@@ -327,7 +327,9 @@ pub enum DropEvidence {
     /// gone before its read has, as in a new window's first burst of focus
     /// events: the event came and cannot be read, and the event for where
     /// the focus went may never come, so the outpost reads its focus at
-    /// once.
+    /// once. A focus event whose sender's nearest window was not found in
+    /// UIA's transaction timeout is sent as this too, as it was before the
+    /// listener told the two apart.
     NoWindow,
     /// Not a focus event: a selection, a notification, or a menu opening,
     /// which says nothing of the focus.

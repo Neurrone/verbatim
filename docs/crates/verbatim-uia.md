@@ -142,7 +142,10 @@ call waits up to `CONNECTION_TIMEOUT` to connect and
   hung application, and is callable from UIA event threads because each
   outpost watches a single application (decision D9), as NVDA runs the
   same walk on its UIA event thread. Its client, walker and request are
-  kept per thread.
+  kept per thread. `nearest_window_lookup(element)` is the same lookup
+  with a call that timed out (`timed_out`) returned as an error rather
+  than as no window, so the focus listener can drop such a focus for the
+  application not answering.
 
 ## Ancestors
 

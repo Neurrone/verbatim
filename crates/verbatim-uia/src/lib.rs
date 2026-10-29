@@ -35,7 +35,9 @@
 //!   it only on a deadline-guarded worker).
 //! - [`nearest_window_handle`] — NVDA's `getNearestWindowHandle`: resolves the
 //!   window an arbitrary element belongs to, for elements (menu items, list
-//!   items) that are not windows themselves. Also blocking; see its docs.
+//!   items) that are not windows themselves, and [`nearest_window_lookup`],
+//!   the same lookup with a timeout told from no window. Also blocking; see
+//!   their docs.
 //! - [`map`] — control-type, role, and state mapping into the model.
 //! - The shape module ([`Shape`], [`Cached`], [`Request`], [`Live`]) — every
 //!   cached read of an element, declared together with the cache request
@@ -88,7 +90,7 @@ pub use com::{
 };
 pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::FocusCallback;
-pub use nearest::nearest_window_handle;
+pub use nearest::{nearest_window_handle, nearest_window_lookup};
 pub use probe::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe, raw_probe_verdict};
 pub use provider::{
     console_host_of, is_top_level_window, parent_across_process_boundary, provider_process,

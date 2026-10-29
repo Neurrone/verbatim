@@ -138,7 +138,10 @@ pub struct Ancestry {
     /// For a list or tab control, the first selected child, filled by the
     /// query's element fill: what `verbatim_uia::Uia::selected_node` reports; for a
     /// combo box without the `Value` pattern, its first selected item, its
-    /// value (`verbatim_uia::map::value_from_selection`).
+    /// value (`verbatim_uia::map::value_from_selection`). Optional: `None`
+    /// too when its read failed, as on an item gone, or, in the classic
+    /// walk, timed out or ran out of the query's time, the rest of the
+    /// ancestry read without it.
     pub selected_child: Option<Cached<Ancestor>>,
     /// The native window handle of the element, or of its nearest raw-view
     /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
@@ -317,7 +320,7 @@ fn reads_selected_child(
     element: &FocusInput,
     (live, fresh, cached): (&verbatim_uia::Live, Option<&Cached<Ancestor>>, Option<bool>),
     before_call: &dyn Fn(&'static str),
-) -> Result<bool, Error> {
+) -> windows::core::Result<bool> {
     if element.control_type != Some(UIA_ComboBoxControlTypeId.0) {
         return Ok(wants_selected_child(element));
     }
@@ -331,6 +334,20 @@ fn reads_selected_child(
     Ok(!live
         .element()
         .current_bool(UIA_IsValuePatternAvailablePropertyId)?)
+}
+
+/// A read of the selected child as optional: one that timed out or found
+/// its container or item gone answers `None`, as nothing read; any other
+/// error, a local one such as a cache request that could not be made, is
+/// returned.
+fn optional<T>(read: windows::core::Result<Option<T>>) -> Result<Option<T>, Error> {
+    match read {
+        Ok(found) => Ok(found),
+        Err(error) if verbatim_uia::timed_out(&error) || verbatim_uia::element_is_gone(&error) => {
+            Ok(None)
+        }
+        Err(error) => Err(Error::Uia(error)),
+    }
 }
 
 /// Whether the focused element's legacy MSAA state is read with it, by its
@@ -546,17 +563,28 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
                 },
             );
         };
-        if input.control_type == Some(UIA_ComboBoxControlTypeId.0) {
-            // A combo box's selected item is its value only without the
-            // `Value` pattern, which the program asks for itself.
-            let available = b
-                .property(element, UIA_IsValuePatternAvailablePropertyId.0)
-                .assume::<kind::Bool>();
-            let without = b.not(available);
-            b.if_(without, read_selected);
-        } else {
-            read_selected(&mut b);
-        }
+        // The selected item is optional: a read of it that fails, as on an
+        // item gone, leaves it out, and the focus and its ancestors are
+        // read without it (`docs/design/focus-pipeline-rework.md`, the
+        // audit's difference 4). Its registers are set only once it is
+        // filled.
+        let is_combo_box = input.control_type == Some(UIA_ComboBoxControlTypeId.0);
+        b.try_catch(
+            |b| {
+                if is_combo_box {
+                    // A combo box's selected item is its value only without
+                    // the `Value` pattern, which the program asks for itself.
+                    let available = b
+                        .property(element, UIA_IsValuePatternAvailablePropertyId.0)
+                        .assume::<kind::Bool>();
+                    let without = b.not(available);
+                    b.if_(without, read_selected);
+                } else {
+                    read_selected(b);
+                }
+            },
+            |_, _| {},
+        );
     }
 
     let known = b.new_string_map();
@@ -845,12 +873,12 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// # Errors
 ///
 /// [`Error::Uia`] when the focus read, the cache request, or the tree
-/// walker fails, when the previous element's focus read or a hop finds
-/// the provider did not answer within UIA's transaction timeout, or when
-/// the selected child's read does or finds an element gone
-/// ([`Uia::selected`]); a hop that finds no parent, or fails
-/// otherwise, ends the walk with the ancestors unknown
-/// ([`Ancestry::failed_hop`]).
+/// walker fails, or when the previous element's focus read or a hop finds
+/// the provider did not answer within UIA's transaction timeout; a hop
+/// that finds no parent, or fails otherwise, ends the walk with the
+/// ancestors unknown ([`Ancestry::failed_hop`]). A selected child whose
+/// read timed out or found an element gone ([`Uia::selected`]) is left
+/// out, and the walk goes on.
 #[expect(
     clippy::too_many_lines,
     reason = "one walk, read top to bottom as it runs, as the program is"
@@ -888,18 +916,21 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     } else {
         None
     };
-    // A selection that timed out, or whose container or item is gone, has
-    // not said nothing is selected: the walk fails, as a hop's would.
-    let selected_child = if reads_selected_child(
+    // The selected child is optional: one whose read timed out, or whose
+    // container or item is gone, is left out, and the focus and its
+    // ancestors are read without it (`docs/design/focus-pipeline-rework.md`,
+    // the audit's difference 4), as NVDA's walk reads no selection.
+    let selected_child = match reads_selected_child(
         &input,
         (live, element.as_ref(), query.value_available),
         &before_call,
-    )? && !out_of_time()
-    {
-        before_call("the selected child");
-        uia.selected_within(live, element_request, &out_of_time)?
-    } else {
-        None
+    ) {
+        Ok(true) if !out_of_time() => {
+            before_call("the selected child");
+            optional(uia.selected_within(live, element_request, &out_of_time))?
+        }
+        Ok(_) => None,
+        Err(error) => optional(Err(error))?,
     };
     // The desktop root is served in this process, so reading it is local.
     before_call("the desktop root and the tree walker");

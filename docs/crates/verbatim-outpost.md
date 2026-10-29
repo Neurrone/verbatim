@@ -107,7 +107,8 @@ receives the event's own element, judges and reads a UIA focus
   focus still has the keyboard focus (`UiaFocusRead::same_as_last`); value,
   states, and details afresh; a list's or tab control's selected child, or
   for a combo box without `Value` or a looping selector the first selected
-  item as its value (`UiaFocusRead::value_from_selection`); the raw-view
+  item as its value (`UiaFocusRead::value_from_selection`), left out when
+  its read times out or finds it gone; the raw-view
   ancestors with their window handles, up to the first the thread knew or
   the desktop root, never across the process boundary
   (`verbatim_uia::parent_across_process_boundary`); and a menu item's
@@ -120,7 +121,9 @@ receives the event's own element, judges and reads a UIA focus
   `evidence` (`DropEvidence`, from `focus_read::drop_evidence`) is `Focus`
   (a verdict of NVDA's checks, `focus_read::VERDICTS`, or the listener
   giving up, `focus_read::GAVE_UP`), `Inconclusive` (any other drop of a
-  focus), `NoWindow` (`focus_read::NO_WINDOW`), or `NotFocus`; which drops
+  focus), `NoWindow` (`focus_read::NO_WINDOW`, and
+  `focus_read::NEAREST_TIMED_OUT`, a focus whose nearest window's lookup
+  timed out, after which the read makes no other call), or `NotFocus`; which drops
   end an outpost's wait is decided in
   `docs/design/listener-without-connections.md`, decision 11.
 - Budget. A read has one budget, `READ_BUDGET` (2 seconds), asked before

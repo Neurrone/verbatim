@@ -314,7 +314,7 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [2443, 1856, 1121, 879, 148],
+        [2446, 1859, 1124, 879, 148],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
@@ -387,7 +387,7 @@ fn reads_and_paths_execute_exactly() {
 
     assert_eq!(
         [read, deepest, near, missing],
-        [2456, 1143, 157, 150],
+        [2459, 1143, 157, 150],
         "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
     );
     assert!(read < LIMIT / 2 && deepest < LIMIT / 2);

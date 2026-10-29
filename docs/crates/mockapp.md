@@ -544,6 +544,9 @@ Each file's module comment says exactly what it asserts; in outline:
   and one that has exited; that a walk that hits UIA's transaction
   timeout is a failure both ways and never answered by the classic walk,
   and a real outpost then reports the focus with its containers unknown;
+  that a list whose selected item is gone is read both ways without it;
+  that the listener drops a focus whose nearest window's lookup timed out
+  for that reason, with no call after the lookup;
   and that `Uia::selected` fails with UIA's timeout when mockapp is slow
   or stalled, and as gone once it has exited, never answering that
   nothing is selected ([verbatim-uia-rops](verbatim-uia-rops.md)). It

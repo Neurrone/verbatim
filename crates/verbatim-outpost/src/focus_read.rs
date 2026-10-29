@@ -423,6 +423,14 @@ pub enum FocusEvent {
 /// before its read (`docs/design/listener-without-connections.md`, risk 13).
 pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object for it";
 
+/// The reason a focus is dropped when the lookup of its sender's nearest
+/// window did not answer within UIA's transaction timeout
+/// (`verbatim_uia::nearest_window_lookup`): NVDA's lookup answers no window
+/// and NVDA drops the focus, and nothing more is read into an application
+/// that has just failed to answer (`docs/design/focus-pipeline-rework.md`,
+/// the audit's difference 14).
+pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so NVDA drops it";
+
 /// The reason a notification is dropped when its sender has no window
 /// above it.
 const NOTIFICATION_NO_WINDOW: &str = "its sender has no window above it";
@@ -521,7 +529,8 @@ impl Judged {
 /// What the drop of an event of kind `kind` for `reason` says to an
 /// outpost waiting for a UIA focus after a `WinEvent` focus
 /// ([`DropEvidence`]): a focus whose sender has no window above it came
-/// too late to be read; a verdict of NVDA's checks ([`VERDICTS`]), or the
+/// too late to be read, as one whose nearest window's lookup timed out is
+/// taken for now ([`NEAREST_TIMED_OUT`]); a verdict of NVDA's checks ([`VERDICTS`]), or the
 /// listener giving up on the application ([`GAVE_UP`]), ends the wait; any
 /// other drop of a focus, such as one no longer focused, one in a window
 /// that does not use UIA, or one a newer event of its element replaced,
@@ -529,7 +538,13 @@ impl Judged {
 #[must_use]
 pub fn drop_evidence(kind: FocusEvent, reason: &str) -> DropEvidence {
     match kind {
-        FocusEvent::Focus if reason == NO_WINDOW => DropEvidence::NoWindow,
+        // A timed-out lookup, told from no window only by its reason, says
+        // to a waiting outpost what it said before it was told apart, until
+        // the gap moves into the listener (`docs/design/focus-pipeline-rework.md`,
+        // order of work, step 5).
+        FocusEvent::Focus if reason == NO_WINDOW || reason == NEAREST_TIMED_OUT => {
+            DropEvidence::NoWindow
+        }
         FocusEvent::Focus if VERDICTS.contains(&reason) || GAVE_UP.contains(&reason) => {
             DropEvidence::Focus
         }
@@ -1448,14 +1463,14 @@ impl FocusReader {
             called = true;
             budget.call("the nearest window");
             let started = Instant::now();
-            let nearest = verbatim_uia::nearest_window_handle(element);
+            let nearest = verbatim_uia::nearest_window_lookup(element);
             let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
             tracing::debug!(
                 elapsed_us,
-                window = nearest,
+                window = ?nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            let nearest = nearest.ok_or(NO_WINDOW)?;
+            let nearest = nearest.map_err(|_| NEAREST_TIMED_OUT)?.ok_or(NO_WINDOW)?;
             self.window.learn(nearest);
             nearest
         } else {
@@ -2610,7 +2625,8 @@ mod tests {
     /// Only a focus event's drop answers an outpost's wait for a UIA focus
     /// after a `WinEvent` focus: a verdict of NVDA's checks, or the listener
     /// giving up on the application, ends it, a focus whose sender has no
-    /// window is told apart, and every other drop of a focus is
+    /// window, or whose nearest window's lookup timed out, is told apart,
+    /// and every other drop of a focus is
     /// inconclusive, one in a window that does not use UIA among them; a
     /// selection's, a notification's, or a menu opening's drop says nothing
     /// of the focus. Every reason the listener drops a focus for is listed.
@@ -2651,10 +2667,15 @@ mod tests {
                 "{inconclusive}"
             );
         }
-        assert_eq!(
-            drop_evidence(FocusEvent::Focus, NO_WINDOW),
-            DropEvidence::NoWindow
-        );
+        // A timed-out lookup says what no window says, until the gap moves
+        // into the listener.
+        for no_window in [NO_WINDOW, NEAREST_TIMED_OUT] {
+            assert_eq!(
+                drop_evidence(FocusEvent::Focus, no_window),
+                DropEvidence::NoWindow,
+                "{no_window}"
+            );
+        }
         assert_eq!(
             drop_evidence(FocusEvent::Selection, NO_WINDOW),
             DropEvidence::NotFocus

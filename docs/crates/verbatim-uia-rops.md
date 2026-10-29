@@ -193,7 +193,10 @@ the element does not have the focus, and otherwise an `Ancestry`:
 - `selected_child`: for a list or tab control, the first selected child,
   which the outpost reports as its node; for a combo box without the
   `Value` pattern, its first selected item, which is its value
-  (`verbatim_uia::map::value_from_selection`).
+  (`verbatim_uia::map::value_from_selection`). It is optional: when its
+  read fails, as on an item gone, or in the classic walk times out or
+  runs out of the query's time, it is `None` and the rest is read without
+  it, as NVDA's walk reads no selection.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one (NVDA's `getNearestWindowHandle`).
 - `previous_focused`: whether `previous` has the keyboard focus, `None`
@@ -226,7 +229,8 @@ instruction when an imported element is gone, so `focus_ancestry` runs
 the program once more without a gone `previous` and answers it as not
 focused. For a list or tab control the program reads
 `Selection2FirstSelectedItem` (`SelectionPattern2`), else the `Selection`
-property; for a combo box it asks `IsValuePatternAvailable` itself. Then
+property; for a combo box it asks `IsValuePatternAvailable` itself, all
+inside a try block whose catch leaves the selected child out. Then
 it walks with `Navigate` to the parent, filling each ancestor's cache
 inside the provider and stopping at the first whose runtime id, turned
 into a string with `Stringify` (`[42,14681214,4,5]`), is in a string map
@@ -257,9 +261,9 @@ log the program's error and stop trying for a window whose import
 failed. A program that timed out or whose element is gone is not answered
 classically, which would wait on a stalled application a second time:
 its error is returned. The classic walk itself fails when its read of
-`previous`, a hop, or the selected child times out, or the selected child
-is gone, so a walk that hit the timeout is never reported as a short but
-complete ancestry. NVDA makes each call site check `remote.isSupported()`
+`previous` or a hop times out, so a walk that hit the timeout is never
+reported as a short but complete ancestry; a selected child that times
+out or is gone is left out and the walk goes on. NVDA makes each call site check `remote.isSupported()`
 and run its own classic code instead; here the choice and the fallback
 live in one function, so a failure is handled the same way everywhere.
 

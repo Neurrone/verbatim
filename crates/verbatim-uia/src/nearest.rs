@@ -85,24 +85,48 @@ pub(crate) fn release_thread_context() {
 /// NVDA makes running this same walk on its own UIA event-handler thread.
 ///
 /// Returns `None` on any COM failure, including apartment or client setup
-/// failing on this thread, the walk itself failing, or no ancestor carrying
-/// a window handle being found (the last should not happen for a live
-/// element rooted under the desktop).
+/// failing on this thread, the walk itself failing or timing out, or no
+/// ancestor carrying a window handle being found (the last should not
+/// happen for a live element rooted under the desktop).
+/// [`nearest_window_lookup`] tells a lookup that timed out from these.
 #[must_use]
 pub fn nearest_window_handle(element: &IUIAutomationElement) -> Option<isize> {
+    nearest_window_lookup(element).ok().flatten()
+}
+
+/// [`nearest_window_handle`], with a lookup the provider did not answer
+/// within UIA's transaction timeout told from no window: NVDA's lookup
+/// answers no window for either, and so drops the focus, but a timed-out
+/// lookup says only that the application is busy, so a caller can decide
+/// not to read into it (`docs/design/focus-pipeline-rework.md`, the audit's
+/// difference 14). One cross-process call, as [`nearest_window_handle`].
+///
+/// # Errors
+///
+/// The lookup's error when the provider did not answer within UIA's
+/// transaction timeout ([`crate::timed_out`]). Every other failure is
+/// `Ok(None)`, as [`nearest_window_handle`] answers it.
+pub fn nearest_window_lookup(
+    element: &IUIAutomationElement,
+) -> windows::core::Result<Option<isize>> {
     CONTEXT.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
             *slot = Context::build().ok();
         }
-        let context = slot.as_ref()?;
+        let Some(context) = slot.as_ref() else {
+            return Ok(None);
+        };
         // `context.walker` and `context.request` are this thread's own,
         // either just built or reused unchanged from an earlier call on this
         // same thread.
-        let normalized = Live::new(element.clone())
-            .normalize(&context.walker, &context.request)
-            .ok()?;
+        let normalized =
+            match Live::new(element.clone()).normalize(&context.walker, &context.request) {
+                Ok(normalized) => normalized,
+                Err(error) if crate::timed_out(&error) => return Err(error),
+                Err(_) => return Ok(None),
+            };
         let hwnd = normalized.read().hwnd;
-        (hwnd != 0).then_some(hwnd)
+        Ok((hwnd != 0).then_some(hwnd))
     })
 }

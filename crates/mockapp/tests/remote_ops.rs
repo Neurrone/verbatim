@@ -20,7 +20,7 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use common::outpost::OutpostUnderTest;
-use verbatim_model::NormalizedEvent;
+use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
@@ -423,6 +423,38 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
     fixture.app.quit();
 }
 
+/// A list whose selected item is gone, the list still naming it
+/// (`disconnect`), is read both ways with its ancestors and without the
+/// item, never failing for it: the selected item is optional
+/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 4), as
+/// NVDA's walk reads no selection.
+fn a_focus_whose_selected_item_is_gone_is_reported_without_it() {
+    let mut fixture = Fixture::start("mockapp-rops-selection-gone");
+    fixture.app.send("disconnect banana");
+    let fruits = fixture.focus("fruits", "Fruits");
+    for (label, ancestry) in BOTH {
+        let ancestry = focused(
+            ancestry(&fixture.uia, &query(&fruits, &[], &fixture.fill)),
+            label,
+        );
+        assert!(
+            ancestry.selected_child.is_none(),
+            "{label}: the gone item is left out"
+        );
+        assert_eq!(
+            names(&ancestry.ancestors),
+            ["Mockapp Ancestry Fixture"],
+            "{label}"
+        );
+        assert!(
+            !ancestry.ancestors_unknown(),
+            "{label}: the ancestors are known"
+        );
+        assert_eq!(ancestry.window, Some(fixture.hwnd), "{label}");
+    }
+    fixture.app.quit();
+}
+
 /// A combo box's selected item is read, both ways alike, only when the
 /// combo box has no `Value` pattern: the remote program asks the combo
 /// box inside the provider, and the classic walk, with no fresh copy of
@@ -684,30 +716,51 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.quit();
 }
 
-/// The focus listener drops a focus whose walk to its nearest window does
-/// not answer within UIA's transaction timeout, every provider call slow
-/// (`slow`): NVDA's walk (`getNearestWindowHandle`) answers no window when
-/// it fails, and NVDA makes no object for an element with none, so it
-/// drops the event (`docs/design/focus-pipeline.md`, section 16.8).
-fn a_focus_whose_nearest_window_walk_times_out_is_dropped() {
+/// The focus listener drops a focus whose lookup of its nearest window does
+/// not answer within UIA's transaction timeout, for that reason and not as
+/// one with no window, and makes no call after the lookup: no probe of the
+/// window and no read of the focus, into an application that has just
+/// failed to answer. NVDA's lookup answers no window when it fails, and NVDA
+/// drops a focus with none (`UIAHandler/__init__.py` 1437 to 1444;
+/// `docs/design/focus-pipeline-rework.md`, the audit's difference 14). The
+/// lookup's first step to the parent waits past the timeout
+/// (`slow-parent`), and returns before mockapp's wait ends.
+fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
     const TIMEOUT: Duration = Duration::from_millis(300);
-    const SLOW_CALL: Duration = Duration::from_millis(15);
-    let mut fixture = Fixture::start_alone("mockapp-rops-no-window", "ancestry.json");
+    const SLOW_PARENT: Duration = Duration::from_millis(900);
+    let mut fixture = Fixture::start_alone("mockapp-rops-lookup-timed-out", "ancestry.json");
     let deep = fixture.focus_delivered("deep", "Deep button");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
     let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
-    fixture.app.send(&format!("slow {}", SLOW_CALL.as_millis()));
-    let (judged, _) = outpost.listener_read(&deep);
-    // Acknowledged once mockapp has answered the calls still queued.
-    fixture.app.send("slow 0");
-    drop(restored);
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener took a focus whose nearest window it could not find: {judged:?}");
+    fixture
+        .app
+        .send(&format!("slow-parent deep {}", SLOW_PARENT.as_millis()));
+    let (judged, calls) = outpost.listener_read(&deep);
+    let returned = common::now_us();
+    let ended = {
+        fixture.app.stamped_line("slow-parent started");
+        fixture.app.stamped_line("slow-parent ended")
     };
+    fixture.app.send("slow-parent deep 0");
+    drop(restored);
+    assert!(
+        returned < ended,
+        "the transaction timeout ended the lookup: it returned at {returned} us, after the wait ended at {ended} us"
+    );
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener took a focus whose nearest window's lookup timed out: {judged:?}");
+    };
+    assert_eq!(reason, verbatim_outpost::focus_read::NEAREST_TIMED_OUT);
     assert_eq!(
-        reason,
-        "it has no window above it, so NVDA makes no object for it"
+        calls,
+        CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 0,
+            connections: 0,
+        },
+        "the lookup is the read's only call"
     );
     drop(outpost);
     fixture.app.quit();
@@ -722,7 +775,8 @@ fn a_focus_whose_nearest_window_walk_times_out_is_dropped() {
 /// containers unknown, never as having none, whether remote operations are
 /// on or off. (With every provider call slow, the walk to the nearest
 /// window times out first, and the focus is dropped, as
-/// `a_focus_whose_nearest_window_walk_times_out_is_dropped` shows.)
+/// `a_timed_out_nearest_window_lookup_reads_nothing_into_the_application`
+/// shows.)
 /// The timeout is short, and the requests only a little slow, since
 /// mockapp goes on answering a timed-out program's calls, each that much
 /// late, before it takes the next command.
@@ -1508,6 +1562,10 @@ fn main() {
             a_list_and_a_tab_control_report_their_selected_child,
         ),
         (
+            "a_focus_whose_selected_item_is_gone_is_reported_without_it",
+            a_focus_whose_selected_item_is_gone_is_reported_without_it,
+        ),
+        (
             "a_combo_box_reads_its_selected_item_only_without_the_value_pattern",
             a_combo_box_reads_its_selected_item_only_without_the_value_pattern,
         ),
@@ -1532,8 +1590,8 @@ fn main() {
             a_focus_walk_that_times_out_fails,
         ),
         (
-            "a_focus_whose_nearest_window_walk_times_out_is_dropped",
-            a_focus_whose_nearest_window_walk_times_out_is_dropped,
+            "a_timed_out_nearest_window_lookup_reads_nothing_into_the_application",
+            a_timed_out_nearest_window_lookup_reads_nothing_into_the_application,
         ),
         (
             "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",
