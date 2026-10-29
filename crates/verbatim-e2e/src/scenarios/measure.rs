@@ -268,27 +268,11 @@ pub(crate) fn body_focus_windows_terminal(scenario: &mut Scenario, state: &mut S
         name: "measure_focus_windows_terminal",
     };
     let first = terminal::title(state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[
-            &format!("{first} window"),
-            &format!("{first} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
     let second_state = terminal::open_windows_terminal_window(scenario, "m-wt-b", state)
         .expect("opens a second Windows Terminal window");
     let second = terminal::title(&second_state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        &second_state,
-        &[
-            &format!("{second} window"),
-            &format!("{second} terminal"),
-            "blank",
-        ],
-    );
+    terminal::expect_second_windows_terminal_prompt_read(scenario, &second_state);
     switch_between(scenario, &truth, &first, &second);
 }
 

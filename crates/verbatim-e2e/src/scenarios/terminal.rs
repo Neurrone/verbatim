@@ -605,7 +605,9 @@ pub(crate) fn expect_prompt_read(
 /// How many times more a Windows Terminal window's terminal may be
 /// announced as the window opens: in some launches Windows Terminal raises
 /// the terminal's focus under a second runtime id, one starting 14,
-/// besides the usual one, and Verbatim announces both. In the runs kept,
+/// besides the usual one, and Verbatim announces both; in others it raises
+/// the usual one twice around a focus of its window, and the outpost
+/// gives the second read a node of its own. In the runs kept,
 /// opening a window, it was said twice at most, in 10 runs of 9
 /// scenarios.
 pub(crate) const LAUNCH_REPEATS: usize = 1;
