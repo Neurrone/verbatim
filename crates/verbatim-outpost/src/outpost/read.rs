@@ -957,6 +957,20 @@ pub(super) fn msaa_enrichment(
 /// enforced by abandonment ([`verbatim_uia::BoundedClient`]).
 const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Whether any of `focuses` had already entered `node`, a container of a
+/// focus reported in the top-level window `top_level` (0 when not known),
+/// by the rule the reducer speaks entered containers by
+/// (`verbatim_core::focus_rules::already_entered`).
+fn entered_before(focuses: &[super::held::Focus], top_level: isize, node: &NodeSnapshot) -> bool {
+    focuses.iter().any(|focus| {
+        already_entered(
+            focus.ancestors.iter().chain(std::iter::once(&focus.node)),
+            top_level != 0 && focus.top_level == top_level,
+            node,
+        )
+    })
+}
+
 /// The dialog this outpost last gathered text for in a foreground report,
 /// and the text: the focus that follows it into the dialog reuses it rather
 /// than reading the dialog again.
@@ -994,15 +1008,6 @@ pub(super) fn describe_dialogs<'a>(
     // inside any of them is not read again.
     let focuses: Vec<super::held::Focus> = context.held().focuses().cloned().collect();
     let top_level = window.map_or(0, super::window::top_level_of);
-    let entered_before = |node: &NodeSnapshot| {
-        focuses.iter().any(|focus| {
-            already_entered(
-                focus.ancestors.iter().chain(std::iter::once(&focus.node)),
-                top_level != 0 && focus.top_level == top_level,
-                node,
-            )
-        })
-    };
     for node in nodes {
         if !is_dialog(node.role)
             || node
@@ -1010,7 +1015,7 @@ pub(super) fn describe_dialogs<'a>(
                 .description
                 .as_deref()
                 .is_some_and(|description| !description.trim().is_empty())
-            || entered_before(node)
+            || entered_before(&focuses, top_level, node)
         {
             continue;
         }
@@ -1834,11 +1839,15 @@ pub(super) fn dump_tree(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
+    use verbatim_core::focus_rules::{HeldFocus, HeldNode};
+    use verbatim_model::{
+        Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet, TraceId, WindowHandle,
+    };
 
+    use super::super::held::Held;
     use super::super::window::window_owner;
     use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, splice,
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice,
         window_read_without_its_handle,
     };
 
@@ -1928,5 +1937,49 @@ mod tests {
             None
         );
         assert_eq!(window_read_without_its_handle(0, &[7, 76_482_230]), None);
+    }
+
+    /// The focus Core holds is a button in a child dialog "Remove", window
+    /// 20, of the top-level window 7. A second dialog "Remove", window 21,
+    /// in the same top-level window, is newly entered, as Core judges it,
+    /// so its text is gathered; a node of window 20 is the dialog the focus
+    /// is already in.
+    #[test]
+    fn a_dialog_of_another_window_with_the_same_role_and_name_is_newly_entered() {
+        let held_node = |id, role, name: Option<&str>, window: Option<u64>| HeldNode {
+            id: NodeId::new(id),
+            backend: Backend::Msaa,
+            role,
+            name: name.map(str::to_owned),
+            states: StateSet::new(),
+            window: window.map(WindowHandle),
+        };
+        let mut held = Held::default();
+        held.core_focus(
+            None,
+            Some(HeldFocus {
+                trace_id: TraceId::mint(),
+                observed_at_us: 1,
+                focus: held_node(2, Role::Button, Some("OK"), None),
+                ancestors: vec![held_node(1, Role::Dialog, Some("Remove"), Some(20))],
+                top_level: Some(WindowHandle(7)),
+                alive: true,
+            }),
+        );
+        let focuses: Vec<_> = held.focuses().cloned().collect();
+        let dialog = |window| NodeSnapshot {
+            id: NodeId::new(3),
+            backend: Backend::Msaa,
+            role: Role::Dialog,
+            name: Some("Remove".to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails {
+                window: Some(WindowHandle(window)),
+                ..NodeDetails::default()
+            },
+        };
+        assert!(!entered_before(&focuses, 7, &dialog(21)));
+        assert!(entered_before(&focuses, 7, &dialog(20)));
     }
 }

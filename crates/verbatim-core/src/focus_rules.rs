@@ -73,6 +73,27 @@ pub struct HeldNode {
     pub name: Option<String>,
     /// Its states, as last known.
     pub states: StateSet,
+    /// The window it is, when it is one
+    /// ([`NodeDetails::window`](verbatim_model::NodeDetails::window)), so
+    /// that an outpost compares it by [`already_entered`] as Core compares
+    /// its snapshot. Left out of the message when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowHandle>,
+}
+
+impl HeldNode {
+    /// `node` as the rules compare it.
+    #[must_use]
+    pub fn of(node: &verbatim_model::NodeSnapshot) -> Self {
+        Self {
+            id: node.id,
+            backend: node.backend,
+            role: node.role,
+            name: node.name.clone(),
+            states: node.states,
+            window: node.details.window,
+        }
+    }
 }
 
 /// The focus Core holds, which Core sends the focus listener and the
@@ -287,10 +308,8 @@ impl EnteredKey for HeldNode {
     fn key_name(&self) -> Option<&str> {
         self.name.as_deref()
     }
-    /// A held node carries no window, so [`already_entered`] compares it by
-    /// its id, and by its role and name.
     fn key_window(&self) -> Option<WindowHandle> {
-        None
+        self.window
     }
 }
 
@@ -449,6 +468,7 @@ mod tests {
             role,
             name: Some(name.to_owned()),
             states: StateSet::default(),
+            window: None,
         }
     }
 
@@ -475,6 +495,23 @@ mod tests {
     }
 
     #[test]
+    fn two_windows_are_one_container_exactly_when_their_handles_are_equal() {
+        let window = |id, handle| HeldNode {
+            window: Some(WindowHandle(handle)),
+            ..held(id, Backend::Msaa, Role::Dialog, "Remove")
+        };
+        let previous = [window(1, 20)];
+        assert!(
+            already_entered(&previous, false, &window(2, 20)),
+            "the same window, in another top-level window by the walk"
+        );
+        assert!(
+            !already_entered(&previous, true, &window(2, 21)),
+            "another window of the same role and name"
+        );
+    }
+
+    #[test]
     fn a_focus_for_an_outpost_keeps_its_own_nodes_unstamped() {
         let ours = |id| NodeId::new(id).with_outpost(OutpostId(3));
         let node = |id: NodeId| HeldNode {
@@ -483,6 +520,7 @@ mod tests {
             role: Role::Pane,
             name: None,
             states: StateSet::default(),
+            window: None,
         };
         let focus = HeldFocus {
             trace_id: TraceId::mint(),

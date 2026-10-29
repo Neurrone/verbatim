@@ -46,10 +46,12 @@ guide maps those behaviors onto the crate's types and modules.
     entered dialog's own text by.
   - `HeldFocus` and `HeldNode`: the focus Core holds as it sends it, the
     trace of the event it came from, its observation time, the focus and
-    its ancestors (id, backend, role, name, states), its top-level window,
-    and whether it is alive; `for_outpost(outpost)` keeps an outpost's own
-    nodes, their ids unstamped, or gives `None` for another outpost's
-    focus.
+    its ancestors (id, backend, role, name, states, and the window a node
+    is, when it is one, left out of the message when absent), its
+    top-level window, and whether it is alive; `HeldNode::of(snapshot)`
+    builds a held node from a snapshot; `for_outpost(outpost)` keeps an
+    outpost's own nodes, their ids unstamped, or gives `None` for another
+    outpost's focus.
 - `is_selection_container(role)`: re-exported from `focus_rules`.
 - `SrState`, the reducer's state:
   - `new()`.
@@ -225,8 +227,8 @@ code is in `reduce.rs` unless named.
   already entered. A focus in a different top-level window treats the
   whole chain but the windows it was in as newly entered, which is how a
   window is announced when its foreground event was dropped. `HeldNode`
-  carries no window, so an outpost's own use of the rule, for a dialog's
-  text, compares by id and by role and name alone.
+  carries a window's handle as the snapshot does, so an outpost's own use
+  of the rule, for a dialog's text, judges as the reducer does.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
   listener last reported (`Input::ForegroundWindow`) and published by the

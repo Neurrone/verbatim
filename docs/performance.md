@@ -1041,8 +1041,12 @@ window's node carries (`NodeDetails::window`).
   (`RoleCore`), the MSAA one the address the object was read at, and a
   plain window's its own. Every snapshot is 16 bytes larger in memory; in
   a message a window's node is about 20 bytes larger and any other node
-  unchanged, the field being left out when absent. Core's comparison adds
-  one test of two handles per pair of chain entries it compares.
+  unchanged, the field being left out when absent. The focus Core holds
+  carries the handle too, so a `CoreFocus` notice is about 20 bytes larger
+  for each of its nodes that is a window, and each held node 16 bytes
+  larger in memory. Core's comparison adds one test of two handles per
+  pair of chain entries it compares, and an outpost's for a dialog's text
+  the same.
 
 ### The system caret's events
 

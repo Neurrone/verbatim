@@ -335,17 +335,6 @@ fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> held:
     }
 }
 
-/// `node` as the focus rules compare it.
-fn held_node(node: &NodeSnapshot) -> HeldNode {
-    HeldNode {
-        id: node.id,
-        backend: node.backend,
-        role: node.role,
-        name: node.name.clone(),
-        states: node.states,
-    }
-}
-
 /// The object the focus `node` is, by its backend's registry: its runtime id
 /// or its MSAA event address, as the intake records the focus.
 fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
@@ -2193,7 +2182,7 @@ impl Worker<'_> {
                 .then_some(top_level),
         };
         let ancestors = match ancestors {
-            Some(ancestors) => ancestors.iter().map(held_node).collect(),
+            Some(ancestors) => ancestors.iter().map(HeldNode::of).collect(),
             None => ancestors_before.unwrap_or_default(),
         };
         let (event, simple_child) = match self.msaa_event.take() {
@@ -2202,7 +2191,7 @@ impl Worker<'_> {
         };
         held::Focus {
             trace,
-            node: held_node(node),
+            node: HeldNode::of(node),
             ancestors,
             top_level,
             entered_in_front,
@@ -4224,6 +4213,7 @@ mod tests {
                 role: Role::Button,
                 name: None,
                 states: StateSet::new(),
+                window: None,
             },
             ancestors: Vec::new(),
             top_level: window,

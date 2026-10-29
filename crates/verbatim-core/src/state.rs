@@ -899,13 +899,7 @@ impl SrState {
     #[must_use]
     pub fn held_focus(&self) -> Option<crate::focus_rules::HeldFocus> {
         let focus = self.focus.as_ref()?;
-        let held = |node: &NodeSnapshot| crate::focus_rules::HeldNode {
-            id: node.id,
-            backend: node.backend,
-            role: node.role,
-            name: node.name.clone(),
-            states: node.states,
-        };
+        let held = crate::focus_rules::HeldNode::of;
         Some(crate::focus_rules::HeldFocus {
             trace_id: focus.trace_id?,
             observed_at_us: focus.observed_at_us,

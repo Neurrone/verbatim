@@ -28,6 +28,7 @@ pub fn held_focus(outpost: OutpostId, observed_at_us: u64) -> HeldFocus {
             role: Role::Button,
             name: None,
             states: StateSet::new(),
+            window: None,
         },
         ancestors: Vec::new(),
         top_level: None,

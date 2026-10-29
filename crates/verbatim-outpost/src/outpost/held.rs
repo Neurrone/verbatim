@@ -203,6 +203,7 @@ mod tests {
             role,
             name: None,
             states: StateSet::default(),
+            window: None,
         }
     }
 

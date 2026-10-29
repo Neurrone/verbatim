@@ -884,13 +884,7 @@ impl OutpostUnderTest {
     /// Core keeps them. The outpost and the listener's reader are told,
     /// as verbatim.exe tells them.
     fn core_judges(&self, message: &OutpostToSupervisor) {
-        let held = |node: &NodeSnapshot| HeldNode {
-            id: node.id,
-            backend: node.backend,
-            role: node.role,
-            name: node.name.clone(),
-            states: node.states,
-        };
+        let held = HeldNode::of;
         let (trace, observed, node, foreground, ancestors, top_level) = match message {
             OutpostToSupervisor::Event {
                 trace_id,

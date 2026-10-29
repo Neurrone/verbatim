@@ -432,7 +432,8 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
   Core just judged, and to the outposts whose focus Core's focus was or now
   is, whenever Core judges a focus event or its focus changes: `judged`
   (the trace judged), `focus` (a `verbatim_core::focus_rules::HeldFocus`:
-  trace, focus and ancestors, top-level window, alive; to the listener
+  trace, focus and ancestors, each with its window's handle when it is
+  a window, top-level window, alive; to the listener
   without ancestors, to an outpost only when the focus is its own, with its
   own node ids, `HeldFocus::for_outpost`).
 - `Query` is a request id and a `Query`: `FocusNow`, `Navigate` (a model
