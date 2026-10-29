@@ -120,15 +120,17 @@ use verbatim_uia::{
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
-use crate::arbitration::{Arbitrator, Clock, known_verdict, uses_uia, window_class_name};
+use crate::arbitration::{
+    Arbitrator, Clock, Verdict, known_verdict, window_class_name, window_verdict,
+};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
     front_is_another_thread_of_its_application, window_belongs_to_hidden_frame, window_is_hung,
 };
 use crate::protocol::{
-    DeliveredFact, DropEvidence, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
-    now_us,
+    DeliveredFact, DropEvidence, DroppedVerdict, EventTiming, UiaAncestorFact, UiaFocusRead,
+    UiaSnapshotFact, now_us,
 };
 use verbatim_core::focus_rules::{RepeatEvidence, repeats_focus};
 
@@ -462,14 +464,16 @@ const CONSOLE_OWN: &str = "the console window's own focus";
 /// The reason a focus is dropped whose window does not use UIA.
 const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
 
+/// The reason a focus is dropped whose window did not answer the raw probe
+/// in time, so that its verdict is unknown
+/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 15).
+const UNKNOWN: &str = "its window did not answer the probe in time, so its verdict is unknown";
+
 /// The drops of a focus that are NVDA's checks' verdict on its event, as
-/// its read would have been ([`DropEvidence::Focus`]). A window that does
-/// not use UIA ([`NOT_UIA`]) is not among them: the copy an outpost waits
-/// on is in a window it judged UIA, so such a drop is of another window of
-/// the application, such as a new File Explorer window's frame beside its
-/// items view, or a disagreement of the listener's and the outpost's
-/// verdicts, and establishes nothing of the copy's focus (Dickson,
-/// 2026-10-21).
+/// its read would have been ([`DropEvidence::Focus`]). A drop on the
+/// window's verdict ([`Judged::DroppedOnVerdict`]) is not among them: it
+/// names its window, which the outpost judges with its own verdict
+/// ([`DropEvidence::Verdict`]).
 const VERDICTS: [&str; 6] = [
     HUNG,
     COMPARISON_FAILED,
@@ -501,6 +505,16 @@ pub enum Judged {
     Read(Box<UiaFocusRead>),
     /// Not reported, for the reason given.
     Dropped(&'static str),
+    /// Not reported because its nearest window, `window`, does not use UIA
+    /// or its verdict is unknown, by the listener's own verdict
+    /// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+    /// fact", the verdicts): the outpost judges the window with its own.
+    DroppedOnVerdict {
+        /// The focus's nearest window, which was judged.
+        window: isize,
+        /// The verdict it was dropped on.
+        verdict: DroppedVerdict,
+    },
     /// A selection or notification that passed its checks, to be passed on
     /// as it now stands ([`FocusReader::check_fact`]).
     Passed(Box<DeliveredFact>),
@@ -521,8 +535,78 @@ impl Judged {
                 marker,
                 evidence: drop_evidence(kind, reason),
             },
+            Judged::DroppedOnVerdict { window, verdict } => DeliveredFact::UiaFocusDropped {
+                marker,
+                evidence: match kind {
+                    FocusEvent::Focus => DropEvidence::Verdict { window, verdict },
+                    FocusEvent::MenuOpened | FocusEvent::Selection | FocusEvent::Notification => {
+                        DropEvidence::NotFocus
+                    }
+                },
+            },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
         }
+    }
+
+    /// Why it was not reported, for one that was dropped.
+    #[must_use]
+    pub fn dropped_reason(&self) -> Option<&'static str> {
+        match self {
+            Judged::Dropped(reason) => Some(reason),
+            Judged::DroppedOnVerdict { verdict, .. } => Some(verdict_reason(*verdict)),
+            Judged::Read(_) | Judged::Passed(_) => None,
+        }
+    }
+}
+
+/// The reason a focus dropped on its window's verdict is logged with.
+fn verdict_reason(verdict: DroppedVerdict) -> &'static str {
+    match verdict {
+        DroppedVerdict::NotUia => NOT_UIA,
+        DroppedVerdict::Unknown => UNKNOWN,
+    }
+}
+
+/// Why a focus is not read: a drop for a reason, or on its window's
+/// verdict, which names the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotRead {
+    /// Dropped for this reason.
+    Dropped(&'static str),
+    /// Dropped because its nearest window, the first, does not use UIA or
+    /// has an unknown verdict.
+    Verdict(isize, DroppedVerdict),
+}
+
+impl From<&'static str> for NotRead {
+    fn from(reason: &'static str) -> Self {
+        NotRead::Dropped(reason)
+    }
+}
+
+impl From<NotRead> for Judged {
+    fn from(not_read: NotRead) -> Self {
+        match not_read {
+            NotRead::Dropped(reason) => Judged::Dropped(reason),
+            NotRead::Verdict(window, verdict) => Judged::DroppedOnVerdict { window, verdict },
+        }
+    }
+}
+
+/// Step 2's judgement of window `nearest` with the reading thread's
+/// `arbitrator` ([`window_verdict`]): `Ok` when it uses UIA, and otherwise
+/// the drop, which names the window and whether it does not use UIA or its
+/// probe did not answer in time, the verdict then unknown and nothing kept
+/// of it. `console` is the console check after the probe.
+fn judge_window(
+    arbitrator: &Mutex<Arbitrator>,
+    nearest: isize,
+    console: impl FnOnce() -> Option<bool>,
+) -> Result<isize, NotRead> {
+    match window_verdict(arbitrator, nearest, console) {
+        Verdict::Uia => Ok(nearest),
+        Verdict::NotUia => Err(NotRead::Verdict(nearest, DroppedVerdict::NotUia)),
+        Verdict::Unknown => Err(NotRead::Verdict(nearest, DroppedVerdict::Unknown)),
     }
 }
 
@@ -532,9 +616,10 @@ impl Judged {
 /// too late to be read, as one whose nearest window's lookup timed out is
 /// taken for now ([`NEAREST_TIMED_OUT`]); a verdict of NVDA's checks ([`VERDICTS`]), or the
 /// listener giving up on the application ([`GAVE_UP`]), ends the wait; any
-/// other drop of a focus, such as one no longer focused, one in a window
-/// that does not use UIA, or one a newer event of its element replaced,
-/// could not establish the focus and leaves the wait to its bound.
+/// other drop of a focus, such as one no longer focused or one a newer
+/// event of its element replaced, could not establish the focus and leaves
+/// the wait to its bound. A drop on the window's verdict is not made from
+/// a reason ([`Judged::DroppedOnVerdict`]).
 #[must_use]
 pub fn drop_evidence(kind: FocusEvent, reason: &str) -> DropEvidence {
     match kind {
@@ -881,7 +966,7 @@ impl FocusReader {
         let nearest =
             match self.judge_before_reading(sender, (&fields, &event.runtime_id), kind, &budget) {
                 Ok(nearest) => nearest,
-                Err(reason) => return Judged::Dropped(reason),
+                Err(not_read) => return not_read.into(),
             };
         let previous = self
             .last
@@ -1236,7 +1321,7 @@ impl FocusReader {
         (sender, runtime_id): (&ListenerEvent, &[i32]),
         kind: FocusEvent,
         budget: &Budget,
-    ) -> Result<isize, &'static str> {
+    ) -> Result<isize, NotRead> {
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let out_of_time = || budget.out_of_time();
@@ -1245,7 +1330,7 @@ impl FocusReader {
         // its cached handle only, so a windowless sender is not tested
         // here, and nothing is read live from a hung application.
         if hwnd != 0 && window_is_hung(hwnd) {
-            return Err(HUNG);
+            return Err(HUNG.into());
         }
         // The focus Core holds, as far as the listener holds its element:
         // Core took it from a UIA focus this listener read (decision D14,
@@ -1284,7 +1369,7 @@ impl FocusReader {
                 let same = compare();
                 match (&same, current.as_ref()) {
                     (Some(Err(_)), _) => {
-                        return Err(COMPARISON_FAILED);
+                        return Err(COMPARISON_FAILED.into());
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
                     _ => (
@@ -1331,7 +1416,7 @@ impl FocusReader {
                     same_element: held.is_some(),
                     still_focused,
                 }) {
-                    return Err(REPEAT);
+                    return Err(REPEAT.into());
                 }
                 (nearest, element)
             }
@@ -1353,7 +1438,7 @@ impl FocusReader {
             &windows,
             &RequestedEvents::default(),
         ) {
-            return Err(NOT_RELATED);
+            return Err(NOT_RELATED.into());
         }
         // 5. The refusals of NVDA's object for the sender, before its
         // keyboard focus is read (`shouldAllowUIAFocusEvent` overridden):
@@ -1364,14 +1449,14 @@ impl FocusReader {
         // is the one element whose own window is the console window; the
         // text area has none.
         if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
-            return Err(CONSOLE_OWN);
+            return Err(CONSOLE_OWN.into());
         }
         // A focus in Core's hidden frame, which its outpost drops whatever
         // it is: dropped before it is read, so it never waits for a
         // judgement of Core's that cannot come ([`HeldElements`]). A local
         // read of the window's property.
         if window_belongs_to_hidden_frame(if hwnd != 0 { hwnd } else { window }) {
-            return Err(HIDDEN_FRAME);
+            return Err(HIDDEN_FRAME.into());
         }
         // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
@@ -1400,12 +1485,12 @@ impl FocusReader {
             || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
         if out_of_time() {
             if lacked_by_its_event() {
-                return Err(UNFOCUSED_OUT_OF_TIME);
+                return Err(UNFOCUSED_OUT_OF_TIME.into());
             }
         } else {
             budget.call("the keyboard focus");
             if let Ok(false) = subject.has_keyboard_focus() {
-                return Err(NOT_FOCUSED);
+                return Err(NOT_FOCUSED.into());
             }
         }
         Ok(window)
@@ -1451,13 +1536,13 @@ impl FocusReader {
         sender: &ListenerEvent,
         budget: &Budget,
         mut called: bool,
-    ) -> Result<isize, &'static str> {
+    ) -> Result<isize, NotRead> {
         let out_of_time = || budget.out_of_time();
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
             if called && out_of_time() {
-                return Err(OUT_OF_TIME_BEFORE_LOOKUP);
+                return Err(OUT_OF_TIME_BEFORE_LOOKUP.into());
             }
             called = true;
             budget.call("the nearest window");
@@ -1480,8 +1565,8 @@ impl FocusReader {
         if called && out_of_time() {
             return match known_verdict(&self.arbitrator, nearest) {
                 Some(true) => Ok(nearest),
-                Some(false) => Err(NOT_UIA),
-                None => Err(OUT_OF_TIME_BEFORE_JUDGEMENT),
+                Some(false) => Err(NotRead::Verdict(nearest, DroppedVerdict::NotUia)),
+                None => Err(OUT_OF_TIME_BEFORE_JUDGEMENT.into()),
             };
         }
         // The raw probe, not a connection: the listener connects to no
@@ -1505,12 +1590,9 @@ impl FocusReader {
         };
         budget.verdict_begins();
         budget.call("the window's verdict, by the raw probe if it is not known");
-        let uia = uses_uia(&self.arbitrator, nearest, console);
+        let judged = judge_window(&self.arbitrator, nearest, console);
         budget.probe_ended();
-        if !uia {
-            return Err(NOT_UIA);
-        }
-        Ok(nearest)
+        judged
     }
 
     /// Logs, at debug, what section 16.3 of `docs/design/focus-pipeline.md`
@@ -2624,9 +2706,11 @@ mod tests {
     /// giving up on the application, ends it, a focus whose sender has no
     /// window, or whose nearest window's lookup timed out, is told apart,
     /// and every other drop of a focus is
-    /// inconclusive, one in a window that does not use UIA among them; a
+    /// inconclusive; a
     /// selection's, a notification's, or a menu opening's drop says nothing
-    /// of the focus. Every reason the listener drops a focus for is listed.
+    /// of the focus. Every reason the listener drops a focus for is listed,
+    /// but its window's verdict, which names the window
+    /// ([`a_timed_out_probe_drops_the_focus_as_unknown`]).
     #[test]
     fn a_focus_events_drop_ends_the_wait_is_inconclusive_or_is_without_a_window() {
         for ends in [
@@ -2649,7 +2733,6 @@ mod tests {
         }
         for inconclusive in [
             "its element no longer has the keyboard focus",
-            "its window does not use UIA, so its MSAA events speak for it",
             "the user moved on from a slow window",
             "a newer focus event of its element replaced it",
             "no thread to read it",
@@ -2685,6 +2768,34 @@ mod tests {
             drop_evidence(FocusEvent::MenuOpened, NOT_FOCUSED),
             DropEvidence::NotFocus
         );
+    }
+
+    /// A focus whose window did not answer the raw probe in time is dropped
+    /// as unknown, naming the window, so its outpost judges the window with
+    /// its own verdict; the reading thread keeps nothing of the probe, so
+    /// the window's next focus probes it again. The probe's outcome is
+    /// injected, not timed.
+    #[test]
+    fn a_timed_out_probe_drops_the_focus_as_unknown() {
+        let mut arbitrator = Arbitrator::new(&[]);
+        arbitrator.set_probe(verbatim_uia::RawProbe::TimedOut);
+        let arbitrator = Mutex::new(arbitrator);
+        let judged: Judged = judge_window(&arbitrator, NEAREST, || {
+            panic!("the console check after a probe that did not answer")
+        })
+        .expect_err("a probe that timed out is no UIA window")
+        .into();
+        assert_eq!(
+            judged.into_fact(9, FocusEvent::Focus),
+            DeliveredFact::UiaFocusDropped {
+                marker: 9,
+                evidence: DropEvidence::Verdict {
+                    window: NEAREST,
+                    verdict: DroppedVerdict::Unknown,
+                },
+            }
+        );
+        assert_eq!(known_verdict(&arbitrator, NEAREST), None, "nothing kept");
     }
 
     /// The time the window's verdict takes, the raw probe's wait, is not

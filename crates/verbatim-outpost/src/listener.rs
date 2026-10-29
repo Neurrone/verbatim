@@ -865,7 +865,7 @@ impl Reading for UiaFocusReading {
     }
 
     fn outcome(&self, pid: Pid, meta: Meta, judged: Judged) {
-        if let Judged::Dropped(reason) = &judged {
+        if let Some(reason) = judged.dropped_reason() {
             tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
         }
         self.outgoing

@@ -36,8 +36,8 @@ use verbatim_model::{
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{
-    DeliveredFact, DropEvidence, OutpostToSupervisor, SupervisorToOutpost, UiaFocusRead,
-    UiaSnapshotFact, WinEventStamp,
+    DeliveredFact, DropEvidence, DroppedVerdict, OutpostToSupervisor, SupervisorToOutpost,
+    UiaFocusRead, UiaSnapshotFact, WinEventStamp,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
@@ -1209,6 +1209,134 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
     app.quit();
 }
 
+/// A UIA focus the listener dropped on its own verdict on its window, here
+/// unknown, its probe not answered in time, in a window this outpost judges
+/// UIA: the outpost reads its application's focus at once, in the drop's
+/// place, and reports it stamped with the dropped event's observation. The
+/// read answers the wait for a UIA focus as a read in that top-level window
+/// does, so the `WinEvent` focus observed 20 ms after the dropped event, as
+/// a UIA focus can reach the listener before its `WinEvent`, opens no wait,
+/// and nothing more is read at its bound.
+fn a_focus_the_listener_dropped_in_a_window_the_outpost_judges_uia_is_read() {
+    let title = common::unique_title("mockapp-verdict-drop");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 5 });
+    let dropped_observed_at_us = common::outpost::now_us();
+    outpost.deliver_stamped(
+        DeliveredFact::UiaFocusDropped {
+            marker: 5,
+            evidence: DropEvidence::Verdict {
+                window: hwnd.0 as isize,
+                verdict: DroppedVerdict::Unknown,
+            },
+        },
+        dropped_observed_at_us,
+    );
+    let message = outpost.next();
+    let OutpostToSupervisor::Event { observed_at_us, .. } = &message else {
+        panic!("the outpost said {message:?}, not a focus change");
+    };
+    assert_eq!(
+        *observed_at_us, dropped_observed_at_us,
+        "the dropped event's stamp"
+    );
+    let NormalizedEvent::FocusChanged {
+        node, ancestors, ..
+    } = focus_changed(message)
+    else {
+        unreachable!("a focus change");
+    };
+    let chain: Vec<Option<&str>> = ancestors
+        .iter()
+        .chain(std::iter::once(&node))
+        .map(|node| node.name.as_deref())
+        .collect();
+    assert_eq!(
+        chain,
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.settled();
+    winevent_focus_observed(&outpost, hwnd, dropped_observed_at_us + 20_000);
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The focused element a focus-now query reads, when it belongs to another
+/// process than the one serving the focus window, as
+/// `GetFocusedElementBuildCache` returns once the keyboard focus has moved
+/// to another application (`experiments/getfocusedelement-after-the-focus-moves/`):
+/// the outpost checks its cached process before anything else is done with
+/// it, answers no focused control, and sends the other application
+/// nothing after the read itself, no remote operation, walk or
+/// subscription. The read is the outpost's reader returning the other
+/// mockapp's focused element, its cache filled by the outpost's request.
+fn a_focused_element_of_another_process_is_not_read_further() {
+    let title = common::unique_title("mockapp-focused-here");
+    let app = common::spawn("small.json", "uia", &title);
+    let other_title = common::unique_title("mockapp-focused-elsewhere");
+    let mut other = common::spawn("small.json", "uia", &other_title);
+    let other_hwnd = common::find_window(&other_title);
+    let other_client = Client::new(other_hwnd);
+    let mut outpost = OutpostUnderTest::new(&app);
+
+    other.send("set-focus btn1");
+    outpost.read_focus_as(other_client.focused().live().element());
+    common::reset_hits(other_hwnd);
+    let (now, _) = outpost.focus_now_answer();
+    assert_eq!(now.focus, None, "no focused control is answered");
+    assert_eq!(
+        common::read_hits(other_hwnd),
+        [
+            ("ProviderOptions", 5),
+            ("GetPatternProvider", 14),
+            ("GetPropertyValue", 20),
+            ("HostRawElementProvider", 3),
+            ("GetRuntimeId", 2),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 3),
+        ],
+        "the other application's calls: the read's cache alone"
+    );
+
+    drop(outpost);
+    other.quit();
+    app.quit();
+}
+
+/// A UIA focus the listener read in a window this outpost judges MSAA,
+/// here by Core's backend override, is dropped: the outpost's own verdict
+/// decides which backend's focus counts in each of its windows, and in an
+/// MSAA window its MSAA focus speaks for it.
+fn a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped() {
+    let title = common::unique_title("mockapp-report-in-msaa-window");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let read = outpost.listener_fact(&client.focused());
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::SetBackendOverride {
+            backend_override: Some(Backend::Msaa),
+        });
+    outpost.deliver(read);
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A `WinEvent` focus in a UIA window whose UIA focus event came but was
 /// dropped because its element no longer had the keyboard focus, as in
 /// ordinary fast navigation: the drop neither answers the wait nor reads at
@@ -2147,7 +2275,8 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
 /// UIA, as NVDA's `isNativeUIAElement` decides (`docs/design/focus-pipeline.md`,
 /// section 18): the listener drops it once it has asked the window for its
 /// provider, one window message and no UIA call, before anything of the
-/// element is read, and the window's MSAA focus speaks for it.
+/// element is read, and names the window it judged, and the window's MSAA
+/// focus speaks for it.
 fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
     let title = common::unique_title("mockapp-msaa-window-focus");
     let app = common::spawn("small.json", "msaa", &title);
@@ -2164,12 +2293,16 @@ fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
         .any_window_element(hwnd.0 as isize, &listener)
         .expect("mockapp's window element, through the MSAA proxy");
     let (judged, calls) = outpost.listener_read(&window);
-    let Judged::Dropped(reason) = judged else {
+    let Judged::DroppedOnVerdict {
+        window: judged_window,
+        verdict,
+    } = judged
+    else {
         panic!("the listener read a focus in a window without UIA: {judged:?}");
     };
     assert_eq!(
-        reason,
-        "its window does not use UIA, so its MSAA events speak for it"
+        (judged_window, verdict),
+        (hwnd.0 as isize, DroppedVerdict::NotUia)
     );
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
@@ -2473,6 +2606,18 @@ fn main() {
         (
             "a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once",
             a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once,
+        ),
+        (
+            "a_focus_the_listener_dropped_in_a_window_the_outpost_judges_uia_is_read",
+            a_focus_the_listener_dropped_in_a_window_the_outpost_judges_uia_is_read,
+        ),
+        (
+            "a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped",
+            a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped,
+        ),
+        (
+            "a_focused_element_of_another_process_is_not_read_further",
+            a_focused_element_of_another_process_is_not_read_further,
         ),
         (
             "a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late",

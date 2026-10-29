@@ -517,7 +517,11 @@ impl MarkerNews {
         let slot = match evidence {
             DropEvidence::Focus => &mut self.answered_at_us,
             DropEvidence::NoWindow => &mut self.no_window_at_us,
-            DropEvidence::Inconclusive | DropEvidence::NotFocus => return,
+            // A drop on the listener's verdict takes its marker's place
+            // instead, and the worker judges its window.
+            DropEvidence::Inconclusive | DropEvidence::NotFocus | DropEvidence::Verdict { .. } => {
+                return;
+            }
         };
         *slot = Some(slot.map_or(observed_at_us, |at| at.max(observed_at_us)));
     }
@@ -619,7 +623,10 @@ impl State {
 
     /// Resolves the markers `entry` resolves without a read, a drop or the
     /// end of the listener's reads, recording it for the worker
-    /// ([`MarkerNews`]); whether it was one.
+    /// ([`MarkerNews`]); whether it was one. A drop on the listener's
+    /// verdict on its window is not one: it takes its marker's place, as a
+    /// read does, since the worker judges that window with its own verdict
+    /// and may read the application's focus in the drop's place.
     fn resolves_without_read(&mut self, entry: &Entry) -> bool {
         // A drop's observation, or the time it arrived when it carries
         // none, which only a test's delivery does.
@@ -629,7 +636,9 @@ impl State {
             entry.observed_at_us
         };
         match &entry.item {
-            Item::Fact(DeliveredFact::UiaFocusDropped { marker, evidence }, _) => {
+            Item::Fact(DeliveredFact::UiaFocusDropped { marker, evidence }, _)
+                if !matches!(evidence, DropEvidence::Verdict { .. }) =>
+            {
                 tracing::debug!(
                     marker,
                     ?evidence,
@@ -721,7 +730,11 @@ impl Intake {
             _ => None,
         };
         let resolves = match &entry.item {
-            Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
+            Item::Fact(
+                DeliveredFact::UiaFocusRead { marker, .. }
+                | DeliveredFact::UiaFocusDropped { marker, .. },
+                _,
+            ) => Some(*marker),
             _ => resolved_by_read,
         };
         let mut place = resolves.and_then(|resolves| {
@@ -1445,8 +1458,9 @@ fn classify_fact(fact: &DeliveredFact, thread: u32) -> (Option<Key>, Category, i
             read.hwnd,
         ),
         // A marker is never planned: its read takes its place, or a drop
-        // removes it. A drop and the end of the listener's reads are never
-        // queued.
+        // removes it. A drop, but one on the listener's verdict, which
+        // takes the marker's place, and the end of the listener's reads are
+        // never queued.
         DeliveredFact::UiaFocusMarker { .. }
         | DeliveredFact::UiaFocusDropped { .. }
         | DeliveredFact::UiaFocusReadsEnded => (None, Category::Exempt, 0),

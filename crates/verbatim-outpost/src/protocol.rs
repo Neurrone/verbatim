@@ -286,7 +286,7 @@ impl ListenerFact {
 /// for a UIA focus after a `WinEvent` focus in one of its UIA windows
 /// (`docs/design/listener-without-connections.md`, decision 11; Dickson,
 /// 2026-10-21): only a focus event's
-/// resolution answers that wait, in one of three ways. It goes on the pipe
+/// resolution answers that wait, in one of four ways. It goes on the pipe
 /// as JSON, by its variant's name; the listener, the supervisor and the
 /// outposts are one build of this definition, so it needs no version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,9 +304,7 @@ pub enum DropEvidence {
     /// to answer.
     Focus,
     /// A focus event whose drop could not establish where the focus is:
-    /// its element no longer had the keyboard focus, its window does not
-    /// use UIA, so it is another window than the one the outpost waits on,
-    /// its read was abandoned when the user moved on or never started, the
+    /// its element no longer had the keyboard focus, its read was abandoned when the user moved on or never started, the
     /// listener was shutting down, its element could not be kept or
     /// resolved for the read, its reading thread had no UIA client, or a
     /// newer event of the same element replaced it. The wait goes on to
@@ -323,9 +321,34 @@ pub enum DropEvidence {
     /// UIA's transaction timeout is sent as this too, as it was before the
     /// listener told the two apart.
     NoWindow,
+    /// A focus event the listener dropped on its own verdict on its
+    /// nearest window, `window`: the window does not use UIA, or did not
+    /// answer the probe in time (`docs/design/focus-pipeline-rework.md`,
+    /// "Who owns each duplicated fact", the verdicts). The outpost judges
+    /// the window with its own verdict. In a window it judges UIA it reads
+    /// its application's focus at once, in the drop's place, which answers
+    /// the wait as a read in that top-level window does; in one it judges
+    /// MSAA its MSAA focus speaks, and the wait goes on to its bound.
+    Verdict {
+        /// The focus's nearest window, which the listener judged.
+        window: isize,
+        /// The listener's verdict on it.
+        verdict: DroppedVerdict,
+    },
     /// Not a focus event: a selection, a notification, or a menu opening,
     /// which says nothing of the focus.
     NotFocus,
+}
+
+/// The listener's verdict on the window a focus was dropped on
+/// ([`DropEvidence::Verdict`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DroppedVerdict {
+    /// The window does not use UIA.
+    NotUia,
+    /// The window did not answer the raw probe in time, so its backend is
+    /// not known; the listener keeps nothing of it.
+    Unknown,
 }
 
 /// A fact the supervisor delivers to a target outpost (decision D13): what

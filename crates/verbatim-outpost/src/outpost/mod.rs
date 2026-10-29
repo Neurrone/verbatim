@@ -739,7 +739,8 @@ impl Context {
                     | DeliveredFact::UiaFocusDropped {
                         evidence: crate::protocol::DropEvidence::Focus
                             | crate::protocol::DropEvidence::Inconclusive
-                            | crate::protocol::DropEvidence::NoWindow,
+                            | crate::protocol::DropEvidence::NoWindow
+                            | crate::protocol::DropEvidence::Verdict { .. },
                         ..
                     }
             )

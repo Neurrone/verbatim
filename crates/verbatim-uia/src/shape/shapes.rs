@@ -865,6 +865,22 @@ uia_shape! {
 }
 
 uia_shape! {
+    /// The process an element belongs to, cached only by a request made
+    /// with [`Request::with_process`] and read only by
+    /// [`Cached::cached_process`].
+    pub struct ProcessOrigin {
+        gates: none;
+        groups {}
+        properties {
+            /// The owning process.
+            process_id: UIA_ProcessIdPropertyId => process_id,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
     /// An element normalized to itself or its nearest ancestor that is a
     /// window (NVDA's `getNearestWindowHandle`).
     pub struct WindowLookup {

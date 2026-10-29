@@ -51,8 +51,8 @@ mod tests;
 
 pub use shapes::{
     Ancestor, AncestorGates, Cell, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
-    ListenerEvent, Node, NodeGates, Place, Position, PropertyEvent, ProviderOrigin, RoleCore,
-    SelectedItem, SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh,
+    ListenerEvent, Node, NodeGates, Place, Position, ProcessOrigin, PropertyEvent, ProviderOrigin,
+    RoleCore, SelectedItem, SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh,
     TextAreaPattern, TextEvent, ValueSet, WindowLookup,
 };
 
@@ -409,6 +409,16 @@ impl<S: Shape> Cached<S> {
         self.gates
     }
 
+    /// The process the element belongs to, from its cache, when its
+    /// request was made with [`Request::with_process`]; `None` when the
+    /// cache does not hold it. Local.
+    #[must_use]
+    pub fn cached_process(&self) -> Option<u32> {
+        Cached::<ProcessOrigin>::filled(self.live.element.clone(), ())
+            .read()
+            .process_id
+    }
+
     /// The element's runtime id, which UIA keeps with every element
     /// whatever its cache holds. Local.
     #[must_use]
@@ -695,6 +705,27 @@ impl<S: Shape> Request<S> {
     /// The cache request, and the gates the elements it fills carry.
     pub(crate) fn parts(&self) -> (&IUIAutomationCacheRequest, S::Gates) {
         (&self.cache, self.gates)
+    }
+
+    /// A copy of this request that also caches the element's process
+    /// ([`Cached::cached_process`]), for a read whose element must be
+    /// checked against the process it was asked of before anything else is
+    /// read of it. Local.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the cache request cannot be copied or added to.
+    pub fn with_process(&self) -> windows::core::Result<Self> {
+        // SAFETY: `cache` is a live cache request; the copy is this one's.
+        let cache = unsafe { self.cache.Clone() }?;
+        // SAFETY: a live cache request; a plain property id.
+        unsafe { cache.AddProperty(windows::Win32::UI::Accessibility::UIA_ProcessIdPropertyId) }?;
+        Ok(Self {
+            cache,
+            described: OnceCell::new(),
+            gates: self.gates,
+            shape: PhantomData,
+        })
     }
 
     /// The cache request with the provider description added, for a lookup

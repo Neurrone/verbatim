@@ -123,7 +123,11 @@ receives the event's own element, judges and reads a UIA focus
   giving up, `focus_read::GAVE_UP`), `Inconclusive` (any other drop of a
   focus), `NoWindow` (`focus_read::NO_WINDOW`, and
   `focus_read::NEAREST_TIMED_OUT`, a focus whose nearest window's lookup
-  timed out, after which the read makes no other call), or `NotFocus`; which drops
+  timed out, after which the read makes no other call), `Verdict` (a focus
+  dropped on the listener's own verdict on its nearest window,
+  `Judged::DroppedOnVerdict`: the window and `DroppedVerdict::NotUia`, or
+  `DroppedVerdict::Unknown` when its raw probe did not answer in time, of
+  which the reading thread keeps nothing), or `NotFocus`; which drops
   end an outpost's wait is decided in
   `docs/design/listener-without-connections.md`, decision 11.
 - Budget. A read has one budget, `READ_BUDGET` (2 seconds), asked before
@@ -160,9 +164,10 @@ focus to report, and the worker waits for that focus (`outpost/gap.rs`;
 `docs/design/listener-without-connections.md`, decision 11). It opens a gap
 unless a UIA focus was observed within 100 ms before the copy. A UIA focus
 read, a `Focus` drop, the end of the listener's reads, a later focus the
-outpost reports, or another application's later focus in Core's
-`CoreFocus` closes it; selection, notification, and menu markers and
-`Inconclusive` drops do not. A read answers a copy only in the copy's
+outpost reports, the read after a `Verdict` drop (below), or another
+application's later focus in Core's `CoreFocus` closes it; selection,
+notification, and menu markers, `Inconclusive` drops, and a `Verdict`
+drop in a window the outpost judges MSAA do not. A read answers a copy only in the copy's
 top-level window (`window::top_level_of`); a drop is matched by its
 observation alone. The gap is the worker's alone, without a lock, and is
 not judged while a marker waits. The intake passes the markers it resolved
@@ -178,6 +183,19 @@ while a gap is open, at most about 12.2 seconds for one focus marker on an
 application that answers (the bound, the read deadline, the relay, and the
 read), within the harness's 15-second idle timeout. `Outpost::settle` reads
 a due gap first.
+
+The verdicts. The listener and the outpost judge a window's backend with
+the same code (`arbitration`) and send no verdict to each other; the
+outpost's decides which backend's focus counts in each of its windows
+(`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
+the verdicts). A listener's read in a window the outpost judges MSAA, by
+the read's nearest window, is dropped (`Worker::uia_focus`). A `Verdict`
+drop takes its marker's place in the intake, as a read does, and the
+worker judges its window (`Worker::focus_dropped_on_verdict`): in a window
+it judges UIA it reads the application's focus at once with the focus-now
+read (`read::focused_control_in`), stamped with the dropped event's
+observation, which answers the gap as a read in that top-level window
+does; in one it judges MSAA it does nothing.
 
 ### Console windows and frames of another process
 
@@ -195,7 +213,18 @@ the process held open (`outpost::ApplicationNames`).
 An outpost takes a window as its application's when the application serves
 its UIA (`window::served_by`, through `verbatim_uia::served_by`, local
 calls), and `read::focused_control_in` reads no focused element in another
-process's window (`read::control_window`). The supervisor checks that a
+process's window (`read::control_window`). `GetFocusedElementBuildCache`
+reads the keyboard focus again itself and can return an element of the
+application the focus has just moved to
+(`experiments/getfocusedelement-after-the-focus-moves/`), so its request
+caches the element's process (`Request::with_process`), and an element
+whose cached process is not the outpost's application, the console host
+for a console, or that has none cached, is read no further: no
+enrichment, walk, subscription or report, `None` answered, and a debug
+line naming both processes. Each read is logged at debug with what asked
+for it (`read::FocusRead`: a focus-now query, the gap, or the read after a
+listener's drop on its verdict). The one connection the call makes into
+the other application cannot be prevented. The supervisor checks that a
 process it starts an outpost for serves the fact's window
 (`check_served_by` in `supervisor/owner.rs`; a debug build fails). The
 crate re-exports `provider_process` and `console_host_of` so Core routes a
@@ -357,9 +386,11 @@ outpost frame.
 `Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`).
 `verdict(hwnd, &WindowClasses)` answers from the good class list, the
 Windows 11 shell rule, the bad class list, a `SetBackendOverride`, or a kept
-probe, and `None` when only the probe can decide; the worker then probes
-with the raw probe (`verbatim_uia::raw_probe`, through
-`arbitration::uses_uia`, as the listener does) and calls `record_probe`. No
+probe, and `None` when only the probe can decide; the window is then
+probed with the raw probe (`verbatim_uia::raw_probe`), by the worker
+through `arbitration::uses_uia_keeping` and by the listener through
+`arbitration::window_verdict`, and its answer recorded (`record_probe`).
+Each process keeps its own verdicts; neither copies the other's. No
 connection follows a probe (`docs/design/listener-without-connections.md`,
 decision 2).
 
@@ -376,8 +407,13 @@ decision 2).
 - A "yes" is kept for the window's lifetime and dropped by `forget` on
   destruction (decision D15). A "no" lasts `NEGATIVE_VERDICT_LIFETIME`
   (500 ms, NVDA's cache period), since a busy application answers late. A
-  timed-out probe is a "no" only for the rest of the worker entry that made
-  it, on that thread (`record_timed_out`, `begin_entry`).
+  timed-out probe is an unknown verdict (`arbitration::Verdict::Unknown`):
+  the listener keeps nothing of it, and an outpost's worker reads the
+  window through MSAA and keeps it as "no" for the rest of the entry that
+  made it, on that thread, and for every thread for
+  `NEGATIVE_VERDICT_LIFETIME` from the probe's end, never renewed with the
+  entry (`record_timed_out`, `begin_entry`); a verdict kept for the
+  window's lifetime meanwhile stays.
   `lasting_verdict` answers only a verdict that lasts the window's
   lifetime.
 - `Clock`, `Arbitrator::set_clock`, and `Arbitrator::now` time the verdicts

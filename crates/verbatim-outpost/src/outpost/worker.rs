@@ -51,8 +51,9 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
-    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
+    DeliveredFact, DropEvidence, DroppedVerdict, EventTiming, FocusNow, FocusedControl,
+    OutpostToSupervisor, Query, QueryOutcome, QueryResult, UiaFocusRead, UiaSnapshotFact,
+    WALK_DEADLINE, now_us,
 };
 
 use super::Context;
@@ -1408,7 +1409,9 @@ impl Worker<'_> {
         let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
         let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < open.observed_at_us;
         let sender_gone = !window_exists(open.hwnd);
-        let Some((hwnd, control)) = read::focused_control_in(context, self.client) else {
+        let Some((hwnd, control)) =
+            read::focused_control_in(context, self.client, read::FocusRead::Gap)
+        else {
             tracing::info!(
                 hwnd = open.hwnd,
                 waited_ms,
@@ -1440,6 +1443,84 @@ impl Worker<'_> {
         self.emit_focus(
             TraceId::mint(),
             open.observed_at_us,
+            backend,
+            Some(hwnd),
+            node,
+            false,
+            object,
+            (ancestors, selected_child),
+        );
+        self.follow_focus((node_id, role));
+    }
+
+    /// A UIA focus the listener dropped on its own verdict on its nearest
+    /// window, `window` (`verdict`: not UIA, or unknown when the window did
+    /// not answer the listener's probe in time), observed at
+    /// `observed_at_us`: in a window this outpost judges UIA, the two
+    /// processes disagree, and the application's focus is read at once in
+    /// the drop's place with the focus-now read
+    /// (`read::focused_control_in`), as the gap's read is made, stamped with
+    /// the dropped event's observation so Core's stale rule judges it as
+    /// that event (`docs/design/focus-pipeline-rework.md`, "Who owns each
+    /// duplicated fact", the verdicts). It answers the wait for a UIA focus
+    /// after a `WinEvent` focus as a read in that top-level window does, so
+    /// that wait does not read again. In a window it judges MSAA, the
+    /// window's MSAA focus speaks for it, and nothing is done.
+    fn focus_dropped_on_verdict(
+        &mut self,
+        window: isize,
+        verdict: DroppedVerdict,
+        trace: TraceId,
+        observed_at_us: u64,
+    ) {
+        let context = self.context;
+        if !read::window_uses_uia(context, window) {
+            tracing::debug!(
+                %trace,
+                window,
+                ?verdict,
+                "the listener dropped a UIA focus on its verdict, and the outpost judges the window MSAA too"
+            );
+            return;
+        }
+        let top_level = Some(top_level_of(window)).filter(|&top| top != 0);
+        if self.gap.uia_answered(observed_at_us, top_level).is_some() {
+            tracing::debug!(
+                %trace,
+                window,
+                "the wait for a UIA focus is answered by the read after the listener's drop"
+            );
+        }
+        let Some((hwnd, control)) =
+            read::focused_control_in(context, self.client, read::FocusRead::VerdictDrop)
+        else {
+            tracing::info!(
+                %trace,
+                window,
+                ?verdict,
+                "the listener dropped a UIA focus in a window the outpost judges UIA; the focus read found none"
+            );
+            return;
+        };
+        let FocusedControl {
+            node,
+            ancestors,
+            selected_child,
+            ..
+        } = control;
+        tracing::info!(
+            %trace,
+            window,
+            ?verdict,
+            role = ?node.role,
+            name = ?node.name,
+            "the listener dropped a UIA focus in a window the outpost judges UIA; the focus is read and reported"
+        );
+        let object = object_of(context, &node);
+        let (node_id, role, backend) = (node.id, node.role, node.backend);
+        self.emit_focus(
+            trace,
+            observed_at_us,
             backend,
             Some(hwnd),
             node,
@@ -3236,6 +3317,10 @@ impl Worker<'_> {
             DeliveredFact::UiaFocusRead { read, focus, .. } => {
                 self.uia_focus(&read, focus, trace, observed_at_us);
             }
+            DeliveredFact::UiaFocusDropped {
+                evidence: DropEvidence::Verdict { window, verdict },
+                ..
+            } => self.focus_dropped_on_verdict(window, verdict, trace, observed_at_us),
             // The intake resolves these; none reaches the worker.
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusDropped { .. }
@@ -3650,11 +3735,21 @@ impl Worker<'_> {
         let Ok(reported) = self.uia_focus_window(read.hwnd, read.window) else {
             return;
         };
-        // The listener took the focus only because its window uses UIA
-        // (section 18): this outpost keeps that verdict for the window, so
-        // the two decide the window alike and it is not probed again.
-        if let Some(window) = read.window {
-            context.arbitrator().record_probe(window, true);
+        // The listener read the focus because it judged its window UIA; the
+        // outpost's own verdict decides which backend's focus counts in
+        // each of its windows (`docs/design/focus-pipeline-rework.md`, "Who
+        // owns each duplicated fact", the verdicts): in a window it judges
+        // MSAA, its MSAA focus speaks, and the listener's report is dropped.
+        let judged_window = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0));
+        if let Some(window) = judged_window
+            && !read::window_uses_uia(context, window)
+        {
+            tracing::debug!(
+                %trace,
+                window,
+                "UIA focus dropped: the outpost judges its window MSAA, whose focus speaks for it"
+            );
+            return;
         }
         let runtime_id = &read.snapshot.runtime_id;
         if read.same_as_last == Some(false) {

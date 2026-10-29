@@ -127,7 +127,7 @@ The proxy rule. An outpost's lookup by handle is not answered when the element i
 
 ## 6. The verdict caching
 
-A "yes" is kept for the window's lifetime, a deliberate difference from NVDA's half-second cache (`docs/parity/backends.md`), as Dickson decided; a "no" for 500 ms, as NVDA keeps both. The listener's verdict, the console check's included, goes to the outpost with the focus.
+A "yes" is kept for the window's lifetime, a deliberate difference from NVDA's half-second cache (`docs/parity/backends.md`), as Dickson decided; a "no" for 500 ms, as NVDA keeps both. The listener and the outpost each judge the window with the same code and keep their own verdicts; no verdict passes between them, and the outpost's decides which backend's focus counts in each of its windows (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact", the verdicts).
 
 ## 7. What the rule replaced, and the tests that pin it
 

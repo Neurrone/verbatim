@@ -311,9 +311,6 @@ pub struct OutpostUnderTest {
     /// Whether the time read is the system's
     /// ([`Self::follow_the_system_clock`]).
     system_time: Arc<AtomicBool>,
-    /// When the outpost's worker read the system's time, on the run's
-    /// shared clock ([`Self::worker_time_reads`]).
-    worker_time_reads: Arc<Mutex<Vec<u64>>>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
     /// The focus listener's reader, standing in for the listener's thread
@@ -419,21 +416,13 @@ impl OutpostUnderTest {
         let time = Arc::new(Mutex::new(Instant::now()));
         let jump_after = Arc::new(Mutex::new(None));
         let system_time = Arc::new(AtomicBool::new(false));
-        let worker_time_reads = Arc::new(Mutex::new(Vec::new()));
-        let (clock, jump, system, worker_reads) = (
+        let (clock, jump, system) = (
             Arc::clone(&time),
             Arc::clone(&jump_after),
             Arc::clone(&system_time),
-            Arc::clone(&worker_time_reads),
         );
         let clock: verbatim_outpost::arbitration::Clock = Arc::new(move || {
             if system.load(Ordering::Relaxed) {
-                if std::thread::current().name() == Some("verbatim-worker") {
-                    worker_reads
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push(super::now_us());
-                }
                 return Instant::now();
             }
             let mut jump = jump.lock().unwrap_or_else(PoisonError::into_inner);
@@ -489,7 +478,6 @@ impl OutpostUnderTest {
             time,
             jump_after,
             system_time,
-            worker_time_reads,
             foreground,
             reader: RefCell::new(reader),
             held_elements,
@@ -551,18 +539,6 @@ impl OutpostUnderTest {
     /// [`run_out_of_time_after`](Self::run_out_of_time_after)).
     pub fn follow_the_system_clock(&self) {
         self.system_time.store(true, Ordering::Relaxed);
-    }
-
-    /// When the outpost's worker has read the time since it became the
-    /// system's ([`follow_the_system_clock`](Self::follow_the_system_clock)),
-    /// in microseconds on the run's shared clock ([`super::now_us`]), in
-    /// order: the evidence of when the worker was running between its
-    /// blocking calls, as each read follows the call before it.
-    pub fn worker_time_reads(&self) -> Vec<u64> {
-        self.worker_time_reads
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
     }
 
     /// The outpost's next message, a focus in it judged as Core judges it
@@ -915,7 +891,9 @@ impl OutpostUnderTest {
     pub fn listener_fact(&self, element: &Cached<ListenerEvent>) -> DeliveredFact {
         match self.listener_read(element).0 {
             read @ Judged::Read(_) => read.into_fact(0, FocusEvent::Focus),
-            Judged::Dropped(reason) => panic!("the listener dropped the focus: {reason}"),
+            dropped @ (Judged::Dropped(_) | Judged::DroppedOnVerdict { .. }) => {
+                panic!("the listener dropped the focus: {dropped:?}")
+            }
             Judged::Passed(fact) => panic!("a focus read passed a fact on: {fact:?}"),
         }
     }

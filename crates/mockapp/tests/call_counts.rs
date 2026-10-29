@@ -1269,21 +1269,26 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// `WM_GETOBJECT` that mockapp answers, and no UIA connection, which as
 /// `UiaHasServerSideProvider` cost mockapp one `WM_GETOBJECT`, five
 /// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`
-/// more.
+/// more. The outpost judges the window with its own verdict and probes it
+/// too, at the cold focus only, before it reports the listener's read
+/// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+/// fact", the verdicts): one window message, which costs mockapp one
+/// `WM_GETOBJECT`, two `ProviderOptions`, one `HostRawElementProvider` and
+/// one `Navigate`.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
         &FocusCosts {
             cold: (
-                calls(6, 0, 1),
+                calls(6, 0, 2),
                 0,
                 &[
-                    ("WM_GETOBJECT", 12),
-                    ("ProviderOptions", 76),
+                    ("WM_GETOBJECT", 13),
+                    ("ProviderOptions", 78),
                     ("GetPatternProvider", 64),
                     ("GetPropertyValue", 114),
-                    ("HostRawElementProvider", 33),
-                    ("Navigate", 22),
+                    ("HostRawElementProvider", 34),
+                    ("Navigate", 23),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
@@ -1347,15 +1352,15 @@ fn uia_focus_changes_cost_exactly_classic() {
         false,
         &FocusCosts {
             cold: (
-                calls(6, 0, 1),
+                calls(6, 0, 2),
                 0,
                 &[
-                    ("WM_GETOBJECT", 12),
-                    ("ProviderOptions", 75),
+                    ("WM_GETOBJECT", 13),
+                    ("ProviderOptions", 77),
                     ("GetPatternProvider", 64),
                     ("GetPropertyValue", 113),
-                    ("HostRawElementProvider", 31),
-                    ("Navigate", 19),
+                    ("HostRawElementProvider", 32),
+                    ("Navigate", 20),
                     ("GetRuntimeId", 9),
                     ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
@@ -1649,9 +1654,11 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             get_objects(connection_messages, 0, &[("OBJID_CLIENT", 1)]),
             "the parent's WM_GETOBJECTs while the outpost read ({path})"
         );
+        // And the outpost's own probe of the focus's window, its own
+        // application's, which it judges with its own verdict.
         assert_eq!(
             reported.calls,
-            calls(0, 8, 0),
+            calls(0, 8, 1),
             "the outpost's calls ({path})"
         );
         assert_eq!(
@@ -1869,7 +1876,7 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         ];
         assert_eq!(
             reported.calls,
-            calls(0, 21, 0),
+            calls(0, 21, 1),
             "the outpost's calls ({path})"
         );
         assert_eq!(
@@ -4411,7 +4418,12 @@ fn uia_combo_box_costs_exactly() {
 /// is read with it, so the one focus message carries every call the focus
 /// costs: the listener's read, the outpost's own element found by the
 /// listener's path, the focus's enrichment, and the caret's read. Each of
-/// `setup`'s mockapp commands is sent before the focus.
+/// `setup`'s mockapp commands is sent before the focus. The outpost judges
+/// the window first, at a foreground change it drops as UIA's, so the
+/// focus's calls hold the listener's probe and not the outpost's, which a
+/// setup command's event would otherwise make first or not, as its event
+/// reaches the outpost before the focus or after it; the outpost's probe at
+/// a cold focus is pinned by [`uia_focus_changes`].
 fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Reported {
     let title = common::unique_title("mockapp-counts-text-focus");
     let mut app = common::spawn(fixture, "uia", &title);
@@ -4422,6 +4434,10 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Repo
             remote_operations: remote,
         },
     );
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    outpost.settled();
     for command in setup {
         app.send(command);
     }

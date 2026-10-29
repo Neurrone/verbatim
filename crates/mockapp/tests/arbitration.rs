@@ -4,8 +4,8 @@
 //! `WM_GETOBJECT` the outposts and the focus listener make, and that
 //! `verbatim-outpost`'s real `Arbitrator`, given that probe's answer,
 //! resolves each to the matching backend, and that a window too busy to
-//! answer is asked once and its "no" taken, as NVDA takes it, once for
-//! the whole of the outpost's entry that asked.
+//! answer is asked once, and read through MSAA, in the outpost's entry
+//! that asked.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -84,20 +84,22 @@ fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
 }
 
 /// An outpost's foreground entry for a window that does not answer its
-/// probe in time takes the timed-out "no" for the whole entry: the
-/// foreground test's probe decides, and the read of the window that
-/// follows asks nothing again, so the entry sends the window one message.
-/// The stall outlasts the probe's wait but ends before a second probe's
-/// would, so a second probe would find the provider and the entry would
-/// read the window through UIA after deciding on MSAA. The time is the
-/// system's, so that the stall spends it, and the worker's reads of it show
-/// when the probe returned.
+/// probe in time decides the window's backend once, on the probe that
+/// timed out: the foreground test's probe decides, and the read of the
+/// window that follows asks nothing again, so the entry sends the window
+/// one message and reads it through MSAA. The stall outlasts the probe's
+/// wait, the entry's first call that waits, by a second and a half, and
+/// ends before a second probe's would, so a second probe would find the
+/// provider and the entry would read the window through UIA after deciding
+/// on MSAA. The entry's report through MSAA is the evidence that its probe
+/// timed out: mockapp's UIA window answers the probe with its provider
+/// whenever it answers. Nothing is timed: the outpost's clock is the
+/// test's, which stands still.
 fn a_probe_that_timed_out_is_made_once_in_its_entry() {
     let title = common::unique_title("mockapp-arb-once-per-entry");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
     let outpost = common::outpost::OutpostUnderTest::new(&app);
-    outpost.follow_the_system_clock();
 
     let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) + 1_500);
     app.stall(stall);
@@ -106,21 +108,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_entry() {
         .messages
         .recv_timeout(stall + common::WAIT_TIMEOUT)
         .expect("the outpost reports the foreground window");
-    let stall_ended_at = app.stall_ended(stall);
-    // The worker reads no time while it waits in the probe, and the probe
-    // is the entry's first call that waits, so its first read of the time
-    // after a gap as long as the probe's wait is the one it made once the
-    // probe returned.
-    let probe_wait_us = u64::from(RAW_PROBE_TIMEOUT_MS) * 1_000;
-    let reads = outpost.worker_time_reads();
-    let probe_returned_at = reads
-        .windows(2)
-        .find(|pair| pair[1] - pair[0] >= probe_wait_us)
-        .unwrap_or_else(|| panic!("no read of the time followed the probe: {reads:?}"))[1];
-    assert!(
-        probe_returned_at < stall_ended_at,
-        "the probe returned while the window was busy, {probe_returned_at} after {stall_ended_at}"
-    );
+    app.stall_ended(stall);
     let OutpostToSupervisor::Event {
         event: NormalizedEvent::FocusChanged { node, .. },
         timing,
@@ -139,6 +127,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_entry() {
         Some(title.as_str()),
         "the window is read through MSAA, which names it by its title, as the entry decided"
     );
+    outpost.settled();
 
     drop(outpost);
     app.quit();

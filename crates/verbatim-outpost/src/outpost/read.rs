@@ -916,9 +916,22 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// ghost window, or hung ([`event_window_unreadable`], local calls), so
 /// nothing is asked of an application that does not answer. Returned with
 /// the window whose focused element it read.
+///
+/// Through UIA, the focused element is read with
+/// `GetFocusedElementBuildCache`, which reads the keyboard focus again
+/// itself and connects to whichever window has it then, so an element of
+/// the application the focus has moved to can come back
+/// (`experiments/getfocusedelement-after-the-focus-moves/`). Its cached
+/// process is compared with the one the check above proved serves the
+/// focus window, this outpost's application, before anything else is done
+/// with it: on a mismatch, or with no process cached, nothing more is read
+/// and `None` is answered, so a stray element is never reported, followed,
+/// or sent a remote operation. `trigger`, what asked for the read, is
+/// logged with it.
 pub(super) fn focused_control_in(
     context: &Context,
     client: &mut Client,
+    trigger: FocusRead,
 ) -> Option<(isize, FocusedControl)> {
     let hwnd = control_window(context.target_pid(), || context.focus_window())?;
     if window_belongs_to_hidden_frame(hwnd) {
@@ -936,7 +949,21 @@ pub(super) fn focused_control_in(
     if window_uses_uia(context, hwnd) {
         let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
         let ancestor_request = context.ancestor_request(uia).ok()?;
-        let element = (context.focused_element)(uia, &nodes).ok()?;
+        let focused_request = nodes.with_process().ok()?;
+        tracing::debug!(?trigger, hwnd, "the application's focused element is read");
+        let element = (context.focused_element)(uia, &focused_request).ok()?;
+        let serving = context.target_pid();
+        let found = element.cached_process();
+        if found != Some(serving) {
+            tracing::debug!(
+                ?trigger,
+                hwnd,
+                serving,
+                ?found,
+                "the focused element read belongs to another process than the one serving the focus window; nothing more is read"
+            );
+            return None;
+        }
         let mut node = with_legacy_checked_state(
             element.live().element(),
             element.snapshot(&context.uia_registry),
@@ -1000,6 +1027,19 @@ pub(super) fn focused_control_in(
     }
 }
 
+/// What asked [`focused_control_in`] to read the application's focus,
+/// logged with each read, so a run's log shows how often each makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FocusRead {
+    /// A focus-now query ([`focus_now`]).
+    FocusNow,
+    /// The gap: no UIA focus followed a `WinEvent` focus in a UIA window.
+    Gap,
+    /// The listener's drop of a focus on its verdict in a window this
+    /// outpost judges UIA.
+    VerdictDrop,
+}
+
 /// The window whose focused element [`focused_control_in`] reads for the
 /// application `target_pid`: the focus window `focus` answers, only when
 /// that application serves it ([`served_by`]), so a console's client never
@@ -1045,7 +1085,7 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Op
                 window_facts(hwnd),
             )
         });
-    let (control_window, focus) = focused_control_in(context, client).unzip();
+    let (control_window, focus) = focused_control_in(context, client, FocusRead::FocusNow).unzip();
     (
         FocusNow {
             window,

@@ -568,14 +568,19 @@ patterns its request holds.
   `ShellButton` (native window handle, control type, name, and whether it
   is off the screen), what File Explorer's outpost reads of each of the
   shell's buttons.
-- `Request<S>`: a shape's cache request, keeping its gates (`gates()`).
+- `Request<S>`: a shape's cache request, keeping its gates (`gates()`);
+  `with_process()` is a copy that also caches the element's process, for
+  the outpost's read of the focused element, which checks it before
+  anything else is read.
 - `Cached<S>`: an element whose cache `S`'s request filled, made only by
   this crate: by a fill from a `Request<S>`, a registration's part,
   `Agile::resolve`, `narrow`, or `Fill::claim`. `read()` reads the shape
   locally; `live()` gives the `Live` element; `gates()`; `runtime_id()`;
   `agile()` makes the `Agile<S>`; `narrow::<T>()` reads the same element
-  as a shape it covers; `observe_cached(property, ignore_default)` gives
-  the raw cached value, for tests only.
+  as a shape it covers; `cached_process()` reads the process a
+  `with_process()` request cached (`ProcessOrigin`, a crate-internal
+  shape), `None` when it holds none; `observe_cached(property,
+  ignore_default)` gives the raw cached value, for tests only.
 - `Agile<S>`: a `Cached<S>` for another thread, `Send` and `Sync` with no
   `unsafe`; `resolve()` gives the `Cached<S>` back, and `reference()` the
   untyped agile reference a `Scope::Elements` takes.
