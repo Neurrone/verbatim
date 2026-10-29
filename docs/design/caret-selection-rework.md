@@ -1,6 +1,6 @@
 # The caret and selection rework
 
-Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The caret and selection rework"). Terminals are out of scope except where the mechanism is shared.
+Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The caret and selection rework"). Terminals are out of scope except where the mechanism is shared. It is built after [the focus pipeline rework](focus-pipeline-rework.md), whose unread repeats, followed focus and removal of `CoreFocus` it relies on (Dickson, 2026-10-29).
 
 ## What was found
 
@@ -10,7 +10,7 @@ The shape is right: a caret key is held while the focus's outpost reads the care
 
 - One last read per text node, held by the outpost and replaced by every read, is the only baseline. A key makes one request that reads the caret before the key and opens the watch with that read as the key's baseline. Every read reports facts. Core takes every report and every answer, late or superseded, as the newest caret by one stamp, the time the read began, and speaks from it.
 - Removed: Core's history of eight caret reports and its prediction of what Backspace and Delete remove; the outpost's history of eight reads, now, so that until uiAccess (M8.1) a caret key pressed while an elevated window is in front is judged from the last read when the request arrives, and is sometimes silent; the time-zero record of Core's own caret move; the "since" check limited to a line; report numbers; the three modes of the selection baseline; the separate watch request and its first check; and the single superseded slot.
-- The baseline's life follows the focus Core holds: the outpost forgets a node's last read when Core's focus leaves it, and Core speaks a repeated focus's changes and ignores a new focus's.
+- A node's last read lives while Core holds the node (`NodesHeld`), and Core's choice between a new and a repeated focus decides what is spoken: Core speaks a repeated focus's changes and ignores a new focus's (2026-10-25; amended 2026-10-29, since the focus pipeline rework removes `CoreFocus`, by which the outpost was to forget a node's last read when Core's focus left it).
 - Control+Z, Control+Y, Control+X, Control+V and Escape in a text field match NVDA, which binds no script to them: they are not held, and nothing is said for them. This replaces the decision of 2026-10-08 that spoke them; the `caret_keys` scenarios' expectations change.
 - The judgement of whether a key's evidence has arrived stays in the outpost, named in D14 as the one read-time decision outside Core, because it bounds reads on text changes.
 - One time stamp per caret report.
@@ -19,7 +19,7 @@ The shape is right: a caret key is held while the focus's outpost reads the care
 ## Order of work
 
 1. Pin today's defects with tests first: Control+A followed by a repeated focus is announced; a superseded key's answer becomes Core's caret; a caret event's report and a key's answer are ordered by one stamp.
-2. The single baseline and one request per key, with the baseline's life following Core's focus.
+2. The single baseline and one request per key, a node's last read living while Core holds the node.
 3. Remove the second layer listed above, the outpost's eight-read history included.
 4. The editing chords as NVDA: not held, silent; the `caret_keys` expectations change.
 5. One time stamp; then verify and remove the outbound merge clause.
@@ -136,7 +136,7 @@ Stated as its mechanisms, each with the constraint or failure it answers.
 - General terms: unchanged (the note, the waiting value change behind the sync, the old range's text).
 - Core speaks from every read it accepts: a report's changes at once, or held in `heard` while a key waits on the node; a before read's changes at once, before the key's words; a key's answer's words then its changes; a late or superseded answer as a report. Reason: compare-once means each change is said by whoever receives it, so no slot is needed and no change is lost.
 - One caret in Core, the newest by its read's start time; a report carries that stamp. Reason: a late answer must not move the review cursor back (ba7064e5), and one stamp with one meaning removes the disagreement above.
-- The baseline's life follows Core's focus: the outpost forgets a node's last read when `CoreFocus` leaves the node; a focus read compares with the last read when one exists and reports the changes with the focus; Core ignores them for a new focus and speaks them for a repeat. Reason: NVDA's `terminateAutoSelectDetection` on loseFocus and its dropping of a duplicate before `initAutoSelectDetection`; the eighth constraint.
+- A node's last read lives while Core holds the node (`NodesHeld`); a focus read compares with the last read when one exists and reports the changes with the focus; Core ignores them for a new focus and speaks them for a repeat. A repeat the focus pipeline rework sends unread is not read, so it leaves the last read as it was. Reason: NVDA drops a duplicate before `initAutoSelectDetection`, and a node Core no longer holds is released; forgetting at Core's departure from the node changes nothing spoken, since Core ignores a new focus's changes; the eighth constraint.
 - `later_key`, `heard`, `removes_selection`, the landing rule, the Backspace-over-selection rule with the selection's start line: unchanged (parity and Dickson's decisions).
 - The ten-second bound and the idle barrier's wait on an open watch: unchanged bookkeeping.
 - Event coverage (`caret_read_since`) and the system caret's dropping: unchanged bookkeeping.
@@ -162,7 +162,7 @@ Counted at the inventory's granularity: of the twenty-five, eight go (Core's his
 - Control+Backspace that did nothing, then Backspace, losing "alpha unselected" (505e3ad8): the late answer is a report; said after the later key's words through `heard`.
 - Control+X saying the cut text (ecd5f901): `removes_selection`; unchanged.
 - Pause opening a watch (71ae5a04): unchanged.
-- The repeated focus swallowing Control+A (the research's counterexample): the focus read compares with the last read and reports "N selected" with the focus; Core, dropping the focus as a repeat, speaks it or holds it for the waiting key; the key's answer then finds no change left. Said once.
+- The repeated focus swallowing Control+A (the research's counterexample): the focus pipeline rework sends the repeat unread and nothing reads it, so the last read is untouched and the key's answer finds the selection change and says it, as NVDA's dropped duplicate leaves its baseline. Where a repeat is read (the gap's read, or a repeat Core does not hold), the focus read compares with the last read and reports "N selected" with the focus; Core, taking the focus as a repeat, speaks it or holds it for the waiting key, and the key's answer then finds no change left. Said once either way.
 - A superseded answer leaving Core's caret stale (the research's second finding): every answer updates Core's caret when newer.
 
 ### Per-key costs
@@ -205,7 +205,7 @@ In Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_
 
 - A typed character's caret report costs Core's pipe reader and reducer a wake each; whether a report that changed nothing Core needs could stay in the outpost is a wake-up question, not a caret one.
 - A kept selection with no text, from the by-parts select path, is not checked for its range no longer holding its text (`docs/parity/text.md`, "Not yet built"); the last read would store text from every path that reads it.
-- The outpost gates caret reports on its own followed focus (`Worker::is_focus`), not Core's; a focus-pipeline question the research also noted.
+- The outpost gates caret reports on its own followed focus (`Worker::is_focus`), not Core's; settled by the focus pipeline rework, whose refusal notice corrects the followed focus when Core refuses a report.
 - Terminals share the key protocol; the merged request and the removal of `since` must be checked against the terminal module's use of the watch's answer as a read trigger (`terminal_output` after an answered check).
 
 
@@ -220,7 +220,7 @@ The question: should D14's rule "a judgment uses the focus Core holds, never a c
 Recommendation: no, not in that form. Keep the comparison and the baseline in the outpost. Instead, amend D14 to say what the baseline is and which part of it Core governs:
 
 - The baseline is read state, not a judgment. It is Verbatim's version of NVDA's `_lastSelectionPos`: a range held inside the provider whose ends move as the text is edited. NVDA replaces it at every comparison whether or not anything is spoken. Only the process holding the provider's ranges can keep it or compare against it.
-- What Core does govern is when the baseline starts over. Today the outpost starts it over whenever it reports a focus, and that includes a focus Core then refuses as a repeat. That is the pattern D14 removed for focus judgments. The fix is that the baseline's life follows the focus Core holds, which Core already sends to the outpost (`CoreFocus`), so no new message is needed.
+- What Core does govern is when the baseline starts over. Today the outpost starts it over whenever it reports a focus, and that includes a focus Core then refuses as a repeat. That is the pattern D14 removed for focus judgments. The fix is that the baseline lives while Core holds its node, which Core already tells the outpost (`NodesHeld`), so no new message is needed, and Core's choice between a new and a repeated focus decides what is spoken.
 - Two Core-side fixes go with it, so that Core's caret and the outpost's agree on the newest read. Both are listed under "What else should change".
 
 Sending Core's selection with every caret request has three costs. It partly reverts commit 505e3ad8 of 2026-10-22, which removed exactly that field (`CaretWatch::previous_selection`) together with the bookkeeping it needed against double speech. It leaves caret events, the path for mouse and program selections, with no request to carry the selection. And Core's copy of the selection is ordered differently from the outpost's, and lacks the selection's text. Details are under "The options".
@@ -397,7 +397,7 @@ What it costs: about 15 bytes per key, nothing per event in the common case, and
 What changes:
 
 - At a focus report, the outpost compares with the node's kept selection when one exists, keeps the new read either way, and reports the changes with the focus's text as facts. It does not forget the selection first.
-- The outpost forgets a node's kept selection when the focus Core holds leaves that node. It learns this from `CoreFocus`, which Core already sends at every focus judgment and whenever its focus enters or leaves the application. That is NVDA's `terminateAutoSelectDetection` on loseFocus. The forgetting is done by the worker at its next read of that node, by checking `Held`, so the pipe thread never takes the anchor lock.
+- The outpost keeps a node's kept selection while Core holds the node, and releases it with the node (`NodesHeld`); `CoreFocus`, by which it was first to forget the selection when Core's focus left the node, is removed by the focus pipeline rework (amended 2026-10-29). Forgetting at the departure would change nothing spoken, since Core ignores a new focus's changes.
 - Core ignores the focus's changes for a focus it takes as new. For a focus it takes as a repeat, it speaks them, or holds them in `heard`, as for a caret event (`keep_focus_caret`).
 
 What it costs: no new messages and no new wake-ups. A new focus has nothing kept, so its read compares nothing and costs what it does today. A repeated focus with a selection costs one comparison inside the read's round trip, the same as a caret event's report.
