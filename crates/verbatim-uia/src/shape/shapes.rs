@@ -1,6 +1,6 @@
 //! The shapes, and the mapping each group does from what it reads.
 
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet};
+use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet, WindowHandle};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationSelectionPattern, IUIAutomationTextPattern, UIA_AcceleratorKeyPropertyId,
     UIA_AccessKeyPropertyId, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
@@ -64,6 +64,13 @@ impl RoleCore {
             self.is_dialog,
             self.hwnd,
         )
+    }
+
+    /// The window the element is, when it is its window's own element
+    /// ([`NodeDetails::window`]); `None` for an element inside a window.
+    #[must_use]
+    pub fn window(&self) -> Option<WindowHandle> {
+        (self.hwnd != 0).then(|| WindowHandle(u64::from_ne_bytes(self.hwnd.to_ne_bytes())))
     }
 }
 
@@ -305,7 +312,10 @@ impl ListenerEvent {
             name,
             value: None,
             states,
-            details: NodeDetails::default(),
+            details: NodeDetails {
+                window: self.role.window(),
+                ..NodeDetails::default()
+            },
         }
     }
 }
@@ -362,6 +372,7 @@ impl ListenerSelection {
             position_in_set: self.position.position_in_set,
             set_size: self.position.size_of_set,
             level: self.level,
+            window: self.event.role.window(),
             ..NodeDetails::default()
         };
         if let Some((row, column)) = self.cell.coordinates() {
@@ -423,7 +434,10 @@ impl PropertyEvent {
             name,
             value,
             states: self.states.states(role, false),
-            details: NodeDetails::default(),
+            details: NodeDetails {
+                window: self.role.window(),
+                ..NodeDetails::default()
+            },
         }
     }
 }
@@ -645,6 +659,7 @@ impl Node {
             row: None,
             column: None,
             parent_automation_id: None,
+            window: self.role.window(),
         };
         if let Some((row, column)) = self.cell.as_ref().and_then(Cell::coordinates) {
             details.row = Some(row);
@@ -802,6 +817,7 @@ impl DialogText {
             states: self.states.states(role, false),
             details: NodeDetails {
                 description,
+                window: self.role.window(),
                 ..NodeDetails::default()
             },
         }

@@ -37,6 +37,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, ProgressReading, QueryKind, Role, State, TreeNode,
+    WindowHandle,
 };
 
 use crate::accessible::{Accessible, Related};
@@ -1789,6 +1790,13 @@ fn read_snapshot_with(
     } else {
         key
     };
+    // A window's own window or client object, acquired at its address,
+    // carries the window: an object at a made-up address may be any object
+    // inside it.
+    let window = (at_address
+        && key.2 == CHILDID_SELF
+        && (key.1 == OBJID_CLIENT.0 || key.1 == OBJID_WINDOW.0))
+        .then(|| WindowHandle(u64::from_ne_bytes(key.0.to_ne_bytes())));
     NodeSnapshot {
         id: node_for(registry, key, at_address, acc, role),
         backend: Backend::Msaa,
@@ -1808,6 +1816,7 @@ fn read_snapshot_with(
             row: None,
             column: None,
             parent_automation_id: None,
+            window,
         },
     }
 }

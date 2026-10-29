@@ -38,7 +38,7 @@ use verbatim_ia2::WinEventKind;
 use verbatim_model::{
     Backend, CallCounts, Effect, Fetches, FocusText, Input, NodeDetails, NodeSnapshot,
     NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent, State,
-    StateSet, TextFormat, TraceId,
+    StateSet, TextFormat, TraceId, WindowHandle,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
 use verbatim_outpost::protocol::{
@@ -2544,9 +2544,9 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
             "the listener did not report a focus whose keyboard focus read timed out: {judged:?}"
         );
     };
-    // Reported whole as its event's cache gives it, its own class
-    // included, with the Focused state, its ancestors unknown, in its own
-    // window.
+    // Reported whole as its event's cache gives it, its own class and
+    // window included, with the Focused state, its ancestors unknown, in
+    // its own window.
     assert_eq!(
         *read,
         UiaFocusRead {
@@ -2559,6 +2559,7 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
                 states: [State::Focused].into_iter().collect::<StateSet>(),
                 details: NodeDetails {
                     class_name: Some("VerbatimMockAppWindow".to_owned()),
+                    window: Some(handle(hwnd)),
                     ..NodeDetails::default()
                 },
             },
@@ -3226,6 +3227,94 @@ fn roles_and_names(reported: &common::outpost::Reported) -> Vec<(Role, Option<&s
         .collect()
 }
 
+/// The windows of a reported focus's chain, outermost first, as its nodes
+/// carry them (`NodeDetails::window`).
+fn windows_of(reported: &common::outpost::Reported) -> Vec<Option<WindowHandle>> {
+    reported
+        .ancestors
+        .iter()
+        .chain(std::iter::once(&reported.node))
+        .map(|node| node.details.window)
+        .collect()
+}
+
+/// `hwnd` as the model's window handle.
+fn handle(hwnd: HWND) -> WindowHandle {
+    WindowHandle(u64::from_ne_bytes((hwnd.0 as isize).to_ne_bytes()))
+}
+
+/// A UIA element that is its window's own carries its window, and an
+/// element inside it carries none: the "Original Name" button in mockapp's
+/// window (`small.json`), read by the listener, is reported under the
+/// window's element, which carries the window, while the button, which
+/// has only a nearest window, carries none.
+fn a_uia_window_element_carries_its_window_and_its_content_none() {
+    let title = common::unique_title("mockapp-uia-window-handle");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus btn1");
+    let reported = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        (roles_and_names(&reported), windows_of(&reported)),
+        (
+            vec![
+                (Role::Window, Some("Mockapp Events Fixture")),
+                (Role::Button, Some("Original Name"))
+            ],
+            vec![Some(handle(hwnd)), None]
+        ),
+        "the outpost's chain and its windows"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The windows of the chain of a focus on the "Save" button of mockapp's
+/// "Save As" dialog (`save_as.json`), whose client area names its address
+/// when `identity` is given (`client-identity`).
+fn save_as_chain_windows(identity: bool) -> (Vec<Option<WindowHandle>>, Option<WindowHandle>) {
+    let title = common::unique_title("mockapp-msaa-window-handle");
+    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    if identity {
+        app.send("client-identity");
+    }
+    let outpost = OutpostUnderTest::new(&app);
+    // The button, index 1, at its object id in the dialog's window.
+    let reported = outpost.msaa_focus(hwnd, 1);
+    assert_eq!(
+        roles_and_names(&reported),
+        [
+            (Role::Dialog, Some("Save As")),
+            (Role::Button, Some("Save"))
+        ],
+        "the outpost's chain"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+    (windows_of(&reported), Some(handle(hwnd)))
+}
+
+/// An MSAA client area reached by a walk carries its window when the walk
+/// knows it is the window's client area, by the address it names, and an
+/// object inside a window carries none: the "Save" button's chain in
+/// mockapp's dialog has the client area carry the window when it names its
+/// address, and nothing when it does not, as an object the walk keys at an
+/// address it made up may be any object inside the window. The window
+/// object above the client area is not among a chain's nodes; its window
+/// is asserted where it is read
+/// (`msaa_window_and_client_objects_carry_their_window`, `msaa_tree.rs`).
+fn an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none() {
+    let (named, window) = save_as_chain_windows(true);
+    assert_eq!(named, [window, None], "with the client area's address");
+    let (unnamed, _) = save_as_chain_windows(false);
+    assert_eq!(unnamed, [None, None], "without it");
+}
+
 /// A failed `accParent` is not the end of a chain: it goes on from the
 /// parent window of the object's window, by that window's object, as
 /// NVDA's parent falls back to the window hierarchy (`Window._get_parent`;
@@ -3385,6 +3474,11 @@ fn a_hung_ancestor_window_is_named_by_its_text_with_no_call() {
         "the outpost's chain"
     );
     assert_eq!(
+        windows_of(&reported),
+        [Some(handle(host)), None],
+        "the plain window carries its window, the button none"
+    );
+    assert_eq!(
         common::read_get_objects(host)
             .into_iter()
             .filter(|&(kind, _)| kind == "OBJID_CLIENT")
@@ -3407,6 +3501,14 @@ fn main() {
         (
             "a_hung_ancestor_window_is_named_by_its_text_with_no_call",
             a_hung_ancestor_window_is_named_by_its_text_with_no_call,
+        ),
+        (
+            "a_uia_window_element_carries_its_window_and_its_content_none",
+            a_uia_window_element_carries_its_window_and_its_content_none,
+        ),
+        (
+            "an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none",
+            an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none,
         ),
         (
             "the_focused_state_test_continues_past_a_failed_acc_parent",

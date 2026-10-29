@@ -251,7 +251,10 @@ fn local_window_snapshot(context: &Context, hwnd: isize) -> NodeSnapshot {
         name: window_text(hwnd),
         value: None,
         states: StateSet::new(),
-        details: NodeDetails::default(),
+        details: NodeDetails {
+            window: Some(super::window::window_handle(hwnd)),
+            ..NodeDetails::default()
+        },
     }
 }
 
@@ -454,7 +457,10 @@ pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
         name: window_text(hwnd),
         value: None,
         states,
-        details: NodeDetails::default(),
+        details: NodeDetails {
+            window: Some(super::window::window_handle(hwnd)),
+            ..NodeDetails::default()
+        },
     }
 }
 

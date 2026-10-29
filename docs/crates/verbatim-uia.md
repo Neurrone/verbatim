@@ -534,7 +534,10 @@ patterns its request holds.
   gated field reads as an `Option`, `None` without touching the cache
   when its gate was off. The outpost maps the theme to the gates.
 - The groups: `RoleCore` (control type, class name, `IsDialog`,
-  `IsTogglePatternAvailable`, native window handle; `role()`),
+  `IsTogglePatternAvailable`, native window handle; `role()`, and
+  `window()`, the handle an element that is its window's own carries in
+  `NodeDetails::window` from every shape's `parts`, `None` for an element
+  inside a window),
   `ValueSet` (the Value pattern's value and the range value with its
   availability; `value(class_name)`), `States` (every state property but
   `IsOffscreen`; `states(role, offscreen)`), `Description`, `Shortcut`,

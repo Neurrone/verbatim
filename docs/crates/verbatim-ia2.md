@@ -165,7 +165,10 @@ Public API:
   the `NodeDetails` half plain MSAA can express, with `top_level_client`
   set on a client object, child id 0, of a window with the `WS_SYSMENU`
   style, from one local style read, as NVDA's
-  `isPresentableFocusAncestor` singles it out; position-in-set is
+  `isPresentableFocusAncestor` singles it out, and `window` set on a
+  window or client object, child id 0, read at its own address, never on
+  an object a walk keys at an address it made up, which may be any object
+  inside the window; position-in-set is
   counted for list-view and tree-view items, as described below, and is
   otherwise `None` until IA2's `groupPosition` (roadmap M7)),
   `tree_view_child_count` (a `SysTreeView32` item's number of children,

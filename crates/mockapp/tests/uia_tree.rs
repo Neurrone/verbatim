@@ -79,7 +79,7 @@ fn valued(name: &str, role: Role, value: &str) -> Node {
 /// bar of mockapp's frame, which UIA's own proxy for the window adds, and
 /// whose subtree, the frame's buttons, is Windows' and named in the
 /// machine's language, so the walk does not go into it.
-fn expected_tree(title: &str) -> Node {
+fn expected_tree(title: &str, window: verbatim_model::WindowHandle) -> Node {
     use State::{
         Checkable, Checked, Collapsed, Disabled, Expanded, Focusable, Mixed, Offscreen, Pressed,
     };
@@ -92,7 +92,7 @@ fn expected_tree(title: &str) -> Node {
         details: NodeDetails::default(),
         children: Vec::new(),
     };
-    parent(
+    let mut root = parent(
         "Mockapp Tree Fixture",
         Role::Window,
         &[],
@@ -174,7 +174,10 @@ fn expected_tree(title: &str) -> Node {
             leaf("Ready", Role::StatusBar, &[]),
             leaf("Popup", Role::Menu, &[]),
         ],
-    )
+    );
+    // The window's element is its window's own.
+    root.details.window = Some(window);
+    root
 }
 
 /// Reads `element`, filled as a node with every detail, and everything
@@ -257,7 +260,10 @@ fn uia_client_reads_the_scripted_tree() {
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     assert_eq!(
         walk(&uia, &root, (&nodes, &roles), &registry),
-        expected_tree(&title)
+        expected_tree(
+            &title,
+            verbatim_model::WindowHandle(u64::from_ne_bytes((hwnd.0 as isize).to_ne_bytes()))
+        )
     );
 
     app.quit();
@@ -330,7 +336,10 @@ fn event_shapes_read_what_the_full_read_gives() {
         let mut states = full.states;
         states.remove(State::Offscreen);
         let expected = map::CachedUiaParts {
-            details: verbatim_model::NodeDetails::default(),
+            details: verbatim_model::NodeDetails {
+                window: full.details.window,
+                ..verbatim_model::NodeDetails::default()
+            },
             states,
             ..full.clone()
         };

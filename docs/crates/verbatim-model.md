@@ -58,8 +58,12 @@ recorder unchanged. What the reducer does with each type is in
   `top_level_client` (the MSAA client area of a top-level window with a
   system menu, presented as that window), `class_name` and
   `parent_automation_id` (only on a UIA focus's snapshot, for Core's rules
-  for an application's elements), and `row` and `column` (a grid item's,
-  read only for a node read alone). Everything in `NodeDetails` defaults
+  for an application's elements), `row` and `column` (a grid item's,
+  read only for a node read alone), and `window` (the `WindowHandle` of
+  the window the node is, carried only by a plain window, a UI Automation
+  element that is its window's own, and an MSAA window or client object,
+  never a nearest window, and left out of the message when absent).
+  Everything in `NodeDetails` defaults
   to "not reported", and its serde default keeps older recordings
   deserializing.
 - `TreeNode`: a `NodeSnapshot` plus its children in tree order, carried

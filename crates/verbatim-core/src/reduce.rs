@@ -2461,14 +2461,17 @@ pub(crate) fn source_of(node: &NodeSnapshot) -> UtteranceSource {
 /// identity alone: an element replaced by a new one with the same role and
 /// name, such as File Explorer's items view list after a folder is opened,
 /// is entered anew (`docs/parity/focus-context.md`, "Focus-ancestry
-/// context"). Otherwise, when the new focus is in the same top-level window
-/// as the previous one, a previous node with the same role and name also
-/// counts: node ids are comparable only within one outpost, and one
-/// top-level window can hold elements of two processes (a Settings page's
-/// frame belongs to `ApplicationFrameHost.exe`), and an MSAA object reached
-/// by another path can have another id, where NVDA's MSAA comparison weighs
-/// the role and name as well. A focus in a different top-level window, or
-/// with no previous focus, enters its whole chain.
+/// context"). Two windows are the same node when they are the same window,
+/// whichever outposts read them, and are two otherwise, so that a Settings
+/// page's frame, which `ApplicationFrameHost.exe` reports as its own
+/// focus and the page's outpost reports as a window above its content, is
+/// entered once. Otherwise, when the new focus is in the same top-level
+/// window as the previous one, a previous node with the same role and name
+/// also counts: node ids are comparable only within one outpost, and an
+/// MSAA object reached by another path can have another id, where NVDA's
+/// MSAA comparison weighs the role and name as well. A focus in a
+/// different top-level window, or with no previous focus, enters its whole
+/// chain but for windows it was already in.
 ///
 /// Entered menu bars, menus, and menu items are never announced: NVDA
 /// cancels speech and stays silent for them. Only the presentable ones

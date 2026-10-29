@@ -475,6 +475,15 @@ pub struct NodeDetails {
     /// and when the parent has none or was not read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_automation_id: Option<String>,
+    /// The window the node is, when it is one: a window read from the
+    /// system's own window data, a UI Automation element that is its
+    /// window's own, or an MSAA window or client object. `None` on every
+    /// other node; never the nearest window of a node inside one. Core
+    /// takes two nodes with the same window as one container, whichever
+    /// outposts read them (`docs/parity/focus-context.md`,
+    /// "Focus-ancestry context"). Left out of the message when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<crate::WindowHandle>,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.

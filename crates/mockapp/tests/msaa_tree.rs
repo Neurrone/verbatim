@@ -18,10 +18,10 @@ use std::ffi::c_void;
 use std::mem::ManuallyDrop;
 
 use verbatim_ia2::map::{role_from_msaa, states_from_msaa};
-use verbatim_model::{Role, State, StateSet};
+use verbatim_model::{Role, State, StateSet, WindowHandle};
 use windows::Win32::System::Variant::{VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4};
 use windows::Win32::UI::Accessibility::{AccessibleObjectFromWindow, IAccessible};
-use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
+use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 use windows::core::Interface;
 
 /// One node of the tree as MSAA reads it, with its children in order.
@@ -373,6 +373,46 @@ fn msaa_sightings_of_one_live_object_are_one_node() {
     app.quit();
 }
 
+/// A window's own window and client objects, read at their addresses,
+/// carry their window, and an object inside the window carries none
+/// (`NodeDetails::window`): mockapp's window (`tree.json`) read at
+/// `OBJID_WINDOW` and `OBJID_CLIENT`, and its second node at its own
+/// object id and as the client area's first child.
+fn msaa_window_and_client_objects_carry_their_window() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-window-handle");
+    let app = common::spawn("tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
+        std::sync::atomic::AtomicU64::new(1),
+    ));
+    let window_of = |id_object: i32, id_child: i32| {
+        verbatim_ia2::acquire::snapshot_from_event(
+            hwnd,
+            id_object,
+            id_child,
+            &registry,
+            verbatim_ia2::acquire::Purpose::Announce,
+        )
+        .expect("the object is acquired")
+        .details
+        .window
+    };
+    let own = Some(WindowHandle(u64::from_ne_bytes(hwnd.to_ne_bytes())));
+    // mockapp addresses node `index` as object id `index + 1`, and the
+    // client area's children by child id too.
+    assert_eq!(
+        [
+            window_of(OBJID_WINDOW.0, 0),
+            window_of(OBJID_CLIENT.0, 0),
+            window_of(2, 0),
+            window_of(OBJID_CLIENT.0, 1)
+        ],
+        [own, own, None, None]
+    );
+    app.quit();
+}
+
 /// A dumped tree's names, each node's with its children's in order.
 #[derive(Debug, PartialEq)]
 struct Named {
@@ -562,6 +602,10 @@ fn main() {
         (
             "msaa_sightings_of_one_live_object_are_one_node",
             msaa_sightings_of_one_live_object_are_one_node,
+        ),
+        (
+            "msaa_window_and_client_objects_carry_their_window",
+            msaa_window_and_client_objects_carry_their_window,
         ),
         (
             "msaa_tree_dump_ends_an_objects_children_where_it_is_gone",

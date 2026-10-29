@@ -1832,6 +1832,7 @@ fn details_speak_in_nvda_property_order() {
         row: Some(3),
         column: Some(1),
         parent_automation_id: None,
+        window: None,
     };
 
     // The first level spoken goes first ("Where the level goes" in
@@ -3832,6 +3833,77 @@ fn a_settings_page_is_announced_before_its_focus_whichever_outpost_reports_first
         spoken_by(&[search(), from_frame_host]),
         expected,
         "the page's focus first: it announces the frame, whose report then says nothing"
+    );
+}
+
+/// The node `id` of `role`, named `name`, that is window `handle`.
+fn window_node(id: u64, backend: Backend, role: Role, name: &str, handle: u64) -> NodeSnapshot {
+    let mut window = node(id, role, Some(name), None, StateSet::new());
+    window.backend = backend;
+    window.details.window = Some(WindowHandle(handle));
+    window
+}
+
+/// The Settings app as its readers report it: the page's outpost reads the
+/// frame, above its process boundary, as a plain window, role window and
+/// named by its title, carrying the frame's handle, which the frame host's
+/// own focus, the frame's client area, carries too. The plain window is the
+/// frame that focus entered, so the page's focus says the content window
+/// and the focus, as NVDA says "Settings" and then "Settings window"
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+#[test]
+fn a_frame_read_by_two_outposts_is_entered_once() {
+    let mut client = window_node(1, Backend::Msaa, Role::Pane, "Settings", 10);
+    client.details.top_level_client = true;
+    let frame = window_node(4, Backend::Msaa, Role::Window, "Settings", 10);
+    let content = window_node(2, Backend::Uia, Role::Window, "Settings", 11);
+    let search = node(
+        3,
+        Role::EditableText,
+        Some("Search box"),
+        None,
+        StateSet::new(),
+    );
+    assert_eq!(
+        spoken_by(&[
+            foreground_in(Pid(1), foreground_window(10), client),
+            focus_in(Pid(2), foreground_window(10), search, vec![frame, content]),
+        ]),
+        vec![
+            vec![UtteranceSegment::label("Settings")],
+            vec![UtteranceSegment::label("Settings"), role(Role::Window)],
+            vec![
+                UtteranceSegment::label("Search box"),
+                role(Role::EditableText),
+            ],
+        ]
+    );
+}
+
+/// Two windows are two containers whatever their role and name: a focus in
+/// a second "Remove" dialog, another window in the same top-level window,
+/// enters it (`docs/parity/focus-context.md`, "Focus-ancestry context").
+#[test]
+fn two_windows_with_one_role_and_name_are_two_containers() {
+    let first = window_node(1, Backend::Msaa, Role::Dialog, "Remove", 20);
+    let second = window_node(3, Backend::Msaa, Role::Dialog, "Remove", 21);
+    let button = |id, name| node(id, Role::Button, Some(name), None, StateSet::new());
+    let mut ok = button(2, "OK");
+    ok.backend = Backend::Msaa;
+    let mut yes = button(4, "Yes");
+    yes.backend = Backend::Msaa;
+    let dialog = vec![UtteranceSegment::label("Remove"), role(Role::Dialog)];
+    assert_eq!(
+        spoken_by(&[
+            focus_in(Pid(1), foreground_window(10), ok, vec![first]),
+            focus_in(Pid(1), foreground_window(10), yes, vec![second]),
+        ]),
+        vec![
+            dialog.clone(),
+            vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            dialog,
+            vec![UtteranceSegment::label("Yes"), role(Role::Button)],
+        ]
     );
 }
 

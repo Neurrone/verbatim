@@ -214,12 +214,19 @@ code is in `reduce.rs` unless named.
   carries the ancestor chain, outermost first; the reducer speaks the
   presentable containers (`is_presentable_container`) not in the previous
   chain. Ancestors reported unknown announce nothing and keep the previous
-  chain. Two UIA nodes of one outpost are the same container only when
-  their ids are equal; otherwise, within the same top-level window, a
-  previous node with the same role and name counts as already entered. A
-  focus in a different top-level window treats the whole chain as newly
-  entered, which is how a window is announced when its foreground event
-  was dropped.
+  chain. A node is already entered when a previous one has its id. Two
+  nodes that both carry a window (`NodeDetails::window`) are the same
+  container exactly when the window is the same, whichever outposts read
+  them, so a Settings page's frame, the frame host's own focus and a plain
+  window above the page's content, is entered once, and two windows of
+  one role and name are two. Otherwise two UIA nodes of one outpost are
+  the same container only when their ids are equal, and, within the same
+  top-level window, a previous node with the same role and name counts as
+  already entered. A focus in a different top-level window treats the
+  whole chain but the windows it was in as newly entered, which is how a
+  window is announced when its foreground event was dropped. `HeldNode`
+  carries no window, so an outpost's own use of the rule, for a dialog's
+  text, compares by id and by role and name alone.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
   listener last reported (`Input::ForegroundWindow`) and published by the

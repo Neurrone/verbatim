@@ -1030,6 +1030,20 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
   per such element; no read of many elements asks for them. Every snapshot
   is 40 bytes larger. One `GetAsyncKeyState` per reported focus change.
 
+### A window's handle in node details
+
+Core takes two nodes that are the same window as one entered container
+(`docs/parity/focus-context.md`, "Focus-ancestry context"), by the handle a
+window's node carries (`NodeDetails::window`).
+
+- Minimum and today: no call, thread, timer, message or wake-up added. The
+  UIA handle is the native window handle every UIA shape already reads
+  (`RoleCore`), the MSAA one the address the object was read at, and a
+  plain window's its own. Every snapshot is 16 bytes larger in memory; in
+  a message a window's node is about 20 bytes larger and any other node
+  unchanged, the field being left out when absent. Core's comparison adds
+  one test of two handles per pair of chain entries it compares.
+
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), handled as a

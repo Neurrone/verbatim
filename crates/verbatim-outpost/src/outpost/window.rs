@@ -159,7 +159,7 @@ pub(super) fn parent_class(handle: isize) -> Option<String> {
 }
 
 /// `handle` as the model's opaque window handle.
-fn window_handle(handle: isize) -> WindowHandle {
+pub(super) fn window_handle(handle: isize) -> WindowHandle {
     WindowHandle(u64::from_ne_bytes(handle.to_ne_bytes()))
 }
 

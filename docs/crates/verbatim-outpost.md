@@ -914,6 +914,11 @@ unredirected, never unspawned.
 - An MSAA client object of a `WS_SYSMENU` window is marked
   `NodeDetails::top_level_client`, read as a pane and presented by its
   title, as NVDA's `isPresentableFocusAncestor` presents it.
+- A plain window (`read::plain_window`), and a foreground window reported
+  from local data, carries its handle in `NodeDetails::window`, as the
+  readers' UIA window elements and MSAA window and client objects do, so
+  Core takes the frame one outpost reports as its focus and another as a
+  plain window above its content as one container.
 - Focus-now answers the foreground window, when the application holds the
   foreground (the outpost's foreground reader, `GetForegroundWindow`, never
   `hwndFocus`), and the focused control (`hwndFocus`, through its window's

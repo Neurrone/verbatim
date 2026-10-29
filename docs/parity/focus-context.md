@@ -24,7 +24,15 @@ nodes from one outpost by node id alone, the outpost giving one element
 one id; it treats nodes from two outposts, or read through MSAA, in the
 same top-level window as the same when their role and name match, since
 their ids cannot be compared ("A window and its content in two
-processes" in [Windows and processes](windows-and-processes.md)).
+processes" in [Windows and processes](windows-and-processes.md)). Two
+nodes that are both windows (a window read from the system's own data,
+a UI Automation element that is its window's own, or an MSAA window or
+client object) are the same exactly when they are the same window,
+whichever outposts read them: the Settings frame its own process reports
+as its focus and the page's process as a plain window above the page is
+entered once, so NVDA's "Settings", then "Settings window" for the page,
+is said without the frame again; and two windows of one role and name are
+two containers.
 An invisible MSAA ancestor is still announced, where NVDA counts it
 unavailable, since the model has no invisible state and the outposts do
 not report it. **partial**: reducer tests, and `explorer_folder_window`

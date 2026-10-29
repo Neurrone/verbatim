@@ -269,6 +269,9 @@ pub trait EnteredKey {
     fn key_role(&self) -> Role;
     /// Its name.
     fn key_name(&self) -> Option<&str>;
+    /// The window it is, when it is one
+    /// ([`NodeDetails::window`](verbatim_model::NodeDetails::window)).
+    fn key_window(&self) -> Option<WindowHandle>;
 }
 
 impl EnteredKey for HeldNode {
@@ -283,6 +286,11 @@ impl EnteredKey for HeldNode {
     }
     fn key_name(&self) -> Option<&str> {
         self.name.as_deref()
+    }
+    /// A held node carries no window, so [`already_entered`] compares it by
+    /// its id, and by its role and name.
+    fn key_window(&self) -> Option<WindowHandle> {
+        None
     }
 }
 
@@ -299,16 +307,22 @@ impl EnteredKey for verbatim_model::NodeSnapshot {
     fn key_name(&self) -> Option<&str> {
         self.name.as_deref()
     }
+    fn key_window(&self) -> Option<WindowHandle> {
+        self.details.window
+    }
 }
 
 /// Whether the focus had already entered `node`, a container of a new
 /// focus, given the previous focus and its ancestors, `previous`
 /// (`docs/parity/focus-context.md`, "Focus-ancestry context"): `node` is
-/// one of them; or, when the new focus is in the same top-level window as
-/// the previous one (`same_window`), one of them has `node`'s role and
-/// name and is not the same element under another node, which only a UIA
-/// node of the same outpost can be. A newly entered container is spoken,
-/// and a newly entered dialog gathers its own text.
+/// one of them; or both are windows, and they are the same window, so that
+/// one window two outposts read is one container; or, when either is not a
+/// window and the new focus is in the same top-level window as the previous
+/// one (`same_window`), one of them has `node`'s role and name and is not
+/// the same element under another node, which only a UIA node of the same
+/// outpost can be. Two windows with the same role and name are two
+/// containers. A newly entered container is spoken, and a newly entered
+/// dialog gathers its own text.
 pub fn already_entered<'a, P: EnteredKey + 'a>(
     previous: impl IntoIterator<Item = &'a P>,
     same_window: bool,
@@ -319,10 +333,15 @@ pub fn already_entered<'a, P: EnteredKey + 'a>(
             && old.key_backend() == Backend::Uia
             && node.key_backend() == Backend::Uia;
         old.key_id() == node.key_id()
-            || (same_window
-                && !one_identity
-                && old.key_role() == node.key_role()
-                && old.key_name() == node.key_name())
+            || match (old.key_window(), node.key_window()) {
+                (Some(old), Some(new)) => old == new,
+                _ => {
+                    same_window
+                        && !one_identity
+                        && old.key_role() == node.key_role()
+                        && old.key_name() == node.key_name()
+                }
+            }
     })
 }
 
