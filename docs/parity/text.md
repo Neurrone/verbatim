@@ -23,10 +23,11 @@ that is neither has no text.
   (`ITextDocumentTextInfo` for any `editAPIVersion` other than 0,
   `nvda/source/NVDAObjects/window/edit.py` 1041 to 1045), whose
   paragraph is the text between line breaks; Verbatim reads it through
-  window messages, and its paragraph unit is the line as shown, so after
-  Control+Up or Control+Down Arrow, which the application moves by its
-  own paragraphs in both, Verbatim speaks the wrapped line where NVDA
-  speaks the paragraph.
+  window messages, and its paragraph unit is the line as shown, as in a
+  plain edit control, so after Control+Up or Control+Down Arrow, which
+  the application moves by its own paragraphs in both, Verbatim speaks
+  the wrapped line where NVDA speaks the paragraph, and its sentences,
+  for say-all and for moving by sentence, stop at a wrapped line's end.
 - NVDA's `caretMovementFailed` event is not offered.
 
 The layer's cases are the entries that follow, from "Caret keys and
