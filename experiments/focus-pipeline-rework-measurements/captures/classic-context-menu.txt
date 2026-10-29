@@ -1,0 +1,62 @@
+A classic Win32 context menu
+
+Taken on 2026-10-30 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, started from a scratch configuration with eSpeak NG, default symbol and verbosity levels, the update check off and the transcript add-on, through cargo xtask nvda capture. context-menu.ps1 (this folder) ran under Windows PowerShell 5.1: a Windows Forms form holding a "Notes" text box with the text "hello" and a ContextMenu (the classic Win32 menu, not a ContextMenuStrip) of three items, "First item", "Second item" and "Third item". menu-hook.ps1 (this folder), one thread holding two out-of-context hooks scoped to the form's process, one for events 0x0003 to 0x0007 and one for EVENT_OBJECT_FOCUS, recorded each event with the time in microseconds since the Unix epoch (GetSystemTimePreciseAsFileTime) and the event's own millisecond stamp.
+
+What it shows. Each of three Shift+F10 presses raised EVENT_SYSTEM_MENUSTART on the text box and then EVENT_SYSTEM_MENUPOPUPSTART on the #32768 popup, 3.4, 3.0 and 5.3 ms later, and no focus event at all: Windows highlights no item when this menu opens from the keyboard. The first focus came only with Down Arrow, on child 1 of the popup, 8.0 seconds after its popup start. NVDA said "Context menu" for each opening, the popup alone, and "First item f" for Down Arrow. So NVDA does not say only the menu's first item here, and the case the delayed pump changes, a batch that begins with a popup start and holds the item's focus within 10 ms, does not occur: the popup start is alone, and NVDA speaks the menu from it. By the design's rule (difference 17, step 14 builds the pump only if NVDA says the item alone here), the delayed pump is not built. Escape closed the menu with EVENT_SYSTEM_MENUPOPUPEND and EVENT_SYSTEM_MENUEND within 0.1 ms of each other, preceded by a focus on the popup's child 0 only when an item had been focused, and with no focus event for the text box, yet NVDA said "Notes edit selected hello" each time.
+
+NVDA's speech:
+
+NVDA alpha-58022,732d1ce2 in session 1
+> front powershell.exe "Context menu capture"
+  +91 ms  cancel
+  +93 ms  [Normal] Notes  edit  selected hello
+> shift+f10
+  +3 ms  cancel
+  +33 ms  [Normal] Context  menu
+> escape
+  +18 ms  cancel
+  +171 ms  [Normal] Notes  edit  selected hello
+> shift+f10
+  +4 ms  cancel
+  +31 ms  [Normal] Context  menu
+> escape
+  +4 ms  cancel
+  +156 ms  [Normal] Notes  edit  selected hello
+> shift+f10
+  +3 ms  cancel
+  +35 ms  [Normal] Context  menu
+xtask nvda: unexpected reply to SendKeys: Error { to: 18, message: "unknown key name: \"down\"" }
+NVDA alpha-58022,732d1ce2 in session 1
+> downarrow
+  +2 ms  cancel
+  +10 ms  [Normal] First item  f
+> escape
+  +15 ms  cancel
+  +167 ms  [Normal] Notes  edit  selected hello
+
+The WinEvents (the capture's third Shift+F10 is followed by its Down Arrow and Escape, sent by a second capture after the first stopped on a misnamed key):
+
+1793296997032510 hooks 99353059 113901709 process 1304
+1793297004108990 tick=54608765 foreground hwnd=15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' obj=0 child=0 thread=12784
+1793297004116527 tick=54608781 focus hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=-4 child=0 thread=12784
+1793297004116549 tick=54608781 focus hwnd=15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' obj=-4 child=0 thread=12784
+1793297004116563 tick=54608781 focus hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=-4 child=0 thread=12784
+1793297005247490 tick=54609906 menustart hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=0 child=0 thread=12784
+1793297005250930 tick=54609921 popupstart hwnd=12585436 class=#32768 text='' obj=-4 child=0 thread=12784
+1793297006316778 tick=54610968 popupend hwnd=12585436 class= text='' obj=-4 child=0 thread=12784
+1793297006316828 tick=54610984 menuend hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=0 child=0 thread=12784
+1793297007535011 tick=54612203 menustart hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=0 child=0 thread=12784
+1793297007538060 tick=54612203 popupstart hwnd=12650972 class=#32768 text='' obj=-4 child=0 thread=12784
+1793297008601464 tick=54613265 popupend hwnd=12650972 class=#32768 text='' obj=-4 child=0 thread=12784
+1793297008602551 tick=54613265 menuend hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=0 child=0 thread=12784
+1793297009822764 tick=54614484 menustart hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=0 child=0 thread=12784
+1793297009828050 tick=54614484 popupstart hwnd=12716508 class=#32768 text='' obj=-4 child=0 thread=12784
+1793297017830124 tick=54622500 focus hwnd=12716508 class=#32768 text='' obj=-4 child=1 thread=12784
+1793297018901008 tick=54623562 focus hwnd=12716508 class= text='' obj=-4 child=0 thread=12784
+1793297018901063 tick=54623562 popupend hwnd=12716508 class= text='' obj=-4 child=0 thread=12784
+1793297018901073 tick=54623562 menuend hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=0 child=0 thread=12784
+1793297072856590 tick=54677515 foreground hwnd=15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' obj=0 child=0 thread=12784
+1793297072856914 tick=54677515 focus hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=-4 child=0 thread=12784
+1793297078872404 tick=54683531 foreground hwnd=15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' obj=0 child=0 thread=12784
+1793297078873052 tick=54683531 focus hwnd=36308178 class=WindowsForms10.EDIT.app.0.3ae120e_r8_ad1 text='hello' obj=-4 child=0 thread=12784
+1793297087061193 end

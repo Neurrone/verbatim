@@ -1,0 +1,84 @@
+The virtual desktop name's hook
+
+Taken on 2026-10-30 on Windows 11 build 26200 (x64), in session 1, whose csrss.exe is process 980, with NVDA alpha-58022,732d1ce2 running and Verbatim not. The machine had two desktops, both unnamed, before and after; none was added, so none had to be closed. keys.ps1 (this folder) pressed Windows+Control+Right and Left with SendInput. winevent-hook.ps1 (this folder) installed an out-of-context hook (WINEVENT_OUTOFCONTEXT) for EVENT_OBJECT_NAMECHANGE (0x800C), once scoped to csrss.exe (idProcess 980) and once, at the same time, to every process, both recording only the window GetDesktopWindow() (65548, class #32769) with its MSAA accName; a third run, scoped to csrss.exe with no window filter, recorded every name change csrss raised for 30 seconds. desktop-accname.ps1 (this folder) timed AccessibleObjectFromWindow on GetDesktopWindow() with OBJID_CLIENT and the accName read, first with a responsive Windows Forms window in front, then 24 times, 250 ms apart, from 1.9 to 8.0 seconds into mockapp's `stall 10000` with mockapp in front (mockapp --fixture crates/mockapp/tests/fixtures/tree.json --backend uia --title "Rework Desktop Stall" --show, held by driver.py). Times are microseconds since the Unix epoch; the hook and key logs take theirs from .NET Framework's DateTime.UtcNow, which is coarser than a microsecond.
+
+What it shows. The hook scoped to csrss.exe installs (SetWinEventHook returned a handle) and delivered the desktop window's name change for every switch, 4 of 4 and then 2 of 2, each 30 to 52 ms after the key, with the same event stamps as the hook on every process; the accName read in the callback gave the desktop switched to ("Desktop 2", "Desktop 1"). In 30 seconds the csrss-scoped hook received no event but the two switches' name changes, so it adds no wake-ups beyond them. The raising thread's process shows as unknown because OpenThread is refused on csrss.exe's thread; the window's process is 980. The accName read does not wait on the stalled foreground application: during the stall, with mockapp judged hung from 5.2 seconds on and its ghost window in front, AccessibleObjectFromWindow took 65 to 1,139 us and accName 0.80 to 45.6 ms, median 1.2 ms, every read answering "Desktop 1"; with a responsive window in front they took 66 to 1,188 us and 1.0 to 3.4 ms. The read of about a millisecond suggests a call into another process, which this check did not identify, so a stall of whichever process serves the name, rather than of the foreground application, was not tested.
+
+The keys:
+
+﻿1793297069784185 key win+ctrl+right (sent 6 inputs)
+1793297072809252 key win+ctrl+left (sent 6 inputs)
+1793297075823298 key win+ctrl+right (sent 6 inputs)
+1793297078840840 key win+ctrl+left (sent 6 inputs)
+1793297226665338 key win+ctrl+right (sent 6 inputs)
+1793297229689435 key win+ctrl+left (sent 6 inputs)
+
+The hook scoped to csrss.exe, desktop window only:
+
+1793297065809940 hook 117507383 events 0x800C-0x800C process 980 desktop window 65548
+1793297069816598 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54674484 client accName='Desktop 2'
+1793297072861646 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54677515 client accName='Desktop 1'
+1793297075858868 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54680515 client accName='Desktop 2'
+1793297078871074 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54683531 client accName='Desktop 1'
+1793297085891216 end
+
+The hook on every process, at the same time, desktop window only:
+
+1793297065809940 hook 126158139 events 0x800C-0x800C process 0 desktop window 65548
+1793297069816598 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54674484 client accName='Desktop 2'
+1793297072855617 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54677515 client accName='Desktop 1'
+1793297075858868 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54680515 client accName='Desktop 2'
+1793297078871074 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54683531 client accName='Desktop 1'
+1793297085875125 end
+
+The hook scoped to csrss.exe with no window filter, for the last two keys above:
+
+1793297222648333 hook 54593321 events 0x800C-0x800C process 980 desktop window 65548
+1793297226707581 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54831359 client accName='Desktop 2'
+1793297229729262 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=54834390 client accName='Desktop 1'
+1793297252662144 end
+
+The accName read with a responsive window in front:
+
+1793297110195282 foreground 15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' hung=False AccessibleObjectFromWindow 1188.2 us accName 3430.5 us name='Desktop 1'
+1793297110301761 foreground 15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' hung=False AccessibleObjectFromWindow 80.6 us accName 1003.5 us name='Desktop 1'
+1793297110412723 foreground 15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' hung=False AccessibleObjectFromWindow 72.0 us accName 1174.6 us name='Desktop 1'
+1793297110524692 foreground 15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' hung=False AccessibleObjectFromWindow 82.6 us accName 1088.0 us name='Desktop 1'
+1793297110636620 foreground 15663316 class=WindowsForms10.Window.8.app.0.3ae120e_r8_ad1 text='Context menu capture' hung=False AccessibleObjectFromWindow 66.2 us accName 1130.3 us name='Desktop 1'
+
+The accName read during the stall:
+
+1793297196741635 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 1139.0 us accName 3328.2 us name='Desktop 1'
+1793297197020209 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 81.0 us accName 10416.0 us name='Desktop 1'
+1793297197323363 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 116.9 us accName 45563.1 us name='Desktop 1'
+1793297197634830 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 93.9 us accName 29607.0 us name='Desktop 1'
+1793297197933754 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 93.4 us accName 40674.8 us name='Desktop 1'
+1793297198208155 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 103.1 us accName 1828.3 us name='Desktop 1'
+1793297198480061 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 112.5 us accName 10479.8 us name='Desktop 1'
+1793297198739904 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 342.0 us accName 1087.0 us name='Desktop 1'
+1793297198992748 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 73.1 us accName 803.7 us name='Desktop 1'
+1793297199249709 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 65.4 us accName 3170.6 us name='Desktop 1'
+1793297199515842 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 81.3 us accName 1045.8 us name='Desktop 1'
+1793297199768568 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=False AccessibleObjectFromWindow 101.4 us accName 1233.6 us name='Desktop 1'
+1793297200022606 foreground 40438234 class=VerbatimMockAppWindow text='Rework Desktop Stall' hung=True AccessibleObjectFromWindow 67.8 us accName 1893.0 us name='Desktop 1'
+1793297200275874 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 86.4 us accName 1089.8 us name='Desktop 1'
+1793297200529623 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 85.1 us accName 1217.7 us name='Desktop 1'
+1793297200783382 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 80.7 us accName 1034.6 us name='Desktop 1'
+1793297201035202 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 112.1 us accName 1265.3 us name='Desktop 1'
+1793297201289948 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 75.6 us accName 1376.7 us name='Desktop 1'
+1793297201543812 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 71.8 us accName 1060.5 us name='Desktop 1'
+1793297201796460 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 85.5 us accName 1029.2 us name='Desktop 1'
+1793297202048917 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 118.9 us accName 977.6 us name='Desktop 1'
+1793297202303208 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 95.0 us accName 1363.2 us name='Desktop 1'
+1793297202557218 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 81.6 us accName 1120.7 us name='Desktop 1'
+1793297202811221 foreground 8980168 class=Ghost text='Rework Desktop Stall (Not Responding)' hung=True AccessibleObjectFromWindow 95.8 us accName 994.0 us name='Desktop 1'
+
+The mockapp driver:
+
+1793297183179311 start C:/Users/Dickson/Desktop/projects/verbatim/target/debug/mockapp.exe --fixture C:/Users/Dickson/Desktop/projects/verbatim/crates/mockapp/tests/fixtures/tree.json --backend uia --title Rework Desktop Stall --show
+1793297183518894 out ready
+1793297194828598 in stall 10000
+1793297194828786 out stall started
+1793297204829338 out stall ended 1793297204829280
+1793297261141964 in quit
+1793297261163479 exit 0

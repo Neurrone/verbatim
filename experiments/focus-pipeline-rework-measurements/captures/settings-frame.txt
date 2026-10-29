@@ -1,0 +1,261 @@
+The Settings frame
+
+Taken on 2026-10-30 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, started from a scratch configuration with eSpeak NG, default symbol and verbosity levels, the update check off and the transcript add-on, through cargo xtask nvda compare settings_system_page and cargo xtask nvda capture (the compare report's date is UTC). settings-frame.ps1 (this folder) read the windows from the focus up to the desktop while the Display page was open; NVDA's developer info (NVDA+F1) gave its objects for the two windows named Settings, reached by object navigation from the focus.
+
+What it shows. Entering a Settings page from another window, whether launched from the desktop (ms-settings:display) or brought forward from a Windows Forms window, NVDA says "Settings", then "Settings window", then the entered groupings and the focus; moving within the page (Tab, Shift+Tab, Up and Down Arrow) it says only the entered groupings and the focus, and nothing for either window. The two windows are ApplicationFrameHost's frame (ApplicationFrameWindow, 28640960) and, inside it, SystemSettings' content (Windows.UI.Core.CoreWindow, 20187504). The frame's InternalGetWindowText is "Settings"; its MSAA window object (OBJID_WINDOW) is named "Settings" with role window (9), and its client object (OBJID_CLIENT) is named "Settings" with role client (10); UIA gives it as a Window named "Settings". The bare "Settings" is the frame's foreground event, which NVDA takes as a focus on the frame's client object, role client mapped to pane (IAccessibleHandler/__init__.py 77), a role silent on focus (controlTypes/role.py 538 to 550); this is the design's "pane named by its title". "Settings window" is the CoreWindow, a UIA window, spoken as an entered ancestor. In the focus's ancestry NVDA's object for the frame is not that pane but an IAccessible WindowRoot (OBJID_WINDOW) named "Settings" with role window (the developer info below), which NVDA never speaks as an ancestor, since GenericWindow sets isPresentableFocusAncestor to False (NVDAObjects/IAccessible/__init__.py 2301 to 2303); object navigation names it "Settings window". A plain window for the frame has the same name and role as that object, "Settings" and window, and takes the frame's place only in the chain of the content's focus; the "Settings" said at entry comes from the frame's own foreground focus, read in the frame's own process, which no process boundary affects. By the design's meeting of chains, which matches window entries by handle, the plain window meets the frame's client (same handle) in the previous chain at entry, and itself within the page, so it is never an entered container, and Verbatim says what NVDA says: "Settings", "Settings window", the groupings and the focus at entry, and the groupings and the focus within the page. Only if the content's focus reached Core with no earlier focus in the frame would the plain window be entered, and Verbatim would say "Settings window" for the frame where NVDA says "Settings" from its foreground event, and then "Settings window" for the content: the same window name with its role word added. The difference does not change the meaning.
+
+Entering from the desktop, then moving within the page:
+
+NVDA alpha-58022,732d1ce2 in session 1
+> launch explorer.exe ms-settings:display
+  +317 ms  cancel
+  +321 ms  [Normal] Settings
+  +1189 ms  [Normal] Settings  window
+  +1195 ms  [Normal] Brightness  and  color  grouping
+  +1198 ms  [Normal] Night light  grouping  Use warmer colors to help block blue light
+  +1203 ms  [Normal] Night light  toggle button  not pressed  Use warmer colors to help block blue light
+> front ApplicationFrameHost.exe "Settings"
+> tab
+  +3 ms  cancel
+  +25 ms  [Normal] Night light  button  More
+> tab
+  +2 ms  cancel
+  +24 ms  [Normal] Color profile  grouping  Determine how colors appear on your screen
+  +30 ms  [Normal] Color profile  button  More
+> tab
+  +4 ms  cancel
+  +35 ms  [Normal] HDR  grouping  More about HDR
+  +39 ms  [Normal] More about HDR
+  +42 ms  [Normal] More about HDR  link
+> shift+tab
+  +3 ms  cancel
+  +28 ms  [Normal] Color profile  grouping  Determine how colors appear on your screen
+  +33 ms  [Normal] Color profile  button  More
+
+Entering from a Windows Forms window (context-menu.ps1), moving within the page, leaving and entering again:
+
+NVDA alpha-58022,732d1ce2 in session 1
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\context-menu.ps1
+  +399 ms  cancel
+  +401 ms  [Normal] Context menu capture
+  +439 ms  [Normal] Notes  edit  selected hello
+> front powershell.exe "Context menu capture"
+> front ApplicationFrameHost.exe "Settings"
+  +96 ms  cancel
+  +101 ms  [Normal] Settings
+  +146 ms  [Normal] Settings  window
+  +151 ms  [Normal] Brightness  and  color  grouping
+  +154 ms  [Normal] Color profile  grouping  Determine how colors appear on your screen
+  +158 ms  [Normal] Color profile  button  More
+> tab
+  +2 ms  cancel
+  +28 ms  [Normal] HDR  grouping  More about HDR
+  +32 ms  [Normal] More about HDR
+  +35 ms  [Normal] More about HDR  link
+> shift+tab
+  +7 ms  cancel
+  +27 ms  [Normal] Color profile  grouping  Determine how colors appear on your screen
+  +31 ms  [Normal] Color profile  button  More
+> front powershell.exe "Context menu capture"
+  +123 ms  cancel
+  +126 ms  [Normal] Notes  edit  selected hello
+> front ApplicationFrameHost.exe "Settings"
+  +59 ms  cancel
+  +63 ms  [Normal] Settings
+  +235 ms  [Normal] Settings  window
+  +241 ms  [Normal] Brightness  and  color  grouping
+  +245 ms  [Normal] Color profile  grouping  Determine how colors appear on your screen
+  +249 ms  [Normal] Color profile  button  More
+
+Object navigation up from the focus (NVDA+Numpad8), from "Color profile button More":
+
+NVDA alpha-58022,732d1ce2 in session 1
+> front ApplicationFrameHost.exe "Settings"
+> insert+numpad8
+  +1 ms  cancel
+  +9 ms  [Normal] Color profile  grouping  Determine how colors appear on your screen
+> insert+numpad8
+  +4 ms  cancel
+  +8 ms  [Normal] Brightness  and  color  grouping
+> insert+numpad8
+  +2 ms  cancel
+  +20 ms  [Normal] Settings  window
+> insert+numpad8
+  +2 ms  cancel
+  +12 ms  [Normal] Settings  window
+> insert+numpad8
+  +3 ms  cancel
+  +4 ms  [Normal] Desktop  window
+> insert+numpad8
+  +2 ms  cancel
+  +3 ms  [Normal] No containing object
+> insert+numpad8
+  +2 ms  cancel
+  +3 ms  [Normal] No containing object
+> insert+numpad8
+  +3 ms  cancel
+  +3 ms  [Normal] No containing object
+> insert+numpad8
+  +2 ms  cancel
+  +3 ms  [Normal] No containing object
+
+settings-frame.ps1, with the focus on "Color profile button More":
+
+foreground:
+window 28640960 class=ApplicationFrameWindow process=ApplicationFrameHost (7428) InternalGetWindowText='Settings'
+    OBJID_WINDOW name='Settings' role=9 (window)
+    OBJID_CLIENT name='Settings' role=10 (client)
+windows from the focus's nearest window up to the desktop:
+window 20187504 class=Windows.UI.Core.CoreWindow process=SystemSettings (12224) InternalGetWindowText='Settings'
+    OBJID_WINDOW name='Settings' role=9 (window)
+    OBJID_CLIENT name='Settings' role=9 (window)
+window 28640960 class=ApplicationFrameWindow process=ApplicationFrameHost (7428) InternalGetWindowText='Settings'
+    OBJID_WINDOW name='Settings' role=9 (window)
+    OBJID_CLIENT name='Settings' role=10 (client)
+UIA raw-view ancestry of the focus:
+  ControlType.Button name='Color profile' class=Button process 12224 window 0
+  ControlType.Button name='Color profile' class=Button process 12224 window 0
+  ControlType.Group name='Color profile' class=NamedContainerAutomationPeer process 12224 window 0
+  ControlType.Group name='Brightness & color' class=NamedContainerAutomationPeer process 12224 window 0
+  ControlType.Pane name='' class=ScrollViewer process 12224 window 0
+  ControlType.Group name='' class=LandmarkTarget process 12224 window 0
+  ControlType.Custom name='' class= process 12224 window 0
+  ControlType.Window name='Settings' class=Windows.UI.Core.CoreWindow process 12224 window 20187504
+  ControlType.Window name='Settings' class=ApplicationFrameWindow process 7428 window 28640960
+  ControlType.Pane name='' class=#32769 process 980 window 65548
+
+NVDA developer info, first for the frame (four levels up), then for the content window (three levels up):
+
+INFO - globalCommands.script_navigatorObject_devInfo (02:00:57.482) - MainThread (10896):
+Developer info for navigator object:
+name: 'Settings'
+role: WINDOW
+processID: 7428
+roleText: None
+states: FOCUSABLE
+isFocusable: True
+hasFocus: False
+Python object: <NVDAObjects.IAccessible.WindowRoot object at 0x0000011A746BFA50>
+Python class mro: (<class 'NVDAObjects.IAccessible.WindowRoot'>, <class 'NVDAObjects.IAccessible.GenericWindow'>, <class 'NVDAObjects.IAccessible.IAccessible'>, <class 'NVDAObjects.window.Window'>, <class 'NVDAObjects.NVDAObject'>, <class 'documentBase.TextContainerObject'>, <class 'baseObject.ScriptableObject'>, <class 'baseObject.AutoPropertyObject'>, <class 'garbageHandler.TrackedObject'>, <class 'object'>)
+description: None
+location: RectLTWH(left=-8, top=-8, width=1296, height=768)
+value: None
+TextInfo: <class 'displayModel.DisplayModelTextInfo'>
+appModule: AppModule(appModuleHandler, appName='applicationframehost', processID=7428)
+appModule.productName: 'Microsoft® Windows® Operating System'
+appModule.productVersion: '10.0.26100.9549'
+appModule.helperLocalBindingHandle: c_void_p(1213103254992)
+appModule.appArchitecture: 'AMD64'
+windowHandle: 28640960
+windowClassName: 'ApplicationFrameWindow'
+windowControlID: 0
+windowStyle: -1781596160
+extendedWindowStyle: 2097408
+windowThreadID: 11956
+windowText: 'Settings'
+displayText: ''
+IAccessibleObject: <POINTER(IAccessible) ptr=0x11a72abedd0 at 11a76397dd0>
+IAccessibleChildID: 0
+IAccessible event parameters: windowHandle=28640960, objectID=0, childID=0
+IAccessible accName: 'Settings'
+IAccessible accRole: ROLE_SYSTEM_WINDOW
+IAccessible accState: STATE_SYSTEM_SIZEABLE, STATE_SYSTEM_MOVEABLE, STATE_SYSTEM_FOCUSABLE, STATE_SYSTEM_VALID (1441792)
+IAccessible accDescription: None
+IAccessible accValue: None
+INFO - globalCommands.script_navigatorObject_devInfo (02:01:15.513) - MainThread (10896):
+Developer info for navigator object:
+name: 'Settings'
+role: WINDOW
+processID: 12224
+roleText: None
+states: FOCUSED
+isFocusable: False
+hasFocus: True
+Python object: <NVDAObjects.UIA.UIA object at 0x0000011A74751D00>
+Python class mro: (<class 'NVDAObjects.UIA.UIA'>, <class 'NVDAObjects.window.Window'>, <class 'NVDAObjects.NVDAObject'>, <class 'documentBase.TextContainerObject'>, <class 'baseObject.ScriptableObject'>, <class 'baseObject.AutoPropertyObject'>, <class 'garbageHandler.TrackedObject'>, <class 'object'>)
+description: ''
+location: RectLTWH(left=0, top=0, width=1280, height=752)
+value: None
+TextInfo: <class 'displayModel.DisplayModelTextInfo'>
+appModule: AppModule(systemsettings, appName='systemsettings', processID=12224)
+appModule.productName: 'windows.immersivecontrolpanel'
+appModule.productVersion: '10.0.8.1000'
+appModule.helperLocalBindingHandle: c_void_p(1213103244112)
+appModule.appArchitecture: 'AMD64'
+windowHandle: 20187504
+windowClassName: 'Windows.UI.Core.CoreWindow'
+windowControlID: 0
+windowStyle: 1409286144
+extendedWindowStyle: 2621440
+windowThreadID: 1500
+windowText: 'Settings'
+displayText: ''
+UIAElement: <POINTER(IUIAutomationElement) ptr=0x11a7261e600 at 11a76457e50>
+UIA automationID: 
+UIA frameworkID: XAML
+UIA runtimeID: (42, 20187504)
+UIA providerDescription: [pid:1296,providerId:0x1340970 Main:Nested [pid:12224,providerId:0x1340970 Main(parent link):Unidentified Provider (unmanaged:Windows.UI.Xaml.dll)]; Hwnd(parent link):Microsoft: HWND Proxy (unmanaged:UIAutomationCore.DLL); View:Microsoft: ViewID Proxy (unmanaged:UIAutomationCore.DLL)]
+UIA className: Windows.UI.Core.CoreWindow
+UIA patterns available: LegacyIAccessiblePattern
+
+cargo xtask nvda compare settings_system_page:
+
+Comparing settings_system_page with NVDA
+Date: 2026-10-29
+NVDA: alpha-58022,732d1ce2
+Submodule pin: 732d1ce2f (release-2026.3beta3-44-g732d1ce2f)
+The pin is the installed build.
+Quiet period: 1000 ms
+
+Step 1: start
+Verbatim:
+  Desktop list
+  Recycle Bin 1 of 13
+NVDA:
+  (nothing)
+Verdict: not compared: NVDA says nothing about a desktop already in front
+
+Step 2: launch explorer.exe, its window titled "Settings" brought forward
+Verbatim:
+  Settings
+  Settings window
+  Search box, Find a setting edit
+  blank
+NVDA:
+  cancel
+  Settings
+  Settings  window
+  Search box, Find a setting  edit  blank
+Verdict: same
+
+Step 3: focus the element with the automation id "settingPagesList"
+Verbatim:
+  list
+  Display 1 of 19
+NVDA:
+  list
+  Display  1 of 19
+Verdict: same
+
+Step 4: keys [downarrow]
+Verbatim:
+  Sound 2 of 19
+NVDA:
+  cancel
+  Sound  2 of 19
+Verdict: same
+
+Step 5: keys [uparrow]
+Verbatim:
+  Display 1 of 19
+NVDA:
+  cancel
+  Display  1 of 19
+Verdict: same
+
+Summary of 5 steps:
+  same: 4
+  differs: 0
+  declared deviation: 0
+  declared, but NVDA agrees: 0
+  not compared: 1
