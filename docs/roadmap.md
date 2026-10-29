@@ -225,7 +225,8 @@ The decisions and their order of work, each in the design's
   walk adds, never the "<title> window" announcement. NVDA instead names
   the window from its parent walk (`api.setFocusObject`), waiting on the
   application, so how the window is named is settled in the revised
-  design. The reason is reliability (Dickson,
+  design. Its bounds are Verbatim's existing ones, not NVDA's 10-second
+  watchdog (Dickson, 2026-10-29). The reason is reliability (Dickson,
   2026-10-26): Windows Terminal raises its focus event before it has
   finished showing its window, and its one UI thread then blocks in
   `DwmExtendFrameIntoClientArea`, which on the test VM's software
