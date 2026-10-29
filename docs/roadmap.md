@@ -273,14 +273,6 @@ The decisions and their order of work, each in the design's
 
 ### Deferred
 
-- Cancelling stuck UIA and MSAA calls, as NVDA's watchdog does with
-  `CoCancelCall`, is handled apart from the focus pipeline rework
-  (Dickson, 2026-10-29): it would return threads that are now abandoned,
-  but changes nothing spoken. First an experiment on whether
-  `CoCancelCall` ends a UIA client call, as
-  `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/`
-  did for MSAA, whose decision of 2026-10-21 not to build it stands until
-  then.
 - Review keys straight to the reducer
   ([communication](design/communication.md), section 11) is reconsidered
   when the command set is settled (Dickson, 2026-10-14).
@@ -560,6 +552,22 @@ and D18; the order of work, with its tests, is
 Exit: Eloquence speaks through Verbatim under the sandbox; the latency
 scenario is green in Dickson's run of the `eloquence_` scenarios, recorded
 here.
+
+## M6.1 — MSAA, UIA and Windows call cancellation
+
+Scheduled after M6 and before M7, whose IAccessible2 work adds many COM
+calls into browsers (Dickson, 2026-10-29). Separate from the focus
+pipeline rework, since cancelling a stuck call frees a thread that is now
+abandoned but changes nothing spoken.
+
+- An experiment on whether `CoCancelCall` ends a UIA client call, as
+  `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/`
+  did for MSAA; the decision of 2026-10-21 not to build MSAA cancellation
+  stands until then.
+- If built: cancelling the outpost worker's and the listener's reading
+  threads' stuck calls, as NVDA's watchdog does, and what that lets go:
+  abandoned threads, the bound on an application's abandoned reads, and
+  the 11-second `READ_DEADLINE`.
 
 ## M7 — Browse mode, browsers, and the injection helper
 
