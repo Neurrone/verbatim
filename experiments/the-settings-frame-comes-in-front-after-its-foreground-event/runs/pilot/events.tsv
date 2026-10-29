@@ -1,0 +1,14 @@
+trial	kind	t_ms	hwnd	class	title	image	id_object	id_child	fg_in_callback_class	lag_ms
+0	between-trials	3640.273	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	0.900
+0	between-trials	6087.101	0x1990a3a	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	26.883
+0	between-trials	8067.672	0x2980bce	Notepad	Notepad	Notepad.exe	0	0		7.297
+2	alt-tab-notepad-to-settings	9579.464	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	10.217
+2	alt-tab-notepad-to-settings	9598.132	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	never within 1 s
+2	alt-tab-notepad-to-settings	9605.227	0x1990a3a	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	30.222
+3	alt-tab-settings-to-notepad	11088.451	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	never within 1 s
+3	alt-tab-settings-to-notepad	11107.440	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	never within 1 s
+3	alt-tab-settings-to-notepad	11128.981	0x2980bce	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	8.688
+0	between-trials	12644.883	0x1990a3a	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	24.192
+0	between-trials	12817.918	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	0.748
+4	notepad-from-desktop	15035.917	0x1cd0776	Notepad	Notepad	Notepad.exe	0	0	(itself)	1.187
+0	between-trials	16567.353	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	36.175

@@ -1,0 +1,126 @@
+trial	kind	t_ms	hwnd	class	title	image	id_object	id_child	fg_in_callback_class	lag_ms	read_before_ms
+1	settings-from-desktop	1877.293	0x1ec09de	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	70.663	70.163
+0	between-trials	4044.674	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.492	-0.992
+2	settings-from-desktop	6373.002	0x2a80864	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	72.776	72.276
+0	between-trials	8638.829	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.825	-1.325
+3	settings-from-desktop	11042.357	0x126060e	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	23.739	23.239
+0	between-trials	13165.698	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-4.250	-6.846
+4	settings-from-desktop	15491.661	0x3000802	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	26.806	26.305
+0	between-trials	17643.225	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-6.735	-7.505
+5	settings-from-desktop	19862.924	0x4350966	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	63.460	62.960
+0	between-trials	22124.287	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.058	-0.558
+6	settings-from-desktop	24356.688	0x3c306e6	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	75.968	75.468
+0	between-trials	26442.457	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-5.136	-8.151
+7	settings-from-desktop	28869.262	0x145069a	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	27.569	27.061
+0	between-trials	30530.319	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	0.306	-0.193
+8	settings-from-desktop	32868.147	0x1b60ba4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	50.850	50.349
+0	between-trials	35015.360	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.001	-0.523
+9	settings-from-desktop	37372.567	0x155087e	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	25.240	24.740
+0	between-trials	39409.424	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.824	-9.862
+10	settings-from-desktop	41768.631	0x1da0776	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	53.399	52.899
+0	between-trials	43988.205	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-3.294	-5.877
+11	settings-from-desktop	46309.226	0x2610736	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	24.201	23.701
+0	between-trials	48428.184	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-3.906	-6.047
+12	settings-from-desktop	50794.678	0x386075a	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	25.765	25.265
+0	between-trials	52867.286	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-7.102	-8.649
+13	settings-from-desktop	55158.428	0x29a082c	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	58.749	58.249
+0	between-trials	57331.060	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	0.164	-0.336
+14	settings-from-desktop	59635.115	0x33305a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	43.865	43.365
+0	between-trials	61421.363	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.426	-0.926
+15	settings-from-desktop	63783.845	0x373094e	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	30.082	29.581
+0	between-trials	65482.401	0x0			pid 0	0	0		12.036	11.537
+0	between-trials	65506.140	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-1.290	-11.703
+16	settings-from-desktop	67904.546	0x2870bcc	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	24.231	23.732
+0	between-trials	70038.101	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-1.808	-2.308
+17	settings-from-desktop	72347.016	0x39d00d4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	60.724	60.224
+0	between-trials	74164.588	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-5.418	-6.843
+18	settings-from-desktop	76395.604	0x177064a	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	77.749	77.249
+0	between-trials	78628.526	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.522	-1.422
+19	settings-from-desktop	80894.525	0x19b04e2	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	63.610	63.110
+0	between-trials	82595.343	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.904	-1.404
+20	settings-from-desktop	84913.364	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	Progman	66.877	66.377
+0	between-trials	86838.125	0x15b08f6	Notepad	Notepad	Notepad.exe	0	0		6.547	6.047
+21	alt-tab-notepad-to-settings	88353.463	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-4.724	-5.362
+21	alt-tab-notepad-to-settings	88374.445	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	never within 1 s	
+21	alt-tab-notepad-to-settings	88381.077	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-2.209	-23.881
+22	alt-tab-settings-to-notepad	89849.748	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.090	-0.591
+22	alt-tab-settings-to-notepad	89861.198	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-0.251	-10.041
+22	alt-tab-settings-to-notepad	89864.120	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-2.167	-2.674
+23	alt-tab-notepad-to-settings	91359.097	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-8.332	-8.832
+23	alt-tab-notepad-to-settings	91371.977	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+23	alt-tab-notepad-to-settings	91372.125	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-2.506	-3.788
+24	alt-tab-settings-to-notepad	92945.178	0x10144	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+24	alt-tab-settings-to-notepad	92946.303	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+24	alt-tab-settings-to-notepad	92946.397	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-19.375	-27.458
+25	alt-tab-notepad-to-settings	94456.833	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.056	-0.557
+25	alt-tab-notepad-to-settings	94463.731	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-0.255	-1.939
+25	alt-tab-notepad-to-settings	94470.215	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-4.169	-5.239
+26	alt-tab-settings-to-notepad	95963.720	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.033	-6.177
+26	alt-tab-settings-to-notepad	95986.435	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+26	alt-tab-settings-to-notepad	95986.523	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-3.942	-20.268
+27	alt-tab-notepad-to-settings	97507.000	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.101	-0.401
+27	alt-tab-notepad-to-settings	97514.240	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-2.148	-3.345
+27	alt-tab-notepad-to-settings	97518.284	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-1.082	-1.603
+28	alt-tab-settings-to-notepad	99007.811	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.035	-0.539
+28	alt-tab-settings-to-notepad	99024.150	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+28	alt-tab-settings-to-notepad	99024.380	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-3.242	-5.241
+29	alt-tab-notepad-to-settings	100508.544	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.338	-0.161
+29	alt-tab-notepad-to-settings	100514.712	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-0.428	-1.056
+29	alt-tab-notepad-to-settings	100520.807	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-2.690	-3.506
+30	alt-tab-settings-to-notepad	102009.429	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.091	-0.409
+30	alt-tab-settings-to-notepad	102019.320	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-2.900	-3.548
+30	alt-tab-settings-to-notepad	102022.641	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-2.085	-2.649
+31	alt-tab-notepad-to-settings	103510.235	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.307	-0.268
+31	alt-tab-notepad-to-settings	103523.939	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+31	alt-tab-notepad-to-settings	103524.198	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-0.346	-8.964
+32	alt-tab-settings-to-notepad	105011.029	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.055	-0.555
+32	alt-tab-settings-to-notepad	105023.022	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	0.552	-8.049
+32	alt-tab-settings-to-notepad	105026.424	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-1.800	-2.350
+33	alt-tab-notepad-to-settings	106511.850	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.250	-0.250
+33	alt-tab-notepad-to-settings	106521.605	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	0.488	-8.505
+33	alt-tab-notepad-to-settings	106525.796	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-0.704	-1.204
+34	alt-tab-settings-to-notepad	108012.478	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.261	-0.240
+34	alt-tab-settings-to-notepad	108024.298	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+34	alt-tab-settings-to-notepad	108025.952	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-1.195	-10.135
+35	alt-tab-notepad-to-settings	109513.399	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.013	-0.529
+35	alt-tab-notepad-to-settings	109522.389	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-2.814	-7.504
+35	alt-tab-notepad-to-settings	109524.444	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-1.035	-1.535
+36	alt-tab-settings-to-notepad	111023.671	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-9.308	-9.851
+36	alt-tab-settings-to-notepad	111032.973	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-5.450	-6.308
+36	alt-tab-settings-to-notepad	111060.600	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-22.075	-25.609
+37	alt-tab-notepad-to-settings	112525.882	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.316	-0.184
+37	alt-tab-notepad-to-settings	112536.208	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	-2.185	-2.685
+37	alt-tab-notepad-to-settings	112538.347	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-0.384	-1.186
+38	alt-tab-settings-to-notepad	114026.814	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.562	-0.184
+38	alt-tab-settings-to-notepad	114038.111	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	0.180	-9.736
+38	alt-tab-settings-to-notepad	114039.939	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-0.648	-1.148
+39	alt-tab-notepad-to-settings	115527.442	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	-0.033	-0.540
+39	alt-tab-notepad-to-settings	115536.293	0x10178	ForegroundStaging		explorer.exe	0	0	(itself)	0.384	-7.385
+39	alt-tab-notepad-to-settings	115539.141	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-1.406	-1.963
+40	alt-tab-settings-to-notepad	117028.000	0x10144	ForegroundStaging		explorer.exe	0	0	(itself)	0.226	-0.274
+40	alt-tab-settings-to-notepad	117039.681	0x10178	ForegroundStaging		explorer.exe	0	0		never within 1 s	
+40	alt-tab-settings-to-notepad	117042.526	0x15b08f6	Notepad	Untitled - Notepad	Notepad.exe	0	0	(itself)	-2.611	-13.300
+0	between-trials	118532.215	0x33a05a4	ApplicationFrameWindow	Settings	ApplicationFrameHost.exe	0	0	(itself)	-1.468	-1.969
+0	between-trials	118639.170	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	0.021	-0.480
+41	notepad-from-desktop	120847.568	0x2170912	Notepad	Notepad	Notepad.exe	0	0	(itself)	-0.290	-0.790
+0	between-trials	122374.200	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-5.449	-13.723
+42	notepad-from-desktop	124658.518	0x1be0610	Notepad	Notepad	Notepad.exe	0	0	(itself)	-0.103	-0.603
+0	between-trials	126182.542	0x10106	Progman	Program Manager	explorer.exe	0	0		-3.185	-13.276
+0	between-trials	127253.490	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-10.132	-10.638
+43	notepad-from-desktop	128467.265	0x33c06c0	Notepad	Notepad	Notepad.exe	0	0	(itself)	-0.801	-1.301
+0	between-trials	130014.990	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-5.478	-35.614
+44	notepad-from-desktop	132288.009	0x1a907ce	Notepad	Notepad	Notepad.exe	0	0	(itself)	-0.041	-0.541
+0	between-trials	133809.314	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.491	-5.900
+45	notepad-from-desktop	136043.192	0x18105b0	Notepad	Notepad	Notepad.exe	0	0	(itself)	0.276	-0.224
+0	between-trials	137560.534	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.102	-0.691
+46	notepad-from-desktop	139793.133	0x22c09a6	Notepad	Notepad	Notepad.exe	0	0	(itself)	0.156	-0.361
+0	between-trials	141324.529	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-1.792	-17.189
+47	notepad-from-desktop	143610.992	0x2df0728	Notepad	Notepad	Notepad.exe	0	0	(itself)	-0.123	-0.623
+0	between-trials	145164.973	0x10106	Progman	Program Manager	explorer.exe	0	0		never within 1 s	
+0	between-trials	146234.462	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-4.558	-5.058
+48	notepad-from-desktop	147445.346	0x34206c0	Notepad	Notepad	Notepad.exe	0	0	(itself)	0.319	-0.181
+0	between-trials	148990.171	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.125	-31.289
+49	notepad-from-desktop	151273.208	0x1710716	Notepad	Notepad	Notepad.exe	0	0	(itself)	0.013	-0.487
+0	between-trials	152810.795	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	1.489	-23.043
+50	notepad-from-desktop	155064.623	0x2880720	Notepad	Notepad	Notepad.exe	0	0	(itself)	0.092	-0.408
+0	between-trials	156581.577	0x10106	Progman	Program Manager	explorer.exe	0	0	(itself)	-0.183	-0.687

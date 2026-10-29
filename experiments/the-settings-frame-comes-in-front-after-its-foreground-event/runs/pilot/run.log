@@ -1,0 +1,47 @@
+   802.456 [0] desktop: SetForegroundWindow(Progman) 1, in front true, foreground Progman
+  1503.224 [1] launch explorer.exe ms-settings:display minimized
+  2122.669 [1] Settings frame present 0x22309a6, minimized false
+  2122.814 [1] SetForegroundWindow 1
+  2122.891 [1] in front true
+  3623.157 [0] WM_CLOSE to 0x22309a6
+  3628.843 [0] closed true
+  3640.273 [0] foreground event 0x10106 Progman "Program Manager" explorer.exe
+  4931.882 [0] desktop: SetForegroundWindow(Progman) 1, in front true, foreground Progman
+  5632.361 [0] launch explorer.exe ms-settings:display minimized
+  6087.101 [0] foreground event 0x1990a3a ApplicationFrameWindow "Settings" ApplicationFrameHost.exe
+  6247.235 [0] Settings frame present 0x1990a3a, minimized false
+  6248.259 [0] SetForegroundWindow 1
+  6248.293 [0] in front true
+  7748.979 [0] launch notepad.exe minimized
+  8067.672 [0] foreground event 0x2980bce Notepad "Notepad" Notepad.exe
+  8069.283 [0] Notepad present 0x2980bce, minimized true
+  8069.333 [0] restore requested
+  8074.813 [0] restored true
+  8074.998 [0] SetForegroundWindow 1
+  8075.173 [0] in front true
+  9575.726 [2] Alt+Tab sent
+  9579.464 [2] foreground event 0x10144 ForegroundStaging "" explorer.exe
+  9598.132 [2] foreground event 0x10178 ForegroundStaging "" explorer.exe
+  9605.227 [2] foreground event 0x1990a3a ApplicationFrameWindow "Settings" ApplicationFrameHost.exe
+ 11076.246 [3] Alt+Tab sent
+ 11088.451 [3] foreground event 0x10144 ForegroundStaging "" explorer.exe
+ 11107.440 [3] foreground event 0x10178 ForegroundStaging "" explorer.exe
+ 11128.981 [3] foreground event 0x2980bce Notepad "Untitled - Notepad" Notepad.exe
+ 12640.657 [0] WM_CLOSE to 0x2980bce
+ 12644.883 [0] foreground event 0x1990a3a ApplicationFrameWindow "Settings" ApplicationFrameHost.exe
+ 12668.279 [0] closed true
+ 12668.332 [0] WM_CLOSE to 0x1990a3a
+ 12805.196 [0] closed true
+ 12817.918 [0] foreground event 0x10106 Progman "Program Manager" explorer.exe
+ 14107.749 [0] desktop: SetForegroundWindow(Progman) 1, in front true, foreground Progman
+ 14808.368 [4] launch notepad.exe minimized
+ 15035.917 [4] foreground event 0x1cd0776 Notepad "Notepad" Notepad.exe
+ 15037.394 [4] Notepad present 0x1cd0776, minimized true
+ 15037.441 [4] restore requested
+ 15048.362 [4] restored true
+ 15048.570 [4] SetForegroundWindow 1
+ 15048.697 [4] in front true
+ 16548.815 [0] WM_CLOSE to 0x1cd0776
+ 16567.353 [0] foreground event 0x10106 Progman "Program Manager" explorer.exe
+ 16587.403 [0] closed true
+ 17891.771 [0] desktop: SetForegroundWindow(Progman) 1, in front true, foreground Progman

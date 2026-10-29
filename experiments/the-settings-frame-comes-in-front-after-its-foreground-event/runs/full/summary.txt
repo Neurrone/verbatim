@@ -1,0 +1,65 @@
+Longest gap between two foreground reads in any trial: 21.673 ms
+
+settings-from-desktop, class ApplicationFrameWindow: 20 events in 20 trials, 0 never within 1 s; lag min 23.74, median 50.85, P90 72.78, max 77.75 ms; within 20 ms 0, within 35 ms 8
+
+alt-tab-notepad-to-settings, class ForegroundStaging: 20 events in 10 trials, 3 never within 1 s; lag min -8.33, median -0.03, P90 0.38, max 0.49 ms; within 20 ms 17, within 35 ms 17
+
+alt-tab-notepad-to-settings, class ApplicationFrameWindow: 10 events in 10 trials, 0 never within 1 s; lag min -4.17, median -1.41, P90 -0.38, max -0.35 ms; within 20 ms 10, within 35 ms 10
+
+alt-tab-settings-to-notepad, class ForegroundStaging: 20 events in 10 trials, 6 never within 1 s; lag min -9.31, median -0.04, P90 0.55, max 0.56 ms; within 20 ms 14, within 35 ms 14
+
+alt-tab-settings-to-notepad, class Notepad: 10 events in 10 trials, 0 never within 1 s; lag min -22.07, median -2.61, P90 -1.19, max -0.65 ms; within 20 ms 10, within 35 ms 10
+
+notepad-from-desktop, class Notepad: 10 events in 10 trials, 0 never within 1 s; lag min -0.80, median -0.04, P90 0.28, max 0.32 ms; within 20 ms 10, within 35 ms 10
+
+Per trial:
+1 settings-from-desktop: ApplicationFrameWindow "Settings" 70.66 ms
+2 settings-from-desktop: ApplicationFrameWindow "Settings" 72.78 ms
+3 settings-from-desktop: ApplicationFrameWindow "Settings" 23.74 ms
+4 settings-from-desktop: ApplicationFrameWindow "Settings" 26.81 ms
+5 settings-from-desktop: ApplicationFrameWindow "Settings" 63.46 ms
+6 settings-from-desktop: ApplicationFrameWindow "Settings" 75.97 ms
+7 settings-from-desktop: ApplicationFrameWindow "Settings" 27.57 ms
+8 settings-from-desktop: ApplicationFrameWindow "Settings" 50.85 ms
+9 settings-from-desktop: ApplicationFrameWindow "Settings" 25.24 ms
+10 settings-from-desktop: ApplicationFrameWindow "Settings" 53.40 ms
+11 settings-from-desktop: ApplicationFrameWindow "Settings" 24.20 ms
+12 settings-from-desktop: ApplicationFrameWindow "Settings" 25.77 ms
+13 settings-from-desktop: ApplicationFrameWindow "Settings" 58.75 ms
+14 settings-from-desktop: ApplicationFrameWindow "Settings" 43.87 ms
+15 settings-from-desktop: ApplicationFrameWindow "Settings" 30.08 ms
+16 settings-from-desktop: ApplicationFrameWindow "Settings" 24.23 ms
+17 settings-from-desktop: ApplicationFrameWindow "Settings" 60.72 ms
+18 settings-from-desktop: ApplicationFrameWindow "Settings" 77.75 ms
+19 settings-from-desktop: ApplicationFrameWindow "Settings" 63.61 ms
+20 settings-from-desktop: ApplicationFrameWindow "Settings" 66.88 ms
+21 alt-tab-notepad-to-settings: ForegroundStaging "" -4.72 ms; ForegroundStaging "" never; ApplicationFrameWindow "Settings" -2.21 ms
+22 alt-tab-settings-to-notepad: ForegroundStaging "" -0.09 ms; ForegroundStaging "" -0.25 ms; Notepad "Untitled - Notepad" -2.17 ms
+23 alt-tab-notepad-to-settings: ForegroundStaging "" -8.33 ms; ForegroundStaging "" never; ApplicationFrameWindow "Settings" -2.51 ms
+24 alt-tab-settings-to-notepad: ForegroundStaging "" never; ForegroundStaging "" never; Notepad "Untitled - Notepad" -19.37 ms
+25 alt-tab-notepad-to-settings: ForegroundStaging "" -0.06 ms; ForegroundStaging "" -0.25 ms; ApplicationFrameWindow "Settings" -4.17 ms
+26 alt-tab-settings-to-notepad: ForegroundStaging "" -0.03 ms; ForegroundStaging "" never; Notepad "Untitled - Notepad" -3.94 ms
+27 alt-tab-notepad-to-settings: ForegroundStaging "" 0.10 ms; ForegroundStaging "" -2.15 ms; ApplicationFrameWindow "Settings" -1.08 ms
+28 alt-tab-settings-to-notepad: ForegroundStaging "" -0.04 ms; ForegroundStaging "" never; Notepad "Untitled - Notepad" -3.24 ms
+29 alt-tab-notepad-to-settings: ForegroundStaging "" 0.34 ms; ForegroundStaging "" -0.43 ms; ApplicationFrameWindow "Settings" -2.69 ms
+30 alt-tab-settings-to-notepad: ForegroundStaging "" 0.09 ms; ForegroundStaging "" -2.90 ms; Notepad "Untitled - Notepad" -2.09 ms
+31 alt-tab-notepad-to-settings: ForegroundStaging "" 0.31 ms; ForegroundStaging "" never; ApplicationFrameWindow "Settings" -0.35 ms
+32 alt-tab-settings-to-notepad: ForegroundStaging "" -0.06 ms; ForegroundStaging "" 0.55 ms; Notepad "Untitled - Notepad" -1.80 ms
+33 alt-tab-notepad-to-settings: ForegroundStaging "" 0.25 ms; ForegroundStaging "" 0.49 ms; ApplicationFrameWindow "Settings" -0.70 ms
+34 alt-tab-settings-to-notepad: ForegroundStaging "" 0.26 ms; ForegroundStaging "" never; Notepad "Untitled - Notepad" -1.19 ms
+35 alt-tab-notepad-to-settings: ForegroundStaging "" -0.01 ms; ForegroundStaging "" -2.81 ms; ApplicationFrameWindow "Settings" -1.03 ms
+36 alt-tab-settings-to-notepad: ForegroundStaging "" -9.31 ms; ForegroundStaging "" -5.45 ms; Notepad "Untitled - Notepad" -22.07 ms
+37 alt-tab-notepad-to-settings: ForegroundStaging "" 0.32 ms; ForegroundStaging "" -2.19 ms; ApplicationFrameWindow "Settings" -0.38 ms
+38 alt-tab-settings-to-notepad: ForegroundStaging "" 0.56 ms; ForegroundStaging "" 0.18 ms; Notepad "Untitled - Notepad" -0.65 ms
+39 alt-tab-notepad-to-settings: ForegroundStaging "" -0.03 ms; ForegroundStaging "" 0.38 ms; ApplicationFrameWindow "Settings" -1.41 ms
+40 alt-tab-settings-to-notepad: ForegroundStaging "" 0.23 ms; ForegroundStaging "" never; Notepad "Untitled - Notepad" -2.61 ms
+41 notepad-from-desktop: Notepad "Notepad" -0.29 ms
+42 notepad-from-desktop: Notepad "Notepad" -0.10 ms
+43 notepad-from-desktop: Notepad "Notepad" -0.80 ms
+44 notepad-from-desktop: Notepad "Notepad" -0.04 ms
+45 notepad-from-desktop: Notepad "Notepad" 0.28 ms
+46 notepad-from-desktop: Notepad "Notepad" 0.16 ms
+47 notepad-from-desktop: Notepad "Notepad" -0.12 ms
+48 notepad-from-desktop: Notepad "Notepad" 0.32 ms
+49 notepad-from-desktop: Notepad "Notepad" 0.01 ms
+50 notepad-from-desktop: Notepad "Notepad" 0.09 ms
