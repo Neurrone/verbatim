@@ -174,7 +174,7 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
                 "drop" => DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    on_verdict: None,
+                    answer: verbatim_outpost::protocol::GapAnswer::LeavesOpen,
                 },
                 "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),

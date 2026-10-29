@@ -1264,31 +1264,27 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// the list's item 1, 10, 4, 3, 3, and 1: so the cold focus rose by one
 /// call and the others by two.
 ///
-/// The listener's probe of the window, at the cold focus, is the raw probe
+/// The listener makes no probe (`docs/design/focus-pipeline-rework.md`,
+/// "Who owns each duplicated fact", the verdicts): the outpost alone
+/// judges the window, and probes it at the cold focus only, before it
+/// reports the listener's read, with the raw probe
 /// (`docs/design/listener-without-connections.md`, section 3, step 4): one
-/// `WM_GETOBJECT` that mockapp answers, and no UIA connection, which as
-/// `UiaHasServerSideProvider` cost mockapp one `WM_GETOBJECT`, five
-/// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`
-/// more. The outpost judges the window with its own verdict and probes it
-/// too, at the cold focus only, before it reports the listener's read
-/// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-/// fact", the verdicts): one window message, which costs mockapp one
-/// `WM_GETOBJECT`, two `ProviderOptions`, one `HostRawElementProvider` and
-/// one `Navigate`.
+/// window message, which costs mockapp one `WM_GETOBJECT`, two
+/// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
         &FocusCosts {
             cold: (
-                calls(6, 0, 2),
+                calls(6, 0, 1),
                 0,
                 &[
-                    ("WM_GETOBJECT", 13),
-                    ("ProviderOptions", 78),
+                    ("WM_GETOBJECT", 12),
+                    ("ProviderOptions", 76),
                     ("GetPatternProvider", 64),
                     ("GetPropertyValue", 114),
-                    ("HostRawElementProvider", 34),
-                    ("Navigate", 23),
+                    ("HostRawElementProvider", 33),
+                    ("Navigate", 22),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
@@ -1352,15 +1348,15 @@ fn uia_focus_changes_cost_exactly_classic() {
         false,
         &FocusCosts {
             cold: (
-                calls(6, 0, 2),
+                calls(6, 0, 1),
                 0,
                 &[
-                    ("WM_GETOBJECT", 13),
-                    ("ProviderOptions", 77),
+                    ("WM_GETOBJECT", 12),
+                    ("ProviderOptions", 75),
                     ("GetPatternProvider", 64),
                     ("GetPropertyValue", 113),
-                    ("HostRawElementProvider", 32),
-                    ("Navigate", 20),
+                    ("HostRawElementProvider", 31),
+                    ("Navigate", 19),
                     ("GetRuntimeId", 9),
                     ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
@@ -1462,7 +1458,7 @@ fn uia_repeated_focus_costs_exactly() {
         "a repeat of the last focus, which still has the keyboard focus"
     );
     outpost.deliver(
-        verbatim_outpost::focus_read::Judged::Dropped(reason).into_fact(0, FocusEvent::Focus),
+        verbatim_outpost::focus_read::Judged::Dropped(reason).into_fact(0, FocusEvent::Focus, None),
     );
     outpost.settled();
     let cost = Cost {
@@ -1526,7 +1522,7 @@ fn the_listener_makes_no_connection() {
             listener_calls.connections, 0,
             "the listener's connections reading the focus on {name}"
         );
-        let _ = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+        let _ = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
     }
     drop(outpost);
     app.quit();
@@ -1606,7 +1602,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         // desktop's root, where a top-level window's walk takes three.
         assert_eq!(
             listener_calls,
-            calls(5, 0, 1),
+            calls(5, 0, 0),
             "the listener's calls ({path})"
         );
         // UIA's client side sends a parent window 2 `WM_GETOBJECT`s as the
@@ -1637,7 +1633,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
 
         common::reset_hits(parent);
-        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
         // The parent's client area and the chain above it through MSAA,
         // with no probe of the other process's window. UIA's client side
         // still sends a parent its connection message as the outpost's
@@ -1865,7 +1861,7 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         let focused = under_test.focused(hwnd);
         let (judged, _) = outpost.listener_read(&focused);
         common::reset_hits(parent);
-        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
         // The parent's client area through MSAA's standard proxy, named by
         // its title, and the chain above it, all MSAA calls.
         let expected_chain = [
@@ -4518,10 +4514,10 @@ fn uia_combo_box_costs_exactly() {
 /// listener's path, the focus's enrichment, and the caret's read. Each of
 /// `setup`'s mockapp commands is sent before the focus. The outpost judges
 /// the window first, at a foreground change it drops as UIA's, so the
-/// focus's calls hold the listener's probe and not the outpost's, which a
-/// setup command's event would otherwise make first or not, as its event
-/// reaches the outpost before the focus or after it; the outpost's probe at
-/// a cold focus is pinned by [`uia_focus_changes`].
+/// focus's calls hold no probe, which a setup command's event would
+/// otherwise make first or not, as its event reaches the outpost before
+/// the focus or after it; the outpost's probe at a cold focus is pinned by
+/// [`uia_focus_changes`], and the listener makes none.
 fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Reported {
     let title = common::unique_title("mockapp-counts-text-focus");
     let mut app = common::spawn(fixture, "uia", &title);
@@ -4565,7 +4561,7 @@ fn text_field_focuses_cost_exactly() {
     let mut ratchet = Ratchet::default();
     let with_connection = |uia| CallCounts {
         connections: 1,
-        ..calls(uia, 0, 1)
+        ..calls(uia, 0, 0)
     };
     let selected: &[&str] = &["caret doc 0 5"];
     let protected_selected: &[&str] = &["set-states doc focusable protected", "caret doc 0 5"];

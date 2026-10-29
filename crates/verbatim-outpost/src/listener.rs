@@ -81,16 +81,17 @@
 //! applications whose outposts' hooks are in, and forwards none of their
 //! events from the start.
 //!
-//! The listener's hook still observes every application's focus and
-//! foreground `WinEvent`s after its outpost's hook is in, and keeps, for
-//! each such application, the oldest focus copy no UIA focus has answered
-//! ([`crate::gap_record`], in the reading threads' shared state): its UIA
-//! focus's read or a drop that settles it answers it, as does a later
-//! focus or foreground event elsewhere; unanswered a second after the
-//! copy, once the application's reads have finished, the reading threads'
-//! watchdog sends the outpost focus-missing
-//! ([`DeliveredFact::FocusMissing`]), and the outpost reads its focus when
-//! its own verdict for the copy's window is UIA.
+//! The wait for a UIA focus that never comes is the outpost's, beside the
+//! verdict that dropped its own copy of the `WinEvent` focus
+//! (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+//! fact", the gap's evidence): each drop of a UIA focus the listener sends
+//! carries its answer to that wait, placed in the top-level window of the
+//! window its read found ([`crate::focus_read::gap_answer`]), and the
+//! outpost places a read by the read's own window. The listener makes no
+//! backend verdict; it skips a focus only by its window's class
+//! (`crate::focus_read::MSAA_CLASS`), unless a backend override forcing
+//! UIA holds for the application
+//! ([`SupervisorToOutpost::SetBackendOverride`]).
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
@@ -124,6 +125,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use verbatim_model::Backend;
 
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::System::Threading::{
@@ -154,9 +156,8 @@ use crate::focus_read::{
     WatchedRead,
 };
 use crate::foreground::{ForegroundWatch, Front, Step};
-use crate::gap_record::{Missing, Observed};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{MOVED_ON_GRACE, top_level_of};
+use crate::outpost::window::MOVED_ON_GRACE;
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
@@ -594,23 +595,6 @@ impl Outgoing {
         self.queue(pid, fact, (meta.trace, meta.timing), None);
     }
 
-    /// Sends focus-missing for the gap record `missing`, stamped with its
-    /// copy's observation, never replaced.
-    fn focus_missing(&self, missing: Missing) {
-        let timing = EventTiming {
-            observed_at_us: missing.observed_at_us,
-            ..EventTiming::default()
-        };
-        self.queue(
-            missing.pid,
-            DeliveredFact::FocusMissing {
-                window: missing.window,
-            },
-            (TraceId::mint(), timing),
-            None,
-        );
-    }
-
     /// Sends Core the window in front, `front`, with the integrity level of
     /// the process that owns it, read here, a local call; only the newest
     /// such report waits. Sent for every process, ignored ones included,
@@ -812,6 +796,24 @@ struct UiaFocusReading {
     /// The elements of the focuses the reading threads accepted, by how
     /// Core judged them, which they share.
     held_elements: HeldElements,
+    /// Whether a backend override forcing UIA holds, per application, each
+    /// shared with that application's readers
+    /// ([`SupervisorToOutpost::SetBackendOverride`]).
+    forced_uia: Mutex<HashMap<Pid, Arc<AtomicBool>>>,
+}
+
+impl UiaFocusReading {
+    /// Whether a backend override forcing UIA holds for `pid`, shared with
+    /// its readers.
+    fn forced_uia(&self, pid: Pid) -> Arc<AtomicBool> {
+        Arc::clone(
+            self.forced_uia
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(pid)
+                .or_default(),
+        )
+    }
 }
 
 impl Reading for UiaFocusReading {
@@ -828,9 +830,12 @@ impl Reading for UiaFocusReading {
     );
     type Reader = FocusReader;
 
-    fn reader(&self, _pid: Pid) -> Option<FocusReader> {
+    fn reader(&self, pid: Pid) -> Option<FocusReader> {
         match FocusReader::new(self.held_elements.clone()) {
-            Ok(reader) => Some(reader),
+            Ok(mut reader) => {
+                reader.share_forced_uia(self.forced_uia(pid));
+                Some(reader)
+            }
             Err(error) => {
                 tracing::warn!(%error, "a reading thread could not create a UIA client");
                 None
@@ -905,16 +910,12 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged) {
+    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged, placed: Option<isize>) {
         if let Some(reason) = judged.dropped_reason() {
-            tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
+            tracing::debug!(%pid, marker = meta.marker, reason, ?placed, "UIA focus dropped");
         }
         self.outgoing
-            .focus_read(pid, judged.into_fact(meta.marker, meta.kind), meta);
-    }
-
-    fn focus_missing(&self, missing: Missing) {
-        self.outgoing.focus_missing(missing);
+            .focus_read(pid, judged.into_fact(meta.marker, meta.kind, placed), meta);
     }
 }
 
@@ -962,7 +963,7 @@ impl Listener {
     /// failure is reported as a fault, before the announcement. Every UIA
     /// event is dropped until `install` returns
     /// ([`Outgoing::uia_event_process`]); a `WinEvent` focus whose UIA
-    /// focus is dropped meanwhile is left to the gap record.
+    /// focus is dropped meanwhile is left to its outpost's gap record.
     ///
     /// The applications in `hooks_in` have outposts with their own hooks
     /// in already: none of their `WinEvent`s is forwarded, and each outpost
@@ -992,13 +993,11 @@ impl Listener {
             UiaFocusReading {
                 outgoing: Arc::clone(&outgoing),
                 held_elements: held_elements.clone(),
+                forced_uia: Mutex::default(),
             },
             READ_DEADLINE,
             MOVED_ON_GRACE,
         ));
-        for &(pid, _) in hooks_in {
-            readers.hook_installed(pid);
-        }
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
         let make_handlers: MakeHandlers = Arc::new(move || {
@@ -1040,7 +1039,7 @@ impl Listener {
                     // Forwarded first, so the event's observation time is
                     // taken before anything else the callback does; its
                     // window's class, read to route it, tells a console.
-                    let console = forward_msaa_event(&outgoing, &foreground_readers, event);
+                    let console = forward_msaa_event(&outgoing, event);
                     if let Some(front) = foreground {
                         let step = watch.borrow_mut().foreground(Front { console, ..front });
                         foreground_step(&outgoing, step);
@@ -1129,8 +1128,9 @@ impl Listener {
 
     /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
     /// its count is always zero), takes the hand-over's news of outposts'
-    /// hooks, starts the idle barrier's round ([`Self::idle_query`]), and
-    /// ignores everything else. An application with no outpost
+    /// hooks, takes a backend override forcing UIA for an application, so
+    /// its readers skip nothing by class, starts the idle barrier's round
+    /// ([`Self::idle_query`]), and ignores everything else. An application with no outpost
     /// any more has its reading thread ended too
     /// ([`Readers::outpost_ended`]). `received_at_us` is when the command
     /// was read off Core's pipe: the hop from verbatim.exe's write is
@@ -1150,11 +1150,26 @@ impl Listener {
             SupervisorToOutpost::HookInstalled { pid, outpost, .. } => {
                 self.outgoing
                     .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
-                self.readers.hook_installed(*pid);
             }
             SupervisorToOutpost::HookRemoved { pid, .. } => {
                 self.outgoing.hook_removed(*pid);
+                // The override is its outpost's, and ends with it.
+                self.readers
+                    .reading()
+                    .forced_uia(*pid)
+                    .store(false, Ordering::Relaxed);
                 self.readers.outpost_ended(*pid);
+            }
+            SupervisorToOutpost::SetBackendOverride {
+                backend_override,
+                pid: Some(pid),
+            } => {
+                let forced = *backend_override == Some(Backend::Uia);
+                tracing::info!(%pid, forced, "a backend override forcing UIA for an application");
+                self.readers
+                    .reading()
+                    .forced_uia(*pid)
+                    .store(forced, Ordering::Relaxed);
             }
             SupervisorToOutpost::CoreFocus { judged, focus, .. } => self.held_elements.core_focus(
                 *judged,
@@ -1365,8 +1380,11 @@ fn queue_for_reading(
             // (`focus_read::gap_answer`).
             outgoing.focus_read(
                 pid,
-                Judged::Dropped("its element could not be kept for its read")
-                    .into_fact(meta.marker, kind),
+                Judged::Dropped("its element could not be kept for its read").into_fact(
+                    meta.marker,
+                    kind,
+                    None,
+                ),
                 meta,
             );
         }
@@ -1490,16 +1508,10 @@ fn install_desktop_subscriptions(
 /// that process's outpost has its own hook in and took it in itself
 /// ([`Outgoing::fact`]). Drops a null window or a pid-zero owner; the raw
 /// object address is forwarded untouched, and the app outpost does the
-/// acquisition. A focus or foreground event is also given to the gap
-/// records (`readers`, [`Readers::observed`]), with its window's top-level
-/// window, one local `GetAncestor`. Returns whether the event's window is
-/// a console host window, by the class read to route it; `false` for an
-/// event dropped before that read, whose window is null or has no owner.
-fn forward_msaa_event(
-    outgoing: &Outgoing,
-    readers: &Readers<UiaFocusReading>,
-    event: WinEvent,
-) -> bool {
+/// acquisition. Returns whether the event's window is a console host
+/// window, by the class read to route it; `false` for an event dropped
+/// before that read, whose window is null or has no owner.
+fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
     // The observation, before the callback's local reads, which the
     // listener's handling stage then holds.
     let observed_at_us = outgoing.now();
@@ -1564,15 +1576,6 @@ fn forward_msaa_event(
         Some(WinEventStamp { thread, time }),
         observed_at_us,
     );
-    if matches!(kind, WinEventKind::Focus | WinEventKind::Foreground) {
-        readers.observed(Observed {
-            pid: Pid(pid),
-            window: hwnd,
-            top_level: top_level_of(hwnd),
-            observed_at_us,
-            focus: kind == WinEventKind::Focus,
-        });
-    }
     console
 }
 
@@ -1878,7 +1881,7 @@ mod tests {
         outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 2 }, meta(2));
         outgoing.focus_read(
             Pid(5),
-            Judged::Dropped("read").into_fact(1, FocusEvent::Focus),
+            Judged::Dropped("read").into_fact(1, FocusEvent::Focus, None),
             meta(1),
         );
         outgoing.focus_read(
@@ -1886,7 +1889,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 2,
                 focus: true,
-                on_verdict: None,
+                answer: crate::protocol::GapAnswer::LeavesOpen,
             },
             meta(2),
         );
@@ -1905,12 +1908,12 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    on_verdict: None,
+                    answer: crate::protocol::GapAnswer::LeavesOpen,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,
                     focus: true,
-                    on_verdict: None,
+                    answer: crate::protocol::GapAnswer::LeavesOpen,
                 },
             ]
         );
@@ -2442,7 +2445,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 1,
                 focus: true,
-                on_verdict: None,
+                answer: crate::protocol::GapAnswer::LeavesOpen,
             },
             meta,
         );

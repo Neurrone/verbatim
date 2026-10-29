@@ -239,7 +239,7 @@ fn focus_search_box(
         .expect("the search")
         .expect("the search box");
     let (judged, _) = outpost.listener_read(&focused);
-    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
     // The search box has no text pattern in mockapp.
     let search = match outpost.next() {
         OutpostToSupervisor::Event {
@@ -532,7 +532,7 @@ fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
             "Sound settings",
         )),
     });
-    outpost.deliver(judged.into_fact(1, FocusEvent::Focus));
+    outpost.deliver(judged.into_fact(1, FocusEvent::Focus, None));
 
     let search = match outpost.next() {
         OutpostToSupervisor::Event {

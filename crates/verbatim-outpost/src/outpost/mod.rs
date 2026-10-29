@@ -37,6 +37,8 @@ pub(crate) mod acceptance;
 mod alarm;
 mod caret_poll;
 mod focus_path;
+mod gap_record;
+mod gap_timer;
 mod handover;
 mod held;
 mod intake;
@@ -83,6 +85,7 @@ use crate::supervisor::Target;
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
 
+pub use gap_timer::GapTimer;
 use intake::{Entry, EventElement, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
 use worker::{Tracking, Watch};
@@ -195,11 +198,20 @@ pub(crate) struct Context {
     /// read the first time a focus in its console window is reported.
     application_names: Mutex<ApplicationNames>,
     outbound: Outbound,
-    intake: Intake,
+    intake: Arc<Intake>,
+    /// What times the gap record's bound ([`gap_timer`]): the outpost's
+    /// threadpool timer, unless a test sets its own
+    /// ([`Outpost::set_gap_timer`]).
+    gap_timer: Mutex<Arc<dyn GapTimer>>,
     watch: Watch,
     uia_registry: UiaRegistry,
     msaa_registry: MsaaRegistry,
     arbitrator: Mutex<Arbitrator>,
+    /// The clock the outpost's own hook and subscriptions stamp their
+    /// events' observations with, and its arbitrator its verdicts' keeps
+    /// by: the run's shared clock, unless a test sets its own
+    /// ([`Outpost::set_observation_clock`]).
+    observation: OnceLock<crate::arbitration::ObservationClock>,
     tracking: Mutex<Tracking>,
     /// The focus Core holds, and the focuses this outpost reported that
     /// Core has not judged, which events are judged against before they are
@@ -292,7 +304,7 @@ pub(crate) struct Context {
     override_changes: AtomicU64,
     /// When the first of the focus listener's UIA focuses reached this
     /// outpost, its read or its drop as a focus, on the run's clock in
-    /// microseconds, 0 before any: the read for focus-missing logs whether
+    /// microseconds, 0 before any: the gap's read logs whether
     /// one came before the copy's observation (`uia_focus_before`).
     first_uia_focus_us: AtomicU64,
     /// What nudges the event thread, which decides whether the hook is
@@ -395,6 +407,47 @@ impl Context {
         self.arbitrator
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Does what a change to the gap record asked of its timer: sets it for
+    /// a record opened, cancels it for one answered.
+    fn gap_timer(&self, action: intake::TimerAction) {
+        let timer = Arc::clone(
+            &self
+                .gap_timer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        match action {
+            intake::TimerAction::Keep => {}
+            intake::TimerAction::Set(due_us) => timer.set(due_us),
+            intake::TimerAction::Cancel => timer.cancel(),
+        }
+    }
+
+    /// [`gap_timer`](Self::gap_timer) for an entry pushed: and, when a UIA
+    /// focus's outcome answered the gap record as it resolved its marker
+    /// while the idle barrier's query waits on that record, a wake for the
+    /// worker, which answers the query after an entry
+    /// ([`worker::answer_idle`]); a drop resolved without a read leaves the
+    /// worker nothing else to handle. Only the idle barrier's rounds pay
+    /// that wake.
+    fn pushed_with_gap_timer(&self, action: intake::TimerAction) {
+        self.gap_timer(action);
+        if action == intake::TimerAction::Cancel && self.idle_query().is_some() {
+            let _ = self.intake.push(Entry {
+                item: Item::Wake,
+                trace: TraceId::mint(),
+                observed_at_us: now_us(),
+                timing: EventTiming::default(),
+            });
+        }
+    }
+
+    /// Now on the clock the outpost stamps its own events' observations
+    /// with ([`Outpost::set_observation_clock`]).
+    fn observed_now(&self) -> u64 {
+        self.observation.get().map_or_else(now_us, |clock| clock())
     }
 
     /// The outpost's clock ([`Outpost::set_clock`]), which its classic
@@ -516,7 +569,7 @@ impl Context {
 
     /// Records that the worker is reading `node`'s caret now.
     fn caret_read(&self, node: NodeId) {
-        self.caret_read_from(node, now_us());
+        self.caret_read_from(node, self.observed_now());
     }
 
     /// Notes that a read of `node`'s caret began at `started_us`, for a
@@ -587,12 +640,13 @@ impl Context {
     }
 
     fn push(&self, item: Item, trace: TraceId, observed_at_us: u64, timing: EventTiming) {
-        self.intake.push(Entry {
+        let timer = self.intake.push(Entry {
             item,
             trace,
             observed_at_us,
             timing,
         });
+        self.pushed_with_gap_timer(timer);
     }
 
     /// Queues an event one of the outpost's own handlers took in, observed
@@ -752,7 +806,10 @@ impl Context {
                     return;
                 }
             }
-            _ => self.intake.push(entry()),
+            _ => {
+                let timer = self.intake.push(entry());
+                self.pushed_with_gap_timer(timer);
+            }
         }
         // The event thread takes the application's focus and foreground
         // windows from these until its own hook delivers them.
@@ -971,15 +1028,19 @@ impl Outpost {
         let id_counter = Arc::new(AtomicU64::new(1));
         let anchor_counter = Arc::new(AtomicU64::new(0));
         let held_anchors = HeldAnchors::default();
+        let intake = Arc::new(Intake::default());
+        let gap_timer = gap_timer::for_intake(&intake);
         let context = Arc::new(Context {
             target_pid: AtomicU32::new(0),
             application_names: Mutex::default(),
             outbound,
-            intake: Intake::default(),
+            intake,
+            gap_timer: Mutex::new(gap_timer),
             watch: Watch::default(),
             uia_registry: UiaRegistry::new(Arc::clone(&id_counter)),
             msaa_registry: MsaaRegistry::new(id_counter),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
+            observation: OnceLock::new(),
             tracking: Mutex::new(Tracking::default()),
             held: Mutex::new(held::Held::default()),
             bounded: verbatim_uia::BoundedClient::default(),
@@ -1049,7 +1110,7 @@ impl Outpost {
                     take_in_hooked(
                         event,
                         &mut *state,
-                        now_us,
+                        || context.observed_now(),
                         |state, event| {
                             if event.kind == WinEventKind::Destroy {
                                 state.windows.forget(event.hwnd);
@@ -1256,14 +1317,51 @@ impl Outpost {
         self.context.failed_reads()
     }
 
-    /// Reads the time for arbitration's kept verdicts and for the time
-    /// budgets of the outpost's classic walks from `clock` from now on, in
-    /// place of the system's ([`Arbitrator::set_clock`]): a test that counts
-    /// an operation's calls decides when a window's verdict of no UIA
-    /// provider runs out and its probe is made again, and when a walk's
-    /// time is up, however long its calls take.
+    /// Reads the time for the time budgets of the outpost's classic walks
+    /// from `clock` from now on, in place of the system's
+    /// ([`Arbitrator::set_clock`]): a test that counts an operation's calls
+    /// decides when a walk's time is up, however long its calls take.
     pub fn set_clock(&self, clock: crate::arbitration::Clock) {
         self.context.arbitrator().set_clock(clock);
+    }
+
+    /// Times the gap record's bound with `timer` from now on, in place of
+    /// the outpost's threadpool timer: a test says when the bound is
+    /// reached ([`gap_bound_reacher`](Self::gap_bound_reacher)) rather than
+    /// waiting for it.
+    pub fn set_gap_timer(&self, timer: Arc<dyn GapTimer>) {
+        *self
+            .context
+            .gap_timer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = timer;
+    }
+
+    /// What reaches the gap record's bound, as the outpost's timer reaches
+    /// it when it fires, from any thread: its entry is queued behind every
+    /// marker queued before it. It does nothing once the outpost is gone.
+    #[must_use]
+    pub fn gap_bound_reacher(&self) -> Arc<dyn Fn() + Send + Sync> {
+        let intake = Arc::downgrade(&self.context.intake);
+        Arc::new(move || {
+            if let Some(intake) = intake.upgrade() {
+                intake.push_gap_bound();
+            }
+        })
+    }
+
+    /// Stamps the observation of every event the outpost's own hook and
+    /// subscriptions take in with `clock` from now on, in place of the
+    /// run's shared clock, and times its verdicts' keeps by it: a test that
+    /// counts an operation's calls says when a window's verdict of no UIA
+    /// provider runs out and its probe is made again, by moving that time
+    /// on, since a verdict is compared with the observation of the event it
+    /// judges. Set once; a later call changes nothing.
+    pub fn set_observation_clock(&self, clock: crate::arbitration::ObservationClock) {
+        self.context
+            .arbitrator()
+            .set_observation_clock(Arc::clone(&clock));
+        let _ = self.context.observation.set(clock);
     }
 
     /// Reads the foreground window with `reader` from now on, in place of
@@ -1311,7 +1409,9 @@ impl Outpost {
     pub fn handle_command(&self, command: &SupervisorToOutpost) {
         let context = &self.context;
         match command {
-            SupervisorToOutpost::SetBackendOverride { backend_override } => {
+            SupervisorToOutpost::SetBackendOverride {
+                backend_override, ..
+            } => {
                 context.set_backend_override(*backend_override);
             }
             SupervisorToOutpost::DeliverFact {
@@ -1577,7 +1677,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                 Item::Uia(capture_property(event, property_id)),
                 Heard::UiaProperty(property_id),
                 EventTiming {
-                    observed_at_us: now_us(),
+                    observed_at_us: property_context.observed_now(),
                     ..EventTiming::default()
                 },
             );
@@ -1595,7 +1695,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                 Item::Uia(capture_text(event, kind)),
                 heard,
                 EventTiming {
-                    observed_at_us: now_us(),
+                    observed_at_us: text_context.observed_now(),
                     ..EventTiming::default()
                 },
             );
@@ -1619,7 +1719,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                     Item::Uia(capture_text(event, UiaKind::ActiveTextPosition(range))),
                     Heard::UiaActiveTextPosition,
                     EventTiming {
-                        observed_at_us: now_us(),
+                        observed_at_us: position_context.observed_now(),
                         ..EventTiming::default()
                     },
                 );

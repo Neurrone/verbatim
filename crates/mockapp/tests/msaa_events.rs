@@ -1085,9 +1085,12 @@ fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
     let outpost = OutpostUnderTest::new(&app);
 
     outpost.set_foreground(hwnd);
-    outpost.deliver(DeliveredFact::Foreground {
-        hwnd: hwnd.0 as isize,
-    });
+    outpost.deliver_stamped(
+        DeliveredFact::Foreground {
+            hwnd: hwnd.0 as isize,
+        },
+        0,
+    );
     let (observed, first_observed) = focus_stamp(&outpost);
     assert_eq!(first_observed, 0, "the fact carried no observation");
     assert_ne!(observed, 0, "the confirmation is stamped");

@@ -1,0 +1,9 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp MSAA Class Window Fixture",
+  "window_class": "MozillaWindowClass",
+  "children": [
+    { "id": "btn1", "role": "button", "name": "Original Name", "states": ["focusable"] }
+  ]
+}

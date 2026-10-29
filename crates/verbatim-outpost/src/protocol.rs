@@ -272,30 +272,27 @@ impl ListenerFact {
     }
 }
 
-/// A UIA focus the listener dropped on its own verdict on its nearest
-/// window (`docs/design/focus-pipeline-rework.md`, "Who owns each
-/// duplicated fact", the verdicts): the outpost judges the window with its
-/// own verdict, and in a window it judges UIA reads its application's focus
-/// at once, in the drop's place; in one it judges MSAA its MSAA focus
-/// speaks. It goes on the pipe as JSON; the listener, the supervisor and
-/// the outposts are one build of this definition, so it needs no version.
+/// What a UIA focus's outcome says of its application's gap record, the
+/// outpost's wait, after a `WinEvent` focus it dropped because it judged
+/// the window UIA, for a UIA focus that answers it
+/// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+/// fact", the gap's evidence). The listener computes it from each drop
+/// and sends it with the drop; the outpost places a read itself. It goes
+/// on the pipe as JSON; the listener, the supervisor and the outposts are
+/// one build of this definition, so it needs no version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerdictDrop {
-    /// The focus's nearest window, which the listener judged.
-    pub window: isize,
-    /// The listener's verdict on it.
-    pub verdict: DroppedVerdict,
-}
-
-/// The listener's verdict on the window a focus was dropped on
-/// ([`VerdictDrop`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DroppedVerdict {
-    /// The window does not use UIA.
-    NotUia,
-    /// The window did not answer the raw probe in time, so its backend is
-    /// not known; the listener keeps nothing of it.
-    Unknown,
+pub enum GapAnswer {
+    /// It answers a copy in the top-level window given, or, with `None`,
+    /// a copy in any window of the application.
+    Answers(Option<isize>),
+    /// It answers a copy in any window of the application, which is to be
+    /// read at once in its place: the event came, and its sender has no
+    /// window above it, as a sender gone before its read has, so the event
+    /// for where the focus went may never come
+    /// (`docs/design/listener-without-connections.md`, risk 13).
+    ReadsNow,
+    /// It leaves the record open.
+    LeavesOpen,
 }
 
 /// A fact the supervisor delivers to a target outpost (decision D13): what
@@ -328,34 +325,22 @@ pub enum DeliveredFact {
     },
     /// The UIA focus event `marker` names is not reported: its element had
     /// lost the keyboard focus when it was read, as NVDA drops such an
-    /// event, or its window was hung, a shell window that only stages a
-    /// switch, or the console window's own; or its read did not return in
-    /// time.
+    /// event, or its window was hung, the console window's own, or of a
+    /// class on NVDA's MSAA list; or its read did not return in time.
     UiaFocusDropped {
         /// The marker the drop resolves.
         marker: u64,
         /// Whether the event dropped was a focus rather than a menu
         /// opening, a selection, or a notification.
         focus: bool,
-        /// For a focus dropped on the listener's verdict on its nearest
-        /// window, that window and the verdict, which the outpost judges
-        /// with its own; `None` for any other drop.
-        on_verdict: Option<VerdictDrop>,
+        /// What the drop says of its application's gap record, placed in
+        /// the top-level window of the window its read found.
+        answer: GapAnswer,
     },
     /// The focus listener that sent the markers still waiting has ended:
     /// none of them will be resolved, so none is waited for any more. Made
     /// by the supervisor when it replaces the listener.
     UiaFocusReadsEnded,
-    /// No UIA focus answered a `WinEvent` focus in `window`, an
-    /// application's oldest such copy, within the listener's bound
-    /// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-    /// fact", the gap's evidence): stamped with the copy's observation, it
-    /// has the outpost read its application's focus when its own verdict
-    /// for `window` is UIA, and do nothing otherwise.
-    FocusMissing {
-        /// The copy's window.
-        window: isize,
-    },
     /// An MSAA focus change: the raw `WinEvent` address.
     MsaaFocus {
         /// The event's window handle.
@@ -496,11 +481,9 @@ impl DeliveredFact {
 
     /// Whether this fact is part of a UIA focus's read: a marker, the read,
     /// a drop, a marked selection or notification, which resolves its
-    /// marker as a read does, the end of a listener's reads, or the
-    /// listener's word that no UIA focus answered a `WinEvent` focus. The
+    /// marker as a read does, or the end of a listener's reads. The
     /// supervisor relays these in order and never drops one, since an
-    /// outpost waits on a marker until its read or drop arrives, and
-    /// focus-missing is sent once for its copy.
+    /// outpost waits on a marker until its read or drop arrives.
     #[must_use]
     pub fn is_focus_read(&self) -> bool {
         matches!(
@@ -510,7 +493,6 @@ impl DeliveredFact {
                 | DeliveredFact::UiaFocusDropped { .. }
                 | DeliveredFact::UiaMarked { .. }
                 | DeliveredFact::UiaFocusReadsEnded
-                | DeliveredFact::FocusMissing { .. }
         )
     }
 
@@ -523,16 +505,13 @@ impl DeliveredFact {
     /// notification only from the focus's application, and an application
     /// with no outpost cannot hold the focus, as NVDA drops a background
     /// application's notification. A focus's drop and the end of a
-    /// listener's reads resolve only markers an outpost already holds, and
-    /// focus-missing is sent only for an application whose outpost has its
-    /// hook in.
+    /// listener's reads resolve only markers an outpost already holds.
     #[must_use]
     pub fn may_start_outpost(&self) -> bool {
         match self {
             DeliveredFact::UiaSelection { .. }
             | DeliveredFact::UiaFocusDropped { .. }
-            | DeliveredFact::UiaFocusReadsEnded
-            | DeliveredFact::FocusMissing { .. } => false,
+            | DeliveredFact::UiaFocusReadsEnded => false,
             DeliveredFact::UiaNotification { notification, .. } => {
                 notification.activity_id.as_deref() == Some(verbatim_core::SNAP_RESULTS_ACTIVITY)
             }
@@ -574,7 +553,6 @@ impl DeliveredFact {
             | DeliveredFact::UiaFocusRead { .. }
             | DeliveredFact::UiaFocusDropped { .. }
             | DeliveredFact::UiaFocusReadsEnded
-            | DeliveredFact::FocusMissing { .. }
             | DeliveredFact::UiaMarked { .. } => return None,
             DeliveredFact::UiaNotification {
                 snapshot,
@@ -648,10 +626,19 @@ pub enum FactKey {
 pub enum SupervisorToOutpost {
     /// Forces one backend for every window of the target application,
     /// overriding arbitration; used by tests and per-app config overrides.
-    /// `None` restores normal arbitration.
+    /// `None` restores normal arbitration. One forcing UIA is sent to the
+    /// focus listener too, naming the application, so that its reads skip
+    /// no focus of that application by its window's class, the outpost then
+    /// counting every UIA focus (`docs/design/focus-pipeline-rework.md`,
+    /// the verdicts); sent as two messages, the two processes can differ
+    /// while one is in flight.
     SetBackendOverride {
         /// The forced backend, or `None` for normal arbitration.
         backend_override: Option<Backend>,
+        /// For the focus listener, the application the override is for;
+        /// `None` to an outpost, whose application it is.
+        #[serde(default)]
+        pid: Option<Pid>,
     },
     /// Delivers a focus fact the focus listener captured, for this outpost's
     /// target application (decision D13), threading the listener's
@@ -1794,7 +1781,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,
-                on_verdict: None,
+                answer: GapAnswer::LeavesOpen,
             },
             DeliveredFact::UiaFocusReadsEnded,
         ] {
@@ -1954,7 +1941,7 @@ mod tests {
             !DeliveredFact::UiaFocusDropped {
                 marker: 1,
                 focus: true,
-                on_verdict: None,
+                answer: GapAnswer::LeavesOpen,
             }
             .may_start_outpost()
         );

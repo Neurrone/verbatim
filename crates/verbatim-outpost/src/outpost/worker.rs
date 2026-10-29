@@ -50,8 +50,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
-    DeliveredFact, DroppedVerdict, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor,
-    Query, QueryOutcome, QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
+    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
+    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
 };
 
 use super::Context;
@@ -59,8 +59,9 @@ use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
 use super::caret_poll::{self, AfterRead, Poll};
 use super::focus_path::{self, FocusPath};
+use super::gap_record::{CopyDropped, GapRead};
 use super::held;
-use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of};
+use super::intake::{Entry, Handling, Item, Object, TimerAction, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
@@ -622,6 +623,9 @@ fn watchdog(context: &Arc<Context>) {
         let running = state.abandon();
         let abandoned = context.watch.abandoned.fetch_add(1, Ordering::Relaxed) + 1;
         let generation = state.generation;
+        // Under the watch lock, as the abandonment: from now on only the
+        // new worker records a verdict.
+        context.arbitrator().set_in_charge(generation);
         // Nothing is sent while the lock is held. The abandoned worker can
         // no longer publish, and its replacement is not started yet, so the
         // answer still comes before anything the replacement says.
@@ -689,20 +693,19 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
 
 /// Answers the idle barrier's query the worker has reached
 /// ([`Item::IdleQuery`]) once no deferred work is pending: no caret key's
-/// watch is open and no terminal owes Core a read. The listener answers
-/// its own round only once every gap record opened before it is answered
-/// or sent as focus-missing (`focus_read::Readers::when_idle`), so a read
-/// for focus-missing is queued ahead of the query. Called by the worker in
-/// charge after each entry, so the answer goes as soon as the entry that
-/// ends the watch is handled, behind what that entry published.
-fn answer_idle(context: &Context) {
+/// watch is open, no terminal owes Core a read, and the gap record is
+/// closed, so the gap's read, if one is made, goes ahead of the answer.
+/// Called by the worker in charge after each entry, so the answer goes as
+/// soon as the entry that ends the watch or closes the record is handled,
+/// behind what that entry published.
+pub(super) fn answer_idle(context: &Context) {
     if context.idle_query().is_none() {
         return;
     }
     // Neither lock is held across a call into the application, so a worker
     // abandoned in a terminal's read, which holds the terminals' lock,
     // cannot hold the answer back.
-    if context.caret_watch().is_some() {
+    if context.caret_watch().is_some() || context.intake.gap_open() {
         return;
     }
     let answered = context.idle_query().take();
@@ -737,7 +740,12 @@ fn run_entry(
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&entry.item));
     let trace = entry.trace;
     let started = Instant::now();
-    let arbitration_started = context.arbitrator().begin_entry();
+    // Every verdict the entry asks for is judged at its event's
+    // observation, or, for an entry with no event, at its start
+    // (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+    // fact", the verdicts).
+    let judged_at = judged_at(context, &entry);
+    context.arbitrator().begin_entry(judged_at, generation);
     let handled = catch_unwind(AssertUnwindSafe(|| {
         let mut worker = Worker {
             context,
@@ -753,11 +761,7 @@ fn run_entry(
             worker.handle(entry);
         }
     }));
-    {
-        let mut arbitrator = context.arbitrator();
-        let finished = arbitrator.now();
-        arbitrator.renew_probes_since(arbitration_started, finished);
-    }
+    context.arbitrator().end_entry();
     // Calls made after the entry's last publish, or by an entry that
     // published nothing: they belong to no trace.
     let unpublished = take_calls();
@@ -804,6 +808,19 @@ fn run_entry(
     Ok(())
 }
 
+/// The observation `entry`'s verdicts are judged at: its event's, for an
+/// event the outpost's hook or subscriptions took in or a fact the listener
+/// sent; for anything else, which has no event, now, on the arbitrator's
+/// observation clock, the entry's start.
+fn judged_at(context: &Context, entry: &Entry) -> u64 {
+    match entry.item {
+        Item::Msaa { .. } | Item::Uia(_) | Item::Fact(..) if entry.observed_at_us != 0 => {
+            entry.observed_at_us
+        }
+        _ => context.observed_now(),
+    }
+}
+
 /// The deadline for an entry, and the query it answers, if it is one.
 fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
     match &entry.item {
@@ -825,7 +842,9 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::NotedCaret { .. }
         | Item::Settle(_)
         | Item::IdleQuery { .. }
-        | Item::Wake => (HANDLING_DEADLINE, None),
+        | Item::Wake
+        | Item::GapBound
+        | Item::GapRead { .. } => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -855,6 +874,8 @@ fn describe(item: &Item) -> String {
         Item::Settle(_) => "settle".to_owned(),
         Item::IdleQuery { round, .. } => format!("idle query {round}"),
         Item::Wake => "wake".to_owned(),
+        Item::GapBound => "the gap record's bound".to_owned(),
+        Item::GapRead { window } => format!("the gap record's read, window {window}"),
     }
 }
 
@@ -1049,6 +1070,14 @@ impl Worker<'_> {
                 behind_noted,
             } => self.idle_query(round, behind_noted, trace),
             Item::Wake => self.wake(),
+            Item::GapBound => self.gap_bound(trace),
+            Item::GapRead { window } => self.gap_read(
+                GapRead {
+                    window,
+                    stamp_us: observed_at_us,
+                },
+                trace,
+            ),
         }
     }
 
@@ -1293,48 +1322,56 @@ impl Worker<'_> {
         }
     }
 
-    /// The listener's focus-missing (`DeliveredFact::FocusMissing`): no UIA
-    /// focus answered a `WinEvent` focus in `window`, observed at
-    /// `observed_at_us`, within the listener's bound. In a window this
-    /// outpost judges UIA, its application's focus is read with the
-    /// focus-now query's read (`read::focused_control_in`), and reported as
-    /// a UIA focus is; in one it judges MSAA, or that its application no
-    /// longer serves, nothing is done, its MSAA copy having been handled.
-    /// A UIA focus of the same element that comes after the read is
-    /// reported under the same node, which Core takes as a duplicate. Its
-    /// log says whether a listener UIA focus had reached the outpost before
-    /// the copy was observed, to the microsecond (`uia_focus_before`), and
-    /// whether the copy's window was gone as the read began
-    /// (`sender_gone`), which together tell late delivery from a burst of
-    /// gone senders. The focus is stamped with the copy's observation, not
-    /// the time of the read, so Core's stale rule drops it when a focus
-    /// observed after the copy, in a window the user has gone to, was
-    /// applied first.
-    fn focus_missing(&mut self, window: isize, trace: TraceId, observed_at_us: u64) {
-        let context = self.context;
-        let waited_ms = now_us().saturating_sub(observed_at_us) / 1_000;
-        let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
-        let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < observed_at_us;
-        let sender_gone = !window_exists(window);
-        if read::own_window_verdict(context, window) != Some(true) {
-            tracing::debug!(
-                %trace,
-                window,
-                sender_gone,
-                "focus-missing for a window the outpost judges MSAA, or does not serve; nothing is read"
-            );
-            return;
+    /// The gap record's bound's entry ([`Item::GapBound`]): the record, still
+    /// open with its bound passed by the observation clock, is read; one
+    /// whose bound has not passed yet, as when the timer fired a little
+    /// early, has its timer set again for the rest.
+    fn gap_bound(&mut self, trace: TraceId) {
+        match self
+            .context
+            .intake
+            .gap_bound_reached(self.context.observed_now())
+        {
+            Ok(Some(read)) => self.gap_read(read, trace),
+            Ok(None) => {}
+            Err(due_us) => self.context.gap_timer(TimerAction::Set(due_us)),
         }
-        let Some((hwnd, control)) =
-            read::focused_control_in(context, self.client, read::FocusRead::FocusMissing).ok()
-        else {
+    }
+
+    /// The gap's read (`docs/design/focus-pipeline-rework.md`, "Who owns
+    /// each duplicated fact", the gap's evidence): no UIA focus answered a
+    /// `WinEvent` focus this outpost dropped because it judged its window
+    /// UIA, the record's `read.window`, by its bound, or a UIA focus whose
+    /// sender has no window above it came beside it. The application's
+    /// focus is read through UIA only, once, with the focus-now query's read
+    /// and its checks of the foreground thread's focus window before and
+    /// after (`read::gap_focus_read`), and reported as a UIA focus is,
+    /// stamped with the record's stamp, the newest copy or foreground change
+    /// it took, so Core's stale rule drops it when a focus observed after
+    /// that, in a window the user has gone to, was applied first. A UIA
+    /// focus of the same element that comes after the read is reported
+    /// under the same node, which Core takes as a duplicate. Its log says
+    /// whether a listener UIA focus had reached the outpost before the
+    /// record's stamp, to the microsecond (`uia_focus_before`), and whether
+    /// the record's window was gone as the read began (`sender_gone`),
+    /// which together tell late delivery from a burst of gone senders.
+    fn gap_read(&mut self, read: GapRead, trace: TraceId) {
+        let context = self.context;
+        let GapRead { window, stamp_us } = read;
+        let waited_ms = now_us().saturating_sub(stamp_us) / 1_000;
+        let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
+        let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < stamp_us;
+        let sender_gone = !window_exists(window);
+        let found = read::gap_focus_read(context, self.client);
+        let Ok((hwnd, control)) = found else {
             tracing::info!(
                 %trace,
                 window,
                 waited_ms,
                 uia_focus_before,
                 sender_gone,
-                "no UIA focus answered a WinEvent focus in a UIA window; the focus read found none"
+                miss = ?found.err(),
+                "no UIA focus answered a WinEvent focus in a UIA window; the gap's read found none"
             );
             return;
         };
@@ -1347,6 +1384,7 @@ impl Worker<'_> {
         tracing::info!(
             %trace,
             window,
+            focus_window = hwnd,
             waited_ms,
             uia_focus_before,
             sender_gone,
@@ -1358,79 +1396,7 @@ impl Worker<'_> {
         let (node_id, role, backend) = (node.id, node.role, node.backend);
         self.emit_focus(
             trace,
-            observed_at_us,
-            backend,
-            Some(hwnd),
-            node,
-            false,
-            object,
-            (ancestors, selected_child),
-        );
-        self.follow_focus((node_id, role));
-    }
-
-    /// A UIA focus the listener dropped on its own verdict on its nearest
-    /// window, `window` (`verdict`: not UIA, or unknown when the window did
-    /// not answer the listener's probe in time), observed at
-    /// `observed_at_us`: in a window this outpost judges UIA, the two
-    /// processes disagree, and the application's focus is read at once in
-    /// the drop's place with the focus-now read
-    /// (`read::focused_control_in`), as focus-missing's read is made, stamped with
-    /// the dropped event's observation so Core's stale rule judges it as
-    /// that event (`docs/design/focus-pipeline-rework.md`, "Who owns each
-    /// duplicated fact", the verdicts). The drop answered the listener's
-    /// gap record, so the read is made here, once. In a window it judges
-    /// MSAA, the window's MSAA focus speaks for it, and nothing is done.
-    fn focus_dropped_on_verdict(
-        &mut self,
-        window: isize,
-        verdict: DroppedVerdict,
-        trace: TraceId,
-        observed_at_us: u64,
-    ) {
-        let context = self.context;
-        match read::own_window_verdict(context, window) {
-            None => return,
-            Some(false) => {
-                tracing::debug!(
-                    %trace,
-                    window,
-                    ?verdict,
-                    "the listener dropped a UIA focus on its verdict, and the outpost judges the window MSAA too"
-                );
-                return;
-            }
-            Some(true) => {}
-        }
-        let read = read::focused_control_in(context, self.client, read::FocusRead::VerdictDrop);
-        let Ok((hwnd, control)) = read else {
-            tracing::info!(
-                %trace,
-                window,
-                ?verdict,
-                "the listener dropped a UIA focus in a window the outpost judges UIA; the focus read found none"
-            );
-            return;
-        };
-        let FocusedControl {
-            node,
-            ancestors,
-            selected_child,
-            ..
-        } = control;
-        tracing::info!(
-            %trace,
-            window,
-            ?verdict,
-            role = ?node.role,
-            name = ?node.name,
-            "the listener dropped a UIA focus in a window the outpost judges UIA; the focus is read and reported"
-        );
-        let object = object_of(context, &node);
-        let (node_id, role, backend) = (node.id, node.role, node.backend);
-        self.emit_focus(
-            trace,
-            observed_at_us,
+            stamp_us,
             backend,
             Some(hwnd),
             node,
@@ -2405,6 +2371,7 @@ impl Worker<'_> {
         if kind == WinEventKind::Destroy {
             if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
                 self.context.arbitrator().forget(hwnd);
+                self.context.intake.gap_window_destroyed(hwnd);
                 self.context.forget_window(hwnd);
                 // A reused window handle must never inherit these nodes.
                 self.context.msaa_registry.forget_window(hwnd);
@@ -3179,18 +3146,6 @@ impl Worker<'_> {
             DeliveredFact::UiaFocusRead { read, .. } => {
                 self.uia_focus(&read, trace, observed_at_us);
             }
-            DeliveredFact::UiaFocusDropped {
-                on_verdict: Some(dropped),
-                ..
-            } => self.focus_dropped_on_verdict(
-                dropped.window,
-                dropped.verdict,
-                trace,
-                observed_at_us,
-            ),
-            DeliveredFact::FocusMissing { window } => {
-                self.focus_missing(window, trace, observed_at_us);
-            }
             // The intake resolves these; none reaches the worker.
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusDropped { .. }
@@ -3397,6 +3352,15 @@ impl Worker<'_> {
         if !Self::readable(hwnd) {
             return;
         }
+        // Accepted: it restamps the gap record open in its window, so the
+        // record's read after a return carries the return's stamp, or
+        // answers one open in another of the application's top-level
+        // windows, before its window's verdict, whichever it is.
+        let timer =
+            self.context
+                .intake
+                .gap_accepted(hwnd, top_level_of(hwnd), observed_at_us, true);
+        self.context.gap_timer(timer);
         match read::own_window_verdict(self.context, hwnd) {
             None => return,
             Some(true) => {
@@ -3452,12 +3416,21 @@ impl Worker<'_> {
         let Some(uia_owns) = read::own_window_verdict(self.context, hwnd) else {
             return;
         };
+        let top_level = top_level_of(hwnd);
         if uia_owns {
             // UIA owns this window; its UIA fact reports the focus, and the
-            // listener's gap record waits for it.
+            // gap record waits for it.
             tracing::debug!(hwnd, "MSAA focus dropped: UIA owns the window");
+            self.copy_dropped_for_uia((hwnd, top_level), trace, observed_at_us);
             return;
         }
+        // Handled through MSAA, it answers a gap record open in another of
+        // the application's top-level windows.
+        let timer = self
+            .context
+            .intake
+            .gap_accepted(hwnd, top_level, observed_at_us, false);
+        self.context.gap_timer(timer);
         // A control taking the focus raised focus on itself and then on its
         // focused child, and the control's event was already reported as
         // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA reports
@@ -3545,6 +3518,40 @@ impl Worker<'_> {
         }
     }
 
+    /// A focus copy in `window`, of top-level window `top_level`, observed
+    /// at `observed_at_us`, that this outpost dropped because it judges the
+    /// window UIA: it opens the gap record, or restamps the one open in its
+    /// top-level window, unless an answer observed with it stands for it;
+    /// a drop for no window observed with it has the application's focus
+    /// read at once in its place, stamped with its observation
+    /// ([`super::gap_record::GapRecord::copy_dropped`]).
+    fn copy_dropped_for_uia(
+        &mut self,
+        (window, top_level): (isize, isize),
+        trace: TraceId,
+        observed_at_us: u64,
+    ) {
+        let (dropped, timer) =
+            self.context
+                .intake
+                .gap_copy_dropped(window, top_level, observed_at_us);
+        self.context.gap_timer(timer);
+        tracing::debug!(
+            window,
+            ?dropped,
+            "the gap record took a copy dropped for UIA"
+        );
+        if dropped == CopyDropped::ReadNow {
+            self.gap_read(
+                GapRead {
+                    window,
+                    stamp_us: observed_at_us,
+                },
+                trace,
+            );
+        }
+    }
+
     /// Whether an MSAA focus event naming the object at `address` repeats
     /// the focus Core holds (`focus_rules::repeats_focus`): Core holds a
     /// focus of this outpost's, and it and every focus this outpost
@@ -3590,12 +3597,12 @@ impl Worker<'_> {
             // makes it before it queues one
             // (`docs/design/focus-pipeline.md`, section 16.2).
             let reported = Self::uia_focus_window(context, read.hwnd, read.window)?;
-            // The listener read the focus because it judged its window
-            // UIA; the outpost's own verdict decides which backend's
-            // focus counts in each of its windows
+            // The listener makes no backend verdict; the outpost's one
+            // verdict per window decides which backend's focus counts in
+            // each of its windows, judged at the read's observation
             // (`docs/design/focus-pipeline-rework.md`, "Who owns each
-            // duplicated fact", the verdicts): in a window it judges
-            // MSAA, its MSAA focus speaks, and the listener's report is
+            // duplicated fact", the verdicts): in a window it judges not
+            // UIA, its MSAA focus speaks, and the listener's read is
             // dropped.
             let judged_window = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0));
             if let Some(window) = judged_window
@@ -3759,10 +3766,8 @@ impl Worker<'_> {
     }
 
     /// The window a UIA focus is reported in, or [`Dropped`] when the focus
-    /// is in Core's hidden frame. Whether the window uses UIA was decided
-    /// by the listener before it took the focus, as NVDA decides it before
-    /// it takes one (`isNativeUIAElement`; `docs/design/focus-pipeline.md`,
-    /// section 18), and is not decided again here.
+    /// is in Core's hidden frame. Whether the window uses UIA is the
+    /// outpost's verdict, judged by the caller.
     fn uia_focus_window(
         context: &Context,
         fact_hwnd: isize,

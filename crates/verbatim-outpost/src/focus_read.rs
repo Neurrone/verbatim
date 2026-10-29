@@ -15,8 +15,11 @@
 //! - NVDA's focus handler's checks, in its order, before anything of the
 //!   sender is read (`FocusReader::judge_before_reading`;
 //!   `docs/design/focus-pipeline.md`, section 18): a sender whose cached
-//!   window the system reports hung is dropped; one whose nearest window
-//!   does not use UIA, or that has none, is not native and is dropped; a
+//!   window the system reports hung is dropped; one whose nearest window's
+//!   class is on NVDA's MSAA class list, or that has none, is not native
+//!   and is dropped, the window's verdict otherwise being its outpost's
+//!   (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+//!   fact", the verdicts); a
 //!   sender UI Automation counts as the element of the focus Core holds
 //!   (`CompareElements`), while that element still has the keyboard
 //!   focus, read live, is a repeat and is dropped, but only once Core has
@@ -55,14 +58,13 @@
 //! holds, which UIA's transaction timeout, set once for the process, ends
 //! (`verbatim_uia::TRANSACTION_TIMEOUT`); a call that fails ends the read.
 //! The whole read, its checks included, has one time budget,
-//! [`READ_BUDGET`], asked before each of its calls after the first, which
-//! does not count the raw probe's wait ([`Budget`]): once it has passed,
-//! the read makes no more calls and reports what it has read, as the
-//! event's cache gives what it has not, with its ancestors unknown, or
-//! drops the event when its window is not yet judged. A watchdog abandons
-//! a thread whose read runs past [`READ_DEADLINE`], the budget, the
-//! probe's wait, and the one call that can be under way when the budget
-//! passes, and, as NVDA's watchdog cancels a slow call once the user has
+//! [`READ_BUDGET`], asked before each of its calls after the first
+//! ([`Budget`]): once it has passed, the read makes no more calls and
+//! reports what it has read, as the event's cache gives what it has not,
+//! with its ancestors unknown. A watchdog abandons a thread whose read runs
+//! past [`READ_DEADLINE`], the budget and the one call that can be under
+//! way when the budget passes, and, as NVDA's watchdog cancels a slow call
+//! once the user has
 //! moved on (`docs/nvda/main-loop-and-watchdog.md`, "The watchdog:
 //! detection"), a thread whose read of a focus has taken
 //! [`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE) while the
@@ -120,10 +122,7 @@ use verbatim_uia::{
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
-use crate::arbitration::{
-    Arbitrator, Clock, Verdict, known_verdict, window_class_name, window_verdict,
-};
-use crate::gap_record::{Answer, GapRecords, Missing, Observed};
+use crate::arbitration::{ClassVerdict, Clock, WindowClasses, class_verdict, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{
@@ -131,8 +130,7 @@ use crate::outpost::window::{
     window_is_hung,
 };
 use crate::protocol::{
-    DeliveredFact, DroppedVerdict, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
-    VerdictDrop, now_us,
+    DeliveredFact, EventTiming, GapAnswer, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
 };
 use verbatim_core::focus_rules::{RepeatEvidence, repeats_focus};
 
@@ -141,10 +139,7 @@ const MAX_ANCESTORS: u32 = 64;
 
 /// How long one focus event's read, its checks included, may take before
 /// it makes no more calls into the application: asked before each call
-/// after the first, each of which UIA ends after its transaction timeout.
-/// The raw probe's wait, which can be 3 seconds by itself, is not counted
-/// ([`Budget`]), so that the probe of a slow window cannot use up the
-/// budget alone and leave the focus's checks unmade
+/// after the first, each of which UIA ends after its transaction timeout
 /// (`docs/design/listener-without-connections.md`, section 5). A read of
 /// an application that answers takes milliseconds (section 10, step 6),
 /// so only a slow application meets it, and its focus is then reported
@@ -154,11 +149,11 @@ const READ_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a reading thread may take over one focus event before the
 /// watchdog abandons it, and the bound on an application at
-/// [`ABANDONED_LIMIT`], 11 seconds: the [`READ_BUDGET`] of 2 seconds,
-/// the raw probe's wait of up to 3 seconds
-/// ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]), which the budget does not
-/// count, UIA's transaction timeout of 5 seconds for the call that can be
-/// under way when the budget passes, and a second to spare. It bounds
+/// [`ABANDONED_LIMIT`], 8 seconds: the [`READ_BUDGET`] of 2 seconds,
+/// UIA's transaction timeout of 5 seconds for the call that can be under
+/// way when the budget passes, and a second to spare. The listener makes
+/// no probe of its own, so no probe's wait is added
+/// (`docs/design/focus-pipeline-rework.md`, the verdicts). It bounds
 /// how long the application's later events wait behind the read's marker,
 /// whatever the read's calls do.
 ///
@@ -182,19 +177,11 @@ const READ_BUDGET: Duration = Duration::from_secs(2);
 /// call is one provider call, or one remote operation, a single
 /// transaction, is sure to end within it.
 pub(crate) const READ_DEADLINE: Duration = READ_BUDGET
-    .saturating_add(Duration::from_millis(
-        verbatim_uia::RAW_PROBE_TIMEOUT_MS as u64,
-    ))
     .saturating_add(verbatim_uia::TRANSACTION_TIMEOUT)
     .saturating_add(Duration::from_secs(1));
 
 /// One focus read's time budget, [`READ_BUDGET`], on the reader's clock,
-/// asked before each of the read's calls after the first. The raw probe's
-/// wait is not counted: the budget's end moves on by the time the window's
-/// verdict took to decide, up to the console check that may follow the
-/// probe ([`FocusReader::native_window`]), so that for a sender with a
-/// window of its own, whose probe is the read's first call, the budget
-/// starts once the probe has answered.
+/// asked before each of the read's calls after the first.
 ///
 /// It also times each of the read's calls, by the system's clock whatever
 /// the reader's: a call that takes longer than [`SLOW_CALL`] is logged at
@@ -205,9 +192,7 @@ pub(crate) const READ_DEADLINE: Duration = READ_BUDGET
 struct Budget {
     clock: Clock,
     /// When the time is up.
-    end: Cell<Instant>,
-    /// When the window's verdict began to be decided, until it is.
-    verdict_began: Cell<Option<Instant>>,
+    end: Instant,
     /// The call under way, by name, and when it began, by the system's
     /// clock.
     call: Cell<Option<(&'static str, Instant)>>,
@@ -222,8 +207,7 @@ impl Budget {
         let end = clock() + READ_BUDGET;
         Self {
             clock,
-            end: Cell::new(end),
-            verdict_began: Cell::new(None),
+            end,
             call: Cell::new(None),
         }
     }
@@ -252,23 +236,7 @@ impl Budget {
 
     /// Whether the time is up.
     fn out_of_time(&self) -> bool {
-        (self.clock)() >= self.end.get()
-    }
-
-    /// The window's verdict, and with it perhaps the raw probe, begins to
-    /// be decided; its time is not counted.
-    fn verdict_begins(&self) {
-        self.verdict_began.set(Some((self.clock)()));
-    }
-
-    /// The raw probe, if one was made, has answered: the budget's end
-    /// moves on by the time since [`verdict_begins`](Self::verdict_begins),
-    /// once.
-    fn probe_ended(&self) {
-        if let Some(began) = self.verdict_began.take() {
-            let waited = (self.clock)().saturating_duration_since(began);
-            self.end.set(self.end.get() + waited);
-        }
+        (self.clock)() >= self.end
     }
 }
 
@@ -308,10 +276,6 @@ const UNFOCUSED_OUT_OF_TIME: &str =
 /// Why a focus is dropped whose read's time was up before its sender's
 /// nearest window was looked up.
 const OUT_OF_TIME_BEFORE_LOOKUP: &str = "its read ran out of time before its window was looked up";
-
-/// Why a focus is dropped whose read's time was up before its window's
-/// verdict was known.
-const OUT_OF_TIME_BEFORE_JUDGEMENT: &str = "its read ran out of time before its window was judged";
 
 /// What a read does once its window becomes known
 /// ([`WatchedRead::learn`]): judges, as the watchdog would, whether the
@@ -467,20 +431,18 @@ const HIDDEN_FRAME: &str = "Core's hidden frame";
 /// The reason the console window's own element's focus is dropped.
 const CONSOLE_OWN: &str = "the console window's own focus";
 
-/// The reason a focus is dropped whose window does not use UIA.
-const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
-
-/// The reason a focus is dropped whose window did not answer the raw probe
-/// in time, so that its verdict is unknown
-/// (`docs/design/focus-pipeline-rework.md`, the audit's difference 15).
-const UNKNOWN: &str = "its window did not answer the probe in time, so its verdict is unknown";
+/// The reason a focus is skipped whose nearest window's class is on
+/// NVDA's MSAA class list, by the class verdict the outposts' arbitrators
+/// use ([`class_verdict`]), so the outpost judges that window MSAA too.
+pub const MSAA_CLASS: &str =
+    "its window's class is on NVDA's MSAA list, so its MSAA events speak for it";
 
 /// The drops of a focus that are NVDA's checks' verdict on its event, as
 /// its read would have been, which answer its application's gap record
-/// ([`gap_answer`]). A drop on the window's verdict
-/// ([`Judged::DroppedOnVerdict`]) is not among them: it names its window,
-/// which the outpost judges with its own verdict.
-const VERDICTS: [&str; 6] = [
+/// ([`gap_answer`]): the class-list skip among them, since the outpost
+/// judges that window MSAA by the same function.
+const VERDICTS: [&str; 7] = [
+    MSAA_CLASS,
     HUNG,
     COMPARISON_FAILED,
     REPEAT,
@@ -499,11 +461,10 @@ const VERDICTS: [&str; 6] = [
 /// its time ran out as the others' did; so is a nearest window's lookup
 /// that timed out (`docs/design/focus-pipeline-rework.md`, the audit's
 /// difference 14).
-const GAVE_UP: [&str; 6] = [
+const GAVE_UP: [&str; 5] = [
     NOT_IN_TIME,
     WAITED_TOO_LONG,
     OUT_OF_TIME_BEFORE_LOOKUP,
-    OUT_OF_TIME_BEFORE_JUDGEMENT,
     UNFOCUSED_OUT_OF_TIME,
     NEAREST_TIMED_OUT,
 ];
@@ -515,16 +476,6 @@ pub enum Judged {
     Read(Box<UiaFocusRead>),
     /// Not reported, for the reason given.
     Dropped(&'static str),
-    /// Not reported because its nearest window, `window`, does not use UIA
-    /// or its verdict is unknown, by the listener's own verdict
-    /// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-    /// fact", the verdicts): the outpost judges the window with its own.
-    DroppedOnVerdict {
-        /// The focus's nearest window, which was judged.
-        window: isize,
-        /// The verdict it was dropped on.
-        verdict: DroppedVerdict,
-    },
     /// A selection or notification that passed its checks, to be passed on
     /// as it now stands ([`FocusReader::check_fact`]).
     Passed(Box<DeliveredFact>),
@@ -532,9 +483,12 @@ pub enum Judged {
 
 impl Judged {
     /// The fact that resolves marker `marker`, sent for an event of kind
-    /// `kind`, with this outcome.
+    /// `kind`, with this outcome; a drop carries its answer to the
+    /// application's gap record ([`gap_answer`]), placed in the top-level
+    /// window `placed` when its read found one.
     #[must_use]
-    pub fn into_fact(self, marker: u64, kind: FocusEvent) -> DeliveredFact {
+    pub fn into_fact(self, marker: u64, kind: FocusEvent, placed: Option<isize>) -> DeliveredFact {
+        let answer = gap_answer(kind, &self, placed);
         match self {
             Judged::Read(read) => DeliveredFact::UiaFocusRead {
                 marker,
@@ -544,12 +498,7 @@ impl Judged {
             Judged::Dropped(_) => DeliveredFact::UiaFocusDropped {
                 marker,
                 focus: kind == FocusEvent::Focus,
-                on_verdict: None,
-            },
-            Judged::DroppedOnVerdict { window, verdict } => DeliveredFact::UiaFocusDropped {
-                marker,
-                focus: kind == FocusEvent::Focus,
-                on_verdict: (kind == FocusEvent::Focus).then_some(VerdictDrop { window, verdict }),
+                answer,
             },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
         }
@@ -560,91 +509,48 @@ impl Judged {
     pub fn dropped_reason(&self) -> Option<&'static str> {
         match self {
             Judged::Dropped(reason) => Some(reason),
-            Judged::DroppedOnVerdict { verdict, .. } => Some(verdict_reason(*verdict)),
             Judged::Read(_) | Judged::Passed(_) => None,
         }
     }
 }
 
-/// The reason a focus dropped on its window's verdict is logged with.
-fn verdict_reason(verdict: DroppedVerdict) -> &'static str {
-    match verdict {
-        DroppedVerdict::NotUia => NOT_UIA,
-        DroppedVerdict::Unknown => UNKNOWN,
-    }
-}
-
-/// Why a focus is not read: a drop for a reason, or on its window's
-/// verdict, which names the window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NotRead {
-    /// Dropped for this reason.
-    Dropped(&'static str),
-    /// Dropped because its nearest window, the first, does not use UIA or
-    /// has an unknown verdict.
-    Verdict(isize, DroppedVerdict),
-}
-
-impl From<&'static str> for NotRead {
-    fn from(reason: &'static str) -> Self {
-        NotRead::Dropped(reason)
-    }
-}
-
-impl From<NotRead> for Judged {
-    fn from(not_read: NotRead) -> Self {
-        match not_read {
-            NotRead::Dropped(reason) => Judged::Dropped(reason),
-            NotRead::Verdict(window, verdict) => Judged::DroppedOnVerdict { window, verdict },
-        }
-    }
-}
-
-/// Step 2's judgement of window `nearest` with the reading thread's
-/// `arbitrator` ([`window_verdict`]): `Ok` when it uses UIA, and otherwise
-/// the drop, which names the window and whether it does not use UIA or its
-/// probe did not answer in time, the verdict then unknown and nothing kept
-/// of it. `console` is the console check after the probe.
-fn judge_window(
-    arbitrator: &Mutex<Arbitrator>,
-    nearest: isize,
-    console: impl FnOnce() -> Option<bool>,
-) -> Result<isize, NotRead> {
-    match window_verdict(arbitrator, nearest, console) {
-        Verdict::Uia => Ok(nearest),
-        Verdict::NotUia => Err(NotRead::Verdict(nearest, DroppedVerdict::NotUia)),
-        Verdict::Unknown => Err(NotRead::Verdict(nearest, DroppedVerdict::Unknown)),
-    }
+/// Whether a focus whose nearest window has the classes `classes` is
+/// skipped ([`MSAA_CLASS`]): the class verdict every outpost's arbitrator
+/// gives calls it MSAA ([`class_verdict`]), unless a backend override
+/// forcing UIA holds for its application (`forced_uia`).
+fn skipped_by_class(classes: &WindowClasses, forced_uia: bool) -> bool {
+    !forced_uia && class_verdict(classes) == ClassVerdict::NonUia
 }
 
 /// What the outcome `judged` of an event of kind `kind`, placed in the
 /// top-level window `placed` when its read found one, says of its
 /// application's gap record (`docs/design/focus-pipeline-rework.md`, "Who
-/// owns each duplicated fact", the gap's evidence). Only a focus's outcome
-/// answers it. A read, a drop on the listener's verdict on its window, and
-/// a verdict of NVDA's checks ([`VERDICTS`]) answer a copy in their
-/// top-level window, or in any window when the read found none. The
+/// owns each duplicated fact", the gap's evidence), which the drop carries
+/// to the outpost, whose intake keeps the record. Only a focus's outcome
+/// answers it. A read and a verdict of NVDA's checks ([`VERDICTS`]), the
+/// class-list skip among them, answer a copy in their top-level window, or
+/// in any window when the read found none. The
 /// listener giving up on the application ([`GAVE_UP`]) answers a copy in
 /// any window. A drop for no window above the sender ([`NO_WINDOW`])
 /// answers a copy in any window too, which its outpost is to read at once
-/// in its place, as it reads after a drop on its verdict: the focus came
-/// and its sender, gone, cannot be read, and the event for where the focus
+/// in its place: the focus came and its sender, gone, cannot be read, and
+/// the event for where the focus
 /// went may never come (`docs/design/listener-without-connections.md`,
 /// risk 13). Any other drop leaves the record open: one no longer focused
 /// ([`NOT_FOCUSED`]) or replaced by a newer event of its element comes in
 /// fast navigation, where it says nothing of the copy's focus (Dickson,
 /// 2026-10-21), and so do the rest, which could not establish the focus.
 #[must_use]
-pub fn gap_answer(kind: FocusEvent, judged: &Judged, placed: Option<isize>) -> Answer {
+pub fn gap_answer(kind: FocusEvent, judged: &Judged, placed: Option<isize>) -> GapAnswer {
     if kind != FocusEvent::Focus {
-        return Answer::LeavesOpen;
+        return GapAnswer::LeavesOpen;
     }
     match judged {
-        Judged::Read(_) | Judged::DroppedOnVerdict { .. } => Answer::Answers(placed),
-        Judged::Dropped(reason) if VERDICTS.contains(reason) => Answer::Answers(placed),
-        Judged::Dropped(reason) if GAVE_UP.contains(reason) => Answer::Answers(None),
-        Judged::Dropped(reason) if *reason == NO_WINDOW => Answer::ReadsNow,
-        Judged::Dropped(_) | Judged::Passed(_) => Answer::LeavesOpen,
+        Judged::Read(_) => GapAnswer::Answers(placed),
+        Judged::Dropped(reason) if VERDICTS.contains(reason) => GapAnswer::Answers(placed),
+        Judged::Dropped(reason) if GAVE_UP.contains(reason) => GapAnswer::Answers(None),
+        Judged::Dropped(reason) if *reason == NO_WINDOW => GapAnswer::ReadsNow,
+        Judged::Dropped(_) | Judged::Passed(_) => GapAnswer::LeavesOpen,
     }
 }
 
@@ -859,10 +765,13 @@ pub struct FocusReader {
     /// system's, unless a test supplies its own
     /// ([`set_foreground_reader`](Self::set_foreground_reader)).
     foreground: ForegroundReader,
-    /// Which of this application's windows use UIA, for NVDA's native
-    /// check (`isNativeUIAElement`), decided as an outpost decides it
-    /// ([`crate::arbitration::uses_uia`]).
-    arbitrator: Mutex<Arbitrator>,
+    /// The time its classic walk's budget is measured by: the system's,
+    /// unless a test sets its own ([`set_clock`](Self::set_clock)).
+    clock: Clock,
+    /// Whether a backend override forcing UIA is set for this reader's
+    /// application, so no focus is skipped by its window's class
+    /// ([`SupervisorToOutpost::SetBackendOverride`](crate::protocol::SupervisorToOutpost::SetBackendOverride)).
+    forced_uia: Arc<AtomicBool>,
     /// The read under way as the reading threads' watchdog watches it,
     /// told a focus's sender's nearest window once the read finds it, and asked
     /// whether it was abandoned before its focus is accepted
@@ -894,7 +803,8 @@ impl FocusReader {
             number: NEXT_READER.fetch_add(1, Ordering::Relaxed),
             held_elements,
             foreground: Arc::new(crate::outpost::window::foreground_window_handle),
-            arbitrator: Mutex::new(Arbitrator::new(&[])),
+            clock: Arc::new(Instant::now),
+            forced_uia: Arc::default(),
             window: WatchedRead::default(),
         })
     }
@@ -908,25 +818,31 @@ impl FocusReader {
         self.foreground = reader;
     }
 
-    /// Reads the time for its windows' kept verdicts and for the time
-    /// budget of its classic walk from `clock` from now on, in place of the
-    /// system's, as an outpost does (`Outpost::set_clock`): a test that
-    /// counts a read's calls decides when the walk's time is up, however
-    /// long its calls take.
+    /// Reads the time for the time budget of its classic walk from `clock`
+    /// from now on, in place of the system's, as an outpost does
+    /// (`Outpost::set_clock`): a test that counts a read's calls decides
+    /// when the walk's time is up, however long its calls take.
     pub fn set_clock(&mut self, clock: Clock) {
-        self.arbitrator
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_clock(clock);
+        self.clock = clock;
     }
 
     /// The reader's clock ([`set_clock`](Self::set_clock)), which its
     /// classic walk measures its time budget by.
     fn clock(&self) -> Clock {
-        self.arbitrator
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clock()
+        Arc::clone(&self.clock)
+    }
+
+    /// Whether a backend override forcing UIA is set for its application,
+    /// shared with whoever sets it ([`forces_uia`](Self::forces_uia)).
+    pub(crate) fn share_forced_uia(&mut self, forced: Arc<AtomicBool>) {
+        self.forced_uia = forced;
+    }
+
+    /// Sets whether a backend override forcing UIA holds for its
+    /// application: while one does, no focus is skipped by its window's
+    /// class, since the outpost then counts it.
+    pub fn forces_uia(&self, forced: bool) {
+        self.forced_uia.store(forced, Ordering::Relaxed);
     }
 
     /// [`read`](Self::read), or for a selection or a notification, whose
@@ -968,13 +884,13 @@ impl FocusReader {
         // application's elements (decision D6): no call.
         event.details.class_name.clone_from(&fields.role.class_name);
         // The read's one time budget, from here, for its checks and its
-        // read alike, the probe's wait aside.
+        // read alike.
         let budget = Budget::new(self.clock());
         let out_of_time = || budget.out_of_time();
         let nearest =
             match self.judge_before_reading(sender, (&fields, &event.runtime_id), kind, &budget) {
                 Ok(nearest) => nearest,
-                Err(not_read) => return not_read.into(),
+                Err(reason) => return Judged::Dropped(reason),
             };
         let previous = self
             .last
@@ -1308,11 +1224,10 @@ impl FocusReader {
     /// handler and of `shouldAllowUIAFocusEvent`
     /// (`NVDAObjects/UIA/__init__.py`) that needs no call into the
     /// application is made, and one that needs a call is skipped and lets
-    /// the focus through, as NVDA lets it through when such a read fails
+    /// focus through, as NVDA lets it through when such a read fails
     /// (`docs/design/listener-without-connections.md`, section 5). Made:
     /// the hung window (step 1), from the event's cached window; the native
-    /// check (step 2) from the window's verdict when it is known without a
-    /// call, the event dropped when only the probe could decide it
+    /// check (step 2), its window's class alone, with no call
     /// ([`native_window`](Self::native_window)); the acceptance test and
     /// the refusals (steps 4 and 5), local calls; and the sender's keyboard
     /// focus (step 6) from the event's cached `HasKeyboardFocus` in place
@@ -1329,7 +1244,7 @@ impl FocusReader {
         (sender, runtime_id): (&ListenerEvent, &[i32]),
         kind: FocusEvent,
         budget: &Budget,
-    ) -> Result<isize, NotRead> {
+    ) -> Result<isize, &'static str> {
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let out_of_time = || budget.out_of_time();
@@ -1338,7 +1253,7 @@ impl FocusReader {
         // its cached handle only, so a windowless sender is not tested
         // here, and nothing is read live from a hung application.
         if hwnd != 0 && window_is_hung(hwnd) {
-            return Err(HUNG.into());
+            return Err(HUNG);
         }
         // The focus Core holds, as far as the listener holds its element:
         // Core took it from a UIA focus this listener read (decision D14,
@@ -1377,7 +1292,7 @@ impl FocusReader {
                 let same = compare();
                 match (&same, current.as_ref()) {
                     (Some(Err(_)), _) => {
-                        return Err(COMPARISON_FAILED.into());
+                        return Err(COMPARISON_FAILED);
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
                     _ => (
@@ -1424,7 +1339,7 @@ impl FocusReader {
                     same_element: held.is_some(),
                     still_focused,
                 }) {
-                    return Err(REPEAT.into());
+                    return Err(REPEAT);
                 }
                 (nearest, element)
             }
@@ -1446,7 +1361,7 @@ impl FocusReader {
             &windows,
             &RequestedEvents::default(),
         ) {
-            return Err(NOT_RELATED.into());
+            return Err(NOT_RELATED);
         }
         // 5. The refusals of NVDA's object for the sender, before its
         // keyboard focus is read (`shouldAllowUIAFocusEvent` overridden):
@@ -1457,14 +1372,14 @@ impl FocusReader {
         // is the one element whose own window is the console window; the
         // text area has none.
         if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
-            return Err(CONSOLE_OWN.into());
+            return Err(CONSOLE_OWN);
         }
         // A focus in Core's hidden frame, which its outpost drops whatever
         // it is: dropped before it is read, so it never waits for a
         // judgement of Core's that cannot come ([`HeldElements`]). A local
         // read of the window's property.
         if window_belongs_to_hidden_frame(if hwnd != 0 { hwnd } else { window }) {
-            return Err(HIDDEN_FRAME.into());
+            return Err(HIDDEN_FRAME);
         }
         // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
@@ -1493,12 +1408,12 @@ impl FocusReader {
             || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
         if out_of_time() {
             if lacked_by_its_event() {
-                return Err(UNFOCUSED_OUT_OF_TIME.into());
+                return Err(UNFOCUSED_OUT_OF_TIME);
             }
         } else {
             budget.call("the keyboard focus");
             if let Ok(false) = subject.has_keyboard_focus() {
-                return Err(NOT_FOCUSED.into());
+                return Err(NOT_FOCUSED);
             }
         }
         Ok(window)
@@ -1507,52 +1422,45 @@ impl FocusReader {
     /// Step 2: whether the sender, `held`, whose cache reads as `sender`, is
     /// native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
     /// 1575): its nearest window, its own else the nearest ancestor's
-    /// (`getNearestWindowHandle`, one call), must use UIA as NVDA decides
-    /// it (`isUIAWindow`: the class lists, then the window's own provider,
-    /// asked with the raw probe),
-    /// or NVDA ignores the event ("Ignoring for non native element") and
-    /// the window's MSAA events speak for it. A sender with no window
-    /// anywhere above it, or whose walk to one fails, is not native either,
-    /// and NVDA's object for it could not be made without a window ("no
-    /// windowHandle", `NVDAObjects/UIA/__init__.py` 1598 to 1606). Windows
-    /// Terminal's second identity of its terminal can be such an element,
-    /// its island not yet joined to its window (section 16.8). NVDA's two
-    /// exceptions, a `NetUI` container in a Word document and Internet
-    /// Explorer 9's downloads list, are Office's and Internet Explorer's,
-    /// and are not ported. Answers the nearest window.
+    /// (`getNearestWindowHandle`, one call), and that window's class. A
+    /// sender with no window anywhere above it, or whose walk to one fails,
+    /// is not native, and NVDA's object for it could not be made without a
+    /// window ("no windowHandle", `NVDAObjects/UIA/__init__.py` 1598 to
+    /// 1606). Windows Terminal's second identity of its terminal can be
+    /// such an element, its island not yet joined to its window (section
+    /// 16.8). A sender whose nearest window's class is on NVDA's MSAA class
+    /// list, and not on its UIA list or under a shell window, is skipped
+    /// ([`MSAA_CLASS`]), by the class verdict every outpost's arbitrator
+    /// gives ([`class_verdict`]): a function of the window's class names,
+    /// local calls only, so the two processes agree on it, unless a backend
+    /// override forcing UIA holds for the application, which then counts
+    /// that focus. The rest of `isUIAWindow`, the probe and the post-probe
+    /// checks, is the outpost's, whose verdict alone decides which
+    /// backend's focus counts in each window
+    /// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+    /// fact", the verdicts): the listener reads every other focus that
+    /// passes NVDA's checks, and the outpost drops a read in a window it
+    /// judges not UIA. NVDA's two exceptions, a `NetUI` container in a Word
+    /// document and Internet Explorer 9's downloads list, are Office's and
+    /// Internet Explorer's, and are not ported. Answers the nearest window.
     ///
-    /// A console window with a provider is checked, as NVDA checks it, for
-    /// the complete provider of current Windows, from the held sender
-    /// rather than by the window's handle, a connection
-    /// (`docs/design/listener-without-connections.md`, section 3, step 5):
-    /// the sender is the console's text area, known by its cached
-    /// automation id, whose cached Text pattern is read, or the console
-    /// window's own element, under which the text area is found. Any other sender in a console window, of which
-    /// none is known, gets no answer: its focus is dropped as not native,
-    /// and the window is checked again at its next focus.
-    ///
-    /// The read's time, `budget`, is asked before each call here after the
-    /// read's first, `called` saying whether one was made before this
-    /// check; the time the window's verdict takes to decide, the raw
-    /// probe's wait, is not counted. Once it is up, the window's verdict is still taken when it is
-    /// known without a call, from the class lists or a kept verdict; only a
-    /// window whose verdict needs the probe, and so perhaps the console
-    /// check, drops the focus.
+    /// The read's time, `budget`, is asked before the nearest window's
+    /// lookup when `called` says a call was made before this check. The
+    /// class verdict needs no call, so it is made whatever the time.
     fn native_window(
         &self,
         held: &Cached<ListenerEvent>,
         sender: &ListenerEvent,
         budget: &Budget,
-        mut called: bool,
-    ) -> Result<isize, NotRead> {
+        called: bool,
+    ) -> Result<isize, &'static str> {
         let out_of_time = || budget.out_of_time();
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
             if called && out_of_time() {
-                return Err(OUT_OF_TIME_BEFORE_LOOKUP.into());
+                return Err(OUT_OF_TIME_BEFORE_LOOKUP);
             }
-            called = true;
             budget.call("the nearest window");
             let started = Instant::now();
             let nearest = verbatim_uia::nearest_window_lookup(element);
@@ -1568,39 +1476,13 @@ impl FocusReader {
         } else {
             hwnd
         };
-        // The probe and the console check are calls into the application
-        // too; a verdict already known needs neither.
-        if called && out_of_time() {
-            return match known_verdict(&self.arbitrator, nearest) {
-                Some(true) => Ok(nearest),
-                Some(false) => Err(NotRead::Verdict(nearest, DroppedVerdict::NotUia)),
-                None => Err(OUT_OF_TIME_BEFORE_JUDGEMENT.into()),
-            };
+        if skipped_by_class(
+            &WindowClasses::of(nearest),
+            self.forced_uia.load(Ordering::Relaxed),
+        ) {
+            return Err(MSAA_CLASS);
         }
-        // The raw probe, not a connection: the listener connects to no
-        // application's window (`docs/design/listener-without-connections.md`,
-        // section 2).
-        let automation_id = sender.automation_id.as_deref();
-        // The console check follows the probe, and its time counts.
-        let console = || {
-            budget.probe_ended();
-            budget.call("the console check");
-            (automation_id == Some(verbatim_uia::CONSOLE_TEXT_AREA) || hwnd == nearest)
-                .then(|| {
-                    verbatim_uia::held_console_reports_formatting(
-                        &self.uia,
-                        held,
-                        automation_id,
-                        &out_of_time,
-                    )
-                })
-                .flatten()
-        };
-        budget.verdict_begins();
-        budget.call("the window's verdict, by the raw probe if it is not known");
-        let judged = judge_window(&self.arbitrator, nearest, console);
-        budget.probe_ended();
-        judged
+        Ok(nearest)
     }
 
     /// Logs, at debug, what section 16.3 of `docs/design/focus-pipeline.md`
@@ -1750,14 +1632,12 @@ pub(crate) trait Reading: Send + Sync + 'static {
     }
     /// Releases a thread's reader as the thread ends, on that thread.
     fn finish(&self, reader: Option<Self::Reader>);
-    /// Sends what became of an event of `pid`'s. Called under the readers'
-    /// lock, so what one application's events became is sent in the order
-    /// they arrived.
-    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged);
-    /// Sends focus-missing for a gap record whose bound passed unanswered
-    /// ([`GapRecords::take_due`]). Called under the readers' lock, so it
-    /// goes behind the outcome of every event of its application.
-    fn focus_missing(&self, missing: Missing);
+    /// Sends what became of an event of `pid`'s, placed, for its
+    /// application's gap record, in the top-level window `placed` when its
+    /// read found one ([`gap_answer`]). Called under the readers' lock, so
+    /// what one application's events became is sent in the order they
+    /// arrived.
+    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged, placed: Option<isize>);
     /// `window`'s top-level window, 0 for none: a local call
     /// ([`top_level_of`], the default), made outside the readers' lock.
     fn top_level(&self, window: isize) -> isize {
@@ -1839,10 +1719,9 @@ struct ReadersState<J> {
     /// place in that order is the count once it is queued.
     queued: u64,
     /// What runs once every event queued before it has its outcome sent,
-    /// and every gap record opened before it is answered or sent as
-    /// focus-missing, each with the count of events queued and of records
-    /// opened when it was added ([`Readers::when_idle`]), oldest first.
-    idle_waiters: VecDeque<(u64, u64, IdleWaiter)>,
+    /// each with the count of events queued when it was added
+    /// ([`Readers::when_idle`]), oldest first.
+    idle_waiters: VecDeque<(u64, IdleWaiter)>,
     /// How many foreground events the listener's hook has delivered
     /// ([`Readers::foreground_changed`]).
     foregrounds: u64,
@@ -1850,8 +1729,6 @@ struct ReadersState<J> {
     /// would have it judge, or check when its grace ends, so that the
     /// event wakes it ([`Readers::foreground_changed`]).
     wake_on_foreground: bool,
-    /// Each application's gap record, whose bound the watchdog times.
-    gaps: GapRecords,
 }
 
 /// What [`Readers::when_idle`] runs.
@@ -1860,11 +1737,9 @@ pub(crate) type IdleWaiter = Box<dyn FnOnce() + Send>;
 impl<J> ReadersState<J> {
     /// Runs each waiter for which every event queued before it has its
     /// outcome sent, no application having one of those waiting or being
-    /// read, and every gap record opened before it is closed, so that a
-    /// focus read for focus-missing is spoken before the idle barrier's
-    /// answer. Events queued and records opened after a waiter are not
-    /// waited for, so a stream of them cannot hold it back. Called under
-    /// the readers' lock, as outcomes are sent and records close.
+    /// read. Events queued after a waiter are not waited for, so a stream
+    /// of them cannot hold it back. Called under the readers' lock, as
+    /// outcomes are sent.
     fn wake_idle_waiters(&mut self) {
         if self.idle_waiters.is_empty() {
             return;
@@ -1883,11 +1758,10 @@ impl<J> ReadersState<J> {
                 }
             })
             .min();
-        while let Some((before, records, _)) = self.idle_waiters.front()
+        while let Some((before, _)) = self.idle_waiters.front()
             && oldest.is_none_or(|oldest| *before < oldest)
-            && !self.gaps.open_through(*records)
         {
-            if let Some((_, _, waiter)) = self.idle_waiters.pop_front() {
+            if let Some((_, waiter)) = self.idle_waiters.pop_front() {
                 waiter();
             }
         }
@@ -1943,7 +1817,6 @@ impl<R: Reading> Readers<R> {
                 idle_waiters: VecDeque::new(),
                 foregrounds: 0,
                 wake_on_foreground: false,
-                gaps: GapRecords::default(),
             }),
             changed: Condvar::new(),
             failed_reads: AtomicU32::new(0),
@@ -1970,13 +1843,14 @@ impl<R: Reading> Readers<R> {
         let shared = &self.shared;
         let mut state = shared.lock();
         if state.stopping {
-            shared
-                .reading
-                .outcome(pid, meta, Judged::Dropped("the listener is shutting down"));
+            shared.reading.outcome(
+                pid,
+                meta,
+                Judged::Dropped("the listener is shutting down"),
+                None,
+            );
             return;
         }
-        // The application's gap record waits for its reads to finish.
-        state.gaps.reads_queued(pid);
         let app = state.apps.entry(pid).or_insert_with(App::new);
         // An event after its outpost ended: the application runs on, and
         // its thread with it.
@@ -1994,7 +1868,7 @@ impl<R: Reading> Readers<R> {
                     // ([`gap_answer`]).
                     shared
                         .reading
-                        .outcome(pid, waiting.meta, Judged::Dropped(REPLACED));
+                        .outcome(pid, waiting.meta, Judged::Dropped(REPLACED), None);
                 } else {
                     kept.push_back(waiting);
                 }
@@ -2064,9 +1938,6 @@ impl<R: Reading> Readers<R> {
     /// Never waits on a read.
     pub(crate) fn outpost_ended(&self, pid: Pid) {
         let mut state = self.shared.lock();
-        if state.gaps.hook_removed(pid) {
-            state.wake_idle_waiters();
-        }
         let Some(app) = state.apps.get_mut(&pid) else {
             return;
         };
@@ -2089,43 +1960,9 @@ impl<R: Reading> Readers<R> {
         if state.stopping {
             return;
         }
-        let (queued, records) = (state.queued, state.gaps.opened());
-        state.idle_waiters.push_back((queued, records, waiter));
+        let queued = state.queued;
+        state.idle_waiters.push_back((queued, waiter));
         state.wake_idle_waiters();
-    }
-
-    /// `pid`'s outpost has its hook in: its focus `WinEvent`s open gap
-    /// records from now on.
-    pub(crate) fn hook_installed(&self, pid: Pid) {
-        self.shared.lock().gaps.hook_installed(pid);
-    }
-
-    /// The listener's hook observed `event`, a focus or foreground
-    /// `WinEvent`: the gap records it answers elsewhere close, and a focus
-    /// of an application whose outpost has its hook in opens its record,
-    /// unless one is open or a UIA focus already answered it, or is sent
-    /// as focus-missing at once when a UIA focus whose sender had no window
-    /// answered it before it came ([`gap_answer`]). The bound is
-    /// armed here when the application has no UIA event waiting for its
-    /// read or being read, waking the watchdog to time it; otherwise its
-    /// reads arm it as they finish. Never waits on a read.
-    pub(crate) fn observed(&self, event: Observed) {
-        let shared = &self.shared;
-        let mut state = shared.lock();
-        let reads_idle = state
-            .apps
-            .get(&event.pid)
-            .is_none_or(|app| app.running.is_none() && app.queue.is_empty());
-        let observation = state.gaps.observed(event, reads_idle, Instant::now());
-        if let Some(missing) = observation.missing {
-            shared.reading.focus_missing(missing);
-        }
-        if observation.armed {
-            shared.changed.notify_all();
-        }
-        if observation.closed {
-            state.wake_idle_waiters();
-        }
     }
 
     /// A foreground event reached the listener's hook: counted, so the
@@ -2140,6 +1977,11 @@ impl<R: Reading> Readers<R> {
         if state.wake_on_foreground && state.apps.values().any(|app| app.running.is_some()) {
             self.shared.changed.notify_all();
         }
+    }
+
+    /// The work the reading threads do.
+    pub(crate) fn reading(&self) -> &R {
+        &self.shared.reading
     }
 
     /// The failed cached reads the reading threads have made so far.
@@ -2202,13 +2044,11 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
             for queued in waiting {
                 send_outcome(
                     shared,
-                    &mut state.gaps,
                     (pid, queued.meta),
                     Judged::Dropped("no thread to read it"),
                     None,
                 );
             }
-            reads_finished(shared, state, pid);
             state.wake_idle_waiters();
         }
     }
@@ -2222,8 +2062,8 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     while let Some((mut meta, job, window)) = next_job(shared, pid, generation) {
         let judged = shared.reading.read(reader.as_mut(), meta, job, &window);
         // The top-level window of the window the read found, which places
-        // a focus for its application's gap record: a local call, made
-        // before the readers' lock is taken.
+        // a focus's drop for its application's gap record, kept in its
+        // outpost: a local call, made before the readers' lock is taken.
         let placed = (meta.kind == FocusEvent::Focus && window.window() != 0)
             .then(|| shared.reading.top_level(window.window()))
             .filter(|&top| top != 0);
@@ -2240,11 +2080,7 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
         };
         if app.live == Some(generation) {
             app.running = None;
-            let finished = app.queue.is_empty();
-            send_outcome(shared, &mut state.gaps, (pid, meta), judged, placed);
-            if finished {
-                reads_finished(shared, state, pid);
-            }
+            send_outcome(shared, (pid, meta), judged, placed);
             state.wake_idle_waiters();
             continue;
         }
@@ -2384,11 +2220,6 @@ fn abandon_reason(
 /// it and not yet set to be checked when its grace ends, on each foreground
 /// event ([`Readers::foreground_changed`]). So a read with no such evidence
 /// costs the watchdog no wake-up besides its start's.
-///
-/// It also times each application's gap record whose bound is armed
-/// ([`GapRecords`]), waking when one is armed and at its bound, when it
-/// sends focus-missing for a record still unanswered
-/// ([`Reading::focus_missing`]), so no reading thread waits on a record.
 fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
     let mut state = shared.lock();
     loop {
@@ -2396,21 +2227,8 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
             return;
         }
         let now = Instant::now();
-        let missing = state.gaps.take_due(now);
-        if !missing.is_empty() {
-            for missing in missing {
-                tracing::info!(
-                    pid = %missing.pid,
-                    window = missing.window,
-                    observed_at_us = missing.observed_at_us,
-                    "no UIA focus answered a WinEvent focus within its bound; focus-missing is sent"
-                );
-                shared.reading.focus_missing(missing);
-            }
-            state.wake_idle_waiters();
-        }
         let foregrounds = state.foregrounds;
-        let mut due: Option<Instant> = state.gaps.next_due();
+        let mut due: Option<Instant> = None;
         let mut wake_on_foreground = false;
         let mut abandoned = Vec::new();
         let mut waited = Vec::new();
@@ -2526,13 +2344,11 @@ fn drop_waiting<R: Reading>(
     for queued in waiting {
         send_outcome(
             shared,
-            &mut state.gaps,
             (pid, queued.meta),
             Judged::Dropped(WAITED_TOO_LONG),
             None,
         );
     }
-    reads_finished(shared, state, pid);
     state.wake_idle_waiters();
 }
 
@@ -2575,13 +2391,7 @@ fn abandon<R: Reading>(
         tracing::warn!(%pid, abandoned, "a UIA focus read did not return in time; its thread is abandoned");
     }
     let waiting = !app.queue.is_empty();
-    send_outcome(
-        shared,
-        &mut state.gaps,
-        (pid, running.meta),
-        Judged::Dropped(reason),
-        None,
-    );
+    send_outcome(shared, (pid, running.meta), Judged::Dropped(reason), None);
     let Some(app) = state.apps.get_mut(&pid) else {
         return;
     };
@@ -2595,41 +2405,21 @@ fn abandon<R: Reading>(
         } else {
             start(shared, state, pid);
         }
-    } else {
-        reads_finished(shared, state, pid);
     }
     state.wake_idle_waiters();
 }
 
 /// Sends the outcome `judged` of `pid`'s event `meta`, under the readers'
-/// lock, once its answer to the application's gap record in `gaps` is
-/// taken: `placed` is the top-level window the read found, when it found
-/// one ([`gap_answer`]). A record it answers that is to be read at once
-/// is sent as focus-missing behind it.
+/// lock: `placed` is the top-level window the read found, when it found
+/// one, which places a drop's answer to the application's gap record
+/// ([`gap_answer`]).
 fn send_outcome<R: Reading>(
     shared: &Shared<R>,
-    gaps: &mut GapRecords,
     (pid, meta): (Pid, Meta),
     judged: Judged,
     placed: Option<isize>,
 ) {
-    let answer = gap_answer(meta.kind, &judged, placed);
-    let reported = gaps.reported(pid, meta.timing.observed_at_us, answer);
-    if reported.closed {
-        tracing::debug!(%pid, marker = meta.marker, ?answer, "a UIA focus answered its application's gap record");
-    }
-    shared.reading.outcome(pid, meta, judged);
-    if let Some(missing) = reported.missing {
-        shared.reading.focus_missing(missing);
-    }
-}
-
-/// `pid` has no UIA event waiting for its read or being read: a gap record
-/// still open has its bound armed, waking the watchdog to time it.
-fn reads_finished<R: Reading>(shared: &Shared<R>, state: &mut ReadersState<R::Job>, pid: Pid) {
-    if state.gaps.reads_finished(pid) {
-        shared.changed.notify_all();
-    }
+    shared.reading.outcome(pid, meta, judged, placed);
 }
 
 #[cfg(test)]
@@ -2659,9 +2449,8 @@ mod tests {
     /// user has moved on from a window is what `moved_on` says, each
     /// judgement sent to the test. A read the watchdog abandons is told to
     /// `held_elements`, as the listener's reading tells its own. Each read
-    /// is dropped as "read", unless `reads` says it is read; each
-    /// focus-missing is sent to the test; and a window is its own
-    /// top-level window.
+    /// is dropped as "read", unless `reads` says it is read; each fact sent
+    /// is sent to the test; and a window is its own top-level window.
     struct Script {
         outcomes: Mutex<Sender<(Pid, u64, &'static str)>>,
         read_on: Mutex<Sender<(u64, ThreadId)>>,
@@ -2677,7 +2466,7 @@ mod tests {
         /// Whether its reads read their focus, `None`, or drop it, and for
         /// what reason.
         reads: Mutex<Option<&'static str>>,
-        missing: Mutex<Sender<Missing>>,
+        facts: Mutex<Sender<DeliveredFact>>,
     }
 
     /// A read of a focus, for a stand-in read that reads its focus.
@@ -2754,14 +2543,6 @@ mod tests {
             }
         }
 
-        fn focus_missing(&self, missing: Missing) {
-            let _ = self
-                .missing
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .send(missing);
-        }
-
         fn top_level(&self, window: isize) -> isize {
             window
         }
@@ -2796,12 +2577,19 @@ mod tests {
             }
         }
 
-        fn outcome(&self, pid: Pid, meta: Meta, judged: Judged) {
+        fn outcome(&self, pid: Pid, meta: Meta, judged: Judged, placed: Option<isize>) {
             let reason = match judged {
                 Judged::Dropped(reason) => reason,
                 Judged::Read(_) => "it was read",
-                other => panic!("the stand-in neither drops nor reads: {other:?}"),
+                ref other @ Judged::Passed(_) => {
+                    panic!("the stand-in neither drops nor reads: {other:?}")
+                }
             };
+            let _ = self
+                .facts
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(judged.into_fact(meta.marker, meta.kind, placed));
             let _ = self
                 .outcomes
                 .lock()
@@ -2817,7 +2605,7 @@ mod tests {
         returned: Receiver<(u64, WatchedRead)>,
         finished: Receiver<ThreadId>,
         asked: Receiver<isize>,
-        missing: Receiver<Missing>,
+        facts: Receiver<DeliveredFact>,
     }
 
     impl Fixture {
@@ -2866,7 +2654,7 @@ mod tests {
         let (returned_tx, returned) = mpsc::channel();
         let (finished_tx, finished) = mpsc::channel();
         let (asked_tx, asked) = mpsc::channel();
-        let (missing_tx, missing) = mpsc::channel();
+        let (facts_tx, facts) = mpsc::channel();
         Fixture {
             readers: Readers::new(
                 Script {
@@ -2881,7 +2669,7 @@ mod tests {
                     nearest,
                     held_elements: HeldElements::default(),
                     reads: Mutex::new(Some("read")),
-                    missing: Mutex::new(missing_tx),
+                    facts: Mutex::new(facts_tx),
                 },
                 deadline,
                 grace,
@@ -2891,7 +2679,7 @@ mod tests {
             returned,
             finished,
             asked,
-            missing,
+            facts,
         }
     }
 
@@ -2907,34 +2695,24 @@ mod tests {
     const WAIT: Duration = Duration::from_secs(10);
 
     /// What each outcome of a focus event says of its application's gap
-    /// record: a read, a verdict of NVDA's checks, or a drop on the
-    /// window's verdict answers a copy in the top-level window its read
-    /// found; the listener giving up on the application, a timed-out
-    /// nearest-window lookup among them, answers a
-    /// copy in any window, and a drop for no window answers it to be read
-    /// at once; and every other drop of a focus leaves the record open, as
-    /// does any outcome of a selection, a notification, or a menu opening.
-    /// Every reason the listener drops a focus for is listed.
+    /// record: a read or a verdict of NVDA's checks, the class-list skip
+    /// among them, answers a copy in the top-level window its read found;
+    /// the listener giving up on the application, a timed-out
+    /// nearest-window lookup among them, answers a copy in any window, and
+    /// a drop for no window answers it to be read at once; and every other
+    /// drop of a focus leaves the record open, as does any outcome of a
+    /// selection, a notification, or a menu opening. Every reason the
+    /// listener drops a focus for is listed.
     #[test]
     fn a_focus_events_drop_answers_its_gap_record_or_leaves_it_open() {
         let placed = Some(70);
         let dropped = |reason| gap_answer(FocusEvent::Focus, &Judged::Dropped(reason), placed);
         assert_eq!(
             gap_answer(FocusEvent::Focus, &read_focus(), placed),
-            Answer::Answers(placed)
-        );
-        assert_eq!(
-            gap_answer(
-                FocusEvent::Focus,
-                &Judged::DroppedOnVerdict {
-                    window: 7,
-                    verdict: DroppedVerdict::Unknown
-                },
-                placed
-            ),
-            Answer::Answers(placed)
+            GapAnswer::Answers(placed)
         );
         for verdict in [
+            "its window's class is on NVDA's MSAA list, so its MSAA events speak for it",
             "its window is hung",
             "its comparison with the current focus failed",
             "a repeat of the last focus, which still has the keyboard focus",
@@ -2942,21 +2720,20 @@ mod tests {
             "the console window's own focus",
             "Core's hidden frame",
         ] {
-            assert_eq!(dropped(verdict), Answer::Answers(placed), "{verdict}");
+            assert_eq!(dropped(verdict), GapAnswer::Answers(placed), "{verdict}");
         }
         assert_eq!(
             dropped("it has no window above it, so NVDA makes no object for it"),
-            Answer::ReadsNow
+            GapAnswer::ReadsNow
         );
         for anywhere in [
             "its nearest window's lookup timed out, so NVDA drops it",
             "its read did not return in time",
             "it waited too long behind its application's abandoned reads",
             "its read ran out of time before its window was looked up",
-            "its read ran out of time before its window was judged",
             "its event says it did not have the keyboard focus, and its read's time was up",
         ] {
-            assert_eq!(dropped(anywhere), Answer::Answers(None), "{anywhere}");
+            assert_eq!(dropped(anywhere), GapAnswer::Answers(None), "{anywhere}");
         }
         for open in [
             "its element no longer has the keyboard focus",
@@ -2968,197 +2745,75 @@ mod tests {
             "its reading thread has no UIA client",
             "its element could not be resolved",
         ] {
-            assert_eq!(dropped(open), Answer::LeavesOpen, "{open}");
+            assert_eq!(dropped(open), GapAnswer::LeavesOpen, "{open}");
         }
         for kind in [
             FocusEvent::Selection,
             FocusEvent::Notification,
             FocusEvent::MenuOpened,
         ] {
-            assert_eq!(gap_answer(kind, &read_focus(), placed), Answer::LeavesOpen);
+            assert_eq!(
+                gap_answer(kind, &read_focus(), placed),
+                GapAnswer::LeavesOpen
+            );
         }
     }
 
-    /// A `WinEvent` focus copy in `window`, its own top-level window, of
-    /// `pid`'s, observed at `observed_at_us`.
-    fn copy(pid: Pid, window: isize, observed_at_us: u64) -> Observed {
-        Observed {
-            pid,
-            window,
-            top_level: window,
-            observed_at_us,
-            focus: true,
-        }
-    }
-
-    /// [`meta`] for an event observed at `observed_at_us`.
-    fn meta_at(marker: u64, observed_at_us: u64) -> Meta {
-        Meta {
-            timing: EventTiming {
-                observed_at_us,
-                ..EventTiming::default()
-            },
-            ..meta(marker)
-        }
-    }
-
-    /// A UIA focus observed just after its `WinEvent` copy, in the copy's
-    /// window, dropped because its element no longer has the keyboard
-    /// focus, as in fast navigation, says nothing of the copy's focus: the
-    /// record stays open, and at its bound focus-missing is sent with the
-    /// copy's window and stamp.
+    /// A focus whose nearest window's class is on NVDA's MSAA class list,
+    /// and not under a shell window, is skipped with no call, by the class
+    /// verdict the outposts' arbitrators give, and its drop answers the
+    /// record in its top-level window; one on no list, or under a shell
+    /// window, is read, and so is any focus while a backend override
+    /// forcing UIA holds for its application.
     #[test]
-    fn a_drop_for_no_keyboard_focus_leaves_the_gap_record_open() {
-        let fixture = fixture(WAIT);
-        fixture.set_reads(Some(NOT_FOCUSED));
-        let pid = Pid(1);
-        fixture.readers.hook_installed(pid);
-        let copied_at_us = now_us();
-        fixture.readers.observed(copy(pid, WINDOW, copied_at_us));
-        fixture
-            .readers
-            .push(pid, meta_at(1, copied_at_us + 1_000), (1, None, Vec::new()));
+    fn a_focus_whose_windows_class_is_on_the_msaa_list_is_skipped_and_answers_the_record() {
+        let edit = WindowClasses::new("Edit", "Notepad");
+        assert!(skipped_by_class(&edit, false));
+        assert!(!skipped_by_class(&edit, true), "the override forcing UIA");
+        assert!(!skipped_by_class(
+            &WindowClasses::new("Windows.UI.Input.InputSite.WindowClass", "Notepad"),
+            false
+        ));
+        assert!(!skipped_by_class(
+            &WindowClasses::new("Edit", "Shell_TrayWnd"),
+            false
+        ));
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT),
-            Ok((pid, 1, NOT_FOCUSED))
-        );
-        assert_eq!(
-            fixture.missing.recv_timeout(WAIT),
-            Ok(Missing {
-                pid,
-                window: WINDOW,
-                observed_at_us: copied_at_us,
-            })
-        );
-    }
-
-    /// A UIA focus whose sender is not a window, which the callback cannot
-    /// place, is placed by the nearest window its read finds: read in
-    /// another top-level window than its copy's, it leaves the record open
-    /// to its bound; read in the copy's, it answers it, and the idle
-    /// barrier's waiter, which waits for every record opened before it,
-    /// runs with no focus-missing sent.
-    #[test]
-    fn a_windowless_sender_answers_the_record_through_its_read() {
-        const OTHER: isize = 0x9190;
-        let fixture = fixture_of(WAIT, MOVED_ON_GRACE, (0, NEAREST));
-        fixture.set_reads(None);
-        let pid = Pid(1);
-        fixture.readers.hook_installed(pid);
-
-        let elsewhere_at_us = now_us();
-        fixture.readers.observed(copy(pid, OTHER, elsewhere_at_us));
-        fixture.readers.push(
-            pid,
-            meta_at(1, elsewhere_at_us + 1_000),
-            (1, None, Vec::new()),
-        );
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT),
-            Ok((pid, 1, "it was read"))
-        );
-        assert_eq!(
-            fixture.missing.recv_timeout(WAIT),
-            Ok(Missing {
-                pid,
-                window: OTHER,
-                observed_at_us: elsewhere_at_us,
-            })
-        );
-
-        let copied_at_us = now_us();
-        fixture.readers.observed(copy(pid, NEAREST, copied_at_us));
-        fixture
-            .readers
-            .push(pid, meta_at(2, copied_at_us + 1_000), (2, None, Vec::new()));
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT),
-            Ok((pid, 2, "it was read"))
-        );
-        let (idle_tx, idle) = mpsc::channel();
-        fixture.readers.when_idle(Box::new(move || {
-            let _ = idle_tx.send(());
-        }));
-        assert_eq!(idle.recv_timeout(WAIT), Ok(()));
-        assert_eq!(fixture.missing.try_recv(), Err(mpsc::TryRecvError::Empty));
-    }
-
-    /// A `WinEvent` focus copy of an application with no UIA event waiting
-    /// or being read, as a new process's whose UIA focus never comes, has
-    /// its bound armed by the callback: with no read to arm it, the
-    /// watchdog sends focus-missing once the bound has passed.
-    #[test]
-    fn a_record_of_an_application_with_no_read_is_armed_by_the_callback() {
-        let fixture = fixture(WAIT);
-        let pid = Pid(1);
-        fixture.readers.hook_installed(pid);
-        let started = Instant::now();
-        let copied_at_us = now_us();
-        fixture.readers.observed(copy(pid, WINDOW, copied_at_us));
-        assert_eq!(
-            fixture.missing.recv_timeout(WAIT),
-            Ok(Missing {
-                pid,
-                window: WINDOW,
-                observed_at_us: copied_at_us,
-            })
-        );
-        assert!(
-            started.elapsed() >= crate::gap_record::BOUND,
-            "sent {:?} after the copy, before its bound",
-            started.elapsed()
-        );
-    }
-
-    /// A focus whose window did not answer the raw probe in time is dropped
-    /// as unknown, naming the window, so its outpost judges the window with
-    /// its own verdict; the reading thread keeps nothing of the probe, so
-    /// the window's next focus probes it again. The probe's outcome is
-    /// injected, not timed.
-    #[test]
-    fn a_timed_out_probe_drops_the_focus_as_unknown() {
-        let mut arbitrator = Arbitrator::new(&[]);
-        arbitrator.set_probe(verbatim_uia::RawProbe::TimedOut);
-        let arbitrator = Mutex::new(arbitrator);
-        let judged: Judged = judge_window(&arbitrator, NEAREST, || {
-            panic!("the console check after a probe that did not answer")
-        })
-        .expect_err("a probe that timed out is no UIA window")
-        .into();
-        assert_eq!(
-            judged.into_fact(9, FocusEvent::Focus),
+            Judged::Dropped(MSAA_CLASS).into_fact(9, FocusEvent::Focus, Some(70)),
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,
-                on_verdict: Some(VerdictDrop {
-                    window: NEAREST,
-                    verdict: DroppedVerdict::Unknown,
-                }),
+                answer: GapAnswer::Answers(Some(70)),
             }
         );
-        assert_eq!(known_verdict(&arbitrator, NEAREST), None, "nothing kept");
     }
 
-    /// The time the window's verdict takes, the raw probe's wait, is not
-    /// counted: a read whose probe waited 3 seconds still has its whole
-    /// budget after it.
+    /// Each drop the reading threads send carries its answer to its
+    /// application's gap record and the top-level window it is placed in:
+    /// that of the sender's own window from the event's cache, or of the
+    /// nearest window its read found for a sender with none, or none when
+    /// it found neither, which answers a copy in any window.
     #[test]
-    fn a_read_s_budget_does_not_count_the_probe_s_wait() {
-        let start = Instant::now();
-        let time = Arc::new(Mutex::new(start));
-        let read = Arc::clone(&time);
-        let budget = Budget::new(Arc::new(move || {
-            *read.lock().unwrap_or_else(PoisonError::into_inner)
-        }));
-        let set = |at: Duration| *time.lock().unwrap_or_else(PoisonError::into_inner) = start + at;
-        set(Duration::from_millis(100));
-        budget.verdict_begins();
-        set(Duration::from_millis(3_100));
-        budget.probe_ended();
-        set(READ_BUDGET + Duration::from_millis(2_999));
-        assert!(!budget.out_of_time());
-        set(READ_BUDGET + Duration::from_secs(3));
-        assert!(budget.out_of_time());
+    fn a_drop_carries_its_answer_and_its_top_level_window() {
+        let cases = [
+            ((WINDOW, 0), Some(WINDOW)),
+            ((0, NEAREST), Some(NEAREST)),
+            ((0, 0), None),
+        ];
+        for ((hwnd, nearest), placed) in cases {
+            let fixture = fixture_of(WAIT, MOVED_ON_GRACE, (hwnd, nearest));
+            fixture.set_reads(Some(HUNG));
+            fixture.readers.push(Pid(1), meta(1), (1, None, Vec::new()));
+            assert_eq!(
+                fixture.facts.recv_timeout(WAIT),
+                Ok(DeliveredFact::UiaFocusDropped {
+                    marker: 1,
+                    focus: true,
+                    answer: GapAnswer::Answers(placed),
+                }),
+                "a sender of window {hwnd} whose nearest window is {nearest}"
+            );
+        }
     }
 
     #[test]
