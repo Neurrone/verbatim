@@ -137,6 +137,9 @@ Crashes and stalls:
 
 Focus and File Explorer:
 
+- Core drops a changed description that equals the name
+  (`reduce_description_changed`), where NVDA speaks a changed description
+  even then (`docs/nvda/speech.md`); found 2026-10-30.
 - A scenario's final check that nothing more was said sees only events an
   application raised before Verbatim answered the idle barrier, so a
   focus raised just after, such as File Explorer's focus on the Start
