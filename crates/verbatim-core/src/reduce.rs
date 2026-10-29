@@ -2423,7 +2423,9 @@ fn entered_ancestors<'a>(
 ///
 /// - An item-level or text-entry role (`TreeItem`, `ListItem`,
 ///   `EditableText`). Focus lands on these; they are never context.
-/// - A structural node with no semantics of its own (`Unknown`, `Pane`),
+/// - A structural node with no semantics of its own (`Unknown`, `Pane`,
+///   `Border`, `Whitespace`), which NVDA counts as layout whatever its
+///   name (`docs/nvda/object-model.md`, "Presentation classification"),
 ///   except a pane that is the client area of a top-level window with a
 ///   system menu ([`verbatim_model::NodeDetails::top_level_client`]): it
 ///   stands for its window, which is presented as any entered window is,
@@ -2453,6 +2455,8 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         | Role::BusyIndicator
         | Role::TitleBar
         | Role::Unknown
+        | Role::Border
+        | Role::Whitespace
         | Role::MenuBar
         | Role::Menu
         | Role::MenuItem => false,

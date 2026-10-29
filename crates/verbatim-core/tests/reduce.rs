@@ -1761,6 +1761,27 @@ fn an_unnamed_window_ancestor_is_not_announced() {
 }
 
 #[test]
+fn a_border_or_white_space_ancestor_is_not_announced() {
+    // NVDA counts both roles as layout, named or not.
+    let border = node(634, Role::Border, Some("Frame"), None, StateSet::new());
+    let space = node(635, Role::Whitespace, Some("Gap"), None, StateSet::new());
+    let button = node(636, Role::Button, Some("OK"), None, StateSet::new());
+
+    let (_, effects) = reduce(
+        &SrState::new(),
+        &focus_event_with_ancestors(TraceId::mint(), Pid(1), button, vec![border, space]),
+    );
+
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 636, &[634, 635], None),
+            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+        )
+    );
+}
+
+#[test]
 fn list_item_and_editable_text_ancestors_are_dropped() {
     // NVDA's focus-ancestry exclusions: item and editable-text roles never
     // announce as entered context, even when named.

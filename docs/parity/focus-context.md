@@ -9,7 +9,8 @@ Announce newly entered presentable containers before the control. NVDA:
 ([Event handling](../nvda/events.md),
 [Object model](../nvda/object-model.md)). Verbatim: the filter follows
 `_get_isPresentableFocusAncestor` (exclusion-based, same role
-exclusions), and an entered container is spoken as NVDA speaks focus
+exclusions, the border and white space roles among the layout ones,
+named or not), and an entered container is spoken as NVDA speaks focus
 entered: as a focus, states and position included, without its value,
 level, or (except a list) keyboard shortcut. Top-level windows are the
 exception, in the next entry. A container is already entered when it is
@@ -24,7 +25,9 @@ one id; it treats nodes from two outposts, or read through MSAA, in the
 same top-level window as the same when their role and name match, since
 their ids cannot be compared ("A window and its content in two
 processes" in [Windows and processes](windows-and-processes.md)).
-**matched (unverified)**: reducer tests, and `explorer_folder_window`
+An invisible MSAA ancestor is still announced, where NVDA counts it
+unavailable, since the model has no invisible state and the outposts do
+not report it. **partial**: reducer tests, and `explorer_folder_window`
 asserts the Enter and Backspace cases.
 
 ### Top-level windows in the ancestry
