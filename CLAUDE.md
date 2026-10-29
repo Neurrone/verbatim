@@ -2,10 +2,10 @@
 
 ## What this repository is
 
-Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), written in Rust. Milestones M0 (foundations), M1 (the self-voicing prototype), M2 (the test harness and VM), and M3 (desktop usability core) are implemented: `verbatim.exe` reads its own GUI through a real out-of-process outpost over UIA and MSAA, speaks through OneCore and WASAPI, and is drivable and inspectable live through the control plane (`verbatim-inspect`); `mockapp` exercises both client stacks cross-process against scripted providers, and an end-to-end suite drives a real Verbatim through an in-guest agent, either on the local machine or in a Hyper-V VM. The authoritative sources are:
+Verbatim: a screen reader for Windows 11 (x64 and ARM64), written in Rust.
 
-- `docs/architecture.md` — decisions of record (D1–D18), process/thread model, crate map, testing strategy, and top risks (R1–R6). Read this before proposing any design or implementation work.
-- `docs/roadmap.md` — the milestones ahead (M4 onward), scoped by risk retired with explicit exit criteria, plus the NVDA app-module porting track; completed milestones are archived in `docs/roadmap-done.md`.
+- `docs/architecture.md` — decisions of record, read this before proposing any design or implementation work.
+- `docs/roadmap.md` — the milestones ahead, completed milestones are archived in `docs/roadmap-done.md`.
 - `docs/readme.md` — the index of all documentation, with reading paths; `docs/glossary.md` defines Verbatim's invented vocabulary.
 - `docs/crates/` — the reviewer's guide to the implemented crates, one file per crate (`docs/crates/readme.md` is the index): what each does, its public API, and how the intricate parts work. Keep the file for a crate current when its public API changes.
 - `docs/tooling/readme.md` — how to actually drive this project, with the interactive-session rule and an index of the guides beside it in `docs/tooling/`: setup, `verbatim-inspect` against a running instance, `mockapp`, measuring, the end-to-end suite, NVDA captures, and the traps that cost us time (`troubleshooting.md`). `docs/tooling/vm.md` covers every `cargo xtask vm` verb and rebuilding the golden image.
@@ -13,7 +13,7 @@ Verbatim: a screen reader for Windows 11 (x64 and ARM64, both first-class), writ
 
 `nvda/` is the NVDA screen reader vendored as a git submodule **for reference only** (IA2 IDL under `nvda/include/ia2`, app modules under `nvda/source/appModules`, design docs under `nvda/projectDocs`). Never modify anything under `nvda/`; Verbatim is informed by NVDA but not constrained by its architecture.
 
-## Writing conventions (mandatory)
+## Writing conventions
 
 All documentation, comments, and commit messages in this repo must read well with a screen reader, in both rendered and source form:
 
@@ -21,19 +21,21 @@ All documentation, comments, and commit messages in this repo must read well wit
 - Prefer prose and lists over pipe tables.
 - Documents describe the present. When a mechanism changes, replace its description rather than appending a dated note or keeping the old text beside the new; history lives in git and the commit messages. A decision of record keeps its date and an amended-on line, but one current statement. A rule that exists because something went wrong keeps one sentence of why, not the narrative. A superseded design record is archived or deleted, never kept in place with a banner.
 - Design documents state the current model, its rules each with a brief reason, its limitations, and the important performance figures such as latency and memory; evidence lives in `experiments/` and history in git, so that a document stays short enough to be read whole. Once its work is built, a design document keeps the problem, the alternatives weighed, the reasons for the choice and its limitations, and points to the crate guide for the mechanism, because the mechanism changes with the code and the crate guide is kept current with it.
-- Reports to Dickson define any invented term on first use or avoid it, lead with the decision he needs to make, and keep status updates short, because in past sessions a third of his messages asked what a term meant.
+- Reports define any invented term on first use or avoid it, lead with the required decisions
 
 ## Standing rules
 
 These hold for every session and every subagent; a subagent brief points here rather than restating them.
 
-- Fix root causes, never adding retries, sleeps, skipped cleanup, or self-termination to hide a race or failure, because the outpost code once became a pile of mechanisms each added for one live failure and had to be redesigned; a workaround needs evidence that the proper fix is not enough, and is documented as one.
-- Verify every claim about NVDA's behavior from the pinned source under `nvda/` or a live capture, and take spoken expectations only from captures, because an expectation taken from anywhere else encodes Verbatim's old behavior as NVDA's.
+- Fix root causes, never adding retries, sleeps, skipped cleanup, or self-termination to hide a race or failure; a workaround needs evidence that the proper fix is not enough, and is documented as one.
+- Verify every claim about NVDA's behavior from the pinned source under `nvda/` or a live capture, and take spoken expectations only from captures
 - The NVDA submodule pin must equal the installed NVDA build used for captures: the capture header prints the build, so compare it with `git -C nvda rev-parse HEAD` before a capture series and stop when they differ, because expectations come from captures and ported code from the pinned source, and both must describe the same NVDA.
+- If a mechanism being implemented has 3 or more rounds of bug fixes, the design is likely flawed and continuing risks adding patches on top of workarounds. Pause and reassess whether to continue or if a redesign is required
 - Follow `docs/testing.md` (one fixed target and code path, exact assertions, waits only for evidence, no branching on the environment, no alternative expectations, no substring matches), because a test that accepts two outcomes proves neither.
 - Run the end-to-end scenarios related to a change, and the full suite only for wide-ranging changes or when asked, because the full suite takes a long time and takes over the desktop.
 - Work on main, with no pull requests or feature branches unless asked, so that every session and subagent builds on the same history.
 - Push rarely, and only after `cargo xtask ci` and the related scenarios pass locally, because a push is not a test run.
+- Confirm a design before building on it, including all edge cases, where each part runs and the exact speech expected; while a design study or decision is open, build nothing that depends on it. All designs undergo an adversarial review from a subagent before implementation
 - Review each completed step as `REVIEW.md` says, not each commit: one full adversarial review of the step's whole implementation by a separate read-only subagent, Important findings reproduced then fixed in one commit, one diff-only re-review, then stop, with nits batched into one unreviewed documents commit; trivial and document-only changes get no review, because on 2026-10-21 reviewing every commit with no stopping rule produced contradictory findings and sixteen rounds on one area.
 - Use UIA remote operations wherever a sequence of UIA calls would benefit, and audit this whenever UIA code changes, because each separate call is a cross-process round trip.
 - Judge every change on wake-ups and CPU as well as latency, and raise neither on the event or speech path unless that is the change's purpose, because a latency figure alone hides a cost paid on every event.
@@ -41,7 +43,6 @@ These hold for every session and every subagent; a subagent brief points here ra
 - Do not stop while work in scope remains; record a question for Dickson and continue with everything it does not block, because a turn that ends on a question idles until he reads it.
 - Keep ported NVDA code in the Windows-specific crates and write the platform-neutral crates from the parity docs (see "NVDA provenance"), so that the platform-neutral tier's licensing does not depend on NVDA's.
 - At most two subagents build at once on Dickson's machine, each in its own target directory, because more exhausts its disk and memory.
-- Settle a design before building on it, including where each part runs and the exact speech expected; while a design study or decision is open, build nothing that depends on it.
 - A subagent that finds its brief's design cannot work, or that wants to do anything beyond its brief, stops and reports instead of improvising, and the parent never commits such a choice for later acceptance, because improvised choices committed as "pending" each cost a review and often a reversal.
 - Builder subagents end at unit tests and `cargo xtask ci`; the parent runs the end-to-end scenarios, one batch at a time from one background script, because agents that waited on the desktop with a large context spent hours polling and fought over it.
 - Split a step that would take a subagent more than about a hundred tool calls into steps handed over by a short written note, because a subagent's cost grows with its length times its context.
