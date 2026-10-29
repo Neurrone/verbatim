@@ -414,10 +414,11 @@ between its steps, so a focus-now query whose focus has such a window
 above its own (`read::plain_window_above`, local calls by
 `verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
 walk instead. A walk cut by its time
-(`ENRICHMENT_BUDGET`; for the continuation of a listener's read, that
-read's bound from the event's observation, `UiaFocusRead::bound_us`) or
-its depth limit of 64 is completed by plain windows from its outermost
-element's nearest window, included. Whether a
+(its bound, for the continuation of a listener's read that read's bound
+from the event's observation, `UiaFocusRead::bound_us`; for an MSAA
+focus's walk and the gap's read, `read::walk_left`; `ENRICHMENT_BUDGET`
+for a focus-now answer) or its depth limit of 64 is completed by plain
+windows from its outermost element's nearest window, included. Whether a
 window can be read is the system's judgement (`window_unreadable`), which a
 test that cannot wait five seconds for Windows to judge an application
 hung replaces (`Outpost::set_window_readability_reader` and
@@ -738,11 +739,44 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   `Abandoned` and starts a replacement worker. A returning abandoned worker
   publishes nothing, since publishing checks under the watchdog's lock that
   it is in charge; nothing is sent while that lock is held.
+- The bound met when a call is stuck (`outpost::bound`;
+  `docs/design/focus-pipeline-rework.md`, "A window's name, and the one
+  fallback"). An MSAA focus that has passed NVDA's checks, its focused-state
+  test among them, and been read, and the gap's read once its focused
+  element is read, arm their walk with the watchdog (`Watch::arm`, a
+  `bound::FocusProgress`): the focus, its event's trace, stamp and MSAA
+  address, and the walk's bound, by the design's Terms
+  (`read::walk_left`): `MOVED_ON_GRACE` when the focus's top-level window
+  is not that of the focus the outpost expects Core to hold
+  (`held::Held::expected`), `ENRICHMENT_BUDGET` otherwise, measured from
+  the event's observation for an MSAA focus and from the read's start for
+  the gap's read, which begins only once the gap's own bound has passed.
+  The walk tells what it reads as it reads it (`read::WalkStep`): the MSAA
+  walk each ancestor (`verbatim_ia2::acquire::AncestorLimits::progress`)
+  and its chain once it stops and once it is complete, the classic UIA
+  walk each ancestor it keeps (`verbatim_uia_rops::FocusQuery::progress`),
+  a remote program nothing until it returns. The alarm is set to the bound
+  when it comes before the entry's next check. Should the walk still be
+  under way at the bound, the watchdog publishes the focus from that
+  progress (`publish_at_bound`), its chain as `bound::chain_at_bound` makes
+  it: the chain once the walk ended, else the ancestors read and plain
+  windows from the window the walk had reached, included, by local calls on
+  its thread, with no selected child, dialog text or text of its own. It
+  records the report for Core's judgement and claims the walk under the
+  watch lock, only while that walk is armed by the worker in charge, and
+  sends after the lock is let go. The worker is not abandoned for this:
+  when its walk returns it disarms it (`Watch::disarm`), which answers the
+  published focus, and adopts that focus as if it had reported it
+  (`Worker::adopt_published`): it follows it, its caret, its text and the
+  focus-following subscription, and sends nothing else for it. A focus
+  whose object is not yet acquired, a focus-now answer and a foreground
+  report are left to the deadline.
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
   `TRANSACTION_TIMEOUT` (5 s); the listener's read's bound bounds the
-  continuation of its chain, and `ENRICHMENT_BUDGET` (2 s) a focus's
-  ancestor walk between calls; a UIA dialog's text runs on a
+  continuation of its chain, the walk's bound an MSAA focus's or the gap's
+  read's ancestor walk between calls, and `ENRICHMENT_BUDGET` (2 s) a
+  focus-now answer's; a UIA dialog's text runs on a
   `verbatim_uia::BoundedClient` within `DIALOG_TEXT_WAIT` (1 s); tree view,
   list view, and edit messages use `SendMessageTimeoutW`; an `IAccessible`
   call is bounded by the entry's deadline.

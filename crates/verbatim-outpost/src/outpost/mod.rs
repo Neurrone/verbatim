@@ -35,6 +35,7 @@
 
 pub(crate) mod acceptance;
 pub(crate) mod alarm;
+mod bound;
 mod caret_poll;
 mod focus_path;
 mod gap_record;

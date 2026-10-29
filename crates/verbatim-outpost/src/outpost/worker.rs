@@ -57,6 +57,7 @@ use crate::protocol::{
 use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
+use super::bound::{self, BoundFocus, FocusProgress};
 use super::caret_poll::{self, AfterRead, Poll};
 use super::focus_path::{self, FocusPath};
 use super::gap_record::{CopyDropped, GapRead};
@@ -106,6 +107,26 @@ struct WatchState {
     /// worker from then on, since the shutdown waits for the call in
     /// progress to finish, and it ends.
     stopping: bool,
+    /// The focus walk of the entry in hand, once armed: the watchdog
+    /// publishes its focus at its bound should it still be under way then
+    /// ([`publish_at_bound`]).
+    walk: Option<FocusProgress>,
+    /// How many walks have been armed, which numbers each.
+    arms: u64,
+    /// The focus the watchdog published at its bound for the entry in
+    /// hand, which the worker adopts when its walk returns.
+    published: Option<Published>,
+}
+
+/// A focus the watchdog published at its walk's bound, as the worker
+/// follows it ([`Worker::adopt_published`]).
+struct Published {
+    node: NodeId,
+    role: Role,
+    object: Option<Object>,
+    window: Option<isize>,
+    /// Its ancestors, outermost first, and itself.
+    chain: Vec<NodeSnapshot>,
 }
 
 impl WatchState {
@@ -116,7 +137,27 @@ impl WatchState {
         self.generation += 1;
         self.deadline = None;
         self.started = None;
+        self.end_walk();
         self.running.take()
+    }
+
+    /// The entry in hand has ended: no walk of it is watched, and no
+    /// publication of it is to be adopted.
+    fn end_walk(&mut self) {
+        self.walk = None;
+        self.published = None;
+    }
+
+    /// When the watchdog next checks the entry in hand, if it has one: its
+    /// next check ([`next_check`]), or its walk's bound when that is sooner.
+    fn next_wake(&self, now: Instant) -> Option<Instant> {
+        let (deadline, (started, window)) = (self.deadline?, self.started?);
+        let check = next_check(now, deadline, started, window);
+        Some(
+            self.walk
+                .as_ref()
+                .map_or(check, |walk| check.min(walk.bound_at)),
+        )
     }
 }
 
@@ -166,7 +207,56 @@ impl Watch {
         state.deadline = Some(now + deadline);
         state.started = Some((now, window));
         state.running = running;
+        state.end_walk();
         self.alarm.set(next_check(now, now + deadline, now, window));
+    }
+
+    /// Arms the focus walk `walk` of its worker's entry, if that worker is
+    /// still in charge: the watchdog publishes its focus at its bound should
+    /// the walk still be under way then, and its alarm is set for the
+    /// bound when that comes before the entry's next check, which wakes no
+    /// thread.
+    fn arm(&self, mut walk: FocusProgress) {
+        let mut state = self.lock();
+        if state.generation != walk.generation {
+            return;
+        }
+        state.arms += 1;
+        walk.armed = state.arms;
+        state.walk = Some(walk);
+        state.published = None;
+        if let Some(wake) = state.next_wake(Instant::now()) {
+            self.alarm.set(wake);
+        }
+    }
+
+    /// The walk `generation` armed has read `step`.
+    fn advance(&self, generation: u64, step: &read::WalkStep<'_>) {
+        if let Some(walk) = self
+            .lock()
+            .walk
+            .as_mut()
+            .filter(|walk| walk.generation == generation)
+        {
+            walk.take_in(step);
+        }
+    }
+
+    /// The walk `generation` armed has returned: the watchdog no longer
+    /// publishes it, and its alarm goes back to the entry's next check.
+    /// Answers the focus the watchdog published at the walk's bound, if it
+    /// did, which the worker adopts and reports no other way.
+    fn disarm(&self, generation: u64) -> Option<Published> {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return None;
+        }
+        if state.walk.take().is_some()
+            && let Some(wake) = state.next_wake(Instant::now())
+        {
+            self.alarm.set(wake);
+        }
+        state.published.take()
     }
 
     /// Claims the right to publish an entry's result for `generation`, if
@@ -250,6 +340,7 @@ impl Watch {
         if state.generation == generation {
             state.deadline = None;
             state.started = None;
+            state.end_walk();
             Ok(state.running.take())
         } else {
             drop(state);
@@ -603,10 +694,19 @@ fn watchdog(context: &Arc<Context>) {
             front_is_another_thread_of_its_application,
         );
         let Some(reason) = reason else {
-            context
-                .watch
-                .alarm
-                .set(next_check(now, deadline, started, window));
+            // A walk past its bound with a call still under way is
+            // published from its progress.
+            let due = state
+                .walk
+                .as_ref()
+                .filter(|walk| now >= walk.bound_at)
+                .cloned();
+            if let Some(walk) = due {
+                drop(state);
+                publish_at_bound(context, &walk);
+            } else if let Some(wake) = state.next_wake(now) {
+                context.watch.alarm.set(wake);
+            }
             continue;
         };
         let running = state.abandon();
@@ -1345,7 +1445,28 @@ impl Worker<'_> {
         let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
         let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < stamp_us;
         let sender_gone = !window_exists(window);
-        let found = read::gap_focus_read(context, self.client);
+        // Its walk is published by the watchdog at its bound, measured from
+        // the read's start, should a call of it still be under way then.
+        let timing = self.timing;
+        let watched = walk_watcher(context, self.generation, |node, window| BoundFocus {
+            trace,
+            observed_at_us: stamp_us,
+            timing,
+            backend: node.backend,
+            window: Some(window),
+            node: node.clone(),
+            object: object_of(context, node),
+            msaa_event: None,
+        });
+        let found = read::gap_focus_read(
+            context,
+            self.client,
+            (context.observed_now(), Some(&watched)),
+        );
+        if let Some(published) = context.watch.disarm(self.generation) {
+            self.adopt_published(published, (trace, stamp_us));
+            return;
+        }
         let Ok((hwnd, control)) = found else {
             tracing::info!(
                 %trace,
@@ -2018,8 +2139,7 @@ impl Worker<'_> {
         )
     }
 
-    /// `event` as the message that reports it, published now with the
-    /// calls made since the last.
+    /// `event` as the message that reports it ([`event_message`]).
     fn event_message(
         &self,
         trace: TraceId,
@@ -2028,26 +2148,13 @@ impl Worker<'_> {
         window: Option<isize>,
         event: NormalizedEvent,
     ) -> OutpostToSupervisor {
-        let target = self.context.target_pid();
-        let client = window.and_then(|hwnd| console_client(hwnd, target));
-        let name = || {
-            self.context
-                .application_name(client.map_or(target, |client| client.0))
-        };
-        OutpostToSupervisor::Event {
-            trace_id: trace,
-            observed_at_us,
-            backend,
-            window: window
-                .map(|hwnd| event_window_facts(window_facts(hwnd), &event, name, alt_is_held)),
-            application: client,
-            timing: EventTiming {
-                published_at_us: now_us(),
-                calls: take_calls(),
-                ..self.timing
-            },
+        event_message(
+            self.context,
+            self.timing,
+            (trace, observed_at_us),
+            (backend, window),
             event,
-        }
+        )
     }
 
     /// Reports a focus and remembers it, so the limiter keeps its events and
@@ -2158,46 +2265,36 @@ impl Worker<'_> {
         window: Option<isize>,
         foreground: bool,
     ) -> held::Focus {
-        let top_level = window.map_or(0, top_level_of);
-        // What the focus before it gives it, taken under the lock, which
-        // is let go before the foreground window is read.
-        let (inherited, ancestors_before) = {
-            let held = self.context.held();
-            let before = held.expected();
-            (
-                before
-                    .filter(|before| top_level != 0 && before.top_level == top_level)
-                    .map(|before| before.entered_in_front),
-                ancestors
-                    .is_none()
-                    .then(|| before.map(|before| before.ancestors.clone()))
-                    .flatten(),
-            )
-        };
-        // A foreground change's window was just found in front.
-        let entered_in_front = match inherited {
-            Some(entered) => entered,
-            None if foreground => Some(top_level).filter(|&top| top != 0),
-            None => (top_level != 0 && top_level == self.context.foreground_window())
-                .then_some(top_level),
-        };
-        let ancestors = match ancestors {
-            Some(ancestors) => ancestors.iter().map(HeldNode::of).collect(),
-            None => ancestors_before.unwrap_or_default(),
-        };
-        let (event, simple_child) = match self.msaa_event.take() {
-            Some((event, simple_child)) => (Some(event), simple_child),
-            None => (window.filter(|_| foreground).map(foreground_event), false),
-        };
-        held::Focus {
-            trace,
-            node: HeldNode::of(node),
-            ancestors,
-            top_level,
-            entered_in_front,
-            event,
-            simple_child,
-        }
+        judged_focus(
+            self.context,
+            (trace, node, ancestors),
+            (window, foreground),
+            self.msaa_event.take(),
+        )
+    }
+
+    /// Follows `published`, the focus the watchdog published at its walk's
+    /// bound while the walk was still under way ([`publish_at_bound`]),
+    /// from the entry of the event traced `trace`, observed at
+    /// `observed_at_us`, once the walk has returned: the outpost adopts it
+    /// as if it had reported it itself, its caret, text and the
+    /// focus-following subscription following it, and sends nothing else
+    /// for it, its own late result discarded.
+    fn adopt_published(&mut self, published: Published, (trace, observed_at_us): (TraceId, u64)) {
+        let Published {
+            node,
+            role,
+            object,
+            window,
+            chain,
+        } = published;
+        tracing::debug!(%trace, "the walk returned after the focus was published at its bound; its result is discarded");
+        self.adopt_focus((node, role), object, window, Some(chain));
+        let mut tracking = self.context.tracking();
+        tracking.batch = Some(self.batch);
+        tracking.reported += 1;
+        drop(tracking);
+        self.follow_text((node, role), None, (trace, observed_at_us));
     }
 
     /// Makes `node_id`, of `role`, the focus this outpost follows: the
@@ -3478,8 +3575,28 @@ impl Worker<'_> {
             return;
         }
         let node = candidate.read(&self.context.msaa_registry);
+        self.report_msaa_focus(
+            node,
+            ((hwnd, id_object, id_child), resolved_child > 0),
+            (trace, observed_at_us),
+        );
+    }
+
+    /// Reports `node`, the MSAA focus NVDA's checks accepted from the
+    /// event at `event`, acquired as a simple child when `simple_child`,
+    /// traced `trace` and observed at `observed_at_us`, with its ancestors
+    /// walked: the watchdog publishes it at its walk's bound should a call
+    /// of the walk still be under way then, and the worker adopts that
+    /// publication when the walk returns.
+    fn report_msaa_focus(
+        &mut self,
+        node: NodeSnapshot,
+        (event, simple_child): ((isize, i32, i32), bool),
+        (trace, observed_at_us): (TraceId, u64),
+    ) {
+        let (hwnd, id_object, id_child) = event;
+        let context = self.context;
         let previous = self.focus_chain();
-        let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
         let object = self
             .context
             .msaa_registry
@@ -3488,17 +3605,53 @@ impl Worker<'_> {
         let redirected = object
             .as_ref()
             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
-        self.msaa_event = Some(((hwnd, id_object, id_child), resolved_child > 0));
-        self.emit_focus(
+        let msaa_event = (event, simple_child);
+        // Its walk, past NVDA's checks, is published by the watchdog at its
+        // bound should a call of it still be under way then; the chain
+        // goes on from the focus's own window until it reads more.
+        let left = read::walk_left(context, hwnd, observed_at_us);
+        let timing = self.timing;
+        let watched = walk_watcher(context, self.generation, |node, window| BoundFocus {
             trace,
             observed_at_us,
-            Backend::Msaa,
-            Some(hwnd),
-            node,
-            false,
-            object.clone(),
-            enrichment,
+            timing,
+            backend: Backend::Msaa,
+            window: Some(window),
+            node: node.clone(),
+            object: object.clone(),
+            msaa_event: Some(msaa_event),
+        });
+        let from = match object {
+            Some(Object::Msaa(window, _, _)) => window,
+            _ => hwnd,
+        };
+        watched(read::WalkStep::Focus {
+            node: &node,
+            window: hwnd,
+            from,
+            left,
+        });
+        let enrichment = read::msaa_enrichment(
+            context,
+            self.client,
+            (&node, &previous),
+            (left, Some(&watched)),
         );
+        if let Some(published) = context.watch.disarm(self.generation) {
+            self.adopt_published(published, (trace, observed_at_us));
+        } else {
+            self.msaa_event = Some(msaa_event);
+            self.emit_focus(
+                trace,
+                observed_at_us,
+                Backend::Msaa,
+                Some(hwnd),
+                node,
+                false,
+                object.clone(),
+                enrichment,
+            );
+        }
         if self.context.intake.focused() == object && redirected {
             self.context.intake.set_focus_redirected();
         }
@@ -4120,6 +4273,188 @@ impl Worker<'_> {
                 },
             },
         );
+    }
+}
+
+/// The focus `node`, with `ancestors` (`None` when unknown), reported in
+/// `window` from the event traced `trace`, as the rules judge events
+/// against it until Core has judged it ([`super::held`]): with unknown
+/// ancestors it keeps those of the focus before it, as Core keeps them; an
+/// MSAA focus carries `msaa_event`, its event's address and whether it is
+/// a simple child, and a foreground change its window's event address,
+/// which NVDA's second foreground test compares. NVDA makes its foreground
+/// object when the focus enters a top-level window, so the window keeps
+/// the verdict it had then while the focus moves within it
+/// ([`Worker::is_foreground_window`]). Local calls.
+fn judged_focus(
+    context: &Context,
+    (trace, node, ancestors): (TraceId, &NodeSnapshot, Option<&[NodeSnapshot]>),
+    (window, foreground): (Option<isize>, bool),
+    msaa_event: Option<((isize, i32, i32), bool)>,
+) -> held::Focus {
+    let top_level = window.map_or(0, top_level_of);
+    // What the focus before it gives it, taken under the lock, which
+    // is let go before the foreground window is read.
+    let (inherited, ancestors_before) = {
+        let held = context.held();
+        let before = held.expected();
+        (
+            before
+                .filter(|before| top_level != 0 && before.top_level == top_level)
+                .map(|before| before.entered_in_front),
+            ancestors
+                .is_none()
+                .then(|| before.map(|before| before.ancestors.clone()))
+                .flatten(),
+        )
+    };
+    // A foreground change's window was just found in front.
+    let entered_in_front = match inherited {
+        Some(entered) => entered,
+        None if foreground => Some(top_level).filter(|&top| top != 0),
+        None => (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
+    };
+    let ancestors = match ancestors {
+        Some(ancestors) => ancestors.iter().map(HeldNode::of).collect(),
+        None => ancestors_before.unwrap_or_default(),
+    };
+    let (event, simple_child) = match msaa_event {
+        Some((event, simple_child)) => (Some(event), simple_child),
+        None => (window.filter(|_| foreground).map(foreground_event), false),
+    };
+    held::Focus {
+        trace,
+        node: HeldNode::of(node),
+        ancestors,
+        top_level,
+        entered_in_front,
+        event,
+        simple_child,
+    }
+}
+
+/// `event` as the message that reports it, from an entry of `timing`,
+/// published now with the calls this thread has made since the last.
+fn event_message(
+    context: &Context,
+    timing: EventTiming,
+    (trace, observed_at_us): (TraceId, u64),
+    (backend, window): (Backend, Option<isize>),
+    event: NormalizedEvent,
+) -> OutpostToSupervisor {
+    let target = context.target_pid();
+    let client = window.and_then(|hwnd| console_client(hwnd, target));
+    let name = || context.application_name(client.map_or(target, |client| client.0));
+    OutpostToSupervisor::Event {
+        trace_id: trace,
+        observed_at_us,
+        backend,
+        window: window
+            .map(|hwnd| event_window_facts(window_facts(hwnd), &event, name, alt_is_held)),
+        application: client,
+        timing: EventTiming {
+            published_at_us: now_us(),
+            calls: take_calls(),
+            ..timing
+        },
+        event,
+    }
+}
+
+/// Publishes the focus of a walk whose call is still under way at its
+/// bound, from `walk`, a copy of its progress the watchdog took
+/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
+/// fallback"): the focus as read, its chain as [`bound::chain_at_bound`]
+/// makes it, completed by plain windows, with no selected child, no dialog
+/// text and no text of its own, which the walk had not reached. The report
+/// is recorded for Core's judgement and the walk claimed under the watch
+/// lock, only while that walk is still armed by the worker in charge, so
+/// the worker's late result is not sent: its worker adopts this focus when
+/// its walk returns ([`Watch::disarm`]). The watchdog's thread makes only
+/// local calls here, and sends after the lock is let go.
+fn publish_at_bound(context: &Context, walk: &FocusProgress) {
+    let focus = &walk.focus;
+    let ancestors = bound::chain_at_bound(context, walk);
+    let judged = judged_focus(
+        context,
+        (focus.trace, &focus.node, Some(&ancestors)),
+        (focus.window, false),
+        focus.msaa_event,
+    );
+    let chain: Vec<NodeSnapshot> = ancestors
+        .iter()
+        .cloned()
+        .chain(std::iter::once(focus.node.clone()))
+        .collect();
+    let message = event_message(
+        context,
+        focus.timing,
+        (focus.trace, focus.observed_at_us),
+        (focus.backend, focus.window),
+        NormalizedEvent::FocusChanged {
+            node: focus.node.clone(),
+            foreground: false,
+            ancestors_unknown: false,
+            ancestors,
+            selected_child: None,
+            text: None,
+        },
+    );
+    let claimed = {
+        let mut state = context.watch.lock();
+        let open = state.generation == walk.generation
+            && state
+                .walk
+                .as_ref()
+                .is_some_and(|armed| armed.armed == walk.armed);
+        open.then(|| {
+            state.walk = None;
+            state.published = Some(Published {
+                node: focus.node.id,
+                role: focus.node.role,
+                object: focus.object.clone(),
+                window: focus.window,
+                chain,
+            });
+            context.held().reported(judged);
+            if let Some(wake) = state.next_wake(Instant::now()) {
+                context.watch.alarm.set(wake);
+            }
+            take_touched(context)
+        })
+    };
+    let Some(touched) = claimed else {
+        return;
+    };
+    tracing::info!(
+        trace = %focus.trace,
+        name = ?focus.node.name,
+        "a focus walk was still under way at its bound; the focus is published as read so far"
+    );
+    context.outbound.publish(message, touched);
+}
+
+/// What tells the watchdog a focus walk's progress, for worker
+/// `generation`: arming it with the focus `focus` makes of the node and
+/// window read ([`read::WalkStep::Focus`]), and taking in each step after.
+fn walk_watcher<'a>(
+    context: &'a Context,
+    generation: u64,
+    focus: impl Fn(&NodeSnapshot, isize) -> BoundFocus + 'a,
+) -> impl Fn(read::WalkStep<'_>) + 'a {
+    move |step: read::WalkStep<'_>| match step {
+        read::WalkStep::Focus {
+            node,
+            window,
+            from,
+            left,
+        } => context.watch.arm(FocusProgress::new(
+            generation,
+            focus(node, window),
+            from,
+            left,
+        )),
+        step => context.watch.advance(generation, &step),
     }
 }
 

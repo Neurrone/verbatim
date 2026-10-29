@@ -44,7 +44,11 @@ The items keep their numbers, since code and the crate guides cite them.
    more than the worker itself. Fixed: the worker sets and cancels a
    waitable timer, which wakes no thread, so the watchdog wakes only when
    a deadline or grace passes (`docs/crates/verbatim-outpost.md`, the
-   worker and its watchdog). The listener's reading threads' watchdog
+   worker and its watchdog). A focus walk the watchdog may publish at its
+   bound, an MSAA focus's or the gap's read's, sets the timer to the bound
+   when that comes sooner and sets it back when the walk returns, two more
+   timer calls a focus and no wake, so the watchdog wakes for it only when
+   the walk is still under way at its bound. The listener's reading threads' watchdog
    sleeps on the same kind of alarm, set as each read starts and as it
    reaches its bound, and cancelled once no read is under way, so it wakes
    only for a read still under way at its bound, grace or deadline.

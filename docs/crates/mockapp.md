@@ -387,7 +387,9 @@ a walk of the window's whole tree would wait on its
     early: every `call_counts` test, the gap record's tests in
     `focus_reports` (the `a_winevent_focus_` tests, the return and
     foreground restamp tests, the timer tests, and the others that hand
-    over a copy the outpost drops for UIA), and the one in `remote_ops`.
+    over a copy the outpost drops for UIA), the outpost's tests of a walk's
+    bound (a stuck MSAA focus's or gap's read's walk, and the continuation
+    of a listener's chain), and the one in `remote_ops`.
   - `OutpostUnderTest::new`, `with_options` and the rest give the real
     clock, the run's clock moved on by the time passed. Every other test
     uses it, because the outpost compares the stamps of its caret, text
@@ -405,7 +407,9 @@ a walk of the window's whole tree would wait on its
   listener's watchdog runs the listener's reading threads in its process
   (`verbatim_outpost::focus_read::ReadingThreads`), their readers on
   frozen clocks of the test's, so that only the watchdog, on the system's
-  clock, meets a read's bound.
+  clock, meets a read's bound. The outpost's own watchdog meets its
+  walks' bound the same way: the outpost's walks are timed by the frozen
+  clock and its watchdog by the system's.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each

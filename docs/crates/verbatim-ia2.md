@@ -265,7 +265,10 @@ Public API:
   window's own window object in its parent window; a control's window object met on the way has as its
   next ancestor the group box enclosing it, a `Button` window with
   `BS_GROUPBOX` before it in z-order, as NVDA's `findGroupboxObject`
-  finds it, and the walk goes on from the group box) (per-hop `accParent` walks, outermost first, with the simple-child
+  finds it, and the walk goes on from the group box; `progress`, an
+  `AncestorProgress`, is told each ancestor as it is read with the window
+  the walk is then in, so the outpost's watchdog can publish the walk as
+  it stands while its next call is under way) (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent

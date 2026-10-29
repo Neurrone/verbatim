@@ -3623,6 +3623,176 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
     app.quit();
 }
 
+/// The outpost's watchdog publishes an MSAA focus whose walk is stuck at
+/// the walk's bound, and its worker's late result is discarded
+/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
+/// fallback"): on the frozen clocks, so the walk is never cut between its
+/// calls and the bound, 500 ms for a focus whose top-level window is not
+/// that of a focus before it, runs from the walk's start, the OK button of
+/// mockapp's MSAA tree, whose own states pass NVDA's focused-state test,
+/// has its walk's step to its parent, "Group One", stuck: the step finds
+/// the window the parent is in (`WindowFromAccessibleObject`), which asks
+/// the parent's own `accParent`, answered 3 seconds late
+/// (`slow-acc-parent`). The focus is published before that call returns,
+/// with no ancestor read and its own window, a plain window named by its
+/// title, above it; once the call returns, the worker adopts the published
+/// focus and says nothing more. The button's own `accParent` is not the
+/// one made late, since its object's acquisition calls it before NVDA's
+/// checks, which the bound does not cover.
+fn an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound() {
+    let title = common::unique_title("mockapp-msaa-bound-stuck");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus btn_ok");
+    app.send(&format!("slow-acc-parent group1 {STUCK_PARENT_MS}"));
+    // The OK button, node 2 of the tree, at its object id.
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: 3,
+        id_child: 0,
+    });
+    let published = focus_changed(outpost.next());
+    let published_at = common::now_us();
+    app.stamped_line("slow-acc-parent started");
+    // Answered at once from the call after this one, which waits for it.
+    app.write("slow-acc-parent group1 0");
+    let returned = app.stamped_line("slow-acc-parent ended");
+    app.expect_line("applied", || "the late call's end".to_owned());
+    assert!(
+        published_at < returned,
+        "published at {published_at}, before the call returned at {returned}"
+    );
+    assert_eq!(
+        chain_of(&published),
+        [
+            (Role::Window, Some(title.clone())),
+            (Role::Button, Some("OK".to_owned()))
+        ],
+        "the focus as read before its stuck step, below its window"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The roles and names of a focus change's chain, its ancestors outermost
+/// first, then the focus.
+fn chain_of(event: &NormalizedEvent) -> Vec<(Role, Option<String>)> {
+    let NormalizedEvent::FocusChanged {
+        node, ancestors, ..
+    } = event
+    else {
+        panic!("{event:?} is not a focus change");
+    };
+    ancestors
+        .iter()
+        .chain(std::iter::once(node))
+        .map(|node| (node.role, node.name.clone()))
+        .collect()
+}
+
+/// The outpost's watchdog publishes the gap's read at its walk's bound
+/// when the walk is stuck, as it publishes an MSAA focus
+/// ([`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound`]): a
+/// `WinEvent` focus on mockapp's UIA window that no UIA focus follows has
+/// the outpost read its application's focus, "First", once the gap's bound
+/// has passed, and the walk's step to its parent answers 3 seconds late
+/// (`slow-parent`), after the remote program's first step up, which finds
+/// the focus's window, has passed at once. On the frozen clocks the walk's
+/// bound, 500 ms from the read's start, is met only by the watchdog: the
+/// focus is published before the step returns, with its window, a plain
+/// window named by its title, above it, and nothing more is said once the
+/// step returns.
+fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
+    let title = common::unique_title("mockapp-gap-bound-stuck");
+    let mut app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus item1");
+    outpost.read_focus_as(client.focused().live().element());
+    app.send(&format!("slow-parent item1 {STUCK_PARENT_MS} 1"));
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    let published = focus_changed(outpost.next());
+    let published_at = common::now_us();
+    app.stamped_line("slow-parent started");
+    // Answered at once from the step after this one, which waits for it.
+    app.write("slow-parent item1 0");
+    let returned = app.stamped_line("slow-parent ended");
+    app.expect_line("applied", || "the late step's end".to_owned());
+    assert!(
+        published_at < returned,
+        "published at {published_at}, before the step returned at {returned}"
+    );
+    assert_eq!(
+        chain_of(&published),
+        [
+            (Role::Window, Some(title.clone())),
+            (Role::ListItem, Some("First".to_owned()))
+        ],
+        "the focus as read before its stuck step, below its window"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The outpost's continuation of a listener's chain ends at the read's
+/// bound (`UiaFocusRead::bound_us`), measured from the event's
+/// observation: the listener's read of "First" stands in for one whose
+/// first step to a parent failed, its chain to go on from mockapp's window
+/// (`AncestorsEnd::ContinueFrom`). Delivered as observed its bound before,
+/// the continuation reads nothing and the window is a plain window, named
+/// by its title; delivered as observed now, it reads the window's UIA
+/// element, named "Mockapp Tree Fixture" by its provider.
+fn the_continuation_of_a_listeners_chain_ends_at_the_reads_bound() {
+    let title = common::unique_title("mockapp-continuation-bound");
+    let mut app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus item1");
+    let Judged::Read(mut read) = outpost.listener_read(&client.focused()).0 else {
+        panic!("the listener dropped the focus");
+    };
+    read.ancestors = Some(Vec::new());
+    read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::ContinueFrom(hwnd.0 as isize);
+    let report = |observed_at_us: u64| {
+        outpost.deliver_stamped(
+            DeliveredFact::UiaFocusRead {
+                marker: 0,
+                read: read.clone(),
+                focus: true,
+            },
+            observed_at_us,
+        );
+        let reported = outpost.reported_focus();
+        roles_and_names(&reported)
+            .into_iter()
+            .map(|(role, name)| (role, name.map(str::to_owned)))
+            .collect::<Vec<_>>()
+    };
+    let first = (Role::ListItem, Some("First".to_owned()));
+    assert_eq!(
+        report(outpost.observed_now() - read.bound_us),
+        [(Role::Window, Some(title.clone())), first.clone()],
+        "observed its bound before"
+    );
+    assert_eq!(
+        report(outpost.observed_now()),
+        [
+            (Role::Window, Some("Mockapp Tree Fixture".to_owned())),
+            first
+        ],
+        "observed now"
+    );
+    drop(outpost);
+    app.quit();
+}
+
 /// A hung application's window in a focus's ancestry is a plain window,
 /// named by its text, with no call, by NVDA's rule
 /// (`NVDAObjects/window/__init__.py` 85 to 97): a button in a child window
@@ -3917,6 +4087,18 @@ fn main() {
         (
             "a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded",
             a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded,
+        ),
+        (
+            "an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound",
+            an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound,
+        ),
+        (
+            "a_gap_read_whose_walk_is_stuck_is_published_at_its_bound",
+            a_gap_read_whose_walk_is_stuck_is_published_at_its_bound,
+        ),
+        (
+            "the_continuation_of_a_listeners_chain_ends_at_the_reads_bound",
+            the_continuation_of_a_listeners_chain_ends_at_the_reads_bound,
         ),
         (
             "a_listener_read_focus_is_reported_with_the_listeners_stamp",

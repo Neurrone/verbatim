@@ -586,12 +586,22 @@ its depth limit is completed by plain windows from that nearest window.
 The listener's walk, and the outpost's continuation of it, are bounded
 from the event's observation: by 500 ms when the focus's top-level window
 is not that of the previous focus the listener observed, and by the
-read's budget of 2 seconds otherwise. A listener read that has passed
-every check NVDA makes before it queues a focus, and whose call is still
-under way at the bound, is published then from what it has read, the
-windows not reached as plain windows, and its late result is discarded,
-a deliberate difference (Dickson, 2026-10-29): NVDA waits for every late
-parent call, and past the hung judgement says nothing for the focus. A step that reaches a ghost's or a hung application's window
+read's budget of 2 seconds otherwise. The outpost's own focus walks, of an
+MSAA focus and of the gap's read, have the same bound, the previous focus
+being the one the outpost expects Core to hold, measured from the event's
+observation for an MSAA focus and from the read's start for the gap's
+read, which is made only once the gap's own bound has passed. A listener
+read, an MSAA focus or a gap's read that has passed every check NVDA
+makes before it queues a focus, and whose call is still under way at the
+bound, is published then from what it has read, the windows not reached
+as plain windows, with no selected child, dialog text or text of its own,
+and its late result is discarded, a deliberate difference (Dickson,
+2026-10-29): NVDA waits for every late parent call, and past the hung
+judgement says nothing for the focus. The outpost's worker, once its call
+returns, follows the focus published, as if it had reported it (the
+outpost's half: Fable, 2026-10-30, pending Dickson's acceptance). A focus
+whose object is not yet acquired at the bound, and a focus-now answer or
+a foreground report, are left to the watchdog's deadline. A step that reaches a ghost's or a hung application's window
 other than the focus's nearest one ends every UIA walk there, as NVDA
 makes that one step and then reads the window as a plain window, going on
 by the window hierarchy with no further call (`correctAPIForRelation`,
