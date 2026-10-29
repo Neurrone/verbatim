@@ -204,6 +204,7 @@ fn query<'a>(
         before_call: None,
         value_available: None,
         plain: None,
+        progress: None,
     }
 }
 

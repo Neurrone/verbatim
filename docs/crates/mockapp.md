@@ -398,7 +398,14 @@ a walk of the window's whole tree would wait on its
   which waits while its record is open. `focus_moves_during_the_read`
   moves the focus window as the outpost reads the focused element, and
   `listener_forces_uia` tells the listener's reader of a backend override
-  forcing UIA.
+  forcing UIA. The listener's reader measures how long an event waited
+  before its read by the same observation clock, so `listener_read_after`
+  passes the time between a focus's observation and its read, bringing its
+  walk's bound that much sooner with no real wait. A test of the
+  listener's watchdog runs the listener's reading threads in its process
+  (`verbatim_outpost::focus_read::ReadingThreads`), their readers on
+  frozen clocks of the test's, so that only the watchdog, on the system's
+  clock, meets a read's bound.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each

@@ -1993,6 +1993,7 @@ mod tests {
                 value_from_selection: false,
                 window: Some(hwnd),
                 same_as_last: None,
+                bound_us: 2_000_000,
             }),
             focus: true,
         }

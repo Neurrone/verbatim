@@ -176,7 +176,11 @@ element's raw-view ancestors and what a focus report needs besides. A
   (`Ancestry::plain_window`), as NVDA makes that one step and reads the
   window as a plain window. The remote program cannot judge a window
   between its steps; a caller with such a window above the focus runs the
-  classic walk instead.
+  classic walk instead. And `progress`, told each fact as the walk reads
+  it (`Progress`: the previous element's keyboard focus, the element read
+  afresh, the selected child, and each ancestor kept), so a caller can
+  share the walk's progress with a thread that publishes it should a call
+  not return in time.
 
 It answers `FocusAncestry::NotFocused` when `require_focus` is set and
 the element does not have the focus, and otherwise an `Ancestry`:

@@ -3623,7 +3623,7 @@ impl Worker<'_> {
                 context,
                 self.client,
                 (ancestors, read.hwnd, read.window, read.ancestors_end),
-                &previous,
+                (&previous, observed_at_us.saturating_add(read.bound_us)),
             )
         });
         *context.focus_path() = Some(FocusPath::of(read));

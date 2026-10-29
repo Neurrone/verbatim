@@ -576,9 +576,17 @@ failed parent read falls back to the window hierarchy
 (`Window._get_parent`), from the parent window of its outermost element's
 nearest window, by that window's own object: the listener, which connects
 to no window, names the window, and the outpost goes on from it; the
-outpost's own walks go on the same way, and a walk cut by the read's time
-budget or its depth limit is completed by plain windows from that nearest
-window. A step that reaches a ghost's or a hung application's window
+outpost's own walks go on the same way, and a walk cut by its bound or
+its depth limit is completed by plain windows from that nearest window.
+The listener's walk, and the outpost's continuation of it, are bounded
+from the event's observation: by 500 ms when the focus's top-level window
+is not that of the previous focus the listener observed, and by the
+read's budget of 2 seconds otherwise. A listener read that has passed
+every check NVDA makes before it queues a focus, and whose call is still
+under way at the bound, is published then from what it has read, the
+windows not reached as plain windows, and its late result is discarded,
+a deliberate difference (Dickson, 2026-10-29): NVDA waits for every late
+parent call, and past the hung judgement says nothing for the focus. A step that reaches a ghost's or a hung application's window
 other than the focus's nearest one ends every UIA walk there, as NVDA
 makes that one step and then reads the window as a plain window, going on
 by the window hierarchy with no further call (`correctAPIForRelation`,

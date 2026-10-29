@@ -1773,6 +1773,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
             before_call: None,
             value_available: None,
             plain: None,
+            progress: None,
         },
     )
     .expect("the walk");
@@ -2763,6 +2764,7 @@ fn uia_selected_children_cost_exactly() {
                     before_call: None,
                     value_available: None,
                     plain: None,
+                    progress: None,
                 },
                 true,
             )

@@ -264,10 +264,15 @@ Rules that hold for every UIA focus:
   one `GetPropertyValue` the provider description that the outpost's
   lookup of the route's window caches for the proxy rule
   (`docs/design/listener-without-connections.md`, section 5).
-- Beside the calls, local work only and no wake-up added: the reading
-  threads' watchdog judges once whether the user moved on from the read's
-  window (`GetGUIThreadInfo`, `GetWindowThreadProcessId`, class and
-  process reads), on the wake-up the read's start makes; and when the new
+- Beside the calls, local work only and no wake-up: the reading thread
+  judges once whether the user moved on from the read's window
+  (`GetGUIThreadInfo`, `GetWindowThreadProcessId`, class and process
+  reads), as the read starts or learns its window; it finds the focus's
+  top-level window (`GetAncestor`) for its walk's bound, shares each fact
+  it reads with the watchdog under an uncontended lock, and sets the
+  watchdog's alarm as it starts and as it passes its checks and cancels
+  it as it ends, three timer calls that wake no thread, where the read's
+  start woke the watchdog before; and when the new
   focus is inside the old, the intake moves the old focus's queued state
   changes ahead of the read (`docs/design/focus-pipeline.md`, section
   12.4), delaying the report by their handling, 0.2 to 1.8 ms per property
@@ -479,6 +484,27 @@ and `a_hung_window_above_a_focus_now_is_a_plain_window_remote` and
   focus-now query read by a remote program, the same check of each
   window above the focus's own to the process boundary. No wake-up, lock
   or allocation is added.
+
+### A focus whose walk is stuck at its bound, UIA
+
+The listener's first focus in a window, "First" in `tree.json`, whose
+walk's first step to its parent answers 3 seconds late (`slow-parent`;
+`focus_reports.rs`'s
+`a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded`).
+
+- Today: the read makes the calls a focus change makes up to the stuck
+  step; the watchdog wakes once, at the bound, 500 ms after the event's
+  observation for a focus in a new top-level window and 2 seconds
+  otherwise, and publishes the focus with the ancestors read and the
+  outermost one's nearest window to complete from, by local calls on its
+  own thread; the outpost then reads the windows not reached as plain
+  windows, about four local calls each. When the step returns, the thread
+  finishes its walk, its result discarded, and reads the application's
+  next event; no thread is abandoned or started, and no second message is
+  sent.
+- Bound: the thread stays in its call until the application answers or
+  UIA's transaction timeout ends the call, the application's later events
+  waiting for it until `READ_DEADLINE` abandons it.
 
 ### A focus change into a list, UIA
 

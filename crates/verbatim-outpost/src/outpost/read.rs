@@ -643,7 +643,11 @@ fn window_object_onward(
 /// named after a failed step, or by plain windows from the window it named
 /// after a cut walk. Each node is minted from its runtime id, with no
 /// element: the outpost finds its own copy of an element only when it
-/// needs one (`super::focus_path`).
+/// needs one (`super::focus_path`). The continuation is part of the
+/// listener's walk, so it ends at that walk's bound, `bound_at_us` on the
+/// run's shared clock, measured from the event's observation
+/// (`docs/design/focus-pipeline-rework.md`, the Terms), and the windows it
+/// has not reached by then are plain windows, named by their text.
 pub(super) fn uia_chain_from_read(
     context: &Context,
     client: &mut Client,
@@ -653,7 +657,7 @@ pub(super) fn uia_chain_from_read(
         Option<isize>,
         crate::protocol::AncestorsEnd,
     ),
-    previous: &[NodeSnapshot],
+    (previous, bound_at_us): (&[NodeSnapshot], u64),
 ) -> Vec<NodeSnapshot> {
     use crate::protocol::AncestorsEnd;
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest.unwrap_or(0), hwnd);
@@ -695,8 +699,11 @@ pub(super) fn uia_chain_from_read(
         (_, None, AncestorsEnd::ContinueFrom(hwnd)) => Above::From(hwnd),
         (_, None, AncestorsEnd::PlainFrom(hwnd)) => Above::Plain(hwnd),
     };
+    // What is left of the walk's bound, timed from here on the outpost's
+    // clock, as every walk here is.
     let clock = context.clock();
-    let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
+    let left = std::time::Duration::from_micros(bound_at_us.saturating_sub(context.observed_now()));
+    let out_of_time = time_limit(&clock, left);
     // Without a client the continuation reads every window it reaches
     // through MSAA or as a plain window.
     let request = client.uia_with(context, Context::ancestor_request).ok();
@@ -793,6 +800,7 @@ pub(super) fn uia_remote_enrichment(
         // of a combo box for it.
         value_available: Some(element.read().states.value_available),
         plain: Some(&|hwnd| context.window_unreadable(hwnd).is_some()),
+        progress: None,
     };
     // The program cannot judge a window between its steps, so a focus
     // with a ghost's or a hung application's window above its own is read

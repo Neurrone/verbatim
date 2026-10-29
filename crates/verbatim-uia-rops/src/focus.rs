@@ -101,6 +101,26 @@ pub struct FocusQuery<'a> {
     /// between its steps and does not read this: a caller with such a
     /// window above the focus runs the classic walk instead.
     pub plain: Option<&'a dyn Fn(isize) -> bool>,
+    /// Told what the classic walk reads as it reads it ([`Progress`]), so
+    /// a caller can share a walk's progress with a thread that publishes
+    /// it should one of the walk's calls not return in time. `None` tells
+    /// nobody. The remote program is one call and does not tell it.
+    pub progress: Option<&'a dyn Fn(Progress<'_>)>,
+}
+
+/// What the classic walk has just read ([`FocusQuery::progress`]), told
+/// once each, in the order the walk reads them.
+#[derive(Clone, Copy)]
+pub enum Progress<'a> {
+    /// Whether [`FocusQuery::previous`] has the keyboard focus, read live
+    /// ([`Ancestry::previous_focused`]).
+    PreviousFocused(bool),
+    /// The element with its cache filled afresh ([`Ancestry::element`]).
+    Element(&'a Cached<Ancestor>),
+    /// The first selected child ([`Ancestry::selected_child`]).
+    SelectedChild(&'a Cached<Ancestor>),
+    /// The next ancestor kept, nearest first ([`Ancestry::ancestors`]).
+    Ancestor(&'a Cached<Ancestor>),
 }
 
 /// The answer to a [`FocusQuery`].
@@ -927,6 +947,14 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
         Some(Err(_)) => Some(false),
     };
+    let progress = |read: Progress<'_>| {
+        if let Some(progress) = query.progress {
+            progress(read);
+        }
+    };
+    if let Some(focused) = previous_focused {
+        progress(Progress::PreviousFocused(focused));
+    }
     let request = query.fill.request();
     let element_request = query.element_fill.request();
     let element = if query.refresh && !out_of_time() {
@@ -935,6 +963,9 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     } else {
         None
     };
+    if let Some(element) = &element {
+        progress(Progress::Element(element));
+    }
     // The selected child is optional: one whose read timed out, or whose
     // container or item is gone, is left out, and the focus and its
     // ancestors are read without it (`docs/design/focus-pipeline-rework.md`,
@@ -951,6 +982,9 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Ok(_) => None,
         Err(error) => optional(Err(error))?,
     };
+    if let Some(child) = &selected_child {
+        progress(Progress::SelectedChild(child));
+    }
     // The desktop root is served in this process, so reading it is local.
     before_call("the desktop root and the tree walker");
     let root = verbatim_uia::runtime_id(&uia.root_element()?);
@@ -1043,6 +1077,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             ancestry.window = own_window(current_window);
         }
         current = parent.live().clone();
+        progress(Progress::Ancestor(&parent));
         ancestry.ancestors.push(parent);
         let known = query.known.iter().position(|known| *known == runtime_id);
         current_id = runtime_id;

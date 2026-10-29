@@ -44,7 +44,10 @@ The items keep their numbers, since code and the crate guides cite them.
    more than the worker itself. Fixed: the worker sets and cancels a
    waitable timer, which wakes no thread, so the watchdog wakes only when
    a deadline or grace passes (`docs/crates/verbatim-outpost.md`, the
-   worker and its watchdog).
+   worker and its watchdog). The listener's reading threads' watchdog
+   sleeps on the same kind of alarm, set as each read starts and as it
+   reaches its bound, and cancelled once no read is under way, so it wakes
+   only for a read still under way at its bound, grace or deadline.
 4. Core answered each outpost message with its list of held nodes
    (`NodesHeld`), a round trip per message in a terminal flood. Fixed: a
    changed list waits in the outpost's writer and goes in the same write

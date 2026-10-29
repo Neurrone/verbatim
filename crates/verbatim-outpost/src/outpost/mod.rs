@@ -34,7 +34,7 @@
 //! not yet reported, is kept: Core may not have seen it yet.
 
 pub(crate) mod acceptance;
-mod alarm;
+pub(crate) mod alarm;
 mod caret_poll;
 mod focus_path;
 mod gap_record;

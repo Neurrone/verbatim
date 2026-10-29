@@ -2569,6 +2569,7 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
             value_from_selection: false,
             window: Some(hwnd.0 as isize),
             same_as_last: None,
+            bound_us: 2_000_000,
         }
     );
 
@@ -3456,6 +3457,172 @@ fn a_chain_cut_at_the_depth_limit_is_completed_by_its_windows() {
     app.quit();
 }
 
+/// A window a focus's walk has not reached by its bound is a plain window,
+/// named by its text (`docs/design/focus-pipeline-rework.md`, "A window's
+/// name, and the one fallback"), and the bound is measured from the
+/// event's observation: `MOVED_ON_GRACE`, 500 ms, for a focus whose
+/// top-level window is not that of the focus before it, and the read's
+/// budget, 2 seconds, otherwise. On the frozen observation clock, each
+/// focus waits before its read: "First", the listener's first focus,
+/// observed 500 ms before, reads none of its ancestors, and is reported
+/// below mockapp's window as a plain window named by its title, its list
+/// "Items" not reached; "Second", in the same window, observed 500 ms
+/// before, reads its whole chain, the window's UIA element named "Mockapp
+/// Tree Fixture" by its provider; and "First" again, observed 2 seconds
+/// before, reads none.
+fn a_window_not_reached_by_the_bound_is_named_by_its_text() {
+    let title = common::unique_title("mockapp-bound-text");
+    let mut app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut report = |id: &str, waited: Duration| {
+        app.send(&format!("set-focus {id}"));
+        let Judged::Read(read) = outpost.listener_read_after(&client.focused(), waited) else {
+            panic!("the listener dropped {id}");
+        };
+        let reported = outpost.focus(DeliveredFact::UiaFocusRead {
+            marker: 0,
+            read,
+            focus: true,
+        });
+        roles_and_names(&reported)
+            .into_iter()
+            .map(|(role, name)| (role, name.map(str::to_owned)))
+            .collect::<Vec<_>>()
+    };
+    let window = (Role::Window, Some(title.clone()));
+    let first = (Role::ListItem, Some("First".to_owned()));
+    let uia_window = (Role::Window, Some("Mockapp Tree Fixture".to_owned()));
+    assert_eq!(
+        report("item1", Duration::from_millis(500)),
+        [window.clone(), first.clone()],
+        "a new window's focus at its bound of 500 ms"
+    );
+    assert_eq!(
+        report("item2", Duration::from_millis(500)),
+        [
+            uia_window,
+            (Role::List, Some("Items".to_owned())),
+            (Role::ListItem, Some("Second".to_owned()))
+        ],
+        "a focus in the same window within its bound of 2 seconds"
+    );
+    assert_eq!(
+        report("item1", Duration::from_secs(2)),
+        [window, first],
+        "a focus in the same window at its bound of 2 seconds"
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// How late the stuck step to "First"'s parent answers: far past the
+/// listener's bound, short of the five seconds after which Windows judges
+/// mockapp's window hung.
+const STUCK_PARENT_MS: u32 = 3000;
+
+/// A read that has passed NVDA's checks and whose step to a parent is
+/// stuck is published at its bound by the listener's watchdog, from what it
+/// has read, and its late result is discarded
+/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
+/// fallback"): with the listener's reading threads run here
+/// (`ReadingThreads`), their readers on the frozen clocks, so no read's
+/// walk reaches its bound between its calls and the watchdog's 500 ms run
+/// from each read's arming, the listener's first focus, "First", whose
+/// walk's first step to its parent answers 3 seconds late (`slow-parent`),
+/// is published before that step returns, with no ancestors read and its
+/// chain to be completed by plain windows from mockapp's window. Its
+/// thread is not abandoned: once the step returns, it reads the
+/// application's next focus, "Second", whose whole chain is its outcome,
+/// and nothing else is said of "First".
+fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded() {
+    use verbatim_outpost::focus_read::ReadingThreads;
+    let title = common::unique_title("mockapp-bound-stuck");
+    let mut app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let window = hwnd.0 as isize;
+    let client = Client::new(hwnd);
+    let frozen = std::time::Instant::now();
+    let frozen_us = common::now_us();
+    let (threads, outcomes) = ReadingThreads::new(Box::new(move |reader| {
+        reader.set_clock(Arc::new(move || frozen));
+        reader.set_observation_clock(Arc::new(move || frozen_us));
+        // No window takes the foreground where the test runs.
+        reader.set_foreground_reader(Arc::new(move || window));
+    }));
+    let pid = Pid(app.pid());
+    app.send("set-focus item1");
+    let first = client.focused();
+    app.send(&format!("slow-parent item1 {STUCK_PARENT_MS} 1"));
+    let marker = threads
+        .push(pid, &first, frozen_us)
+        .expect("the focus's element kept for its read");
+    let (published, judged) = outcomes
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the focus published");
+    let published_at = common::now_us();
+    app.stamped_line("slow-parent started");
+    let returned = app.stamped_line("slow-parent ended");
+    assert!(
+        published_at < returned,
+        "published at {published_at}, before the step returned at {returned}"
+    );
+    let Judged::Read(read) = judged else {
+        panic!("the stuck read was not published: {judged:?}");
+    };
+    assert_eq!(
+        (
+            published,
+            read.snapshot.name.as_deref(),
+            read.ancestors.as_deref().map(<[_]>::len),
+            read.ancestors_end
+        ),
+        (
+            marker,
+            Some("First"),
+            Some(0),
+            verbatim_outpost::protocol::AncestorsEnd::PlainFrom(window)
+        ),
+        "the focus as read before its stuck step"
+    );
+    app.send("slow-parent item1 0");
+    app.send("set-focus item2");
+    let next = threads
+        .push(pid, &client.focused(), frozen_us)
+        .expect("the next focus's element kept for its read");
+    let (read_next, judged) = outcomes
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the next focus read");
+    let Judged::Read(read) = judged else {
+        panic!("the next focus was not read: {judged:?}");
+    };
+    assert_eq!(
+        (
+            read_next,
+            read.snapshot.name.as_deref(),
+            read.ancestors.as_ref().map(|ancestors| ancestors
+                .iter()
+                .map(|ancestor| ancestor.snapshot.name.as_deref())
+                .collect::<Vec<_>>()),
+            read.ancestors_end
+        ),
+        (
+            next,
+            Some("Second"),
+            Some(vec![Some("Items"), Some("Mockapp Tree Fixture")]),
+            verbatim_outpost::protocol::AncestorsEnd::Top
+        ),
+        "the next focus, read by the same thread once the step returned"
+    );
+    drop(threads);
+    assert!(
+        outcomes.try_recv().is_err(),
+        "nothing more is said of either focus"
+    );
+    app.quit();
+}
+
 /// A hung application's window in a focus's ancestry is a plain window,
 /// named by its text, with no call, by NVDA's rule
 /// (`NVDAObjects/window/__init__.py` 85 to 97): a button in a child window
@@ -3742,6 +3909,14 @@ fn main() {
         (
             "a_chain_cut_at_the_depth_limit_is_completed_by_its_windows",
             a_chain_cut_at_the_depth_limit_is_completed_by_its_windows,
+        ),
+        (
+            "a_window_not_reached_by_the_bound_is_named_by_its_text",
+            a_window_not_reached_by_the_bound_is_named_by_its_text,
+        ),
+        (
+            "a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded",
+            a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded,
         ),
         (
             "a_listener_read_focus_is_reported_with_the_listeners_stamp",

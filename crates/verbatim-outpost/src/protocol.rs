@@ -230,6 +230,12 @@ pub struct UiaFocusRead {
     /// read while the focus before it waited for Core's judgement
     /// (`focus_read::HeldElements`).
     pub same_as_last: Option<bool>,
+    /// The bound of the read's walk, in microseconds from the event's
+    /// observation (`docs/design/focus-pipeline-rework.md`, the Terms):
+    /// `MOVED_ON_GRACE` when the focus's top-level window is not that of
+    /// the previous focus the listener observed, and the read's budget
+    /// otherwise. The outpost's continuation of the chain ends by it too.
+    pub bound_us: u64,
 }
 
 /// The thread that raised an MSAA `WinEvent` and when, as every hook that
@@ -1752,6 +1758,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one read's every field, then each message that carries it"
+    )]
     fn focus_fact_and_deliver_fact_round_trip() {
         let snapshot = UiaSnapshotFact {
             runtime_id: vec![42, 7],
@@ -1774,6 +1784,7 @@ mod tests {
             value_from_selection: false,
             window: Some(0x40),
             same_as_last: Some(false),
+            bound_us: 500_000,
         };
         let fact = ListenerFact {
             pid: Pid(1234),

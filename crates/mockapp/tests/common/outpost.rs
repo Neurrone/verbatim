@@ -670,8 +670,11 @@ impl OutpostUnderTest {
         reader.set_foreground_reader(Arc::new(move || {
             listener_foreground.load(Ordering::Relaxed)
         }));
-        // And the same time.
+        // And the same time, and the same observation clock, by which how
+        // long an event waited before its read is measured.
         reader.set_clock(clock);
+        let observed = Arc::clone(&observation);
+        reader.set_observation_clock(Arc::new(move || observed.now()));
         Self {
             outpost,
             messages,
@@ -1145,6 +1148,23 @@ impl OutpostUnderTest {
         self.last_read.set(Some(arrival.trace));
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
+    }
+
+    /// [`Self::listener_read`] for a UIA focus event observed `waited`
+    /// before its read begins, as one that waits behind its application's
+    /// earlier reads is: the test's time passes between its observation and
+    /// its read, so its walk's bound, measured from its observation, comes
+    /// that much sooner.
+    pub fn listener_read_after(&self, element: &Cached<ListenerEvent>, waited: Duration) -> Judged {
+        let arrival = Arrival {
+            trace: TraceId::mint(),
+            observed_at_us: self.observed_now(),
+        };
+        self.last_read.set(Some(arrival.trace));
+        self.pass_time(waited);
+        self.reader
+            .borrow_mut()
+            .read(element, FocusEvent::Focus, arrival)
     }
 
     /// Tells the listener's reader that Core judged the focus it last read

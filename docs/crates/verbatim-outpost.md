@@ -141,9 +141,11 @@ receives the event's own element, judges and reads a UIA focus
   since it connects to no window: after a step to a parent that fails or
   finds none, the parent window of its outermost element's nearest window
   (`ContinueFrom`, `verbatim_uia::outermost_nearest_window`), as NVDA's
-  parent read falls back to the window hierarchy; after the read's budget
+  parent read falls back to the window hierarchy; after the walk's bound
   or its depth limit of 64, that nearest window, from which the chain is
-  completed by plain windows (`PlainFrom`). It reuses, from where a later
+  completed by plain windows (`PlainFrom`).
+  Each read carries its walk's bound (`UiaFocusRead::bound_us`), which
+  the outpost's continuation of the chain ends by. It reuses, from where a later
   read meets it, only a chain that reached the top. A read that fails
   reports the focus from its event, ancestors unknown. A test can be told
   each call the classic walk is about to make
@@ -162,13 +164,45 @@ receives the event's own element, judges and reads a UIA focus
   `GetAncestor`), or in none when it found neither. A focus whose nearest
   window's lookup timed out (`focus_read::NEAREST_TIMED_OUT`) is dropped
   with no other call.
-- Budget. A read has one budget, `READ_BUDGET` (2 seconds), asked before
-  each call after the first (`Budget`). Past it the read makes no calls
-  but still makes every check that needs none, the class-list skip among
-  them, taking the keyboard focus from the cached `HasKeyboardFocus` (also
-  when a live read fails by UIA's transaction timeout); the repeat check is
-  skipped, a deliberate divergence from NVDA. A call over a second is
-  logged at info (`FocusQuery::before_call`).
+- Budget and bound. NVDA's checks have `READ_BUDGET` (2 seconds) from
+  the read's start, asked before each call after the first (`Budget`).
+  Past it the read makes no calls but still makes every check that needs
+  none, the class-list skip among them, taking the keyboard focus from the
+  cached `HasKeyboardFocus` (also when a live read fails by UIA's
+  transaction timeout); the repeat check is skipped, a deliberate
+  divergence from NVDA. The walk after the checks has its bound, measured
+  from the event's observation (`Budget::bound_walk`, the time the event
+  waited counted by the reader's observation clock,
+  `FocusReader::set_observation_clock`): `MOVED_ON_GRACE` (500 ms) when
+  the focus's top-level window is not that of the previous focus the
+  listener observed, which the reading thread places in order
+  (`FocusReader::last_top`) and which is always elsewhere after another
+  application's focus (`ReadersState::last_focus`), and `READ_BUDGET`
+  otherwise. A walk past its bound is reported by `read_at_bound`: the
+  focus as read so far, the ancestors read, and `PlainFrom` the outermost
+  one's nearest window. A call over a second is logged at info
+  (`FocusQuery::before_call`).
+- Publication at the bound. Once a read has passed every check, its
+  thread shares its progress with the watchdog (`ReadProgress` in
+  `WatchedRead`: the event's cached facts, the facts read so far through
+  `FocusQuery::progress`, the ancestors read, the nearest window and the
+  bound) and sets the watchdog's alarm to the bound (`on_arm`). A read
+  whose call is still under way at the bound is published by the watchdog
+  from that progress through the same `read_at_bound`, its chain
+  completed by plain windows by local calls on the watchdog's thread
+  (`publish_at_bound`), and claimed (`WatchedRead::publish`), so its
+  thread's late result is discarded when it returns and its element is
+  not kept for Core's judgement. The thread is not abandoned for this: it
+  reads its application's next event when its call returns, is abandoned
+  only at `READ_DEADLINE` or by the moved-on rule, and so counts against
+  `ABANDONED_LIMIT` only then, when no second outcome is sent. A read
+  still in its checks at the bound is left to those rules. A menu item's
+  legacy MSAA state, read after the walk, is published as the walk ended
+  should it be the call under way (`ReadProgress::finished`). A published
+  read is no longer a pending focus for menu openings, nor in progress for
+  the idle barrier. `ReadingThreads` runs the reading threads and their
+  watchdog in a test's process, outcomes sent to a channel, so a mockapp
+  test can watch the watchdog meet the bound.
 - Watchdog. A read past `READ_DEADLINE`, 8 seconds (the budget, the
   5-second transaction timeout, and a second), is abandoned;
   the timeout bounds each provider call, not an operation
@@ -187,7 +221,16 @@ receives the event's own element, judges and reads a UIA focus
   thread takes later events. With `ABANDONED_LIMIT` (two) threads still in
   calls the application gets no new thread and its events wait;
   `READ_DEADLINE` after that (`App::limit_reached`) every waiting and later
-  event is dropped until a thread returns.
+  event is dropped until a thread returns. The watchdog sleeps on an alarm
+  (`outpost::alarm::Alarm`, as an outpost's watchdog does): a read sets its
+  timer as it starts, to its deadline, or to the end of its grace when a
+  foreground event came while it waited, and again to its bound once it
+  has passed its checks, each only when no sooner time is set
+  (`alarm_by`); a read that returns with none other under way cancels it
+  (`settle_alarm`). A read whose window is known from the event's cache
+  has the window in front judged as it starts, on its own thread
+  (`WatchedRead::known`). So a read that returns before its bound wakes
+  the watchdog not at all.
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
@@ -362,8 +405,10 @@ between its steps, so a focus-now query whose focus has such a window
 above its own (`read::plain_window_above`, local calls by
 `verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
 walk instead. A walk cut by its time
-(`ENRICHMENT_BUDGET`) or its depth limit of 64 is completed by plain
-windows from its outermost element's nearest window, included. Whether a
+(`ENRICHMENT_BUDGET`; for the continuation of a listener's read, that
+read's bound from the event's observation, `UiaFocusRead::bound_us`) or
+its depth limit of 64 is completed by plain windows from its outermost
+element's nearest window, included. Whether a
 window can be read is the system's judgement (`window_unreadable`), which a
 test that cannot wait five seconds for Windows to judge an application
 hung replaces (`Outpost::set_window_readability_reader` and
@@ -686,7 +731,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   it is in charge; nothing is sent while that lock is held.
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
-  `TRANSACTION_TIMEOUT` (5 s); `ENRICHMENT_BUDGET` (2 s) bounds a focus's
+  `TRANSACTION_TIMEOUT` (5 s); the listener's read's bound bounds the
+  continuation of its chain, and `ENRICHMENT_BUDGET` (2 s) a focus's
   ancestor walk between calls; a UIA dialog's text runs on a
   `verbatim_uia::BoundedClient` within `DIALOG_TEXT_WAIT` (1 s); tree view,
   list view, and edit messages use `SendMessageTimeoutW`; an `IAccessible`
