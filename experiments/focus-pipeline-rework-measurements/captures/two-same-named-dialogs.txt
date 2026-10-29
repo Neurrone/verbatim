@@ -1,0 +1,65 @@
+Two child dialogs of one role and name
+
+Taken on 2026-10-30 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, started from a scratch configuration with eSpeak NG, defaults, the update check off and the transcript add-on, through cargo xtask nvda capture; then, with NVDA closed, Verbatim at 10c9e83a (target\debug, VERBATIM_TEST_AUDIO=null, eSpeak NG) through cargo xtask nvda capture --verbatim, the same steps. The window is two-same-named-dialogs.ps1 (this folder), a Windows Forms form "Two dialogs capture" holding two panels, each a child window of its own whose MSAA client object (OBJID_CLIENT) is role dialog, name "Remove", the first holding a "First" button and the second a "Second" button, each button a child window of its panel; window-ancestry.ps1 (this folder) read the chains below while the NVDA run's form was open. mockapp could not give this setup: its child-window command makes one child window that serves the whole fixture tree from its root, and its focus command raises EVENT_OBJECT_FOCUS only from the host window, so no node can be a dialog that is a child window of its own with the focus event raised from a window inside it.
+
+What it shows. Tab from the first dialog's button into the second's, a second dialog of the same role and name with a different window handle in the same top-level window, NVDA says "Remove dialog" again, then "Second button", and again each time the focus crosses between the two panels (Shift+Tab back, Tab forward). NVDA treats the two windows as two containers, as the test two_windows_with_one_role_and_name_are_two_containers (crates/verbatim-core/tests/reduce.rs) expects. Verbatim at 10c9e83a says only "Second button" and "First button" on those moves, and does not say "Remove dialog" again, so in this application it still enters the two dialogs as one container; the dialog nodes here are the panels' client objects, reached from each button's window by the walk, and presumably carry no window handle, so Core falls back to matching by role and name. At entry NVDA did not say the form's title, and Verbatim said "Two dialogs capture" first; the lines before the front step in Verbatim's run are its own console window and log, spoken as Verbatim started, and are not part of the setup.
+
+The windows, in the NVDA run (handle, class, InternalGetWindowText, client object's MSAA role and name), from each button up to the desktop:
+
+34801380 class=WindowsForms10.BUTTON.app.0.172b30c_r8_ad1 text='First' client role=push button name='First'
+23725838 class=WindowsForms10.Window.8.app.0.172b30c_r8_ad1 text='' client role=dialog name='Remove'
+33031814 class=WindowsForms10.Window.8.app.0.172b30c_r8_ad1 text='Two dialogs capture' client role=client name='Two dialogs capture'
+65548 class=#32769 text='' client role=client name='Desktop 1'
+20252080 class=WindowsForms10.BUTTON.app.0.172b30c_r8_ad1 text='Second' client role=push button name='Second'
+39257198 class=WindowsForms10.Window.8.app.0.172b30c_r8_ad1 text='' client role=dialog name='Remove'
+33031814 class=WindowsForms10.Window.8.app.0.172b30c_r8_ad1 text='Two dialogs capture' client role=client name='Two dialogs capture'
+65548 class=#32769 text='' client role=client name='Desktop 1'
+
+In the Verbatim run the form was 33097350, the panels 39322734 and 23791374, and the buttons 20317616 and 34866916, the same classes, roles and names.
+
+NVDA:
+
+NVDA alpha-58022,732d1ce2 in session 1
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\two-same-named-dialogs.ps1 -Ready C:\Users\Dickson\AppData\Local\Temp\claude\C--Users-Dickson-Desktop-projects-verbatim\85df2444-e74f-4445-8c2d-95e21acea0d8\scratchpad\ready-nvda.txt
+> front powershell.exe "Two dialogs capture"
+  +930 ms  cancel
+  +988 ms  [Normal] Remove  dialog
+  +991 ms  [Normal] First  button
+> tab
+  +15 ms  cancel
+  +107 ms  [Normal] Remove  dialog
+  +110 ms  [Normal] Second  button
+> shift+tab
+  +3 ms  cancel
+  +126 ms  [Normal] Remove  dialog
+  +129 ms  [Normal] First  button
+> tab
+  +3 ms  cancel
+  +104 ms  [Normal] Remove  dialog
+  +107 ms  [Normal] Second  button
+
+Verbatim:
+
+Verbatim on its control pipe
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\two-same-named-dialogs.ps1 -Ready C:\Users\Dickson\AppData\Local\Temp\claude\C--Users-Dickson-Desktop-projects-verbatim\85df2444-e74f-4445-8c2d-95e21acea0d8\scratchpad\ready-verbatim.txt
+  -12477 ms  sound: start
+  -11719 ms  [u1] C:\Users\Dickson\Desktop\projects\verbatim\target\debug\verbatim.exe window
+  -11719 ms  [u2] C:\Users\Dickson\Desktop\projects\verbatim\target\debug\verbatim.exe terminal
+  -11719 ms  [u3] blank
+  -5242 ms  [u4] 2026-10-29T21:28:14.104791Z  INFO verbatim::latency: 42.5 ms for "C:\\Users\\Dickson\\Desktop\\projects\\verbatim\\target\\debug\\verbatim.exe window": 1.1 ms to speech and 41.4 ms to sound, not counting 0.3 ms waiting behind earlier speech. Event: verbatim.exe 0.0, verbatim.exe to outpost 0.2, outpost queue 0.3, outpost read 257.7 (8 calls), outpost outbound 0.0, outpost's pipe to verbatim.exe 0.2, waiting for the reducer 0.6, reducer 0.6, to speech 0.5. Speech: synthesizer request 0.0, to the synthesizer host 0.1, the host's first chunk 0.4, back from the synthesizer host 0.1, leading silence 0.1, mixer and device 40.6.
+  +32 ms  [u5] 2026-10-29T21:28:19.393827Z  INFO verbatim_control::server: speech subscribed on a control connection replayed=8
+> front powershell.exe "Two dialogs capture"
+  +62 ms  cancelled [u3] blank
+  +62 ms  cancelled [u4] 2026-10-29T21:28:14.104791Z  INFO verbatim::latency: 42.5 ms for "C:\\Users\\Dickson\\Desktop\\projects\\verbatim\\target\\debug\\verbatim.exe window": 1.1 ms to speech and 41.4 ms to sound, not counting 0.3 ms waiting behind earlier speech. Event: verbatim.exe 0.0, verbatim.exe to outpost 0.2, outpost queue 0.3, outpost read 257.7 (8 calls), outpost outbound 0.0, outpost's pipe to verbatim.exe 0.2, waiting for the reducer 0.6, reducer 0.6, to speech 0.5. Speech: synthesizer request 0.0, to the synthesizer host 0.1, the host's first chunk 0.4, back from the synthesizer host 0.1, leading silence 0.1, mixer and device 40.6.
+  +62 ms  cancelled [u5] 2026-10-29T21:28:19.393827Z  INFO verbatim_control::server: speech subscribed on a control connection replayed=8
+  +58 ms  [u6] Two dialogs capture
+  +58 ms  [u7] Remove dialog
+  +58 ms  [u8] First button
+> tab
+  +52 ms  cancelled [u8] First button
+  +52 ms  cancelled [u7] Remove dialog
+  +24 ms  [u9] Second button
+> shift+tab
+  +20 ms  [u10] First button
+> tab
+  +21 ms  [u11] Second button
