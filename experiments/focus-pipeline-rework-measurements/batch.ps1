@@ -45,6 +45,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# At most 20 runs of any scenario in a measurement (Dickson, 2026-10-29).
+$Runs = [Math]::Min($Runs, 20)
 $defaultLog = 'info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug'
 
 $env:CARGO_TARGET_DIR = $TargetDir
