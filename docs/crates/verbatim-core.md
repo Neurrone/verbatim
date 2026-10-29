@@ -267,8 +267,13 @@ code is in `reduce.rs` unless named.
   `ancestors`), which review reads and a repeat updates, and what Core
   last spoke of it (`FocusContext::spoken`, a `SpokenRecord`): the
   focus's name, value, description and states, and each ancestor's
-  states. Only speech moves the record: a focus taken, and a change that
-  reaches its speech. An ancestor the previous focus line held, the
+  states. A repeat never moves the record. A focus taken moves it, and
+  so does a report of the focus's object (the report-focus command,
+  reporting the current object while the navigator is on the focus, and
+  the navigator's return to the focus), whatever the reason it is spoken.
+  A name, value, description or state change on the focus moves it to the
+  new reading even when nothing is spoken, as NVDA's property cache does.
+  An ancestor the previous focus line held, the
   previous focus among them, keeps its entry, so an expansion of a combo
   box the focus has just left for its item, arriving after the item's
   report, is still spoken; an ancestor with no entry is compared with its

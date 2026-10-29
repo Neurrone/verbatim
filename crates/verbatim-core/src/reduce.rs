@@ -1607,7 +1607,7 @@ fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     };
     let object = focus.snapshot.clone();
     state.navigator = Some(Navigator::on(object.clone()));
-    announce_navigator(state, trace_id, &object, Reason::Focus)
+    announce_focus_object(state, trace_id, &object, Reason::Focus)
 }
 
 /// Announces the navigator object `object` after object navigation or on
@@ -1638,6 +1638,31 @@ fn announce_navigator(
     effects
 }
 
+/// Announces `object` as [`announce_navigator`] does and, when it is the
+/// focus, moves what was last spoken of the focus to what is spoken now
+/// ([`SpokenRecord`]): a property is remembered whenever it is spoken of the
+/// object, whatever the reason (`docs/parity/changes-and-selection.md`,
+/// "Name change on the focus"; "When values and descriptions are spoken" in
+/// `docs/nvda/speech.md`), so a change a report has already spoken is not
+/// spoken again when its event comes. The ancestors' entries stay, since
+/// the announcement speaks none of them.
+fn announce_focus_object(
+    state: &mut SrState,
+    trace_id: TraceId,
+    object: &NodeSnapshot,
+    reason: Reason,
+) -> Vec<Effect> {
+    if let Some(focus) = state
+        .focus
+        .as_mut()
+        .filter(|focus| focus.snapshot.id == object.id)
+    {
+        let ancestors = Arc::clone(&focus.spoken().ancestors);
+        focus.spoken = Some(SpokenRecord::of(object, ancestors));
+    }
+    announce_navigator(state, trace_id, object, reason)
+}
+
 /// Reports the navigator object: on the first press its full announcement,
 /// on the second its text spelled character by character, on the third its
 /// name and value copied to the clipboard (NVDA's multi-press semantics).
@@ -1648,7 +1673,7 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
     match repeat {
         0 => {
             let object = navigator.object.clone();
-            announce_navigator(state, trace_id, &object, Reason::Query)
+            announce_focus_object(state, trace_id, &object, Reason::Query)
         }
         // An object with text spells or copies its name and the text it
         // would announce, the selection or the caret's line, as NVDA does
@@ -1709,7 +1734,7 @@ fn report_focus(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effec
         )];
     };
     if repeat == 0 {
-        return announce_navigator(state, trace_id, &object, Reason::Query);
+        return announce_focus_object(state, trace_id, &object, Reason::Query);
     }
     let segments =
         review_text::spell_or_blank(object.name.as_deref().unwrap_or_default(), repeat > 1, None);

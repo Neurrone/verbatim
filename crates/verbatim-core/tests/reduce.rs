@@ -2425,6 +2425,119 @@ fn a_name_change_after_a_repeat_carried_it_is_spoken() {
 }
 
 #[test]
+fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
+    // A repeat carries the new name in; the report-focus command speaks it,
+    // which moves what was last spoken of the focus, so the name change's
+    // own event finds it already spoken.
+    let source = Pid(1);
+    let first = node(42, Role::Button, Some("Connect"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, first),
+    );
+    let renamed = node(42, Role::Button, Some("Disconnect"), None, StateSet::new());
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, renamed));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportFocus, 0),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![
+            UtteranceSegment::label("Disconnect"),
+            role(Role::Button),
+        ])]
+    );
+    let name_changed = event_in(
+        source,
+        None,
+        NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(42),
+            change: PropertyChange::Name(Some("Disconnect".to_string())),
+            child_count: None,
+        },
+    );
+    let (_, effects) = reduce(&state, &name_changed);
+    assert_eq!(heard(&effects), vec![]);
+}
+
+#[test]
+fn a_name_change_the_navigator_s_return_to_the_focus_spoke_is_silent() {
+    // Moving the navigator to the focus announces the focus, which moves
+    // what was last spoken of it.
+    let source = Pid(1);
+    let first = node(44, Role::Button, Some("Play"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, first),
+    );
+    let renamed = node(44, Role::Button, Some("Pause"), None, StateSet::new());
+    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, renamed));
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![
+            message(verbatim_model::Message::MoveToFocus),
+            UtteranceSegment::label("Pause"),
+            role(Role::Button),
+        ])]
+    );
+    let name_changed = event_in(
+        source,
+        None,
+        NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(44),
+            change: PropertyChange::Name(Some("Pause".to_string())),
+            child_count: None,
+        },
+    );
+    let (_, effects) = reduce(&state, &name_changed);
+    assert_eq!(heard(&effects), vec![]);
+}
+
+#[test]
+fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
+    // The navigator rests on the focus, so reporting the current object
+    // speaks the focus's states, which moves what was last spoken of it.
+    let source = Pid(1);
+    let unchecked = node(43, Role::CheckBox, Some("Wrap"), None, StateSet::new());
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, unchecked),
+    );
+    let checked = node(
+        43,
+        Role::CheckBox,
+        Some("Wrap"),
+        None,
+        states(&[State::Checked]),
+    );
+    let (reader, _) = reduce(&reader, &focus_event(TraceId::mint(), source, checked));
+    let (reader, effects) = reduce(
+        &reader,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![
+            UtteranceSegment::label("Wrap"),
+            role(Role::CheckBox),
+            state(State::Checked),
+        ])]
+    );
+    let (_, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(43),
+            states(&[State::Checked]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![]);
+}
+
+#[test]
 fn an_expand_of_the_focus_left_reported_after_the_new_focus_is_spoken() {
     // Alt+Down on a Settings combo box: the item's focus, whose ancestor is
     // the combo box already expanded, reaches Core before the combo box's

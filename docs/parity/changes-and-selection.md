@@ -11,7 +11,8 @@ of the focus, is silent ([Event handling](../nvda/events.md), "The focus
 gate" and "Foreground windows"). Verbatim: the new name alone is
 spoken at `Queued` priority, only for the focused node, when it differs
 from the name last spoken of it, which a repeated report of the focus
-does not move. A state change of an ancestor is compared with the states
+does not move and a spoken report of the focus does, as NVDA remembers
+every property it speaks of an object whatever the reason. A state change of an ancestor is compared with the states
 last spoken of it, which an ancestor that was the previous focus keeps
 from when it was spoken as the focus.
 **matched (unverified)**.
