@@ -1635,7 +1635,15 @@ for every event, so each request holds only what is read from it.
 - The listener's desktop-wide registrations carry NVDA's base cache
   request, thirteen properties and the Text pattern, as the
   `verbatim_uia::ListenerEvent` shape with two more; the rest is read from
-  the sender, and a selection is reported with what its cache holds.
+  the sender. An element selected also carries what Core speaks of an
+  item selected in a focused list, 25 properties more
+  (`verbatim_uia::ListenerSelection`: the value, states, description,
+  keyboard shortcut, grid row and column, position in set and level, not
+  the rectangle), whatever the theme, so the selection is reported with no
+  call of its own (Dickson, 2026-10-29;
+  `a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache`):
+  25 provider calls more inside the application per selection event,
+  paid for every selection on the desktop, spoken or not.
 - The outpost's text registration asks for 3 properties (`TextEvent`),
   since the worker reads the text itself, and its property registration
   for 23 (`PropertyEvent`), without a node's details or its off-screen
@@ -1644,8 +1652,9 @@ for every event, so each request holds only what is read from it.
   UIA makes to route an event vary with load: the text events' request 3
   `GetPropertyValue`; the property changes' 12 `GetPropertyValue` and 11
   `GetPatternProvider`; the listener's 15 `GetPropertyValue` and 3
-  `GetPatternProvider`; each also 5 `ProviderOptions`, 3
-  `HostRawElementProvider`, 3 `FragmentRoot` and 2 `GetRuntimeId`.
+  `GetPatternProvider`, and for an element selected 27 and 16; each also
+  5 `ProviderOptions`, 3 `HostRawElementProvider`, 3 `FragmentRoot` and 2
+  `GetRuntimeId`.
 - A help text change and a `ControllerFor` change on the focus each read
   what they need when handled, one call, as NVDA does
   (`a_focus_s_help_text_and_suggestions_are_followed`); the first after

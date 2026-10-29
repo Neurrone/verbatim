@@ -289,8 +289,8 @@ impl ListenerEvent {
     /// The event's element as the focus listener forwards it: its runtime
     /// id `runtime_id`, role, name, and, as its only state, whether it has
     /// the keyboard focus. Nothing else is in the cache, so the value,
-    /// other states, and details are left empty, not read as defaults;
-    /// what Verbatim needs of them is read afresh.
+    /// other states, and details are left empty, not read as defaults. An
+    /// element selected carries them too ([`ListenerSelection::parts`]).
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
         let mut name = self.name.clone();
@@ -306,6 +306,76 @@ impl ListenerEvent {
             value: None,
             states,
             details: NodeDetails::default(),
+        }
+    }
+}
+
+uia_shape! {
+    /// An element selected, as the focus listener's registration delivers
+    /// it: a [`ListenerEvent`], with what Core speaks of an item selected
+    /// inside a focused list or tab control, which it says as a focus: its
+    /// value, states, description, keyboard shortcut, row and column in a
+    /// grid, position in its set, and level. UIA fills them inside the
+    /// application with the event, so the item is reported with no call
+    /// (Dickson, 2026-10-29). Not its [`Place`], which is never in an
+    /// event's cache (`docs/design/uia-shapes.md`, decision 9) and is not
+    /// spoken, so a state set it carries is never off the screen.
+    pub struct ListenerSelection {
+        gates: none;
+        groups {
+            /// What every desktop-wide event of the listener carries.
+            event: ListenerEvent,
+            /// What its value is read from.
+            value: ValueSet,
+            /// What its states are mapped from.
+            states: States,
+            /// Its description.
+            description: Description,
+            /// Its keyboard shortcut.
+            shortcut: Shortcut,
+            /// Its position in its set.
+            position: Position,
+            /// Where it is in a grid, when it is a grid's item.
+            cell: Cell,
+        }
+        properties {
+            /// Its one-based level, in a tree or among headings.
+            level: UIA_LevelPropertyId => one_based,
+        }
+        prefetch {}
+        covers { ListenerEvent, Kept, FocusInput, TextAreaPattern }
+    }
+}
+
+impl ListenerSelection {
+    /// The selected item as a snapshot's parts, with runtime id
+    /// `runtime_id`: its role, name, value, states, and every detail but
+    /// its rectangle, each as the event's cache holds it.
+    #[must_use]
+    pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
+        let role = self.event.role.role();
+        let mut name = self.event.name.clone();
+        let mut value = self.value.value(self.event.role.class_name.as_deref());
+        let mut details = NodeDetails {
+            description: self.description.description(),
+            keyboard_shortcut: self.shortcut.shortcut(),
+            position_in_set: self.position.position_in_set,
+            set_size: self.position.size_of_set,
+            level: self.level,
+            ..NodeDetails::default()
+        };
+        if let Some((row, column)) = self.cell.coordinates() {
+            details.row = Some(row);
+            details.column = Some(column);
+        }
+        strip_bidi_controls([&mut name, &mut value, &mut details.description]);
+        CachedUiaParts {
+            runtime_id,
+            role,
+            name,
+            value,
+            states: self.states.states(role, false),
+            details,
         }
     }
 }

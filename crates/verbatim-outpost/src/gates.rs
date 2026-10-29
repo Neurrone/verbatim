@@ -6,7 +6,7 @@
 //! a platform-neutral crate that knows nothing of UI Automation, so each
 //! gated field has a unit test.
 
-use verbatim_model::Fetches;
+use verbatim_model::{Fetches, NodeDetails};
 use verbatim_uia::{AncestorGates, NodeGates};
 
 /// The gates of a [`verbatim_uia::Node`] read alone, such as a focus or a
@@ -65,12 +65,36 @@ pub fn focus_gates(fetches: &Fetches) -> AncestorGates {
     }
 }
 
+/// `details`, read whatever the theme, as the listener's selection is from
+/// its event's cache (`verbatim_uia::ListenerSelection`), without those
+/// `fetches` does not name: what a read with [`node_gates`] would have
+/// left unfetched.
+pub fn leave_out_unreported(details: &mut NodeDetails, fetches: &Fetches) {
+    if !fetches.description {
+        details.description = None;
+    }
+    if !fetches.shortcut {
+        details.keyboard_shortcut = None;
+    }
+    if !fetches.position {
+        details.position_in_set = None;
+        details.set_size = None;
+    }
+    if !fetches.level {
+        details.level = None;
+    }
+    if !fetches.cell_coordinates {
+        details.row = None;
+        details.column = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use verbatim_model::Fetches;
+    use verbatim_model::{Fetches, NodeDetails};
     use verbatim_uia::{AncestorGates, Node, NodeGates, Shape};
 
-    use super::{ancestor_gates, focus_gates, many_node_gates, node_gates};
+    use super::{ancestor_gates, focus_gates, leave_out_unreported, many_node_gates, node_gates};
 
     /// The gates for every detail but the one `off` turns off, as a node's
     /// and as the focus's, which must equal `expected` and that node
@@ -158,6 +182,67 @@ mod tests {
                 level: false,
                 ..Node::all_on()
             },
+        );
+    }
+
+    /// Each detail the theme does not report is left out of details read
+    /// whatever the theme, and nothing else.
+    #[test]
+    fn each_unreported_detail_is_left_out_alone() {
+        let read = NodeDetails {
+            description: Some("Opens it".to_owned()),
+            keyboard_shortcut: Some("Alt+O".to_owned()),
+            position_in_set: Some(2),
+            set_size: Some(3),
+            level: Some(1),
+            row: Some(4),
+            column: Some(5),
+            ..NodeDetails::default()
+        };
+        let left = |off: fn(&mut Fetches)| {
+            let mut fetches = Fetches::default();
+            off(&mut fetches);
+            let mut details = read.clone();
+            leave_out_unreported(&mut details, &fetches);
+            details
+        };
+        assert_eq!(left(|_| {}), read);
+        assert_eq!(
+            left(|fetches| fetches.description = false),
+            NodeDetails {
+                description: None,
+                ..read.clone()
+            }
+        );
+        assert_eq!(
+            left(|fetches| fetches.shortcut = false),
+            NodeDetails {
+                keyboard_shortcut: None,
+                ..read.clone()
+            }
+        );
+        assert_eq!(
+            left(|fetches| fetches.position = false),
+            NodeDetails {
+                position_in_set: None,
+                set_size: None,
+                ..read.clone()
+            }
+        );
+        assert_eq!(
+            left(|fetches| fetches.level = false),
+            NodeDetails {
+                level: None,
+                ..read.clone()
+            }
+        );
+        assert_eq!(
+            left(|fetches| fetches.cell_coordinates = false),
+            NodeDetails {
+                row: None,
+                column: None,
+                ..read.clone()
+            }
         );
     }
 }

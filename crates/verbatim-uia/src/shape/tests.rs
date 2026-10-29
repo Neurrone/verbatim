@@ -12,9 +12,9 @@ use windows::core::IUnknown;
 
 use super::{
     Absent, Ancestor, CachedReads, Cell, Description, DialogText, FocusInput, HelpTextRefresh,
-    Kept, ListenerEvent, Node, Place, Position, PropertyEvent, ProviderOrigin, Reader, RoleCore,
-    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
-    TextEvent, ValueSet, WindowLookup, request_properties,
+    Kept, ListenerEvent, ListenerSelection, Node, Place, Position, PropertyEvent, ProviderOrigin,
+    Reader, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh,
+    TextAreaPattern, TextEvent, ValueSet, WindowLookup, request_properties,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -112,6 +112,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         TextEvent,
         PropertyEvent,
         ListenerEvent,
+        ListenerSelection,
         FocusInput,
         Description,
         Shortcut,
@@ -141,6 +142,8 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         ("TextEvent", TextEvent::PROPERTIES, 3),
         ("PropertyEvent", PropertyEvent::PROPERTIES, 23),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
+        // A node's, without its place, with the rest of the listener's.
+        ("ListenerSelection", ListenerSelection::PROPERTIES, 40),
         ("Node", Node::PROPERTIES, 34),
         // Neither the rectangle nor whether it is off the screen is read
         // unless the place's gate asks for them, nor the row and column
@@ -154,6 +157,7 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         assert_eq!(ids(properties).len(), expected, "{shape} has no repeats");
     }
     assert_eq!(ListenerEvent::PATTERNS, [UIA_TextPatternId]);
+    assert_eq!(ListenerSelection::PATTERNS, [UIA_TextPatternId]);
     assert_eq!(PropertyEvent::PATTERNS, []);
     assert_eq!(SelectionContainer::PATTERNS, [UIA_SelectionPatternId]);
     // With every gate on, a node's request is all of its properties, and

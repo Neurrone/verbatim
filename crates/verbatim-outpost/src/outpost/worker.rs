@@ -2922,12 +2922,16 @@ impl Worker<'_> {
             }
             _ => {}
         }
-        // A selection the listener heard carries the item's identity, role
-        // and name alone, NVDA's base cache request, and is reported with
-        // them: no search is made for its element, which could enter a
+        // A selection the listener heard carries what Core speaks of the
+        // item, filled by UIA with the event (`verbatim_uia::ListenerSelection`),
+        // and is reported with it, less the details the theme does not
+        // report: no search is made for its element, which could enter a
         // child window another process serves
         // (`docs/design/cross-process-calls-study.md`, instance 3).
-        let node = Self::uia_node(self.context, &event.parts, element.as_ref());
+        let mut node = Self::uia_node(self.context, &event.parts, element.as_ref());
+        if matches!(event.kind, UiaKind::Selection) {
+            crate::gates::leave_out_unreported(&mut node.details, &self.context.fetches());
+        }
         let normalized = match event.kind {
             UiaKind::Property(id) => {
                 let refreshed = refreshed_for(self.client.uia(), id, element.as_ref());

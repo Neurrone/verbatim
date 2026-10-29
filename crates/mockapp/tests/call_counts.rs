@@ -77,8 +77,8 @@ use verbatim_outpost::text::{
 };
 use verbatim_uia::{
     Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
-    Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape, Subscription,
-    TextEvent, Uia,
+    ListenerSelection, Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,
+    Subscription, TextEvent, Uia,
 };
 use verbatim_uia_rops::{
     Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry, focus_ancestry_classic,
@@ -2341,7 +2341,7 @@ fn uia_event_registrations_cost_exactly() {
     let (registration, cost) = under_test.measure(hwnd, |_| {
         Registration::with_parts(
             vec![
-                Part::shaped::<ListenerEvent>(Subscription::Event {
+                Part::shaped::<ListenerSelection>(Subscription::Event {
                     event: UIA_SelectionItem_ElementSelectedEventId,
                     callback: Arc::new(|_| {}),
                 }),
@@ -2581,7 +2581,8 @@ fn uia_selected_children_cost_exactly() {
 /// focus carries what its name, value, and states are read from
 /// (`PropertyEvent`), while every desktop-wide event of the listener's
 /// registration carries what the listener judges and reads a focus from
-/// (`ListenerEvent`); every event was registered with the base
+/// (`ListenerEvent`), and an element selected also what Core speaks of the
+/// item (`ListenerSelection`); every event was registered with the base
 /// cache request, 34 properties, before. Measured on demand because the calls UIA makes to
 /// route an event to its registration vary from one delivery to another
 /// with how busy the machine is, while a cache request's calls do not.
@@ -2604,6 +2605,10 @@ fn uia_event_caches_cost_exactly() {
         .uia
         .request_fixed::<ListenerEvent>()
         .expect("the listener event's request");
+    let selection = under_test
+        .uia
+        .request_fixed::<ListenerSelection>()
+        .expect("the listener selection's request");
     let live = Live::new(notes.clone());
     let (_, cost) = under_test.measure(hwnd, |_| {
         live.refresh(&text).expect("the element's cache is filled")
@@ -2652,6 +2657,24 @@ fn uia_event_caches_cost_exactly() {
             ("ProviderOptions", 5),
             ("GetPatternProvider", 3),
             ("GetPropertyValue", 15),
+            ("HostRawElementProvider", 3),
+            ("GetRuntimeId", 2),
+            ("FragmentRoot", 3),
+        ],
+    );
+    let (_, cost) = under_test.measure(hwnd, |_| {
+        live.refresh(&selection)
+            .expect("the element's cache is filled")
+    });
+    ratchet.check(
+        "UIA event cache, an element selected",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("ProviderOptions", 5),
+            ("GetPatternProvider", 16),
+            ("GetPropertyValue", 27),
             ("HostRawElementProvider", 3),
             ("GetRuntimeId", 2),
             ("FragmentRoot", 3),

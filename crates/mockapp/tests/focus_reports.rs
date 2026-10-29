@@ -26,6 +26,7 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use verbatim_core::SrState;
@@ -41,11 +42,15 @@ use verbatim_outpost::protocol::{
     UiaSnapshotFact, VerdictDrop, WinEventStamp,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
-use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
+use verbatim_uia::{
+    Cached, ListenerEvent, ListenerSelection, Part, RAW_PROBE_TIMEOUT_MS, Registration,
+    Subscription, Uia,
+};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomation2, UIA_ControllerForPropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_HelpTextPropertyId, UIA_NamePropertyId, UIA_ValueValuePropertyId,
+    UIA_HelpTextPropertyId, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_ValueValuePropertyId,
 };
 use windows::core::Interface;
 
@@ -2506,6 +2511,104 @@ fn a_windowless_selection_is_given_its_nearest_window() {
     app.quit();
 }
 
+/// An item selected inside a focused list is reported with its states and
+/// its position in its set from the event's cache, which the listener's
+/// registration fills with the event (`verbatim_uia::ListenerSelection`):
+/// the outpost reads nothing of the item, its one call the test every
+/// selection is given first for a list the focus controls, a read of the
+/// focus's `ControllerFor`. The selection is mockapp's own event, caught by
+/// a subscription shaped as the listener's and captured by its own
+/// `capture_selection`, then checked by the listener's reading thread's
+/// check.
+fn a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache() {
+    let title = common::unique_title("mockapp-selection-from-cache");
+    let mut app = common::spawn("reuse.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus folder");
+    let focus = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        (focus.node.role, focus.node.name.as_deref()),
+        (Role::List, Some("Items View"))
+    );
+
+    let (sent, events) = mpsc::channel();
+    let registration = Registration::with_parts(
+        vec![Part::shaped::<ListenerSelection>(Subscription::Event {
+            event: UIA_SelectionItem_ElementSelectedEventId,
+            callback: Arc::new(move |element: &Cached<ListenerSelection>| {
+                let captured =
+                    verbatim_outpost::listener::capture_selection(element, &element.read())
+                        .expect("mockapp's element has its process");
+                let agile = element.agile().expect("an agile reference");
+                // The test may have finished.
+                let _ = sent.send((agile, captured));
+            }),
+        })],
+        common::window_subtree(hwnd.0 as isize),
+    )
+    .expect("a subscription to element selected events");
+    app.send("select alpha");
+    let (agile, (window, snapshot)) = events
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("an element selected event for alpha.txt");
+    let element = agile.resolve().expect("the event's element");
+    let selection = DeliveredFact::UiaSelection {
+        hwnd: window,
+        focus_window: 0,
+        snapshot,
+    };
+    let fact = match outpost.listener_check(&element.narrow(), selection) {
+        Judged::Passed(fact) => *fact,
+        other => panic!("the listener's check made {other:?} of the selection"),
+    };
+
+    common::reset_hits(hwnd);
+    outpost.deliver(fact);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::SelectionChanged { node },
+            timing,
+            ..
+        } => assert_eq!(
+            (
+                node.role,
+                node.name.as_deref(),
+                node.states,
+                node.details.position_in_set,
+                node.details.set_size,
+                timing.calls,
+                common::read_hits(hwnd),
+            ),
+            (
+                Role::ListItem,
+                Some("alpha.txt"),
+                StateSet::from_iter([State::Focusable, State::Selectable, State::Selected]),
+                Some(2),
+                Some(2),
+                CallCounts {
+                    uia: 1,
+                    ..CallCounts::default()
+                },
+                vec![
+                    ("ProviderOptions", 2),
+                    ("GetPropertyValue", 2),
+                    ("HostRawElementProvider", 1),
+                    ("Navigate", 1),
+                ],
+            )
+        ),
+        other => panic!("the outpost said {other:?}, not the item's selection"),
+    }
+    outpost.settled();
+
+    drop(registration);
+    drop(outpost);
+    app.quit();
+}
+
 /// An unnamed grouping with a description is focus context whatever the
 /// theme, as NVDA's layout judgment reads the description whatever its
 /// setting (`docs/design/uia-shapes.md`, decision 4): with a theme that
@@ -2726,6 +2829,10 @@ fn main() {
         (
             "a_windowless_selection_is_given_its_nearest_window",
             a_windowless_selection_is_given_its_nearest_window,
+        ),
+        (
+            "a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache",
+            a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache,
         ),
         (
             "a_menu_opening_is_judged_as_a_focus_on_the_menu",

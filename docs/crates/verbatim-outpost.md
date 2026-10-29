@@ -77,7 +77,11 @@ receives the event's own element, judges and reads a UIA focus
   with `IsDialog` and `IsTogglePatternAvailable` added
   (`docs/design/uia-shapes.md`, decision 6), so the role is refined as
   every other read refines it. `ListenerEvent::parts` gives the role, name,
-  and focused state.
+  and focused state. The element-selected part alone is shaped as
+  `verbatim_uia::ListenerSelection`, which adds the item's value, states,
+  and every detail but its rectangle, what Core speaks of an item selected
+  in a focused list, so the selection is reported with no call (Dickson,
+  2026-10-29).
 - The callback makes no call. It sends the application a marker
   (`DeliveredFact::UiaFocusMarker`) and queues the element as an
   `Agile<ListenerEvent>` for the application's reading thread
@@ -331,9 +335,9 @@ walk-up races (`docs/design/listener-without-connections.md`, section 2),
 so no lock is needed around them. No node is searched for by runtime id:
 a UIA node whose kept element is gone, or that has none, and whose focus
 route finds nothing is answered gone (`read::resolve_uia_element`), and a
-listener's selection is reported with the identity, role and name it
-came with, since a search of a subtree enters any child window another
-process serves (the study's instance 3). The supervisor's `App` table holds each application's
+listener's selection is reported with what its event's cache holds
+(`verbatim_uia::ListenerSelection`), since a search of a subtree enters
+any child window another process serves (the study's instance 3). The supervisor's `App` table holds each application's
 process open while it has a record, so its pid is never reused while an
 outpost or reading thread serves it. Registrations scope windows' subtrees
 by their elements (`Scope::Subtrees`), with no connection by handle.
@@ -686,8 +690,9 @@ section 6.3).
   (`listener::parse_hooks_in`) and does without each thread's last focus,
   at the cost of one fuller ancestor read per application. It makes no
   remote operation, so takes no `--classic-uia`.
-- `listener::capture` is what the UIA callbacks capture, public so mockapp
-  makes a selection's fact as the listener does
+- `listener::capture` is what the notification callback captures, and
+  `listener::capture_selection` what the element-selected callback
+  captures, public so mockapp makes a selection's fact as the listener does
   (`crates/mockapp/tests/combo_box.rs`).
 
 ### The supervisor
@@ -1000,7 +1005,9 @@ fills are built from the gates of the `Node` and `Ancestor` shapes
 a node's place only for an element read alone (`node_gates`,
 `focus_gates`, not `many_node_gates` or `ancestor_gates`, decision 9), and
 an ancestor's description always (decision 4). MSAA reads skip what is off.
-The subscriptions' cache requests ask for everything. Text formatting is
+The subscriptions' cache requests are fixed, whatever the theme, so the
+details of a listener's selection that the theme does not report are taken
+out of its report (`gates::leave_out_unreported`). Text formatting is
 read only for indications that are on and attributes the control supports,
 learned from its answers and kept per node (`text_support`); spelling and
 grammar annotation types are never learned, since Notepad answers "not

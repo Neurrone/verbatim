@@ -100,9 +100,9 @@ pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
     Direction, ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,
-    ListenerEvent, Live, Node, NodeGates, Place, Position, PropertyEvent, Request, RoleCore,
-    SelectedItem, SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh,
-    TextAreaPattern, TextEvent, Ungated, ValueSet, WindowLookup,
+    ListenerEvent, ListenerSelection, Live, Node, NodeGates, Place, Position, PropertyEvent,
+    Request, RoleCore, SelectedItem, SelectionContainer, Shape, ShellButton, Shortcut, States,
+    SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated, ValueSet, WindowLookup,
 };
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,

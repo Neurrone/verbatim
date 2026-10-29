@@ -544,11 +544,17 @@ patterns its request holds.
   `IsDialog` and `IsTogglePatternAvailable`, with the Text pattern;
   `parts(runtime_id)`; `lacked_keyboard_focus()`, true unless its cached
   `HasKeyboardFocus` is true, since a provider that answers nothing and
-  one whose answer fails leave the same default), `PropertyEvent`
+  one whose answer fails leave the same default), `ListenerSelection`
+  (the listener's element selected: a `ListenerEvent` with what Core
+  speaks of an item selected in a focused list, `ValueSet`, `States`,
+  `Description`, `Shortcut`, `Position`, `Cell` and the level, 40
+  properties, a `Node`'s without its `Place`; `parts(runtime_id)`),
+  `PropertyEvent`
   (`RoleCore`, name, `ValueSet`, `States` and the process id;
   `parts(runtime_id)`), and `TextEvent` (process id, native window handle
-  and class name). All three cover `Kept`, and `ListenerEvent` covers
-  `FocusInput` and `TextAreaPattern`.
+  and class name). All four cover `Kept`, `ListenerEvent` covers
+  `FocusInput` and `TextAreaPattern`, and `ListenerSelection` covers
+  `ListenerEvent` and both of those.
 - The fetch shapes: `Node` (`RoleCore`, `ValueSet`, `States`, name, four
   gated details, the `Description`, `Shortcut` and `Position` groups and
   the level, and the gated `Place` and `Cell`: 22 to 34 properties;

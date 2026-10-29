@@ -139,9 +139,12 @@ use verbatim_model::{Notification, OutpostId, Pid, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
-    ignores_notifications, notification_kind_from_uia, notification_processing_from_uia,
+    CachedUiaParts, ignores_notifications, notification_kind_from_uia,
+    notification_processing_from_uia,
 };
-use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subscription};
+use verbatim_uia::{
+    Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Scope, Subscription,
+};
 
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
@@ -1150,25 +1153,47 @@ fn answer_when_reads_are_done(
 /// What a UIA callback captures from an event's element, `sender`, read
 /// as `fields`: its cached window handle and snapshot parts. `None` for an
 /// element with no owning process. Public so that mockapp's tests make a
-/// selection's fact from mockapp's own event as the listener makes it.
+/// notification's fact from mockapp's own event as the listener makes it.
 #[must_use]
 pub fn capture(
     sender: &Cached<ListenerEvent>,
     fields: &ListenerEvent,
 ) -> Option<(isize, UiaSnapshotFact)> {
     fields.process_id.filter(|&pid| pid != 0)?;
-    let parts = fields.parts(sender.runtime_id());
     Some((
         fields.role.hwnd,
-        UiaSnapshotFact {
-            runtime_id: parts.runtime_id,
-            role: parts.role,
-            name: parts.name,
-            value: parts.value,
-            states: parts.states,
-            details: parts.details,
-        },
+        snapshot_fact(fields.parts(sender.runtime_id())),
     ))
+}
+
+/// What the selection callback captures from the selected item, `sender`,
+/// read as `fields`: as [`capture`], with the item's value, states, and
+/// details from its event's cache ([`ListenerSelection`]), which Core
+/// speaks of an item selected inside a focused list or tab control. Public
+/// so that mockapp's tests make a selection's fact from mockapp's own
+/// event as the listener makes it.
+#[must_use]
+pub fn capture_selection(
+    sender: &Cached<ListenerSelection>,
+    fields: &ListenerSelection,
+) -> Option<(isize, UiaSnapshotFact)> {
+    fields.event.process_id.filter(|&pid| pid != 0)?;
+    Some((
+        fields.event.role.hwnd,
+        snapshot_fact(fields.parts(sender.runtime_id())),
+    ))
+}
+
+/// A fact's snapshot of an element's cached parts.
+fn snapshot_fact(parts: CachedUiaParts) -> UiaSnapshotFact {
+    UiaSnapshotFact {
+        runtime_id: parts.runtime_id,
+        role: parts.role,
+        name: parts.name,
+        value: parts.value,
+        states: parts.states,
+        details: parts.details,
+    }
 }
 
 /// The desktop-wide UIA focus subscription. Its callback makes no call: it
@@ -1282,9 +1307,11 @@ fn queue_for_reading(
 /// NVDA's base cache request, with the two properties that refine a role
 /// for dialogs and toggle buttons. The facts carry the
 /// element's process, window, runtime id, role, and name from that cache;
-/// anything else in their snapshots is not read here and is left empty. A
-/// failure is reported as a fault and leaves the MSAA path running on its
-/// own.
+/// anything else in their snapshots is not read here and is left empty,
+/// but for an element selected, whose part is shaped as
+/// `verbatim_uia::ListenerSelection`, which also carries the item's value,
+/// states, and details. A failure is reported as a fault and leaves the
+/// MSAA path running on its own.
 fn install_desktop_subscriptions(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
@@ -1299,9 +1326,9 @@ fn install_desktop_subscriptions(
     let selection_readers = Arc::clone(readers);
     let selection = Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
-        callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
+        callback: Arc::new(move |sender: &Cached<ListenerSelection>| {
             let fields = sender.read();
-            if let Some((hwnd, snapshot)) = capture(sender, &fields) {
+            if let Some((hwnd, snapshot)) = capture_selection(sender, &fields) {
                 let fact = DeliveredFact::UiaSelection {
                     hwnd,
                     focus_window: 0,
@@ -1310,8 +1337,8 @@ fn install_desktop_subscriptions(
                 queue_for_reading(
                     &selection_outgoing,
                     &selection_readers,
-                    sender,
-                    &fields,
+                    &sender.narrow(),
+                    &fields.event,
                     FocusEvent::Selection,
                     Some(fact),
                 );
@@ -1361,12 +1388,15 @@ fn install_desktop_subscriptions(
 
     // NVDA's base cache request, as its global group carries, with what
     // refines a role (`ListenerEvent`): UIA fills only these in the
-    // application for each event, and the outpost reads what more it needs
-    // of a selected item when it handles the event.
-    let parts = [focus, selection, menu, notifications]
-        .into_iter()
-        .map(Part::shaped::<ListenerEvent>)
-        .collect();
+    // application for each event, and for an element selected also what
+    // Core speaks of it (`ListenerSelection`), so the outpost reports the
+    // item with no call.
+    let parts = vec![
+        Part::shaped(focus),
+        Part::shaped::<ListenerSelection>(selection),
+        Part::shaped(menu),
+        Part::shaped(notifications),
+    ];
     match Registration::with_parts(parts, Scope::Desktop) {
         Ok(registration) => Some(registration),
         Err(error) => {

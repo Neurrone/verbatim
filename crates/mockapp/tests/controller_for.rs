@@ -44,7 +44,8 @@ use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
-    Agile, Cached, Fill, ListenerEvent, Live, Node, Part, Registration, Shape, Subscription, Uia,
+    Agile, Cached, Fill, ListenerEvent, ListenerSelection, Live, Node, Part, Registration, Shape,
+    Subscription, Uia,
 };
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
@@ -275,22 +276,22 @@ fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, role: Role, name: &str) -> 
 
 /// mockapp's element selected events under its window `window`, each with
 /// its fact as the focus listener's callback captures it
-/// (`verbatim_outpost::listener::capture`) and its element in agile form,
+/// (`verbatim_outpost::listener::capture_selection`) and its element in agile form,
 /// as the listener hands both to its reading thread. The subscription
 /// lasts as long as the registration returned.
 fn selections(
     window: isize,
 ) -> (
     Registration,
-    mpsc::Receiver<(Agile<ListenerEvent>, DeliveredFact)>,
+    mpsc::Receiver<(Agile<ListenerSelection>, DeliveredFact)>,
 ) {
     let (sent, events) = mpsc::channel();
     let registration = Registration::with_parts(
-        vec![Part::shaped::<ListenerEvent>(Subscription::Event {
+        vec![Part::shaped::<ListenerSelection>(Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
-            callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+            callback: Arc::new(move |element: &Cached<ListenerSelection>| {
                 let (hwnd, snapshot) =
-                    verbatim_outpost::listener::capture(element, &element.read())
+                    verbatim_outpost::listener::capture_selection(element, &element.read())
                         .expect("mockapp's element has its process");
                 let fact = DeliveredFact::UiaSelection {
                     hwnd,
@@ -341,7 +342,7 @@ fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selec
         .recv_timeout(common::WAIT_TIMEOUT)
         .expect("an element selected event for Sound settings");
     let element = agile.resolve().expect("the event's element");
-    let fact = match outpost.listener_check(&element, fact) {
+    let fact = match outpost.listener_check(&element.narrow(), fact) {
         Judged::Passed(fact) => *fact,
         other => panic!("the listener's check made {other:?} of the selection"),
     };

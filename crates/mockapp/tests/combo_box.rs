@@ -11,7 +11,7 @@
 //! Each selection is mockapp's own `ElementSelected` event, raised by its
 //! `select` command and caught by a subscription shaped as the focus
 //! listener's: its fact is captured from the event's element by the
-//! listener's own `capture` in the callback, and checked on the test's
+//! listener's own `capture_selection` in the callback, and checked on the test's
 //! thread by the listener's reading thread's check (`FocusReader::check_fact`,
 //! through the harness), which finds a windowless item's nearest window, as
 //! the listener's reader does, from the element handed over in its agile
@@ -36,7 +36,9 @@ use verbatim_model::{
 };
 use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
-use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Subscription, Uia};
+use verbatim_uia::{
+    Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Subscription, Uia,
+};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -161,13 +163,13 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
 
 /// mockapp's element selected events under its window, subscribed to with
 /// the focus listener's cache request: each event's fact as the listener's
-/// callback captures it (`verbatim_outpost::listener::capture`), with the
+/// callback captures it (`verbatim_outpost::listener::capture_selection`), with the
 /// event's element in its agile form, as the listener hands both to its
 /// reading thread.
 struct Selections {
     _registration: Registration,
     window: isize,
-    events: mpsc::Receiver<(Agile<ListenerEvent>, DeliveredFact)>,
+    events: mpsc::Receiver<(Agile<ListenerSelection>, DeliveredFact)>,
 }
 
 impl Selections {
@@ -175,11 +177,11 @@ impl Selections {
         let window = hwnd.0 as isize;
         let (sent, events) = mpsc::channel();
         let registration = Registration::with_parts(
-            vec![Part::shaped::<ListenerEvent>(Subscription::Event {
+            vec![Part::shaped::<ListenerSelection>(Subscription::Event {
                 event: UIA_SelectionItem_ElementSelectedEventId,
-                callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                callback: Arc::new(move |element: &Cached<ListenerSelection>| {
                     let (hwnd, snapshot) =
-                        verbatim_outpost::listener::capture(element, &element.read())
+                        verbatim_outpost::listener::capture_selection(element, &element.read())
                             .expect("mockapp's element has its process");
                     let fact = DeliveredFact::UiaSelection {
                         hwnd,
@@ -212,7 +214,7 @@ impl Selections {
             .recv_timeout(common::WAIT_TIMEOUT)
             .unwrap_or_else(|_| panic!("no element selected event for {name}"));
         let element = agile.resolve().expect("the event's element");
-        let fact = match outpost.listener_check(&element, fact) {
+        let fact = match outpost.listener_check(&element.narrow(), fact) {
             Judged::Passed(fact) => *fact,
             other => panic!("the listener's check made {other:?} of the selection of {name}"),
         };
@@ -233,8 +235,8 @@ impl Selections {
 }
 
 /// The listener's selection fact for mockapp's item `name`, its cached
-/// name `cached_name`, as the listener sends a selection's identity, role
-/// and name alone.
+/// name `cached_name`, with its identity and role and no states, value or
+/// details, none of which the combo box's value is taken from.
 fn selection_of(hwnd: HWND, name: &str, cached_name: Option<&str>) -> DeliveredFact {
     DeliveredFact::UiaSelection {
         hwnd: hwnd.0 as isize,

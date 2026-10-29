@@ -28,8 +28,8 @@ use std::time::Instant;
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
-    Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, Part, PropertyEvent, Registration,
-    Scope, Subscription, Uia,
+    Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, ListenerSelection, Part,
+    PropertyEvent, Registration, Scope, Subscription, Uia,
     map::{ignores_notifications, notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
@@ -411,9 +411,9 @@ fn describe(answer: windows::core::Result<windows::Win32::System::Variant::VARIA
     }
 }
 
-/// A registration of the focus listener's shape, `ListenerEvent`, for
-/// selections and notifications on mockapp's window reads each event's
-/// sender as the listener does, its `ListenerEvent` read and parts and,
+/// A registration of the focus listener's shapes, `ListenerSelection` for
+/// selections and `ListenerEvent` for notifications, on mockapp's window
+/// reads each event's sender as the listener does, its read and parts and,
 /// for a notification, `ignores_notifications` from its class name and
 /// automation id, with no failed cached read.
 fn uia_listener_reads_its_facts_with_no_failed_read() {
@@ -425,9 +425,9 @@ fn uia_listener_reads_its_facts_with_no_failed_read() {
     let notified = sender.clone();
     let registration = Registration::with_parts(
         vec![
-            Part::shaped::<ListenerEvent>(Subscription::Event {
+            Part::shaped::<ListenerSelection>(Subscription::Event {
                 event: UIA_SelectionItem_ElementSelectedEventId,
-                callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                callback: Arc::new(move |element: &Cached<ListenerSelection>| {
                     let parts = element.read().parts(element.runtime_id());
                     let _ = sender.send(("selection", parts.role, parts.name, None));
                 }),
