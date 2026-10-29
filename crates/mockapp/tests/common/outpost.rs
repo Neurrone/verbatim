@@ -595,7 +595,6 @@ impl OutpostUnderTest {
         let (trace, observed, node, foreground, ancestors, top_level) = match message {
             OutpostToSupervisor::Event {
                 trace_id,
-                observed_at_ms,
                 observed_at_us,
                 window,
                 event:
@@ -609,7 +608,7 @@ impl OutpostUnderTest {
                 ..
             } => (
                 *trace_id,
-                (*observed_at_ms, *observed_at_us),
+                *observed_at_us,
                 node,
                 *foreground,
                 (!ancestors_unknown).then_some(ancestors),
@@ -625,7 +624,7 @@ impl OutpostUnderTest {
                 };
                 (
                     *trace_id,
-                    (now.observed_at_ms, now.observed_at_us),
+                    now.observed_at_us,
                     &control.node,
                     false,
                     control.ancestors.as_ref(),
@@ -653,13 +652,15 @@ impl OutpostUnderTest {
             };
             // A repeat of the focus it holds keeps the trace it was taken
             // from, as Core keeps its newer reading under the old one.
-            let (trace_id, observed) = core
+            let (trace_id, observed_at_us) = core
                 .as_ref()
                 .filter(|focus| focus.alive && focus.focus.id == node.id)
-                .map_or((trace, observed), |focus| (focus.trace_id, focus.observed));
+                .map_or((trace, observed), |focus| {
+                    (focus.trace_id, focus.observed_at_us)
+                });
             *core = Some(HeldFocus {
                 trace_id,
-                observed,
+                observed_at_us,
                 focus: held(node),
                 ancestors,
                 top_level,
@@ -679,12 +680,12 @@ impl OutpostUnderTest {
             judged,
             focus.as_ref().map(|focus| (focus.trace_id, focus.alive)),
         );
-        let observed = focus.as_ref().map_or((0, 0), |focus| focus.observed);
+        let observed_at_us = focus.as_ref().map_or(0, |focus| focus.observed_at_us);
         self.outpost
             .handle_command(&SupervisorToOutpost::CoreFocus {
                 judged,
                 focus,
-                observed,
+                observed_at_us,
                 sent_at_us: 0,
             });
     }
@@ -745,13 +746,11 @@ impl OutpostUnderTest {
 
     /// Hands the outpost `fact`, as the supervisor relays the listener's
     /// fact for a UIA event its callback received at `observed_at_us` on
-    /// the run's shared clock: stamped in milliseconds and microseconds
-    /// from that one reading. Returns at once.
+    /// the run's shared clock. Returns at once.
     pub fn deliver_stamped(&self, fact: DeliveredFact, observed_at_us: u64) {
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: self.trace_for(&fact),
-                observed_at_ms: observed_at_us / 1_000,
                 timing: EventTiming {
                     observed_at_us,
                     ..EventTiming::default()
@@ -779,7 +778,6 @@ impl OutpostUnderTest {
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: self.trace_for(&fact),
-                observed_at_ms: 0,
                 timing: EventTiming::default(),
                 fact,
                 win_event: None,
@@ -794,18 +792,21 @@ impl OutpostUnderTest {
     }
 
     /// [`deliver_win_event`](Self::deliver_win_event), the event observed
-    /// at `observed_at_ms`.
+    /// at `observed_at_us`, in microseconds on the run's shared clock (0
+    /// for none).
     pub fn deliver_win_event_observed(
         &self,
         fact: DeliveredFact,
         stamp: WinEventStamp,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) {
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: TraceId::mint(),
-                observed_at_ms,
-                timing: EventTiming::default(),
+                timing: EventTiming {
+                    observed_at_us,
+                    ..EventTiming::default()
+                },
                 fact,
                 win_event: Some(stamp),
             });
@@ -819,16 +820,17 @@ impl OutpostUnderTest {
             .handle_command(&SupervisorToOutpost::ForwardingEnded { through });
     }
 
-    /// Hands the outpost `fact`, as the listener would, stamped in
-    /// milliseconds on the run's shared clock with the time it is handed
-    /// over as the time it was observed, and returns at once.
+    /// Hands the outpost `fact`, as the listener would, stamped on the
+    /// run's shared clock with the time it is handed over as the time it
+    /// was observed, and returns at once.
     pub fn deliver_observed_now(&self, fact: DeliveredFact) {
-        let observed_at_ms = now_ms();
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: self.trace_for(&fact),
-                observed_at_ms,
-                timing: EventTiming::default(),
+                timing: EventTiming {
+                    observed_at_us: now_us(),
+                    ..EventTiming::default()
+                },
                 fact,
                 win_event: None,
             });
@@ -865,11 +867,9 @@ impl OutpostUnderTest {
     ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
-        let observed_at_us = verbatim_process::clock::now_us();
         let arrival = Arrival {
             trace: TraceId::mint(),
-            observed_at_ms: observed_at_us / 1_000,
-            observed_at_us,
+            observed_at_us: now_us(),
         };
         self.last_read.set(Some(arrival.trace));
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
@@ -897,16 +897,15 @@ impl OutpostUnderTest {
     }
 
     /// Tells the outpost that Core took another application's focus,
-    /// observed at `observed_at_ms` with no microseconds, as the supervisor
-    /// tells the outpost whose focus Core held before
-    /// (`SupervisorToOutpost::CoreFocus`).
-    pub fn core_focus_elsewhere(&self, observed_at_ms: u64) {
+    /// observed at `observed_at_us`, as the supervisor tells the outpost
+    /// whose focus Core held before (`SupervisorToOutpost::CoreFocus`).
+    pub fn core_focus_elsewhere(&self, observed_at_us: u64) {
         *self.core.borrow_mut() = None;
         self.outpost
             .handle_command(&SupervisorToOutpost::CoreFocus {
                 judged: None,
                 focus: None,
-                observed: (observed_at_ms, 0),
+                observed_at_us,
                 sent_at_us: 0,
             });
     }
@@ -1129,7 +1128,13 @@ impl OutpostUnderTest {
 }
 
 /// Milliseconds since the Unix epoch on the run's shared clock, as the
-/// listener stamps an event's arrival.
+/// hook stamps a caret key's press.
 pub fn now_ms() -> u64 {
     verbatim_process::clock::now_us() / 1_000
+}
+
+/// Microseconds since the Unix epoch on the run's shared clock, as the
+/// listener stamps an event's arrival.
+pub fn now_us() -> u64 {
+    verbatim_process::clock::now_us()
 }

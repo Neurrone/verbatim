@@ -400,12 +400,12 @@ impl MenuEnd {
                 return;
             }
         }
-        if let Some((ended_at_ms, timing, _)) = grace.end.take() {
+        if let Some((ended_at_us, timing, _)) = grace.end.take() {
             sent(
                 &self
                     .sender
                     .send(Sent::MenuEnd(OutpostToSupervisor::MenuOrSwitchEnded {
-                        ended_at_ms,
+                        ended_at_us,
                         timing,
                     })),
             );
@@ -567,12 +567,7 @@ impl Outgoing {
             observed_at_us,
             ..EventTiming::default()
         };
-        self.queue(
-            pid,
-            fact,
-            (TraceId::mint(), observed_at_us / 1_000, timing),
-            win_event,
-        );
+        self.queue(pid, fact, (TraceId::mint(), timing), win_event);
     }
 
     /// Sends `fact`, part of the read of the UIA focus event `meta`
@@ -580,12 +575,7 @@ impl Outgoing {
     /// times of the event itself. Never replaced, since an outpost waits on
     /// the marker until its read or drop arrives.
     fn focus_read(&self, pid: Pid, fact: DeliveredFact, meta: Meta) {
-        self.queue(
-            pid,
-            fact,
-            (meta.trace, meta.observed_at_ms, meta.timing),
-            None,
-        );
+        self.queue(pid, fact, (meta.trace, meta.timing), None);
     }
 
     /// Sends Core the window in front, `front`, with the integrity level of
@@ -644,18 +634,15 @@ impl Outgoing {
     }
 
     /// A UIA event of kind `kind` the listener's callback received now: a
-    /// new marker and trace, and its observation, whose milliseconds and
-    /// microseconds one clock read stamps, so the focus it becomes is
-    /// ordered to the microsecond.
+    /// new marker and trace, and its observation, in microseconds from one
+    /// clock read, by which the focus it becomes is ordered.
     fn received(&self, kind: FocusEvent) -> Meta {
-        let observed_at_us = self.now();
         Meta {
             marker: self.next_marker(),
             kind,
             trace: TraceId::mint(),
-            observed_at_ms: observed_at_us / 1_000,
             timing: EventTiming {
-                observed_at_us,
+                observed_at_us: self.now(),
                 ..EventTiming::default()
             },
         }
@@ -669,7 +656,7 @@ impl Outgoing {
         &self,
         pid: Pid,
         fact: DeliveredFact,
-        (trace_id, observed_at_ms, mut timing): (TraceId, u64, EventTiming),
+        (trace_id, mut timing): (TraceId, EventTiming),
         win_event: Option<WinEventStamp>,
     ) {
         if self.ignored.contains(pid) {
@@ -681,7 +668,6 @@ impl Outgoing {
         let key = fact.key(win_event).map(|key| (pid, key));
         let message = OutpostToSupervisor::FocusFact {
             trace_id,
-            observed_at_ms,
             timing,
             fact: ListenerFact { pid, fact },
             win_event,
@@ -730,7 +716,7 @@ impl Outgoing {
             listener_handled_at_us: self.now(),
             ..EventTiming::default()
         };
-        self.menu_end.lock().end = Some((observed_at_us / 1_000, timing, over));
+        self.menu_end.lock().end = Some((observed_at_us, timing, over));
     }
 
     /// Answers the idle barrier's round `round`, behind every fact sent
@@ -828,7 +814,6 @@ impl Reading for UiaFocusReading {
                 (
                     Arrival {
                         trace: meta.trace,
-                        observed_at_ms: meta.observed_at_ms,
                         observed_at_us: meta.timing.observed_at_us,
                     },
                     watched.clone(),
@@ -1728,7 +1713,6 @@ mod tests {
             marker,
             kind: FocusEvent::Focus,
             trace: TraceId::mint(),
-            observed_at_ms: 0,
             timing: EventTiming::default(),
         };
         // Two focus events on one element, the first read, the second
@@ -2111,36 +2095,28 @@ mod tests {
         );
     }
 
-    /// A `WinEvent`'s fact is stamped, in milliseconds, at its callback's
-    /// observation, from the same clock read as its microseconds, so the
-    /// focus it becomes is ordered by when it happened.
+    /// A `WinEvent`'s fact is stamped, in microseconds, at its callback's
+    /// observation, so the focus it becomes is ordered by when it happened.
     #[test]
     fn a_win_events_fact_is_stamped_at_its_callbacks_observation() {
         let (outgoing, mut reader) = at_seven_thousand();
         outgoing.fact(Pid(5), msaa_focus(), None, None, 6_543_210);
         let sent = sent(&outgoing, &mut reader);
-        let [
-            OutpostToSupervisor::FocusFact {
-                observed_at_ms,
-                timing,
-                ..
-            },
-        ] = sent.as_slice()
-        else {
+        let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
             panic!("one fact is sent: {sent:?}");
         };
-        assert_eq!((*observed_at_ms, timing.observed_at_us), (6_543, 6_543_210));
+        assert_eq!(timing.observed_at_us, 6_543_210);
     }
 
-    /// A UIA event is stamped, in milliseconds and microseconds, from one
-    /// clock read as the callback received it, and its facts carry that
-    /// stamp, so the focus it becomes is ordered to the microsecond.
+    /// A UIA event is stamped, in microseconds, from one clock read as the
+    /// callback received it, and its facts carry that stamp, so the focus
+    /// it becomes is ordered by when it happened.
     #[test]
     fn a_uia_events_facts_carry_one_clock_reads_stamp() {
         static CLOCK: AtomicU64 = AtomicU64::new(6_543_900);
         let (mut outgoing, mut reader) = outgoing();
         // Each read of the clock is 200 microseconds after the last, so a
-        // second read would be in another millisecond.
+        // second read would stamp another time.
         outgoing.clock = Clock(|| CLOCK.fetch_add(200, Ordering::Relaxed));
         let meta = outgoing.received(FocusEvent::Focus);
         outgoing.focus_read(
@@ -2151,17 +2127,10 @@ mod tests {
             meta,
         );
         let sent = sent(&outgoing, &mut reader);
-        let [
-            OutpostToSupervisor::FocusFact {
-                observed_at_ms,
-                timing,
-                ..
-            },
-        ] = sent.as_slice()
-        else {
+        let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
             panic!("one fact is sent: {sent:?}");
         };
-        assert_eq!((*observed_at_ms, timing.observed_at_us), (6_543, 6_543_900));
+        assert_eq!(timing.observed_at_us, 6_543_900);
     }
 
     #[test]
@@ -2171,7 +2140,6 @@ mod tests {
             marker: 1,
             kind: FocusEvent::Focus,
             trace: TraceId::mint(),
-            observed_at_ms: 0,
             timing: EventTiming {
                 observed_at_us: 6_000,
                 ..EventTiming::default()
@@ -2191,7 +2159,6 @@ mod tests {
             marker: 1,
             kind: FocusEvent::Focus,
             trace: TraceId::mint(),
-            observed_at_ms: 0,
             timing: EventTiming {
                 observed_at_us: 6_000,
                 listener_handled_at_us: 6_500,
@@ -2222,10 +2189,10 @@ mod tests {
         let message = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent");
-        let OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms, .. } = message else {
+        let OutpostToSupervisor::MenuOrSwitchEnded { ended_at_us, .. } = message else {
             panic!("a menu end: {message:?}");
         };
-        assert_eq!(ended_at_ms, 6_543);
+        assert_eq!(ended_at_us, 6_543_210);
     }
 
     #[test]

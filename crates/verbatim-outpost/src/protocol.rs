@@ -31,7 +31,9 @@ pub struct EventTiming {
     /// How many milliseconds before it was observed Windows raised the
     /// event; only `WinEvents` carry the time they were raised.
     pub raised_ms_ago: Option<u32>,
-    /// When the listener or the outpost observed it.
+    /// When the listener or the outpost observed it: for a fact the
+    /// listener sent, the observation stamp by which the fact is ordered
+    /// against other observations.
     pub observed_at_us: u64,
     /// When the focus listener finished handling this fact and queued it
     /// for its writer: for a fact a reading thread judged (a UIA focus's or
@@ -108,25 +110,15 @@ pub fn now_us() -> u64 {
     verbatim_process::clock::now_us()
 }
 
-/// Whether an observation stamped `later`, its milliseconds and
-/// microseconds on the run's shared clock (microseconds 0 when not known),
-/// was no earlier than one stamped `earlier`: to the microsecond when both
-/// carry microseconds, else to the millisecond, a tie counting as no
-/// earlier. Core orders two focuses from different outposts the same way
-/// (`docs/parity/focus-events.md`, "Stale focus events"), so the listener
-/// and the outposts take a focus Core queued as newer by Core's rule. The
-/// rule is a total order only among stamps that all carry microseconds or
-/// all lack them: with mixed stamps it is not transitive (a stamp without
-/// microseconds ties every stamp in its millisecond), so a running maximum
-/// kept by it can depend on the order the stamps arrive in, and two
-/// processes that saw them in different orders can then disagree.
+/// Whether an observation stamped `later`, in microseconds on the run's
+/// shared clock, was no earlier than one stamped `earlier`, a tie counting
+/// as no earlier. Core orders two focuses from different outposts the same
+/// way (`docs/parity/focus-events.md`, "Stale focus events"), so the
+/// listener and the outposts take a focus Core queued as newer by Core's
+/// rule.
 #[must_use]
-pub fn observed_no_earlier(later: (u64, u64), earlier: (u64, u64)) -> bool {
-    if later.1 != 0 && earlier.1 != 0 {
-        later.1 >= earlier.1
-    } else {
-        later.0 >= earlier.0
-    }
+pub fn observed_no_earlier(later: u64, earlier: u64) -> bool {
+    later >= earlier
 }
 use verbatim_model::{
     Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
@@ -676,16 +668,15 @@ pub enum SupervisorToOutpost {
     },
     /// Delivers a focus fact the focus listener captured, for this outpost's
     /// target application (decision D13), threading the listener's
-    /// `trace_id` and `observed_at_ms` through to the emitted event so the
-    /// latency timeline starts at the real OS event rather than this
-    /// delivery.
+    /// `trace_id` and observation (`timing`'s `observed_at_us`) through to
+    /// the emitted event so the event is ordered by, and the latency
+    /// timeline starts at, the real OS event rather than this delivery.
     DeliverFact {
         /// Trace ID the listener minted when it observed the OS event.
         trace_id: TraceId,
-        /// Milliseconds since the Unix epoch when the listener observed the
-        /// OS event — the first point on the keypress-to-audio timeline.
-        observed_at_ms: u64,
-        /// When it was raised and observed, for the latency log.
+        /// When it was raised and observed: its `observed_at_us` is the
+        /// listener's observation, the first point on the keypress-to-audio
+        /// timeline.
         #[serde(default)]
         timing: EventTiming,
         /// The routed fact, minus the pid (routing is done).
@@ -744,12 +735,12 @@ pub enum SupervisorToOutpost {
         /// none, or another outpost's.
         #[serde(default)]
         focus: Option<HeldFocus>,
-        /// When the focus Core holds was observed, in milliseconds and
-        /// microseconds on the run's shared clock, whoever's it is; 0 when
-        /// not known. An outpost whose focus Core no longer holds stops
-        /// waiting for a UIA focus observed before it.
+        /// When the focus Core holds was observed, in microseconds on the
+        /// run's shared clock, whoever's it is; 0 when not known. An
+        /// outpost whose focus Core no longer holds stops waiting for a UIA
+        /// focus observed before it.
         #[serde(default)]
-        observed: (u64, u64),
+        observed_at_us: u64,
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch; 0 from an older peer
         /// ([`SupervisorToOutpost::stamp_sent`]).
@@ -1026,14 +1017,12 @@ pub struct FocusNow {
     pub window: Option<(NodeSnapshot, WindowFacts)>,
     /// The focused control and its facts, when the application has one.
     pub focus: Option<FocusedControl>,
-    /// When the outpost began reading the answer, in milliseconds since the
-    /// Unix epoch: the answer's place among the focus events, which carry
-    /// the time they were observed. A focus event observed before it is
-    /// older than the answer, and one observed after it newer, as NVDA
-    /// queues a focus it reads in order with the events around it.
-    pub observed_at_ms: u64,
-    /// The same time in microseconds on the run's shared clock, from the
-    /// same clock read; 0 from an older peer.
+    /// When the outpost began reading the answer, in microseconds since the
+    /// Unix epoch on the run's shared clock: the answer's place among the
+    /// focus events, which carry the time they were observed. A focus event
+    /// observed before it is older than the answer, and one observed after
+    /// it newer, as NVDA queues a focus it reads in order with the events
+    /// around it. 0 from an older peer.
     #[serde(default)]
     pub observed_at_us: u64,
 }
@@ -1082,19 +1071,13 @@ pub enum OutpostToSupervisor {
         /// Trace ID minted when the OS event was first observed in the
         /// outpost.
         trace_id: TraceId,
-        /// Milliseconds since the Unix epoch when the OS event was first
-        /// observed, which orders it against other outposts' events. A
-        /// foreground change carries instead the time its window was
-        /// confirmed as the foreground, since Windows raises the event
-        /// before the change completes; `timing` keeps the first
+        /// Microseconds since the Unix epoch on the run's shared clock when
+        /// the OS event was first observed, which orders it against other
+        /// outposts' events. A foreground change carries instead the time
+        /// its window was confirmed as the foreground, since Windows raises
+        /// the event before the change completes; `timing` keeps the first
         /// observation, where the latency timeline starts. Defaults to 0
         /// for messages from older peers.
-        #[serde(default)]
-        observed_at_ms: u64,
-        /// For a focus, the same stamp in microseconds on the run's shared
-        /// clock, taken with the same clock read, which orders two focuses
-        /// stamped in one millisecond; 0 for every other event and from
-        /// older peers.
         #[serde(default)]
         observed_at_us: u64,
         /// Which backend sourced the event.
@@ -1157,14 +1140,13 @@ pub enum OutpostToSupervisor {
     /// the listener process, never a per-application outpost; the supervisor
     /// intercepts it, routes it to the target's own outpost, and never
     /// forwards it to the app. The listener mints the `trace_id` and stamps
-    /// `observed_at_ms` at observation, so the latency timeline starts at the
-    /// real OS event.
+    /// `timing`'s `observed_at_us` at observation, so the fact is ordered
+    /// by, and the latency timeline starts at, the real OS event.
     FocusFact {
         /// Trace ID minted when the listener observed the OS event.
         trace_id: TraceId,
-        /// Milliseconds since the Unix epoch when the OS event was observed.
-        observed_at_ms: u64,
-        /// When it was raised and observed, for the latency log.
+        /// When it was raised and observed, in microseconds on the run's
+        /// shared clock.
         #[serde(default)]
         timing: EventTiming,
         /// The captured fact, tagged with the pid Core routes it to.
@@ -1193,9 +1175,9 @@ pub enum OutpostToSupervisor {
     /// foreground application's focused control (NVDA's fake focus) unless a
     /// focus observed since the end has already been applied.
     MenuOrSwitchEnded {
-        /// When the menu or switcher ended, in milliseconds since the Unix
-        /// epoch.
-        ended_at_ms: u64,
+        /// When the menu or switcher ended, in microseconds since the Unix
+        /// epoch on the run's shared clock.
+        ended_at_us: u64,
         /// When the listener observed the end and queued it, and when its
         /// writer began writing this message, as a fact's are stamped;
         /// verbatim.exe logs the listener's stages from them.
@@ -1609,8 +1591,7 @@ mod tests {
         let event = OutpostToSupervisor::Event {
             trace_id: TraceId::mint(),
             timing: EventTiming::default(),
-            observed_at_ms: 1_752_000_000_000,
-            observed_at_us: 0,
+            observed_at_us: 1_752_000_000_000_000,
             backend: Backend::Msaa,
             window: None,
             application: Some(Pid(20)),
@@ -1667,7 +1648,6 @@ mod tests {
         let mut event = OutpostToSupervisor::Event {
             trace_id: TraceId::mint(),
             timing: EventTiming::default(),
-            observed_at_ms: 0,
             observed_at_us: 0,
             backend: Backend::Uia,
             window: None,
@@ -1803,8 +1783,10 @@ mod tests {
         };
         let focus_fact = OutpostToSupervisor::FocusFact {
             trace_id: TraceId::mint(),
-            timing: EventTiming::default(),
-            observed_at_ms: 1_752_000_000_000,
+            timing: EventTiming {
+                observed_at_us: 1_752_000_000_000_000,
+                ..EventTiming::default()
+            },
             fact: fact.clone(),
             win_event: None,
         };
@@ -1836,8 +1818,10 @@ mod tests {
         ] {
             let deliver = SupervisorToOutpost::DeliverFact {
                 trace_id: TraceId::mint(),
-                timing: EventTiming::default(),
-                observed_at_ms: 1,
+                timing: EventTiming {
+                    observed_at_us: 1,
+                    ..EventTiming::default()
+                },
                 fact,
                 win_event: None,
             };
@@ -1850,8 +1834,10 @@ mod tests {
 
         let deliver = SupervisorToOutpost::DeliverFact {
             trace_id: TraceId::mint(),
-            timing: EventTiming::default(),
-            observed_at_ms: 1_752_000_000_001,
+            timing: EventTiming {
+                observed_at_us: 1_752_000_000_001_000,
+                ..EventTiming::default()
+            },
             fact: DeliveredFact::MsaaFocus {
                 hwnd: 0x1234,
                 id_object: -4,
@@ -2055,8 +2041,7 @@ mod tests {
                     window: None,
                     text: None,
                 }),
-                observed_at_ms: 42,
-                observed_at_us: 0,
+                observed_at_us: 42,
             })),
             QueryOutcome::Done(QueryResult::Navigated(None)),
             QueryOutcome::Done(QueryResult::Tree(DumpedTree {
@@ -2127,7 +2112,7 @@ mod tests {
     #[test]
     fn a_menu_ends_trip_runs_from_the_listeners_write_to_verbatim_exes_read() {
         let mut ended = OutpostToSupervisor::MenuOrSwitchEnded {
-            ended_at_ms: 1,
+            ended_at_us: 1,
             timing: EventTiming::default(),
         };
         ended.written(7_000);

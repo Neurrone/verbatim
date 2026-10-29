@@ -30,7 +30,7 @@
 //!
 //! It is the worker's alone, kept on its thread with no lock, and costs a
 //! few comparisons per focus. Its times are of two kinds: observation
-//! times in milliseconds, which the copy and the UIA focus events carry and
+//! times in microseconds, which the copy and the UIA focus events carry and
 //! which match a UIA focus to a copy, and the outpost's clock, which counts
 //! the bound.
 
@@ -43,7 +43,7 @@ use super::intake::MarkerNews;
 /// `WinEvent` of the same focus, by up to 25.5 ms in the runs measured
 /// (5 of 1,680 `WinEvent` focuses in UIA windows, `measure_focus_explorer`,
 /// 2026-10-21).
-pub(super) const ANSWERED_BEFORE_MS: u64 = 100;
+pub(super) const ANSWERED_BEFORE_US: u64 = 100_000;
 
 /// The first `WinEvent` focus copy in a UIA window that no UIA focus has
 /// answered yet.
@@ -53,8 +53,8 @@ pub(super) struct Open {
     pub(super) hwnd: isize,
     /// The copy's top-level window, which a read must share to answer it.
     pub(super) top_level: isize,
-    /// When the copy was observed, in milliseconds.
-    pub(super) observed_at_ms: u64,
+    /// When the copy was observed, in microseconds.
+    pub(super) observed_at_us: u64,
     /// When the copy was observed, put on the outpost's clock: the bound
     /// counts from there, not from when the worker took the copy up.
     pub(super) opened: Instant,
@@ -73,24 +73,24 @@ pub(super) struct FocusGap {
     last_answered: Option<Answered>,
     /// The newest observation of a UIA focus the worker has seen dropped
     /// because its sender had no window above it.
-    last_no_window_ms: Option<u64>,
+    last_no_window_us: Option<u64>,
     /// The outpost's clock as the worker last read it.
     clock_now: Option<Instant>,
 }
 
 /// A UIA focus that answers a copy observed no later than
-/// [`ANSWERED_BEFORE_MS`] after it, in its top-level window when it has one.
+/// [`ANSWERED_BEFORE_US`] after it, in its top-level window when it has one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Answered {
-    observed_at_ms: u64,
+    observed_at_us: u64,
     top_level: Option<isize>,
 }
 
 impl Answered {
-    /// Whether it answers a copy observed at `copy_ms` in the top-level
+    /// Whether it answers a copy observed at `copy_us` in the top-level
     /// window `copy_top_level`.
-    fn answers(self, copy_ms: u64, copy_top_level: isize) -> bool {
-        self.observed_at_ms.saturating_add(ANSWERED_BEFORE_MS) >= copy_ms
+    fn answers(self, copy_us: u64, copy_top_level: isize) -> bool {
+        self.observed_at_us.saturating_add(ANSWERED_BEFORE_US) >= copy_us
             && self.top_level.is_none_or(|top| top == copy_top_level)
     }
 }
@@ -102,39 +102,39 @@ impl FocusGap {
     }
 
     /// A copy in the UIA window `hwnd`, whose top-level window is
-    /// `top_level`, observed at `observed_at_ms`, which the worker dropped
-    /// for its UIA focus to report at `now` by the outpost's clock, `now_ms`
+    /// `top_level`, observed at `observed_at_us`, which the worker dropped
+    /// for its UIA focus to report at `now` by the outpost's clock, `now_us`
     /// by the system's: opens a gap, unless one is open or a UIA focus
     /// answered it already, to be read at once when a drop for no window
     /// answers it. Returns whether it opened one.
     pub(super) fn dropped_for_uia(
         &mut self,
         (hwnd, top_level): (isize, isize),
-        observed_at_ms: u64,
-        (now, now_ms): (Instant, u64),
+        observed_at_us: u64,
+        (now, now_us): (Instant, u64),
     ) -> bool {
         if self.open.is_some()
             || self
                 .last_answered
-                .is_some_and(|answered| answered.answers(observed_at_ms, top_level))
+                .is_some_and(|answered| answered.answers(observed_at_us, top_level))
         {
             return false;
         }
         // A copy that carries no observation, which only a test's delivery
         // does, counts from now; so does an age beyond the clock's range,
         // which no observation has.
-        let age = if observed_at_ms == 0 {
+        let age = if observed_at_us == 0 {
             Duration::ZERO
         } else {
-            Duration::from_millis(now_ms.saturating_sub(observed_at_ms))
+            Duration::from_micros(now_us.saturating_sub(observed_at_us))
         };
         self.open = Some(Open {
             hwnd,
             top_level,
-            observed_at_ms,
+            observed_at_us,
             opened: now.checked_sub(age).unwrap_or(now),
         });
-        self.unreadable = Self::answers(self.last_no_window_ms, observed_at_ms);
+        self.unreadable = Self::answers(self.last_no_window_us, observed_at_us);
         true
     }
 
@@ -143,62 +143,62 @@ impl FocusGap {
     /// wait closed, if it closed one.
     pub(super) fn marker_news(&mut self, news: MarkerNews) -> Option<Open> {
         let closed = news
-            .answered_at_ms
+            .answered_at_us
             .and_then(|at| self.uia_answered(at, None));
-        if let Some(at) = news.no_window_at_ms {
+        if let Some(at) = news.no_window_at_us {
             self.focus_without_window(at);
         }
         closed
     }
 
-    /// A UIA focus marker observed at `observed_at_ms` was answered: read,
+    /// A UIA focus marker observed at `observed_at_us` was answered: read,
     /// in the top-level window `top_level`, or dropped in a way that ends
     /// the wait, with no window (`None`). Closes the gap it answers,
     /// returning it.
     pub(super) fn uia_answered(
         &mut self,
-        observed_at_ms: u64,
+        observed_at_us: u64,
         top_level: Option<isize>,
     ) -> Option<Open> {
         let answered = Answered {
-            observed_at_ms,
+            observed_at_us,
             top_level,
         };
         if self
             .last_answered
-            .is_none_or(|last| last.observed_at_ms <= observed_at_ms)
+            .is_none_or(|last| last.observed_at_us <= observed_at_us)
         {
             self.last_answered = Some(answered);
         }
         let open = self.open?;
-        if !answered.answers(open.observed_at_ms, open.top_level) {
+        if !answered.answers(open.observed_at_us, open.top_level) {
             return None;
         }
         self.close()
     }
 
-    /// A UIA focus marker observed at `observed_at_ms` was dropped because
+    /// A UIA focus marker observed at `observed_at_us` was dropped because
     /// its sender had no window above it: the gap it answers is read at
     /// once.
-    fn focus_without_window(&mut self, observed_at_ms: u64) {
-        self.last_no_window_ms = Some(
-            self.last_no_window_ms
-                .map_or(observed_at_ms, |at| at.max(observed_at_ms)),
+    fn focus_without_window(&mut self, observed_at_us: u64) {
+        self.last_no_window_us = Some(
+            self.last_no_window_us
+                .map_or(observed_at_us, |at| at.max(observed_at_us)),
         );
         if let Some(open) = self.open
-            && Self::answers(Some(observed_at_ms), open.observed_at_ms)
+            && Self::answers(Some(observed_at_us), open.observed_at_us)
         {
             self.unreadable = true;
         }
     }
 
-    /// The outpost reported a focus observed at `observed_at_ms`, not a
+    /// The outpost reported a focus observed at `observed_at_us`, not a
     /// foreground change, which says nothing of the focus inside its
     /// window; or Core queued another application's then: a gap whose copy
     /// came no later is answered by it, and closes.
-    pub(super) fn focus_after(&mut self, observed_at_ms: u64) -> Option<Open> {
+    pub(super) fn focus_after(&mut self, observed_at_us: u64) -> Option<Open> {
         let open = self.open?;
-        if observed_at_ms < open.observed_at_ms {
+        if observed_at_us < open.observed_at_us {
             return None;
         }
         self.close()
@@ -250,7 +250,7 @@ impl FocusGap {
     /// Whether a UIA focus observed at `answered` answers a copy observed
     /// at `copy`.
     fn answers(answered: Option<u64>, copy: u64) -> bool {
-        answered.is_some_and(|at| at.saturating_add(ANSWERED_BEFORE_MS) >= copy)
+        answered.is_some_and(|at| at.saturating_add(ANSWERED_BEFORE_US) >= copy)
     }
 }
 
@@ -261,13 +261,13 @@ mod tests {
     const BOUND: Duration = Duration::from_secs(1);
 
     fn opened(gap: &mut FocusGap, start: Instant) {
-        assert!(gap.dropped_for_uia((7, 70), 5_000, (start, 5_000)));
+        assert!(gap.dropped_for_uia((7, 70), 5_000_000, (start, 5_000_000)));
     }
 
     fn no_window_at(at: u64) -> MarkerNews {
         MarkerNews {
-            answered_at_ms: None,
-            no_window_at_ms: Some(at),
+            answered_at_us: None,
+            no_window_at_us: Some(at),
         }
     }
 
@@ -277,11 +277,11 @@ mod tests {
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
         assert_eq!(
-            gap.uia_answered(5_030, Some(70)),
+            gap.uia_answered(5_030_000, Some(70)),
             Some(Open {
                 hwnd: 7,
                 top_level: 70,
-                observed_at_ms: 5_000,
+                observed_at_us: 5_000_000,
                 opened: start
             })
         );
@@ -297,17 +297,17 @@ mod tests {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
-        assert_eq!(gap.uia_answered(5_030, Some(80)), None);
+        assert_eq!(gap.uia_answered(5_030_000, Some(80)), None);
         assert!(gap.is_open());
         assert_eq!(
             gap.take_due(start + BOUND, BOUND).map(|open| open.hwnd),
             Some(7)
         );
-        assert!(gap.dropped_for_uia((7, 70), 5_040, (start + BOUND, 5_040)));
+        assert!(gap.dropped_for_uia((7, 70), 5_040_000, (start + BOUND, 5_040_000)));
         assert_eq!(
             gap.marker_news(MarkerNews {
-                answered_at_ms: Some(5_050),
-                no_window_at_ms: None,
+                answered_at_us: Some(5_050_000),
+                no_window_at_us: None,
             })
             .map(|open| open.hwnd),
             Some(7)
@@ -335,7 +335,7 @@ mod tests {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
-        gap.marker_news(no_window_at(5_200));
+        gap.marker_news(no_window_at(5_200_000));
         assert_eq!(gap.wake_at(start, BOUND), Some(start));
         assert_eq!(gap.take_due(start, BOUND).map(|open| open.hwnd), Some(7));
     }
@@ -344,8 +344,8 @@ mod tests {
     fn a_uia_focus_observed_just_before_the_copy_opens_no_gap() {
         let start = Instant::now();
         let mut gap = FocusGap::default();
-        assert_eq!(gap.uia_answered(4_975, Some(70)), None);
-        assert!(!gap.dropped_for_uia((7, 70), 5_000, (start, 5_000)));
+        assert_eq!(gap.uia_answered(4_975_000, Some(70)), None);
+        assert!(!gap.dropped_for_uia((7, 70), 5_000_000, (start, 5_000_000)));
         assert!(!gap.is_open());
     }
 
@@ -353,8 +353,8 @@ mod tests {
     fn a_uia_focus_observed_more_than_100_ms_before_the_copy_leaves_it_to_open_a_gap() {
         let start = Instant::now();
         let mut gap = FocusGap::default();
-        assert_eq!(gap.uia_answered(4_899, Some(70)), None);
-        assert!(gap.dropped_for_uia((7, 70), 5_000, (start, 5_000)));
+        assert_eq!(gap.uia_answered(4_899_000, Some(70)), None);
+        assert!(gap.dropped_for_uia((7, 70), 5_000_000, (start, 5_000_000)));
     }
 
     #[test]
@@ -362,7 +362,7 @@ mod tests {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
-        assert_eq!(gap.uia_answered(4_899, Some(70)), None);
+        assert_eq!(gap.uia_answered(4_899_000, Some(70)), None);
         assert!(gap.is_open());
     }
 
@@ -371,7 +371,7 @@ mod tests {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         // Taken up 400 ms after it was observed.
-        assert!(gap.dropped_for_uia((7, 70), 5_000, (start, 5_400)));
+        assert!(gap.dropped_for_uia((7, 70), 5_000_000, (start, 5_400_000)));
         let bound_passed = start + Duration::from_millis(600);
         assert!(!gap.is_due(start + Duration::from_millis(599), BOUND));
         assert_eq!(
@@ -385,8 +385,8 @@ mod tests {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
-        assert_eq!(gap.focus_after(4_999), None);
-        assert_eq!(gap.focus_after(5_400).map(|open| open.hwnd), Some(7));
+        assert_eq!(gap.focus_after(4_999_000), None);
+        assert_eq!(gap.focus_after(5_400_000).map(|open| open.hwnd), Some(7));
         assert_eq!(gap.take_due(start + BOUND, BOUND), None);
     }
 
@@ -395,9 +395,9 @@ mod tests {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
-        assert!(!gap.dropped_for_uia((8, 70), 5_100, (start, 5_100)));
+        assert!(!gap.dropped_for_uia((8, 70), 5_100_000, (start, 5_100_000)));
         assert!(gap.take_due(start + BOUND, BOUND).is_some());
-        assert!(gap.dropped_for_uia((9, 70), 6_200, (start + BOUND, 6_200)));
+        assert!(gap.dropped_for_uia((9, 70), 6_200_000, (start + BOUND, 6_200_000)));
         assert_eq!(gap.wake_at(start + BOUND, BOUND), Some(start + BOUND * 2));
     }
 }

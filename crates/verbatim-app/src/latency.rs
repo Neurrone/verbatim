@@ -39,7 +39,9 @@ pub fn now_ms() -> u64 {
 /// One timeline under assembly.
 struct Entry {
     trace_id: TraceId,
-    event_observed_at_ms: Option<u64>,
+    /// When the OS event or key behind the trace was first observed, in
+    /// microseconds on the run's shared clock.
+    event_observed_at_us: Option<u64>,
     speech_queued_at_ms: Option<u64>,
     audio_started_at_ms: Option<u64>,
     stages: Stages,
@@ -96,6 +98,12 @@ impl Entry {
     /// plus its utterance text's buffer, the only part that grows.
     fn estimated_bytes(&self) -> usize {
         size_of::<Self>() + self.stages.text.capacity()
+    }
+
+    /// When the OS event or key behind the trace was first observed, in
+    /// milliseconds, as the control plane's records give it.
+    fn event_observed_at_ms(&self) -> Option<u64> {
+        self.event_observed_at_us.map(|us| us / 1_000)
     }
 
     /// Whether the trace's speech is still owed: asked for or queued, and
@@ -516,7 +524,7 @@ impl LatencyLedger {
     /// in microseconds since the Unix epoch: where its timeline starts.
     pub fn key_pressed(&self, trace_id: TraceId, at_us: u64) {
         self.update(trace_id, |entry| {
-            entry.event_observed_at_ms = Some(at_us / 1_000);
+            entry.event_observed_at_us = Some(at_us);
             entry.stages.key_pressed = Some(at_us);
         });
     }
@@ -530,12 +538,13 @@ impl LatencyLedger {
             .store(at_us << 1 | u64::from(typed), Ordering::Relaxed);
     }
 
-    /// Records when an OS event behind `trace_id` was first observed.
-    pub fn event_observed(&self, trace_id: TraceId, at_ms: u64) {
+    /// Records when an OS event behind `trace_id` was first observed, at
+    /// `at_us`, in microseconds since the Unix epoch.
+    pub fn event_observed(&self, trace_id: TraceId, at_us: u64) {
         self.update(trace_id, |entry| {
             // The message the trace's speech came from, as its stages.
             if !entry.stages.speech_requested {
-                entry.event_observed_at_ms = Some(at_ms);
+                entry.event_observed_at_us = Some(at_us);
             }
         });
     }
@@ -642,7 +651,7 @@ impl LatencyLedger {
                 // a future self-originated message) has no OS observation;
                 // report the queue time as its start.
                 event_observed_at_ms: entry
-                    .event_observed_at_ms
+                    .event_observed_at_ms()
                     .or(entry.speech_queued_at_ms)
                     .unwrap_or(0),
                 speech_queued_at_ms: entry.speech_queued_at_ms,
@@ -669,7 +678,7 @@ impl LatencyLedger {
         } else {
             let mut entry = Entry {
                 trace_id,
-                event_observed_at_ms: None,
+                event_observed_at_us: None,
                 speech_queued_at_ms: None,
                 audio_started_at_ms: None,
                 stages: Stages::default(),
@@ -715,7 +724,7 @@ impl SpeechEvents for LatencyLedger {
                 entry.stages.queued = Some(now);
                 entry.stages.last_key = last_key;
             }
-            entry.event_observed_at_ms
+            entry.event_observed_at_ms()
         });
         // The text is copied for the control plane only when some connection
         // is subscribed to speech.
@@ -927,7 +936,7 @@ mod tests {
     fn assembles_a_full_timeline() {
         let ledger = ledger_at(250_400);
         let trace = TraceId::mint();
-        ledger.event_observed(trace, 100);
+        ledger.event_observed(trace, 100_000);
         ledger.utterance_queued(
             UtteranceId(1),
             trace,
@@ -1423,7 +1432,7 @@ mod tests {
         let ledger = ledger_at(9_300);
         let trace = TraceId::mint();
         let now = std::time::Instant::now;
-        ledger.event_observed(trace, 1);
+        ledger.event_observed(trace, 1_000);
         ledger.event_received(
             trace,
             EventTiming {
@@ -1438,7 +1447,7 @@ mod tests {
         ledger.reduced(trace);
         ledger.speech_requested(trace);
         FAKE_US.set(21_300);
-        ledger.event_observed(trace, 20);
+        ledger.event_observed(trace, 20_000);
         ledger.event_received(
             trace,
             EventTiming {

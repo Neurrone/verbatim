@@ -203,8 +203,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
         &mut state,
         &Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms: 1_000,
-            observed_at_us: 0,
+            observed_at_us: 1_000,
             source: Pid(1),
             backend: Backend::Uia,
             window: None,
@@ -229,16 +228,16 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     assert_eq!(state.latest_focus_observed_at(), Some(1_000));
     // A focus observed after the close was applied: nothing more is asked.
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_ms: 900 }),
+        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 900 }),
         []
     );
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_ms: 1_000 }),
+        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_000 }),
         []
     );
     // None since: the application in front is asked for its focus.
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_ms: 1_001 }),
+        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_001 }),
         [Effect::ReadForegroundFocus]
     );
 }

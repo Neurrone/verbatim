@@ -41,7 +41,6 @@ const RUN_BYTES: usize = 16;
 enum Wire<'a> {
     Event {
         trace_id: TraceId,
-        observed_at_ms: u64,
         observed_at_us: u64,
         backend: Backend,
         window: Option<Cow<'a, WindowFacts>>,
@@ -169,7 +168,6 @@ impl<'a> Terminal<'a> {
         let wire = match message {
             OutpostToSupervisor::Event {
                 trace_id,
-                observed_at_ms,
                 observed_at_us,
                 backend,
                 window,
@@ -178,7 +176,6 @@ impl<'a> Terminal<'a> {
                 event: NormalizedEvent::TerminalSnapshot { node_id, snapshot },
             } => Wire::Event {
                 trace_id: *trace_id,
-                observed_at_ms: *observed_at_ms,
                 observed_at_us: *observed_at_us,
                 backend: *backend,
                 window: window.as_ref().map(Cow::Borrowed),
@@ -347,7 +344,6 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor>
     let message = match wire {
         Wire::Event {
             trace_id,
-            observed_at_ms,
             observed_at_us,
             backend,
             window,
@@ -356,7 +352,6 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor>
             event: WireEvent::TerminalSnapshot { node_id, snapshot },
         } => OutpostToSupervisor::Event {
             trace_id,
-            observed_at_ms,
             observed_at_us,
             backend,
             window: window.map(Cow::into_owned),
@@ -593,8 +588,7 @@ mod tests {
     fn event(snapshot: TerminalSnapshot) -> OutpostToSupervisor {
         OutpostToSupervisor::Event {
             trace_id: trace(7),
-            observed_at_ms: 1_752_000_000_000,
-            observed_at_us: 0,
+            observed_at_us: 1_752_000_000_000_000,
             backend: Backend::Uia,
             window: None,
             application: Some(Pid(20)),
@@ -678,8 +672,7 @@ mod tests {
             // The event's window and the read's caret, both given.
             OutpostToSupervisor::Event {
                 trace_id: trace(7),
-                observed_at_ms: 1_752_000_000_000,
-                observed_at_us: 0,
+                observed_at_us: 1_752_000_000_000_000,
                 backend: Backend::Uia,
                 window: Some(window()),
                 application: Some(Pid(20)),
@@ -796,7 +789,6 @@ mod tests {
             },
             OutpostToSupervisor::Event {
                 trace_id: trace(7),
-                observed_at_ms: 0,
                 observed_at_us: 0,
                 backend: Backend::Uia,
                 window: None,

@@ -1050,7 +1050,6 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Op
         FocusNow {
             window,
             focus,
-            observed_at_ms: observed_at_us / 1_000,
             observed_at_us,
         },
         control_window,

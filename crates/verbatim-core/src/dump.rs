@@ -26,8 +26,9 @@ use crate::state::SrState;
 /// Version 1: node ids carry their outpost, events carry window facts, and
 /// snapshot versions are gone. Version 2: the line after the header is the
 /// reducer state the inputs start from. Version 3: a select then copy's
-/// pending read names the start marker it was made for.
-pub const DUMP_FORMAT_VERSION: u32 = 3;
+/// pending read names the start marker it was made for. Version 4: events
+/// and the state's focus times are stamped in microseconds only.
+pub const DUMP_FORMAT_VERSION: u32 = 4;
 
 /// The first line of a dump: format version, the crate version that wrote
 /// it, and a caller-supplied timestamp string.
@@ -263,8 +264,8 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 mod tests {
     use super::*;
     use verbatim_model::{
-        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role,
-        StateSet, TraceId, WindowHandle,
+        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role, StateSet,
+        TraceId,
     };
 
     fn sample_inputs() -> Vec<RecordedInput> {
@@ -272,7 +273,6 @@ mod tests {
             RecordedInput {
                 input: Input::Event {
                     trace_id: TraceId::mint(),
-                    observed_at_ms: 0,
                     observed_at_us: 0,
                     source: Pid(1),
                     backend: Backend::Uia,
@@ -327,41 +327,6 @@ mod tests {
         assert_eq!(contents.base, base);
         assert_eq!(contents.inputs, inputs);
         assert!(!contents.truncated);
-    }
-
-    /// A dump written before focuses carried microseconds holds the latest
-    /// focus as the tuple of its outpost, its milliseconds and its
-    /// top-level window, and still loads, with no microseconds.
-    #[test]
-    fn a_dump_with_the_latest_focus_as_a_tuple_loads() {
-        let mut base = sample_base();
-        base.latest_focus = Some(crate::state::LatestFocus {
-            outpost: OutpostId(3),
-            observed_at_ms: 6_543,
-            top_level: Some(WindowHandle(0x10)),
-            observed_at_us: 0,
-        });
-        let mut written = serde_json::to_value(&base).expect("serializes");
-        written["latest_focus"] = serde_json::json!([
-            serde_json::to_value(OutpostId(3)).expect("serializes"),
-            6_543,
-            serde_json::to_value(WindowHandle(0x10)).expect("serializes"),
-        ]);
-        let mut buffer = Vec::new();
-        write_line(
-            &mut buffer,
-            &DumpHeader {
-                format_version: DUMP_FORMAT_VERSION,
-                crate_version: "9.9.9".to_owned(),
-                timestamp: "2026-07-14T00:00:00Z".to_owned(),
-            },
-        )
-        .expect("writes header");
-        write_line(&mut buffer, &written).expect("writes the base state");
-
-        let mut reader = buffer.as_slice();
-        let contents = read_dump(&mut reader).expect("reads");
-        assert_eq!(contents.base, base);
     }
 
     #[test]
@@ -429,7 +394,6 @@ mod tests {
         let third = RecordedInput {
             input: Input::Event {
                 trace_id: TraceId::mint(),
-                observed_at_ms: 0,
                 observed_at_us: 0,
                 source: Pid(2),
                 backend: Backend::Uia,

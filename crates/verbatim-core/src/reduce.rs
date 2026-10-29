@@ -53,8 +53,9 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     if !state.terminals.is_empty() {
         let now = state.focus.as_ref().map(|focus| focus.snapshot.id);
         if now != focus {
+            // The terminal's reading rules count in milliseconds.
             let at_ms = match input {
-                Input::Event { observed_at_ms, .. } => *observed_at_ms,
+                Input::Event { observed_at_us, .. } => whole_ms(*observed_at_us),
                 _ => 0,
             };
             effects.extend(terminal_model::focus_moved(state, (focus, now), at_ms));
@@ -76,7 +77,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Event {
             trace_id,
-            observed_at_ms,
             observed_at_us,
             source,
             window,
@@ -85,7 +85,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         } => reduce_event(
             state,
             *trace_id,
-            (*observed_at_ms, *observed_at_us),
+            *observed_at_us,
             *source,
             window.as_ref(),
             event,
@@ -343,15 +343,14 @@ fn classify(
     }
 }
 
-/// Whether a focus event from `outpost`, observed at `observed`, its
-/// milliseconds and microseconds on the run's shared clock, was observed
-/// before the newest focus applied from another outpost. Events from one
-/// outpost arrive in order; across outposts they can arrive out of order,
-/// which NVDA's single event queue never does. Two focuses stamped in one
-/// millisecond are ordered by their microseconds when both carry them
-/// ([`LatestFocus::observed_after`]). An answer to a focus-now query carries
-/// the time the outpost began reading it, so it is ordered with the events
-/// by that; a report with no observation time (0) is never stale.
+/// Whether a focus event from `outpost`, observed at `observed_at_us`,
+/// microseconds on the run's shared clock, was observed before the newest
+/// focus applied from another outpost ([`LatestFocus::observed_after`]).
+/// Events from one outpost arrive in order; across outposts they can arrive
+/// out of order, which NVDA's single event queue never does. An answer to a
+/// focus-now query carries the time the outpost began reading it, so it is
+/// ordered with the events by that; a report with no observation time (0)
+/// is never stale.
 ///
 /// A focus in the same top-level window as the newest focus is never stale:
 /// one window can hold several applications (a Settings page's content
@@ -361,14 +360,14 @@ fn classify(
 fn is_stale_focus(
     state: &SrState,
     outpost: OutpostId,
-    observed: (u64, u64),
+    observed_at_us: u64,
     window: Option<&WindowFacts>,
 ) -> bool {
     let top_level = window.map(|window| window.top_level);
-    observed.0 != 0
+    observed_at_us != 0
         && state.latest_focus.is_some_and(|latest| {
             latest.outpost != outpost
-                && latest.observed_after(observed)
+                && latest.observed_after(observed_at_us)
                 && !(top_level.is_some() && top_level == latest.top_level)
         })
 }
@@ -432,16 +431,23 @@ fn keep_newer_reading(
     }
 }
 
-/// Whether an event from elsewhere, observed at `observed_at_ms`, was
+/// Whether an event from elsewhere, observed at `observed_at_us`, was
 /// observed before the newest foreground change Core applied: its speech
 /// would have been queued before that change, which cancels it in NVDA
 /// (`docs/design/focus-pipeline.md`, section 7). An event with no
 /// observation time (0) is never judged so.
-fn observed_before_foreground_change(state: &SrState, observed_at_ms: u64) -> bool {
-    observed_at_ms != 0
+fn observed_before_foreground_change(state: &SrState, observed_at_us: u64) -> bool {
+    observed_at_us != 0
         && state
             .foreground_changed_at
-            .is_some_and(|changed_at| observed_at_ms < changed_at)
+            .is_some_and(|changed_at| observed_at_us < changed_at)
+}
+
+/// `observed_at_us` in whole milliseconds, for the caret history and the
+/// terminal's reading rules, which compare it with a key's `pressed_at_ms`
+/// and the terminal's own times in milliseconds.
+fn whole_ms(observed_at_us: u64) -> u64 {
+    observed_at_us / 1_000
 }
 
 /// Whether an event's window is one the attention record covers: the same
@@ -581,7 +587,7 @@ fn reduce_activation_completed(
 /// application's rule refuses whole ([`crate::applications::refuses_focus`]).
 fn focus_dropped_first(
     state: &mut SrState,
-    observed: (u64, u64),
+    observed_at_us: u64,
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> bool {
@@ -604,10 +610,10 @@ fn focus_dropped_first(
             focus_ancestors(window, node, (ancestors, *ancestors_unknown));
         keep_newer_reading(state, node, ancestors, ancestors_unknown);
         sync_navigator_with_focus(state);
-        editing::keep_focus_caret(state, node.id, text.as_deref(), observed.0);
+        editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
         return true;
     }
-    is_stale_focus(state, node.id.outpost(), observed, window)
+    is_stale_focus(state, node.id.outpost(), observed_at_us, window)
 }
 
 /// A focus's ancestors and whether they are unknown, as Core takes them:
@@ -664,15 +670,14 @@ fn reduce_caret_moved(
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
-    observed: (u64, u64),
+    observed_at_us: u64,
     source: Pid,
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if focus_dropped_first(state, observed, window, event) {
+    if focus_dropped_first(state, observed_at_us, window, event) {
         return Vec::new();
     }
-    let observed_at_ms = observed.0;
     match classify(
         state.attention.as_ref(),
         state.focus_source(),
@@ -681,17 +686,16 @@ fn reduce_event(
         event,
     ) {
         Acceptance::Dropped => return Vec::new(),
-        Acceptance::Background => return reduce_background(state, trace_id, observed_at_ms, event),
+        Acceptance::Background => return reduce_background(state, trace_id, observed_at_us, event),
         Acceptance::Attended => {}
     }
     if let NormalizedEvent::FocusChanged { node, .. } = event
-        && observed_at_ms != 0
+        && observed_at_us != 0
     {
         state.latest_focus = Some(LatestFocus {
             outpost: node.id.outpost(),
-            observed_at_ms,
+            observed_at_us,
             top_level: window.map(|window| window.top_level),
-            observed_at_us: observed.1,
         });
     }
 
@@ -713,8 +717,7 @@ fn reduce_event(
                 window,
                 &FocusReport {
                     node,
-                    observed_at_ms,
-                    observed_at_us: observed.1,
+                    observed_at_us,
                     foreground: *foreground,
                     ancestors,
                     ancestors_unknown,
@@ -739,7 +742,7 @@ fn reduce_event(
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
         moved @ NormalizedEvent::CaretMoved { .. } => {
-            reduce_caret_moved(state, (trace_id, observed_at_ms), moved)
+            reduce_caret_moved(state, (trace_id, whole_ms(observed_at_us)), moved)
         }
         NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
             terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
@@ -801,10 +804,10 @@ fn sync_navigator_with_focus(state: &mut SrState) {
 fn reduce_background(
     state: &SrState,
     trace_id: TraceId,
-    observed_at_ms: u64,
+    observed_at_us: u64,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if observed_before_foreground_change(state, observed_at_ms) {
+    if observed_before_foreground_change(state, observed_at_us) {
         return Vec::new();
     }
     if let NormalizedEvent::Alert { node, .. } = event {
@@ -833,9 +836,7 @@ fn reduce_background(
 /// The parts of a `FocusChanged` event the focus handling reads.
 struct FocusReport<'a> {
     node: &'a NodeSnapshot,
-    /// When its outpost observed it; 0 when not known.
-    observed_at_ms: u64,
-    /// The same time in microseconds; 0 when not known.
+    /// When its outpost observed it, in microseconds; 0 when not known.
     observed_at_us: u64,
     foreground: bool,
     ancestors: &'a [NodeSnapshot],
@@ -844,6 +845,14 @@ struct FocusReport<'a> {
     selected_child: Option<&'a NodeSnapshot>,
     /// What the outpost's caret read found, for a focus that may have text.
     text: Option<&'a FocusText>,
+}
+
+impl FocusReport<'_> {
+    /// When its outpost observed it, in whole milliseconds, for the caret
+    /// history ([`whole_ms`]).
+    fn observed_at_ms(&self) -> u64 {
+        whole_ms(self.observed_at_us)
+    }
 }
 
 /// Handles an accepted focus change (`docs/parity/focus-announcement.md`,
@@ -931,7 +940,7 @@ fn reduce_focus_changed(
         alive: true,
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),
-        observed: (report.observed_at_ms, report.observed_at_us),
+        observed_at_us: report.observed_at_us,
     };
 
     if let Some(focus) = state.focus.as_ref()
@@ -949,7 +958,7 @@ fn reduce_focus_changed(
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
         }
-        editing::keep_focus_caret(state, report.node.id, report.text, report.observed_at_ms);
+        editing::keep_focus_caret(state, report.node.id, report.text, report.observed_at_ms());
         return Vec::new();
     }
 
@@ -968,8 +977,8 @@ fn reduce_focus_changed(
     // dropped by the speech manager, which is told where the focus now is.
     let foreground_changed =
         foreground_changed(state.focus.as_ref(), report, focus_window.as_ref());
-    if foreground_changed && report.observed_at_ms != 0 {
-        state.foreground_changed_at = Some(report.observed_at_ms);
+    if foreground_changed && report.observed_at_us != 0 {
+        state.foreground_changed_at = Some(report.observed_at_us);
     }
     if report.foreground {
         state.foreground = Some(report.node.id);
@@ -1008,7 +1017,7 @@ fn reduce_focus_changed(
         state,
         trace_id,
         report.node,
-        (report.text, report.observed_at_ms),
+        (report.text, report.observed_at_ms()),
     ));
     effects
 }

@@ -689,7 +689,7 @@ fn a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus() {
     uia_app.send("set-focus btn1");
     let reported = uia_outpost.uia_focus(&client.focused());
     assert_eq!(reported.node.role, Role::Button);
-    msaa_outpost.core_focus_elsewhere(common::outpost::now_ms());
+    msaa_outpost.core_focus_elsewhere(common::outpost::now_us());
     let reported = msaa_outpost.focus(button);
     assert_eq!(
         (reported.node.role, reported.node.name.as_deref()),
@@ -1059,8 +1059,8 @@ fn winevent_focus(outpost: &OutpostUnderTest, hwnd: HWND) {
     winevent_focus_observed(outpost, hwnd, 0);
 }
 
-/// [`winevent_focus`], observed at `observed_at_ms` (0 for none).
-fn winevent_focus_observed(outpost: &OutpostUnderTest, hwnd: HWND, observed_at_ms: u64) {
+/// [`winevent_focus`], observed at `observed_at_us` (0 for none).
+fn winevent_focus_observed(outpost: &OutpostUnderTest, hwnd: HWND, observed_at_us: u64) {
     outpost.deliver_win_event_observed(
         DeliveredFact::MsaaFocus {
             hwnd: hwnd.0 as isize,
@@ -1068,7 +1068,7 @@ fn winevent_focus_observed(outpost: &OutpostUnderTest, hwnd: HWND, observed_at_m
             id_child: 0,
         },
         WinEventStamp { thread: 1, time: 1 },
-        observed_at_ms,
+        observed_at_us,
     );
 }
 
@@ -1093,7 +1093,6 @@ fn reduced(
         state,
         &Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms: 0,
             observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Uia,
@@ -1258,7 +1257,7 @@ fn a_winevent_focus_observed_past_its_bound_is_read_at_once() {
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
-    winevent_focus_observed(&outpost, hwnd, common::outpost::now_ms() - 2_000);
+    winevent_focus_observed(&outpost, hwnd, common::outpost::now_us() - 2_000_000);
     outpost.settle();
     let reported = outpost.reported_focus();
     assert_eq!(
@@ -1295,7 +1294,7 @@ fn a_drop_handed_over_with_a_copy_is_taken_in_before_the_copy() {
         marker: 6,
         evidence: DropEvidence::Focus,
     });
-    winevent_focus_observed(&outpost, hwnd, common::outpost::now_ms() + 200);
+    winevent_focus_observed(&outpost, hwnd, common::outpost::now_us() + 200_000);
     outpost.release_worker();
     outpost.settled();
     outpost.pass_time(Duration::from_secs(1));
@@ -1315,7 +1314,8 @@ fn a_drop_handed_over_with_a_copy_is_taken_in_before_the_copy() {
 /// outpost's clock the system's and no settle request: the worker's own
 /// wait for its next entry ends at the bound, a second after the copy, and
 /// the focus is read, as in the product, not before the bound: the read's
-/// report is observed a second or more after the copy. The UIA focus that
+/// report is published a second or more after the copy, stamped with the
+/// copy's observation, not the time of its read. The UIA focus that
 /// then comes late is reported under the read's node, which Core's
 /// duplicate rule takes silently, so the element is heard once in all.
 fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late()
@@ -1329,21 +1329,23 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_whe
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
-    let copy_observed_at_ms = common::outpost::now_ms();
-    winevent_focus_observed(&outpost, hwnd, copy_observed_at_ms);
+    let copy_observed_at_us = common::outpost::now_us();
+    winevent_focus_observed(&outpost, hwnd, copy_observed_at_us);
     // The report is the evidence that the wait ended.
     let message = outpost.next();
     let OutpostToSupervisor::Event {
-        observed_at_ms: read_observed_at_ms,
+        observed_at_us,
+        timing,
         ..
     } = &message
     else {
         panic!("the outpost said {message:?}, not a focus change");
     };
+    assert_eq!(*observed_at_us, copy_observed_at_us, "the copy's stamp");
     assert!(
-        *read_observed_at_ms >= copy_observed_at_ms + 1_000,
-        "read {} ms after the copy, before the bound",
-        read_observed_at_ms.saturating_sub(copy_observed_at_ms)
+        timing.published_at_us >= copy_observed_at_us + 1_000_000,
+        "read {} us after the copy, before the bound",
+        timing.published_at_us.saturating_sub(copy_observed_at_us)
     );
     let read = focus_changed(message);
     outpost.settled();
@@ -1510,10 +1512,10 @@ fn a_focus_queued_from_another_application_after_the_copy_answers_the_wait() {
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
-    let observed_at_ms = common::outpost::now_ms();
-    winevent_focus_observed(&outpost, hwnd, observed_at_ms);
+    let observed_at_us = common::outpost::now_us();
+    winevent_focus_observed(&outpost, hwnd, observed_at_us);
     outpost.settled();
-    outpost.core_focus_elsewhere(observed_at_ms + 1);
+    outpost.core_focus_elsewhere(observed_at_us + 1);
     outpost.pass_time(Duration::from_secs(1));
     outpost.settled();
 
@@ -2397,10 +2399,9 @@ fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
 }
 
 /// A UIA focus the listener read is reported with the listener's stamp,
-/// its milliseconds and microseconds from the one clock read the
-/// listener's callback took, so Core orders it to the microsecond against
-/// another application's focus (`docs/parity/focus-events.md`, "Stale
-/// focus events").
+/// the one clock read the listener's callback took, so Core orders it to
+/// the microsecond against another application's focus
+/// (`docs/parity/focus-events.md`, "Stale focus events").
 fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
     let title = common::unique_title("mockapp-uia-focus-stamp");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -2413,14 +2414,10 @@ fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
     outpost.deliver_stamped(fact, received_at_us);
     match outpost.next() {
         OutpostToSupervisor::Event {
-            observed_at_ms,
             observed_at_us,
             event: NormalizedEvent::FocusChanged { .. },
             ..
-        } => assert_eq!(
-            (observed_at_ms, observed_at_us),
-            (received_at_us / 1_000, received_at_us)
-        ),
+        } => assert_eq!(observed_at_us, received_at_us),
         other => panic!("the outpost said {other:?}, not the focus"),
     }
     outpost.settled();
@@ -2430,9 +2427,7 @@ fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
 }
 
 /// A focus-now answer is stamped when its read began, to the microsecond,
-/// so Core orders the focus it becomes to the microsecond. Its milliseconds
-/// are checked only to agree with its microseconds, which cannot tell one
-/// clock read from two in the same millisecond.
+/// so Core orders the focus it becomes to the microsecond.
 fn a_focus_now_answer_is_stamped_to_the_microsecond() {
     let title = common::unique_title("mockapp-focus-now-stamp");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -2447,7 +2442,6 @@ fn a_focus_now_answer_is_stamped_to_the_microsecond() {
         "the read began at {} us, not between the question at {asked_at_us} us and its answer at {answered_at_us} us",
         answer.observed_at_us
     );
-    assert_eq!(answer.observed_at_ms, answer.observed_at_us / 1_000);
 
     drop(outpost);
     app.quit();

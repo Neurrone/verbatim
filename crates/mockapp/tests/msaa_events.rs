@@ -85,7 +85,6 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentCon
         state,
         &Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms: 0,
             observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Msaa,
@@ -265,7 +264,6 @@ fn said(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
         state,
         &Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms: 0,
             observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Msaa,
@@ -524,7 +522,6 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
             &mut state,
             &Input::Event {
                 trace_id: TraceId::mint(),
-                observed_at_ms: 0,
                 observed_at_us: 0,
                 source: Pid(1),
                 backend: Backend::Msaa,
@@ -600,7 +597,7 @@ fn a_change_of_a_focus_core_no_longer_holds_is_not_read() {
     app.send("set-focus item2");
     let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
-    outpost.core_focus_elsewhere(common::outpost::now_ms());
+    outpost.core_focus_elsewhere(common::outpost::now_us());
     common::reset_hits(hwnd);
     app.send("set-description item2 Second choice");
     outpost.heard(&[Heard::Msaa(WinEventKind::DescriptionChange)]);
@@ -1031,7 +1028,7 @@ fn a_foreground_change_after_another_application_s_focus_is_reported() {
     let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     // Observed now, after the outpost's focus.
-    outpost.core_focus_elsewhere(common::outpost::now_ms());
+    outpost.core_focus_elsewhere(common::outpost::now_us());
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: hwnd.0 as isize,
     });
@@ -1042,26 +1039,24 @@ fn a_foreground_change_after_another_application_s_focus_is_reported() {
     app.quit();
 }
 
-/// The stamp of the outpost's next message, which must be a focus change:
-/// its milliseconds and microseconds, and when its event was first
-/// observed, in microseconds.
-fn focus_stamp(outpost: &OutpostUnderTest) -> (u64, u64, u64) {
+/// The stamp of the outpost's next message, which must be a focus change,
+/// and when its event was first observed, both in microseconds.
+fn focus_stamp(outpost: &OutpostUnderTest) -> (u64, u64) {
     match outpost.next() {
         OutpostToSupervisor::Event {
-            observed_at_ms,
             observed_at_us,
             timing,
             event: NormalizedEvent::FocusChanged { .. },
             ..
-        } => (observed_at_ms, observed_at_us, timing.observed_at_us),
+        } => (observed_at_us, timing.observed_at_us),
         other => panic!("the outpost said {other:?}, not a focus change"),
     }
 }
 
 /// A focus the outpost's own hook took in is stamped with its hook's
-/// observation to the microsecond, its milliseconds from the same clock
-/// read, so Core orders it against another application's focus in the
-/// same millisecond (`docs/parity/focus-events.md`, "Stale focus events").
+/// observation to the microsecond, so Core orders it against another
+/// application's focus in the same millisecond
+/// (`docs/parity/focus-events.md`, "Stale focus events").
 fn a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond() {
     use verbatim_outpost::Heard;
     common::init_com();
@@ -1071,17 +1066,17 @@ fn a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond() {
 
     let (fact, stamp) = raise_focus(&mut app);
     outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
-    let (ms, micros, first_observed) = focus_stamp(&outpost);
+    let (observed, first_observed) = focus_stamp(&outpost);
     assert_ne!(first_observed, 0, "the hook observed the focus");
-    assert_eq!((ms, micros), (first_observed / 1_000, first_observed));
+    assert_eq!(observed, first_observed);
     outpost.deliver_win_event(fact, stamp);
     outpost.settled();
     app.quit();
 }
 
 /// A foreground change is stamped when its window was confirmed as the
-/// foreground, to the microsecond, its milliseconds from the same clock
-/// read: the fact it came from carried no observation.
+/// foreground, to the microsecond: the fact it came from carried no
+/// observation.
 fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-foreground-stamp");
@@ -1093,10 +1088,9 @@ fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: hwnd.0 as isize,
     });
-    let (ms, micros, first_observed) = focus_stamp(&outpost);
+    let (observed, first_observed) = focus_stamp(&outpost);
     assert_eq!(first_observed, 0, "the fact carried no observation");
-    assert_ne!(micros, 0, "the confirmation is stamped");
-    assert_eq!(ms, micros / 1_000);
+    assert_ne!(observed, 0, "the confirmation is stamped");
     outpost.settled();
     app.quit();
 }

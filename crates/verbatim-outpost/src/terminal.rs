@@ -65,10 +65,9 @@ pub struct Terminal {
     colours_now: bool,
     /// On-demand reading.
     pub reading: Reading,
-    /// When the last read began, in milliseconds on the shared clock, and
-    /// in microseconds: a text change observed before it is covered by that
-    /// read ([`Terminal::covers`]).
-    read_started_ms: u64,
+    /// When the last read began, in microseconds on the shared clock: a
+    /// text change observed before it is covered by that read
+    /// ([`Terminal::covers`]).
     read_started_us: u64,
     /// When the last read ended, in milliseconds on the shared clock.
     read_ended_ms: u64,
@@ -91,17 +90,12 @@ impl Terminal {
         Self::default()
     }
 
-    /// Whether a text change observed at `millis` (milliseconds on
-    /// the shared clock), with its microseconds, `micros`, when they are known (0
-    /// otherwise), is covered by the last read, having been observed before
-    /// that read began.
+    /// Whether a text change observed at `observed_at_us` (microseconds on
+    /// the shared clock) is covered by the last read, having been observed
+    /// before that read began.
     #[must_use]
-    pub fn covers(&self, (millis, micros): (u64, u64)) -> bool {
-        if micros == 0 {
-            millis < self.read_started_ms
-        } else {
-            micros < self.read_started_us
-        }
+    pub fn covers(&self, observed_at_us: u64) -> bool {
+        observed_at_us < self.read_started_us
     }
 
     /// Where the next read starts, for a read of the history above it.
@@ -422,6 +416,9 @@ pub struct ReadAnswer {
     pub caret: Option<CaretAnswer>,
     /// The path the snapshot took, for the caller to log a fallback.
     pub path: Path,
+    /// When the read began, in microseconds on the shared clock, from the
+    /// clock read the snapshot's `started_ms` was taken from.
+    pub started_us: u64,
 }
 
 /// Reads `terminal` through UIA, with the caret and its line read in the
@@ -527,7 +524,6 @@ pub fn read<'a>(
             .take()
             .and_then(|range| AgileReference::new(&range).ok());
     }
-    terminal.read_started_ms = started_ms;
     terminal.read_started_us = clock_us;
     terminal.read_ended_ms = wire.ended_ms;
     terminal.read_colours = wire.colours.is_some();
@@ -536,6 +532,7 @@ pub fn read<'a>(
         snapshot: wire,
         caret: snapshot.caret.take(),
         path,
+        started_us: clock_us,
     })
 }
 

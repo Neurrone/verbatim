@@ -115,8 +115,8 @@ fn stand_in(args: &[String]) -> ! {
             SupervisorToOutpost::Shutdown => std::process::exit(0),
             SupervisorToOutpost::Cancel { request_id: 0 } if !listener => send(&ready),
             SupervisorToOutpost::DeliverFact { .. } => facts += 1,
-            SupervisorToOutpost::CoreFocus { observed, .. } => {
-                fact_for = Some(Pid(u32::try_from(observed.0).expect("a pid")));
+            SupervisorToOutpost::CoreFocus { observed_at_us, .. } => {
+                fact_for = Some(Pid(u32::try_from(observed_at_us).expect("a pid")));
             }
             SupervisorToOutpost::IdleQuery { round: 1 } if listener => {
                 drop(messages.borrow_mut().take());
@@ -125,7 +125,6 @@ fn stand_in(args: &[String]) -> ! {
                 if let Some(pid) = fact_for.take() {
                     send(&OutpostToSupervisor::FocusFact {
                         trace_id: TraceId::mint(),
-                        observed_at_ms: 0,
                         timing: EventTiming::default(),
                         fact: ListenerFact {
                             pid,

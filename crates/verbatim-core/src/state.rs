@@ -61,10 +61,10 @@ pub(crate) struct FocusContext {
     /// before it was kept.
     #[serde(default)]
     pub(crate) trace_id: Option<TraceId>,
-    /// When that event was observed, its milliseconds and microseconds on
-    /// the run's shared clock (0 when not known).
+    /// When that event was observed, in microseconds on the run's shared
+    /// clock (0 when not known).
     #[serde(default)]
-    pub(crate) observed: (u64, u64),
+    pub(crate) observed_at_us: u64,
 }
 
 /// The application and window of the most recent foreground change (decision
@@ -179,8 +179,8 @@ pub(crate) struct CaretContext {
     /// when the caret's own line has none (the last line).
     #[serde(default)]
     pub(crate) line_break: Option<String>,
-    /// When the report this caret came from was observed or read, 0 when
-    /// unknown. A timed report observed before this one, arriving later,
+    /// When the report this caret came from was observed or read, in
+    /// milliseconds, 0 when unknown. A timed report observed before this one, arriving later,
     /// does not replace it, so the caret is always the newest known.
     #[serde(default)]
     pub(crate) observed_at_ms: u64,
@@ -201,12 +201,13 @@ impl CaretContext {
 /// keys raise while one key is on its way to Core.
 pub(crate) const CARET_HISTORY: usize = 8;
 
-/// A report of the focus's caret with the time it was observed: an event's
-/// `observed_at_ms`, or the time the outpost read a caret key's reply. A
-/// caret key's own path to Core (the hook, then the application, then
-/// Core) can be slower than the application's (the application, then the
-/// outpost, then Core), so the report Core holds when a key arrives may
-/// already show what the key did. The newest report observed before the
+/// A report of the focus's caret with the time it was observed, in
+/// milliseconds to compare with a caret key's `pressed_at_ms`: an event's
+/// `observed_at_us` in whole milliseconds, or the time the outpost read a
+/// caret key's reply. A caret key's own path to Core (the hook, then the
+/// application, then Core) can be slower than the application's (the
+/// application, then the outpost, then Core), so the report Core holds when
+/// a key arrives may already show what the key did. The newest report observed before the
 /// key was pressed is the caret the key found.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TimedCaret {
@@ -541,33 +542,22 @@ pub(crate) struct SayAll {
 }
 
 /// The newest focus event applied, by which a focus from another outpost is
-/// ordered ([`SrState::latest_focus`]). It reads from a dump written as the
-/// tuple of its first three fields.
+/// ordered ([`SrState::latest_focus`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LatestFocus {
     /// The outpost that reported it.
     pub(crate) outpost: OutpostId,
-    /// When it was observed, in milliseconds on the run's shared clock.
-    pub(crate) observed_at_ms: u64,
+    /// When it was observed, in microseconds on the run's shared clock.
+    pub(crate) observed_at_us: u64,
     /// Its top-level window, when known.
     pub(crate) top_level: Option<WindowHandle>,
-    /// When it was observed, in microseconds from the same clock read; 0
-    /// when its source gave milliseconds only.
-    #[serde(default)]
-    pub(crate) observed_at_us: u64,
 }
 
 impl LatestFocus {
-    /// Whether this focus was observed after a focus observed at `ms`
-    /// milliseconds, and at `micros` microseconds when not 0: to the
-    /// microsecond when both are known, else to the millisecond, a tie
-    /// being no later.
-    pub(crate) fn observed_after(&self, (ms, micros): (u64, u64)) -> bool {
-        if micros != 0 && self.observed_at_us != 0 {
-            micros < self.observed_at_us
-        } else {
-            ms < self.observed_at_ms
-        }
+    /// Whether this focus was observed after a focus observed at
+    /// `observed_at_us`, a tie being no later.
+    pub(crate) fn observed_after(&self, observed_at_us: u64) -> bool {
+        observed_at_us < self.observed_at_us
     }
 }
 
@@ -624,11 +614,12 @@ pub struct SrState {
     /// same top-level window.
     pub(crate) latest_focus: Option<LatestFocus>,
     /// When the newest foreground change applied was observed, in
-    /// milliseconds since the Unix epoch: a focus with a known observation
-    /// time that brought a new foreground window and cut speech off. Speech
-    /// from elsewhere observed before it, but reaching the reducer after it,
-    /// is dropped, as NVDA's foreground change cancels speech queued before
-    /// it (`docs/design/focus-pipeline.md`, section 7).
+    /// microseconds since the Unix epoch on the run's shared clock: a focus
+    /// with a known observation time that brought a new foreground window
+    /// and cut speech off. Speech from elsewhere observed before it, but
+    /// reaching the reducer after it, is dropped, as NVDA's foreground
+    /// change cancels speech queued before it
+    /// (`docs/design/focus-pipeline.md`, section 7).
     #[serde(default)]
     pub(crate) foreground_changed_at: Option<u64>,
     /// The node of the window most recently reported as the foreground,
@@ -822,7 +813,7 @@ impl SrState {
         };
         Some(crate::focus_rules::HeldFocus {
             trace_id: focus.trace_id?,
-            observed: focus.observed,
+            observed_at_us: focus.observed_at_us,
             focus: held(&focus.snapshot),
             ancestors: focus.ancestors.iter().map(held).collect(),
             top_level: focus.window.as_ref().map(|window| window.top_level),
@@ -886,10 +877,11 @@ impl SrState {
     }
 
     /// When the newest focus the reducer applied was observed, in
-    /// milliseconds since the Unix epoch; `None` before any.
+    /// microseconds since the Unix epoch on the run's shared clock; `None`
+    /// before any.
     #[must_use]
     pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.latest_focus.map(|latest| latest.observed_at_ms)
+        self.latest_focus.map(|latest| latest.observed_at_us)
     }
 
     /// Every node the state refers to, grouped by the outpost that issued

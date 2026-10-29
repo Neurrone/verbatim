@@ -554,9 +554,9 @@ pub trait CaretSignal {
     /// its own when nothing knew where the caret was before the key.
     fn caret_event(&mut self) -> bool;
 
-    /// Milliseconds since the Unix epoch: the clock outposts stamp events'
-    /// `observed_at_ms` with and the hook stamps a caret key's
-    /// `pressed_at_ms` with.
+    /// Milliseconds since the Unix epoch on the run's shared clock, which
+    /// outposts stamp events' `observed_at_us` with and the hook stamps a
+    /// caret key's `pressed_at_ms` with.
     fn now_ms(&mut self) -> u64;
 
     /// The caret is about to be read: a caret event observed before now

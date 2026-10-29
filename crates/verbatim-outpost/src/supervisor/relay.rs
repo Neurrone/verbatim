@@ -383,11 +383,13 @@ mod tests {
         (writer, BufReader::new(File::from(child)))
     }
 
-    fn held(observed_at_ms: u64, hwnd: isize) -> HeldFact {
+    fn held(observed_at_us: u64, hwnd: isize) -> HeldFact {
         HeldFact {
             trace_id: TraceId::mint(),
-            observed_at_ms,
-            timing: EventTiming::default(),
+            timing: EventTiming {
+                observed_at_us,
+                ..EventTiming::default()
+            },
             fact: DeliveredFact::Foreground { hwnd },
             win_event: None,
             received: Received::now(),
@@ -397,8 +399,8 @@ mod tests {
     /// What a command read off a child's pipe is, for the order asserted.
     fn name(command: &SupervisorToOutpost) -> String {
         match command {
-            SupervisorToOutpost::DeliverFact { observed_at_ms, .. } => {
-                format!("fact {observed_at_ms}")
+            SupervisorToOutpost::DeliverFact { timing, .. } => {
+                format!("fact {}", timing.observed_at_us)
             }
             SupervisorToOutpost::ForwardingEnded { through } => format!("ended {through}"),
             other => format!("{other:?}"),

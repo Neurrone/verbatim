@@ -80,7 +80,6 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     app.stall(STALL);
     outpost.handle_command(&SupervisorToOutpost::DeliverFact {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         timing: verbatim_outpost::protocol::EventTiming::default(),
         fact: DeliveredFact::MsaaFocus {
             hwnd,

@@ -350,7 +350,7 @@ fn a_watchs_end_reads_no_focus_while_a_marker_waits() {
             id_child: 0,
         },
         WinEventStamp { thread: 1, time: 1 },
-        common::outpost::now_ms(),
+        common::outpost::now_us(),
     );
     outpost.settled();
     // The marker arrives, and the bound passes, while the worker is held,

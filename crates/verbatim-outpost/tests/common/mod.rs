@@ -11,17 +11,17 @@ use verbatim_outpost::protocol::{HeldFocus, HeldNode};
 use verbatim_outpost::supervisor::{Frames, OutpostMessage, Supervisor};
 
 /// A focus Core holds, of a node of outpost `outpost`, observed at
-/// `observed_at_ms`: what a test has the supervisor tell the listener and
+/// `observed_at_us`: what a test has the supervisor tell the listener and
 /// the outposts (`Supervisor::core_focus`), whose fakes read the
 /// observation as the test's message.
 #[allow(
     dead_code,
     reason = "not every test of the supervisor tells Core's focus"
 )]
-pub fn held_focus(outpost: OutpostId, observed_at_ms: u64) -> HeldFocus {
+pub fn held_focus(outpost: OutpostId, observed_at_us: u64) -> HeldFocus {
     HeldFocus {
         trace_id: TraceId::mint(),
-        observed: (observed_at_ms, 0),
+        observed_at_us,
         focus: HeldNode {
             id: NodeId::new(1).with_outpost(outpost),
             backend: Backend::Uia,

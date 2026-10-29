@@ -138,8 +138,7 @@ impl Session<'_> {
         );
         Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms: snapshot.started_ms,
-            observed_at_us: 0,
+            observed_at_us: snapshot.started_ms * 1_000,
             source: Pid(1),
             backend: Backend::Uia,
             window: None,
@@ -296,7 +295,6 @@ impl IntoInput for TextReply {
 fn focus() -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
@@ -376,8 +374,7 @@ fn new_output_is_said_line_by_line(remote: bool) {
     }
     session.input(&Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: snapshot.started_ms,
-        observed_at_us: 0,
+        observed_at_us: snapshot.started_ms * 1_000,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,

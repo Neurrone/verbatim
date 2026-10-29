@@ -66,8 +66,8 @@ guide maps those behaviors onto the crate's types and modules.
     reducer judges and every change of its focus
     (`SupervisorToOutpost::CoreFocus`).
   - `latest_focus_observed_at()`, when the newest applied focus was
-    observed, which lets the shell skip a fake focus after a menu closes
-    when a later focus has been applied.
+    observed, in microseconds, which lets the shell skip a fake focus
+    after a menu closes when a later focus has been applied.
   - `attention()`, the application holding attention, which the shell
     sends to the supervisor.
   - `held_nodes()` and `held_anchors()`: every node id and every text
@@ -257,8 +257,7 @@ code is in `reduce.rs` unless named.
   suppression" and "Stale focus events"). A focus that `repeats_focus`
   judges a repeat is dropped before anything else judges it, its newer
   reading kept unspoken. Across outposts, a focus observed before the
-  applied one is dropped (`observed_at_ms`, and `observed_at_us` when both
-  carry it).
+  applied one is dropped (`observed_at_us`, a tie being no earlier).
 - Background speech across a foreground change
   (`docs/design/focus-pipeline.md`, section 7): a background event
   observed before the newest applied foreground change is dropped.

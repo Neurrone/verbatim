@@ -83,7 +83,6 @@ fn fault(name: &str, padding: usize) -> OutpostToSupervisor {
 fn value_change(value: &str) -> OutpostToSupervisor {
     OutpostToSupervisor::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         observed_at_us: 0,
         backend: Backend::Uia,
         window: None,

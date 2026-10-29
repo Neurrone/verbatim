@@ -83,9 +83,9 @@ pub struct HeldFocus {
     /// The trace of the event Core took the focus from: the focus
     /// listener's own trace for a UIA focus it read.
     pub trace_id: TraceId,
-    /// When that event was observed, in milliseconds and microseconds on
-    /// the run's shared clock (0 when not known).
-    pub observed: (u64, u64),
+    /// When that event was observed, in microseconds on the run's shared
+    /// clock (0 when not known).
+    pub observed_at_us: u64,
     /// The focus.
     pub focus: HeldNode,
     /// Its ancestors, outermost first.
@@ -467,7 +467,7 @@ mod tests {
         };
         let focus = HeldFocus {
             trace_id: TraceId::mint(),
-            observed: (1, 0),
+            observed_at_us: 1,
             focus: node(ours(5)),
             ancestors: vec![
                 node(NodeId::new(9).with_outpost(OutpostId(4))),

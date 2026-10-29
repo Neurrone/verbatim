@@ -32,13 +32,12 @@ pub(crate) fn now_ms() -> u64 {
     crate::protocol::now_us() / 1_000
 }
 
-/// The millisecond stamp of an observation `timing` holds, taken from the
-/// same clock read as its microseconds, so a focus can be ordered to the
-/// microsecond; now, when `timing` holds none.
-pub(crate) fn observed_ms(timing: &crate::protocol::EventTiming) -> u64 {
+/// The observation `timing` holds, in microseconds on the run's shared
+/// clock; now, when `timing` holds none.
+pub(crate) fn observed_us(timing: &crate::protocol::EventTiming) -> u64 {
     match timing.observed_at_us {
-        0 => now_ms(),
-        observed_at_us => observed_at_us / 1_000,
+        0 => crate::protocol::now_us(),
+        observed_at_us => observed_at_us,
     }
 }
 
@@ -533,16 +532,15 @@ mod tests {
         unsafe { DestroyWindow(hwnd(handle)) }.expect("destroy a window");
     }
 
-    /// An event the outpost's own handlers took in is stamped, in
-    /// milliseconds, from the same clock read as the microseconds of its
-    /// observation.
+    /// An event the outpost's own handlers took in is stamped with the
+    /// microseconds of its observation, its own clock read.
     #[test]
     fn an_observation_is_stamped_from_its_own_clock_read() {
         let timing = crate::protocol::EventTiming {
             observed_at_us: 6_543_210,
             ..crate::protocol::EventTiming::default()
         };
-        assert_eq!(observed_ms(&timing), 6_543);
+        assert_eq!(observed_us(&timing), 6_543_210);
     }
     #[test]
     fn only_a_live_window_can_be_read_for_an_event() {

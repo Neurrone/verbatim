@@ -853,11 +853,14 @@ any window.
 Core drops a focus from another outpost observed before the focus it has
 applied (decision D14; `docs/parity/focus-events.md`, "Stale focus
 events"). Every process stamps an observation with one read of the
-performance counter, milliseconds and, for a focus, microseconds.
+performance counter, in microseconds, for every event kind.
 
-- Minimum and today: one clock read per observation and no wait; a focus
-  message and Core's `CoreFocus` notice carry one number more. No thread,
-  timer, message or wake-up.
+- Minimum and today: one clock read per observation and no wait; every
+  message carries one stamp. With no millisecond field, an event message
+  is 31 bytes smaller for a focus and 16 for any other event, a listener
+  fact and its relay to the outpost and a focus-now answer 31 bytes
+  smaller, Core's `CoreFocus` notice 10, and a menu's end 3 bytes larger.
+  No thread, timer, message or wake-up.
 - What it does not catch: a switcher focus Windows raises after the
   console's (11 ms after its foreground event and 15 ms after its focus)
   happened later, so no ordering drops it; Core's refusal of the

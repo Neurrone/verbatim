@@ -74,8 +74,8 @@ pub(super) struct Held {
     /// The focus Core holds, when it is this outpost's.
     core: Option<Focus>,
     /// When the focus Core holds was observed, when it is another
-    /// outpost's, in milliseconds and microseconds; 0 for none.
-    elsewhere: (u64, u64),
+    /// outpost's, in microseconds; 0 for none.
+    elsewhere: u64,
     /// The focuses this outpost reported that Core has not judged, oldest
     /// first.
     unjudged: VecDeque<Focus>,
@@ -93,13 +93,13 @@ impl Held {
 
     /// Core judged this outpost's focus event traced `judged`, if any, and
     /// every one reported before it, and holds `focus`, this outpost's,
-    /// or another outpost's observed at `observed`
+    /// or another outpost's observed at `observed_at_us`
     /// (`SupervisorToOutpost::CoreFocus`).
     pub(super) fn core_focus(
         &mut self,
         judged: Option<TraceId>,
         focus: Option<HeldFocus>,
-        observed: (u64, u64),
+        observed_at_us: u64,
     ) {
         let mut judged_focuses = Vec::new();
         if let Some(judged) = judged
@@ -111,11 +111,10 @@ impl Held {
             self.core = None;
             // A focus with no observation time is taken as now, as it is
             // newer than any the outpost waits on.
-            let observed = if observed.0 == 0 {
-                let now = crate::protocol::now_us();
-                (now / 1_000, now)
+            let observed = if observed_at_us == 0 {
+                crate::protocol::now_us()
             } else {
-                observed
+                observed_at_us
             };
             if observed_no_earlier(observed, self.elsewhere) {
                 self.elsewhere = observed;
@@ -145,7 +144,7 @@ impl Held {
     /// When the focus Core holds was observed, when it is another
     /// outpost's; 0 for none.
     pub(super) fn elsewhere_observed(&self) -> u64 {
-        self.elsewhere.0
+        self.elsewhere
     }
 
     /// The focus Core holds, when it is this outpost's.
@@ -249,7 +248,7 @@ mod tests {
     fn held_focus(trace: TraceId, id: u64) -> HeldFocus {
         HeldFocus {
             trace_id: trace,
-            observed: (1, 0),
+            observed_at_us: 1,
             focus: node(id, Role::Button),
             ancestors: vec![node(100, Role::Dialog)],
             top_level: Some(WindowHandle(7)),
@@ -265,10 +264,10 @@ mod tests {
         held.reported(reported(second, 2));
         assert!(!held.settled());
         assert_eq!(held.expected().map(|focus| focus.trace), Some(second));
-        held.core_focus(Some(first), Some(held_focus(first, 1)), (1, 0));
+        held.core_focus(Some(first), Some(held_focus(first, 1)), 1);
         assert!(!held.settled(), "the second still waits");
         assert!(held.is_a_focus(1.into_node()) && held.is_a_focus(2.into_node()));
-        held.core_focus(Some(second), Some(held_focus(first, 1)), (1, 0));
+        held.core_focus(Some(second), Some(held_focus(first, 1)), 1);
         assert!(held.settled());
         assert!(
             !held.is_a_focus(2.into_node()),
@@ -287,8 +286,8 @@ mod tests {
         let mut held = Held::default();
         let trace = TraceId::mint();
         held.reported(reported(trace, 1));
-        held.core_focus(Some(trace), Some(held_focus(trace, 1)), (5, 0));
-        held.core_focus(None, None, (9, 0));
+        held.core_focus(Some(trace), Some(held_focus(trace, 1)), 5);
+        held.core_focus(None, None, 9);
         assert!(held.core().is_none());
         assert_eq!(held.elsewhere_observed(), 9);
     }
@@ -298,11 +297,11 @@ mod tests {
     #[test]
     fn a_focus_elsewhere_in_the_same_millisecond_is_ordered_by_microseconds() {
         let mut held = Held::default();
-        held.core_focus(None, None, (6_543, 6_543_800));
-        held.core_focus(None, None, (6_543, 6_543_200));
-        assert_eq!(held.elsewhere, (6_543, 6_543_800));
-        held.core_focus(None, None, (6_544, 0));
-        assert_eq!(held.elsewhere_observed(), 6_544);
+        held.core_focus(None, None, 6_543_800);
+        held.core_focus(None, None, 6_543_200);
+        assert_eq!(held.elsewhere, 6_543_800);
+        held.core_focus(None, None, 6_544_000);
+        assert_eq!(held.elsewhere_observed(), 6_544_000);
     }
 
     #[test]

@@ -81,7 +81,6 @@ pub(super) enum OwnerEvent {
     /// Read from the listener's pipe: a focus fact to route.
     Fact {
         trace_id: TraceId,
-        observed_at_ms: u64,
         timing: EventTiming,
         fact: ListenerFact,
         win_event: Option<WinEventStamp>,
@@ -98,7 +97,7 @@ pub(super) enum OwnerEvent {
     },
     /// Read from the listener's pipe: a menu or the Alt+Tab switcher
     /// closed.
-    MenuOrSwitchEnded { ended_at_ms: u64 },
+    MenuOrSwitchEnded { ended_at_us: u64 },
     /// Read from the listener's pipe: a window came to the foreground.
     ForegroundWindow(crate::supervisor::ForegroundReport),
     /// Read from a child's pipe: the child sent `Ready`.
@@ -699,13 +698,11 @@ impl Owner {
         let event = match message {
             OutpostToSupervisor::FocusFact {
                 trace_id,
-                observed_at_ms,
                 timing,
                 fact,
                 win_event,
             } => OwnerEvent::Fact {
                 trace_id,
-                observed_at_ms,
                 timing,
                 fact,
                 win_event,
@@ -730,7 +727,7 @@ impl Owner {
                 }
             }
             OutpostToSupervisor::MenuOrSwitchEnded {
-                ended_at_ms,
+                ended_at_us,
                 timing,
             } => {
                 tracing::trace!(
@@ -740,7 +737,7 @@ impl Owner {
                     pipe_us = hop_us(timing.listener_written_at_us, received.at_us()),
                     "a menu or switcher end: listener handling, listener queue, listener's pipe to verbatim.exe"
                 );
-                OwnerEvent::MenuOrSwitchEnded { ended_at_ms }
+                OwnerEvent::MenuOrSwitchEnded { ended_at_us }
             }
             OutpostToSupervisor::ForegroundWindow {
                 window,
@@ -777,12 +774,12 @@ impl Owner {
         focus: Option<&crate::protocol::HeldFocus>,
         outposts: Vec<OutpostId>,
     ) {
-        let observed = focus.map_or((0, 0), |focus| focus.observed);
+        let observed_at_us = focus.map_or(0, |focus| focus.observed_at_us);
         let notice = |focus| {
             Outgoing::HandOver(SupervisorToOutpost::CoreFocus {
                 judged,
                 focus,
-                observed,
+                observed_at_us,
                 sent_at_us: 0,
             })
         };
@@ -791,7 +788,7 @@ impl Owner {
         // ancestors are left out of its notice.
         let to_listener = focus.map(|focus| crate::protocol::HeldFocus {
             trace_id: focus.trace_id,
-            observed: focus.observed,
+            observed_at_us: focus.observed_at_us,
             focus: focus.focus.clone(),
             ancestors: Vec::new(),
             top_level: focus.top_level,
@@ -844,7 +841,6 @@ impl Owner {
             OwnerEvent::Fact { .. } if self.shutting_down.is_some() => {}
             OwnerEvent::Fact {
                 trace_id,
-                observed_at_ms,
                 timing,
                 fact,
                 win_event,
@@ -852,7 +848,6 @@ impl Owner {
             } => self.route_fact(
                 HeldFact {
                     trace_id,
-                    observed_at_ms,
                     timing,
                     fact: fact.fact,
                     win_event,
@@ -865,9 +860,9 @@ impl Owner {
                 outpost,
                 through,
             } => self.forwarding_ended(pid, outpost, through),
-            OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
+            OwnerEvent::MenuOrSwitchEnded { ended_at_us } => {
                 self.outbox
-                    .send(OutpostMessage::MenuOrSwitchEnded { ended_at_ms });
+                    .send(OutpostMessage::MenuOrSwitchEnded { ended_at_us });
             }
             OwnerEvent::ForegroundWindow(report) => {
                 self.outbox.send(OutpostMessage::ForegroundWindow(report));
@@ -1984,8 +1979,10 @@ impl Owner {
         for record in self.records.values_mut() {
             let held = HeldFact {
                 trace_id: TraceId::mint(),
-                observed_at_ms: crate::outpost::now_ms(),
-                timing: EventTiming::default(),
+                timing: EventTiming {
+                    observed_at_us: crate::protocol::now_us(),
+                    ..EventTiming::default()
+                },
                 fact: DeliveredFact::UiaFocusReadsEnded,
                 win_event: None,
                 received: crate::supervisor::writer::Received::now(),

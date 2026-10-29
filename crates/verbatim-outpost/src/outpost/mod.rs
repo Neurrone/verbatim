@@ -496,7 +496,7 @@ impl Context {
                 behind_noted: false,
             },
             TraceId::mint(),
-            now_ms(),
+            now_us(),
             EventTiming::default(),
         );
     }
@@ -587,11 +587,11 @@ impl Context {
         nodes.len()
     }
 
-    fn push(&self, item: Item, trace: TraceId, observed_at_ms: u64, timing: EventTiming) {
+    fn push(&self, item: Item, trace: TraceId, observed_at_us: u64, timing: EventTiming) {
         self.intake.push(Entry {
             item,
             trace,
-            observed_at_ms,
+            observed_at_us,
             timing,
         });
     }
@@ -599,7 +599,7 @@ impl Context {
     /// Queues an event one of the outpost's own handlers took in, observed
     /// now, then tells the observer, if there is one, that it was heard.
     fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
-        self.push(item, TraceId::mint(), window::observed_ms(&timing), timing);
+        self.push(item, TraceId::mint(), window::observed_us(&timing), timing);
         self.tell_heard(heard);
     }
 
@@ -703,7 +703,7 @@ impl Context {
                 Entry {
                     item: Item::Fact(fact, Some(stamp)),
                     trace: TraceId::mint(),
-                    observed_at_ms: window::observed_ms(&timing),
+                    observed_at_us: window::observed_us(&timing),
                     timing,
                 }
             });
@@ -715,19 +715,19 @@ impl Context {
 
     /// Queues a fact the supervisor routed from the listener, unless it is
     /// the listener's copy of a `WinEvent` the outpost's own hook already
-    /// took in ([`handover`]).
+    /// took in ([`handover`]). It is ordered by the listener's observation,
+    /// `timing`'s `observed_at_us`.
     fn take_in_routed_fact(
         &self,
         fact: &DeliveredFact,
         win_event: Option<WinEventStamp>,
         trace: TraceId,
-        observed_at_ms: u64,
         timing: EventTiming,
     ) {
         let entry = || Entry {
             item: Item::Fact(fact.clone(), win_event),
             trace,
-            observed_at_ms,
+            observed_at_us: timing.observed_at_us,
             timing,
         };
         // The first UIA focus's arrival, stamped with the relay's own
@@ -1157,7 +1157,7 @@ impl Outpost {
         self.context.push(
             Item::Settle(done_tx),
             TraceId::mint(),
-            now_ms(),
+            now_us(),
             EventTiming::default(),
         );
         // An error means the worker dropped the request, abandoned.
@@ -1323,7 +1323,6 @@ impl Outpost {
             }
             SupervisorToOutpost::DeliverFact {
                 trace_id,
-                observed_at_ms,
                 timing,
                 fact,
                 win_event,
@@ -1331,7 +1330,6 @@ impl Outpost {
                 fact,
                 *win_event,
                 *trace_id,
-                *observed_at_ms,
                 EventTiming {
                     relayed_at_us: now_us(),
                     ..*timing
@@ -1353,7 +1351,7 @@ impl Outpost {
                     query: unstamped(query),
                 },
                 *trace_id,
-                now_ms(),
+                now_us(),
                 // Only Core's relay stamps come with a request.
                 EventTiming {
                     relayed_at_us: now_us(),
@@ -1405,10 +1403,12 @@ impl Outpost {
             SupervisorToOutpost::CoreFocus {
                 judged,
                 focus,
-                observed,
+                observed_at_us,
                 ..
             } => {
-                context.held().core_focus(*judged, focus.clone(), *observed);
+                context
+                    .held()
+                    .core_focus(*judged, focus.clone(), *observed_at_us);
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,
@@ -1427,7 +1427,7 @@ impl Outpost {
                         acknowledged: *acknowledged,
                     },
                     TraceId::mint(),
-                    now_ms(),
+                    now_us(),
                     EventTiming::default(),
                 );
             }

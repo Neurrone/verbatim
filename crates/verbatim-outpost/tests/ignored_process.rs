@@ -58,7 +58,6 @@ fn value(args: &[String], name: &str) -> Option<String> {
 fn focus_fact(pid: u32) -> OutpostToSupervisor {
     OutpostToSupervisor::FocusFact {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         timing: EventTiming::default(),
         fact: ListenerFact {
             pid: Pid(pid),

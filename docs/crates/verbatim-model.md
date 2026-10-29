@@ -299,10 +299,10 @@ supersedes an older one, whose answer Core drops. The operations
   may carry `removed`, text removed from a typed line that had wrapped. A
   watch that ends with no evidence (replaced by the next watch, the focus
   moving, or a bound on its age passing) is answered
-  `TextReply::WatchEnded`. The reply carries the caret, `read_at_ms` on
-  the clock of `observed_at_ms` (0 when unknown), the requested `unit` at
-  the caret (`None` for `Line` or a unit the provider lacks), and
-  `selection_changes`.
+  `TextReply::WatchEnded`. The reply carries the caret, `read_at_ms` in
+  milliseconds on the clock of `observed_at_us` (0 when unknown), the
+  requested `unit` at the caret (`None` for `Line` or a unit the provider
+  lacks), and `selection_changes`.
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
   `characters`. When the old and new selections neither overlap nor

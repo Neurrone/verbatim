@@ -96,7 +96,6 @@ fn node(id: u64, role: Role, name: &str) -> NodeSnapshot {
 fn focus_event(node: NodeSnapshot, ancestors: Vec<NodeSnapshot>) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
@@ -221,8 +220,7 @@ fn editing_with_chain(depth: u64) -> SrState {
 fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms,
-        observed_at_us: 0,
+        observed_at_us: observed_at_ms * 1_000,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -310,8 +308,7 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
         terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
     let snapshot = |outpost: &mut terminal_support::Outpost, at_ms: u64| Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: at_ms,
-        observed_at_us: 0,
+        observed_at_us: at_ms * 1_000,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,

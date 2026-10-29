@@ -133,12 +133,10 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
 - Across outposts, events can arrive out of the order they happened in,
   so the reducer drops a focus event from one outpost observed before the
   newest focus it applied from another (decision D14). Every process
-  stamps its observations on the run's shared clock
-  (`verbatim_process::clock`), in milliseconds and, for a focus, in
-  microseconds from the same clock read. Two focuses stamped in one
-  millisecond are ordered by their microseconds when both carry them, and
-  otherwise neither is stale: UI Automation delivers focus events in
-  bursts, several in one millisecond, and in an Alt+Tab check the
+  stamps every observation on the run's shared clock
+  (`verbatim_process::clock`), in microseconds from one clock read, and
+  a tie is no earlier, so neither is stale: UI Automation delivers focus
+  events in bursts, several in one millisecond, and in an Alt+Tab check the
   switcher's pane, read first, reached Core after the console switched
   to and was announced over it.
 - What each focus's time is: a UIA focus, when the focus listener's
@@ -146,8 +144,10 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
   own; a `WinEvent` focus, when the hook's callback that took it in began;
   a focus read on request (at startup, after an outpost is replaced, or
   after a menu closes), when the read began, so it is ordered with the
-  events as NVDA's queue orders the focus it reads; and the end of a menu
-  or of the switcher, when the listener's callback observed it.
+  events as NVDA's queue orders the focus it reads; a focus the outpost
+  reads when no UIA focus followed a `WinEvent` focus, the copy's
+  observation; and the end of a menu or of the switcher, when the
+  listener's callback observed it.
 - A foreground change is ordered by the time its window was confirmed as
   the system's foreground window, not when Windows raised the event:
   Windows raises it before the change completes, and the old foreground

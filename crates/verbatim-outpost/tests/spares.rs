@@ -162,8 +162,8 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
         .filter(|fact| !fact.is_empty())
         .map(|fact| {
             let parts: Vec<&str> = fact.split(':').collect();
-            let [kind, pid, ms] = parts.as_slice() else {
-                panic!("a fact is kind:pid:ms: {fact}");
+            let [kind, pid, us] = parts.as_slice() else {
+                panic!("a fact is kind:pid:us: {fact}");
             };
             let fact = match *kind {
                 "focus" => DeliveredFact::MsaaFocus {
@@ -180,8 +180,10 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
             };
             OutpostToSupervisor::FocusFact {
                 trace_id: TraceId::mint(),
-                observed_at_ms: ms.parse().expect("a time"),
-                timing: EventTiming::default(),
+                timing: EventTiming {
+                    observed_at_us: us.parse().expect("a time"),
+                    ..EventTiming::default()
+                },
                 fact: ListenerFact {
                     pid: Pid(pid.parse().expect("a pid")),
                     fact,
@@ -349,12 +351,14 @@ fn stand_in(args: &[String]) -> ! {
                 }
             }
             Ok(Some(SupervisorToOutpost::CoreFocus {
-                focus, observed, ..
+                focus,
+                observed_at_us,
+                ..
             })) if !listener => {
                 send(&OutpostToSupervisor::Fault {
                     detail: format!(
                         "Core's focus at {} {}",
-                        observed.0,
+                        observed_at_us,
                         if focus.is_some() { "here" } else { "elsewhere" }
                     ),
                 });
@@ -362,9 +366,9 @@ fn stand_in(args: &[String]) -> ! {
             Ok(Some(SupervisorToOutpost::Assign { target_pid })) => {
                 mute = assign(&send, outpost_pid, target_pid);
             }
-            Ok(Some(SupervisorToOutpost::DeliverFact { observed_at_ms, .. })) => {
+            Ok(Some(SupervisorToOutpost::DeliverFact { timing, .. })) => {
                 send(&OutpostToSupervisor::Fault {
-                    detail: format!("fact {observed_at_ms}"),
+                    detail: format!("fact {}", timing.observed_at_us),
                 });
             }
             Ok(Some(SupervisorToOutpost::IdleQuery { round })) if listener => {

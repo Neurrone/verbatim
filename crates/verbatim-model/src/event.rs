@@ -541,16 +541,11 @@ pub enum Input {
     Event {
         /// Trace ID minted when the OS event was first observed.
         trace_id: TraceId,
-        /// Milliseconds since the Unix epoch when the OS event was first
-        /// observed — the same stamp the outpost put on the wire. The
-        /// latency record reads it, and so does the reducer, to drop a focus
+        /// Microseconds since the Unix epoch on the run's shared clock when
+        /// the OS event was first observed, the stamp the outpost put on the
+        /// wire; 0 when unknown. The reducer orders by it, to drop a focus
         /// observed before the focus it already applied
         /// (`docs/parity/focus-events.md`, "Stale focus events").
-        #[serde(default)]
-        observed_at_ms: u64,
-        /// The same stamp in microseconds on the run's shared clock, which
-        /// orders two focuses stamped in one millisecond; 0 when the source
-        /// gave milliseconds only.
         #[serde(default)]
         observed_at_us: u64,
         /// The application the event came from: information about its
@@ -636,9 +631,9 @@ pub enum Input {
         /// Which key.
         key: CaretKey,
         /// Milliseconds since the Unix epoch when the hook saw the key,
-        /// before the application could: the clock of an event's
-        /// `observed_at_ms`, so an outpost can tell whether a caret it read
-        /// came before the key. 0 when unknown.
+        /// before the application could, on the run's shared clock that an
+        /// event's `observed_at_us` reads, so an outpost can tell whether a
+        /// caret it read came before the key. 0 when unknown.
         #[serde(default)]
         pressed_at_ms: u64,
     },
@@ -822,12 +817,12 @@ pub enum Input {
     /// The settings dialog's theme page previews an event, as the theme
     /// reports it.
     PreviewEarcon(Earcon),
-    /// A menu or the Alt+Tab switcher closed, at `ended_at_ms`, as the focus
+    /// A menu or the Alt+Tab switcher closed, at `ended_at_us`, as the focus
     /// listener tells it, 50 ms later.
     MenuOrSwitchEnded {
-        /// When it closed, in milliseconds since the Unix epoch, the clock
-        /// events' `observed_at_ms` use.
-        ended_at_ms: u64,
+        /// When it closed, in microseconds since the Unix epoch on the
+        /// clock events' `observed_at_us` use.
+        ended_at_us: u64,
     },
     /// The quiet-period timer of the focused terminal's reading rules came
     /// due ([`Effect::TerminalTimer`]): the rules are given the keys that

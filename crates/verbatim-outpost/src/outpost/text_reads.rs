@@ -122,11 +122,13 @@ impl CaretSignal for Signal<'_> {
     }
 }
 
-/// Whether a caret event of `node_id` observed at or after `since_ms`
-/// waits in the intake: UIA's caret event from the node's element, the
-/// console's caret event of its window for the console host's text area,
-/// or, for an edit control's client area, the caret's location change or
-/// the text selection change of its window.
+/// Whether a caret event of `node_id` observed at or after `since_ms`, a
+/// caret key's press in milliseconds, which the event's observation is
+/// compared with in whole milliseconds, waits in the intake: UIA's caret
+/// event from the node's element, the console's caret event of its window
+/// for the console host's text area, or, for an edit control's client
+/// area, the caret's location change or the text selection change of its
+/// window.
 fn caret_event_waiting(context: &Context, node_id: NodeId, since_ms: u64) -> bool {
     use super::intake::{Item, UiaKind};
     use verbatim_ia2::WinEventKind;
@@ -148,7 +150,7 @@ fn caret_event_waiting(context: &Context, node_id: NodeId, since_ms: u64) -> boo
         ),
     };
     context.intake.any_waiting(|entry| {
-        entry.observed_at_ms >= since_ms
+        entry.observed_at_us / 1_000 >= since_ms
             && match &entry.item {
                 Item::Uia(event) => {
                     matches!(event.kind, UiaKind::TextSelection)

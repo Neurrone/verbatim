@@ -66,7 +66,6 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         &mut state,
         &Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms: 0,
             observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Uia,

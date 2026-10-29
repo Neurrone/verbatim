@@ -323,12 +323,13 @@ pub enum OutpostMessage {
         replacement: bool,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
-    /// somewhere on the desktop, at `ended_at_ms`: unless a focus observed
+    /// somewhere on the desktop, at `ended_at_us`: unless a focus observed
     /// since has been applied, the app asks the foreground application for
     /// its focused control (NVDA's fake focus).
     MenuOrSwitchEnded {
-        /// When it ended, in milliseconds since the Unix epoch.
-        ended_at_ms: u64,
+        /// When it ended, in microseconds since the Unix epoch on the run's
+        /// shared clock.
+        ended_at_us: u64,
     },
     /// A window came to the system's foreground, as the focus listener
     /// learned it: the app gives it to Core, which decides the keyboard

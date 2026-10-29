@@ -44,7 +44,7 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         }
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
-        Input::MenuOrSwitchEnded { ended_at_ms } => menu_or_switch_ended(state, *ended_at_ms),
+        Input::MenuOrSwitchEnded { ended_at_us } => menu_or_switch_ended(state, *ended_at_us),
         Input::ForegroundWindow(foreground) => {
             // Decided into the keyboard hook's view of the foreground
             // (`SrState::hook_foreground`); nothing is said.
@@ -171,15 +171,15 @@ fn preview_speech(trace_id: TraceId, segments: &[UtteranceSegment]) -> Vec<Effec
     )]
 }
 
-/// A menu or the Alt+Tab switcher closed at `ended_at_ms`: unless a focus
+/// A menu or the Alt+Tab switcher closed at `ended_at_us`: unless a focus
 /// observed since then has been applied, the application in front is asked
 /// for its focus, as NVDA's fake focus is queued when no focus event was
 /// validly processed with the end; a focus fact dropped or unreadable does
 /// not skip it (`docs/parity/backends.md`).
-fn menu_or_switch_ended(state: &SrState, ended_at_ms: u64) -> Vec<Effect> {
+fn menu_or_switch_ended(state: &SrState, ended_at_us: u64) -> Vec<Effect> {
     if state
         .latest_focus_observed_at()
-        .is_some_and(|observed| observed >= ended_at_ms)
+        .is_some_and(|observed| observed >= ended_at_us)
     {
         Vec::new()
     } else {

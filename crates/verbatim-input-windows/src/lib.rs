@@ -289,8 +289,8 @@ pub enum KeyReport {
         /// The gesture.
         gesture: EmittedGesture,
         /// Microseconds since the Unix epoch when the hook procedure ran,
-        /// the clock outposts stamp what they observe with (in milliseconds
-        /// for `observed_at_ms`, in microseconds for the latency log). The
+        /// the clock outposts stamp what they observe with (`observed_at_us`
+        /// and the latency log). The
         /// application receives the key only after the hook returns, so
         /// anything an outpost read before this time came before the key.
         /// This is not the key event's own `time`, which counts

@@ -289,11 +289,12 @@ pub(super) enum Item {
     Wake,
 }
 
-/// An item with its trace and observation time.
+/// An item with its trace and observation time, in microseconds on the
+/// run's shared clock.
 pub(super) struct Entry {
     pub(super) item: Item,
     pub(super) trace: TraceId,
-    pub(super) observed_at_ms: u64,
+    pub(super) observed_at_us: u64,
     /// When it was raised, observed, and relayed, for the latency log.
     pub(super) timing: crate::protocol::EventTiming,
 }
@@ -493,9 +494,9 @@ struct State {
 pub(super) struct MarkerNews {
     /// The newest focus drop that ends the wait, or the end of the
     /// listener's reads, by when it was observed.
-    pub(super) answered_at_ms: Option<u64>,
+    pub(super) answered_at_us: Option<u64>,
     /// The newest focus drop because its sender had no window above it.
-    pub(super) no_window_at_ms: Option<u64>,
+    pub(super) no_window_at_us: Option<u64>,
 }
 
 /// When [`Intake::next_with_gap`] wakes its worker for the gap.
@@ -510,15 +511,15 @@ enum GapWake {
 }
 
 impl MarkerNews {
-    /// A drop observed at `observed_at_ms` saying `evidence`, or the end of
+    /// A drop observed at `observed_at_us` saying `evidence`, or the end of
     /// the listener's reads (`DropEvidence::Focus`).
-    fn record(&mut self, evidence: DropEvidence, observed_at_ms: u64) {
+    fn record(&mut self, evidence: DropEvidence, observed_at_us: u64) {
         let slot = match evidence {
-            DropEvidence::Focus => &mut self.answered_at_ms,
-            DropEvidence::NoWindow => &mut self.no_window_at_ms,
+            DropEvidence::Focus => &mut self.answered_at_us,
+            DropEvidence::NoWindow => &mut self.no_window_at_us,
             DropEvidence::Inconclusive | DropEvidence::NotFocus => return,
         };
-        *slot = Some(slot.map_or(observed_at_ms, |at| at.max(observed_at_ms)));
+        *slot = Some(slot.map_or(observed_at_us, |at| at.max(observed_at_us)));
     }
 
     fn is_empty(self) -> bool {
@@ -622,10 +623,10 @@ impl State {
     fn resolves_without_read(&mut self, entry: &Entry) -> bool {
         // A drop's observation, or the time it arrived when it carries
         // none, which only a test's delivery does.
-        let observed_at_ms = if entry.observed_at_ms == 0 {
-            super::now_ms()
+        let observed_at_us = if entry.observed_at_us == 0 {
+            crate::protocol::now_us()
         } else {
-            entry.observed_at_ms
+            entry.observed_at_us
         };
         match &entry.item {
             Item::Fact(DeliveredFact::UiaFocusDropped { marker, evidence }, _) => {
@@ -636,13 +637,13 @@ impl State {
                 );
                 self.waiting
                     .retain(|waiting| waiting.marker != Some(*marker));
-                self.marker_news.record(*evidence, observed_at_ms);
+                self.marker_news.record(*evidence, observed_at_us);
                 true
             }
             Item::Fact(DeliveredFact::UiaFocusReadsEnded, _) => {
                 tracing::debug!("the listener's reads ended; no marker is waited on");
                 self.waiting.retain(|waiting| waiting.marker.is_none());
-                self.marker_news.record(DropEvidence::Focus, observed_at_ms);
+                self.marker_news.record(DropEvidence::Focus, observed_at_us);
                 true
             }
             _ => false,
@@ -654,7 +655,7 @@ impl State {
         Entry {
             item: Item::Wake,
             trace: TraceId::mint(),
-            observed_at_ms: super::now_ms(),
+            observed_at_us: crate::protocol::now_us(),
             timing: crate::protocol::EventTiming::default(),
         }
     }
@@ -1793,7 +1794,7 @@ mod tests {
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
-                observed_at_ms: u64::try_from(child).unwrap_or(0),
+                observed_at_us: u64::try_from(child).unwrap_or(0),
                 timing: crate::protocol::EventTiming::default(),
             },
         }
@@ -1804,7 +1805,7 @@ mod tests {
         msaa_from(kind, hwnd, child, u32::try_from(hwnd).unwrap_or(0))
     }
 
-    fn fact(fact: DeliveredFact, observed_at_ms: u64) -> Waiting {
+    fn fact(fact: DeliveredFact, observed_at_us: u64) -> Waiting {
         let item = Item::Fact(fact, None);
         let (key, category, hwnd) = classify(&item);
         Waiting {
@@ -1817,21 +1818,21 @@ mod tests {
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
-                observed_at_ms,
+                observed_at_us,
                 timing: crate::protocol::EventTiming::default(),
             },
         }
     }
 
     /// An MSAA focus on child `child` of window 9.
-    fn msaa_focus(child: i32, observed_at_ms: u64) -> Waiting {
+    fn msaa_focus(child: i32, observed_at_us: u64) -> Waiting {
         fact(
             DeliveredFact::MsaaFocus {
                 hwnd: 9,
                 id_object: -4,
                 id_child: child,
             },
-            observed_at_ms,
+            observed_at_us,
         )
     }
 
@@ -1881,7 +1882,7 @@ mod tests {
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
-                observed_at_ms: 0,
+                observed_at_us: 0,
                 timing: crate::protocol::EventTiming::default(),
             },
         }
@@ -1894,7 +1895,7 @@ mod tests {
                 planned
                     .entries()
                     .into_iter()
-                    .map(|entry| entry.observed_at_ms)
+                    .map(|entry| entry.observed_at_us)
                     .collect::<Vec<_>>()
             })
             .collect()
@@ -1906,7 +1907,7 @@ mod tests {
             .iter()
             .filter_map(|planned| match planned {
                 Planned::Focus(entries) => {
-                    Some(entries.iter().map(|entry| entry.observed_at_ms).collect())
+                    Some(entries.iter().map(|entry| entry.observed_at_us).collect())
                 }
                 _ => None,
             })
@@ -2021,7 +2022,7 @@ mod tests {
         ];
         let kept: Vec<u64> = admit(waiting, None, never_hung)
             .iter()
-            .map(|item| item.entry.observed_at_ms)
+            .map(|item| item.entry.observed_at_us)
             .collect();
         // Four newer focus events fill the focus limit; the foreground
         // change is kept as one of its thread's other events, and the
@@ -2072,7 +2073,7 @@ mod tests {
         let mut order = Vec::new();
         for _ in 0..2 {
             if let Some((Planned::Run(entry), _)) = intake.next() {
-                order.push(entry.observed_at_ms);
+                order.push(entry.observed_at_us);
             }
         }
         assert_eq!(order, vec![20, 30]);
@@ -2135,8 +2136,8 @@ mod tests {
     fn every_uia_focus_of_a_batch_is_handled_oldest_first() {
         // Control+Tab in Windows Terminal: the tab the focus leaves, the tab
         // it moves to, and that tab's terminal, in one batch.
-        let uia = |runtime_id: i32, observed_at_ms: u64| {
-            fact(uia_focus(0, 3, vec![42, runtime_id]), observed_at_ms)
+        let uia = |runtime_id: i32, observed_at_us: u64| {
+            fact(uia_focus(0, 3, vec![42, runtime_id]), observed_at_us)
         };
         let planned = plan(vec![uia(1, 1), uia(2, 2), uia(3, 3)], None, never_hung);
         assert_eq!(observed(&planned), vec![1, 2, 3]);
@@ -2181,8 +2182,8 @@ mod tests {
         for planned in planned {
             planned
                 .handle(|entry, _| {
-                    order.push(entry.observed_at_ms);
-                    Ok::<bool, ()>(reported.contains(&entry.observed_at_ms))
+                    order.push(entry.observed_at_us);
+                    Ok::<bool, ()>(reported.contains(&entry.observed_at_us))
                 })
                 .expect("never stopped");
         }
@@ -2327,7 +2328,7 @@ mod tests {
                 id_object: OBJID_CLIENT,
                 id_child: 0,
             };
-            for (fact, time, arrival, observed_at_ms) in [
+            for (fact, time, arrival, observed_at_us) in [
                 (client_focus, 200, Arrival::Hook, 1),
                 (DeliveredFact::Foreground { hwnd: 9 }, time, arrival, 2),
             ] {
@@ -2335,7 +2336,7 @@ mod tests {
                     Entry {
                         item: Item::Fact(fact, stamp(time)),
                         trace: TraceId::mint(),
-                        observed_at_ms,
+                        observed_at_us,
                         timing: crate::protocol::EventTiming::default(),
                     },
                     arrival,
@@ -2430,7 +2431,7 @@ mod tests {
             entry: Entry {
                 item: held,
                 trace: TraceId::mint(),
-                observed_at_ms: 2,
+                observed_at_us: 2,
                 timing: crate::protocol::EventTiming::default(),
             },
         };
@@ -2541,11 +2542,11 @@ mod tests {
         // Arriving while a batch is in progress, after that batch's events
         // that have not started.
         let intake = Intake::default();
-        let push = |item: Item, observed_at_ms: u64| {
+        let push = |item: Item, observed_at_us: u64| {
             intake.push(Entry {
                 item,
                 trace: TraceId::mint(),
-                observed_at_ms,
+                observed_at_us,
                 timing: crate::protocol::EventTiming::default(),
             });
         };
@@ -2561,7 +2562,7 @@ mod tests {
         push(name_change(3), 3);
         let mut order = Vec::new();
         let (first, _) = intake.next().expect("an entry");
-        order.extend(first.entries().iter().map(|entry| entry.observed_at_ms));
+        order.extend(first.entries().iter().map(|entry| entry.observed_at_us));
         push(
             Item::Fact(
                 DeliveredFact::MsaaFocus {
@@ -2575,7 +2576,7 @@ mod tests {
         );
         while intake.busy() {
             let (planned, _) = intake.next().expect("an entry");
-            order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
+            order.extend(planned.entries().iter().map(|entry| entry.observed_at_us));
         }
         assert_eq!(order, vec![1, 2, 3, 4]);
     }
@@ -2583,7 +2584,7 @@ mod tests {
     #[test]
     fn a_newer_event_for_the_same_object_replaces_the_waiting_one() {
         let intake = Intake::default();
-        let push = |child: i32, observed_at_ms: u64| {
+        let push = |child: i32, observed_at_us: u64| {
             intake.push(Entry {
                 item: Item::Msaa {
                     kind: WinEventKind::ValueChange,
@@ -2593,7 +2594,7 @@ mod tests {
                     thread: 0,
                 },
                 trace: TraceId::mint(),
-                observed_at_ms,
+                observed_at_us,
                 timing: crate::protocol::EventTiming::default(),
             });
         };
@@ -2603,7 +2604,7 @@ mod tests {
         let mut order = Vec::new();
         for _ in 0..2 {
             if let Some((Planned::Run(entry), _)) = intake.next() {
-                order.push(entry.observed_at_ms);
+                order.push(entry.observed_at_us);
             }
         }
         assert_eq!(order, vec![20, 30]);
@@ -2615,7 +2616,7 @@ mod tests {
     #[test]
     fn an_msaa_event_replaces_only_the_one_waiting_from_its_own_thread() {
         let intake = Intake::default();
-        let push = |thread: u32, observed_at_ms: u64| {
+        let push = |thread: u32, observed_at_us: u64| {
             intake.push(Entry {
                 item: Item::Msaa {
                     kind: WinEventKind::ValueChange,
@@ -2625,7 +2626,7 @@ mod tests {
                     thread,
                 },
                 trace: TraceId::mint(),
-                observed_at_ms,
+                observed_at_us,
                 timing: crate::protocol::EventTiming::default(),
             });
         };
@@ -2643,7 +2644,7 @@ mod tests {
     #[test]
     fn an_msaa_focus_replaces_only_the_one_waiting_from_its_own_thread() {
         let intake = Intake::default();
-        let push = |thread: u32, observed_at_ms: u64| {
+        let push = |thread: u32, observed_at_us: u64| {
             intake.push(Entry {
                 item: Item::Fact(
                     DeliveredFact::MsaaFocus {
@@ -2653,11 +2654,11 @@ mod tests {
                     },
                     Some(WinEventStamp {
                         thread,
-                        time: u32::try_from(observed_at_ms).unwrap_or(0),
+                        time: u32::try_from(observed_at_us).unwrap_or(0),
                     }),
                 ),
                 trace: TraceId::mint(),
-                observed_at_ms,
+                observed_at_us,
                 timing: crate::protocol::EventTiming::default(),
             });
         };
@@ -2677,7 +2678,7 @@ mod tests {
                     acknowledged,
                 },
                 trace: TraceId::mint(),
-                observed_at_ms: 0,
+                observed_at_us: 0,
                 timing: crate::protocol::EventTiming::default(),
             });
         }
@@ -2699,7 +2700,7 @@ mod tests {
         intake.push(Entry {
             item: Item::Fact(fact, None),
             trace: TraceId::mint(),
-            observed_at_ms: 0,
+            observed_at_us: 0,
             timing: crate::protocol::EventTiming::default(),
         });
     }
@@ -2736,18 +2737,18 @@ mod tests {
                 query: Query::DumpTree { locations: false },
             },
             trace: TraceId::mint(),
-            observed_at_ms: 0,
+            observed_at_us: 0,
             timing: crate::protocol::EventTiming::default(),
         });
         assert!(intake.cancel(5));
         assert!(!intake.cancel(5), "already withdrawn");
     }
 
-    fn push_item(intake: &Intake, item: Item, observed_at_ms: u64) {
+    fn push_item(intake: &Intake, item: Item, observed_at_us: u64) {
         intake.push(Entry {
             item,
             trace: TraceId::mint(),
-            observed_at_ms,
+            observed_at_us,
             timing: crate::protocol::EventTiming::default(),
         });
     }
@@ -2772,7 +2773,7 @@ mod tests {
         planned
             .entries()
             .iter()
-            .map(|entry| entry.observed_at_ms)
+            .map(|entry| entry.observed_at_us)
             .collect()
     }
 
@@ -2782,7 +2783,7 @@ mod tests {
         let mut order = Vec::new();
         while intake.ready_now() {
             let (planned, _) = intake.next().expect("an entry");
-            order.extend(planned.entries().iter().map(|entry| entry.observed_at_ms));
+            order.extend(planned.entries().iter().map(|entry| entry.observed_at_us));
         }
         order
     }
@@ -2829,8 +2830,8 @@ mod tests {
         assert_eq!(
             news,
             MarkerNews {
-                answered_at_ms: None,
-                no_window_at_ms: Some(40),
+                answered_at_us: None,
+                no_window_at_us: Some(40),
             }
         );
         assert_eq!(
@@ -2846,8 +2847,8 @@ mod tests {
         assert_eq!(
             focus.lock().marker_news,
             MarkerNews {
-                answered_at_ms: Some(40),
-                no_window_at_ms: None,
+                answered_at_us: Some(40),
+                no_window_at_us: None,
             }
         );
         let selection = Intake::default();
@@ -2917,8 +2918,8 @@ mod tests {
         assert_eq!(
             news,
             MarkerNews {
-                answered_at_ms: Some(40),
-                no_window_at_ms: None,
+                answered_at_us: Some(40),
+                no_window_at_us: None,
             }
         );
         assert_eq!(gap.marker_news(news).map(|open| open.hwnd), Some(7));
@@ -2948,8 +2949,8 @@ mod tests {
         assert_eq!(
             news,
             MarkerNews {
-                answered_at_ms: Some(40),
-                no_window_at_ms: None,
+                answered_at_us: Some(40),
+                no_window_at_us: None,
             }
         );
         gap.marker_news(news);
@@ -2978,8 +2979,8 @@ mod tests {
         assert_eq!(
             news,
             MarkerNews {
-                answered_at_ms: Some(40),
-                no_window_at_ms: None,
+                answered_at_us: Some(40),
+                no_window_at_us: None,
             }
         );
         assert_eq!(intake.lock().marker_news, MarkerNews::default());
@@ -3138,8 +3139,8 @@ mod tests {
         assert_eq!(handed_out(&intake), [4, 3]);
     }
 
-    /// A console update of window `hwnd`, observed at `observed_at_ms`.
-    fn push_console_update(intake: &Intake, hwnd: isize, observed_at_ms: u64) {
+    /// A console update of window `hwnd`, observed at `observed_at_us`.
+    fn push_console_update(intake: &Intake, hwnd: isize, observed_at_us: u64) {
         push_item(
             intake,
             Item::Msaa {
@@ -3149,7 +3150,7 @@ mod tests {
                 id_child: 65,
                 thread: 80,
             },
-            observed_at_ms,
+            observed_at_us,
         );
     }
 

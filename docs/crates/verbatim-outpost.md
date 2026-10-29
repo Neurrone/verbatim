@@ -170,7 +170,9 @@ without a read (`MarkerNews`) under the lock `Intake::next_with_gap` takes,
 and gives `Item::Wake` at `UIA_FOCUS_BOUND`, a second after the copy. Due,
 or at once on a `NoWindow` drop, the worker reads the focus with the
 focus-now read (`read::focused_control_in`) and reports it as a UIA focus,
-logged at info; that read makes no call into a gone, ghosted, or hung
+logged at info and stamped with the copy's observation, never the time of
+its read, so Core's stale rule drops it when a later focus elsewhere was
+applied first; that read makes no call into a gone, ghosted, or hung
 window (`window::event_window_unreadable`). The idle barrier's answer waits
 while a gap is open, at most about 12.2 seconds for one focus marker on an
 application that answers (the bound, the read deadline, the relay, and the
@@ -268,8 +270,9 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
 - `SupervisorToOutpost`: `SetBackendOverride` (one backend for every
   window, or normal arbitration); `DeliverFact` (a routed fact: a UIA
   focus's marker, read, or drop, an MSAA focus or menu-popup address, a
-  foreground window, with the listener's trace id, observation time,
-  `EventTiming`, and for a `WinEvent` its `WinEventStamp`); `HookInstalled`
+  foreground window, with the listener's trace id, its `EventTiming`, whose
+  `observed_at_us` is the observation the fact is ordered by, and for a
+  `WinEvent` its `WinEventStamp`); `HookInstalled`
   and `HookRemoved` (to the listener) and `ForwardingEnded` (to an
   outpost); `CoreFocus`; `Query`; `Cancel` (withdraws a query not
   started); `Ping`; `IdleQuery`; `Shutdown`; `Assign`; `NodesHeld`; and
@@ -280,13 +283,13 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
   (the trace judged), `focus` (a `verbatim_core::focus_rules::HeldFocus`:
   trace, focus and ancestors, top-level window, alive; to the listener
   without ancestors, to an outpost only when the focus is its own, with its
-  own node ids, `HeldFocus::for_outpost`), and `observed`.
+  own node ids, `HeldFocus::for_outpost`), and `observed_at_us`.
 - `Query` is a request id and a `Query`: `FocusNow`, `Navigate` (a model
   `QueryKind`), `Activate`, `Ancestors`, `DumpTree`, `Text` (a node and a
   model `TextOp`), `ShellItems`, or `ShellItemPosition`.
 - `OutpostToSupervisor`: `Ready`; `SpareReady`; `Event` (trace id,
-  observation time in milliseconds and, for a focus, microseconds from one
-  clock read, backend, `WindowFacts`, normalized event); `Reply` (exactly
+  observation time in microseconds from one clock read, for every event
+  kind, backend, `WindowFacts`, normalized event); `Reply` (exactly
   one per accepted query, with its `EventTiming` and a `QueryOutcome`:
   `Done` with a `QueryResult`, `Gone`, `Failed`, `NotStarted`, or
   `Abandoned`, after which side effects may have happened); `Pong` (the
@@ -301,8 +304,8 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
 - A `ListenerFact` strips to a pid-less `DeliveredFact` once routed. Node
   ids from Core carry the outpost's stamp, cleared for lookup
   (`NodeId::unstamped`); `OutpostToSupervisor::assign_outpost` applies it.
-  `observed_no_earlier` orders two observations as Core orders focuses, to
-  the microsecond when both have it. `WALK_DEADLINE` (5 seconds) is public
+  `observed_no_earlier` orders two observations, in microseconds, as Core
+  orders focuses. `WALK_DEADLINE` (5 seconds) is public
   so Core's deadline for a shell walk can outlast it.
 
 Timing (`docs/design/communication.md`, section 10.1). `EventTiming`
@@ -1004,9 +1007,9 @@ scripts wait for, without waiting:
   arrives (compared only when that report was not already compared, by its
   number). A caret event alone is evidence only when nothing knew the caret.
 - The baseline is the newest caret the outpost reported from a read that
-  finished before the key's `pressed_at_ms` (the keyboard hook's stamp on
-  the clock of `observed_at_ms`), else Core's; never a read at or after the
-  key, which may already show its effect. The last eight reports per node
+  finished before the key's `pressed_at_ms` (the keyboard hook's stamp, in
+  milliseconds on the clock of `observed_at_us`), else Core's; never a
+  read at or after the key, which may already show its effect. The last eight reports per node
   are remembered, forgotten when the outpost moves the caret itself.
 - Before answering, the caret is read again (`CaretRequest::recheck`;
   `CaretRead::moved_while_read` at the end of the same program), and a
@@ -1287,8 +1290,9 @@ provider gives no handle for the window, which the classic walk finds.
   text changes, and its `EVENT_CONSOLE_CARET` reads the terminal too;
   Windows Terminal's UIA text changes and caret events read it. A change
   observed before the last read began is covered (`Terminal::covers`, in
-  microseconds when known). Reads on Windows Terminal's events never wait
-  for a frame; the before read of a held key, prompted by no event, can
+  microseconds; `ReadAnswer::started_us` is the read's start, which the
+  snapshot's event is stamped with). Reads on Windows Terminal's events
+  never wait for a frame; the before read of a held key, prompted by no event, can
   cost that key one software-rendered frame. Windows Terminal raises no change for writes of
   blank lines only, so such a scroll is read at the next event.
 - When a terminal's focus is reported, the subscription moves to it and the

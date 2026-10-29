@@ -1210,8 +1210,8 @@ impl ReducerThread<'_> {
                     self.want_focus_now(pid);
                 }
             }
-            OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => {
-                self.apply(Input::MenuOrSwitchEnded { ended_at_ms });
+            OutpostMessage::MenuOrSwitchEnded { ended_at_us } => {
+                self.apply(Input::MenuOrSwitchEnded { ended_at_us });
             }
             OutpostMessage::ForegroundWindow(report) => {
                 self.apply(Input::ForegroundWindow(ForegroundWindow {
@@ -1364,7 +1364,6 @@ impl ReducerThread<'_> {
         match message {
             OutpostToSupervisor::Event {
                 trace_id,
-                observed_at_ms,
                 observed_at_us,
                 backend,
                 window,
@@ -1373,7 +1372,7 @@ impl ReducerThread<'_> {
                 event,
             } => {
                 // The latency timeline starts when the event was first
-                // observed. That is `observed_at_ms` except for a foreground
+                // observed. That is `observed_at_us` except for a foreground
                 // change, which is ordered by when its window became the
                 // foreground, later than Windows raised it.
                 // An event read is the outpost's application answering.
@@ -1396,13 +1395,13 @@ impl ReducerThread<'_> {
                     self.tell_core_focus(Some((trace_id, outpost)), queued, owner);
                     return;
                 }
-                let first_observed_ms = match timing.observed_at_us {
-                    0 => observed_at_ms,
-                    us => us / 1000,
+                let first_observed_us = match timing.observed_at_us {
+                    0 => observed_at_us,
+                    us => us,
                 };
                 self.context
                     .ledger
-                    .event_observed(trace_id, first_observed_ms);
+                    .event_observed(trace_id, first_observed_us);
                 self.context.ledger.event_received(trace_id, timing);
                 // The event is copied for the control plane only when some
                 // connection is subscribed to events.
@@ -1419,7 +1418,6 @@ impl ReducerThread<'_> {
                 }
                 self.apply(Input::Event {
                     trace_id,
-                    observed_at_ms,
                     observed_at_us,
                     source,
                     backend,

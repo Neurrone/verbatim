@@ -331,9 +331,9 @@ struct AnsweredFocus {
     ancestors: Option<Vec<NodeSnapshot>>,
     /// What its caret read found ([`Worker::read_focus_text`]).
     text: Option<FocusText>,
-    /// When the answer began to be read, in milliseconds and microseconds
-    /// on the run's shared clock.
-    observed: (u64, u64),
+    /// When the answer began to be read, in microseconds on the run's
+    /// shared clock.
+    observed_at_us: u64,
     /// The window whose focused element the answer read.
     window: Option<isize>,
 }
@@ -699,7 +699,7 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         if let Some(closed) = gap.marker_news(news) {
             tracing::debug!(
                 hwnd = closed.hwnd,
-                observed_at_ms = closed.observed_at_ms,
+                observed_at_us = closed.observed_at_us,
                 "the wait for a UIA focus is closed by the listener's news: a drop that ends it, or the end of its reads"
             );
         }
@@ -1088,7 +1088,7 @@ impl Worker<'_> {
         let Entry {
             item,
             trace,
-            observed_at_ms,
+            observed_at_us,
             ..
         } = entry;
         match item {
@@ -1098,16 +1098,16 @@ impl Worker<'_> {
                 id_object,
                 id_child,
                 ..
-            } => self.msaa_event(kind, hwnd, id_object, id_child, trace, observed_at_ms),
-            Item::Uia(event) => self.uia_event(event, trace, observed_at_ms),
-            Item::Fact(fact, _) => self.fact(fact, trace, observed_at_ms),
+            } => self.msaa_event(kind, hwnd, id_object, id_child, trace, observed_at_us),
+            Item::Uia(event) => self.uia_event(event, trace, observed_at_us),
+            Item::Fact(fact, _) => self.fact(fact, trace, observed_at_us),
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             Item::NodesHeld {
                 nodes,
                 acknowledged,
             } => self.release(&nodes, acknowledged),
             // Read now that nothing else waits, unless a read since saw it.
-            Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_ms),
+            Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
             Item::Settle(done) => {
                 // A gap due is work still to do: its read comes first.
                 self.gap_wake();
@@ -1395,7 +1395,10 @@ impl Worker<'_> {
     /// listener UIA focus had reached the outpost before the copy was
     /// observed, to the millisecond (`uia_focus_before`), and whether the
     /// copy's window was gone as the read began (`sender_gone`), which
-    /// together tell late delivery from a burst of gone senders.
+    /// together tell late delivery from a burst of gone senders. The focus
+    /// is stamped with the copy's observation, not the time of the read,
+    /// so Core's stale rule drops it when a focus observed after the copy,
+    /// in a window the user has gone to, was applied first.
     fn read_focus_after_gap(&mut self, open: gap::Open, unreadable: bool) {
         let context = self.context;
         let waited_ms = self
@@ -1403,10 +1406,8 @@ impl Worker<'_> {
             .saturating_duration_since(open.opened)
             .as_millis();
         let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
-        let uia_focus_before =
-            first_uia_focus_us != 0 && first_uia_focus_us / 1_000 < open.observed_at_ms;
+        let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < open.observed_at_us;
         let sender_gone = !window_exists(open.hwnd);
-        let observed_at_us = now_us();
         let Some((hwnd, control)) = read::focused_control_in(context, self.client) else {
             tracing::info!(
                 hwnd = open.hwnd,
@@ -1438,7 +1439,7 @@ impl Worker<'_> {
         let (node_id, role, backend) = (node.id, node.role, node.backend);
         self.emit_focus(
             TraceId::mint(),
-            (observed_at_us / 1_000, observed_at_us),
+            open.observed_at_us,
             backend,
             Some(hwnd),
             node,
@@ -1458,7 +1459,7 @@ impl Worker<'_> {
             context.intake.push(Entry {
                 item: Item::Settle(done),
                 trace,
-                observed_at_ms: now_ms(),
+                observed_at_us: now_us(),
                 timing: EventTiming::default(),
             });
             return;
@@ -1470,7 +1471,7 @@ impl Worker<'_> {
             context.intake.push(Entry {
                 item: Item::Settle(done),
                 trace,
-                observed_at_ms: now_ms(),
+                observed_at_us: now_us(),
                 timing: EventTiming::default(),
             });
             return;
@@ -1499,7 +1500,7 @@ impl Worker<'_> {
                     behind_noted: true,
                 },
                 trace,
-                observed_at_ms: now_ms(),
+                observed_at_us: now_us(),
                 timing: EventTiming::default(),
             };
             context.intake.push_ahead([noted, query]);
@@ -1525,7 +1526,7 @@ impl Worker<'_> {
     /// asked: a caret key's answer, read after the event, already told Core.
     /// A focus's own caret comes with the focus
     /// ([`read_focus_text`](Self::read_focus_text)).
-    fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+    fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         if !self.is_focus(node_id)
             || self
                 .context
@@ -1572,7 +1573,7 @@ impl Worker<'_> {
             Backend::Msaa
         };
         let window = self.context.tracking().window;
-        self.emit(trace, observed_at_ms, backend, window, event);
+        self.emit(trace, observed_at_us, backend, window, event);
     }
 
     /// Whether `node_id` is the focused terminal and its reading is held
@@ -1612,12 +1613,12 @@ impl Worker<'_> {
     /// asks for reads the caret with the text, and covers it if it comes
     /// first. NVDA's console handler likewise queues a caret event only
     /// when one is not already pending (`winConsoleHandler.py`, 169).
-    fn note_caret(&self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+    fn note_caret(&self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         tracing::debug!(%trace, "a held terminal's caret event is noted");
         self.context.intake.when_idle(Entry {
             item: Item::NotedCaret { node_id },
             trace,
-            observed_at_ms,
+            observed_at_us,
             timing: self.timing,
         });
     }
@@ -1634,19 +1635,19 @@ impl Worker<'_> {
     /// Terminal sometimes moves its caret with no text change, and the
     /// console host's caret event is its cursor's move
     /// (`docs/design/terminal-model.md`, "Where it runs": one caret).
-    fn caret_event(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
+    fn caret_event(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         if self.check_open_watch(node_id, true) {
             if self.focused_terminal(node_id) {
-                self.terminal_output(node_id, trace, observed_at_ms);
+                self.terminal_output(node_id, trace, observed_at_us);
             }
             return;
         }
         if self.held_with_changes(node_id) {
-            self.note_caret(node_id, trace, observed_at_ms);
+            self.note_caret(node_id, trace, observed_at_us);
         } else if self.focused_terminal(node_id) {
-            self.terminal_output(node_id, trace, observed_at_ms);
+            self.terminal_output(node_id, trace, observed_at_us);
         } else {
-            self.caret_of(node_id, trace, observed_at_ms);
+            self.caret_of(node_id, trace, observed_at_us);
         }
     }
 
@@ -1783,7 +1784,7 @@ impl Worker<'_> {
             self.sent_caret(node_id, &caret.report);
             snapshot.caret = Some(caret.report);
         }
-        let read_at_ms = snapshot.started_ms;
+        let read_at_us = answer.started_us;
         if let Some(request) = owed {
             if let Some(terminal) = self.context.terminals().get_mut(&node_id.number()) {
                 terminal.answered(&snapshot);
@@ -1806,7 +1807,7 @@ impl Worker<'_> {
         // after a key may show what the key did.
         self.emit(
             trace,
-            read_at_ms,
+            read_at_us,
             Backend::Uia,
             window,
             NormalizedEvent::TerminalSnapshot {
@@ -1849,22 +1850,19 @@ impl Worker<'_> {
     /// read at once or noted, as its on-demand reading stands. A change
     /// observed before the last read began is covered by that read and
     /// changes nothing (a console terminal's text change comes by UIA and
-    /// as a console update both). The entry's observation is compared in
-    /// microseconds when its timing holds them, so a change observed in the
-    /// read's own millisecond but before it began is covered too; an
-    /// `observed_at_ms` of 0 is covered by nothing.
-    fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
-        let observed = self.entry_stamp(observed_at_ms);
-        let covered = observed_at_ms != 0
+    /// as a console update both). An `observed_at_us` of 0 is covered by
+    /// nothing.
+    fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
+        let covered = observed_at_us != 0
             && self
                 .context
                 .terminals()
                 .get(&node_id.number())
-                .is_some_and(|terminal| terminal.covers(observed));
+                .is_some_and(|terminal| terminal.covers(observed_at_us));
         if covered {
             return;
         }
-        self.terminal_event(node_id, Event::TextChanged, None, (trace, observed_at_ms));
+        self.terminal_event(node_id, Event::TextChanged, None, (trace, observed_at_us));
     }
 
     /// What the caret read of a focus about to be reported finds, for a
@@ -1938,7 +1936,7 @@ impl Worker<'_> {
         &mut self,
         (node_id, role): (NodeId, Role),
         text: Option<&FocusText>,
-        (trace, observed_at_ms): (TraceId, u64),
+        (trace, observed_at_us): (TraceId, u64),
     ) {
         self.follow_focus((node_id, role));
         if let Some(FocusText::Caret { caret, .. }) = text
@@ -1948,7 +1946,7 @@ impl Worker<'_> {
                 subscription.settle();
             }
             self.sent_caret(node_id, caret);
-            self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
+            self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_us));
         }
     }
 
@@ -2063,23 +2061,12 @@ impl Worker<'_> {
         drop(objects);
     }
 
+    /// Emits `event` stamped `observed_at_us`, in microseconds on the run's
+    /// shared clock (0 when not known).
     fn emit(
         &self,
         trace: TraceId,
-        observed_at_ms: u64,
-        backend: Backend,
-        window: Option<isize>,
-        event: NormalizedEvent,
-    ) -> bool {
-        self.emit_stamped(trace, (observed_at_ms, 0), backend, window, event)
-    }
-
-    /// Emits `event` stamped in milliseconds and, for a focus, in
-    /// microseconds from the same clock read (0 when not known).
-    fn emit_stamped(
-        &self,
-        trace: TraceId,
-        stamp: (u64, u64),
+        observed_at_us: u64,
         backend: Backend,
         window: Option<isize>,
         event: NormalizedEvent,
@@ -2087,16 +2074,8 @@ impl Worker<'_> {
         publish(
             self.context,
             self.generation,
-            self.event_message(trace, stamp, backend, window, event),
+            self.event_message(trace, observed_at_us, backend, window, event),
         )
-    }
-
-    /// The stamp of the entry being handled, observed at `observed_at_ms`,
-    /// with its microseconds when its timing holds the same observation:
-    /// every entry the outpost or the listener stamps at observation takes
-    /// both from one clock read.
-    fn entry_stamp(&self, observed_at_ms: u64) -> (u64, u64) {
-        stamp_with_micros(observed_at_ms, self.timing.observed_at_us)
     }
 
     /// `event` as the message that reports it, published now with the
@@ -2104,7 +2083,7 @@ impl Worker<'_> {
     fn event_message(
         &self,
         trace: TraceId,
-        stamp: (u64, u64),
+        observed_at_us: u64,
         backend: Backend,
         window: Option<isize>,
         event: NormalizedEvent,
@@ -2117,8 +2096,7 @@ impl Worker<'_> {
         };
         OutpostToSupervisor::Event {
             trace_id: trace,
-            observed_at_ms: stamp.0,
-            observed_at_us: stamp.1,
+            observed_at_us,
             backend,
             window: window
                 .map(|hwnd| event_window_facts(window_facts(hwnd), &event, name, alt_is_held)),
@@ -2141,7 +2119,7 @@ impl Worker<'_> {
     fn emit_focus(
         &mut self,
         trace: TraceId,
-        stamp: (u64, u64),
+        observed_at_us: u64,
         backend: Backend,
         window: Option<isize>,
         node: NodeSnapshot,
@@ -2203,8 +2181,7 @@ impl Worker<'_> {
             selected_child,
             text: text.clone().map(Box::new),
         };
-        let observed_at_ms = stamp.0;
-        if self.emit_stamped(trace, stamp, backend, window, event) {
+        if self.emit(trace, observed_at_us, backend, window, event) {
             if foreground {
                 self.end_watch_elsewhere(node_id);
                 self.context.tracking().role = Some(role);
@@ -2212,7 +2189,7 @@ impl Worker<'_> {
                 // A focus observed after a `WinEvent` focus no UIA focus
                 // has answered yet answers it; a foreground change says
                 // nothing of the focus inside its window, and does not.
-                self.gap.focus_after(observed_at_ms);
+                self.gap.focus_after(observed_at_us);
                 self.adopt_focus((node_id, role), object, window, chain);
             }
             let mut tracking = self.context.tracking();
@@ -2223,7 +2200,7 @@ impl Worker<'_> {
             // without waiting. A foreground report is a window, not the
             // control focus is in.
             if let Some(node) = text_node {
-                self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
+                self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_us));
             }
         }
     }
@@ -2409,7 +2386,7 @@ impl Worker<'_> {
         id_object: i32,
         id_child: i32,
         trace: TraceId,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) {
         if kind == WinEventKind::ConsoleUpdate {
             // The console host's text changed: its updates are the focused
@@ -2421,7 +2398,7 @@ impl Worker<'_> {
                 // checked before the read, which reads the caret too and
                 // would leave the change nothing new to show.
                 self.check_open_watch(node_id, false);
-                self.terminal_output(node_id, trace, observed_at_ms);
+                self.terminal_output(node_id, trace, observed_at_us);
                 self.absorb_while_held(node_id, hwnd);
             }
             return;
@@ -2434,7 +2411,7 @@ impl Worker<'_> {
                 // A watch's poll goes on unless the event's check answers
                 // the key: a blink tick left over from an earlier cursor
                 // set can come before the key's move.
-                self.caret_event(node_id, trace, observed_at_ms);
+                self.caret_event(node_id, trace, observed_at_us);
             }
             return;
         }
@@ -2469,14 +2446,14 @@ impl Worker<'_> {
             if let Some(node_id) = self.watched_edit(hwnd) {
                 self.check_open_watch(node_id, true);
             } else {
-                self.system_caret_of_uia_focus(&runtime_id, trace, observed_at_ms);
+                self.system_caret_of_uia_focus(&runtime_id, trace, observed_at_us);
             }
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {
             return; // UIA owns this window.
         }
-        if self.edit_event(kind, (hwnd, id_object, id_child), trace, observed_at_ms) {
+        if self.edit_event(kind, (hwnd, id_object, id_child), trace, observed_at_us) {
             return;
         }
         let Some(object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child) else {
@@ -2484,12 +2461,12 @@ impl Worker<'_> {
         };
         let registry = &self.context.msaa_registry;
         if kind == WinEventKind::Selection {
-            self.msaa_selection(object, hwnd, (trace, observed_at_ms));
+            self.msaa_selection(object, hwnd, (trace, observed_at_us));
             return;
         }
         let spoken = self.spoken_node(kind, &object);
         if kind == WinEventKind::ValueChange {
-            self.value_change(object, spoken, (hwnd, trace, observed_at_ms));
+            self.value_change(object, spoken, (hwnd, trace, observed_at_us));
             return;
         }
         let Some((node_id, role)) = spoken else {
@@ -2519,7 +2496,7 @@ impl Worker<'_> {
             }
             _ => return,
         };
-        self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+        self.emit(trace, observed_at_us, Backend::Msaa, Some(hwnd), event);
     }
 
     /// The system caret's location change or show, accepted from any
@@ -2548,13 +2525,13 @@ impl Worker<'_> {
         &mut self,
         runtime_id: &[i32],
         trace: TraceId,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) {
         if self.context.intake.system_caret_unused() {
             return;
         }
         if let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) {
-            self.caret_event(node_id, trace, observed_at_ms);
+            self.caret_event(node_id, trace, observed_at_us);
         }
     }
 
@@ -2572,7 +2549,7 @@ impl Worker<'_> {
         &mut self,
         object: verbatim_ia2::acquire::EventObject,
         hwnd: isize,
-        (trace, observed_at_ms): (TraceId, u64),
+        (trace, observed_at_us): (TraceId, u64),
     ) {
         let registry = &self.context.msaa_registry;
         // A tree view item selected on its way to the focus, from one of
@@ -2617,7 +2594,7 @@ impl Worker<'_> {
             );
             return;
         };
-        self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+        self.emit(trace, observed_at_us, Backend::Msaa, Some(hwnd), event);
     }
 
     /// The caret, a text selection, or the text of the focus, when it is an
@@ -2629,7 +2606,7 @@ impl Worker<'_> {
         kind: WinEventKind,
         (hwnd, id_object, id_child): (isize, i32, i32),
         trace: TraceId,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) -> bool {
         let client = Object::Msaa(hwnd, OBJID_CLIENT.0, CHILDID_SELF);
         let of_focus = self.context.intake.focused() == Some(client);
@@ -2641,7 +2618,7 @@ impl Worker<'_> {
                             .msaa_registry
                             .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
                     if !self.check_open_watch(node_id, true) {
-                        self.caret_of(node_id, trace, observed_at_ms);
+                        self.caret_of(node_id, trace, observed_at_us);
                     }
                 } else if let Some(node_id) = self.watched_edit(hwnd) {
                     // A caret key's watch on an edit control Core took as
@@ -2667,7 +2644,7 @@ impl Worker<'_> {
                 self.check_open_watch(node_id, false);
                 self.emit(
                     trace,
-                    observed_at_ms,
+                    observed_at_us,
                     Backend::Msaa,
                     Some(hwnd),
                     NormalizedEvent::TextChanged { node_id },
@@ -2708,7 +2685,7 @@ impl Worker<'_> {
         &mut self,
         mut object: verbatim_ia2::acquire::EventObject,
         focus: Option<(NodeId, Role)>,
-        (hwnd, trace, observed_at_ms): (isize, TraceId, u64),
+        (hwnd, trace, observed_at_us): (isize, TraceId, u64),
     ) {
         let registry = &self.context.msaa_registry;
         let progress_bar = match focus {
@@ -2726,7 +2703,7 @@ impl Worker<'_> {
             },
             (None, None) => return,
         };
-        self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
+        self.emit(trace, observed_at_us, Backend::Msaa, Some(hwnd), event);
     }
 
     /// The role a node of a focus's chain was last read with: one of the
@@ -2871,7 +2848,7 @@ impl Worker<'_> {
     /// the window's UIA test for the focus's own events too, where NVDA
     /// skips it; the focus's window passed it when the focus was taken, so
     /// the outcome is the same.
-    fn uia_event(&mut self, event: UiaEvent, trace: TraceId, observed_at_ms: u64) {
+    fn uia_event(&mut self, event: UiaEvent, trace: TraceId, observed_at_us: u64) {
         let element = event
             .element
             .as_ref()
@@ -2918,13 +2895,13 @@ impl Worker<'_> {
         if matches!(event.kind, UiaKind::Selection)
             && let Some(selection) = self.controlled_selection(&event.parts.runtime_id)
         {
-            self.emit(trace, observed_at_ms, Backend::Uia, hwnd, selection);
+            self.emit(trace, observed_at_us, Backend::Uia, hwnd, selection);
             return;
         }
         if matches!(event.kind, UiaKind::Selection)
             && let Some(change) = self.selection_as_value(&event.parts)
         {
-            self.emit(trace, observed_at_ms, Backend::Uia, hwnd, change);
+            self.emit(trace, observed_at_us, Backend::Uia, hwnd, change);
             return;
         }
         // A text focus's caret and text: the subscription follows only the
@@ -2943,17 +2920,17 @@ impl Worker<'_> {
                         // focus (`Worker::system_caret_of_uia_focus`).
                         self.context.intake.drop_system_caret();
                     }
-                    self.caret_event(node_id, trace, observed_at_ms);
+                    self.caret_event(node_id, trace, observed_at_us);
                 }
                 return;
             }
             UiaKind::ActiveTextPosition(range) => {
                 let event = (&event.parts.runtime_id[..], range, hwnd);
-                return self.active_text_position(event, (trace, observed_at_ms));
+                return self.active_text_position(event, (trace, observed_at_us));
             }
             UiaKind::TextChanged => {
                 let changed = (&event.parts.runtime_id[..], element.as_ref());
-                return self.text_changed(changed, hwnd, (trace, observed_at_ms));
+                return self.text_changed(changed, hwnd, (trace, observed_at_us));
             }
             _ => {}
         }
@@ -2976,7 +2953,7 @@ impl Worker<'_> {
                 return;
             }
         };
-        self.emit(trace, observed_at_ms, Backend::Uia, hwnd, normalized);
+        self.emit(trace, observed_at_us, Backend::Uia, hwnd, normalized);
     }
 
     /// A UIA text change of the text focus whose runtime id it carries: it
@@ -2986,7 +2963,7 @@ impl Worker<'_> {
         &mut self,
         (runtime_id, element): (&[i32], Option<&Cached<Kept>>),
         hwnd: Option<isize>,
-        (trace, observed_at_ms): (TraceId, u64),
+        (trace, observed_at_us): (TraceId, u64),
     ) {
         let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) else {
             return;
@@ -2995,12 +2972,12 @@ impl Worker<'_> {
         let terminal = self.focused_terminal(node_id);
         self.check_open_watch(node_id, false);
         if terminal {
-            self.terminal_output(node_id, trace, observed_at_ms);
+            self.terminal_output(node_id, trace, observed_at_us);
             return;
         }
         self.emit(
             trace,
-            observed_at_ms,
+            observed_at_us,
             Backend::Uia,
             hwnd,
             NormalizedEvent::TextChanged { node_id },
@@ -3015,7 +2992,7 @@ impl Worker<'_> {
     fn active_text_position(
         &mut self,
         (runtime_id, range, hwnd): (&[i32], Option<super::intake::ActiveRange>, Option<isize>),
-        (trace, observed_at_ms): (TraceId, u64),
+        (trace, observed_at_us): (TraceId, u64),
     ) {
         let node_id = self.context.uia_registry.existing_id(runtime_id);
         let (Some(node_id), Some(range)) = (node_id, range) else {
@@ -3024,7 +3001,7 @@ impl Worker<'_> {
         if let Some(position) = text_reads::active_position(self.context, node_id, &range.0) {
             self.emit(
                 trace,
-                observed_at_ms,
+                observed_at_us,
                 Backend::Uia,
                 hwnd,
                 NormalizedEvent::ActiveTextPositionChanged { node_id, position },
@@ -3248,23 +3225,23 @@ impl Worker<'_> {
     /// A fact routed from the listener, or one the outpost's own hook took
     /// in: an MSAA focus, foreground change, menu opening, alert, or
     /// tooltip, whichever brought it.
-    fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
+    fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_us: u64) {
         match fact {
-            DeliveredFact::Foreground { hwnd } => self.foreground(hwnd, trace, observed_at_ms),
+            DeliveredFact::Foreground { hwnd } => self.foreground(hwnd, trace, observed_at_us),
             DeliveredFact::MsaaFocus {
                 hwnd,
                 id_object,
                 id_child,
-            } => self.msaa_focus(hwnd, id_object, id_child, trace, observed_at_ms),
+            } => self.msaa_focus(hwnd, id_object, id_child, trace, observed_at_us),
             DeliveredFact::UiaFocusRead { read, focus, .. } => {
-                self.uia_focus(&read, focus, trace, observed_at_ms);
+                self.uia_focus(&read, focus, trace, observed_at_us);
             }
             // The intake resolves these; none reaches the worker.
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusDropped { .. }
             | DeliveredFact::UiaFocusReadsEnded => {}
             // The intake unwraps a marked event as it takes it in.
-            DeliveredFact::UiaMarked { fact, .. } => self.fact(*fact, trace, observed_at_ms),
+            DeliveredFact::UiaMarked { fact, .. } => self.fact(*fact, trace, observed_at_us),
             DeliveredFact::UiaSelection {
                 hwnd,
                 focus_window,
@@ -3278,7 +3255,7 @@ impl Worker<'_> {
                     element: None,
                 },
                 trace,
-                observed_at_ms,
+                observed_at_us,
             ),
             DeliveredFact::UiaNotification {
                 hwnd,
@@ -3293,25 +3270,25 @@ impl Worker<'_> {
                     element: None,
                 },
                 trace,
-                observed_at_ms,
+                observed_at_us,
             ),
             DeliveredFact::Alert {
                 hwnd,
                 id_object,
                 id_child,
-            } => self.alert(hwnd, id_object, id_child, trace, observed_at_ms),
+            } => self.alert(hwnd, id_object, id_child, trace, observed_at_us),
             DeliveredFact::Show {
                 hwnd,
                 id_object,
                 id_child,
-            } => self.tooltip_shown(hwnd, id_object, id_child, trace, observed_at_ms),
+            } => self.tooltip_shown(hwnd, id_object, id_child, trace, observed_at_us),
             // Menu openings are planned separately; one reaching here is
             // handled the same way.
             menu @ DeliveredFact::MenuPopup { .. } => {
                 self.menu_opened(&Entry {
                     item: Item::Fact(menu, None),
                     trace,
-                    observed_at_ms,
+                    observed_at_us,
                     timing: crate::protocol::EventTiming::default(),
                 });
             }
@@ -3329,7 +3306,7 @@ impl Worker<'_> {
         id_object: i32,
         id_child: i32,
         trace: TraceId,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) {
         // NVDA accepts a show event by its window's class alone, whatever
         // the foreground; the hook that took this one, the outpost's own or
@@ -3348,7 +3325,7 @@ impl Worker<'_> {
         let node = object.read(&self.context.msaa_registry, Purpose::Announce);
         self.emit(
             trace,
-            observed_at_ms,
+            observed_at_us,
             Backend::Msaa,
             Some(hwnd),
             NormalizedEvent::Alert { node },
@@ -3367,7 +3344,7 @@ impl Worker<'_> {
         id_object: i32,
         id_child: i32,
         trace: TraceId,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) {
         if !self.accepts(EventName::Alert, hwnd) {
             return;
@@ -3389,7 +3366,7 @@ impl Worker<'_> {
         };
         self.emit(
             trace,
-            observed_at_ms,
+            observed_at_us,
             Backend::Msaa,
             Some(hwnd),
             NormalizedEvent::Alert { node },
@@ -3441,7 +3418,7 @@ impl Worker<'_> {
     /// one dropped lets the next older entry be tried
     /// ([`super::intake::try_newest_first`]), as NVDA's `pumpAll` stops at
     /// the first foreground or focus event processed.
-    fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
+    fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_us: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
@@ -3469,12 +3446,12 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "foreground dropped: UIA owns the window");
             return;
         }
-        self.report_foreground(hwnd, trace, observed_at_ms);
+        self.report_foreground(hwnd, trace, observed_at_us);
     }
 
     /// Reads the foreground window `hwnd`'s name and reports it, unless it
     /// is no longer the foreground window by then.
-    fn report_foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
+    fn report_foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_us: u64) {
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
         if !self.in_front(hwnd) {
             tracing::info!(
@@ -3483,15 +3460,12 @@ impl Worker<'_> {
             );
             return;
         }
-        let confirmed_at_us = now_us();
-        let stamp = if confirmed_at_us / 1_000 >= observed_at_ms {
-            (confirmed_at_us / 1_000, confirmed_at_us)
-        } else {
-            (observed_at_ms, 0)
-        };
+        // Ordered by when its window was confirmed as the foreground, which
+        // is never before the event was observed.
+        let confirmed_at_us = now_us().max(observed_at_us);
         self.emit_focus(
             trace,
-            stamp,
+            confirmed_at_us,
             backend,
             Some(hwnd),
             node,
@@ -3508,7 +3482,7 @@ impl Worker<'_> {
         id_object: i32,
         id_child: i32,
         trace: TraceId,
-        observed_at_ms: u64,
+        observed_at_us: u64,
     ) {
         if id_child == CHILDID_SELF && window_belongs_to_hidden_frame(hwnd) {
             return;
@@ -3523,8 +3497,8 @@ impl Worker<'_> {
             // the outpost's place it on the latter.
             let opened_gap = self.gap.dropped_for_uia(
                 (hwnd, top_level_of(hwnd)),
-                observed_at_ms,
-                (self.clock_now, self.timing.dequeued_at_us / 1_000),
+                observed_at_us,
+                (self.clock_now, self.timing.dequeued_at_us),
             );
             tracing::debug!(hwnd, opened_gap, "MSAA focus dropped: UIA owns the window");
             return;
@@ -3603,7 +3577,7 @@ impl Worker<'_> {
         self.msaa_event = Some(((hwnd, id_object, id_child), resolved_child > 0));
         self.emit_focus(
             trace,
-            self.entry_stamp(observed_at_ms),
+            observed_at_us,
             Backend::Msaa,
             Some(hwnd),
             node,
@@ -3653,7 +3627,7 @@ impl Worker<'_> {
     /// ([`find_focus_element`](Self::find_focus_element)); for a focus that
     /// may have text, before it is reported, since its caret is read with
     /// it.
-    fn uia_focus(&mut self, read: &UiaFocusRead, focus: bool, trace: TraceId, observed_at_ms: u64) {
+    fn uia_focus(&mut self, read: &UiaFocusRead, focus: bool, trace: TraceId, observed_at_us: u64) {
         let context = self.context;
         // The UIA focus a `WinEvent` focus in a UIA window was waiting for,
         // in the copy's top-level window; a menu opening's read is not one.
@@ -3663,7 +3637,7 @@ impl Worker<'_> {
             .map(top_level_of)
             .filter(|&top| top != 0);
         let answered_gap_ms = focus
-            .then(|| self.gap.uia_answered(observed_at_ms, read_top_level))
+            .then(|| self.gap.uia_answered(observed_at_us, read_top_level))
             .flatten()
             .map(|open| {
                 self.clock_now
@@ -3728,7 +3702,7 @@ impl Worker<'_> {
         context.tracking().value_from_selection = read.value_from_selection.then_some(node.id);
         self.emit_focus(
             trace,
-            self.entry_stamp(observed_at_ms),
+            observed_at_us,
             Backend::Uia,
             reported,
             node,
@@ -3883,7 +3857,7 @@ impl Worker<'_> {
         };
         self.emit_focus(
             entry.trace,
-            self.entry_stamp(entry.observed_at_ms),
+            entry.observed_at_us,
             Backend::Msaa,
             Some(window),
             node,
@@ -3984,12 +3958,12 @@ impl Worker<'_> {
                 self.reply_text(request, reply);
                 return true;
             }
-            let observed_at_ms = now_ms();
+            let observed_at_us = now_us();
             if event == Event::Hold {
-                self.terminal_event(node_id, event, None, (trace, observed_at_ms));
+                self.terminal_event(node_id, event, None, (trace, observed_at_us));
                 self.reply_text(request, TextReply::Done);
             } else {
-                self.terminal_event(node_id, event, Some(request), (trace, observed_at_ms));
+                self.terminal_event(node_id, event, Some(request), (trace, observed_at_us));
             }
             return true;
         }
@@ -4088,7 +4062,7 @@ impl Worker<'_> {
                 node: node.clone(),
                 ancestors: control.ancestors.clone(),
                 text,
-                observed: (answer.observed_at_ms, answer.observed_at_us),
+                observed_at_us: answer.observed_at_us,
                 window,
             }
         });
@@ -4127,7 +4101,7 @@ impl Worker<'_> {
             node,
             ancestors,
             text,
-            observed,
+            observed_at_us,
             window,
         } = answered;
         let same_node = self.context.tracking().focus == Some(node.id);
@@ -4141,7 +4115,7 @@ impl Worker<'_> {
             });
             self.adopt_focus((node.id, node.role), object, window, chain);
         }
-        self.follow_text((node.id, node.role), text.as_ref(), (trace, observed.0));
+        self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_us));
     }
 
     /// Publishes the reply to the query in hand, ending its entry.
@@ -4184,32 +4158,11 @@ fn event_window_facts(
     facts
 }
 
-/// A stamp of `ms` milliseconds with the microseconds of the observation
-/// `micros` when that is the same observation, read with the same clock
-/// read, and with none (0) otherwise.
-fn stamp_with_micros(ms: u64, micros: u64) -> (u64, u64) {
-    if micros != 0 && micros / 1_000 == ms {
-        (ms, micros)
-    } else {
-        (ms, 0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use verbatim_core::focus_rules::HeldFocus;
 
     use super::*;
-
-    /// A focus carries the microseconds of its observation only when they
-    /// are of its millisecond stamp: a foreground change, stamped when its
-    /// window was confirmed, does not carry its event's first observation.
-    #[test]
-    fn a_stamp_carries_microseconds_only_of_its_own_observation() {
-        assert_eq!(stamp_with_micros(6_543, 6_543_210), (6_543, 6_543_210));
-        assert_eq!(stamp_with_micros(6_544, 6_543_210), (6_544, 0));
-        assert_eq!(stamp_with_micros(6_543, 0), (6_543, 0));
-    }
 
     /// A focus change's window facts keep the window's class, which Core's
     /// staging rule matches, and take the application's name, which its
@@ -4298,7 +4251,7 @@ mod tests {
             Some(trace),
             Some(HeldFocus {
                 trace_id: trace,
-                observed: (1, 0),
+                observed_at_us: 1,
                 focus: node,
                 ancestors: Vec::new(),
                 top_level: Some(verbatim_model::WindowHandle(u64::from_ne_bytes(
@@ -4306,7 +4259,7 @@ mod tests {
                 ))),
                 alive: true,
             }),
-            (1, 0),
+            1,
         );
         held
     }
@@ -4331,7 +4284,7 @@ mod tests {
         );
         assert_eq!(foreground_repeats(&held, 6, is_descendant), None);
         let mut elsewhere = core_holds(focus_in(TraceId::mint(), 7, None));
-        elsewhere.core_focus(None, None, (2, 0));
+        elsewhere.core_focus(None, None, 2);
         assert_eq!(foreground_repeats(&elsewhere, 7, is_descendant), None);
         assert_eq!(
             foreground_repeats(&held::Held::default(), 7, is_descendant),

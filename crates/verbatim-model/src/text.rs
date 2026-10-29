@@ -421,7 +421,7 @@ pub struct CaretWatch {
     /// did not know.
     pub since: Option<TextPosition>,
     /// Milliseconds since the Unix epoch when the key was pressed, on the
-    /// clock of an event's `observed_at_ms`; 0 when unknown. A caret the
+    /// clock of an event's `observed_at_us`; 0 when unknown. A caret the
     /// outpost read and reported before this time is where the caret was
     /// before the key, and stands in for `since`, which may be older; one
     /// read at or after it may already show the key's effect, and does not.
@@ -478,7 +478,7 @@ pub struct CaretReply {
     /// The caret as it is now.
     pub caret: CaretReport,
     /// Milliseconds since the Unix epoch when the outpost read `caret`, on
-    /// the clock of an event's `observed_at_ms`; 0 when unknown. Core
+    /// the clock of an event's `observed_at_us`; 0 when unknown. Core
     /// compares it with a later key's `pressed_at_ms` to tell whether this
     /// caret was where that key found it.
     #[serde(default)]

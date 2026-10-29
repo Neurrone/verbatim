@@ -353,7 +353,6 @@ fn event(
     };
     OutpostToSupervisor::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         observed_at_us: 0,
         backend: Backend::Uia,
         window: None,

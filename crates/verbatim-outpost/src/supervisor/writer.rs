@@ -102,7 +102,6 @@ impl Outgoing {
         let focus_read = held.fact.is_focus_read();
         let command = SupervisorToOutpost::DeliverFact {
             trace_id: held.trace_id,
-            observed_at_ms: held.observed_at_ms,
             timing: held.timing,
             fact: held.fact,
             win_event: held.win_event,
@@ -659,7 +658,6 @@ mod tests {
     fn held(fact: DeliveredFact) -> HeldFact {
         HeldFact {
             trace_id: TraceId::mint(),
-            observed_at_ms: 0,
             timing: EventTiming::default(),
             fact,
             win_event: None,

@@ -35,7 +35,6 @@ fn node(number: u64, role: Role, states: StateSet) -> NodeSnapshot {
 fn event(event: NormalizedEvent) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
@@ -686,14 +685,14 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     assert!(matches!(request(&effects).op, TextOp::AwaitCaret(_)));
 }
 
-/// A caret event for node 5 observed at `observed_at_ms`.
+/// A caret event for node 5 observed at `observed_at_ms`, in milliseconds
+/// to compare with a key's `pressed_at_ms`.
 fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> Vec<Effect> {
     reduce(
         state,
         &Input::Event {
             trace_id: TraceId::mint(),
-            observed_at_ms,
-            observed_at_us: 0,
+            observed_at_us: observed_at_ms * 1_000,
             source: Pid(1),
             backend: Backend::Uia,
             window: None,
@@ -3271,8 +3270,7 @@ fn selection_report(
 ) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms,
-        observed_at_us: 0,
+        observed_at_us: observed_at_ms * 1_000,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -3369,7 +3367,6 @@ fn general_report(selection: Option<Selection>, changes: &[bool], new: Option<&s
     };
     Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Msaa,

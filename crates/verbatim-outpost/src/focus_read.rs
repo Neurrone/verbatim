@@ -620,9 +620,8 @@ enum Judgement {
 pub struct Arrival {
     /// The trace minted for the event.
     pub trace: TraceId,
-    /// When the event was received, in milliseconds.
-    pub observed_at_ms: u64,
-    /// The same time in microseconds, from the same clock read.
+    /// When the event was received, in microseconds on the run's shared
+    /// clock.
     pub observed_at_us: u64,
 }
 
@@ -1605,9 +1604,8 @@ pub(crate) struct Meta {
     pub(crate) kind: FocusEvent,
     /// The trace minted when the event arrived.
     pub(crate) trace: TraceId,
-    /// When the event arrived, in milliseconds since the Unix epoch.
-    pub(crate) observed_at_ms: u64,
-    /// When it arrived, for the latency log.
+    /// When it arrived, its `observed_at_us` the observation by which its
+    /// fact is ordered, and the latency log's stamps.
     pub(crate) timing: EventTiming,
 }
 
@@ -2615,7 +2613,6 @@ mod tests {
             marker,
             kind: FocusEvent::Focus,
             trace: TraceId::mint(),
-            observed_at_ms: 0,
             timing: EventTiming::default(),
         }
     }
@@ -3310,7 +3307,6 @@ mod tests {
         let held_elements = HeldElements::default();
         let arrival = |trace| Arrival {
             trace,
-            observed_at_ms: 0,
             observed_at_us: 0,
         };
         let (taken, refused) = (TraceId::mint(), TraceId::mint());
@@ -3351,7 +3347,6 @@ mod tests {
         let first = meta(1);
         let arrival = Arrival {
             trace: first.trace,
-            observed_at_ms: 0,
             observed_at_us: 0,
         };
         let (open, gate) = mpsc::channel();
@@ -3388,7 +3383,6 @@ mod tests {
         assert_eq!(marker, 1);
         let newer = Arrival {
             trace: TraceId::mint(),
-            observed_at_ms: 0,
             observed_at_us: 0,
         };
         held_elements.accept(

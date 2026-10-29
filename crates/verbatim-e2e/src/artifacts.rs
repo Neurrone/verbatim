@@ -372,7 +372,7 @@ pub fn trace_lines(dir: &Path, trace: TraceId) -> io::Result<Vec<String>> {
 /// `trace` as a field, `trace_id=` or `trace=` in a log line and
 /// `"trace_id":` or `"trace":` in the flight recorder's JSON, with
 /// terminal colour codes removed, ordered by time: a log line's leading
-/// UTC timestamp, a flight recorder entry's `observed_at_ms` or
+/// UTC timestamp, a flight recorder entry's `observed_at_us` or
 /// `pressed_at_ms`. A line without a time of its own (a flight recorder
 /// entry Core made in reply to an outpost, a log message's continuation)
 /// takes the time of the line before it in its file, so it stays after
@@ -428,19 +428,20 @@ fn carries_trace(line: &str, trace: &str) -> bool {
 
 /// When `line` was written, in microseconds since the Unix epoch: a log
 /// line's leading timestamp (`2026-10-09T10:42:19.268605Z`), or a flight
-/// recorder entry's `observed_at_ms` or `pressed_at_ms`.
+/// recorder entry's `observed_at_us` or `pressed_at_ms`.
 fn line_time_us(line: &str) -> Option<u64> {
     if let Some(stamp) = line.split_whitespace().next()
         && let Some(time) = parse_utc_us(stamp)
     {
         return Some(time);
     }
-    ["\"observed_at_ms\":", "\"pressed_at_ms\":"]
+    // Each key with what its value is multiplied by to give microseconds.
+    [("\"observed_at_us\":", 1), ("\"pressed_at_ms\":", 1_000)]
         .iter()
-        .find_map(|key| {
+        .find_map(|&(key, to_us)| {
             let value = &line[line.find(key)? + key.len()..];
             let digits = value.split(|c: char| !c.is_ascii_digit()).next()?;
-            digits.parse::<u64>().ok().map(|ms| ms * 1000)
+            digits.parse::<u64>().ok().map(|time| time * to_us)
         })
 }
 

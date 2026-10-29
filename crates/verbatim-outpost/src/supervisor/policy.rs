@@ -143,11 +143,10 @@ impl Backoff {
 }
 
 /// A focus fact routed to an outpost, with the trace and observation time
-/// the listener stamped.
+/// (`timing`'s `observed_at_us`) the listener stamped.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct HeldFact {
     pub(super) trace_id: TraceId,
-    pub(super) observed_at_ms: u64,
     pub(super) timing: crate::protocol::EventTiming,
     pub(super) fact: DeliveredFact,
     /// For an MSAA `WinEvent`'s fact, the thread that raised it and when.
@@ -458,11 +457,13 @@ mod tests {
         assert_eq!(spares.due(), None);
     }
 
-    fn held(observed_at_ms: u64, fact: DeliveredFact) -> HeldFact {
+    fn held(observed_at_us: u64, fact: DeliveredFact) -> HeldFact {
         HeldFact {
             trace_id: TraceId::mint(),
-            observed_at_ms,
-            timing: crate::protocol::EventTiming::default(),
+            timing: crate::protocol::EventTiming {
+                observed_at_us,
+                ..crate::protocol::EventTiming::default()
+            },
             fact,
             win_event: None,
             received: crate::supervisor::writer::Received::now(),
@@ -553,7 +554,7 @@ mod tests {
         let released: Vec<u64> = facts
             .take()
             .iter()
-            .map(|fact| fact.observed_at_ms)
+            .map(|fact| fact.timing.observed_at_us)
             .collect();
         assert_eq!(released, vec![1, 3, 4]);
         assert!(facts.take().is_empty(), "nothing is left held");
