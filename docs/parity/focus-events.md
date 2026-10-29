@@ -154,9 +154,6 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
   window's focus events in between would otherwise be newer and make the
   change stale. This orders it where NVDA's processing does. The latency
   timeline still starts when the foreground event was first observed.
-- The focus listener and the outposts judge against the focus Core
-  holds, so the order Core gave two focuses is the order they judge by
-  (`protocol::observed_no_earlier`).
 - A UIA focus fact whose element is not the focused element is dropped
   when the focus is in another application by then, and otherwise
   reported from the fact with its window: its own, or for a windowless

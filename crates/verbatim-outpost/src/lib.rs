@@ -26,6 +26,7 @@ pub mod dialog_text;
 mod event_thread;
 pub mod focus_read;
 mod foreground;
+pub mod gap_record;
 mod gates;
 pub mod integrity;
 pub mod listener;

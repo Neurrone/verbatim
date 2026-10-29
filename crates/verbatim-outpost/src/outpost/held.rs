@@ -22,8 +22,6 @@ use std::collections::VecDeque;
 use verbatim_core::focus_rules::{HeldFocus, HeldNode};
 use verbatim_model::{NodeId, Role, StateSet, TraceId};
 
-use crate::protocol::observed_no_earlier;
-
 /// One focus as the outpost judges against it: the focus Core holds, or
 /// one it reported that Core has not judged yet, with what the outpost
 /// recorded of it as it reported it.
@@ -73,9 +71,6 @@ impl Focus {
 pub(super) struct Held {
     /// The focus Core holds, when it is this outpost's.
     core: Option<Focus>,
-    /// When the focus Core holds was observed, when it is another
-    /// outpost's, in microseconds; 0 for none.
-    elsewhere: u64,
     /// The focuses this outpost reported that Core has not judged, oldest
     /// first.
     unjudged: VecDeque<Focus>,
@@ -92,15 +87,9 @@ impl Held {
     }
 
     /// Core judged this outpost's focus event traced `judged`, if any, and
-    /// every one reported before it, and holds `focus`, this outpost's,
-    /// or another outpost's observed at `observed_at_us`
-    /// (`SupervisorToOutpost::CoreFocus`).
-    pub(super) fn core_focus(
-        &mut self,
-        judged: Option<TraceId>,
-        focus: Option<HeldFocus>,
-        observed_at_us: u64,
-    ) {
+    /// every one reported before it, and holds `focus`, this outpost's, or
+    /// none of this outpost's (`SupervisorToOutpost::CoreFocus`).
+    pub(super) fn core_focus(&mut self, judged: Option<TraceId>, focus: Option<HeldFocus>) {
         let mut judged_focuses = Vec::new();
         if let Some(judged) = judged
             && let Some(at) = self.unjudged.iter().position(|focus| focus.trace == judged)
@@ -109,16 +98,6 @@ impl Held {
         }
         let Some(held) = focus else {
             self.core = None;
-            // A focus with no observation time is taken as now, as it is
-            // newer than any the outpost waits on.
-            let observed = if observed_at_us == 0 {
-                crate::protocol::now_us()
-            } else {
-                observed_at_us
-            };
-            if observed_no_earlier(observed, self.elsewhere) {
-                self.elsewhere = observed;
-            }
             return;
         };
         // What this outpost recorded of the focus as it reported it.
@@ -139,12 +118,6 @@ impl Held {
             event: recorded.as_ref().and_then(|focus| focus.event),
             simple_child: recorded.is_some_and(|focus| focus.simple_child),
         });
-    }
-
-    /// When the focus Core holds was observed, when it is another
-    /// outpost's; 0 for none.
-    pub(super) fn elsewhere_observed(&self) -> u64 {
-        self.elsewhere
     }
 
     /// The focus Core holds, when it is this outpost's.
@@ -264,10 +237,10 @@ mod tests {
         held.reported(reported(second, 2));
         assert!(!held.settled());
         assert_eq!(held.expected().map(|focus| focus.trace), Some(second));
-        held.core_focus(Some(first), Some(held_focus(first, 1)), 1);
+        held.core_focus(Some(first), Some(held_focus(first, 1)));
         assert!(!held.settled(), "the second still waits");
         assert!(held.is_a_focus(1.into_node()) && held.is_a_focus(2.into_node()));
-        held.core_focus(Some(second), Some(held_focus(first, 1)), 1);
+        held.core_focus(Some(second), Some(held_focus(first, 1)));
         assert!(held.settled());
         assert!(
             !held.is_a_focus(2.into_node()),
@@ -279,29 +252,6 @@ mod tests {
             Some((Some(7), Some((7, -4, 0)))),
             "what the outpost recorded of the focus Core took"
         );
-    }
-
-    #[test]
-    fn a_focus_elsewhere_records_when_it_was_observed() {
-        let mut held = Held::default();
-        let trace = TraceId::mint();
-        held.reported(reported(trace, 1));
-        held.core_focus(Some(trace), Some(held_focus(trace, 1)), 5);
-        held.core_focus(None, None, 9);
-        assert!(held.core().is_none());
-        assert_eq!(held.elsewhere_observed(), 9);
-    }
-
-    /// Core's focus elsewhere is kept by its newest observation, ordered to
-    /// the microsecond as Core orders two focuses in one millisecond.
-    #[test]
-    fn a_focus_elsewhere_in_the_same_millisecond_is_ordered_by_microseconds() {
-        let mut held = Held::default();
-        held.core_focus(None, None, 6_543_800);
-        held.core_focus(None, None, 6_543_200);
-        assert_eq!(held.elsewhere, 6_543_800);
-        held.core_focus(None, None, 6_544_000);
-        assert_eq!(held.elsewhere_observed(), 6_544_000);
     }
 
     #[test]

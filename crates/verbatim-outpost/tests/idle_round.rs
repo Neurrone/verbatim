@@ -115,8 +115,10 @@ fn stand_in(args: &[String]) -> ! {
             SupervisorToOutpost::Shutdown => std::process::exit(0),
             SupervisorToOutpost::Cancel { request_id: 0 } if !listener => send(&ready),
             SupervisorToOutpost::DeliverFact { .. } => facts += 1,
-            SupervisorToOutpost::CoreFocus { observed_at_us, .. } => {
-                fact_for = Some(Pid(u32::try_from(observed_at_us).expect("a pid")));
+            SupervisorToOutpost::CoreFocus {
+                focus: Some(focus), ..
+            } => {
+                fact_for = Some(Pid(u32::try_from(focus.observed_at_us).expect("a pid")));
             }
             SupervisorToOutpost::IdleQuery { round: 1 } if listener => {
                 drop(messages.borrow_mut().take());

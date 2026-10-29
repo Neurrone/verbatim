@@ -774,12 +774,10 @@ impl Owner {
         focus: Option<&crate::protocol::HeldFocus>,
         outposts: Vec<OutpostId>,
     ) {
-        let observed_at_us = focus.map_or(0, |focus| focus.observed_at_us);
         let notice = |focus| {
             Outgoing::HandOver(SupervisorToOutpost::CoreFocus {
                 judged,
                 focus,
-                observed_at_us,
                 sent_at_us: 0,
             })
         };

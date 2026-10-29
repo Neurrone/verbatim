@@ -275,48 +275,67 @@ Rules that hold for every UIA focus:
 - Bound: one step per ancestor until a known one, so the count grows only
   with how far the focus moved up the tree.
 
-### A WinEvent focus in a UIA window, and the read when no UIA focus follows
+### A WinEvent focus no UIA focus answers, and the read for focus-missing
 
-- Per focus: nothing. The worker drops a `WinEvent` focus copy in a UIA
-  window and records a gap, with no lock or call; the listener's UIA focus
-  closes it. The gap's bound rides on the worker's wait for its next entry
-  (`Intake::next_with_gap`), so it sets no timer. A listener focus message
-  carries about 13 bytes more, and one local `GetAncestor` is made per copy
-  and per focus read.
-- Per gap that comes to a read, once a second passes with no UIA focus or
-  at once when it was dropped for having no window above it
-  (`docs/design/listener-without-connections.md`, decision 11): one worker
-  wake-up and the focus-now query's read (`read::focused_control_in`),
-  local checks first so a hung application is not called, then one
-  `GetFocusedElementBuildCache`, whose request caches one property more,
-  the element's process, checked locally against the application with no
-  extra call (an element of another process is read no further), the
-  enrichment, the MSAA continuation
+- Per focus or foreground `WinEvent` the listener's hook observes: one
+  local `GetAncestor` for its top-level window and one take of the reading
+  threads' lock, on the `WinEvent` thread, to answer the gap records
+  elsewhere and open its application's (`gap_record`, `Readers::observed`);
+  no call into any application. Per UIA focus outcome with a window: one
+  local `GetAncestor` on the reading thread, before the lock. The outpost
+  makes neither any more, nor any work for a copy it drops.
+- Wake-ups: a copy that reaches the listener while its application has
+  no UIA event waiting or being read, the usual order since the
+  `WinEvent` nearly always comes first, arms its record's bound and wakes
+  the readers' watchdog once to time it; the UIA focus's read, whose start
+  wakes the watchdog as before, disarms it, so the watchdog does not wake
+  again at the bound. A record still open when its application's reads
+  finish is armed by the reading thread, one watchdog wake-up more, and
+  costs one more at its bound. So a focus change costs the listener one
+  watchdog wake-up more than before, and the outpost none.
+- Per record unanswered at its bound, a second after its copy's
+  observation, or at once when a UIA focus whose sender has no window
+  answered it (`docs/design/listener-without-connections.md`, risk 13):
+  one focus-missing message to the outpost, one worker wake-up, and, in a
+  window the outpost judges UIA, the focus-now query's read
+  (`read::focused_control_in`), local checks first so a hung application
+  is not called, then one `GetFocusedElementBuildCache`, whose request
+  caches one property more, the element's process, checked locally
+  against the application with no extra call (an element of another
+  process is read no further), the enrichment, the MSAA continuation
   above the process boundary, and one `ElementFromHandleBuildCache` more
   for a window's own element read without its handle, as the console
-  host's is (`docs/uia-bugs.md`). The late UIA focus then costs one
-  connection more, its element found by path (`find_focus_element`).
+  host's is (`docs/uia-bugs.md`). In a window the outpost judges MSAA, or
+  one its application no longer serves, nothing. The late UIA focus then
+  costs one connection more, its element found by path
+  (`find_focus_element`).
 - Per event the worker judges a window for, an MSAA event, a foreground
-  change, a menu opening, a UIA selection, a listener's read or drop: the
-  check that its application serves the window (`served_by`), local calls
-  and no call into any application; an event naming another
-  application's window is dropped there, before any probe
+  change, a menu opening, a UIA selection, a listener's read or drop, or
+  focus-missing: the check that its application serves the window
+  (`served_by`), local calls and no call into any application; an event
+  naming another application's window is dropped there, before any probe
   (`a_focus_event_naming_another_applications_window_is_not_read`).
 - Per listener drop on its verdict ("not UIA" or "unknown") in a window
   the outpost judges UIA, a disagreement of the two processes' verdicts:
-  the same focus-now read, at once, in the drop's place, which answers the
-  gap, so the gap does not read again
+  the same focus-now read, at once, in the drop's place; the drop answers
+  the listener's record, so it is not read again
   (`a_focus_the_listener_dropped_in_a_window_the_outpost_judges_uia_is_read`).
   In a window the outpost judges MSAA too, its verdict alone: kept, from
   the class lists, or its own probe when it has none.
-- Reads made in vain are accepted: in `measure_focus_explorer` a gap can
-  come to a read after the focus moved to another process's window, whose
-  foreground event comes about 200 ms early; the read ends at its local
-  check, about 110 µs.
-- The harness's idle barrier waits while a gap is open, at most about 12.2
-  seconds for one focus marker (the bound and the listener's 11-second
-  `READ_DEADLINE`), within its 15-second idle timeout.
-- Target: none per focus and at most one read per gap, met.
+- Memory: one record and two observation stamps per application whose
+  outpost has its hook in; each watchdog wake and each observed
+  `WinEvent` walks those applications, tens at most.
+- Reads made in vain are accepted: in `measure_focus_explorer` a record
+  can come to a read after the focus moved to another process's window,
+  whose foreground event comes about 200 ms early; the read ends at its
+  local check, about 110 µs.
+- The harness's idle barrier: the listener answers a round only once
+  every record opened before it is answered or sent as focus-missing, at
+  most about 12.2 seconds for one focus marker (the bound and the
+  listener's 11-second `READ_DEADLINE`), within its 15-second idle
+  timeout.
+- Target: no call per focus and at most one read per record; met, at one
+  watchdog wake-up per focus change in the listener.
 
 ### A focus behind other objects' events
 

@@ -1071,8 +1071,9 @@ pub(super) enum FocusReadMiss {
 pub(super) enum FocusRead {
     /// A focus-now query ([`focus_now`]).
     FocusNow,
-    /// The gap: no UIA focus followed a `WinEvent` focus in a UIA window.
-    Gap,
+    /// The listener's focus-missing: no UIA focus answered a `WinEvent`
+    /// focus in a window this outpost judges UIA.
+    FocusMissing,
     /// The listener's drop of a focus on its verdict in a window this
     /// outpost judges UIA.
     VerdictDrop,

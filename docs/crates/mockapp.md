@@ -358,7 +358,14 @@ a walk of the window's whole tree would wait on its
   out, its probe's `WM_GETOBJECT` is made, and a classic walk's time
   budget is spent only where the test says. The test hands the outpost
   focus facts as the listener would, and the outpost reads the focused
-  element from the test rather than the system.
+  element from the test rather than the system. The stand-in keeps the
+  listener's gap records (`verbatim_outpost::gap_record`) as the
+  listener's hook does: each `WinEvent` copy handed over opens or answers
+  one, each marker, read and drop handed over is a read waiting and its
+  outcome (`listener_outcome` gives a drop's reason), and once the
+  test's time passes a record's bound with no read waiting it hands the
+  outpost focus-missing; an idle round (`idle_round`) reaches the outpost
+  only once the records opened before it are closed.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each

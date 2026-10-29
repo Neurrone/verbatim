@@ -41,8 +41,8 @@ use crossbeam_channel::unbounded;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    DeliveredFact, DropEvidence, EventTiming, ListenerFact, OutpostToSupervisor,
-    SupervisorToOutpost, read_message, write_message,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
+    read_message, write_message,
 };
 use verbatim_outpost::supervisor::{
     EndReason, IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor,
@@ -173,7 +173,8 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
                 },
                 "drop" => DeliveredFact::UiaFocusDropped {
                     marker: 1,
-                    evidence: DropEvidence::Focus,
+                    focus: true,
+                    on_verdict: None,
                 },
                 "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),
@@ -350,15 +351,10 @@ fn stand_in(args: &[String]) -> ! {
                     send(&fact);
                 }
             }
-            Ok(Some(SupervisorToOutpost::CoreFocus {
-                focus,
-                observed_at_us,
-                ..
-            })) if !listener => {
+            Ok(Some(SupervisorToOutpost::CoreFocus { focus, .. })) if !listener => {
                 send(&OutpostToSupervisor::Fault {
                     detail: format!(
-                        "Core's focus at {} {}",
-                        observed_at_us,
+                        "Core's focus {}",
                         if focus.is_some() { "here" } else { "elsewhere" }
                     ),
                 });
@@ -1131,10 +1127,7 @@ fn core_s_focus_is_told_to_the_outposts_concerned_and_no_other() {
         [
             (
                 OutpostId(3),
-                vec![
-                    "Core's focus at 42 elsewhere".to_owned(),
-                    "fact 9".to_owned()
-                ]
+                vec!["Core's focus elsewhere".to_owned(), "fact 9".to_owned()]
             ),
             (OutpostId(4), vec!["fact 10".to_owned()]),
         ]

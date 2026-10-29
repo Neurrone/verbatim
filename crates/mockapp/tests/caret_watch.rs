@@ -6,9 +6,7 @@
 //! as the focus arrives is read once the application raises a caret event,
 //! and the system caret's move is the caret event of a UIA focus that
 //! raises none of its own, as its show is a classic edit control's; and a
-//! watch's end at its bound reads no focus for the wait for a UIA focus
-//! after a `WinEvent` focus while a UIA focus's marker waits for its read;
-//! and a selection no key made is reported with its change, one a key or
+//! selection no key made is reported with its change, one a key or
 //! Verbatim made is not; and a selection change after a text change is
 //! said in general terms, through UIA once the old selection's range no
 //! longer holds its text, and in a classic edit control in either order of
@@ -36,8 +34,7 @@ use verbatim_model::{
 };
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::{
-    DeliveredFact, DropEvidence, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
-    WinEventStamp,
+    DeliveredFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
 };
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
@@ -318,52 +315,6 @@ fn a_key_that_moves_nothing_is_answered_with_nothing() {
     app.send("caret-event doc");
     assert!(caret_reply(answer_to(&outpost, second)).moved);
     heard_caret_event(&outpost);
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A caret key's watch that reaches its bound, ten seconds by the system's
-/// clock, while the outpost waits for a UIA focus after a `WinEvent` focus
-/// in mockapp's window (`docs/design/listener-without-connections.md`,
-/// decision 11) whose bound has passed by the outpost's, and a UIA focus's
-/// marker waits for its read: the worker's wake for the watch reads no
-/// focus, since the marker's resolution decides first, and the watch ends
-/// with nothing to say. The marker's drop by a verdict of NVDA's checks
-/// then answers the wait, and nothing is read.
-fn a_watchs_end_reads_no_focus_while_a_marker_waits() {
-    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-gap");
-    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
-    let key = outpost.ask(Query::Text {
-        node_id: notes,
-        op: right_arrow(&before),
-    });
-    outpost.settled();
-    // The focus a read would find, which no UIA focus has reported.
-    app.send("set-focus ok");
-    outpost.read_focus_as(focused(hwnd).live().element());
-    // The copy, observed now, after the document's focus, which it follows.
-    outpost.deliver_win_event_observed(
-        DeliveredFact::MsaaFocus {
-            hwnd: hwnd.0 as isize,
-            id_object: -4,
-            id_child: 0,
-        },
-        WinEventStamp { thread: 1, time: 1 },
-        common::outpost::now_us(),
-    );
-    outpost.settled();
-    // The marker arrives, and the bound passes, while the worker is held,
-    // so no wake of its own judges the gap before the marker is in.
-    outpost.hold_worker();
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 8 });
-    outpost.pass_time(std::time::Duration::from_secs(1));
-    outpost.release_worker();
-    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
-    outpost.deliver(DeliveredFact::UiaFocusDropped {
-        marker: 8,
-        evidence: DropEvidence::Focus,
-    });
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -1379,7 +1330,6 @@ fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
-#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
         (
@@ -1401,10 +1351,6 @@ fn main() {
         (
             "a_key_that_moves_nothing_is_answered_with_nothing",
             a_key_that_moves_nothing_is_answered_with_nothing,
-        ),
-        (
-            "a_watchs_end_reads_no_focus_while_a_marker_waits",
-            a_watchs_end_reads_no_focus_while_a_marker_waits,
         ),
         (
             "a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event",

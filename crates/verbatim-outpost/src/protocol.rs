@@ -110,16 +110,6 @@ pub fn now_us() -> u64 {
     verbatim_process::clock::now_us()
 }
 
-/// Whether an observation stamped `later`, in microseconds on the run's
-/// shared clock, was no earlier than one stamped `earlier`, a tie counting
-/// as no earlier. Core orders two focuses from different outposts the same
-/// way (`docs/parity/focus-events.md`, "Stale focus events"), so the
-/// listener and the outposts take a focus Core queued as newer by Core's
-/// rule.
-#[must_use]
-pub fn observed_no_earlier(later: u64, earlier: u64) -> bool {
-    later >= earlier
-}
 use verbatim_model::{
     Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
     NotificationKind, NotificationProcessing, OutpostId, Pid, QueryKind, Role, StateSet, TextOp,
@@ -282,66 +272,23 @@ impl ListenerFact {
     }
 }
 
-/// What the drop of a UIA focus event's read says to an outpost waiting
-/// for a UIA focus after a `WinEvent` focus in one of its UIA windows
-/// (`docs/design/listener-without-connections.md`, decision 11; Dickson,
-/// 2026-10-21): only a focus event's
-/// resolution answers that wait, in one of four ways. It goes on the pipe
-/// as JSON, by its variant's name; the listener, the supervisor and the
-/// outposts are one build of this definition, so it needs no version.
+/// A UIA focus the listener dropped on its own verdict on its nearest
+/// window (`docs/design/focus-pipeline-rework.md`, "Who owns each
+/// duplicated fact", the verdicts): the outpost judges the window with its
+/// own verdict, and in a window it judges UIA reads its application's focus
+/// at once, in the drop's place; in one it judges MSAA its MSAA focus
+/// speaks. It goes on the pipe as JSON; the listener, the supervisor and
+/// the outposts are one build of this definition, so it needs no version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DropEvidence {
-    /// A focus event whose drop ends the wait: a verdict of NVDA's checks
-    /// on it, as its read would have been (its window was hung, not
-    /// related to the foreground window, the console window's own, or a
-    /// shell window that only stages a switch, or the event repeats the
-    /// focus, which still has the keyboard focus), or the listener giving
-    /// up on its application, which did not answer in time (the read did
-    /// not return in time, waited too long behind abandoned reads, ran out
-    /// of time before its window was looked up or judged, or its event
-    /// said it lacked the keyboard focus when the read's time was up), so
-    /// that the outpost does not read an application that has just failed
-    /// to answer.
-    Focus,
-    /// A focus event whose drop could not establish where the focus is:
-    /// its element no longer had the keyboard focus, its read was abandoned when the user moved on or never started, the
-    /// listener was shutting down, its element could not be kept or
-    /// resolved for the read, its reading thread had no UIA client, or a
-    /// newer event of the same element replaced it. The wait goes on to
-    /// its bound, and nothing is read at once: such drops come in ordinary
-    /// fast navigation, where the next key's focus event follows, and in a
-    /// new File Explorer window, whose frame's focus is dropped beside its
-    /// items view's.
-    Inconclusive,
-    /// A focus event whose sender has no window above it, which a sender
-    /// gone before its read has, as in a new window's first burst of focus
-    /// events: the event came and cannot be read, and the event for where
-    /// the focus went may never come, so the outpost reads its focus at
-    /// once. A focus event whose sender's nearest window was not found in
-    /// UIA's transaction timeout is sent as this too, as it was before the
-    /// listener told the two apart.
-    NoWindow,
-    /// A focus event the listener dropped on its own verdict on its
-    /// nearest window, `window`: the window does not use UIA, or did not
-    /// answer the probe in time (`docs/design/focus-pipeline-rework.md`,
-    /// "Who owns each duplicated fact", the verdicts). The outpost judges
-    /// the window with its own verdict. In a window it judges UIA it reads
-    /// its application's focus at once, in the drop's place, which answers
-    /// the wait as a read in that top-level window does; in one it judges
-    /// MSAA its MSAA focus speaks, and the wait goes on to its bound.
-    Verdict {
-        /// The focus's nearest window, which the listener judged.
-        window: isize,
-        /// The listener's verdict on it.
-        verdict: DroppedVerdict,
-    },
-    /// Not a focus event: a selection, a notification, or a menu opening,
-    /// which says nothing of the focus.
-    NotFocus,
+pub struct VerdictDrop {
+    /// The focus's nearest window, which the listener judged.
+    pub window: isize,
+    /// The listener's verdict on it.
+    pub verdict: DroppedVerdict,
 }
 
 /// The listener's verdict on the window a focus was dropped on
-/// ([`DropEvidence::Verdict`]).
+/// ([`VerdictDrop`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DroppedVerdict {
     /// The window does not use UIA.
@@ -376,11 +323,7 @@ pub enum DeliveredFact {
         marker: u64,
         /// The focus as read.
         read: Box<UiaFocusRead>,
-        /// Whether the event read was a focus rather than a menu opening:
-        /// only a focus's read, in the copy's top-level window, answers an
-        /// outpost's wait for a UIA focus after a `WinEvent` focus in a UIA
-        /// window (`docs/design/listener-without-connections.md`, decision
-        /// 11).
+        /// Whether the event read was a focus rather than a menu opening.
         focus: bool,
     },
     /// The UIA focus event `marker` names is not reported: its element had
@@ -391,14 +334,28 @@ pub enum DeliveredFact {
     UiaFocusDropped {
         /// The marker the drop resolves.
         marker: u64,
-        /// What the drop says to an outpost waiting for a UIA focus after a
-        /// `WinEvent` focus in a UIA window.
-        evidence: DropEvidence,
+        /// Whether the event dropped was a focus rather than a menu
+        /// opening, a selection, or a notification.
+        focus: bool,
+        /// For a focus dropped on the listener's verdict on its nearest
+        /// window, that window and the verdict, which the outpost judges
+        /// with its own; `None` for any other drop.
+        on_verdict: Option<VerdictDrop>,
     },
     /// The focus listener that sent the markers still waiting has ended:
     /// none of them will be resolved, so none is waited for any more. Made
     /// by the supervisor when it replaces the listener.
     UiaFocusReadsEnded,
+    /// No UIA focus answered a `WinEvent` focus in `window`, an
+    /// application's oldest such copy, within the listener's bound
+    /// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+    /// fact", the gap's evidence): stamped with the copy's observation, it
+    /// has the outpost read its application's focus when its own verdict
+    /// for `window` is UIA, and do nothing otherwise.
+    FocusMissing {
+        /// The copy's window.
+        window: isize,
+    },
     /// An MSAA focus change: the raw `WinEvent` address.
     MsaaFocus {
         /// The event's window handle.
@@ -539,9 +496,11 @@ impl DeliveredFact {
 
     /// Whether this fact is part of a UIA focus's read: a marker, the read,
     /// a drop, a marked selection or notification, which resolves its
-    /// marker as a read does, or the end of a listener's reads. The supervisor relays
-    /// these in order and never drops one, since an outpost waits on a
-    /// marker until its read or drop arrives.
+    /// marker as a read does, the end of a listener's reads, or the
+    /// listener's word that no UIA focus answered a `WinEvent` focus. The
+    /// supervisor relays these in order and never drops one, since an
+    /// outpost waits on a marker until its read or drop arrives, and
+    /// focus-missing is sent once for its copy.
     #[must_use]
     pub fn is_focus_read(&self) -> bool {
         matches!(
@@ -551,6 +510,7 @@ impl DeliveredFact {
                 | DeliveredFact::UiaFocusDropped { .. }
                 | DeliveredFact::UiaMarked { .. }
                 | DeliveredFact::UiaFocusReadsEnded
+                | DeliveredFact::FocusMissing { .. }
         )
     }
 
@@ -563,13 +523,16 @@ impl DeliveredFact {
     /// notification only from the focus's application, and an application
     /// with no outpost cannot hold the focus, as NVDA drops a background
     /// application's notification. A focus's drop and the end of a
-    /// listener's reads resolve only markers an outpost already holds.
+    /// listener's reads resolve only markers an outpost already holds, and
+    /// focus-missing is sent only for an application whose outpost has its
+    /// hook in.
     #[must_use]
     pub fn may_start_outpost(&self) -> bool {
         match self {
             DeliveredFact::UiaSelection { .. }
             | DeliveredFact::UiaFocusDropped { .. }
-            | DeliveredFact::UiaFocusReadsEnded => false,
+            | DeliveredFact::UiaFocusReadsEnded
+            | DeliveredFact::FocusMissing { .. } => false,
             DeliveredFact::UiaNotification { notification, .. } => {
                 notification.activity_id.as_deref() == Some(verbatim_core::SNAP_RESULTS_ACTIVITY)
             }
@@ -611,6 +574,7 @@ impl DeliveredFact {
             | DeliveredFact::UiaFocusRead { .. }
             | DeliveredFact::UiaFocusDropped { .. }
             | DeliveredFact::UiaFocusReadsEnded
+            | DeliveredFact::FocusMissing { .. }
             | DeliveredFact::UiaMarked { .. } => return None,
             DeliveredFact::UiaNotification {
                 snapshot,
@@ -758,12 +722,6 @@ pub enum SupervisorToOutpost {
         /// none, or another outpost's.
         #[serde(default)]
         focus: Option<HeldFocus>,
-        /// When the focus Core holds was observed, in microseconds on the
-        /// run's shared clock, whoever's it is; 0 when not known. An
-        /// outpost whose focus Core no longer holds stops waiting for a UIA
-        /// focus observed before it.
-        #[serde(default)]
-        observed_at_us: u64,
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch; 0 from an older peer
         /// ([`SupervisorToOutpost::stamp_sent`]).
@@ -1835,7 +1793,8 @@ mod tests {
             DeliveredFact::UiaFocusMarker { marker: 9 },
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
-                evidence: DropEvidence::NoWindow,
+                focus: true,
+                on_verdict: None,
             },
             DeliveredFact::UiaFocusReadsEnded,
         ] {
@@ -1873,11 +1832,9 @@ mod tests {
         };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &deliver).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_back: SupervisorToOutpost = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_back, deliver);
+        let read_back: Option<SupervisorToOutpost> =
+            read_message(&mut buffer.as_slice()).expect("reads");
+        assert_eq!(read_back, Some(deliver));
     }
 
     #[test]
@@ -1996,7 +1953,8 @@ mod tests {
         assert!(
             !DeliveredFact::UiaFocusDropped {
                 marker: 1,
-                evidence: DropEvidence::Focus,
+                focus: true,
+                on_verdict: None,
             }
             .may_start_outpost()
         );

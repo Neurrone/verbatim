@@ -37,7 +37,6 @@ pub(crate) mod acceptance;
 mod alarm;
 mod caret_poll;
 mod focus_path;
-mod gap;
 mod handover;
 mod held;
 mod intake;
@@ -293,8 +292,8 @@ pub(crate) struct Context {
     override_changes: AtomicU64,
     /// When the first of the focus listener's UIA focuses reached this
     /// outpost, its read or its drop as a focus, on the run's clock in
-    /// microseconds, 0 before any: the read after a gap logs whether one
-    /// came before the copy's observation (`uia_focus_before`).
+    /// microseconds, 0 before any: the read for focus-missing logs whether
+    /// one came before the copy's observation (`uia_focus_before`).
     first_uia_focus_us: AtomicU64,
     /// What nudges the event thread, which decides whether the hook is
     /// narrowed ([`narrowing`]); set once the thread runs.
@@ -736,13 +735,7 @@ impl Context {
             && matches!(
                 fact,
                 DeliveredFact::UiaFocusRead { focus: true, .. }
-                    | DeliveredFact::UiaFocusDropped {
-                        evidence: crate::protocol::DropEvidence::Focus
-                            | crate::protocol::DropEvidence::Inconclusive
-                            | crate::protocol::DropEvidence::NoWindow
-                            | crate::protocol::DropEvidence::Verdict { .. },
-                        ..
-                    }
+                    | DeliveredFact::UiaFocusDropped { focus: true, .. }
             )
         {
             self.first_uia_focus_us
@@ -1315,7 +1308,6 @@ impl Outpost {
     /// Handles one command from Core, on the I/O thread. Pings are
     /// answered here, the pong written at once unless a write is in flight;
     /// everything that reads the application is queued for the worker.
-    #[expect(clippy::too_many_lines, reason = "one arm per command")]
     pub fn handle_command(&self, command: &SupervisorToOutpost) {
         let context = &self.context;
         match command {
@@ -1401,15 +1393,8 @@ impl Outpost {
             // outpost's or its focus moved to or from this application:
             // taken in at once, without the worker, which reads it as it
             // judges its next event.
-            SupervisorToOutpost::CoreFocus {
-                judged,
-                focus,
-                observed_at_us,
-                ..
-            } => {
-                context
-                    .held()
-                    .core_focus(*judged, focus.clone(), *observed_at_us);
+            SupervisorToOutpost::CoreFocus { judged, focus, .. } => {
+                context.held().core_focus(*judged, focus.clone());
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,

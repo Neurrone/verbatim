@@ -46,6 +46,18 @@
 //! [`OutpostUnderTest::deliver_win_event`] hands over a stamped one, the
 //! listener's copy of an event mockapp raised.
 //!
+//! The test's stand-in for the listener keeps the listener's gap records
+//! too ([`verbatim_outpost::gap_record`]), as the listener's hook keeps
+//! them beside the outpost's: each `WinEvent` copy the test hands over
+//! ([`OutpostUnderTest::deliver_win_event`]) is one the listener's hook
+//! observed, each marker the test hands over a read the listener has
+//! waiting, and each read or drop the outcome of one, answering the record
+//! as the listener's does; once the time the test moves has passed a
+//! record's bound with no read waiting, the stand-in hands the outpost
+//! focus-missing, and an idle round the test starts
+//! ([`OutpostUnderTest::idle_round`]) reaches the outpost only once every
+//! record opened before it is closed, as the listener answers its round.
+//!
 //! The test stands in for Core's judgement of focuses too (decision D14,
 //! "Where the rules run"): as each focus the outpost reports, or each
 //! focus-now answer with a control, is read from its pipe, Core takes it,
@@ -66,7 +78,10 @@ use verbatim_model::{
     CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowHandle,
 };
-use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, HeldElements, Judged};
+use verbatim_outpost::focus_read::{
+    Arrival, FocusEvent, FocusReader, HeldElements, Judged, gap_answer,
+};
+use verbatim_outpost::gap_record::{Answer, GapRecords, Missing, Observed};
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, HeldFocus, HeldNode, OutpostToSupervisor,
     Query, QueryOutcome, QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
@@ -77,6 +92,7 @@ use verbatim_process::transport::BlockingReader;
 use verbatim_uia::{Cached, ListenerEvent, Live};
 use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
+use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor};
 use windows::core::AgileReference;
 
 /// How much the outpost's pipe to Core holds unread. A test reads the
@@ -327,6 +343,16 @@ pub struct OutpostUnderTest {
     /// The trace of the UIA focus event the listener's reader last read,
     /// which its read is delivered under, as the listener sends it.
     last_read: Cell<Option<TraceId>>,
+    /// mockapp's process, whose outpost has its hook in.
+    pid: Pid,
+    /// The listener's gap records, as its hook keeps them.
+    gaps: RefCell<GapRecords>,
+    /// The markers handed over whose read or drop has not been, the reads
+    /// the listener has waiting.
+    reads_waiting: Cell<u32>,
+    /// The idle rounds started and not yet handed to the outpost, each
+    /// with the count of gap records opened when it started.
+    idle_rounds: RefCell<Vec<(u64, u64)>>,
 }
 
 impl OutpostUnderTest {
@@ -468,6 +494,8 @@ impl OutpostUnderTest {
         }));
         // And the same time.
         reader.set_clock(clock);
+        let mut gaps = GapRecords::default();
+        gaps.hook_installed(Pid(pid));
         Self {
             outpost,
             messages,
@@ -484,6 +512,188 @@ impl OutpostUnderTest {
             failed_reads_taken: Cell::new(0),
             core: RefCell::new(None),
             last_read: Cell::new(None),
+            pid: Pid(pid),
+            gaps: RefCell::new(gaps),
+            reads_waiting: Cell::new(0),
+            idle_rounds: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The time the outpost and the listener's reader read now.
+    fn now(&self) -> Instant {
+        if self.system_time.load(Ordering::Relaxed) {
+            Instant::now()
+        } else {
+            *self.time.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+
+    /// What the listener's gap records make of `fact`, which it sends
+    /// observed at `observed_at_us`: a marker is a read waiting, and a read
+    /// or a drop resolves one, answering mockapp's record as `answer` says,
+    /// or, with `None`, as the listener's would for a read or a drop on
+    /// the listener's verdict, any other drop handed over leaving it open
+    /// (`focus_read::gap_answer`); once no read waits, its bound is armed.
+    fn listener_sends(&self, fact: &DeliveredFact, observed_at_us: u64, answer: Option<Answer>) {
+        let mut gaps = self.gaps.borrow_mut();
+        let mut read_now = None;
+        match fact {
+            DeliveredFact::UiaFocusMarker { .. } => {
+                self.reads_waiting.set(self.reads_waiting.get() + 1);
+                gaps.reads_queued(self.pid);
+            }
+            DeliveredFact::UiaFocusRead { .. }
+            | DeliveredFact::UiaFocusDropped { .. }
+            | DeliveredFact::UiaMarked { .. } => {
+                let answer = answer.unwrap_or_else(|| match fact {
+                    DeliveredFact::UiaFocusRead {
+                        read, focus: true, ..
+                    } => Answer::Answers(top_level(
+                        Some(read.hwnd).filter(|&hwnd| hwnd != 0).or(read.window),
+                    )),
+                    DeliveredFact::UiaFocusDropped {
+                        on_verdict: Some(dropped),
+                        ..
+                    } => Answer::Answers(top_level(Some(dropped.window))),
+                    _ => Answer::LeavesOpen,
+                });
+                read_now = gaps.reported(self.pid, observed_at_us, answer).missing;
+                self.reads_waiting
+                    .set(self.reads_waiting.get().saturating_sub(1));
+                if self.reads_waiting.get() == 0 {
+                    gaps.reads_finished(self.pid);
+                }
+            }
+            _ => return,
+        }
+        drop(gaps);
+        if let Some(missing) = read_now {
+            self.focus_missing(missing);
+        }
+        self.listener_bound();
+    }
+
+    /// Hands the outpost focus-missing for `missing`, stamped with its
+    /// copy's observation.
+    fn focus_missing(&self, missing: Missing) {
+        self.hand_over(
+            DeliveredFact::FocusMissing {
+                window: missing.window,
+            },
+            missing.observed_at_us,
+            None,
+        );
+    }
+
+    /// The listener's watchdog: every gap record whose bound has passed by
+    /// the time the outpost reads, with no read waiting, is handed to the
+    /// outpost as focus-missing, stamped with its copy's observation; then
+    /// every idle round whose records are all closed reaches the outpost.
+    fn listener_bound(&self) {
+        let due = self.gaps.borrow_mut().take_due(self.now());
+        for missing in due {
+            self.focus_missing(missing);
+        }
+        let gaps = self.gaps.borrow();
+        let mut rounds = self.idle_rounds.borrow_mut();
+        let (ready, waiting): (Vec<_>, Vec<_>) = rounds
+            .drain(..)
+            .partition(|&(_, records)| !gaps.open_through(records));
+        *rounds = waiting;
+        drop((gaps, rounds));
+        for (round, _) in ready {
+            self.outpost
+                .handle_command(&SupervisorToOutpost::IdleQuery { round });
+        }
+    }
+
+    /// Starts the idle barrier's round `round`, as verbatim.exe does: the
+    /// listener answers it once every gap record opened before it is
+    /// closed, and the outpost is asked then.
+    pub fn idle_round(&self, round: u64) {
+        let opened = self.gaps.borrow().opened();
+        self.idle_rounds.borrow_mut().push((round, opened));
+        self.listener_bound();
+    }
+
+    /// The listener's hook observed `fact`, a `WinEvent` copy of
+    /// mockapp's observed at `observed_at_us`: a focus opens mockapp's gap
+    /// record, and a focus or a foreground change answers it elsewhere.
+    fn listener_observes(&self, fact: &DeliveredFact, observed_at_us: u64) {
+        let (window, focus) = match fact {
+            DeliveredFact::MsaaFocus { hwnd, .. } => (*hwnd, true),
+            DeliveredFact::Foreground { hwnd } => (*hwnd, false),
+            _ => return,
+        };
+        self.observes(Observed {
+            pid: self.pid,
+            window,
+            top_level: top_level(Some(window)).unwrap_or(0),
+            observed_at_us,
+            focus,
+        });
+    }
+
+    /// The listener's hook observed `event`, as its callback hands it to
+    /// the gap records, with mockapp's reads idle when none waits.
+    fn observes(&self, event: Observed) {
+        let idle = self.reads_waiting.get() == 0;
+        let observation = self.gaps.borrow_mut().observed(event, idle, self.now());
+        if let Some(missing) = observation.missing {
+            self.focus_missing(missing);
+        }
+        self.listener_bound();
+    }
+
+    /// The listener's hook observed a focus `WinEvent` in `window` of
+    /// another application, observed now.
+    pub fn win_event_in_another_application(&self, window: isize) {
+        self.observes(Observed {
+            pid: Pid(std::process::id()),
+            window,
+            top_level: window,
+            observed_at_us: now_us(),
+            focus: true,
+        });
+    }
+
+    /// Hands the outpost what the listener sends for the UIA focus event
+    /// `marker` names when its outcome is `judged`, observed at
+    /// `observed_at_us`, its answer to mockapp's gap record the
+    /// listener's (`focus_read::gap_answer`), placed by the window its
+    /// read found.
+    pub fn listener_outcome(&self, marker: u64, judged: Judged, observed_at_us: u64) {
+        let placed = match &judged {
+            Judged::Read(read) => {
+                top_level(Some(read.hwnd).filter(|&hwnd| hwnd != 0).or(read.window))
+            }
+            Judged::DroppedOnVerdict { window, .. } => top_level(Some(*window)),
+            Judged::Dropped(_) | Judged::Passed(_) => None,
+        };
+        let answer = gap_answer(FocusEvent::Focus, &judged, placed);
+        self.hand_over(
+            judged.into_fact(marker, FocusEvent::Focus),
+            observed_at_us,
+            Some(answer),
+        );
+    }
+
+    /// Hands the outpost `fact`, observed at `observed_at_us`, as the
+    /// supervisor relays the listener's fact, then has the listener's gap
+    /// records take it in, as `answer` says ([`Self::listener_sends`]).
+    fn hand_over(&self, fact: DeliveredFact, observed_at_us: u64, answer: Option<Answer>) {
+        let command = SupervisorToOutpost::DeliverFact {
+            trace_id: self.trace_for(&fact),
+            timing: EventTiming {
+                observed_at_us,
+                ..EventTiming::default()
+            },
+            fact,
+            win_event: None,
+        };
+        self.outpost.handle_command(&command);
+        if let SupervisorToOutpost::DeliverFact { fact, .. } = &command {
+            self.listener_sends(fact, observed_at_us, answer);
         }
     }
 
@@ -503,6 +713,7 @@ impl OutpostUnderTest {
     pub fn pass_time(&self, by: Duration) {
         self.assert_the_time_is_the_tests();
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
+        self.listener_bound();
     }
 
     /// Fails the test once the time is the system's, which the test can no
@@ -656,12 +867,10 @@ impl OutpostUnderTest {
             judged,
             focus.as_ref().map(|focus| (focus.trace_id, focus.alive)),
         );
-        let observed_at_us = focus.as_ref().map_or(0, |focus| focus.observed_at_us);
         self.outpost
             .handle_command(&SupervisorToOutpost::CoreFocus {
                 judged,
                 focus,
-                observed_at_us,
                 sent_at_us: 0,
             });
     }
@@ -704,9 +913,8 @@ impl OutpostUnderTest {
         now - self.failed_reads_taken.replace(now)
     }
 
-    /// Lets the outpost handle everything handed to it, a wait for a UIA
-    /// focus that is due by its clock included, without asserting what it
-    /// said meanwhile.
+    /// Lets the outpost handle everything handed to it, without asserting
+    /// what it said meanwhile.
     pub fn settle(&self) {
         self.outpost.settle();
     }
@@ -724,16 +932,7 @@ impl OutpostUnderTest {
     /// fact for a UIA event its callback received at `observed_at_us` on
     /// the run's shared clock. Returns at once.
     pub fn deliver_stamped(&self, fact: DeliveredFact, observed_at_us: u64) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::DeliverFact {
-                trace_id: self.trace_for(&fact),
-                timing: EventTiming {
-                    observed_at_us,
-                    ..EventTiming::default()
-                },
-                fact,
-                win_event: None,
-            });
+        self.hand_over(fact, observed_at_us, None);
     }
 
     /// The trace `fact` is delivered under: a UIA focus read's is the
@@ -751,13 +950,7 @@ impl OutpostUnderTest {
     /// Hands the outpost `fact`, as the listener would, and returns at
     /// once.
     pub fn deliver(&self, fact: DeliveredFact) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::DeliverFact {
-                trace_id: self.trace_for(&fact),
-                timing: EventTiming::default(),
-                fact,
-                win_event: None,
-            });
+        self.hand_over(fact, 0, None);
     }
 
     /// Hands the outpost the fact the listener forwards for an MSAA
@@ -776,16 +969,19 @@ impl OutpostUnderTest {
         stamp: WinEventStamp,
         observed_at_us: u64,
     ) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::DeliverFact {
-                trace_id: TraceId::mint(),
-                timing: EventTiming {
-                    observed_at_us,
-                    ..EventTiming::default()
-                },
-                fact,
-                win_event: Some(stamp),
-            });
+        let command = SupervisorToOutpost::DeliverFact {
+            trace_id: TraceId::mint(),
+            timing: EventTiming {
+                observed_at_us,
+                ..EventTiming::default()
+            },
+            fact,
+            win_event: Some(stamp),
+        };
+        self.outpost.handle_command(&command);
+        if let SupervisorToOutpost::DeliverFact { fact, .. } = &command {
+            self.listener_observes(fact, observed_at_us);
+        }
     }
 
     /// Tells the outpost, as the supervisor relays it, that the focus
@@ -800,16 +996,7 @@ impl OutpostUnderTest {
     /// run's shared clock with the time it is handed over as the time it
     /// was observed, and returns at once.
     pub fn deliver_observed_now(&self, fact: DeliveredFact) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::DeliverFact {
-                trace_id: self.trace_for(&fact),
-                timing: EventTiming {
-                    observed_at_us: now_us(),
-                    ..EventTiming::default()
-                },
-                fact,
-                win_event: None,
-            });
+        self.hand_over(fact, now_us(), None);
     }
 
     /// Asks the outpost `query`, as Core would, and returns its request id
@@ -872,16 +1059,15 @@ impl OutpostUnderTest {
             .core_focus(None, Some((TraceId::mint(), true)));
     }
 
-    /// Tells the outpost that Core took another application's focus,
-    /// observed at `observed_at_us`, as the supervisor tells the outpost
-    /// whose focus Core held before (`SupervisorToOutpost::CoreFocus`).
-    pub fn core_focus_elsewhere(&self, observed_at_us: u64) {
+    /// Tells the outpost that Core took another application's focus, as
+    /// the supervisor tells the outpost whose focus Core held before
+    /// (`SupervisorToOutpost::CoreFocus`).
+    pub fn core_focus_elsewhere(&self) {
         *self.core.borrow_mut() = None;
         self.outpost
             .handle_command(&SupervisorToOutpost::CoreFocus {
                 judged: None,
                 focus: None,
-                observed_at_us,
                 sent_at_us: 0,
             });
     }
@@ -1109,6 +1295,16 @@ impl OutpostUnderTest {
 /// hook stamps a caret key's press.
 pub fn now_ms() -> u64 {
     verbatim_process::clock::now_us() / 1_000
+}
+
+/// `window`'s top-level window (`GetAncestor` with `GA_ROOT`), `None` for
+/// none.
+fn top_level(window: Option<isize>) -> Option<isize> {
+    let window = window.filter(|&window| window != 0)?;
+    // SAFETY: GetAncestor tolerates any handle, returning null for an
+    // invalid one.
+    let top = unsafe { GetAncestor(HWND(window as *mut _), GA_ROOT) }.0 as isize;
+    (top != 0).then_some(top)
 }
 
 /// Microseconds since the Unix epoch on the run's shared clock, as the

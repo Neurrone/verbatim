@@ -81,6 +81,17 @@
 //! applications whose outposts' hooks are in, and forwards none of their
 //! events from the start.
 //!
+//! The listener's hook still observes every application's focus and
+//! foreground `WinEvent`s after its outpost's hook is in, and keeps, for
+//! each such application, the oldest focus copy no UIA focus has answered
+//! ([`crate::gap_record`], in the reading threads' shared state): its UIA
+//! focus's read or a drop that settles it answers it, as does a later
+//! focus or foreground event elsewhere; unanswered a second after the
+//! copy, once the application's reads have finished, the reading threads'
+//! watchdog sends the outpost focus-missing
+//! ([`DeliveredFact::FocusMissing`]), and the outpost reads its focus when
+//! its own verdict for the copy's window is UIA.
+//!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
 //! element, kind, processing, and activity id; for a `WinEvent`'s fact
@@ -139,8 +150,9 @@ use crate::focus_read::{
     WatchedRead,
 };
 use crate::foreground::{ForegroundWatch, Front, Step};
+use crate::gap_record::{Missing, Observed};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::MOVED_ON_GRACE;
+use crate::outpost::window::{MOVED_ON_GRACE, top_level_of};
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
@@ -578,6 +590,23 @@ impl Outgoing {
         self.queue(pid, fact, (meta.trace, meta.timing), None);
     }
 
+    /// Sends focus-missing for the gap record `missing`, stamped with its
+    /// copy's observation, never replaced.
+    fn focus_missing(&self, missing: Missing) {
+        let timing = EventTiming {
+            observed_at_us: missing.observed_at_us,
+            ..EventTiming::default()
+        };
+        self.queue(
+            missing.pid,
+            DeliveredFact::FocusMissing {
+                window: missing.window,
+            },
+            (TraceId::mint(), timing),
+            None,
+        );
+    }
+
     /// Sends Core the window in front, `front`, with the integrity level of
     /// the process that owns it, read here, a local call; only the newest
     /// such report waits. Sent for every process, ignored ones included,
@@ -871,6 +900,10 @@ impl Reading for UiaFocusReading {
         self.outgoing
             .focus_read(pid, judged.into_fact(meta.marker, meta.kind), meta);
     }
+
+    fn focus_missing(&self, missing: Missing) {
+        self.outgoing.focus_missing(missing);
+    }
 }
 
 impl Listener {
@@ -912,6 +945,9 @@ impl Listener {
             READ_DEADLINE,
             MOVED_ON_GRACE,
         ));
+        for &(pid, _) in hooks_in {
+            readers.hook_installed(pid);
+        }
         let registration = install_desktop_subscriptions(
             &outgoing,
             &readers,
@@ -961,7 +997,7 @@ impl Listener {
                     // Forwarded first, so the event's observation time is
                     // taken before anything else the callback does; its
                     // window's class, read to route it, tells a console.
-                    let console = forward_msaa_event(&outgoing, event);
+                    let console = forward_msaa_event(&outgoing, &foreground_readers, event);
                     if let Some(front) = foreground {
                         let step = watch.borrow_mut().foreground(Front { console, ..front });
                         foreground_step(&outgoing, step);
@@ -1071,6 +1107,7 @@ impl Listener {
             SupervisorToOutpost::HookInstalled { pid, outpost, .. } => {
                 self.outgoing
                     .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
+                self.readers.hook_installed(*pid);
             }
             SupervisorToOutpost::HookRemoved { pid, .. } => {
                 self.outgoing.hook_removed(*pid);
@@ -1222,15 +1259,12 @@ fn queue_for_reading(
         Ok(agile) => readers.push(pid, meta, (agile, fields.role.hwnd, runtime_id, kind, fact)),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
+            // Its drop leaves its application's gap record open
+            // (`focus_read::gap_answer`).
             outgoing.focus_read(
                 pid,
-                DeliveredFact::UiaFocusDropped {
-                    marker: meta.marker,
-                    evidence: crate::focus_read::drop_evidence(
-                        kind,
-                        "its element could not be kept for its read",
-                    ),
-                },
+                Judged::Dropped("its element could not be kept for its read")
+                    .into_fact(meta.marker, kind),
                 meta,
             );
         }
@@ -1349,10 +1383,16 @@ fn install_desktop_subscriptions(
 /// that process's outpost has its own hook in and took it in itself
 /// ([`Outgoing::fact`]). Drops a null window or a pid-zero owner; the raw
 /// object address is forwarded untouched, and the app outpost does the
-/// acquisition. Returns whether the event's window is a console host
-/// window, by the class read to route it; `false` for an event dropped
-/// before that read, whose window is null or has no owner.
-fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
+/// acquisition. A focus or foreground event is also given to the gap
+/// records (`readers`, [`Readers::observed`]), with its window's top-level
+/// window, one local `GetAncestor`. Returns whether the event's window is
+/// a console host window, by the class read to route it; `false` for an
+/// event dropped before that read, whose window is null or has no owner.
+fn forward_msaa_event(
+    outgoing: &Outgoing,
+    readers: &Readers<UiaFocusReading>,
+    event: WinEvent,
+) -> bool {
     // The observation, before the callback's local reads, which the
     // listener's handling stage then holds.
     let observed_at_us = outgoing.now();
@@ -1417,6 +1457,15 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
         Some(WinEventStamp { thread, time }),
         observed_at_us,
     );
+    if matches!(kind, WinEventKind::Focus | WinEventKind::Foreground) {
+        readers.observed(Observed {
+            pid: Pid(pid),
+            window: hwnd,
+            top_level: top_level_of(hwnd),
+            observed_at_us,
+            focus: kind == WinEventKind::Focus,
+        });
+    }
     console
 }
 
@@ -1617,7 +1666,7 @@ mod tests {
     use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
     use super::*;
-    use crate::protocol::{DropEvidence, read_message};
+    use crate::protocol::read_message;
 
     /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
     /// writes that pend finished by a thread of the sender's own, as the
@@ -1729,7 +1778,8 @@ mod tests {
             Pid(5),
             DeliveredFact::UiaFocusDropped {
                 marker: 2,
-                evidence: DropEvidence::Focus,
+                focus: true,
+                on_verdict: None,
             },
             meta(2),
         );
@@ -1747,11 +1797,13 @@ mod tests {
                 DeliveredFact::UiaFocusMarker { marker: 2 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
-                    evidence: DropEvidence::Inconclusive,
+                    focus: true,
+                    on_verdict: None,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,
-                    evidence: DropEvidence::Focus,
+                    focus: true,
+                    on_verdict: None,
                 },
             ]
         );
@@ -2169,7 +2221,8 @@ mod tests {
             Pid(5),
             DeliveredFact::UiaFocusDropped {
                 marker: 1,
-                evidence: DropEvidence::Focus,
+                focus: true,
+                on_verdict: None,
             },
             meta,
         );
