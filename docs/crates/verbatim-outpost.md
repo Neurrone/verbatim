@@ -41,8 +41,8 @@ listener receives before those subscriptions are all installed is dropped
 as NVDA drops events before its global handlers are registered; Verbatim's
 start asks the foreground application's outpost for its focus instead
 (`ShellCommand::FocusNow`), and a `WinEvent` focus whose UIA focus is so
-dropped, in an application whose outpost has its hook in, is read by its
-outpost at the gap record's bound (below). The installation's end is logged
+dropped is read by its outpost at the gap record's bound when the outpost
+judges the copy's window UIA (below). The installation's end is logged
 at info, with the time it took; the shutdown waits for it.
 
 ### The hand-over of an application's MSAA events
