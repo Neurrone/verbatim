@@ -2840,35 +2840,150 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     );
 }
 
+/// A focus in window `facts` of application `source`, observed at `us` and
+/// delivered by `outpost`, with `ancestors` outermost first.
+fn focus_observed(
+    (source, outpost): (Pid, OutpostId),
+    facts: &WindowFacts,
+    (focus, ancestors): (NodeSnapshot, Vec<NodeSnapshot>),
+    us: u64,
+) -> (Input, OutpostId) {
+    (
+        observed_at(focus_in(source, facts.clone(), focus, ancestors), us),
+        outpost,
+    )
+}
+
+/// `second_application_and_verbatim_menu`'s switch to Notepad (b1917eed,
+/// 2026-10-05): Windows raised Notepad's foreground event while the desktop
+/// was still the foreground window, and the desktop's list raised two focus
+/// events before Notepad's window was confirmed in front. Those reach Core
+/// first; Notepad's foreground report, ordered by the confirmation, is not
+/// stale against them, and "Untitled - Notepad" is said.
 #[test]
-fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
-    // Settings: ApplicationFrameHost's frame is reported when it became the
-    // foreground, after SystemSettings' content focus inside the same window
-    // was observed, and that focus arrives later. It is in the window the
-    // newest focus is in, so it is not stale.
-    let facts = foreground_window(40);
-    let frame = Input::Event {
-        observed_at_us: 1_130,
-        trace_id: TraceId::mint(),
-        source: Pid(10),
-        backend: Backend::Uia,
-        window: Some(facts.clone()),
-        event: NormalizedEvent::FocusChanged {
-            node: node(1, Role::Window, Some("Settings"), None, StateSet::new()),
-            foreground: true,
-            ancestors: vec![],
-            ancestors_unknown: false,
-            selected_child: None,
-            text: None,
-        },
-    };
-    let (state, _) = reduce_from(&SrState::new(), &frame, OutpostId(1));
-    let toggle = node(1, Role::CheckBox, Some("Bluetooth"), None, StateSet::new());
-    let (_, effects) = reduce_from(
-        &state,
-        &observed_at(focus_in(Pid(11), facts, toggle, vec![]), 1_040),
-        OutpostId(2),
+fn notepads_foreground_report_after_the_desktops_last_focuses_is_spoken() {
+    let desktop = (Pid(3), OutpostId(3));
+    let desktop_window = foreground_window(10);
+    let list = node(2, Role::List, Some("Desktop"), None, StateSet::new());
+    let item = |id, name| node(id, Role::ListItem, Some(name), None, StateSet::new());
+    let mut state = SrState::new();
+    for (focus, us) in [(item(1, "Recycle Bin"), 900), (item(3, "This PC"), 1_040)] {
+        let (input, outpost) =
+            focus_observed(desktop, &desktop_window, (focus, vec![list.clone()]), us);
+        state = reduce_from(&state, &input, outpost).0;
+    }
+    let (input, outpost) = focus_observed(
+        desktop,
+        &desktop_window,
+        (item(1, "Recycle Bin"), vec![list.clone()]),
+        1_080,
     );
+    let (state, effects) = reduce_from(&state, &input, outpost);
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(3), 1, &[2], Some((OutpostId(3), 2))),
+            vec![vec![UtteranceSegment::label("Recycle Bin")]]
+        )
+    );
+
+    let notepad_window = foreground_window(20);
+    let window_node = node(
+        1,
+        Role::Window,
+        Some("Untitled - Notepad"),
+        None,
+        StateSet::new(),
+    );
+    let foreground = observed_at(
+        foreground_in(Pid(2), notepad_window.clone(), window_node.clone()),
+        1_130,
+    );
+    let (state, effects) = reduce_from(&state, &foreground, OutpostId(2));
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 1, &[], Some((OutpostId(2), 1)))),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Untitled - Notepad"),
+                role(Role::Window)
+            ]),
+        ],
+        "the window is said"
+    );
+    let edit = node(
+        2,
+        Role::EditableText,
+        Some("Text editor"),
+        None,
+        StateSet::new(),
+    );
+    let (input, outpost) = focus_observed(
+        (Pid(2), OutpostId(2)),
+        &notepad_window,
+        (edit, vec![window_node]),
+        1_150,
+    );
+    let (_, effects) = reduce_from(&state, &input, outpost);
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(2), 2, &[1], Some((OutpostId(2), 1))),
+            vec![vec![
+                UtteranceSegment::label("Text editor"),
+                role(Role::EditableText)
+            ]]
+        ),
+        "the edit follows"
+    );
+}
+
+/// A Settings page opened from the desktop: `SystemSettings`' content raises
+/// its focus before `ApplicationFrameHost`'s frame, the same top-level
+/// window, is confirmed in front, and reaches Core after the frame's
+/// foreground report. The content's focus is spoken.
+#[test]
+fn a_settings_pages_content_focus_observed_before_its_frame_came_in_front_is_spoken() {
+    let desktop_item = node(
+        1,
+        Role::ListItem,
+        Some("Recycle Bin"),
+        None,
+        StateSet::new(),
+    );
+    let (input, outpost) = focus_observed(
+        (Pid(3), OutpostId(3)),
+        &foreground_window(10),
+        (desktop_item, vec![]),
+        900,
+    );
+    let (state, _) = reduce_from(&SrState::new(), &input, outpost);
+    let facts = foreground_window(40);
+    let frame = observed_at(
+        foreground_in(
+            Pid(10),
+            facts.clone(),
+            node(1, Role::Window, Some("Settings"), None, StateSet::new()),
+        ),
+        1_130,
+    );
+    let (state, effects) = reduce_from(&state, &frame, OutpostId(1));
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 1, &[], Some((OutpostId(1), 1)))),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("Settings"),
+                role(Role::Window)
+            ]),
+        ],
+        "the frame is said"
+    );
+    let toggle = node(1, Role::CheckBox, Some("Bluetooth"), None, StateSet::new());
+    let (input, outpost) = focus_observed((Pid(11), OutpostId(2)), &facts, (toggle, vec![]), 1_040);
+    let (_, effects) = reduce_from(&state, &input, outpost);
     assert_eq!(
         heard(&effects),
         focus_heard(
