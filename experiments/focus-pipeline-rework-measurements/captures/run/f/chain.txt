@@ -1,0 +1,16 @@
+drop-down window 1049996 (ComboLBox '')
+  owner 0 ( ''); GetParent 65548 (#32769 ''); GA_PARENT 65548 (#32769 ''); GA_ROOTOWNER 65548 (#32769 ''); desktop 65548 (#32769 '')
+  MSAA accParent chain from OBJID_CLIENT:
+    0: role=list name='Letters' window 1049996 (ComboLBox '')
+    1: role=window name='Letters' window 1049996 (ComboLBox '')
+    2: role=combo box name='Letters' window 657406 (WindowsForms10.COMBOBOX.app.0.7287dc_r8_ad1 '')
+    3: role=window name='Letters' window 657406 (WindowsForms10.COMBOBOX.app.0.7287dc_r8_ad1 '')
+    4: role=client name='Rework ComboBox' window 984748 (WindowsForms10.Window.8.app.0.7287dc_r8_ad1 'Rework ComboBox')
+    5: role=window name='Rework ComboBox' window 984748 (WindowsForms10.Window.8.app.0.7287dc_r8_ad1 'Rework ComboBox')
+    6: role=client name='Desktop 1' window 65548 (#32769 '')
+    7: role=window name='Desktop 1' window 65548 (#32769 '')
+    end of accParent chain
+  UIA raw-view parent chain:
+    0: ControlType.Pane name='' class=ComboLBox window 1049996 (1049996 (ComboLBox ''))
+    1: ControlType.Pane name='' class=#32769 window 65548 (65548 (#32769 ''))
+    end of raw-view chain

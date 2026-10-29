@@ -1,0 +1,285 @@
+The virtual desktop's name
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), in session 1, with NVDA alpha-58022,732d1ce2 (the pin) running and recorded through cargo xtask nvda capture's `--wait-file` step (eSpeak NG, default symbol and verbosity levels), since the capture refuses keys once its window has left the front, which a desktop switch and Task View do. keys.ps1 (this folder) pressed the keys with SendInput. winevent-hook.ps1 (this folder), an out-of-context WinEvent hook on every process, recorded EVENT_OBJECT_NAMECHANGE (0x800C) for the window GetDesktopWindow() (65548, class #32769), with the raising thread's process, the window's InternalGetWindowText and, from the second run on, its client object's MSAA accName; a second instance recorded every EVENT_SYSTEM_FOREGROUND (0x0003). Times are microseconds since the Unix epoch. The machine had two desktops, both unnamed, at the start.
+
+What it shows. Every desktop switch (Windows+Control+D, Windows+Control+Left and Right), the rename in Task View, and each closing by Windows+Control+F4 raises exactly one name change on the desktop window, always from thread 1152 of csrss.exe (process 980, session 1; Win32_Thread names the thread's process, since the hook cannot open the thread), 25 to 140 ms after the switch's foreground event. The desktop window's text, InternalGetWindowText, is empty every time; the virtual desktop's name is the desktop window's client object's MSAA accName ("Desktop 1", "Desktop 2", "Rework Desk"), which is what NVDA says ("Desktop 3", "Desktop 2", "Rework Desk"), once per switch, and nothing else for an empty desktop. The rename raised the event at the Enter that committed it, and NVDA said "Rework Desk" before the list item's "Rework Desk 4 of 4". A process-scoped hook would therefore be scoped to csrss, and the name must be read through MSAA, not the window text. Every Windows+Control+Left or Right also raises a foreground change, for explorer's "Virtual desktop hotkey switching preview" window (class VirtualDesktopHotkeySwitcher), and Windows+Control+D a second one for Program Manager; Windows+Control+F4 raises none. With a window shown on all desktops in front (Notepad 3541188, pinned with Task View's "Show this window on all desktops"), a switch raises the same foreground change for the switching preview and none for Notepad, which is still the foreground window afterwards (GetForegroundWindow), and NVDA says only the desktop's name, not Notepad.
+
+Two slips during the run, both undone: on the new, empty Desktop 3, Task View's first Tab went from the desktop list to its "New desktop" button, so F2 did nothing, the typed text went nowhere, and Enter added and switched to a fourth desktop; the rename was then done on that fourth desktop (F2 on its list item). Cleanup closed the fourth and the third desktops with Windows+Control+F4 and returned to Desktop 1; the registry then listed the two original desktops, unnamed, with Desktop 1 current.
+
+Windows+Control+D, Left, Right, then Task View (capture started 1793273123930211):
+
+> wait for ...\run\g\end1
+  +550 ms  cancel
+  +752 ms  [Normal] Desktop 3
+  +754 ms  [Normal] Desktop  list
+  +757 ms  [Normal] Recycle Bin  1 of 13
+  +4732 ms  cancel
+  +5163 ms  [Normal] Desktop 2
+  +8746 ms  cancel
+  +9108 ms  [Normal] Desktop 3
+  +12752 ms  cancel
+  +12906 ms  [Normal] Task View  window
+  +12912 ms  [Normal] Desktops  list
+  +12918 ms  [Normal] Desktop 1  not selected  1 of 3
+  +14264 ms  cancel
+  +14282 ms  [Normal] New desktop  button
+  +14889 ms  cancel
+  +17449 ms  [Normal] unknown
+  +17716 ms  cancel
+  +17725 ms  [Normal] Widgets 25 degrees C Mostly cloudy  toggle button  not pressed
+
+The rename on the fourth desktop: Windows+Tab, Right Arrow three times, F2 (capture started 1793273199549237):
+
+> wait for ...\run\g\end2
+  +2300 ms  cancel
+  +2449 ms  [Normal] Task View  window
+  +2457 ms  [Normal] Desktops  list
+  +2460 ms  [Normal] Desktop 1  not selected  1 of 4
+  +3895 ms  cancel
+  +3908 ms  [Normal] Desktop 2  not selected  2 of 4
+  +4404 ms  cancel
+  +4421 ms  [Normal] Desktop 3  not selected  3 of 4
+  +4925 ms  cancel
+  +4940 ms  [Normal] Desktop 4  4 of 4
+  +5646 ms  cancel
+  +5680 ms  [Normal] edit  selected Desktop 4
+
+The name typed, Enter, Escape (capture started 1793273217954826):
+
+> wait for ...\run\g\end3
+  +2906 ms  cancel
+  +2935 ms  [Normal] R
+  +2972 ms  [Normal] R   unselected
+  +2972 ms  [Normal] e
+  +3032 ms  [Normal] w
+  +3036 ms  [Normal] o
+  +3040 ms  [Normal] r
+  +3044 ms  [Normal] k
+  +3049 ms  [Normal] space
+  +3052 ms  [Normal] D
+  +3070 ms  [Normal] e
+  +3074 ms  [Normal] s
+  +3085 ms  [Normal] k
+  +3465 ms  cancel
+  +3515 ms  [Normal] Rework Desk
+  +3530 ms  [Normal] Rework Desk  4 of 4
+  +5086 ms  cancel
+  +5106 ms  [Normal] unknown
+  +5431 ms  cancel
+  +5441 ms  [Normal] Start  toggle button  not pressed
+
+Back to Desktop 1 (three Windows+Control+Left) and Task View (capture started 1793273265355472):
+
+> wait for ...\run\g\end4
+  +2312 ms  cancel
+  +2627 ms  [Normal] Desktop 3
+  +5413 ms  cancel
+  +5728 ms  [Normal] Desktop 2
+  +8422 ms  cancel
+  +8768 ms  [Normal] Desktop 1
+  +11430 ms  cancel
+  +11622 ms  [Normal] Task View  window
+  +11626 ms  [Normal] Running applications  list
+  +11632 ms  [Normal] Untitled - Notepad  row 1  column 1  1 of 6
+
+Notepad pinned through the thumbnail's context menu (capture started 1793273292195580):
+
+> wait for ...\run\g\end5
+  +2308 ms  cancel
+  +2375 ms  [Normal] Popup  window
+  +2375 ms  cancel
+  +2380 ms  [Normal] Snap left  not checked  1 of 6
+  +3602 ms  cancel
+  +3612 ms  [Normal] Snap right  not checked  2 of 6
+  +4017 ms  cancel
+  +4032 ms  [Normal] Move to  collapsed  3 of 6
+  +4431 ms  cancel
+  +4442 ms  [Normal] Show this window on all desktops  not checked  4 of 6
+  +4868 ms  cancel
+  +4896 ms  [Normal] Running applications  list
+  +4904 ms  [Normal] Untitled - Notepad  1 of 6
+
+Escape and three Windows+Control+Right to the fourth desktop; Escape left the taskbar in front, not Notepad (capture started 1793273309002303):
+
+> wait for ...\run\g\end6
+  +2344 ms  cancel
+  +2366 ms  [Normal] unknown
+  +2786 ms  cancel
+  +2794 ms  [Normal] Start  toggle button  not pressed
+  +4940 ms  cancel
+  +5249 ms  [Normal] Desktop 2
+  +7948 ms  cancel
+  +8279 ms  [Normal] Desktop 3
+  +10972 ms  cancel
+  +11319 ms  [Normal] Rework Desk
+
+On the fourth desktop IVirtualDesktopManager.IsWindowOnCurrentVirtualDesktop was true for Notepad's window 3541188 alone, the pinned one. Alt+Tab brought it forward (1793273358404494; GetForegroundWindow 3541188 'Untitled - Notepad'). Then two Windows+Control+Left with it in front (capture started 1793273368438196):
+
+> wait for ...\run\g\end7
+  +2358 ms  cancel
+  +2689 ms  [Normal] Desktop 3
+  +5454 ms  cancel
+  +5756 ms  [Normal] Desktop 2
+
+Cleanup: two Windows+Control+Right (capture started 1793273395870906: "Desktop 3", "Rework Desk"), Windows+Control+F4 (capture started 1793273414383517: "Desktop 3"), Windows+Control+F4 (capture started 1793273428734641: "Desktop 2"), Windows+Control+Left at 1793273444554358. Desktops afterwards:
+desktop 1 {7c8ba865-add8-4d1e-aecb-801f0814b084} name='' (current)
+desktop 2 {2148a64f-d82e-48e0-b9bc-583013297847} name=''
+
+The key logs, hook logs and foreground logs, in order, follow.
+
+keys1.log:
+1793273124569684 key win+ctrl+d (sent 6 inputs)
+1793273128718259 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273128746352 key win+ctrl+left (sent 6 inputs)
+1793273132756944 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273132760966 key win+ctrl+right (sent 6 inputs)
+1793273136763768 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273136765831 key win+tab (sent 4 inputs)
+1793273138277538 key tab (sent 2 inputs)
+1793273138898284 focus: ControlType.Button name='New desktop' class=Button window 0 process 5748
+1793273138902318 key f2 (sent 2 inputs)
+1793273139911223 focus: ControlType.Button name='New desktop' class=Button window 0 process 5748
+1793273139920352 type Rework
+1793273140229852 key enter (sent 2 inputs)
+1793273141447731 focus: ControlType.Button name='New desktop' class=Button window 0 process 5748
+1793273141449742 key escape (sent 2 inputs)
+1793273144471673 focus: ControlType.Button name='Widgets 25øC Mostly cloudy' class=ToggleButton window 0 process 5748
+1793273144474182 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\g\end1
+
+keys2.log:
+1793273201894264 key win+tab (sent 4 inputs)
+1793273203476196 focus: ControlType.ListItem name='Desktop 1' class=ListViewItem window 0 process 5748
+1793273203486264 key right (sent 2 inputs)
+1793273203993948 key right (sent 2 inputs)
+1793273204525915 key right (sent 2 inputs)
+1793273205234204 focus: ControlType.ListItem name='Desktop 4' class=ListViewItem window 0 process 5748
+1793273205236223 key f2 (sent 2 inputs)
+1793273206241891 focus: ControlType.Edit name='' class=TextBox window 0 process 5748
+
+keys3.log:
+1793273220992432 type Rework Desk
+1793273221536898 key enter (sent 2 inputs)
+1793273223143897 focus: ControlType.ListItem name='Rework Desk' class=ListViewItem window 0 process 5748
+1793273223159754 key escape (sent 2 inputs)
+1793273225687918 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+
+keys4.log:
+1793273267712315 key win+ctrl+left (sent 6 inputs)
+1793273270800082 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273270809648 key win+ctrl+left (sent 6 inputs)
+1793273273813652 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273273817672 key win+ctrl+left (sent 6 inputs)
+1793273276823892 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273276827912 key win+tab (sent 4 inputs)
+1793273278341530 focus: ControlType.ListItem name='Untitled - Notepad' class=ListViewItem window 0 process 5748
+
+keys5.log:
+1793273294544025 key apps (sent 2 inputs)
+1793273295824135 focus: ControlType.MenuItem name='Snap left' class=ToggleMenuFlyoutItem window 0 process 5748
+1793273295833924 seek: focus 'Snap left'
+1793273296247961 seek: focus 'Snap right'
+1793273296662402 seek: focus 'Move to'
+1793273297075809 seek: focus 'Show this window on all desktops'
+1793273297086377 key enter on 'Show this window on all desktops'
+1793273298619438 focus: ControlType.ListItem name='Untitled - Notepad' class=ListViewItem window 0 process 5748
+
+keys6.log:
+1793273311390214 key escape (sent 2 inputs)
+1793273313972386 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273313980441 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\g\pinned-front
+1793273313984503 key win+ctrl+right (sent 6 inputs)
+1793273316987438 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273316992485 key win+ctrl+right (sent 6 inputs)
+1793273320012002 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273320082455 key win+ctrl+right (sent 6 inputs)
+1793273323099997 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+
+keys7.log:
+1793273370816457 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\g\pinned-switch
+1793273370842107 key win+ctrl+left (sent 6 inputs)
+1793273373924188 focus: ControlType.Document name='Text editor' class=RichEditD2DPT window 1115618 process 13216
+1793273373936274 key win+ctrl+left (sent 6 inputs)
+1793273376948015 focus: ControlType.Document name='Text editor' class=RichEditD2DPT window 1115618 process 13216
+foreground: 3541188 'Untitled - Notepad' class=Notepad process=Notepad (13216)
+
+keys8.log:
+1793273398342304 key win+ctrl+right (sent 6 inputs)
+1793273401378989 key win+ctrl+right (sent 6 inputs)
+desktop 1 {7c8ba865-add8-4d1e-aecb-801f0814b084} name=''
+desktop 2 {2148a64f-d82e-48e0-b9bc-583013297847} name=''
+desktop 3 {9c667993-adfd-421c-94e5-f235496370c2} name=''
+desktop 4 {9d642a00-7a7f-4e7d-a86b-0e45550e3242} name='Rework Desk' (current)
+
+keys9.log:
+1793273416788702 key win+ctrl+f4 (sent 6 inputs)
+desktop 1 {7c8ba865-add8-4d1e-aecb-801f0814b084} name=''
+desktop 2 {2148a64f-d82e-48e0-b9bc-583013297847} name=''
+desktop 3 {9c667993-adfd-421c-94e5-f235496370c2} name='' (current)
+
+keys10.log:
+1793273431128282 key win+ctrl+f4 (sent 6 inputs)
+desktop 1 {7c8ba865-add8-4d1e-aecb-801f0814b084} name=''
+desktop 2 {2148a64f-d82e-48e0-b9bc-583013297847} name='' (current)
+
+name.log:
+1793273119553476 hook 73008549 events 0x800C-0x800C process 0 desktop window 65548
+1793273124599372 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30729203
+1793273128890292 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30733500
+1793273132832071 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30737437
+1793273189597789 end
+
+name2.log:
+1793273196812057 hook 28574643 events 0x800C-0x800C process 0 desktop window 65548
+1793273221545115 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30826156
+1793273236849910 end
+
+name3.log:
+1793273261696050 hook 13042185 events 0x800C-0x800C process 0 desktop window 65548
+1793273267742329 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30872343 client accName='Desktop 3'
+1793273270834192 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30875437 client accName='Desktop 2'
+1793273273847897 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30878453 client accName='Desktop 1'
+1793273314010159 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30918625 client accName='Desktop 2'
+1793273317016171 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30921625 client accName='Desktop 3'
+1793273320059830 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30924656 client accName='Rework Desk'
+1793273370870146 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30975484 client accName='Desktop 3'
+1793273373957880 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30978562 client accName='Desktop 2'
+1793273398374198 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31002984 client accName='Desktop 3'
+1793273401409847 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31006015 client accName='Rework Desk'
+1793273416786193 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31021390 client accName='Desktop 3'
+1793273431124760 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31035734 client accName='Desktop 2'
+1793273444588442 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31049203 client accName='Desktop 1'
+1793273501704233 end
+
+foreground.log:
+1793273119708064 hook 19924479 events 0x0003-0x0003 process 0 desktop window 65548
+1793273124571700 event=0x0003 hwnd=852044 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30729171
+1793273124597362 event=0x0003 hwnd=65798 class=Progman text='Program Manager' obj=0 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=30729203
+1793273128748108 event=0x0003 hwnd=1312428 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30733359
+1793273132760965 event=0x0003 hwnd=983116 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30737375
+1793273136823978 event=0x0003 hwnd=1048652 class=XamlExplorerHostIslandWindow text='Task View' obj=0 child=0 raised by explorer (5748) thread 7792 window process 5748 desktop=False tick=30741421
+1793273141664113 event=0x0003 hwnd=65762 class=Shell_TrayWnd text='' obj=0 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=30746265
+1793273189741333 end
+
+foreground3.log:
+1793273261698062 hook 25101791 events 0x0003-0x0003 process 0 desktop window 65548
+1793273267712315 event=0x0003 hwnd=853450 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30872312
+1793273270814187 event=0x0003 hwnd=7603560 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30875421
+1793273273820707 event=0x0003 hwnd=984522 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30878421
+1793273276900424 event=0x0003 hwnd=2229822 class=XamlExplorerHostIslandWindow text='Task View' obj=0 child=0 raised by explorer (5748) thread 7792 window process 5748 desktop=False tick=30881515
+1793273311768608 event=0x0003 hwnd=65762 class=Shell_TrayWnd text='' obj=0 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=30916375
+1793273313986512 event=0x0003 hwnd=1115594 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30918593
+1793273316994509 event=0x0003 hwnd=4196302 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30921593
+1793273320025856 event=0x0003 hwnd=1246666 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30924625
+1793273358407511 event=0x0003 hwnd=65912 class=ForegroundStaging text='' obj=0 child=0 raised by explorer (5748) thread 7792 window process 5748 desktop=False tick=30963015
+1793273358414583 event=0x0003 hwnd=3541188 class=Notepad text='Untitled - Notepad' obj=0 child=0 raised by Notepad (13216) thread 14636 window process 13216 desktop=False tick=30963015
+1793273370842106 event=0x0003 hwnd=3867764 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30975453
+1793273373938023 event=0x0003 hwnd=1574550 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30978546
+1793273398341795 event=0x0003 hwnd=1181024 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=31002953
+1793273401380998 event=0x0003 hwnd=1050514 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=31005984
+1793273444552346 event=0x0003 hwnd=1181586 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=31049156
+1793273458184528 event=0x0003 hwnd=1836384 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (13384) thread 8552 window process 4312 desktop=False tick=31062796
+1793273458188557 event=0x0003 hwnd=1902252 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (3352) thread 7824 window process 9056 desktop=False tick=31062796
+1793273458190587 event=0x0003 hwnd=1902230 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (13772) thread 6280 window process 13440 desktop=False tick=31062796
+1793273467644309 event=0x0003 hwnd=4719056 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (7492) thread 15444 window process 13392 desktop=False tick=31072250
+1793273467646058 event=0x0003 hwnd=4392052 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (12452) thread 11388 window process 13172 desktop=False tick=31072250
+1793273501767880 end

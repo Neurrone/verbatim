@@ -1,0 +1,14 @@
+1793272180503311 start C:/Users/Dickson/Desktop/projects/verbatim/target/debug/mockapp.exe --fixture C:/Users/Dickson/Desktop/projects/verbatim/crates/mockapp/tests/fixtures/tree.json --backend uia --title Rework UIA Hung --show
+1793272180540277 out ready
+1793272191580280 sleep 2500
+1793272194080640 in focus btn_ok
+1793272194082315 out applied
+1793272194087690 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\c\h1
+1793272203514376 sleep 1000
+1793272204514871 in stall 30000
+1793272204515050 out stall started
+1793272204515107 sleep 5000
+1793272209516188 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\c\h2
+1793272234515327 out stall ended 1793272234515233
+1793272309740483 in quit
+1793272309761377 exit 0

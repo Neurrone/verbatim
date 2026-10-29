@@ -1,0 +1,5 @@
+1793273119553476 hook 73008549 events 0x800C-0x800C process 0 desktop window 65548
+1793273124599372 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30729203
+1793273128890292 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30733500
+1793273132832071 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30737437
+1793273189597789 end

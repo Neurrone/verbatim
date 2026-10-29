@@ -1,0 +1,42 @@
+A gone UIA element's focus
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture. Mockapp ran from driver.py: `mockapp --fixture crates/mockapp/tests/fixtures/tree.json --backend uia --title "Rework UIA Gone" --show`, brought to the front by the capture's `--front`, the focus first on `btn_ok` by `focus btn_ok`. Driver times are microseconds since the Unix epoch.
+
+What it shows. When the editable text node `edit1` raises its focus and the window thread stalls at once for 2 seconds, killing the node 100 ms into the stall (`stall 2000 100 disconnect edit1`), NVDA says nothing for that focus: no "Notes edit", no other object in its place, and the previous focus is not said again; in one of the two runs it queued a cancel at the stall's end and nothing else. The same focus without the stall says "Notes edit Hello world". So NVDA's object for a gone UIA element is none: the event is dropped. The first run, below, began its commands about 18 ms after the capture command started, possibly before the add-on's client connected, so the second run, with a 1.5 second delay first, is the one to take; both agree.
+
+Baseline, no stall (capture started 1793272128012701):
+
+> wait for ...\run\b\g3
+  +1447 ms  [Normal] Group One  grouping
+  +1451 ms  [Normal] OK  button  Applies the changes and closes the dialog  Alt plus  O
+  +3449 ms  [Normal] Notes  edit  Hello world
+1793272129494466 in focus btn_ok
+1793272129495677 out applied
+1793272131496351 in focus edit1
+1793272131496952 out applied
+
+Gone, run 2 (capture started 1793272144885004; quiet period 10 s):
+
+> wait for ...\run\b\g4
+  +1452 ms  [Normal] Group One  grouping
+  +1456 ms  [Normal] OK  button  Applies the changes and closes the dialog  Alt plus  O
+(nothing more)
+1793272146365106 in focus btn_ok
+1793272146366220 out applied
+1793272148371697 in focus edit1
+1793272148372327 out applied
+1793272148372444 in stall 2000 100 disconnect edit1
+1793272148372594 out stall started
+1793272148472963 out applied
+1793272150372970 out stall ended 1793272150372899
+
+Gone, run 1 (another mockapp instance, "Rework UIA Parent", focus already on btn_ok; capture started 1793272060515341):
+
+> wait for ...\run\a\g2
+  +1986 ms  cancel
+1793272060533184 in focus edit1
+1793272060533685 out applied
+1793272060535134 in stall 2000 100 disconnect edit1
+1793272060535272 out stall started
+1793272060635876 out applied
+1793272062535737 out stall ended 1793272062535497

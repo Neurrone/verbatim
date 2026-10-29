@@ -1,0 +1,15 @@
+1793273742050755 hook 27919729 events 0x8005-0x8005 process 0 desktop window 65548
+1793273745002974 event=0x8005 hwnd=1115800 class=CabinetWClass text='File Explorer' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349609
+1793273745151167 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745155186 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=10 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745160957 event=0x8005 hwnd=1574490 class=ShellTabWindowClass text='ReworkSearch' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745164974 event=0x8005 hwnd=919030 class=SHELLDLL_DefView text='ShellView' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745177304 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745192873 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=11 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745349549 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=12 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349953
+1793273749742242 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31354343
+1793273749752026 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=16 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31354343
+1793273749754032 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=17 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31354343
+1793273753860621 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=18 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31358468
+1793273755935435 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=19 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31360531
+1793273787099773 end

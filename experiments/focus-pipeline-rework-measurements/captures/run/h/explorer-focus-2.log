@@ -1,0 +1,4 @@
+1793273694742039 hook 12518603 events 0x8005-0x8005 process 8076 desktop window 65548
+1793273699554377 event=0x8005 hwnd=1181104 class=InputSiteWindowClass text='' obj=17 child=0 raised by explorer (8076) thread 15500 window process 8076 desktop=False tick=31304156
+1793273703611773 event=0x8005 hwnd=1181104 class=InputSiteWindowClass text='' obj=18 child=0 raised by explorer (8076) thread 15500 window process 8076 desktop=False tick=31308218
+1793273719797295 end

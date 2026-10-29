@@ -1,0 +1,64 @@
+A combo box's drop-down
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture with a 2 second quiet period. The window is forms-list.ps1 (this folder) with `-Kind combobox`: a Windows Forms ComboBox in DropDownList style named "Letters", holding Alpha, Beta and Gamma with Alpha selected, in a form titled "Rework ComboBox", in the form of the text_box_password scenario's script. dropdown-chain.ps1 (this folder) read the drop-down while it was open after Alt+Down: the process's visible ComboLBox window, its window relations, its MSAA accParent chain from its client object, and its UIA raw-view parent chain (System.Windows.Automation's RawViewWalker, the .NET Framework client over UI Automation's core).
+
+What it shows. The drop-down list is a top-level ComboLBox window of the form's process with no owner, its parent the desktop window (#32769), and the keyboard focus stays in the combo box while it is open. Its MSAA accParent chain reaches the desktop through the combo box and the combo box's top-level window: list "Letters", its window, combo box "Letters", its window, the form's client and window "Rework ComboBox", then the desktop's client and window, named "Desktop 1". Its UIA raw-view parent is the desktop root directly, with no combo box or form between, and UIA gives the pane no name. So the MSAA chain, which NVDA follows for this window, meets the combo box's chain at the combo box, while the raw view does not confirm that parent. NVDA's speech for Alt+Down is "expanded" and nothing else, with no cancel after the key's own; Down Arrow in the open list then says "Letters list" and "Beta". Alt+Up said nothing after the key's cancel, and a second Alt+Down and Escape said nothing.
+
+The drop-down, read while open (run/f/chain.txt):
+
+visible windows of the form's process and the GUI focus at that time:
+1049996 class=ComboLBox text=''
+7079272 class=SysShadow text=''
+984748 class=WindowsForms10.Window.8.app.0.7287dc_r8_ad1 text='Rework ComboBox'
+focus 657406 class=WindowsForms10.COMBOBOX.app.0.7287dc_r8_ad1; active 984748 class=WindowsForms10.Window.8.app.0.7287dc_r8_ad1; menuOwner 0 flags=0
+drop-down window 1049996 (ComboLBox '')
+  owner 0 ( ''); GetParent 65548 (#32769 ''); GA_PARENT 65548 (#32769 ''); GA_ROOTOWNER 65548 (#32769 ''); desktop 65548 (#32769 '')
+  MSAA accParent chain from OBJID_CLIENT:
+    0: role=list name='Letters' window 1049996 (ComboLBox '')
+    1: role=window name='Letters' window 1049996 (ComboLBox '')
+    2: role=combo box name='Letters' window 657406 (WindowsForms10.COMBOBOX.app.0.7287dc_r8_ad1 '')
+    3: role=window name='Letters' window 657406 (WindowsForms10.COMBOBOX.app.0.7287dc_r8_ad1 '')
+    4: role=client name='Rework ComboBox' window 984748 (WindowsForms10.Window.8.app.0.7287dc_r8_ad1 'Rework ComboBox')
+    5: role=window name='Rework ComboBox' window 984748 (WindowsForms10.Window.8.app.0.7287dc_r8_ad1 'Rework ComboBox')
+    6: role=client name='Desktop 1' window 65548 (#32769 '')
+    7: role=window name='Desktop 1' window 65548 (#32769 '')
+    end of accParent chain
+  UIA raw-view parent chain:
+    0: ControlType.Pane name='' class=ComboLBox window 1049996 (1049996 (ComboLBox ''))
+    1: ControlType.Pane name='' class=#32769 window 65548 (65548 (#32769 ''))
+    end of raw-view chain
+
+NVDA, first form (the second key sequence's --front came while the drop-down was open):
+
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ...\forms-list.ps1 -Kind combobox -Title Rework ComboBox -Ready ...\run\f\cb-ready
+  +385 ms  cancel
+  +387 ms  [Normal] Rework Combo Box
+  +423 ms  [Normal] Letters  combo box  Alpha  collapsed
+> wait for ...\run\f\cb-ready
+> front * "Rework ComboBox"
+> alt+downarrow
+  +12 ms  cancel
+  +207 ms  [Normal] expanded
+
+NVDA, second form:
+
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ...\forms-list.ps1 -Kind combobox -Title Rework ComboBox -Ready ...\run\f\cb-ready
+  +400 ms  cancel
+  +402 ms  [Normal] Rework Combo Box
+  +440 ms  [Normal] Letters  combo box  Alpha  collapsed
+> wait for ...\run\f\cb-ready
+> front * "Rework ComboBox"
+> alt+downarrow
+  +3 ms  cancel
+  +194 ms  [Normal] expanded
+> downarrow
+  +5 ms  cancel
+  +24 ms  [Normal] Letters  list
+  +26 ms  [Normal] Beta
+> alt+uparrow
+  +12 ms  cancel
+> alt+downarrow
+> escape
+> alt+f4
+  +49 ms  [Normal] Untitled - Notepad
+  +68 ms  [Normal] Text editor  document  blank

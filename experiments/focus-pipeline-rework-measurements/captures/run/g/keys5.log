@@ -1,0 +1,8 @@
+1793273294544025 key apps (sent 2 inputs)
+1793273295824135 focus: ControlType.MenuItem name='Snap left' class=ToggleMenuFlyoutItem window 0 process 5748
+1793273295833924 seek: focus 'Snap left'
+1793273296247961 seek: focus 'Snap right'
+1793273296662402 seek: focus 'Move to'
+1793273297075809 seek: focus 'Show this window on all desktops'
+1793273297086377 key enter on 'Show this window on all desktops'
+1793273298619438 focus: ControlType.ListItem name='Untitled - Notepad' class=ListViewItem window 0 process 5748

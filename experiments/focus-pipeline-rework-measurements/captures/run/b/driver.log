@@ -1,0 +1,29 @@
+1793272101660444 start C:/Users/Dickson/Desktop/projects/verbatim/target/debug/mockapp.exe --fixture C:/Users/Dickson/Desktop/projects/verbatim/crates/mockapp/tests/fixtures/tree.json --backend uia --title Rework UIA Gone --show
+1793272101703513 out ready
+1793272103778644 sleep 2500
+1793272106278924 in focus btn_ok
+1793272106280002 out applied
+1793272106281799 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\b\g1
+1793272112506134 in focus edit1
+1793272112506662 out applied
+1793272112507132 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\b\g2
+1793272127994125 sleep 1500
+1793272129494466 in focus btn_ok
+1793272129495677 out applied
+1793272129495766 sleep 2000
+1793272131496351 in focus edit1
+1793272131496952 out applied
+1793272131498219 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\b\g3
+1793272144864650 sleep 1500
+1793272146365106 in focus btn_ok
+1793272146366220 out applied
+1793272146371111 sleep 2000
+1793272148371697 in focus edit1
+1793272148372327 out applied
+1793272148372444 in stall 2000 100 disconnect edit1
+1793272148372594 out stall started
+1793272148373343 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\b\g4
+1793272148472963 out applied
+1793272150372970 out stall ended 1793272150372899
+1793272176117789 in quit
+1793272176144727 exit 0

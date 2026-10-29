@@ -1,0 +1,6 @@
+1793273370816457 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\g\pinned-switch
+1793273370842107 key win+ctrl+left (sent 6 inputs)
+1793273373924188 focus: ControlType.Document name='Text editor' class=RichEditD2DPT window 1115618 process 13216
+1793273373936274 key win+ctrl+left (sent 6 inputs)
+1793273376948015 focus: ControlType.Document name='Text editor' class=RichEditD2DPT window 1115618 process 13216
+foreground: 3541188 'Untitled - Notepad' class=Notepad process=Notepad (13216)

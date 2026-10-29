@@ -1,0 +1,5 @@
+1793273220992432 type Rework Desk
+1793273221536898 key enter (sent 2 inputs)
+1793273223143897 focus: ControlType.ListItem name='Rework Desk' class=ListViewItem window 0 process 5748
+1793273223159754 key escape (sent 2 inputs)
+1793273225687918 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748

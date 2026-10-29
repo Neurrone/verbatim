@@ -1,0 +1,20 @@
+A nameless foreground window
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture, from Notepad in front. Mockapp was launched by the capture's `--launch` with `--fixture nameless-window.json` (this folder: one window node, no name, no children, nothing focusable), `--title ""` and `--show`, once with `--backend uia` and once with `--backend msaa`; each time it took the foreground (checked with GetForegroundWindow afterwards: title '' class VerbatimMockAppWindow).
+
+What it shows. With the MSAA backend, NVDA says "window" and nothing else: the role alone, with no name and no focus after it. With the UIA backend NVDA says nothing at all, which is not about the name: a mockapp UIA window that raises no UIA focus event is not announced when it comes to the front even with a title (uia-parent-read-cancelled.txt, "The window brought forward with no focus event"). The capture's `--front mockapp.exe` after the first launch failed because the agent's window list leaves out a window with no title; the window was in front all the same. Both captures end with the capture's own complaint that no window was brought forward after the launch, which is expected here, since no key followed.
+
+UIA backend (capture started 1793272555627219):
+
+> front notepad.exe
+> launch C:\Users\Dickson\Desktop\projects\verbatim\target\debug\mockapp.exe --fixture C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\nameless-window.json --backend uia --title  --show
+xtask nvda: no window of mockapp.exe titled None took the foreground; the remaining steps were not run
+foreground: 1312318 '' class=VerbatimMockAppWindow process=mockapp (11064)
+
+MSAA backend (capture started 1793272581858879):
+
+> launch C:\Users\Dickson\Desktop\projects\verbatim\target\debug\mockapp.exe --fixture C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\nameless-window.json --backend msaa --title  --show
+  +71 ms  cancel
+  +74 ms  [Normal] window
+xtask nvda: at the end of the capture no window was brought forward after the launch; keys it was sent may not have been read, and closing it would hand them to the window behind it
+foreground: 1443422 '' class=VerbatimMockAppWindow process=mockapp (13564)

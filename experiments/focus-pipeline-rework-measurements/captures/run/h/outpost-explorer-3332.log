@@ -1,0 +1,727 @@
+2026-10-29T11:33:16.334741Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[] to="nothing" elements=[] group=Base
+2026-10-29T11:33:16.334881Z DEBUG verbatim_uia::subscribe: a UIA subscription's first registration registration=1 to="nothing" result=Ok(()) elapsed_ms=0
+2026-10-29T11:33:16.335395Z  INFO verbatim_outpost::outpost: a spare, waiting for its application
+2026-10-29T11:35:45.000062Z  INFO verbatim_outpost::outpost: watching its application target_pid=3332 image=explorer
+2026-10-29T11:35:45.000654Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4785544 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.000839Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409753 key=Some(Foreground(1115800, 11880)) raised=Some(31349609) arrival=Some(Listener) waiting=1 in_batch=0 batch=0
+2026-10-29T11:35:45.000990Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=1 taken=1 planned=1
+2026-10-29T11:35:45.001186Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870209 key=None raised=None arrival=None waiting=1 in_batch=0 batch=1
+2026-10-29T11:35:45.001542Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1115800 event=GainFocus foreground=3541188
+2026-10-29T11:35:45.001581Z DEBUG verbatim_outpost::outpost::worker: foreground dropped: not the foreground window hwnd=1115800
+2026-10-29T11:35:45.001603Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409753 item="fact Some(Foreground(1115800, 11880))" elapsed_us=387 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.001639Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=2 taken=1 planned=1
+2026-10-29T11:35:45.001677Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870209 item="MSAA Destroy hwnd=4785544 object=0 child=0 thread=11880" elapsed_us=16 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.003276Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.003433Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870210 key=Some(MsaaFocus(1115800, -4, 0, 11880)) raised=Some(31349609) arrival=Some(Hook) waiting=1 in_batch=0 batch=2
+2026-10-29T11:35:45.003525Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=3 taken=1 planned=1
+2026-10-29T11:35:45.003576Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1115800 event=GainFocus foreground=3541188
+2026-10-29T11:35:45.003592Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870210 item="fact Some(MsaaFocus(1115800, -4, 0, 11880))" elapsed_us=36 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.003672Z DEBUG verbatim_outpost::outpost::handover: a WinEvent's second copy is dropped source=Listener key=MsaaFocus(1115800, -4, 0, 11880) stamp=WinEventStamp { thread: 11880, time: 31349609 }
+2026-10-29T11:35:45.038666Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1246640 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:35:45.038829Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870211 key=Some(Msaa(4, 1246640, -4, 1, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=3
+2026-10-29T11:35:45.038883Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=4 taken=1 planned=1
+2026-10-29T11:35:45.039117Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1246640 event=NameChange foreground=3541188
+2026-10-29T11:35:45.039182Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870211 item="MSAA NameChange hwnd=1246640 object=-4 child=1 thread=11880" elapsed_us=257 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.102975Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=6423940 id_object=100728832 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.103139Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870212 key=Some(Msaa(4, 6423940, 100728832, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=4
+2026-10-29T11:35:45.103178Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.103191Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=5 taken=1 planned=1
+2026-10-29T11:35:45.103241Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870213 key=Some(Msaa(4, 919030, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=5
+2026-10-29T11:35:45.103260Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=NameChange foreground=3541188
+2026-10-29T11:35:45.103287Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870212 item="MSAA NameChange hwnd=6423940 object=100728832 child=0 thread=11880" elapsed_us=46 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.103326Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=6 taken=1 planned=1
+2026-10-29T11:35:45.103363Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=919030 event=NameChange foreground=3541188
+2026-10-29T11:35:45.103384Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870213 item="MSAA NameChange hwnd=919030 object=-4 child=0 thread=11880" elapsed_us=33 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.110059Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=984306 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.110136Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870214 key=None raised=None arrival=None waiting=1 in_batch=0 batch=6
+2026-10-29T11:35:45.110175Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=7 taken=1 planned=1
+2026-10-29T11:35:45.110228Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870214 item="MSAA Destroy hwnd=984306 object=0 child=0 thread=11880" elapsed_us=16 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.125834Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.125923Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870215 key=Some(Msaa(4, 919030, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=7
+2026-10-29T11:35:45.125973Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=8 taken=1 planned=1
+2026-10-29T11:35:45.126005Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=6423940 id_object=100728851 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.126033Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870216 key=Some(Msaa(4, 6423940, 100728851, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=8
+2026-10-29T11:35:45.126045Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=919030 event=NameChange foreground=3541188
+2026-10-29T11:35:45.126053Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728850 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.126066Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870215 item="MSAA NameChange hwnd=919030 object=-4 child=0 thread=11880" elapsed_us=53 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.126072Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870217 key=Some(Msaa(3, 6423940, 100728850, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=8
+2026-10-29T11:35:45.126165Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=9 taken=2 planned=2
+2026-10-29T11:35:45.126174Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728850 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.126213Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870218 key=Some(Msaa(3, 6423940, 100728850, 0, 11880)) raised=None arrival=None waiting=1 in_batch=1 batch=9
+2026-10-29T11:35:45.126204Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=NameChange foreground=3541188
+2026-10-29T11:35:45.126253Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870216 item="MSAA NameChange hwnd=6423940 object=100728851 child=0 thread=11880" elapsed_us=61 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.126336Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.126355Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870217 item="MSAA StateChange hwnd=6423940 object=100728850 child=0 thread=11880" elapsed_us=78 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.126381Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=10 taken=1 planned=1
+2026-10-29T11:35:45.126433Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728836 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.126466Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870219 key=Some(Msaa(3, 6423940, 100728836, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=10
+2026-10-29T11:35:45.126523Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.126548Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870218 item="MSAA StateChange hwnd=6423940 object=100728850 child=0 thread=11880" elapsed_us=143 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.126574Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=11 taken=1 planned=1
+2026-10-29T11:35:45.126673Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.126700Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870219 item="MSAA StateChange hwnd=6423940 object=100728836 child=0 thread=11880" elapsed_us=109 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.127491Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728850 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.127529Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870220 key=Some(Msaa(3, 6423940, 100728850, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=11
+2026-10-29T11:35:45.127554Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=12 taken=1 planned=1
+2026-10-29T11:35:45.127569Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728850 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.127590Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870221 key=Some(Msaa(3, 6423940, 100728850, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=12
+2026-10-29T11:35:45.127711Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.127737Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870220 item="MSAA StateChange hwnd=6423940 object=100728850 child=0 thread=11880" elapsed_us=158 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.127764Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=13 taken=1 planned=1
+2026-10-29T11:35:45.127823Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.127841Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870221 item="MSAA StateChange hwnd=6423940 object=100728850 child=0 thread=11880" elapsed_us=60 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.128044Z DEBUG verbatim_ia2::hook: WinEvent received kind=DescriptionChange event=0x800d hwnd=6423940 id_object=100728850 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128073Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870222 key=Some(Msaa(5, 6423940, 100728850, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=13
+2026-10-29T11:35:45.128089Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=14 taken=1 planned=1
+2026-10-29T11:35:45.128117Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=DescriptionChange foreground=3541188
+2026-10-29T11:35:45.128129Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870222 item="MSAA DescriptionChange hwnd=6423940 object=100728850 child=0 thread=11880" elapsed_us=20 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.128286Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728833 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128336Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870223 key=Some(Msaa(3, 6423940, 100728833, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=14
+2026-10-29T11:35:45.128352Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=15 taken=1 planned=1
+2026-10-29T11:35:45.128426Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728841 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128461Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870224 key=Some(Msaa(3, 6423940, 100728841, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=15
+2026-10-29T11:35:45.128483Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.128501Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728842 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128507Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870223 item="MSAA StateChange hwnd=6423940 object=100728833 child=0 thread=11880" elapsed_us=132 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.128538Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870225 key=Some(Msaa(3, 6423940, 100728842, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=15
+2026-10-29T11:35:45.128556Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=16 taken=2 planned=2
+2026-10-29T11:35:45.128568Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728843 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128583Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.128595Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870226 key=Some(Msaa(3, 6423940, 100728843, 0, 11880)) raised=None arrival=None waiting=1 in_batch=1 batch=16
+2026-10-29T11:35:45.128641Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870224 item="MSAA StateChange hwnd=6423940 object=100728841 child=0 thread=11880" elapsed_us=66 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.128676Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728844 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128710Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870227 key=Some(Msaa(3, 6423940, 100728844, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=16
+2026-10-29T11:35:45.128713Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.128757Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870225 item="MSAA StateChange hwnd=6423940 object=100728842 child=0 thread=11880" elapsed_us=56 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.128791Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=17 taken=2 planned=2
+2026-10-29T11:35:45.128788Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728845 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128824Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870228 key=Some(Msaa(3, 6423940, 100728845, 0, 11880)) raised=None arrival=None waiting=1 in_batch=1 batch=17
+2026-10-29T11:35:45.128895Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.128892Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=6423940 id_object=100728852 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.128915Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870226 item="MSAA StateChange hwnd=6423940 object=100728843 child=0 thread=11880" elapsed_us=106 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.128944Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870229 key=Some(Msaa(4, 6423940, 100728852, 0, 11880)) raised=None arrival=None waiting=2 in_batch=1 batch=17
+2026-10-29T11:35:45.129023Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=6423940 id_object=100728852 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.129046Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.129062Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870230 key=Some(Msaa(4, 6423940, 100728852, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=17
+2026-10-29T11:35:45.129066Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870227 item="MSAA StateChange hwnd=6423940 object=100728844 child=0 thread=11880" elapsed_us=116 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.129095Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=18 taken=2 planned=2
+2026-10-29T11:35:45.129108Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728835 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.129131Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870231 key=Some(Msaa(3, 6423940, 100728835, 0, 11880)) raised=None arrival=None waiting=1 in_batch=1 batch=18
+2026-10-29T11:35:45.129205Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728836 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.129209Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.129235Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870232 key=Some(Msaa(3, 6423940, 100728836, 0, 11880)) raised=None arrival=None waiting=2 in_batch=1 batch=18
+2026-10-29T11:35:45.129244Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870228 item="MSAA StateChange hwnd=6423940 object=100728845 child=0 thread=11880" elapsed_us=133 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.129254Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728837 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.129269Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870233 key=Some(Msaa(3, 6423940, 100728837, 0, 11880)) raised=None arrival=None waiting=3 in_batch=0 batch=18
+2026-10-29T11:35:45.129384Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=NameChange foreground=3541188
+2026-10-29T11:35:45.129409Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870230 item="MSAA NameChange hwnd=6423940 object=100728852 child=0 thread=11880" elapsed_us=146 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.129434Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=19 taken=3 planned=3
+2026-10-29T11:35:45.129556Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.129574Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870231 item="MSAA StateChange hwnd=6423940 object=100728835 child=0 thread=11880" elapsed_us=124 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.129626Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.129643Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870232 item="MSAA StateChange hwnd=6423940 object=100728836 child=0 thread=11880" elapsed_us=53 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.129734Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.129751Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870233 item="MSAA StateChange hwnd=6423940 object=100728837 child=0 thread=11880" elapsed_us=92 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.132165Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.132221Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870234 key=Some(Msaa(4, 1115800, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=19
+2026-10-29T11:35:45.132250Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=20 taken=1 planned=1
+2026-10-29T11:35:45.132263Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.132377Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870235 key=Some(Msaa(4, 1574490, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=20
+2026-10-29T11:35:45.132386Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1115800 event=NameChange foreground=3541188
+2026-10-29T11:35:45.132420Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870234 item="MSAA NameChange hwnd=1115800 object=-4 child=0 thread=11880" elapsed_us=139 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.132449Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=21 taken=1 planned=1
+2026-10-29T11:35:45.132475Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1574490 event=NameChange foreground=3541188
+2026-10-29T11:35:45.132488Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870235 item="MSAA NameChange hwnd=1574490 object=-4 child=0 thread=11880" elapsed_us=21 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.134170Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=5178658 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.134217Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870236 key=None raised=None arrival=None waiting=1 in_batch=0 batch=21
+2026-10-29T11:35:45.134241Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=22 taken=1 planned=1
+2026-10-29T11:35:45.134282Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870236 item="MSAA Destroy hwnd=5178658 object=0 child=0 thread=15384" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.137279Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.137365Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870237 key=Some(Msaa(4, 1115800, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=22
+2026-10-29T11:35:45.137406Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=23 taken=1 planned=1
+2026-10-29T11:35:45.137501Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.137541Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870238 key=Some(Msaa(4, 1574490, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=23
+2026-10-29T11:35:45.137544Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1115800 event=NameChange foreground=3541188
+2026-10-29T11:35:45.137570Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870237 item="MSAA NameChange hwnd=1115800 object=-4 child=0 thread=11880" elapsed_us=127 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.137597Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=24 taken=1 planned=1
+2026-10-29T11:35:45.137704Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1574490 event=NameChange foreground=3541188
+2026-10-29T11:35:45.137729Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870238 item="MSAA NameChange hwnd=1574490 object=-4 child=0 thread=11880" elapsed_us=116 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.138933Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.138975Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870239 key=Some(Msaa(4, 1115800, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=24
+2026-10-29T11:35:45.138997Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=25 taken=1 planned=1
+2026-10-29T11:35:45.139030Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.139070Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870240 key=Some(Msaa(4, 1574490, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=25
+2026-10-29T11:35:45.139114Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1115800 event=NameChange foreground=3541188
+2026-10-29T11:35:45.139135Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870239 item="MSAA NameChange hwnd=1115800 object=-4 child=0 thread=11880" elapsed_us=111 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.139159Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=26 taken=1 planned=1
+2026-10-29T11:35:45.139246Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1574490 event=NameChange foreground=3541188
+2026-10-29T11:35:45.139264Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870240 item="MSAA NameChange hwnd=1574490 object=-4 child=0 thread=11880" elapsed_us=89 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.140178Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=6423940 id_object=100728853 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.140214Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870241 key=Some(Msaa(4, 6423940, 100728853, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=26
+2026-10-29T11:35:45.140235Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=27 taken=1 planned=1
+2026-10-29T11:35:45.140240Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728854 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.140278Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=NameChange foreground=3541188
+2026-10-29T11:35:45.140281Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870242 key=Some(Msaa(3, 6423940, 100728854, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=27
+2026-10-29T11:35:45.140292Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870241 item="MSAA NameChange hwnd=6423940 object=100728853 child=0 thread=11880" elapsed_us=24 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.140301Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728855 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.140313Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=28 taken=1 planned=1
+2026-10-29T11:35:45.140335Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870243 key=Some(Msaa(3, 6423940, 100728855, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=28
+2026-10-29T11:35:45.140339Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.140357Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728854 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.140361Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870242 item="MSAA StateChange hwnd=6423940 object=100728854 child=0 thread=11880" elapsed_us=28 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.140374Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870244 key=Some(Msaa(3, 6423940, 100728854, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=28
+2026-10-29T11:35:45.140385Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=29 taken=2 planned=2
+2026-10-29T11:35:45.140414Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.140472Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870243 item="MSAA StateChange hwnd=6423940 object=100728855 child=0 thread=11880" elapsed_us=66 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.140498Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.140510Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870244 item="MSAA StateChange hwnd=6423940 object=100728854 child=0 thread=11880" elapsed_us=18 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.140999Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728853 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.141029Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870245 key=Some(Msaa(3, 6423940, 100728853, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=29
+2026-10-29T11:35:45.141056Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=30 taken=1 planned=1
+2026-10-29T11:35:45.141080Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728855 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.141101Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870246 key=Some(Msaa(3, 6423940, 100728855, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=30
+2026-10-29T11:35:45.141214Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.141239Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870245 item="MSAA StateChange hwnd=6423940 object=100728853 child=0 thread=11880" elapsed_us=145 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.141265Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=31 taken=1 planned=1
+2026-10-29T11:35:45.141335Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.141352Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870246 item="MSAA StateChange hwnd=6423940 object=100728855 child=0 thread=11880" elapsed_us=71 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.148374Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728853 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.148443Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870247 key=Some(Msaa(3, 6423940, 100728853, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=31
+2026-10-29T11:35:45.148475Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=32 taken=1 planned=1
+2026-10-29T11:35:45.148558Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728855 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.148596Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870248 key=Some(Msaa(3, 6423940, 100728855, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=32
+2026-10-29T11:35:45.148615Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.148643Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870247 item="MSAA StateChange hwnd=6423940 object=100728853 child=0 thread=11880" elapsed_us=126 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.148671Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=33 taken=1 planned=1
+2026-10-29T11:35:45.148788Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.148809Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870248 item="MSAA StateChange hwnd=6423940 object=100728855 child=0 thread=11880" elapsed_us=116 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.149012Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728835 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.149051Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870249 key=Some(Msaa(3, 6423940, 100728835, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=33
+2026-10-29T11:35:45.149068Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=34 taken=1 planned=1
+2026-10-29T11:35:45.149187Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728836 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.149191Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.149217Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870250 key=Some(Msaa(3, 6423940, 100728836, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=34
+2026-10-29T11:35:45.149225Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870249 item="MSAA StateChange hwnd=6423940 object=100728835 child=0 thread=11880" elapsed_us=134 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.149249Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=35 taken=1 planned=1
+2026-10-29T11:35:45.149314Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728837 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.149346Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870251 key=Some(Msaa(3, 6423940, 100728837, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=35
+2026-10-29T11:35:45.149347Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.149380Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870250 item="MSAA StateChange hwnd=6423940 object=100728836 child=0 thread=11880" elapsed_us=115 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.149411Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=36 taken=1 planned=1
+2026-10-29T11:35:45.149504Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=StateChange foreground=3541188
+2026-10-29T11:35:45.149521Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870251 item="MSAA StateChange hwnd=6423940 object=100728837 child=0 thread=11880" elapsed_us=93 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.152436Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.152572Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870252 key=Some(MsaaFocus(1508870, -4, 0, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=1 in_batch=0 batch=36
+2026-10-29T11:35:45.152619Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=37 taken=1 planned=1
+2026-10-29T11:35:45.152659Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1508870 event=GainFocus foreground=3541188
+2026-10-29T11:35:45.152673Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870252 item="fact Some(MsaaFocus(1508870, -4, 0, 11880))" elapsed_us=33 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.152708Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=10 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.152748Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870253 key=Some(MsaaFocus(1508870, 10, 0, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=1 in_batch=0 batch=37
+2026-10-29T11:35:45.152786Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=38 taken=1 planned=1
+2026-10-29T11:35:45.152957Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1508870 event=GainFocus foreground=3541188
+2026-10-29T11:35:45.152979Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870253 item="fact Some(MsaaFocus(1508870, 10, 0, 11880))" elapsed_us=173 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.158380Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.158471Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870254 key=Some(Foreground(1574490, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=1 in_batch=0 batch=38
+2026-10-29T11:35:45.158692Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=39 taken=1 planned=1
+2026-10-29T11:35:45.158794Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.158829Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870255 key=Some(Foreground(1115800, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=1 in_batch=0 batch=39
+2026-10-29T11:35:45.159903Z DEBUG verbatim_outpost::outpost::worker: foreground dropped: not the foreground window hwnd=1574490
+2026-10-29T11:35:45.159939Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870254 item="fact Some(Foreground(1574490, 11880))" elapsed_us=1030 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.160027Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=40 taken=1 planned=1
+2026-10-29T11:35:45.160133Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160183Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870256 key=Some(MsaaFocus(1574490, -4, 0, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=1 in_batch=0 batch=40
+2026-10-29T11:35:45.160343Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160376Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870257 key=Some(MsaaFocus(919030, -4, 0, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=2 in_batch=0 batch=40
+2026-10-29T11:35:45.160761Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160796Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870258 key=Some(MsaaFocus(1508870, -4, 0, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=3 in_batch=0 batch=40
+2026-10-29T11:35:45.160825Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=11 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160850Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870259 key=Some(MsaaFocus(1508870, 11, 0, 11880)) raised=Some(31349765) arrival=Some(Hook) waiting=4 in_batch=0 batch=40
+2026-10-29T11:35:45.162149Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.162199Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870260 key=Some(Msaa(4, 1115800, -4, 0, 11880)) raised=None arrival=None waiting=5 in_batch=0 batch=40
+2026-10-29T11:35:45.162243Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.162278Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870261 key=Some(Msaa(4, 1574490, -4, 0, 11880)) raised=None arrival=None waiting=6 in_batch=0 batch=40
+2026-10-29T11:35:45.190051Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1115800 class="CabinetWClass" probed=Answered(0) elapsed_ms=28
+2026-10-29T11:35:45.271028Z DEBUG verbatim_outpost::outpost::worker: focus reported role=Pane name=Some("ReworkSearch - File Explorer") foreground=true backend=Msaa ancestors_unknown=false
+2026-10-29T11:35:45.271291Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870255 item="fact Some(Foreground(1115800, 11880))" elapsed_us=111238 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.271361Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=41 taken=6 planned=3
+2026-10-29T11:35:45.280503Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1508870 class="DirectUIHWND" probed=Provider elapsed_ms=9
+2026-10-29T11:35:45.280642Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=1508870 opened_gap=true
+2026-10-29T11:35:45.280680Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870259 item="fact Some(MsaaFocus(1508870, 11, 0, 11880))" elapsed_us=9296 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.281199Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=1508870 opened_gap=false
+2026-10-29T11:35:45.281224Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870258 item="fact Some(MsaaFocus(1508870, -4, 0, 11880))" elapsed_us=507 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.343801Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=919030 class="SHELLDLL_DefView" probed=Provider elapsed_ms=62
+2026-10-29T11:35:45.343886Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=919030 opened_gap=false
+2026-10-29T11:35:45.343911Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870257 item="fact Some(MsaaFocus(919030, -4, 0, 11880))" elapsed_us=62665 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.350828Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=12 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.350902Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870262 key=Some(MsaaFocus(1508870, 12, 0, 11880)) raised=Some(31349953) arrival=Some(Hook) waiting=1 in_batch=2 batch=41
+2026-10-29T11:35:45.351752Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1574490 class="ShellTabWindowClass" probed=Answered(0) elapsed_ms=7
+2026-10-29T11:35:45.361724Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: nothing has the focused state hwnd=1574490 id_object=-4 id_child=0
+2026-10-29T11:35:45.361781Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870256 item="fact Some(MsaaFocus(1574490, -4, 0, 11880))" elapsed_us=17832 unpublished=CallCounts { uia: 0, msaa: 21, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.363382Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870260 item="MSAA NameChange hwnd=1115800 object=-4 child=0 thread=11880" elapsed_us=1549 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.363857Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870261 item="MSAA NameChange hwnd=1574490 object=-4 child=0 thread=11880" elapsed_us=399 unpublished=CallCounts { uia: 0, msaa: 1, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.363942Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=42 taken=1 planned=1
+2026-10-29T11:35:45.364062Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=1508870 opened_gap=false
+2026-10-29T11:35:45.364089Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870262 item="fact Some(MsaaFocus(1508870, 12, 0, 11880))" elapsed_us=109 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.364421Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=6423940 id_object=100728856 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.364464Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870263 key=Some(Msaa(4, 6423940, 100728856, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=42
+2026-10-29T11:35:45.364489Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=43 taken=1 planned=1
+2026-10-29T11:35:45.364532Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728857 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.364555Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870264 key=Some(Msaa(3, 6423940, 100728857, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=43
+2026-10-29T11:35:45.364643Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728858 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.364667Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870265 key=Some(Msaa(3, 6423940, 100728858, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=43
+2026-10-29T11:35:45.364778Z DEBUG verbatim_ia2::hook: WinEvent received kind=StateChange event=0x800a hwnd=6423940 id_object=100728857 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.364802Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870266 key=Some(Msaa(3, 6423940, 100728857, 0, 11880)) raised=None arrival=None waiting=2 in_batch=0 batch=43
+2026-10-29T11:35:45.365121Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=6423940 class="DirectUIHWND" probed=Provider elapsed_ms=0
+2026-10-29T11:35:45.365166Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870263 item="MSAA NameChange hwnd=6423940 object=100728856 child=0 thread=11880" elapsed_us=643 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.365197Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=44 taken=2 planned=2
+2026-10-29T11:35:45.365233Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870265 item="MSAA StateChange hwnd=6423940 object=100728858 child=0 thread=11880" elapsed_us=18 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.365263Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870266 item="MSAA StateChange hwnd=6423940 object=100728857 child=0 thread=11880" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.391166Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409764 key=None raised=None arrival=None waiting=1 in_batch=0 batch=44
+2026-10-29T11:35:45.391250Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870267 key=Some(NodesHeld) raised=None arrival=None waiting=2 in_batch=0 batch=44
+2026-10-29T11:35:45.402524Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1901528 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.402610Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870268 key=None raised=None arrival=None waiting=3 in_batch=0 batch=44
+2026-10-29T11:35:45.570298Z DEBUG verbatim_ia2::hook: WinEvent received kind=Selection event=0x8006 hwnd=5834036 id_object=14 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.570477Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870269 key=Some(Msaa(6, 5834036, 14, 0, 11880)) raised=None arrival=None waiting=4 in_batch=0 batch=44
+2026-10-29T11:35:45.571027Z DEBUG verbatim_ia2::hook: WinEvent received kind=Selection event=0x8006 hwnd=5834036 id_object=15 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.571059Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870270 key=Some(Msaa(6, 5834036, 15, 0, 11880)) raised=None arrival=None waiting=5 in_batch=0 batch=44
+2026-10-29T11:35:45.656634Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=3998868 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.656706Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870271 key=None raised=None arrival=None waiting=6 in_batch=0 batch=44
+2026-10-29T11:35:45.658384Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409765 key=None raised=None arrival=None waiting=7 in_batch=0 batch=44
+2026-10-29T11:35:45.658469Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409766 key=None raised=None arrival=None waiting=8 in_batch=0 batch=44
+2026-10-29T11:35:45.673704Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409764 key=Some(UiaFocus([3332, 235413392, 0])) raised=None arrival=None waiting=9 in_batch=0 batch=44
+2026-10-29T11:35:45.673751Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=45 taken=6 planned=6
+2026-10-29T11:35:45.677714Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1508880 class="DUIViewWndClassName" probed=Answered(0) elapsed_ms=3
+2026-10-29T11:35:45.682023Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409765 key=Some(Uia(1, 0, [42, 5834036, 4, 1])) raised=None arrival=None waiting=3 in_batch=5 batch=45
+2026-10-29T11:35:45.683912Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1967230 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.683969Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870272 key=None raised=None arrival=None waiting=3 in_batch=5 batch=45
+2026-10-29T11:35:45.686393Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2032766 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.686461Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870273 key=None raised=None arrival=None waiting=4 in_batch=5 batch=45
+2026-10-29T11:35:45.687364Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2098302 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.687404Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870274 key=None raised=None arrival=None waiting=5 in_batch=5 batch=45
+2026-10-29T11:35:45.688365Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2163838 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.688403Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870275 key=None raised=None arrival=None waiting=6 in_batch=5 batch=45
+2026-10-29T11:35:45.688882Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409766 key=Some(Uia(1, 0, [42, 5834036, 4, 2])) raised=None arrival=None waiting=7 in_batch=5 batch=45
+2026-10-29T11:35:45.689420Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2229374 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.689458Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870276 key=None raised=None arrival=None waiting=7 in_batch=5 batch=45
+2026-10-29T11:35:45.690469Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2294910 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.690498Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870277 key=None raised=None arrival=None waiting=8 in_batch=5 batch=45
+2026-10-29T11:35:45.691490Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2360446 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.691546Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870278 key=None raised=None arrival=None waiting=9 in_batch=5 batch=45
+2026-10-29T11:35:45.692503Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2425982 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.692536Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870279 key=None raised=None arrival=None waiting=10 in_batch=5 batch=45
+2026-10-29T11:35:45.693447Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2491518 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.693477Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870280 key=None raised=None arrival=None waiting=11 in_batch=5 batch=45
+2026-10-29T11:35:45.694199Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2557054 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.694240Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870281 key=None raised=None arrival=None waiting=12 in_batch=5 batch=45
+2026-10-29T11:35:45.696913Z DEBUG verbatim_outpost::outpost::read: UIA ancestors continued through MSAA hwnd=1508880 elapsed_us=19061
+2026-10-29T11:35:45.696971Z DEBUG verbatim_outpost::outpost::worker: UIA focus reported from the listener's read trace=50113678409764 enrichment_us=23154 answered_gap_ms=Some(512)
+2026-10-29T11:35:45.697018Z DEBUG verbatim_outpost::outpost::worker: focus reported role=ListItem name=Some("note.txt") foreground=false backend=Uia ancestors_unknown=false
+2026-10-29T11:35:45.697300Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription already follows this focus; it is not moved wanted=None
+2026-10-29T11:35:45.713960Z DEBUG verbatim_outpost::outpost::worker: the focus's own element looked for by its path found=true elapsed_us=16627
+2026-10-29T11:35:45.714049Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=None to=Some((NodeId { outpost: OutpostId(0), number: 2 }, Base)) runtime_id=Some([3332, 235413392, 0])
+2026-10-29T11:35:45.714113Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409764 item="UIA focus read 11" elapsed_us=40320 unpublished=CallCounts { uia: 2, msaa: 0, window_messages: 0, connections: 1 } failed_reads=0
+2026-10-29T11:35:45.714125Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[] to="1 elements" elements=[[3332, 235413392, 0]] group=Base
+2026-10-29T11:35:45.714182Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={1} acknowledged=2 position=3 released=None
+2026-10-29T11:35:45.714219Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870267 item="nodes held (1)" elapsed_us=58 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.714258Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870268 item="MSAA Destroy hwnd=1901528 object=0 child=0 thread=15376" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.714497Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=5834036 class="InputSiteWindowClass" probed=Provider elapsed_ms=0
+2026-10-29T11:35:45.714585Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870269 item="MSAA Selection hwnd=5834036 object=14 child=0 thread=11880" elapsed_us=301 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.714853Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870270 item="MSAA Selection hwnd=5834036 object=15 child=0 thread=11880" elapsed_us=232 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.714900Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870271 item="MSAA Destroy hwnd=3998868 object=0 child=0 thread=15376" elapsed_us=8 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.714965Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=46 taken=12 planned=12
+2026-10-29T11:35:45.716326Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409765 item="fact Some(UiaSelection([42, 5834036, 4, 1]))" elapsed_us=1336 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717358Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409766 item="fact Some(UiaSelection([42, 5834036, 4, 2]))" elapsed_us=979 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717402Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870272 item="MSAA Destroy hwnd=1967230 object=0 child=0 thread=4292" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717428Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870273 item="MSAA Destroy hwnd=2032766 object=0 child=0 thread=4292" elapsed_us=3 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717444Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870274 item="MSAA Destroy hwnd=2098302 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717459Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870275 item="MSAA Destroy hwnd=2163838 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717474Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870276 item="MSAA Destroy hwnd=2229374 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717488Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870277 item="MSAA Destroy hwnd=2294910 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717502Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870278 item="MSAA Destroy hwnd=2360446 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717516Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870279 item="MSAA Destroy hwnd=2425982 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717530Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870280 item="MSAA Destroy hwnd=2491518 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717544Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870281 item="MSAA Destroy hwnd=2557054 object=0 child=0 thread=4292" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717785Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[3332, 235413392, 0] result=Ok(()) elapsed_ms=3
+2026-10-29T11:35:45.857817Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870282 key=Some(NodesHeld) raised=None arrival=None waiting=1 in_batch=0 batch=46
+2026-10-29T11:35:45.859211Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=47 taken=1 planned=1
+2026-10-29T11:35:45.859296Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={3, 2, 7, 9, 1} acknowledged=5 position=5 released=Some({12, 13, 6, 4, 10, 8, 5, 11})
+2026-10-29T11:35:45.859494Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870282 item="nodes held (5)" elapsed_us=247 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:47.709237Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2622642 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:47.709324Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870283 key=None raised=None arrival=None waiting=1 in_batch=0 batch=47
+2026-10-29T11:35:47.710052Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=48 taken=1 planned=1
+2026-10-29T11:35:47.710113Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870283 item="MSAA Destroy hwnd=2622642 object=0 child=0 thread=4292" elapsed_us=19 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.736267Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736360Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870284 key=Some(MsaaFocus(5834036, -4, 0, 11880)) raised=Some(31354343) arrival=Some(Hook) waiting=1 in_batch=0 batch=48
+2026-10-29T11:35:49.736386Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=16 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736412Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870285 key=Some(MsaaFocus(5834036, 16, 0, 11880)) raised=Some(31354343) arrival=Some(Hook) waiting=2 in_batch=0 batch=48
+2026-10-29T11:35:49.736849Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=17 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736885Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870286 key=Some(MsaaFocus(5834036, 17, 0, 11880)) raised=Some(31354343) arrival=Some(Hook) waiting=3 in_batch=0 batch=48
+2026-10-29T11:35:49.751797Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=49 taken=3 planned=1
+2026-10-29T11:35:49.751907Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=true
+2026-10-29T11:35:49.751926Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870286 item="fact Some(MsaaFocus(5834036, 17, 0, 11880))" elapsed_us=69 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.751962Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=false
+2026-10-29T11:35:49.751975Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870285 item="fact Some(MsaaFocus(5834036, 16, 0, 11880))" elapsed_us=30 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.752005Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=false
+2026-10-29T11:35:49.752017Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870284 item="fact Some(MsaaFocus(5834036, -4, 0, 11880))" elapsed_us=28 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.752758Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409770 key=None raised=None arrival=None waiting=1 in_batch=0 batch=49
+2026-10-29T11:35:49.752806Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409771 key=None raised=None arrival=None waiting=2 in_batch=0 batch=49
+2026-10-29T11:35:49.752860Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=14 evidence=Inconclusive
+2026-10-29T11:35:49.759593Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409771 key=Some(UiaFocus([42, 5834036, 4, 3])) raised=None arrival=None waiting=2 in_batch=0 batch=49
+2026-10-29T11:35:49.759624Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=50 taken=1 planned=1
+2026-10-29T11:35:49.759782Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1115800 class="CabinetWClass" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:35:49.760143Z DEBUG verbatim_outpost::outpost::read: UIA ancestors continued through MSAA hwnd=1115800 elapsed_us=290
+2026-10-29T11:35:49.760173Z DEBUG verbatim_outpost::outpost::worker: UIA focus reported from the listener's read trace=50113678409771 enrichment_us=489 answered_gap_ms=Some(22)
+2026-10-29T11:35:49.762885Z DEBUG verbatim_outpost::outpost::worker: the focus's own element looked for by its path found=true elapsed_us=2698
+2026-10-29T11:35:49.763824Z DEBUG verbatim_outpost::outpost::worker: the focus's caret read elapsed_us=876
+2026-10-29T11:35:49.764299Z DEBUG verbatim_outpost::outpost::worker: focus reported role=EditableText name=Some(" Search ReworkSearch") foreground=false backend=Uia ancestors_unknown=false
+2026-10-29T11:35:49.764511Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 2 }, Base)) to=Some((NodeId { outpost: OutpostId(0), number: 14 }, Extended)) runtime_id=Some([42, 5834036, 4, 3])
+2026-10-29T11:35:49.764555Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409771 item="UIA focus read 15" elapsed_us=4895 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.764670Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([3332, 235413392, 0], Base)] to="1 elements" elements=[[42, 5834036, 4, 3]] group=Extended
+2026-10-29T11:35:49.765187Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:49.765501Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[3332, 235413392, 0] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:51.838792Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2688178 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:51.838859Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870287 key=None raised=None arrival=None waiting=1 in_batch=0 batch=50
+2026-10-29T11:35:51.840437Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=51 taken=1 planned=1
+2026-10-29T11:35:51.840491Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870287 item="MSAA Destroy hwnd=2688178 object=0 child=0 thread=14608" elapsed_us=17 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:51.840922Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=69114613727269 key=None raised=None arrival=None waiting=1 in_batch=0 batch=51
+2026-10-29T11:35:51.840968Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870288 key=Some(NodesHeld) raised=None arrival=None waiting=2 in_batch=0 batch=51
+2026-10-29T11:35:51.841003Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=52 taken=2 planned=2
+2026-10-29T11:35:51.842240Z DEBUG verbatim_outpost::outpost::worker: a caret key's watch is open trace=69114613727269 calls=CallCounts { uia: 1, msaa: 0, window_messages: 0, connections: 0 } polled=false
+2026-10-29T11:35:51.842265Z DEBUG verbatim_outpost::outpost::worker: handled trace=69114613727269 item="query Text { node_id: NodeId { outpost: OutpostId(0), number: 14 }, op: AwaitCaret(CaretWatch { since: Some(TextPosition { anchor: TextAnchor(1), offset: 0 }), pressed_at_ms: 1793273751820, unit: Word, compare: None, landing: true, deletes: false }) }" elapsed_us=1234 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:51.842316Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={14, 1} acknowledged=6 position=6 released=Some({17, 2, 9, 7, 3, 16, 15})
+2026-10-29T11:35:51.842491Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870288 item="nodes held (2)" elapsed_us=206 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:53.860709Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=18 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:53.860801Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870289 key=Some(MsaaFocus(5834036, 18, 0, 11880)) raised=Some(31358468) arrival=Some(Hook) waiting=1 in_batch=0 batch=52
+2026-10-29T11:35:53.866887Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=53 taken=1 planned=1
+2026-10-29T11:35:53.866981Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=true
+2026-10-29T11:35:53.866998Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870289 item="fact Some(MsaaFocus(5834036, 18, 0, 11880))" elapsed_us=68 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:53.867222Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409773 key=None raised=None arrival=None waiting=1 in_batch=0 batch=53
+2026-10-29T11:35:53.874311Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409773 key=Some(UiaFocus([42, 5834036, 4, 2])) raised=None arrival=None waiting=2 in_batch=0 batch=53
+2026-10-29T11:35:53.874340Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=54 taken=1 planned=1
+2026-10-29T11:35:53.874505Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1115800 class="CabinetWClass" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:35:53.874824Z DEBUG verbatim_outpost::outpost::read: UIA ancestors continued through MSAA hwnd=1115800 elapsed_us=250
+2026-10-29T11:35:53.874852Z DEBUG verbatim_outpost::outpost::worker: UIA focus reported from the listener's read trace=50113678409773 enrichment_us=465 answered_gap_ms=Some(13)
+2026-10-29T11:35:53.874879Z DEBUG verbatim_outpost::outpost::worker: focus reported role=Tab name=Some("ReworkSearch") foreground=false backend=Uia ancestors_unknown=false
+2026-10-29T11:35:53.875055Z DEBUG verbatim_outpost::outpost::worker: a caret key's watch ended without evidence trace=69114613727269 why="the focus moved" waited_ms=2032
+2026-10-29T11:35:53.875078Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 14 }, Extended)) to=None runtime_id=Some([42, 5834036, 4, 2])
+2026-10-29T11:35:53.875365Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([42, 5834036, 4, 3], Extended)] to="nothing" elements=[] group=Base
+2026-10-29T11:35:53.877809Z DEBUG verbatim_outpost::outpost::worker: the focus's own element looked for by its path found=true elapsed_us=2705
+2026-10-29T11:35:53.877843Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=None to=Some((NodeId { outpost: OutpostId(0), number: 18 }, Base)) runtime_id=Some([42, 5834036, 4, 2])
+2026-10-29T11:35:53.877869Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409773 item="UIA focus read 16" elapsed_us=3499 unpublished=CallCounts { uia: 2, msaa: 0, window_messages: 0, connections: 1 } failed_reads=0
+2026-10-29T11:35:53.878061Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=2
+2026-10-29T11:35:53.878092Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[] to="1 elements" elements=[[42, 5834036, 4, 2]] group=Base
+2026-10-29T11:35:53.878563Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 2] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:54.682170Z DEBUG verbatim_ia2::hook: WinEvent received kind=NameChange event=0x800c hwnd=2753714 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:54.682277Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870290 key=Some(Msaa(4, 2753714, -4, 0, 11880)) raised=None arrival=None waiting=1 in_batch=0 batch=54
+2026-10-29T11:35:54.687694Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=55 taken=1 planned=1
+2026-10-29T11:35:54.692740Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=2753714 class="Microsoft.UI.Content.PopupWindowSiteBridge" probed=Answered(0) elapsed_ms=4
+2026-10-29T11:35:54.693323Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870290 item="MSAA NameChange hwnd=2753714 object=-4 child=0 thread=11880" elapsed_us=5581 unpublished=CallCounts { uia: 0, msaa: 1, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:54.698576Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409774 key=None raised=None arrival=None waiting=1 in_batch=0 batch=55
+2026-10-29T11:35:54.698623Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870291 key=Some(NodesHeld) raised=None arrival=None waiting=2 in_batch=0 batch=55
+2026-10-29T11:35:54.700667Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=17 evidence=Focus
+2026-10-29T11:35:54.700720Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=56 taken=1 planned=1
+2026-10-29T11:35:54.700771Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={1, 18, 19, 20} acknowledged=8 position=8 released=Some({21, 14, 22})
+2026-10-29T11:35:54.700859Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870291 item="nodes held (4)" elapsed_us=117 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:54.702827Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409775 key=None raised=None arrival=None waiting=1 in_batch=0 batch=56
+2026-10-29T11:35:54.705298Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=18 evidence=Focus
+2026-10-29T11:35:55.927801Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=19 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:55.927906Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870292 key=Some(MsaaFocus(5834036, 19, 0, 11880)) raised=Some(31360531) arrival=Some(Hook) waiting=1 in_batch=0 batch=56
+2026-10-29T11:35:55.938072Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=57 taken=1 planned=1
+2026-10-29T11:35:55.938188Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=true
+2026-10-29T11:35:55.938206Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870292 item="fact Some(MsaaFocus(5834036, 19, 0, 11880))" elapsed_us=67 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:55.938644Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409777 key=None raised=None arrival=None waiting=1 in_batch=0 batch=57
+2026-10-29T11:35:55.942850Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409777 key=Some(UiaFocus([42, 5834036, 4, 3])) raised=None arrival=None waiting=2 in_batch=0 batch=57
+2026-10-29T11:35:55.942874Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=58 taken=1 planned=1
+2026-10-29T11:35:55.943059Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1115800 class="CabinetWClass" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:35:55.943525Z DEBUG verbatim_outpost::outpost::read: UIA ancestors continued through MSAA hwnd=1115800 elapsed_us=382
+2026-10-29T11:35:55.943554Z DEBUG verbatim_outpost::outpost::worker: UIA focus reported from the listener's read trace=50113678409777 enrichment_us=619 answered_gap_ms=Some(15)
+2026-10-29T11:35:55.946367Z DEBUG verbatim_outpost::outpost::worker: the focus's own element looked for by its path found=true elapsed_us=2798
+2026-10-29T11:35:55.947179Z DEBUG verbatim_outpost::outpost::worker: the focus's caret read elapsed_us=671
+2026-10-29T11:35:55.947205Z DEBUG verbatim_outpost::outpost::worker: focus reported role=EditableText name=Some(" Search ReworkSearch") foreground=false backend=Uia ancestors_unknown=false
+2026-10-29T11:35:55.947379Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 18 }, Base)) to=Some((NodeId { outpost: OutpostId(0), number: 23 }, Extended)) runtime_id=Some([42, 5834036, 4, 3])
+2026-10-29T11:35:55.947436Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409777 item="UIA focus read 19" elapsed_us=4532 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:55.947449Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([42, 5834036, 4, 2], Base)] to="1 elements" elements=[[42, 5834036, 4, 3]] group=Extended
+2026-10-29T11:35:55.947833Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870293 key=Some(NodesHeld) raised=None arrival=None waiting=1 in_batch=0 batch=58
+2026-10-29T11:35:55.947887Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:55.947961Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=59 taken=1 planned=1
+2026-10-29T11:35:55.948037Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={23, 1} acknowledged=9 position=9 released=Some({20, 25, 18, 19, 24, 26})
+2026-10-29T11:35:55.948066Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870293 item="nodes held (2)" elapsed_us=81 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:55.948068Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 2] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:56.140189Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2753714 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:56.140258Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870294 key=None raised=None arrival=None waiting=1 in_batch=0 batch=59
+2026-10-29T11:35:56.141000Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2688050 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:56.141029Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870295 key=None raised=None arrival=None waiting=2 in_batch=0 batch=59
+2026-10-29T11:35:56.142852Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=60 taken=2 planned=2
+2026-10-29T11:35:56.142903Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870294 item="MSAA Destroy hwnd=2753714 object=0 child=0 thread=11880" elapsed_us=16 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:56.142927Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870295 item="MSAA Destroy hwnd=2688050 object=0 child=0 thread=6000" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:36:15.362877Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2622906 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:36:15.362984Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870296 key=None raised=None arrival=None waiting=1 in_batch=0 batch=60
+2026-10-29T11:36:15.363470Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=61 taken=1 planned=1
+2026-10-29T11:36:15.363721Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870296 item="MSAA Destroy hwnd=2622906 object=0 child=0 thread=8716" elapsed_us=19 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:36:45.379890Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2819646 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:36:45.380013Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870297 key=None raised=None arrival=None waiting=1 in_batch=0 batch=61
+2026-10-29T11:36:45.380155Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=62 taken=1 planned=1
+2026-10-29T11:36:45.380219Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870297 item="MSAA Destroy hwnd=2819646 object=0 child=0 thread=13752" elapsed_us=23 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:36:45.395125Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2098528 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:36:45.395198Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870298 key=None raised=None arrival=None waiting=1 in_batch=0 batch=62
+2026-10-29T11:36:45.395271Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=63 taken=1 planned=1
+2026-10-29T11:36:45.395329Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870298 item="MSAA Destroy hwnd=2098528 object=0 child=0 thread=6864" elapsed_us=17 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.272024Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.272117Z DEBUG verbatim_outpost::outpost::handover: the MSAA hand-over is over; no copy is counted from now on unmatched=1
+2026-10-29T11:37:42.272149Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870299 key=Some(MsaaFocus(1115800, -4, 0, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=1 in_batch=0 batch=63
+2026-10-29T11:37:42.272788Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.273659Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=64 taken=1 planned=1
+2026-10-29T11:37:42.273691Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870300 key=Some(Foreground(1574490, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=1 in_batch=0 batch=64
+2026-10-29T11:37:42.273763Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.273792Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870301 key=Some(Foreground(1115800, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=2 in_batch=0 batch=64
+2026-10-29T11:37:42.274120Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274178Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870302 key=Some(MsaaFocus(1574490, -4, 0, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=3 in_batch=0 batch=64
+2026-10-29T11:37:42.274436Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274473Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870303 key=Some(MsaaFocus(919030, -4, 0, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=4 in_batch=0 batch=64
+2026-10-29T11:37:42.274813Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274848Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870304 key=Some(MsaaFocus(1508870, -4, 0, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=5 in_batch=0 batch=64
+2026-10-29T11:37:42.274868Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=20 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274884Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870305 key=Some(MsaaFocus(1508870, 20, 0, 11880)) raised=Some(31466875) arrival=Some(Hook) waiting=6 in_batch=0 batch=64
+2026-10-29T11:37:42.276055Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=69114613727280 key=None raised=None arrival=None waiting=7 in_batch=0 batch=64
+2026-10-29T11:37:42.277749Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1902300 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.277804Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870306 key=None raised=None arrival=None waiting=8 in_batch=0 batch=64
+2026-10-29T11:37:42.279877Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=3868192 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.279937Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870307 key=None raised=None arrival=None waiting=9 in_batch=0 batch=64
+2026-10-29T11:37:42.280333Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=788358 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.280363Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870308 key=None raised=None arrival=None waiting=10 in_batch=0 batch=64
+2026-10-29T11:37:42.280782Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2688206 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.280831Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870309 key=None raised=None arrival=None waiting=11 in_batch=0 batch=64
+2026-10-29T11:37:42.280875Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=3147028 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.280892Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870310 key=None raised=None arrival=None waiting=12 in_batch=0 batch=64
+2026-10-29T11:37:42.281370Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.281421Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870311 key=Some(MsaaFocus(919030, -4, 0, 11880)) raised=Some(31466890) arrival=Some(Hook) waiting=12 in_batch=0 batch=64
+2026-10-29T11:37:42.281783Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1508870 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.281813Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870312 key=None raised=None arrival=None waiting=13 in_batch=0 batch=64
+2026-10-29T11:37:42.282653Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=722468 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.282756Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870313 key=Some(MsaaFocus(722468, -4, 0, 11880)) raised=Some(31466890) arrival=Some(Hook) waiting=14 in_batch=0 batch=64
+2026-10-29T11:37:42.283187Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=919030 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.283217Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870314 key=None raised=None arrival=None waiting=15 in_batch=0 batch=64
+2026-10-29T11:37:42.283749Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4850128 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.283896Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870315 key=None raised=None arrival=None waiting=16 in_batch=0 batch=64
+2026-10-29T11:37:42.284695Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1574490 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.284729Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870316 key=None raised=None arrival=None waiting=17 in_batch=0 batch=64
+2026-10-29T11:37:42.286761Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1115800 class="CabinetWClass" probed=Answered(0) elapsed_ms=11
+2026-10-29T11:37:42.288191Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: nothing has the focused state hwnd=1115800 id_object=-4 id_child=0
+2026-10-29T11:37:42.288227Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870299 item="fact Some(MsaaFocus(1115800, -4, 0, 11880))" elapsed_us=14120 unpublished=CallCounts { uia: 0, msaa: 15, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.288281Z DEBUG verbatim_outpost::outpost::intake: focus event dropped by the batch limits trace=64630667870302 key=Some(MsaaFocus(1574490, -4, 0, 11880))
+2026-10-29T11:37:42.288332Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=65 taken=17 planned=11
+2026-10-29T11:37:42.289463Z DEBUG verbatim_outpost::outpost::worker: a caret key's watch is open trace=69114613727280 calls=CallCounts { uia: 1, msaa: 0, window_messages: 0, connections: 0 } polled=false
+2026-10-29T11:37:42.289491Z DEBUG verbatim_outpost::outpost::worker: handled trace=69114613727280 item="query Text { node_id: NodeId { outpost: OutpostId(0), number: 23 }, op: AwaitCaret(CaretWatch { since: Some(TextPosition { anchor: TextAnchor(2), offset: 0 }), pressed_at_ms: 1793273862256, unit: Word, compare: None, landing: true, deletes: false }) }" elapsed_us=1094 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289552Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870306 item="MSAA Destroy hwnd=1902300 object=0 child=0 thread=11880" elapsed_us=10 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289582Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870307 item="MSAA Destroy hwnd=3868192 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289609Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870308 item="MSAA Destroy hwnd=788358 object=0 child=0 thread=11880" elapsed_us=3 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289625Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870309 item="MSAA Destroy hwnd=2688206 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289639Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870310 item="MSAA Destroy hwnd=3147028 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289655Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870312 item="MSAA Destroy hwnd=1508870 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289792Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=722468 class="CtrlNotifySink" probed=Provider elapsed_ms=0
+2026-10-29T11:37:42.289842Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=722468 opened_gap=true
+2026-10-29T11:37:42.289856Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870313 item="fact Some(MsaaFocus(722468, -4, 0, 11880))" elapsed_us=186 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289882Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=919030 event=GainFocus foreground=1115800
+2026-10-29T11:37:42.289894Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870311 item="fact Some(MsaaFocus(919030, -4, 0, 11880))" elapsed_us=20 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289912Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1508870 event=GainFocus foreground=1115800
+2026-10-29T11:37:42.289923Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870305 item="fact Some(MsaaFocus(1508870, 20, 0, 11880))" elapsed_us=16 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289944Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1508870 event=GainFocus foreground=1115800
+2026-10-29T11:37:42.289957Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870304 item="fact Some(MsaaFocus(1508870, -4, 0, 11880))" elapsed_us=18 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.289983Z DEBUG verbatim_outpost::outpost::worker: foreground dropped: the focus already hwnd=1115800 reason="the focus is already in the window"
+2026-10-29T11:37:42.290000Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870301 item="fact Some(Foreground(1115800, 11880))" elapsed_us=30 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.290024Z DEBUG verbatim_outpost::outpost::worker: foreground dropped: not the foreground window hwnd=1574490
+2026-10-29T11:37:42.290034Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870300 item="fact Some(Foreground(1574490, 11880))" elapsed_us=21 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.290054Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870314 item="MSAA Destroy hwnd=919030 object=0 child=0 thread=11880" elapsed_us=5 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.290070Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870315 item="MSAA Destroy hwnd=4850128 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.290085Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870316 item="MSAA Destroy hwnd=1574490 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.304377Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409790 key=None raised=None arrival=None waiting=1 in_batch=0 batch=65
+2026-10-29T11:37:42.305828Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=5047478 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.305869Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870317 key=None raised=None arrival=None waiting=2 in_batch=0 batch=65
+2026-10-29T11:37:42.306920Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1967406 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.307061Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1049842 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308039Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870318 key=None raised=None arrival=None waiting=3 in_batch=0 batch=65
+2026-10-29T11:37:42.308061Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1967406 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308075Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1312574 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308086Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870319 key=None raised=None arrival=None waiting=4 in_batch=0 batch=65
+2026-10-29T11:37:42.308099Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=8192352 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308110Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870320 key=None raised=None arrival=None waiting=5 in_batch=0 batch=65
+2026-10-29T11:37:42.308121Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1442520 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308132Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870321 key=None raised=None arrival=None waiting=6 in_batch=0 batch=65
+2026-10-29T11:37:42.308148Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2164396 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308161Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870322 key=None raised=None arrival=None waiting=7 in_batch=0 batch=65
+2026-10-29T11:37:42.308173Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=5178334 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308184Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870323 key=None raised=None arrival=None waiting=8 in_batch=0 batch=65
+2026-10-29T11:37:42.308195Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1902396 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308206Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870324 key=None raised=None arrival=None waiting=9 in_batch=0 batch=65
+2026-10-29T11:37:42.308218Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=7931240 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308228Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870325 key=None raised=None arrival=None waiting=10 in_batch=0 batch=65
+2026-10-29T11:37:42.308240Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1574802 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308250Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870326 key=None raised=None arrival=None waiting=11 in_batch=0 batch=65
+2026-10-29T11:37:42.308262Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2622810 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308272Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870327 key=None raised=None arrival=None waiting=12 in_batch=0 batch=65
+2026-10-29T11:37:42.308284Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1508880 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.308294Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870328 key=None raised=None arrival=None waiting=13 in_batch=0 batch=65
+2026-10-29T11:37:42.309101Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=6423940 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.309138Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870329 key=Some(MsaaFocus(6423940, -4, 0, 11880)) raised=Some(31466921) arrival=Some(Hook) waiting=14 in_batch=0 batch=65
+2026-10-29T11:37:42.309807Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508880 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.309860Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870330 key=Some(MsaaFocus(1508880, -4, 0, 11880)) raised=Some(31466921) arrival=Some(Hook) waiting=15 in_batch=0 batch=65
+2026-10-29T11:37:42.309879Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=6423940 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.310073Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870331 key=Some(MsaaFocus(6423940, -4, 0, 11880)) raised=Some(31466921) arrival=Some(Hook) waiting=15 in_batch=0 batch=65
+2026-10-29T11:37:42.313769Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4457368 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.313837Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870332 key=None raised=None arrival=None waiting=16 in_batch=0 batch=65
+2026-10-29T11:37:42.314462Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1640040 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.314492Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870333 key=None raised=None arrival=None waiting=17 in_batch=0 batch=65
+2026-10-29T11:37:42.316699Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2688194 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.316728Z DEBUG verbatim_outpost::outpost::intake: a UIA focus's marker is dropped with its focus marker=23 evidence=NoWindow
+2026-10-29T11:37:42.316780Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870334 key=None raised=None arrival=None waiting=17 in_batch=0 batch=65
+2026-10-29T11:37:42.317249Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=66 taken=17 planned=16
+2026-10-29T11:37:42.317359Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1967064 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.317393Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870335 key=None raised=None arrival=None waiting=1 in_batch=15 batch=66
+2026-10-29T11:37:42.317431Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870317 item="MSAA Destroy hwnd=5047478 object=0 child=0 thread=11880" elapsed_us=142 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317459Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870318 item="MSAA Destroy hwnd=1049842 object=0 child=0 thread=11880" elapsed_us=4 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317476Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870319 item="MSAA Destroy hwnd=1312574 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317627Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870320 item="MSAA Destroy hwnd=8192352 object=0 child=0 thread=11880" elapsed_us=6 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317652Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870321 item="MSAA Destroy hwnd=1442520 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317668Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870322 item="MSAA Destroy hwnd=2164396 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317682Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870323 item="MSAA Destroy hwnd=5178334 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317696Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870324 item="MSAA Destroy hwnd=1902396 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317710Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870325 item="MSAA Destroy hwnd=7931240 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317724Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870326 item="MSAA Destroy hwnd=1574802 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317737Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870327 item="MSAA Destroy hwnd=2622810 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317751Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870328 item="MSAA Destroy hwnd=1508880 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317782Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=6423940 event=GainFocus foreground=1115800
+2026-10-29T11:37:42.317798Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870331 item="fact Some(MsaaFocus(6423940, -4, 0, 11880))" elapsed_us=31 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317819Z DEBUG verbatim_outpost::outpost::worker: event dropped: its window is not related to the foreground window hwnd=1508880 event=GainFocus foreground=1115800
+2026-10-29T11:37:42.317830Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870330 item="fact Some(MsaaFocus(1508880, -4, 0, 11880))" elapsed_us=17 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317848Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870332 item="MSAA Destroy hwnd=4457368 object=0 child=0 thread=11880" elapsed_us=3 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317863Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870333 item="MSAA Destroy hwnd=1640040 object=0 child=0 thread=11880" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317877Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870334 item="MSAA Destroy hwnd=2688194 object=0 child=0 thread=15376" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.317899Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=67 taken=1 planned=1
+2026-10-29T11:37:42.317917Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870335 item="MSAA Destroy hwnd=1967064 object=0 child=0 thread=15376" elapsed_us=4 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.324228Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4851088 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.324284Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870337 key=None raised=None arrival=None waiting=1 in_batch=0 batch=67
+2026-10-29T11:37:42.325003Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1246730 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.325033Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870338 key=None raised=None arrival=None waiting=2 in_batch=0 batch=67
+2026-10-29T11:37:42.332317Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1115800 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.332403Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870339 key=None raised=None arrival=None waiting=3 in_batch=0 batch=67
+2026-10-29T11:37:42.338160Z  INFO verbatim_outpost::outpost::worker: no UIA focus followed a WinEvent focus in a UIA window; the focus is read and reported hwnd=722468 waited_ms=35 unreadable=true uia_focus_before=true sender_gone=true role=Pane name=None
+2026-10-29T11:37:42.338240Z DEBUG verbatim_outpost::outpost::worker: focus reported role=Pane name=None foreground=false backend=Msaa ancestors_unknown=false
+2026-10-29T11:37:42.338531Z DEBUG verbatim_outpost::outpost::worker: a caret key's watch ended without evidence trace=69114613727280 why="the focus moved" waited_ms=49
+2026-10-29T11:37:42.338628Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 23 }, Extended)) to=None runtime_id=None
+2026-10-29T11:37:42.338685Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription already follows this focus; it is not moved wanted=None
+2026-10-29T11:37:42.338765Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870336 item="wake" elapsed_us=20831 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.338829Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=68 taken=3 planned=3
+2026-10-29T11:37:42.338872Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870337 item="MSAA Destroy hwnd=4851088 object=0 child=0 thread=11880" elapsed_us=11 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.338904Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870338 item="MSAA Destroy hwnd=1246730 object=0 child=0 thread=6000" elapsed_us=5 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.338964Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870339 item="MSAA Destroy hwnd=1115800 object=0 child=0 thread=11880" elapsed_us=33 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.339150Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([42, 5834036, 4, 3], Extended)] to="nothing" elements=[] group=Base
+2026-10-29T11:37:42.342748Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=2
+2026-10-29T11:37:42.345968Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870341 key=Some(NodesHeld) raised=None arrival=None waiting=1 in_batch=0 batch=68
+2026-10-29T11:37:42.347272Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=69 taken=1 planned=1
+2026-10-29T11:37:42.347386Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={} acknowledged=9 position=11 released=Some({23})
+2026-10-29T11:37:42.347698Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870341 item="nodes held (0)" elapsed_us=347 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.367446Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1312266 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.367530Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870342 key=None raised=None arrival=None waiting=1 in_batch=0 batch=69
+2026-10-29T11:37:42.367580Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=70 taken=1 planned=1
+2026-10-29T11:37:42.367668Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870342 item="MSAA Destroy hwnd=1312266 object=0 child=0 thread=5696" elapsed_us=17 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.368268Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4916624 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.368292Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870343 key=None raised=None arrival=None waiting=1 in_batch=0 batch=70
+2026-10-29T11:37:42.368343Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=71 taken=1 planned=1
+2026-10-29T11:37:42.368370Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870343 item="MSAA Destroy hwnd=4916624 object=0 child=0 thread=5696" elapsed_us=6 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.373164Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4064338 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.373252Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870344 key=None raised=None arrival=None waiting=1 in_batch=0 batch=71
+2026-10-29T11:37:42.373324Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=72 taken=1 planned=1
+2026-10-29T11:37:42.373463Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870344 item="MSAA Destroy hwnd=4064338 object=0 child=0 thread=6728" elapsed_us=39 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.374266Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1574290 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.374308Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870345 key=None raised=None arrival=None waiting=1 in_batch=0 batch=72
+2026-10-29T11:37:42.374357Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=73 taken=1 planned=1
+2026-10-29T11:37:42.374372Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2098838 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.374423Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870346 key=None raised=None arrival=None waiting=1 in_batch=0 batch=73
+2026-10-29T11:37:42.374467Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870345 item="MSAA Destroy hwnd=1574290 object=0 child=0 thread=6728" elapsed_us=77 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.374513Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=74 taken=1 planned=1
+2026-10-29T11:37:42.374573Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870346 item="MSAA Destroy hwnd=2098838 object=0 child=0 thread=11880" elapsed_us=8 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.409051Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=5440714 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.409144Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870347 key=None raised=None arrival=None waiting=1 in_batch=0 batch=74
+2026-10-29T11:37:42.410663Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=75 taken=1 planned=1
+2026-10-29T11:37:42.410788Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870347 item="MSAA Destroy hwnd=5440714 object=0 child=0 thread=13424" elapsed_us=21 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.411748Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1967908 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.411796Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870348 key=None raised=None arrival=None waiting=1 in_batch=0 batch=75
+2026-10-29T11:37:42.411833Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1115420 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.411849Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870349 key=None raised=None arrival=None waiting=2 in_batch=0 batch=75
+2026-10-29T11:37:42.411926Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=76 taken=2 planned=2
+2026-10-29T11:37:42.411975Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870348 item="MSAA Destroy hwnd=1967908 object=0 child=0 thread=6000" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.412022Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870349 item="MSAA Destroy hwnd=1115420 object=0 child=0 thread=6000" elapsed_us=8 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.414489Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=591598 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.414548Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870350 key=None raised=None arrival=None waiting=1 in_batch=0 batch=76
+2026-10-29T11:37:42.414620Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=77 taken=1 planned=1
+2026-10-29T11:37:42.414674Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870350 item="MSAA Destroy hwnd=591598 object=0 child=0 thread=11880" elapsed_us=14 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.418899Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=9372134 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.418965Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870351 key=None raised=None arrival=None waiting=1 in_batch=0 batch=77
+2026-10-29T11:37:42.419025Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=78 taken=1 planned=1
+2026-10-29T11:37:42.419076Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870351 item="MSAA Destroy hwnd=9372134 object=0 child=0 thread=11880" elapsed_us=16 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.419949Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4851080 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.419986Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870352 key=None raised=None arrival=None waiting=1 in_batch=0 batch=78
+2026-10-29T11:37:42.420014Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=79 taken=1 planned=1
+2026-10-29T11:37:42.420054Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870352 item="MSAA Destroy hwnd=4851080 object=0 child=0 thread=11880" elapsed_us=8 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.420346Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1771288 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.420380Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870353 key=None raised=None arrival=None waiting=1 in_batch=0 batch=79
+2026-10-29T11:37:42.420401Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=80 taken=1 planned=1
+2026-10-29T11:37:42.420514Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870353 item="MSAA Destroy hwnd=1771288 object=0 child=0 thread=11880" elapsed_us=73 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.420736Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2098726 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.420779Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870354 key=None raised=None arrival=None waiting=1 in_batch=0 batch=80
+2026-10-29T11:37:42.420893Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=81 taken=1 planned=1
+2026-10-29T11:37:42.420936Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870354 item="MSAA Destroy hwnd=2098726 object=0 child=0 thread=11880" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.421428Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1574416 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.421462Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870355 key=None raised=None arrival=None waiting=1 in_batch=0 batch=81
+2026-10-29T11:37:42.421483Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=82 taken=1 planned=1
+2026-10-29T11:37:42.421518Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870355 item="MSAA Destroy hwnd=1574416 object=0 child=0 thread=11880" elapsed_us=7 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.422841Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1902216 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.422883Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870356 key=None raised=None arrival=None waiting=1 in_batch=0 batch=82
+2026-10-29T11:37:42.422904Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=83 taken=1 planned=1
+2026-10-29T11:37:42.422941Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870356 item="MSAA Destroy hwnd=1902216 object=0 child=0 thread=11880" elapsed_us=8 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.424102Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1312264 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.424166Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870357 key=None raised=None arrival=None waiting=1 in_batch=0 batch=83
+2026-10-29T11:37:42.424224Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=5244194 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.424276Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=84 taken=1 planned=1
+2026-10-29T11:37:42.424317Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870358 key=None raised=None arrival=None waiting=1 in_batch=0 batch=84
+2026-10-29T11:37:42.424330Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870357 item="MSAA Destroy hwnd=1312264 object=0 child=0 thread=11880" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.424358Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=85 taken=1 planned=1
+2026-10-29T11:37:42.424377Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870358 item="MSAA Destroy hwnd=5244194 object=0 child=0 thread=11880" elapsed_us=4 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:42.864785Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870359 key=Some(NodesHeld) raised=None arrival=None waiting=1 in_batch=0 batch=85
+2026-10-29T11:37:42.865252Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=86 taken=1 planned=1
+2026-10-29T11:37:42.865340Z DEBUG verbatim_outpost::outpost::worker: releasing the nodes Core no longer holds held={} acknowledged=11 position=11 released=Some({1})
+2026-10-29T11:37:42.865374Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870359 item="nodes held (0)" elapsed_us=68 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.986095Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1312620 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.986162Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870360 key=None raised=None arrival=None waiting=1 in_batch=0 batch=86
+2026-10-29T11:37:44.986274Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=87 taken=1 planned=1
+2026-10-29T11:37:44.986327Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870360 item="MSAA Destroy hwnd=1312620 object=0 child=0 thread=14692" elapsed_us=18 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.988307Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=984318 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.988356Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870361 key=None raised=None arrival=None waiting=1 in_batch=0 batch=87
+2026-10-29T11:37:44.988406Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=3670992 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.988425Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870362 key=None raised=None arrival=None waiting=2 in_batch=0 batch=87
+2026-10-29T11:37:44.988464Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=2819016 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.988494Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870363 key=None raised=None arrival=None waiting=3 in_batch=0 batch=87
+2026-10-29T11:37:44.988582Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=88 taken=3 planned=3
+2026-10-29T11:37:44.988641Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870361 item="MSAA Destroy hwnd=984318 object=0 child=0 thread=16280" elapsed_us=12 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.988707Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870362 item="MSAA Destroy hwnd=3670992 object=0 child=0 thread=16280" elapsed_us=4 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.988728Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870363 item="MSAA Destroy hwnd=2819016 object=0 child=0 thread=16280" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.994416Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=788464 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.994569Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870364 key=None raised=None arrival=None waiting=1 in_batch=0 batch=88
+2026-10-29T11:37:44.994602Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4655054 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.994708Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870365 key=None raised=None arrival=None waiting=2 in_batch=0 batch=88
+2026-10-29T11:37:44.994730Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=656884 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.994743Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870366 key=None raised=None arrival=None waiting=3 in_batch=0 batch=88
+2026-10-29T11:37:44.994778Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=4523124 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.994795Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870367 key=None raised=None arrival=None waiting=4 in_batch=0 batch=88
+2026-10-29T11:37:44.994829Z DEBUG verbatim_ia2::hook: WinEvent received kind=Destroy event=0x8001 hwnd=1441868 id_object=0 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:44.994846Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870368 key=None raised=None arrival=None waiting=5 in_batch=0 batch=88
+2026-10-29T11:37:44.995141Z DEBUG verbatim_outpost::outpost::intake: intake planned a batch batch=89 taken=5 planned=5
+2026-10-29T11:37:44.995190Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870364 item="MSAA Destroy hwnd=788464 object=0 child=0 thread=14692" elapsed_us=16 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.995212Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870365 item="MSAA Destroy hwnd=4655054 object=0 child=0 thread=14692" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.995228Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870366 item="MSAA Destroy hwnd=656884 object=0 child=0 thread=14692" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.995242Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870367 item="MSAA Destroy hwnd=4523124 object=0 child=0 thread=14692" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:44.995255Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870368 item="MSAA Destroy hwnd=1441868 object=0 child=0 thread=14692" elapsed_us=2 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:37:45.008451Z  INFO verbatim_outpost::outpost: the target application exited target_pid=3332
+2026-10-29T11:37:45.009179Z  INFO verbatim_outpost::outpost: shutting down, as Core asked
+2026-10-29T11:37:45.010234Z DEBUG verbatim_uia::subscribe: the UIA registering thread ends: RemoveAllEventHandlers result=Ok(()) open=0 closed_with_live_handlers=0
+2026-10-29T11:37:45.010360Z  INFO verbatim_outpost::outpost: the outpost shut down target_pid=3332 handlers_removed_ms=0 calls_finished_ms=0 elapsed_ms=1 workers=1 bounded=0 objects=0 failed_reads=0

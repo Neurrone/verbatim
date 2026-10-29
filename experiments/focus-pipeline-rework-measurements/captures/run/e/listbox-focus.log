@@ -1,0 +1,6 @@
+1793272816444223 hook 10029403 events 0x8005-0x8005 process 0 desktop window 65548
+1793272819494026 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=0 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30424109
+1793272819498574 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=1 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30424109
+1793272829844482 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=2 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30434453
+1793272831926625 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=1 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30436531
+1793272856530742 end

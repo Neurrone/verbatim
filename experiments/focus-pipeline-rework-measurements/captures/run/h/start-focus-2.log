@@ -1,0 +1,25 @@
+1793273931164608 hook 7866519 events 0x8005-0x8005 process 0 desktop window 65548
+1793273936307171 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31540906
+1793273936311187 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31540921
+1793273936313197 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31540921
+1793273938876425 event=0x8005 hwnd=197018 class=Windows.UI.Core.CoreWindow text='Search' obj=167 child=0 raised by SearchHost (7908) thread 7976 window process 7908 desktop=False tick=31543484
+1793273938884474 event=0x8005 hwnd=197018 class=Windows.UI.Core.CoreWindow text='Search' obj=-4 child=0 raised by SearchHost (7908) thread 7976 window process 7908 desktop=False tick=31543484
+1793273941616752 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273941620766 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273941626534 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273941632558 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273943452643 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943454652 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943456662 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943460679 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1664 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943468455 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1666 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943468455 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1667 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548062
+1793273943470464 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1668 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548062
+1793273943472473 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1669 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548062
+1793273943474482 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1671 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548078
+1793273943476491 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1672 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548078
+1793273943480008 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1673 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548078
+1793273945956420 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1674 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31550562
+1793273947965714 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1676 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31552578
+1793273949975641 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1677 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31554578
+1793273981232001 end

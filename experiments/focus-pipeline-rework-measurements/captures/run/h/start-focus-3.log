@@ -1,0 +1,30 @@
+1793273999171998 hook 7604413 events 0x8005-0x8005 process 0 desktop window 65548
+1793274004251491 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004255511 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004257518 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004261280 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004263288 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004263288 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004265296 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274006848102 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274006855879 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274006857887 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274006859896 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1680 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274009364784 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1681 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31613968
+1793274011373959 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274011377973 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274011379981 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274011385749 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274013381134 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013383143 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013392927 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013394934 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1682 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013396941 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1683 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31618000
+1793274015414280 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015428504 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015434504 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015436504 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015438503 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620031
+1793274015442660 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620031
+1793274015444662 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620031
+1793274039223414 end

@@ -1,0 +1,12 @@
+1793273875485903 key win (sent 2 inputs)
+1793273878078742 focus: ControlType.Edit name='Search box' class=RichEditBox window 0 process 7908
+1793273878085782 key escape (sent 2 inputs)
+1793273880100900 focus: ControlType.Document name='Text editor' class=RichEditD2DPT window 1115618 process 13216
+1793273880110940 key win+x (sent 4 inputs)
+1793273882618289 focus: ControlType.MenuItem name='Installed apps' class=MenuFlyoutItem window 0 process 5748
+1793273882629336 key escape (sent 2 inputs)
+1793273884657714 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273884665752 key tab (sent 2 inputs)
+1793273886670841 focus: ControlType.Button name='Search' class=ToggleButton window 0 process 5748
+1793273886678872 key tab (sent 2 inputs)
+1793273888679904 focus: ControlType.Button name='Search - Avebury henge, Wiltshire, England' class=Button window 0 process 5748

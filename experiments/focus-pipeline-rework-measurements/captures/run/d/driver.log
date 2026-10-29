@@ -1,0 +1,73 @@
+1793272320252089 start C:/Users/Dickson/Desktop/projects/verbatim/target/debug/mockapp.exe --fixture C:/Users/Dickson/Desktop/projects/verbatim/crates/mockapp/tests/fixtures/tree.json --backend msaa --title Rework MSAA Parent --show
+1793272320292497 out ready
+1793272322378379 sleep 2500
+1793272324878594 in focus btn_ok
+1793272324880106 out applied
+1793272324893616 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\d\m1
+1793272331116279 sleep 1500
+1793272332616677 in slow-acc-parent item1 1
+1793272332616959 out applied
+1793272332617026 in focus item1
+1793272332617212 out applied
+1793272332617934 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\d\m2
+1793272332618214 out slow-acc-parent started 1793272332618175
+1793272332619316 out slow-acc-parent ended 1793272332619230
+1793272332619422 out slow-acc-parent started 1793272332619392
+1793272332621123 out slow-acc-parent ended 1793272332620942
+1793272332622841 out slow-acc-parent started 1793272332622802
+1793272332623985 out slow-acc-parent ended 1793272332623850
+1793272332624074 out slow-acc-parent started 1793272332624040
+1793272332625605 out slow-acc-parent ended 1793272332625580
+1793272332628675 out slow-acc-parent started 1793272332628634
+1793272332629734 out slow-acc-parent ended 1793272332629699
+1793272348796837 in slow-acc-parent item1 0
+1793272348797002 out applied
+1793272348797039 sleep 1500
+1793272350297543 in focus btn_ok
+1793272350297811 out applied
+1793272350297873 sleep 2500
+1793272352798440 in slow-acc-parent item1 4000
+1793272352798635 out applied
+1793272352798680 in focus item1
+1793272352798864 out applied
+1793272352799391 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\d\m3
+1793272352799760 out slow-acc-parent started 1793272352799729
+1793272356800122 out slow-acc-parent ended 1793272356799819
+1793272356800169 out slow-acc-parent started 1793272356800069
+1793272360800272 out slow-acc-parent ended 1793272360800211
+1793272400430020 in slow-acc-parent item1 0
+1793272400430178 out applied
+1793272400430212 sleep 1500
+1793272401930462 in focus btn_ok
+1793272401931233 out applied
+1793272401938019 sleep 2500
+1793272404438195 in slow-acc-parent item1 15000
+1793272404438402 out applied
+1793272404438457 in focus item1
+1793272404438656 out applied
+1793272404439330 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\d\m4
+1793272404439590 out slow-acc-parent started 1793272404439564
+1793272419440143 out slow-acc-parent ended 1793272419440082
+1793272419440339 out slow-acc-parent started 1793272419440313
+1793272434440884 out slow-acc-parent ended 1793272434440823
+1793272474643759 in slow-acc-parent item1 0
+1793272474643959 out applied
+1793272474643997 sleep 1500
+1793272476144509 in focus chk_enable
+1793272476145303 out applied
+1793272476152040 sleep 2500
+1793272478652280 in slow-acc-parent item1 2000
+1793272478652493 out applied
+1793272478652548 in focus item1
+1793272478652732 out applied
+1793272478653399 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\d\m5
+1793272478653662 out slow-acc-parent started 1793272478653626
+1793272480653883 out slow-acc-parent ended 1793272480653816
+1793272480654138 out slow-acc-parent started 1793272480654106
+1793272482654601 out slow-acc-parent ended 1793272482654407
+1793272482656023 out slow-acc-parent started 1793272482655989
+1793272484656891 out slow-acc-parent ended 1793272484656635
+1793272484659774 out slow-acc-parent started 1793272484659737
+1793272486660278 out slow-acc-parent ended 1793272486660208
+1793272544771691 in quit
+1793272544793142 exit 0

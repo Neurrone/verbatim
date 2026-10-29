@@ -1,0 +1,129 @@
+A cancelled UIA parent read
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the nvda submodule's pin, 732d1ce2f0f051da3ef1e6a6247c64cf04596337) in session 1, eSpeak NG, symbol and verbosity levels at their defaults, delayed character descriptions off, through cargo xtask nvda capture. Mockapp ran from driver.py (this folder), which held its stdin: `mockapp --fixture crates/mockapp/tests/fixtures/tree.json --backend uia --title "Rework UIA Parent" --show`. Times in the driver lines are microseconds since the Unix epoch, the clock of mockapp's own stamps; capture times are milliseconds after the key or step was sent.
+
+What it shows. A 1 ms `slow-parent` counting run showed that a focus on the list item `item1` makes six `Navigate(Parent)` calls on it: two inside mockapp's own `UiaRaiseAutomationEvent`, before its `applied`, and four from the client after it. "After its first parent step" is therefore `slow-parent item1 <ms> 3`: the raise's two calls and the client's first step pass, and every later call waits. With a 4 second wait, NVDA, arriving by Alt+Tab or within the application, says the window (Alt+Tab only) and "Items list" after two late calls, about 8 seconds, and never says the item, although the client's third late call ends within the capture's quiet period; this was the same in two runs from within. With a 15 second wait, NVDA says the same after two late calls, about 30 seconds, and "First 1 of 2" after the third, at 45 seconds by Alt+Tab and together with the list at 32 seconds from within. NVDA neither speaks the focus before its ancestors are read nor substitutes a window for the slow parent: it waits for every call, three in all, each paid in full, and says nothing until then. Within the application, Tab does not move mockapp's focus, so the focus was moved by `focus item1` from the driver, as the key would move it in a real application; by Alt+Tab, mockapp raised the focus on its activation (`on-activate focus item1`), since a mockapp window that raises no focus event is not announced at all when it comes to the front (the `--front` lines below). Two earlier runs by Alt+Tab with `after` 1, which stalled mockapp's own raise instead (the second raise call), are kept at the end: with the raise stalled 15 seconds, past the hung judgement, NVDA said "unknown" at 5 seconds, then the window and list at 60 seconds and the item at 75 seconds, after four more late calls of its own.
+
+Baseline, no wait (slow-parent item1 1 0, focus from within, after focus btn_ok):
+
+> wait for ...\run\a\f3
+  +1961 ms  [Normal] Items  list
+  +1965 ms  [Normal] First  1 of 2
+driver: in focus item1 at 1793271552910758; slow-parent started/ended pairs at 1793271552910835 and 1793271552912029 (inside the raise), applied 1793271552913780, then client calls at 1793271552915404, 1793271552918105, 1793271552921030, 1793271552933624, each about 1 ms.
+
+Baseline by Alt+Tab, no wait (slow-parent item1 1 0, on-activate focus item1, from Notepad):
+
+> alt+tab
+  +2 ms  cancel
+  +78 ms  [Normal] Mockapp Tree Fixture  window
+  +82 ms  [Normal] Items  list
+  +87 ms  [Normal] First  1 of 2
+driver: two calls before the activation's applied (1793271812188214), four after.
+
+The window brought forward with no focus event (set-focus item1 only):
+
+> front * "Rework UIA Parent"
+> shift
+(nothing said)
+
+Alt+Tab, 4 seconds (slow-parent item1 4000 3, on-activate focus item1; capture started 1793271830627349):
+
+> alt+tab
+  +2 ms  cancel
+  +8061 ms  [Normal] Mockapp Tree Fixture  window
+  +8065 ms  [Normal] Items  list
+(quiet for 30 s after; no item)
+1793271830700595 out applied
+1793271830712961 out slow-parent started 1793271830712891
+1793271834713189 out slow-parent ended 1793271834713118
+1793271834716913 out slow-parent started 1793271834716863
+1793271838717266 out slow-parent ended 1793271838717199
+1793271838735468 out slow-parent started 1793271838735410
+1793271842735886 out slow-parent ended 1793271842735824
+
+Alt+Tab, 15 seconds (slow-parent item1 15000 3, on-activate focus item1; capture started 1793271879324259):
+
+> alt+tab
+  +3 ms  cancel
+  +30070 ms  [Normal] Mockapp Tree Fixture  window
+  +30073 ms  [Normal] Items  list
+  +45078 ms  [Normal] First  1 of 2
+1793271879412268 out applied
+1793271879424518 out slow-parent started 1793271879424448
+1793271894424726 out slow-parent ended 1793271894424651
+1793271894427398 out slow-parent started 1793271894427337
+1793271909427618 out slow-parent ended 1793271909427551
+1793271909445122 out slow-parent started 1793271909445064
+1793271924445921 out slow-parent ended 1793271924445343
+
+From within, 4 seconds (focus btn_ok, then slow-parent item1 4000 3 and focus item1; capture started 1793271574142252), run 1:
+
+> wait for ...\run\a\f4
+  +10488 ms  [Normal] Items  list
+(quiet for 30 s after; no item)
+1793271576658498 in focus item1
+1793271576658976 out applied
+1793271576661569 out slow-parent started 1793271576661528
+1793271580661875 out slow-parent ended 1793271580661801
+1793271580664386 out slow-parent started 1793271580664334
+1793271584664924 out slow-parent ended 1793271584664844
+1793271584676955 out slow-parent started 1793271584676898
+1793271588677431 out slow-parent ended 1793271588677348
+
+From within, 4 seconds, run 2 (capture started 1793271759466107):
+
+> wait for ...\run\a\f6
+  +10488 ms  [Normal] Items  list
+1793271761986085 in focus item1
+1793271761986494 out applied
+1793271761989225 out slow-parent started 1793271761989178
+1793271765989384 out slow-parent ended 1793271765989316
+1793271765991738 out slow-parent started 1793271765991693
+1793271769992292 out slow-parent ended 1793271769992214
+1793271770003752 out slow-parent started 1793271770003695
+1793271774003944 out slow-parent ended 1793271774003863
+
+From within, 15 seconds (capture started 1793271625437038):
+
+> wait for ...\run\a\f5
+  +32491 ms  [Normal] Items  list
+  +32494 ms  [Normal] First  1 of 2
+1793271627952879 in focus item1
+1793271627953401 out applied
+1793271627956956 out slow-parent started 1793271627956917
+1793271642957154 out slow-parent ended 1793271642957077
+1793271642961009 out slow-parent started 1793271642960961
+1793271657961198 out slow-parent ended 1793271657961121
+1793271657973858 out slow-parent started 1793271657973797
+1793271672974113 out slow-parent ended 1793271672974038
+
+Earlier runs with the raise stalled (slow-parent item1 <ms> 1), by Alt+Tab:
+
+4 seconds (capture started 1793271162380659):
+> alt+tab
+  +1 ms  cancel
+  +4037 ms  [Normal] Rework UIA Parent
+1793271162451178 out slow-parent started 1793271162451119   (inside the activation's raise)
+1793271166451613 out slow-parent ended 1793271166451550
+1793271166451778 out applied
+(no later call; quiet 8 s)
+
+15 seconds (capture started 1793271305958589):
+> alt+tab
+  +3 ms  cancel
+  +5062 ms  [Normal] unknown
+  +60061 ms  cancel
+  +60064 ms  [Normal] Mockapp Tree Fixture  window
+  +60067 ms  [Normal] Items  list
+  +75071 ms  [Normal] First  1 of 2
+1793271306034938 out slow-parent started 1793271306034860   (inside the activation's raise)
+1793271321035088 out slow-parent ended 1793271321035013
+1793271321035426 out applied
+1793271321040955 out slow-parent started 1793271321040903
+1793271336041545 out slow-parent ended 1793271336041472
+1793271336044996 out slow-parent started 1793271336044953
+1793271351045589 out slow-parent ended 1793271351045522
+1793271351048511 out slow-parent started 1793271351048458
+1793271366049072 out slow-parent ended 1793271366048995
+1793271366069627 out slow-parent started 1793271366069570
+1793271381069786 out slow-parent ended 1793271381069704

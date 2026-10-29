@@ -1,0 +1,62 @@
+A repeated MSAA focus on a simple child
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture with a 2 second quiet period. The windows are forms-list.ps1 (this folder), in the form of the text_box_password scenario's Windows Forms script: `-Kind listview`, a ListView in details view, and `-Kind listbox`, a ListBox, each named "Letters" and holding Alpha, Beta and Gamma with the first item focused and selected, launched by the capture's `--launch powershell.exe ... -WindowStyle Hidden -File forms-list.ps1`. winevent-hook.ps1 (this folder), an out-of-context hook for EVENT_OBJECT_FOCUS (0x8005) on every process, recorded the focus events raised meanwhile.
+
+What it shows. Home on the first item, already focused, raises no focus event in either control on this Windows build: the hook records none, and NVDA only cancels speech for the key and says nothing, both times it is pressed. Home after Down Arrow raises one focus event on child 1 and NVDA says the item. So Home on the first item does not give a repeated MSAA focus on a simple child here. The one repeat these windows raise comes when they open: the control's focus event on child 0 (the list itself) and then on child 1 (Alpha), in the same tick. For the ListView NVDA says "Alpha 1 of 3" twice, once for the list's focus, which it takes to the focused item, and once for child 1, not taking the second as a duplicate; for the ListBox it says "Alpha" once.
+
+ListView, opening and Home twice:
+
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ...\forms-list.ps1 -Kind listview -Title Rework ListView -Ready ...\run\e\lv-ready
+  +439 ms  cancel
+  +441 ms  [Normal] Rework List View
+  +485 ms  [Normal] Letters  list
+  +541 ms  [Normal] Alpha  1 of 3
+  +547 ms  [Normal] Alpha  1 of 3
+> wait for ...\run\e\lv-ready
+> front * "Rework ListView"
+> home
+  +6 ms  cancel
+> home
+hook:
+1793272715769917 event=0x8005 hwnd=8585702 class=WindowsForms10.SysListView32.app.0.7287dc_r8_ad1 text='' obj=-4 child=0 raised by powershell (14960) thread 15160 window process 14960 desktop=False tick=30320375
+1793272715771927 event=0x8005 hwnd=8585702 class=WindowsForms10.SysListView32.app.0.7287dc_r8_ad1 text='' obj=-4 child=1 raised by powershell (14960) thread 15160 window process 14960 desktop=False tick=30320375
+(nothing for either Home; the hook ran until 30 s after them)
+
+ListView, Down Arrow and Home twice:
+
+> front * "Rework ListView"
+> downarrow
+  +20 ms  [Normal] Beta  2 of 3
+> home
+  +2 ms  cancel
+  +24 ms  [Normal] Alpha  1 of 3
+> home
+  +5 ms  cancel
+hook:
+1793272772643242 event=0x8005 hwnd=8585702 class=WindowsForms10.SysListView32.app.0.7287dc_r8_ad1 text='' obj=-4 child=2 raised by powershell (14960) thread 15160 window process 14960 desktop=False tick=30377250
+1793272774716636 event=0x8005 hwnd=8585702 class=WindowsForms10.SysListView32.app.0.7287dc_r8_ad1 text='' obj=-4 child=1 raised by powershell (14960) thread 15160 window process 14960 desktop=False tick=30379328
+
+ListBox, opening, Home twice, Down Arrow, Home twice:
+
+> launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ...\forms-list.ps1 -Kind listbox -Title Rework ListBox -Ready ...\run\e\lb-ready
+  +386 ms  cancel
+  +390 ms  [Normal] Rework List Box
+  +426 ms  [Normal] Letters  list
+  +428 ms  [Normal] Alpha
+> wait for ...\run\e\lb-ready
+> front * "Rework ListBox"
+> home
+  +2 ms  cancel
+> home
+> downarrow
+  +20 ms  [Normal] Beta
+> home
+  +11 ms  cancel
+  +21 ms  [Normal] Alpha
+> home
+  +3 ms  cancel
+hook:
+1793272819494026 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=0 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30424109
+1793272819498574 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=1 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30424109
+1793272829844482 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=2 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30434453
+1793272831926625 event=0x8005 hwnd=8651238 class=WindowsForms10.LISTBOX.app.0.2fa6dda_r8_ad1 text='' obj=-4 child=1 raised by powershell (15388) thread 6152 window process 15388 desktop=False tick=30436531

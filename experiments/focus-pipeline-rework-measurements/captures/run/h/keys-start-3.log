@@ -1,0 +1,13 @@
+1793274004249484 key win+d (sent 4 inputs)
+1793274006834300 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793274006848103 key win+d (sent 4 inputs)
+1793274009360768 focus: ControlType.Button name='File Explorer pinned' class=Taskbar.TaskListButtonAutomationPeer window 0 process 5748
+1793274009362776 key tab (sent 2 inputs)
+1793274011367939 focus: ControlType.Button name='Show Hidden Icons' class=SystemTray.NormalButton window 0 process 5748
+1793274011369946 key tab (sent 2 inputs)
+1793274013377120 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793274013379128 key tab (sent 2 inputs)
+1793274015407679 focus: ControlType.Button name='Widgets 25øC Mostly cloudy' class=ToggleButton window 0 process 5748
+1793274015414280 key win+d (sent 4 inputs)
+1793274017932997 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+foreground: 65798 'Program Manager' class=Progman process=explorer (5748)

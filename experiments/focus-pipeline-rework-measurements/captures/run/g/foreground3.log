@@ -1,0 +1,22 @@
+1793273261698062 hook 25101791 events 0x0003-0x0003 process 0 desktop window 65548
+1793273267712315 event=0x0003 hwnd=853450 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30872312
+1793273270814187 event=0x0003 hwnd=7603560 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30875421
+1793273273820707 event=0x0003 hwnd=984522 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30878421
+1793273276900424 event=0x0003 hwnd=2229822 class=XamlExplorerHostIslandWindow text='Task View' obj=0 child=0 raised by explorer (5748) thread 7792 window process 5748 desktop=False tick=30881515
+1793273311768608 event=0x0003 hwnd=65762 class=Shell_TrayWnd text='' obj=0 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=30916375
+1793273313986512 event=0x0003 hwnd=1115594 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30918593
+1793273316994509 event=0x0003 hwnd=4196302 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30921593
+1793273320025856 event=0x0003 hwnd=1246666 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30924625
+1793273358407511 event=0x0003 hwnd=65912 class=ForegroundStaging text='' obj=0 child=0 raised by explorer (5748) thread 7792 window process 5748 desktop=False tick=30963015
+1793273358414583 event=0x0003 hwnd=3541188 class=Notepad text='Untitled - Notepad' obj=0 child=0 raised by Notepad (13216) thread 14636 window process 13216 desktop=False tick=30963015
+1793273370842106 event=0x0003 hwnd=3867764 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30975453
+1793273373938023 event=0x0003 hwnd=1574550 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30978546
+1793273398341795 event=0x0003 hwnd=1181024 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=31002953
+1793273401380998 event=0x0003 hwnd=1050514 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=31005984
+1793273444552346 event=0x0003 hwnd=1181586 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=31049156
+1793273458184528 event=0x0003 hwnd=1836384 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (13384) thread 8552 window process 4312 desktop=False tick=31062796
+1793273458188557 event=0x0003 hwnd=1902252 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (3352) thread 7824 window process 9056 desktop=False tick=31062796
+1793273458190587 event=0x0003 hwnd=1902230 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (13772) thread 6280 window process 13440 desktop=False tick=31062796
+1793273467644309 event=0x0003 hwnd=4719056 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (7492) thread 15444 window process 13392 desktop=False tick=31072250
+1793273467646058 event=0x0003 hwnd=4392052 class=ConsoleWindowClass text='C:\WINDOWS\SYSTEM32\conhost.exe' obj=0 child=0 raised by conhost (12452) thread 11388 window process 13172 desktop=False tick=31072250
+1793273501767880 end

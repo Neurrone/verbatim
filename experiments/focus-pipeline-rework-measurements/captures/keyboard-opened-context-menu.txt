@@ -1,0 +1,39 @@
+A keyboard-opened context menu
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture with a 2 second quiet period. Windows 11 Notepad, an empty untitled document, its text area focused; Shift+F10 opened the context menu and Escape closed it, twice.
+
+What it shows. Both times NVDA queued "Popup window" for the menu and cancelled it 0 ms later, within the same millisecond as the stamp the add-on gives, before queueing "Paste button", the menu's first enabled item (the document is empty, so Cut and Copy are unavailable). So what is heard is the item alone, which agrees with the design's expected speech for the delayed pump. A caveat for difference 17: Windows 11 Notepad's context menu is a WinUI popup, a top-level window of class Microsoft.UI.Content.PopupWindowSiteBridge titled "PopupHost" with the keyboard focus in an InputSiteWindowClass window (read while the menu was open, below), reached through UIA, so this capture shows NVDA's speech for the menu but does not by itself show that NVDA's 10 ms MSAA delayed pump is what removes the popup's speech; the cancel here is the focus's own speech cancel on the item. Closing with Escape says the window and document the first time and the document alone the second time.
+
+> front notepad.exe
+> shift+f10
+  +5 ms  cancel
+  +197 ms  [Normal] Popup  window
+  +197 ms  cancel
+  +202 ms  [Normal] Paste  button
+> escape
+  +4 ms  cancel
+  +59 ms  [Normal] Untitled - Notepad
+  +67 ms  [Normal] Text editor  document  blank
+> shift+f10
+  +7 ms  cancel
+  +77 ms  [Normal] Popup  window
+  +77 ms  cancel
+  +81 ms  [Normal] Paste  button
+> escape
+  +18 ms  cancel
+  +50 ms  [Normal] Text editor  document  blank
+
+A third opening, with Notepad's visible top-level windows and the GUI thread's focus read while the menu was open:
+
+> shift+f10
+  +4 ms  cancel
+  +68 ms  [Normal] Popup  window
+  +69 ms  cancel
+  +73 ms  [Normal] Paste  button
+3539544 class=Microsoft.UI.Content.PopupWindowSiteBridge text='PopupHost'
+1574760 class=Microsoft.UI.Content.PopupWindowSiteBridge text='PopupHost'
+3541188 class=Notepad text='Untitled - Notepad'
+focus 1640030 class=InputSiteWindowClass; active 3541188 class=Notepad; menuOwner 0 flags=0
+> escape
+  +2 ms  cancel
+  +43 ms  [Normal] Text editor  document  blank

@@ -1,0 +1,66 @@
+A stall after an MSAA focus is judged
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture. Mockapp ran from driver.py: `mockapp --fixture crates/mockapp/tests/fixtures/tree.json --backend msaa --title "Rework MSAA Parent" --show`, brought to the front by `--front`. Driver times are microseconds since the Unix epoch.
+
+What it shows. Mockapp does not move its focus on Tab, so the move to the list item was raised by `focus item1` from the driver, as Tab would raise it in a real application, after a focus on another control. NVDA's first call on the item's new object is `accParent`, so its first call reaches the provider twice in a row (the trap in docs/tooling/mockapp.md): in every run the late calls come in back-to-back pairs, the first pair being NVDA's first parent call and the second its next object's, so each NVDA parent call costs twice the `slow-acc-parent` time. Nothing reads the item's name in NVDA's proxy before its parent, and no other client can change that, so the doubled time is reported. With `slow-acc-parent item1 2000`, 4 seconds per NVDA call and so short of the hung judgement, NVDA waits for every call, four provider calls and 8 seconds in all, and then says "Items list" and "First", the same speech as with no wait. With `slow-acc-parent item1 4000`, 8 seconds per call, and with 15000, 30 seconds per call, both past the hung judgement, NVDA makes only its first parent call, never a second, and says nothing for the item at all, within quiet periods of 30 and 60 seconds; its focus stays on the previous control (a later `focus btn_ok` on the same control was silent as a duplicate). So a stall past the hung judgement in an MSAA focus's parent walk loses the focus in NVDA; a shorter one only delays it.
+
+Counting run, slow-acc-parent item1 1 (capture started 1793272331106158; focus btn_ok before):
+
+> wait for ...\run\d\m2
+  +1498 ms  [Normal] Items  list
+  +1499 ms  [Normal] First
+1793272332617026 in focus item1
+1793272332617212 out applied
+1793272332618214 out slow-acc-parent started 1793272332618175
+1793272332619316 out slow-acc-parent ended 1793272332619230
+1793272332619422 out slow-acc-parent started 1793272332619392
+1793272332621123 out slow-acc-parent ended 1793272332620942
+1793272332622841 out slow-acc-parent started 1793272332622802
+1793272332623985 out slow-acc-parent ended 1793272332623850
+1793272332624074 out slow-acc-parent started 1793272332624040
+1793272332625605 out slow-acc-parent ended 1793272332625580
+1793272332628675 out slow-acc-parent started 1793272332628634
+1793272332629734 out slow-acc-parent ended 1793272332629699
+
+slow-acc-parent item1 2000, 4 seconds per NVDA call (capture started 1793272474644013; focus chk_enable before):
+
+> wait for ...\run\d\m5
+  +1480 ms  [Normal] Enable feature  check box  checked
+  +11990 ms  [Normal] Items  list
+  +11992 ms  [Normal] First
+1793272478652548 in focus item1
+1793272478652732 out applied
+1793272478653662 out slow-acc-parent started 1793272478653626
+1793272480653883 out slow-acc-parent ended 1793272480653816
+1793272480654138 out slow-acc-parent started 1793272480654106
+1793272482654601 out slow-acc-parent ended 1793272482654407
+1793272482656023 out slow-acc-parent started 1793272482655989
+1793272484656891 out slow-acc-parent ended 1793272484656635
+1793272484659774 out slow-acc-parent started 1793272484659737
+1793272486660278 out slow-acc-parent ended 1793272486660208
+
+slow-acc-parent item1 4000, 8 seconds per NVDA call (capture started 1793272348811502; focus btn_ok before; quiet period 30 s):
+
+> wait for ...\run\d\m3
+  +1468 ms  [Normal] Group One  list
+  +1471 ms  [Normal] OK  button  Applies the changes and closes the dialog  Alt plus  O
+(nothing more)
+1793272352798680 in focus item1
+1793272352798864 out applied
+1793272352799760 out slow-acc-parent started 1793272352799729
+1793272356800122 out slow-acc-parent ended 1793272356799819
+1793272356800169 out slow-acc-parent started 1793272356800069
+1793272360800272 out slow-acc-parent ended 1793272360800211
+(no later call)
+
+slow-acc-parent item1 15000, 30 seconds per NVDA call (capture started 1793272400412127; quiet period 60 s; focus btn_ok before, silent as NVDA's focus was still the OK button):
+
+> wait for ...\run\d\m4
+(nothing said)
+1793272404438457 in focus item1
+1793272404438656 out applied
+1793272404439590 out slow-acc-parent started 1793272404439564
+1793272419440143 out slow-acc-parent ended 1793272419440082
+1793272419440339 out slow-acc-parent started 1793272419440313
+1793272434440884 out slow-acc-parent ended 1793272434440823
+(no later call)

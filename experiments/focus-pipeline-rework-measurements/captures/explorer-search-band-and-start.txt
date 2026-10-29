@@ -1,0 +1,330 @@
+File Explorer's search band and the Start window
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), in session 1, with Verbatim running instead of NVDA (target\debug\verbatim.exe from main at 0c3a5e6f, test-audio mode, RUST_LOG at the end-to-end suite's default filter, info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug), its speech recorded by cargo xtask nvda capture --verbatim. The outposts' debug logs are Verbatim's logs\16092 folder; the File Explorer folder window's outpost was outpost-spare-5.log (target_pid 3332). The outpost's debug lines give each MSAA focus's window handle and, on the window's first probe, its class (the "arbitration probed" line); winevent-hook.ps1 (this folder), an out-of-context hook for EVENT_OBJECT_FOCUS on every process, recorded each MSAA focus with its window's class as well, and window-ancestry.ps1 (this folder) read the search box window's ancestors while it existed. Times are microseconds since the Unix epoch.
+
+What it shows. Control+E in a folder window (a scratch folder, ReworkSearch, opened with --launch-without-foreground and brought forward with --front) raises an MSAA focus on OBJID_CLIENT of an InputSiteWindowClass window, whose parent is a Microsoft.UI.Content.DesktopChildSiteBridge child of the CabinetWClass frame: on this 25H2 build the search box is a WinUI island, and no window of class "Search Box" or "UniversalSearchBand" exists in the folder window at all (its 25 child windows are listed below), so NVDA's SearchBoxClient rule has no window to match. That MSAA focus came 16 ms before the search box's UIA focus here, not after it, and the outpost dropped it ("MSAA focus dropped: UIA owns the window"). Verbatim said " Search ReworkSearch edit" and "blank". From the desktop (shown with Windows+D) and from Notepad, the Windows key, Windows+X and Tab raised no MSAA focus in any window of class Start: the Windows key focuses SearchHost's "Search" window (class Windows.UI.Core.CoreWindow), and Windows+X and Tab focus the taskbar's Windows.UI.Input.InputSite.WindowClass window (Shell_TrayWnd's XAML island), with the desktop's FolderView between. So neither NVDA rule, SearchBoxClient nor StartButton, has a window to apply to on this build by these routes.
+
+Verbatim, the folder window opened, Control+E, Escape, Tab, Control+E (capture started 1793273744790477):
+
+> launch without the foreground right explorer.exe C:\Users\Dickson\AppData\Local\Temp\claude\...\scratchpad\ReworkSearch
+  +443 ms  [u9] ReworkSearch - File Explorer
+  +869 ms  [u10] Items View list
+  +869 ms  [u11] note.txt not selected 1 of 1
+> front explorer.exe "ReworkSearch"
+> control+e
+  +35 ms  [u12]  Search ReworkSearch edit
+  +35 ms  [u13] blank
+> escape
+> tab
+  +23 ms  [u14] tab control
+  +23 ms  [u15] list
+  +25 ms  [u16] ReworkSearch tab selected 1 of 1
+> control+e
+  +69 ms  cancelled [u16] ReworkSearch tab selected 1 of 1
+  +26 ms  [u17]  Search ReworkSearch edit
+  +26 ms  [u18] blank
+
+Every MSAA focus over that run (explorer-focus-3.log):
+1793273742050755 hook 27919729 events 0x8005-0x8005 process 0 desktop window 65548
+1793273745002974 event=0x8005 hwnd=1115800 class=CabinetWClass text='File Explorer' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349609
+1793273745151167 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745155186 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=10 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745160957 event=0x8005 hwnd=1574490 class=ShellTabWindowClass text='ReworkSearch' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745164974 event=0x8005 hwnd=919030 class=SHELLDLL_DefView text='ShellView' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745177304 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745192873 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=11 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349765
+1793273745349549 event=0x8005 hwnd=1508870 class=DirectUIHWND text='' obj=12 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31349953
+1793273749742242 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=-4 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31354343
+1793273749752026 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=16 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31354343
+1793273749754032 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=17 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31354343
+1793273753860621 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=18 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31358468
+1793273755935435 event=0x8005 hwnd=5834036 class=InputSiteWindowClass text='' obj=19 child=0 raised by explorer (3332) thread 11880 window process 3332 desktop=False tick=31360531
+1793273787099773 end
+
+The search box window and its ancestors, read while the window was open (search-ancestry.txt):
+5834036 class=InputSiteWindowClass text='' client role=client name=''
+4851088 class=Microsoft.UI.Content.DesktopChildSiteBridge text='' client role=client name=''
+1115800 class=CabinetWClass text='ReworkSearch - File Explorer' client role=client name='ReworkSearch - File Explorer'
+65548 class=#32769 text='' client role=client name='Desktop 1'
+
+The folder window's child windows by class (count, class):
+      2 Button
+      7 CtrlNotifySink
+      1 DUIViewWndClassName
+      2 DirectUIHWND
+      1 InputNonClientPointerSource
+      1 InputSiteWindowClass
+      1 Microsoft.UI.Content.DesktopChildSiteBridge
+      1 NamespaceTreeControl
+      1 SHELLDLL_DefView
+      2 ScrollBar
+      1 Shell
+      1 ShellTabWindowClass
+      1 Static
+      1 SysTreeView32
+      1 TITLE_BAR_SCAFFOLDING_WINDOW_CLASS
+      1 msctls_statusbar32
+
+The File Explorer outpost's log for the search box window (outpost-spare-5.log):
+2026-10-29T11:35:45.570298Z DEBUG verbatim_ia2::hook: WinEvent received kind=Selection event=0x8006 hwnd=5834036 id_object=14 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.570477Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870269 key=Some(Msaa(6, 5834036, 14, 0, 11880)) raised=None arrival=None waiting=4 in_batch=0 batch=44
+2026-10-29T11:35:45.571027Z DEBUG verbatim_ia2::hook: WinEvent received kind=Selection event=0x8006 hwnd=5834036 id_object=15 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.571059Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870270 key=Some(Msaa(6, 5834036, 15, 0, 11880)) raised=None arrival=None waiting=5 in_batch=0 batch=44
+2026-10-29T11:35:45.682023Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409765 key=Some(Uia(1, 0, [42, 5834036, 4, 1])) raised=None arrival=None waiting=3 in_batch=5 batch=45
+2026-10-29T11:35:45.688882Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409766 key=Some(Uia(1, 0, [42, 5834036, 4, 2])) raised=None arrival=None waiting=7 in_batch=5 batch=45
+2026-10-29T11:35:45.714497Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=5834036 class="InputSiteWindowClass" probed=Provider elapsed_ms=0
+2026-10-29T11:35:45.714585Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870269 item="MSAA Selection hwnd=5834036 object=14 child=0 thread=11880" elapsed_us=301 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 1, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.714853Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870270 item="MSAA Selection hwnd=5834036 object=15 child=0 thread=11880" elapsed_us=232 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.716326Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409765 item="fact Some(UiaSelection([42, 5834036, 4, 1]))" elapsed_us=1336 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:45.717358Z DEBUG verbatim_outpost::outpost::worker: handled trace=50113678409766 item="fact Some(UiaSelection([42, 5834036, 4, 2]))" elapsed_us=979 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.736267Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736360Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870284 key=Some(MsaaFocus(5834036, -4, 0, 11880)) raised=Some(31354343) arrival=Some(Hook) waiting=1 in_batch=0 batch=48
+2026-10-29T11:35:49.736386Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=16 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736412Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870285 key=Some(MsaaFocus(5834036, 16, 0, 11880)) raised=Some(31354343) arrival=Some(Hook) waiting=2 in_batch=0 batch=48
+2026-10-29T11:35:49.736849Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=17 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736885Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870286 key=Some(MsaaFocus(5834036, 17, 0, 11880)) raised=Some(31354343) arrival=Some(Hook) waiting=3 in_batch=0 batch=48
+2026-10-29T11:35:49.751907Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=true
+2026-10-29T11:35:49.751926Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870286 item="fact Some(MsaaFocus(5834036, 17, 0, 11880))" elapsed_us=69 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.751962Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=false
+2026-10-29T11:35:49.751975Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870285 item="fact Some(MsaaFocus(5834036, 16, 0, 11880))" elapsed_us=30 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.752005Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=false
+2026-10-29T11:35:49.752017Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870284 item="fact Some(MsaaFocus(5834036, -4, 0, 11880))" elapsed_us=28 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:49.759593Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409771 key=Some(UiaFocus([42, 5834036, 4, 3])) raised=None arrival=None waiting=2 in_batch=0 batch=49
+2026-10-29T11:35:49.764511Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 2 }, Base)) to=Some((NodeId { outpost: OutpostId(0), number: 14 }, Extended)) runtime_id=Some([42, 5834036, 4, 3])
+2026-10-29T11:35:49.764670Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([3332, 235413392, 0], Base)] to="1 elements" elements=[[42, 5834036, 4, 3]] group=Extended
+2026-10-29T11:35:49.765187Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:53.860709Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=18 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:53.860801Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870289 key=Some(MsaaFocus(5834036, 18, 0, 11880)) raised=Some(31358468) arrival=Some(Hook) waiting=1 in_batch=0 batch=52
+2026-10-29T11:35:53.866981Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=true
+2026-10-29T11:35:53.866998Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870289 item="fact Some(MsaaFocus(5834036, 18, 0, 11880))" elapsed_us=68 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:53.874311Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409773 key=Some(UiaFocus([42, 5834036, 4, 2])) raised=None arrival=None waiting=2 in_batch=0 batch=53
+2026-10-29T11:35:53.875078Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 14 }, Extended)) to=None runtime_id=Some([42, 5834036, 4, 2])
+2026-10-29T11:35:53.875365Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([42, 5834036, 4, 3], Extended)] to="nothing" elements=[] group=Base
+2026-10-29T11:35:53.877843Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=None to=Some((NodeId { outpost: OutpostId(0), number: 18 }, Base)) runtime_id=Some([42, 5834036, 4, 2])
+2026-10-29T11:35:53.878061Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=2
+2026-10-29T11:35:53.878092Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[] to="1 elements" elements=[[42, 5834036, 4, 2]] group=Base
+2026-10-29T11:35:53.878563Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 2] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:55.927801Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=19 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:55.927906Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=64630667870292 key=Some(MsaaFocus(5834036, 19, 0, 11880)) raised=Some(31360531) arrival=Some(Hook) waiting=1 in_batch=0 batch=56
+2026-10-29T11:35:55.938188Z DEBUG verbatim_outpost::outpost::worker: MSAA focus dropped: UIA owns the window hwnd=5834036 opened_gap=true
+2026-10-29T11:35:55.938206Z DEBUG verbatim_outpost::outpost::worker: handled trace=64630667870292 item="fact Some(MsaaFocus(5834036, 19, 0, 11880))" elapsed_us=67 unpublished=CallCounts { uia: 0, msaa: 0, window_messages: 0, connections: 0 } failed_reads=0
+2026-10-29T11:35:55.942850Z DEBUG verbatim_outpost::outpost::intake: intake pushed trace=50113678409777 key=Some(UiaFocus([42, 5834036, 4, 3])) raised=None arrival=None waiting=2 in_batch=0 batch=57
+2026-10-29T11:35:55.947379Z DEBUG verbatim_outpost::outpost::worker: the focus-following subscription is moved from=Some((NodeId { outpost: OutpostId(0), number: 18 }, Base)) to=Some((NodeId { outpost: OutpostId(0), number: 23 }, Extended)) runtime_id=Some([42, 5834036, 4, 3])
+2026-10-29T11:35:55.947449Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([42, 5834036, 4, 2], Base)] to="1 elements" elements=[[42, 5834036, 4, 3]] group=Extended
+2026-10-29T11:35:55.947887Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=0
+2026-10-29T11:35:55.948068Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 2] result=Ok(()) elapsed_ms=0
+2026-10-29T11:37:42.339150Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[([42, 5834036, 4, 3], Extended)] to="nothing" elements=[] group=Base
+2026-10-29T11:37:42.342748Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 5834036, 4, 3] result=Ok(()) elapsed_ms=2
+
+The focus listener's log for it (listener.log):
+2026-10-29T11:35:45.657970Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 5834036, 4, 1]
+2026-10-29T11:35:45.658050Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=12 kind=Selection runtime_id=[42, 5834036, 4, 1]
+2026-10-29T11:35:45.658180Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:45.658230Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=13 kind=Selection runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:49.736466Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736513Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=16 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736924Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=17 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.752231Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752294Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=14 kind=Focus runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752401Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752444Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=15 kind=Focus runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.754399Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1041 window=Ok(Some(5834036))
+2026-10-29T11:35:49.754630Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=5834036 class="InputSiteWindowClass" probed=Provider elapsed_ms=0
+2026-10-29T11:35:49.754668Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:35:49.758989Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=4 met_known=Some(7) depth_limited=false out_of_time=false failed_hop=None window=Some(5834036)
+2026-10-29T11:35:49.759022Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 5] role=Group name=None hwnd=0 content=true
+2026-10-29T11:35:49.759035Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036] role=Pane name=None hwnd=5834036 content=true
+2026-10-29T11:35:53.860855Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=18 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:53.866856Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:53.866941Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=16 kind=Focus runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:53.868174Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1068 window=Ok(Some(5834036))
+2026-10-29T11:35:53.868240Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 2] class_name=Some("ListViewItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:35:53.873588Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=3 met_known=Some(2) depth_limited=false out_of_time=false failed_hop=None window=Some(5834036)
+2026-10-29T11:35:53.873622Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 11] role=List name=None hwnd=0 content=true
+2026-10-29T11:35:53.873634Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 6] role=TabControl name=None hwnd=0 content=true
+2026-10-29T11:35:53.873643Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036] role=Pane name=None hwnd=5834036 content=true
+2026-10-29T11:35:54.698176Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.698249Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=17 kind=Focus runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.700134Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1527 window=Ok(Some(5834036))
+2026-10-29T11:35:54.700198Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 2] class_name=Some("ListViewItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:35:54.702610Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.702658Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=18 kind=Focus runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.704584Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1751 window=Ok(Some(5834036))
+2026-10-29T11:35:54.704639Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 2] class_name=Some("ListViewItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:35:55.927966Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=19 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:55.938332Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:55.938387Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=19 kind=Focus runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:55.939760Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=971 window=Ok(Some(5834036))
+2026-10-29T11:35:55.939859Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:35:55.942222Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=2 met_known=Some(3) depth_limited=false out_of_time=false failed_hop=None window=Some(5834036)
+2026-10-29T11:35:55.942247Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 5] role=Group name=None hwnd=0 content=true
+2026-10-29T11:35:55.942259Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036] role=Pane name=None hwnd=5834036 content=true
+
+The Windows key, Escape, Windows+X, Escape, Tab, Tab, from Notepad (the agent could not bring Program Manager forward; capture started 1793273873133398):
+
+> wait for ...\run\h\end-start
+  +2410 ms  [u22] Search window
+  +2410 ms  [u23] Search box edit
+  +2410 ms  [u24] blank
+  +5150 ms  [u25] Untitled - Notepad
+  +5156 ms  [u26] Text editor document
+  +5156 ms  [u27] blank
+  +15585 ms  cancelled [u27] blank
+  +7222 ms  [u28] Popup window
+  +15585 ms  cancelled [u28] Popup window
+  +7222 ms  [u29] Installed apps Alt, p 1 of 17
+  +9470 ms  [u30] Start toggle button not pressed
+  +11496 ms  [u31] Search toggle button not pressed
+  +13507 ms  [u32] Search - Avebury henge, Wiltshire, England button
+1793273875485903 key win (sent 2 inputs)
+1793273878078742 focus: ControlType.Edit name='Search box' class=RichEditBox window 0 process 7908
+1793273878085782 key escape (sent 2 inputs)
+1793273880100900 focus: ControlType.Document name='Text editor' class=RichEditD2DPT window 1115618 process 13216
+1793273880110940 key win+x (sent 4 inputs)
+1793273882618289 focus: ControlType.MenuItem name='Installed apps' class=MenuFlyoutItem window 0 process 5748
+1793273882629336 key escape (sent 2 inputs)
+1793273884657714 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273884665752 key tab (sent 2 inputs)
+1793273886670841 focus: ControlType.Button name='Search' class=ToggleButton window 0 process 5748
+1793273886678872 key tab (sent 2 inputs)
+1793273888679904 focus: ControlType.Button name='Search - Avebury henge, Wiltshire, England' class=Button window 0 process 5748
+
+MSAA focuses (start-focus.log):
+1793273870385561 hook 32310781 events 0x8005-0x8005 process 0 desktop window 65548
+1793273875487913 event=0x8005 hwnd=197018 class=Windows.UI.Core.CoreWindow text='Search' obj=-4 child=0 raised by SearchHost (7908) thread 7976 window process 7908 desktop=False tick=31480093
+1793273878295395 event=0x8005 hwnd=1115618 class=RichEditD2DPT text='' obj=-4 child=0 raised by Notepad (13216) thread 14636 window process 13216 desktop=False tick=31482890
+1793273880305948 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484906
+1793273880315985 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484906
+1793273880317994 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484906
+1793273880320002 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1650 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484906
+1793273880321752 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1652 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484921
+1793273880327776 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1653 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484937
+1793273880329792 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1654 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484937
+1793273880331798 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1655 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484937
+1793273880337571 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1657 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484953
+1793273880345615 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1658 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484953
+1793273880357413 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1659 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31484968
+1793273882627327 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1661 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31487234
+1793273884663742 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1662 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31489265
+1793273886676863 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1663 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31491281
+1793273910388871 end
+
+From the desktop: Windows+D, the Windows key, Escape, Windows+X, Escape, Tab, Tab (capture started 1793273933917877):
+
+> wait for ...\run\h\end-start-2
+  +2385 ms  [u33] Desktop list
+  +2385 ms  [u34] Recycle Bin 1 of 13
+  +4994 ms  [u35] Search window
+  +4994 ms  [u36] Search box edit
+  +4994 ms  [u37] blank
+  +7673 ms  [u38] Desktop list
+  +7673 ms  [u39] Recycle Bin 1 of 13
+  +9536 ms  [u40] Popup window
+  +18482 ms  cancelled [u40] Popup window
+  +9536 ms  [u41] Installed apps Alt, p 1 of 17
+  +12000 ms  [u42] Search toggle button not pressed
+  +12000 ms  [u43] Search - Avebury henge, Wiltshire, England button
+  +18482 ms  cancelled [u43] Search - Avebury henge, Wiltshire, England button
+  +14011 ms  [u44] Task View toggle button not pressed 2 desktops
+  +16016 ms  [u45] File Explorer pinned button 1 of 4
+1793273936281568 key win+d (sent 4 inputs)
+1793273938862317 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273938874416 key win (sent 2 inputs)
+1793273941405347 focus: ControlType.Edit name='Search box' class=RichEditBox window 0 process 7908
+1793273941419160 key escape (sent 2 inputs)
+1793273943432812 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273943436826 key win+x (sent 4 inputs)
+1793273945950396 focus: ControlType.MenuItem name='Installed apps' class=MenuFlyoutItem window 0 process 5748
+1793273945958430 key escape (sent 2 inputs)
+1793273947963706 focus: ControlType.Button name='Search - Avebury henge, Wiltshire, England' class=Button window 0 process 5748
+1793273947965715 key tab (sent 2 inputs)
+1793273949971628 focus: ControlType.Button name='Task View' class=ToggleButton window 0 process 5748
+1793273949975641 key tab (sent 2 inputs)
+1793273951997189 focus: ControlType.Button name='File Explorer pinned' class=Taskbar.TaskListButtonAutomationPeer window 0 process 5748
+foreground: 65762 '' class=Shell_TrayWnd process=explorer (5748)
+
+MSAA focuses (start-focus-2.log):
+1793273931164608 hook 7866519 events 0x8005-0x8005 process 0 desktop window 65548
+1793273936307171 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31540906
+1793273936311187 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31540921
+1793273936313197 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31540921
+1793273938876425 event=0x8005 hwnd=197018 class=Windows.UI.Core.CoreWindow text='Search' obj=167 child=0 raised by SearchHost (7908) thread 7976 window process 7908 desktop=False tick=31543484
+1793273938884474 event=0x8005 hwnd=197018 class=Windows.UI.Core.CoreWindow text='Search' obj=-4 child=0 raised by SearchHost (7908) thread 7976 window process 7908 desktop=False tick=31543484
+1793273941616752 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273941620766 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273941626534 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273941632558 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31546218
+1793273943452643 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943454652 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943456662 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943460679 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1664 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943468455 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1666 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548046
+1793273943468455 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1667 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548062
+1793273943470464 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1668 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548062
+1793273943472473 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1669 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548062
+1793273943474482 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1671 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548078
+1793273943476491 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1672 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548078
+1793273943480008 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1673 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31548078
+1793273945956420 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1674 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31550562
+1793273947965714 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1676 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31552578
+1793273949975641 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1677 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31554578
+1793273981232001 end
+
+Tab from the desktop: Windows+D twice, Tab three times, Windows+D (capture started 1793274001893234):
+
+> wait for ...\run\h\end-start-3
+  +2351 ms  [u46] Desktop list
+  +2351 ms  [u47] Recycle Bin 1 of 13
+  +4918 ms  [u48] File Explorer pinned button 1 of 4
+  +7428 ms  [u49] Show Hidden Icons button
+  +9449 ms  [u50] Desktop list
+  +9449 ms  [u51] Recycle Bin 1 of 13
+  +11459 ms  [u52] Widgets 25°C Mostly cloudy toggle button not pressed
+  +16449 ms  cancelled [u52] Widgets 25°C Mostly cloudy toggle button not pressed
+  +13488 ms  [u53] Desktop list
+  +13488 ms  [u54] Recycle Bin 1 of 13
+1793274004249484 key win+d (sent 4 inputs)
+1793274006834300 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793274006848103 key win+d (sent 4 inputs)
+1793274009360768 focus: ControlType.Button name='File Explorer pinned' class=Taskbar.TaskListButtonAutomationPeer window 0 process 5748
+1793274009362776 key tab (sent 2 inputs)
+1793274011367939 focus: ControlType.Button name='Show Hidden Icons' class=SystemTray.NormalButton window 0 process 5748
+1793274011369946 key tab (sent 2 inputs)
+1793274013377120 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793274013379128 key tab (sent 2 inputs)
+1793274015407679 focus: ControlType.Button name='Widgets 25�C Mostly cloudy' class=ToggleButton window 0 process 5748
+1793274015414280 key win+d (sent 4 inputs)
+1793274017932997 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+foreground: 65798 'Program Manager' class=Progman process=explorer (5748)
+
+MSAA focuses (start-focus-3.log):
+1793273999171998 hook 7604413 events 0x8005-0x8005 process 0 desktop window 65548
+1793274004251491 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004255511 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004257518 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004261280 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004263288 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004263288 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274004265296 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31608859
+1793274006848102 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274006855879 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274006857887 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274006859896 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1680 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31611453
+1793274009364784 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1681 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31613968
+1793274011373959 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274011377973 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274011379981 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274011385749 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31615984
+1793274013381134 event=0x8005 hwnd=65762 class=Shell_TrayWnd text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013383143 event=0x8005 hwnd=65996 class=Windows.UI.Composition.DesktopWindowContentBridge text='DesktopWindowXamlSource' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013392927 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=-4 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013394934 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1682 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31617984
+1793274013396941 event=0x8005 hwnd=65998 class=Windows.UI.Input.InputSite.WindowClass text='' obj=1683 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=31618000
+1793274015414280 event=0x8005 hwnd=65798 class=Progman text='Program Manager' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015428504 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015434504 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015436504 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620015
+1793274015438503 event=0x8005 hwnd=65802 class=SHELLDLL_DefView text='' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620031
+1793274015442660 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620031
+1793274015444662 event=0x8005 hwnd=65804 class=SysListView32 text='FolderView' obj=-4 child=1 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=31620031
+1793274039223414 end

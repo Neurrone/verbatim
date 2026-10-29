@@ -1,0 +1,15 @@
+1793273261696050 hook 13042185 events 0x800C-0x800C process 0 desktop window 65548
+1793273267742329 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30872343 client accName='Desktop 3'
+1793273270834192 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30875437 client accName='Desktop 2'
+1793273273847897 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30878453 client accName='Desktop 1'
+1793273314010159 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30918625 client accName='Desktop 2'
+1793273317016171 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30921625 client accName='Desktop 3'
+1793273320059830 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30924656 client accName='Rework Desk'
+1793273370870146 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30975484 client accName='Desktop 3'
+1793273373957880 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=30978562 client accName='Desktop 2'
+1793273398374198 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31002984 client accName='Desktop 3'
+1793273401409847 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31006015 client accName='Rework Desk'
+1793273416786193 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31021390 client accName='Desktop 3'
+1793273431124760 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31035734 client accName='Desktop 2'
+1793273444588442 event=0x800C hwnd=65548 class=#32769 text='' obj=0 child=0 raised by thread 1152 (process unknown) window process 980 desktop=True tick=31049203 client accName='Desktop 1'
+1793273501704233 end

@@ -1,0 +1,4 @@
+5834036 class=InputSiteWindowClass text='' client role=client name=''
+4851088 class=Microsoft.UI.Content.DesktopChildSiteBridge text='' client role=client name=''
+1115800 class=CabinetWClass text='ReworkSearch - File Explorer' client role=client name='ReworkSearch - File Explorer'
+65548 class=#32769 text='' client role=client name='Desktop 1'

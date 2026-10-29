@@ -1,0 +1,8 @@
+1793273267712315 key win+ctrl+left (sent 6 inputs)
+1793273270800082 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273270809648 key win+ctrl+left (sent 6 inputs)
+1793273273813652 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273273817672 key win+ctrl+left (sent 6 inputs)
+1793273276823892 focus: ControlType.Button name='Start' class=ToggleButton window 0 process 5748
+1793273276827912 key win+tab (sent 4 inputs)
+1793273278341530 focus: ControlType.ListItem name='Untitled - Notepad' class=ListViewItem window 0 process 5748

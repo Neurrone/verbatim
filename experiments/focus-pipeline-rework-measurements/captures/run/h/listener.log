@@ -1,0 +1,693 @@
+2026-10-29T11:33:16.330531Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:33:16.330748Z DEBUG verbatim_outpost::listener: UIA event dropped: received before the listener's UIA subscriptions were installed process_id=Some(5748)
+2026-10-29T11:33:16.331708Z DEBUG verbatim_uia::subscribe: AddFocusChangedEventHandler registration=1 result=Ok(()) elapsed_ms=23
+2026-10-29T11:33:16.331765Z DEBUG verbatim_uia::subscribe: a UIA subscription moves registration=1 from=[] to="the desktop" elements=[[42, 65548]] group=Base
+2026-10-29T11:33:16.344162Z DEBUG verbatim_uia::subscribe: AddEventHandlerGroup registration=1 runtime_id=[42, 65548] result=Ok(()) elapsed_ms=12
+2026-10-29T11:33:16.344709Z DEBUG verbatim_uia::subscribe: a UIA subscription's first registration registration=1 to="the desktop" result=Ok(()) elapsed_ms=48
+2026-10-29T11:33:34.169799Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1443418 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:34.174710Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1443418 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:34.341322Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=2098860 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:34.341438Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=2098860 id_object=10 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:34.546715Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=2098860 id_object=11 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:34.588004Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[8076, 215242208, 0]
+2026-10-29T11:33:34.588092Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=1 kind=Focus runtime_id=[8076, 215242208, 0]
+2026-10-29T11:33:34.764827Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 1181104, 4, 1]
+2026-10-29T11:33:34.764893Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=2 kind=Selection runtime_id=[42, 1181104, 4, 1]
+2026-10-29T11:33:34.765296Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 1181104, 4, 2]
+2026-10-29T11:33:34.765337Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=3 kind=Selection runtime_id=[42, 1181104, 4, 2]
+2026-10-29T11:33:34.844573Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=250617 window=Ok(Some(2098860))
+2026-10-29T11:33:34.845685Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=2098860 class="DirectUIHWND" probed=Provider elapsed_ms=0
+2026-10-29T11:33:34.845733Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[8076, 215242208, 0] class_name=Some("UIItem") framework=Some("DirectUI") hwnd=0 same_as_current=None
+2026-10-29T11:33:34.845852Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=8076 marker=1 reason="its window is not related to the foreground window"
+2026-10-29T11:33:36.055413Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=0 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:36.080693Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1443418 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:36.107476Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1443418]
+2026-10-29T11:33:36.107573Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=4 kind=Focus runtime_id=[42, 1443418]
+2026-10-29T11:33:36.108213Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1443418 class="CabinetWClass" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:33:36.108279Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=8076 marker=4 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:33:38.137426Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1181104 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:38.138813Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1181104 id_object=15 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:38.145896Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1181104 id_object=16 id_child=0 raised_ms_ago=0
+2026-10-29T11:33:38.162658Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:33:38.162817Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=5 kind=Focus runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:33:38.162984Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:33:38.163138Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=6 kind=Focus runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:33:38.165547Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=2493 window=Ok(Some(1181104))
+2026-10-29T11:33:38.165727Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1181104 class="InputSiteWindowClass" probed=Provider elapsed_ms=0
+2026-10-29T11:33:38.165764Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1181104, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:33:38.181007Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=4 met_known=None depth_limited=false out_of_time=false failed_hop=None window=Some(1181104)
+2026-10-29T11:33:38.181055Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1181104, 4, 5] role=Group name=None hwnd=0 content=true
+2026-10-29T11:33:38.181071Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1181104] role=Pane name=None hwnd=1181104 content=true
+2026-10-29T11:33:38.181080Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1640216] role=Pane name=None hwnd=1640216 content=true
+2026-10-29T11:33:38.181103Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1443418] role=Window name=Some("ReworkSearch - File Explorer") hwnd=1443418 content=true
+2026-10-29T11:33:38.182769Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1326 window=Ok(Some(1181104))
+2026-10-29T11:33:38.182891Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1181104, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:33:38.184563Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(1181104)
+2026-10-29T11:33:38.184593Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1181104, 4, 5] role=Group name=None hwnd=0 content=true
+2026-10-29T11:33:38.184606Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1181104] role=Pane name=None hwnd=1181104 content=true
+2026-10-29T11:33:38.184615Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1640216] role=Pane name=None hwnd=1640216 content=true
+2026-10-29T11:33:38.184623Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1443418] role=Window name=Some("ReworkSearch - File Explorer") hwnd=1443418 content=true
+2026-10-29T11:34:59.544805Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1181104 id_object=17 id_child=0 raised_ms_ago=0
+2026-10-29T11:34:59.554318Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:34:59.554396Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=7 kind=Focus runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:34:59.555988Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1042 window=Ok(Some(1181104))
+2026-10-29T11:34:59.556097Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1181104, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:34:59.556312Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=8076 marker=7 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:35:03.605787Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1181104 id_object=18 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:03.616305Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:35:03.616379Z DEBUG verbatim_outpost::listener: UIA focus event received pid=8076 marker=8 kind=Focus runtime_id=[42, 1181104, 4, 3]
+2026-10-29T11:35:03.617614Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=809 window=Ok(Some(1181104))
+2026-10-29T11:35:03.617677Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1181104, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:35:03.617915Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=8076 marker=8 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:35:38.084165Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=3541188 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:38.086854Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115618 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:38.089634Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1443418 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:38.099569Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1115618]
+2026-10-29T11:35:38.099632Z DEBUG verbatim_outpost::listener: UIA focus event received pid=13216 marker=9 kind=Focus runtime_id=[42, 1115618]
+2026-10-29T11:35:38.101233Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1115618]
+2026-10-29T11:35:38.101278Z DEBUG verbatim_outpost::listener: UIA focus event received pid=13216 marker=10 kind=Focus runtime_id=[42, 1115618]
+2026-10-29T11:35:38.101508Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=13216 marker=9 reason="a newer focus event of its element replaced it"
+2026-10-29T11:35:38.120202Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1115618 class="RichEditD2DPT" probed=Provider elapsed_ms=0
+2026-10-29T11:35:38.120268Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1115618] class_name=Some("RichEditD2DPT") framework=Some("Win32") hwnd=1115618 same_as_current=None
+2026-10-29T11:35:38.134493Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=2 met_known=None depth_limited=false out_of_time=false failed_hop=None window=Some(1115618)
+2026-10-29T11:35:38.134521Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1574534] role=Pane name=None hwnd=1574534 content=true
+2026-10-29T11:35:38.134533Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 3541188] role=Window name=Some("Untitled - Notepad") hwnd=3541188 content=true
+2026-10-29T11:35:44.998985Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.003291Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.152452Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.152815Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=10 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.158380Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.158787Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160175Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160359Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160775Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.160837Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=11 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.350877Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=12 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:45.390715Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[3332, 235413392, 0]
+2026-10-29T11:35:45.390798Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=11 kind=Focus runtime_id=[3332, 235413392, 0]
+2026-10-29T11:35:45.407536Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=15815 window=Ok(Some(1508870))
+2026-10-29T11:35:45.407881Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=1508870 class="DirectUIHWND" probed=Provider elapsed_ms=0
+2026-10-29T11:35:45.407915Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[3332, 235413392, 0] class_name=Some("UIItem") framework=Some("DirectUI") hwnd=0 same_as_current=None
+2026-10-29T11:35:45.657970Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 5834036, 4, 1]
+2026-10-29T11:35:45.658050Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=12 kind=Selection runtime_id=[42, 5834036, 4, 1]
+2026-10-29T11:35:45.658180Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:45.658230Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=13 kind=Selection runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:45.672767Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=7 met_known=None depth_limited=false out_of_time=false failed_hop=None window=Some(1508870)
+2026-10-29T11:35:45.672829Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1508870] role=List name=Some("Items View") hwnd=1508870 content=true
+2026-10-29T11:35:45.672845Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 919030] role=Pane name=Some("Shell Folder View") hwnd=919030 content=false
+2026-10-29T11:35:45.672857Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[3332, 170305840, 0] role=Pane name=Some("Folder Layout Pane") hwnd=0 content=false
+2026-10-29T11:35:45.672868Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 6423940] role=Pane name=Some("Explorer Pane") hwnd=6423940 content=false
+2026-10-29T11:35:45.672879Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1508880] role=Pane name=None hwnd=1508880 content=true
+2026-10-29T11:35:45.672889Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1574490] role=Pane name=Some("ReworkSearch") hwnd=1574490 content=true
+2026-10-29T11:35:45.672900Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1115800] role=Window name=Some("ReworkSearch - File Explorer") hwnd=1115800 content=true
+2026-10-29T11:35:49.736466Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736513Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=16 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.736924Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=17 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:49.752231Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752294Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=14 kind=Focus runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752401Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752444Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=15 kind=Focus runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:49.752492Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=3332 marker=14 reason="a newer focus event of its element replaced it"
+2026-10-29T11:35:49.754399Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1041 window=Ok(Some(5834036))
+2026-10-29T11:35:49.754630Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=5834036 class="InputSiteWindowClass" probed=Provider elapsed_ms=0
+2026-10-29T11:35:49.754668Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:35:49.758989Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=4 met_known=Some(7) depth_limited=false out_of_time=false failed_hop=None window=Some(5834036)
+2026-10-29T11:35:49.759022Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 5] role=Group name=None hwnd=0 content=true
+2026-10-29T11:35:49.759035Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036] role=Pane name=None hwnd=5834036 content=true
+2026-10-29T11:35:49.759044Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 4851088] role=Pane name=None hwnd=4851088 content=true
+2026-10-29T11:35:49.759052Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1115800] role=Window name=Some("ReworkSearch - File Explorer") hwnd=1115800 content=true
+2026-10-29T11:35:53.860855Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=18 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:53.866856Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:53.866941Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=16 kind=Focus runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:53.868174Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1068 window=Ok(Some(5834036))
+2026-10-29T11:35:53.868240Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 2] class_name=Some("ListViewItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:35:53.873588Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=3 met_known=Some(2) depth_limited=false out_of_time=false failed_hop=None window=Some(5834036)
+2026-10-29T11:35:53.873622Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 11] role=List name=None hwnd=0 content=true
+2026-10-29T11:35:53.873634Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 6] role=TabControl name=None hwnd=0 content=true
+2026-10-29T11:35:53.873643Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036] role=Pane name=None hwnd=5834036 content=true
+2026-10-29T11:35:53.873651Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 4851088] role=Pane name=None hwnd=4851088 content=true
+2026-10-29T11:35:53.873660Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1115800] role=Window name=Some("ReworkSearch - File Explorer") hwnd=1115800 content=true
+2026-10-29T11:35:54.698176Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.698249Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=17 kind=Focus runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.700134Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1527 window=Ok(Some(5834036))
+2026-10-29T11:35:54.700198Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 2] class_name=Some("ListViewItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:35:54.700481Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=3332 marker=17 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:35:54.702610Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.702658Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=18 kind=Focus runtime_id=[42, 5834036, 4, 2]
+2026-10-29T11:35:54.704584Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1751 window=Ok(Some(5834036))
+2026-10-29T11:35:54.704639Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 2] class_name=Some("ListViewItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:35:54.705108Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=3332 marker=18 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:35:55.927966Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=5834036 id_object=19 id_child=0 raised_ms_ago=0
+2026-10-29T11:35:55.938332Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:55.938387Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=19 kind=Focus runtime_id=[42, 5834036, 4, 3]
+2026-10-29T11:35:55.939760Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=971 window=Ok(Some(5834036))
+2026-10-29T11:35:55.939859Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 5834036, 4, 3] class_name=Some("TextBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:35:55.942222Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=2 met_known=Some(3) depth_limited=false out_of_time=false failed_hop=None window=Some(5834036)
+2026-10-29T11:35:55.942247Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036, 4, 5] role=Group name=None hwnd=0 content=true
+2026-10-29T11:35:55.942259Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 5834036] role=Pane name=None hwnd=5834036 content=true
+2026-10-29T11:35:55.942268Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 4851088] role=Pane name=None hwnd=4851088 content=true
+2026-10-29T11:35:55.942277Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1115800] role=Window name=Some("ReworkSearch - File Explorer") hwnd=1115800 content=true
+2026-10-29T11:36:38.678311Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 263222, 4, 5, 1, 6021]
+2026-10-29T11:36:38.678396Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=20 kind=Focus runtime_id=[42, 263222, 4, 5, 1, 6021]
+2026-10-29T11:36:38.684421Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1988 window=Ok(Some(263222))
+2026-10-29T11:36:38.684685Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=263222 class="Chrome_RenderWidgetHostHWND" probed=Provider elapsed_ms=0
+2026-10-29T11:36:38.684731Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 263222, 4, 5, 1, 6021] class_name=Some("ms-Stack css-147") framework=Some("Chrome") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:36:38.684805Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=11708 marker=20 reason="its window is not related to the foreground window"
+2026-10-29T11:36:38.717493Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 263222, 4, 5, 1, 6021]
+2026-10-29T11:36:38.717588Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=21 kind=Focus runtime_id=[42, 263222, 4, 5, 1, 6021]
+2026-10-29T11:36:38.719754Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1806 window=Ok(Some(263222))
+2026-10-29T11:36:38.719847Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 263222, 4, 5, 1, 6021] class_name=Some("ms-Stack css-147") framework=Some("Chrome") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:36:38.719903Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=11708 marker=21 reason="its window is not related to the foreground window"
+2026-10-29T11:36:38.756019Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 21954]
+2026-10-29T11:36:38.756152Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=22 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 21954]
+2026-10-29T11:37:42.272190Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.272854Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.273000Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=1115800 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274155Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1574490 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274507Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274906Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.274932Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508870 id_object=20 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.281453Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=919030 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.282695Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=722468 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.303103Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[3332, 235413392, 0]
+2026-10-29T11:37:42.303414Z DEBUG verbatim_outpost::listener: UIA focus event received pid=3332 marker=23 kind=Focus runtime_id=[3332, 235413392, 0]
+2026-10-29T11:37:42.309044Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=6423940 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.310107Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1508880 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.310151Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=6423940 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.315978Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=11321 window=Ok(None)
+2026-10-29T11:37:42.316160Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=3332 marker=23 reason="it has no window above it, so NVDA makes no object for it"
+2026-10-29T11:37:42.326445Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=3541188 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.328488Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115618 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:42.335788Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1115618]
+2026-10-29T11:37:42.335861Z DEBUG verbatim_outpost::listener: UIA focus event received pid=13216 marker=24 kind=Focus runtime_id=[42, 1115618]
+2026-10-29T11:37:42.337294Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1115618] class_name=Some("RichEditD2DPT") framework=Some("Win32") hwnd=1115618 same_as_current=Some(Ok(false))
+2026-10-29T11:37:42.349033Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1115618]
+2026-10-29T11:37:42.349111Z DEBUG verbatim_outpost::listener: UIA focus event received pid=13216 marker=25 kind=Focus runtime_id=[42, 1115618]
+2026-10-29T11:37:42.345690Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(1115618)
+2026-10-29T11:37:42.349738Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1574534] role=Pane name=None hwnd=1574534 content=true
+2026-10-29T11:37:42.349757Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 3541188] role=Window name=Some("Untitled - Notepad") hwnd=3541188 content=true
+2026-10-29T11:37:42.350627Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1115618] class_name=Some("RichEditD2DPT") framework=Some("Win32") hwnd=1115618 same_as_current=None
+2026-10-29T11:37:42.355215Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(1115618)
+2026-10-29T11:37:42.355269Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1574534] role=Pane name=None hwnd=1574534 content=true
+2026-10-29T11:37:42.355282Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 3541188] role=Window name=Some("Untitled - Notepad") hwnd=3541188 content=true
+2026-10-29T11:37:45.015654Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.015772Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.017111Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.017965Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.018225Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:37:45.019559Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.019832Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.020040Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.020153Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:37:45.020485Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.020840Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.021015Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:45.021172Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:37:45.054316Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:37:45.054377Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=26 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:37:45.057238Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=2061 window=Ok(Some(65804))
+2026-10-29T11:37:45.057420Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65804 class="SysListView32" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:37:45.057475Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=26 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:37:45.064297Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:37:45.064361Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=27 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:37:45.065372Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=873 window=Ok(Some(65804))
+2026-10-29T11:37:45.065445Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=27 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:37:45.074401Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:37:45.074492Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=28 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:37:45.076163Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1488 window=Ok(Some(65804))
+2026-10-29T11:37:45.076245Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=28 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:37:55.474008Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=197018 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:55.480541Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=197018 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:55.518556Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 197018, 4, 1]
+2026-10-29T11:37:55.518669Z DEBUG verbatim_outpost::listener: UIA focus event received pid=7908 marker=29 kind=Focus runtime_id=[42, 197018, 4, 1]
+2026-10-29T11:37:55.541811Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=7868 window=Ok(Some(197018))
+2026-10-29T11:37:55.541988Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=197018 class="Windows.UI.Core.CoreWindow" probed=Provider elapsed_ms=0
+2026-10-29T11:37:55.542028Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 197018, 4, 1] class_name=Some("RichEditBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:37:55.555159Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=None depth_limited=false out_of_time=false failed_hop=None window=Some(197018)
+2026-10-29T11:37:55.555211Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 197018] role=Window name=Some("Search") hwnd=197018 content=true
+2026-10-29T11:37:57.516956Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 197018, 4, 1]
+2026-10-29T11:37:57.517042Z DEBUG verbatim_outpost::listener: UIA focus event received pid=7908 marker=30 kind=Focus runtime_id=[42, 197018, 4, 1]
+2026-10-29T11:37:57.518577Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1185 window=Ok(Some(197018))
+2026-10-29T11:37:57.518642Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 197018, 4, 1] class_name=Some("RichEditBox") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:37:57.518838Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=7908 marker=30 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:37:58.273183Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=3541188 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:58.277878Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=1115618 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:37:58.301589Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1115618]
+2026-10-29T11:37:58.301722Z DEBUG verbatim_outpost::listener: UIA focus event received pid=13216 marker=31 kind=Focus runtime_id=[42, 1115618]
+2026-10-29T11:37:58.303292Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 1115618]
+2026-10-29T11:37:58.303338Z DEBUG verbatim_outpost::listener: UIA focus event received pid=13216 marker=32 kind=Focus runtime_id=[42, 1115618]
+2026-10-29T11:37:58.303673Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=13216 marker=31 reason="a newer focus event of its element replaced it"
+2026-10-29T11:37:58.305387Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 1115618] class_name=Some("RichEditD2DPT") framework=Some("Win32") hwnd=1115618 same_as_current=Some(Ok(false))
+2026-10-29T11:37:58.306954Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(1115618)
+2026-10-29T11:37:58.306980Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 1574534] role=Pane name=None hwnd=1574534 content=true
+2026-10-29T11:37:58.306992Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 3541188] role=Window name=Some("Untitled - Notepad") hwnd=3541188 content=true
+2026-10-29T11:38:00.303510Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.304967Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.305002Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65996 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.305022Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.305716Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1650 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.308086Z DEBUG verbatim_ia2::hook: WinEvent received kind=MenuPopupStart event=0x0006 hwnd=65998 id_object=1651 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.310147Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1652 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.316591Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:00.316845Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=33 kind=Focus runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:00.317774Z DEBUG verbatim_uia::com: UIA event received event="event" id=20003 runtime_id=[42, 65998, 4, 22]
+2026-10-29T11:38:00.317870Z DEBUG verbatim_outpost::listener: UIA menu opening dropped: a focus is pending
+2026-10-29T11:38:00.329005Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1653 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.330419Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1654 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.332419Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1655 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.336479Z DEBUG verbatim_ia2::hook: WinEvent received kind=MenuPopupStart event=0x0006 hwnd=65998 id_object=1656 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.338234Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1657 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.345800Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1658 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.356331Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1659 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:00.365710Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=47353 window=Ok(Some(65998))
+2026-10-29T11:38:00.365985Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 2] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:38:00.366581Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=33 reason="its element no longer has the keyboard focus"
+2026-10-29T11:38:00.367140Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 23]
+2026-10-29T11:38:00.367186Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=34 kind=Focus runtime_id=[42, 65998, 4, 23]
+2026-10-29T11:38:00.368457Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1012 window=Ok(None)
+2026-10-29T11:38:00.368532Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=34 reason="it has no window above it, so NVDA makes no object for it"
+2026-10-29T11:38:00.368974Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.369019Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=35 kind=Focus runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.374532Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=5370 window=Ok(Some(65998))
+2026-10-29T11:38:00.374760Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 24] class_name=Some("MenuFlyoutItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:38:00.379634Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65762]
+2026-10-29T11:38:00.379699Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=36 kind=Focus runtime_id=[42, 65762]
+2026-10-29T11:38:00.383170Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.383219Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=37 kind=Focus runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.384512Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 22]
+2026-10-29T11:38:00.384596Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=38 kind=Focus runtime_id=[42, 65998, 4, 22]
+2026-10-29T11:38:00.384722Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.384784Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=39 kind=Focus runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.384871Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=37 reason="a newer focus event of its element replaced it"
+2026-10-29T11:38:00.385000Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:00.385194Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=40 kind=Focus runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:00.385445Z DEBUG verbatim_uia::com: UIA event received event="event" id=20003 runtime_id=[42, 65998, 4, 22]
+2026-10-29T11:38:00.385504Z DEBUG verbatim_outpost::listener: UIA menu opening dropped: a focus is pending
+2026-10-29T11:38:00.385564Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 25]
+2026-10-29T11:38:00.385615Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=41 kind=Focus runtime_id=[42, 65998, 4, 25]
+2026-10-29T11:38:00.385743Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 22]
+2026-10-29T11:38:00.385807Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=42 kind=Focus runtime_id=[42, 65998, 4, 22]
+2026-10-29T11:38:00.385880Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=38 reason="a newer focus event of its element replaced it"
+2026-10-29T11:38:00.385975Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.386021Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=43 kind=Focus runtime_id=[42, 65998, 4, 24]
+2026-10-29T11:38:00.386086Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=39 reason="a newer focus event of its element replaced it"
+2026-10-29T11:38:00.389706Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=5 met_known=None depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:38:00.389750Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 22] role=Menu name=None hwnd=0 content=true
+2026-10-29T11:38:00.389763Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 25] role=Window name=Some("Popup") hwnd=0 content=true
+2026-10-29T11:38:00.389773Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:38:00.389781Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:38:00.389803Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:38:00.390042Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65762] class_name=Some("Shell_TrayWnd") framework=Some("Win32") hwnd=65762 same_as_current=None
+2026-10-29T11:38:00.396966Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=36 reason="its element no longer has the keyboard focus"
+2026-10-29T11:38:00.398798Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1656 window=Ok(Some(65998))
+2026-10-29T11:38:00.398846Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 2] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:38:00.399251Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=40 reason="its element no longer has the keyboard focus"
+2026-10-29T11:38:00.402445Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=3093 window=Ok(Some(65998))
+2026-10-29T11:38:00.402498Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 25] class_name=Some("Popup") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:38:00.402663Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=41 reason="its element no longer has the keyboard focus"
+2026-10-29T11:38:00.403525Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=754 window=Ok(Some(65998))
+2026-10-29T11:38:00.403562Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 22] class_name=Some("MenuFlyout") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:38:00.403707Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=42 reason="its element no longer has the keyboard focus"
+2026-10-29T11:38:00.404547Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=750 window=Ok(Some(65998))
+2026-10-29T11:38:00.404588Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 24] class_name=Some("MenuFlyoutItem") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:38:00.406099Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:38:00.406124Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 22] role=Menu name=None hwnd=0 content=true
+2026-10-29T11:38:00.406140Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 25] role=Window name=Some("Popup") hwnd=0 content=true
+2026-10-29T11:38:00.406152Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:38:00.406161Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:38:00.406169Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:38:02.627121Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1661 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:02.630245Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:02.630298Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=44 kind=Focus runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:02.632034Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=943 window=Ok(Some(65998))
+2026-10-29T11:38:02.632078Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 2] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:38:02.639322Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=3 met_known=Some(3) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:38:02.639356Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:38:02.639368Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:38:02.639378Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:38:02.639386Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:38:02.639395Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:38:03.461850Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:03.461940Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=45 kind=Focus runtime_id=[42, 65998, 4, 2]
+2026-10-29T11:38:03.463859Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1307 window=Ok(Some(65998))
+2026-10-29T11:38:03.463937Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 2] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:38:03.464145Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=45 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:38:04.664347Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1662 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:04.666212Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 27]
+2026-10-29T11:38:04.666262Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=46 kind=Focus runtime_id=[42, 65998, 4, 27]
+2026-10-29T11:38:04.669209Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=2667 window=Ok(Some(65998))
+2026-10-29T11:38:04.669303Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 27] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:38:04.670688Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:38:04.670716Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:38:04.670729Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:38:04.670738Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:38:04.670746Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:38:04.670754Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:38:05.487332Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 27]
+2026-10-29T11:38:05.487427Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=47 kind=Focus runtime_id=[42, 65998, 4, 27]
+2026-10-29T11:38:05.488779Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1202 window=Ok(Some(65998))
+2026-10-29T11:38:05.488844Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 27] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:38:05.489101Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=47 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:38:06.677448Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1663 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:06.677864Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:38:06.677909Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=48 kind=Focus runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:38:06.680427Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1507 window=Ok(Some(65998))
+2026-10-29T11:38:06.680488Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 29] class_name=Some("Button") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:38:06.681881Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(0) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:38:06.681907Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 27] role=ToggleButton name=Some("Search") hwnd=0 content=true
+2026-10-29T11:38:06.681919Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:38:06.681928Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:38:06.681936Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:38:06.681944Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:38:06.681953Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:38:07.501201Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:38:07.501288Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=49 kind=Focus runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:38:07.503125Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1212 window=Ok(Some(65998))
+2026-10-29T11:38:07.503178Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 29] class_name=Some("Button") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:38:07.503331Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=49 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:38:56.306890Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:56.308159Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:56.308635Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:38:56.339187Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:38:56.339280Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=50 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:38:56.339590Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65798 class="Progman" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:38:56.339656Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=50 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:38:56.344099Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:38:56.344239Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=51 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:38:56.347193Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=2756 window=Ok(Some(65804))
+2026-10-29T11:38:56.347412Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65804 class="SysListView32" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:38:56.347468Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=51 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:38:56.348471Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:38:56.348544Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=52 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:38:56.350211Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1500 window=Ok(Some(65804))
+2026-10-29T11:38:56.350343Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=52 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:38:58.874431Z DEBUG verbatim_ia2::hook: WinEvent received kind=Foreground event=0x0003 hwnd=197018 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:58.876125Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=197018 id_object=167 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:58.876612Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=197018 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:38:58.877243Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 197018, 4, 1]
+2026-10-29T11:38:58.877298Z DEBUG verbatim_outpost::listener: UIA focus event received pid=7908 marker=53 kind=Focus runtime_id=[42, 197018, 4, 1]
+2026-10-29T11:38:58.936448Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=51823 window=Ok(Some(197018))
+2026-10-29T11:38:58.936607Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 197018, 4, 1] class_name=Some("RichEditBox") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:38:58.942392Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(197018)
+2026-10-29T11:38:58.942457Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 197018] role=Window name=Some("Search") hwnd=197018 content=true
+2026-10-29T11:39:01.610003Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:01.610778Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:01.611163Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:01.611186Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:01.611412Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:39:01.629035Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:39:01.629118Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=54 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:39:01.630304Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65798 class="Progman" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:39:01.630373Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=54 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:39:01.631500Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:39:01.631554Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=55 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:39:01.633454Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1517 window=Ok(Some(65804))
+2026-10-29T11:39:01.634195Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65804 class="SysListView32" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:39:01.634272Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=55 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:39:01.637636Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:39:01.637693Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=56 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:39:01.638926Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=794 window=Ok(Some(65804))
+2026-10-29T11:39:01.639002Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=56 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:39:03.441037Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.442529Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.442787Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65996 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.442977Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.443096Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1664 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.445562Z DEBUG verbatim_ia2::hook: WinEvent received kind=MenuPopupStart event=0x0006 hwnd=65998 id_object=1665 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.452400Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1666 id_child=0 raised_ms_ago=16
+2026-10-29T11:39:03.458657Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:03.458750Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=57 kind=Focus runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:03.459366Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1667 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.460013Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1668 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.462077Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1669 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.466219Z DEBUG verbatim_ia2::hook: WinEvent received kind=MenuPopupStart event=0x0006 hwnd=65998 id_object=1670 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.467422Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1671 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.472679Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1672 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:03.480487Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1673 id_child=0 raised_ms_ago=15
+2026-10-29T11:39:03.486867Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=26977 window=Ok(Some(65998))
+2026-10-29T11:39:03.486957Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 29] class_name=Some("Button") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:39:03.487375Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 35]
+2026-10-29T11:39:03.487451Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=58 kind=Focus runtime_id=[42, 65998, 4, 35]
+2026-10-29T11:39:03.487489Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=57 reason="its element no longer has the keyboard focus"
+2026-10-29T11:39:03.487576Z DEBUG verbatim_uia::com: UIA event received event="event" id=20003 runtime_id=[42, 65998, 4, 33]
+2026-10-29T11:39:03.487888Z DEBUG verbatim_outpost::listener: UIA menu opening dropped: a focus is pending
+2026-10-29T11:39:03.487959Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 34]
+2026-10-29T11:39:03.488013Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=59 kind=Focus runtime_id=[42, 65998, 4, 34]
+2026-10-29T11:39:03.491503Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 33]
+2026-10-29T11:39:03.491560Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=60 kind=Focus runtime_id=[42, 65998, 4, 33]
+2026-10-29T11:39:03.491557Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=3162 window=Ok(Some(65998))
+2026-10-29T11:39:03.491676Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 35]
+2026-10-29T11:39:03.491753Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=61 kind=Focus runtime_id=[42, 65998, 4, 35]
+2026-10-29T11:39:03.491868Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:03.491928Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=62 kind=Focus runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:03.492045Z DEBUG verbatim_uia::com: UIA event received event="event" id=20003 runtime_id=[42, 65998, 4, 33]
+2026-10-29T11:39:03.492100Z DEBUG verbatim_outpost::listener: UIA menu opening dropped: a focus is pending
+2026-10-29T11:39:03.492162Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 36]
+2026-10-29T11:39:03.492216Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=63 kind=Focus runtime_id=[42, 65998, 4, 36]
+2026-10-29T11:39:03.492349Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 33]
+2026-10-29T11:39:03.492412Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=64 kind=Focus runtime_id=[42, 65998, 4, 33]
+2026-10-29T11:39:03.492525Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=60 reason="a newer focus event of its element replaced it"
+2026-10-29T11:39:03.492885Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 35]
+2026-10-29T11:39:03.492909Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 35] class_name=Some("MenuFlyoutItem") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:39:03.492942Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=65 kind=Focus runtime_id=[42, 65998, 4, 35]
+2026-10-29T11:39:03.493023Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=61 reason="a newer focus event of its element replaced it"
+2026-10-29T11:39:03.500531Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=3 met_known=Some(4) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:39:03.500599Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 33] role=Menu name=None hwnd=0 content=true
+2026-10-29T11:39:03.500621Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 36] role=Window name=Some("Popup") hwnd=0 content=true
+2026-10-29T11:39:03.500641Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:39:03.500655Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:39:03.500670Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:39:03.502014Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1056 window=Ok(None)
+2026-10-29T11:39:03.502077Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=59 reason="it has no window above it, so NVDA makes no object for it"
+2026-10-29T11:39:03.503272Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1089 window=Ok(Some(65998))
+2026-10-29T11:39:03.503336Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 29] class_name=Some("Button") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:39:03.503549Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=62 reason="its element no longer has the keyboard focus"
+2026-10-29T11:39:03.505284Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1631 window=Ok(Some(65998))
+2026-10-29T11:39:03.505335Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 36] class_name=Some("Popup") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:39:03.505765Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=63 reason="its element no longer has the keyboard focus"
+2026-10-29T11:39:03.508582Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=2709 window=Ok(Some(65998))
+2026-10-29T11:39:03.508658Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 33] class_name=Some("MenuFlyout") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:39:03.508883Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=64 reason="its element no longer has the keyboard focus"
+2026-10-29T11:39:03.509860Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=830 window=Ok(Some(65998))
+2026-10-29T11:39:03.509902Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 35] class_name=Some("MenuFlyoutItem") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:39:03.510051Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=65 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:39:05.957654Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1674 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:05.960787Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:05.960856Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=66 kind=Focus runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:05.962531Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1311 window=Ok(Some(65998))
+2026-10-29T11:39:05.962636Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 29] class_name=Some("Button") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:39:05.966092Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=4 met_known=Some(3) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:39:05.966127Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 27] role=ToggleButton name=Some("Search") hwnd=0 content=true
+2026-10-29T11:39:05.966139Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:39:05.966148Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:39:05.966156Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:39:05.966164Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:39:05.966173Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:39:06.781440Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:06.781522Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=67 kind=Focus runtime_id=[42, 65998, 4, 29]
+2026-10-29T11:39:06.783417Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1661 window=Ok(Some(65998))
+2026-10-29T11:39:06.783475Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 29] class_name=Some("Button") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:39:06.783899Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=67 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:39:07.967135Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1676 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:07.970730Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 18]
+2026-10-29T11:39:07.970841Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=68 kind=Focus runtime_id=[42, 65998, 4, 18]
+2026-10-29T11:39:07.972143Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=926 window=Ok(Some(65998))
+2026-10-29T11:39:07.972195Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 18] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:39:07.973838Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(2) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:39:07.973878Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:39:07.973894Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:39:07.973904Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:39:07.973913Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:39:07.973922Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:39:08.806802Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 18]
+2026-10-29T11:39:08.806886Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=69 kind=Focus runtime_id=[42, 65998, 4, 18]
+2026-10-29T11:39:08.808207Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1173 window=Ok(Some(65998))
+2026-10-29T11:39:08.808283Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 18] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:39:08.808532Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=69 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:39:09.976443Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1677 id_child=0 raised_ms_ago=0
+2026-10-29T11:39:09.978960Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:39:09.979039Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=70 kind=Focus runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:39:09.980594Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=957 window=Ok(Some(65998))
+2026-10-29T11:39:09.980661Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 5] class_name=Some("Taskbar.TaskListButtonAutomationPeer") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:39:09.982107Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:39:09.982131Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:39:09.982143Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:39:09.982153Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:39:09.982161Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:39:09.982169Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:39:10.804658Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:39:10.804740Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=71 kind=Focus runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:39:10.805952Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=784 window=Ok(Some(65998))
+2026-10-29T11:39:10.806004Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 5] class_name=Some("Taskbar.TaskListButtonAutomationPeer") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:39:10.806126Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=71 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:40:04.249930Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:04.251520Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:04.252273Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:04.252931Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:04.253209Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:40:04.255060Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:04.255682Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:04.256073Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:40:04.287758Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:40:04.287892Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=72 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:40:04.288270Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65798 class="Progman" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:40:04.288317Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=72 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:04.290720Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.290774Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=73 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.293129Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=2227 window=Ok(Some(65804))
+2026-10-29T11:40:04.293541Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65804 class="SysListView32" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:40:04.293611Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=73 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:04.294758Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.294813Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=74 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.295975Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1030 window=Ok(Some(65804))
+2026-10-29T11:40:04.296062Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=74 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:04.297672Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:40:04.297731Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=75 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:40:04.297936Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=75 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:04.299722Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.299769Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=76 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.301379Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1467 window=Ok(Some(65804))
+2026-10-29T11:40:04.301432Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=76 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:04.301910Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.301956Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=77 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:04.302865Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=805 window=Ok(Some(65804))
+2026-10-29T11:40:04.302940Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=77 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:06.845097Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:06.846497Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:06.846621Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65996 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:06.847149Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:06.847305Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1680 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:06.855285Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:40:06.855357Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=78 kind=Focus runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:40:06.857906Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1859 window=Ok(Some(65998))
+2026-10-29T11:40:06.858035Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 5] class_name=Some("Taskbar.TaskListButtonAutomationPeer") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:40:06.860451Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:40:06.860490Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:40:06.860503Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:40:06.860511Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:40:06.860520Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:40:06.860529Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:40:07.689261Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:40:07.689346Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=79 kind=Focus runtime_id=[42, 65998, 4, 5]
+2026-10-29T11:40:07.690515Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=753 window=Ok(Some(65998))
+2026-10-29T11:40:07.690568Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 5] class_name=Some("Taskbar.TaskListButtonAutomationPeer") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:40:07.690685Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=79 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:40:09.365036Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1681 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:09.365811Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 9]
+2026-10-29T11:40:09.367572Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=80 kind=Focus runtime_id=[42, 65998, 4, 9]
+2026-10-29T11:40:09.368751Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=971 window=Ok(Some(65998))
+2026-10-29T11:40:09.368824Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 9] class_name=Some("SystemTray.NormalButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:40:09.370548Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=1 met_known=Some(3) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:40:09.370573Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:40:09.370585Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:40:09.370595Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:40:10.191000Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 9]
+2026-10-29T11:40:10.191084Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=81 kind=Focus runtime_id=[42, 65998, 4, 9]
+2026-10-29T11:40:10.192247Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=771 window=Ok(Some(65998))
+2026-10-29T11:40:10.192309Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 9] class_name=Some("SystemTray.NormalButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:40:10.192443Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=81 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:40:11.372440Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:11.373328Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:11.373597Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:11.373734Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:11.374052Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:40:11.383594Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:40:11.383658Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=82 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:40:11.384291Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65798 class="Progman" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:40:11.384403Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=82 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:11.386069Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:11.386144Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=83 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:11.388395Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1832 window=Ok(Some(65804))
+2026-10-29T11:40:11.388984Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65804 class="SysListView32" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:40:11.389021Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:11.389052Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=83 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:11.389068Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=84 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:11.390892Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1607 window=Ok(Some(65804))
+2026-10-29T11:40:11.391023Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=84 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:13.380277Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:13.381740Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65762 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:13.382469Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65996 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:13.383603Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:13.383646Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1682 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:13.385408Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65998 id_object=1683 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:13.395554Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 9]
+2026-10-29T11:40:13.395618Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=85 kind=Focus runtime_id=[42, 65998, 4, 9]
+2026-10-29T11:40:13.395955Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 11]
+2026-10-29T11:40:13.396008Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=86 kind=Focus runtime_id=[42, 65998, 4, 11]
+2026-10-29T11:40:13.397055Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=775 window=Ok(Some(65998))
+2026-10-29T11:40:13.397112Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 9] class_name=Some("SystemTray.NormalButton") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:40:13.397328Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=85 reason="its element no longer has the keyboard focus"
+2026-10-29T11:40:13.398374Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=907 window=Ok(Some(65998))
+2026-10-29T11:40:13.398442Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 11] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=None
+2026-10-29T11:40:13.401030Z DEBUG verbatim_outpost::focus_read: UIA focus ancestors read path="classic" read=3 met_known=Some(1) depth_limited=false out_of_time=false failed_hop=None window=Some(65998)
+2026-10-29T11:40:13.401056Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 10] role=Group name=None hwnd=0 content=false
+2026-10-29T11:40:13.401068Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998, 4, 14] role=Pane name=None hwnd=0 content=true
+2026-10-29T11:40:13.401077Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65998] role=Pane name=None hwnd=65998 content=true
+2026-10-29T11:40:13.401085Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65996] role=Pane name=Some("DesktopWindowXamlSource") hwnd=65996 content=false
+2026-10-29T11:40:13.401099Z DEBUG verbatim_outpost::focus_read: UIA focus ancestor fact path="classic" runtime_id=[42, 65762] role=Pane name=Some("Taskbar") hwnd=65762 content=true
+2026-10-29T11:40:13.938515Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 263222, 4, 5, 1, 6021]
+2026-10-29T11:40:13.938606Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=87 kind=Focus runtime_id=[42, 263222, 4, 5, 1, 6021]
+2026-10-29T11:40:13.944367Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=3240 window=Ok(Some(263222))
+2026-10-29T11:40:13.944521Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=263222 class="Chrome_RenderWidgetHostHWND" probed=Provider elapsed_ms=0
+2026-10-29T11:40:13.944560Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 263222, 4, 5, 1, 6021] class_name=Some("ms-Stack css-147") framework=Some("Chrome") hwnd=0 same_as_current=Some(Ok(false))
+2026-10-29T11:40:13.944617Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=11708 marker=87 reason="its window is not related to the foreground window"
+2026-10-29T11:40:14.004081Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 21956]
+2026-10-29T11:40:14.004193Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=88 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 21956]
+2026-10-29T11:40:14.116913Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 24308]
+2026-10-29T11:40:14.117138Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=89 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 24308]
+2026-10-29T11:40:14.219605Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65998, 4, 11]
+2026-10-29T11:40:14.219695Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=90 kind=Focus runtime_id=[42, 65998, 4, 11]
+2026-10-29T11:40:14.221325Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1432 window=Ok(Some(65998))
+2026-10-29T11:40:14.221406Z DEBUG verbatim_outpost::focus_read: UIA focus sender runtime_id=[42, 65998, 4, 11] class_name=Some("ToggleButton") framework=Some("XAML") hwnd=0 same_as_current=Some(Ok(true))
+2026-10-29T11:40:14.221716Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=90 reason="a repeat of the last focus, which still has the keyboard focus"
+2026-10-29T11:40:14.301449Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26212]
+2026-10-29T11:40:14.301563Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=91 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26212]
+2026-10-29T11:40:15.411303Z DEBUG verbatim_ia2::hook: WinEvent received kind=ShellForeground event=0x0003 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:15.413042Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65798 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:15.413853Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:15.414297Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:15.414748Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:40:15.416608Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65802 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:15.417118Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=0 raised_ms_ago=0
+2026-10-29T11:40:15.417225Z DEBUG verbatim_ia2::hook: WinEvent received kind=Focus event=0x8005 hwnd=65804 id_object=-4 id_child=1 raised_ms_ago=0
+2026-10-29T11:40:15.430733Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:40:15.430788Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=92 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:40:15.431070Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65798 class="Progman" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:40:15.431165Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=92 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:15.432771Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.432820Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=93 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.434464Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1316 window=Ok(Some(65804))
+2026-10-29T11:40:15.435059Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.435062Z DEBUG verbatim_outpost::arbitration: arbitration probed hwnd=65804 class="SysListView32" probed=Answered(0) elapsed_ms=0
+2026-10-29T11:40:15.435115Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=94 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.435202Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=93 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:15.436396Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1087 window=Ok(Some(65804))
+2026-10-29T11:40:15.436542Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=94 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:15.437022Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65798]
+2026-10-29T11:40:15.437068Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=95 kind=Focus runtime_id=[42, 65798]
+2026-10-29T11:40:15.437671Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=95 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:15.439367Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.439429Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=96 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.441261Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=1140 window=Ok(Some(65804))
+2026-10-29T11:40:15.441326Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=96 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:15.442470Z DEBUG verbatim_uia::com: UIA event received event="focus" id=0 runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.442521Z DEBUG verbatim_outpost::listener: UIA focus event received pid=5748 marker=97 kind=Focus runtime_id=[42, 65804, 4, 0]
+2026-10-29T11:40:15.443499Z DEBUG verbatim_outpost::focus_read: UIA focus sender's nearest window looked up elapsed_us=769 window=Ok(Some(65804))
+2026-10-29T11:40:15.443611Z DEBUG verbatim_outpost::listener: UIA focus dropped pid=5748 marker=97 reason="its window does not use UIA, so its MSAA events speak for it"
+2026-10-29T11:40:29.247285Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26214]
+2026-10-29T11:40:29.247362Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=98 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26214]
+2026-10-29T11:40:44.250770Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26216]
+2026-10-29T11:40:44.250871Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=99 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26216]
+2026-10-29T11:40:59.260583Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26218]
+2026-10-29T11:40:59.260663Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=100 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26218]
+2026-10-29T11:41:14.261786Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26220]
+2026-10-29T11:41:14.261879Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=101 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26220]
+2026-10-29T11:41:29.277130Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26222]
+2026-10-29T11:41:29.277206Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=102 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26222]
+2026-10-29T11:41:44.278032Z DEBUG verbatim_uia::com: UIA event received event="event" id=20012 runtime_id=[42, 263222, 4, 5, 1, 26224]
+2026-10-29T11:41:44.278108Z DEBUG verbatim_outpost::listener: UIA focus event received pid=11708 marker=103 kind=Selection runtime_id=[42, 263222, 4, 5, 1, 26224]
+2026-10-29T11:41:55.463270Z  INFO verbatim_outpost::listener: shutting down, as Core asked
+2026-10-29T11:41:55.465014Z DEBUG verbatim_uia::subscribe: RemoveEventHandlerGroup registration=1 runtime_id=[42, 65548] result=Ok(()) elapsed_ms=0
+2026-10-29T11:41:55.479043Z DEBUG verbatim_uia::subscribe: RemoveFocusChangedEventHandler registration=1 result=Ok(()) elapsed_ms=13
+2026-10-29T11:41:55.479939Z DEBUG verbatim_uia::subscribe: the UIA registering thread ends: RemoveAllEventHandlers result=Ok(()) open=0 closed_with_live_handlers=0
+2026-10-29T11:41:55.480225Z  INFO verbatim_outpost::listener: the focus listener shut down elapsed_ms=16 reading_threads=4 failed_reads=0

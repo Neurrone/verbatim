@@ -1,0 +1,4 @@
+1793272767856568 hook 24970839 events 0x8005-0x8005 process 0 desktop window 65548
+1793272772643242 event=0x8005 hwnd=8585702 class=WindowsForms10.SysListView32.app.0.7287dc_r8_ad1 text='' obj=-4 child=2 raised by powershell (14960) thread 15160 window process 14960 desktop=False tick=30377250
+1793272774716636 event=0x8005 hwnd=8585702 class=WindowsForms10.SysListView32.app.0.7287dc_r8_ad1 text='' obj=-4 child=1 raised by powershell (14960) thread 15160 window process 14960 desktop=False tick=30379328
+1793272792884173 end

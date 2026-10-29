@@ -1,0 +1,29 @@
+Focus-now onto a hung window
+
+Taken on 2026-10-29 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin) in session 1, eSpeak NG, default symbol and verbosity levels, through cargo xtask nvda capture. Mockapp ran from driver.py: `mockapp --fixture crates/mockapp/tests/fixtures/tree.json --backend uia --title "Rework UIA Hung" --show`. Driver times are microseconds since the Unix epoch.
+
+What it shows. Mockapp was brought to the front with its focus on the OK button, the capture switched to Notepad, `stall 30000` blocked mockapp's window thread, and 5 seconds later Alt+Tab brought mockapp back while it was hung. NVDA said nothing: only a cancel at the key, nothing for the foreground window, plain or otherwise, and nothing when the stall ended 25 seconds later, within the capture's 40 second quiet period. Mockapp raises no focus event of its own when activated (none was armed, as a hung application raises none), so the only events were Windows' own foreground change and system focus on the hung window. Windows had mockapp in front at the end, as the final foreground check shows. NVDA's focus-now onto a hung window is therefore silence, not the window named by its text.
+
+> front * "Rework UIA Hung"
+  +2502 ms  cancel
+  +2505 ms  [Normal] Mockapp Tree Fixture  window
+  +2508 ms  [Normal] Group One  grouping
+  +2511 ms  [Normal] OK  button  Applies the changes and closes the dialog  Alt plus  O
+> wait for ...\run\c\h1
+> front notepad.exe
+  +27 ms  cancel
+  +29 ms  [Normal] Untitled - Notepad
+  +82 ms  [Normal] Text editor  document  blank
+
+Capture started at 1793272203532404 (--quiet-ms 40000):
+> wait for ...\run\c\h2
+> alt+tab
+  +13 ms  cancel
+xtask nvda: at the end of the capture the window in front is "Rework UIA Hung" of mockapp.exe (window 1050454), not the capture's (window 3541188); ...
+(the capture's own end check: its window was Notepad, which Alt+Tab left, as intended)
+
+1793272204514871 in stall 30000
+1793272204515050 out stall started
+1793272209516188 touch ...\run\c\h2   (Alt+Tab was pressed just after)
+1793272234515327 out stall ended 1793272234515233
+foreground afterwards: 1050454 'Rework UIA Hung' class=VerbatimMockAppWindow process=mockapp

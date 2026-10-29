@@ -1,0 +1,25 @@
+3998802 InputNonClientPointerSource
+1640040 TITLE_BAR_SCAFFOLDING_WINDOW_CLASS
+1574490 ShellTabWindowClass
+1508880 DUIViewWndClassName
+6423940 DirectUIHWND
+1312574 CtrlNotifySink
+5047478 NamespaceTreeControl
+6358374 Static
+1967406 SysTreeView32
+1442520 CtrlNotifySink
+8192352 Button
+5178334 CtrlNotifySink
+2164396 Button
+7931240 CtrlNotifySink
+1902396 Shell Preview Extension Host
+722468 CtrlNotifySink
+919030 SHELLDLL_DefView
+1508870 DirectUIHWND
+3147028 CtrlNotifySink
+2688206 ScrollBar
+788358 CtrlNotifySink
+3868192 ScrollBar
+1246640 msctls_statusbar32
+4851088 Microsoft.UI.Content.DesktopChildSiteBridge
+5834036 InputSiteWindowClass

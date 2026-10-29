@@ -1,0 +1,8 @@
+1793273201894264 key win+tab (sent 4 inputs)
+1793273203476196 focus: ControlType.ListItem name='Desktop 1' class=ListViewItem window 0 process 5748
+1793273203486264 key right (sent 2 inputs)
+1793273203993948 key right (sent 2 inputs)
+1793273204525915 key right (sent 2 inputs)
+1793273205234204 focus: ControlType.ListItem name='Desktop 4' class=ListViewItem window 0 process 5748
+1793273205236223 key f2 (sent 2 inputs)
+1793273206241891 focus: ControlType.Edit name='' class=TextBox window 0 process 5748

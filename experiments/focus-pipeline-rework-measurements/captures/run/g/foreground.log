@@ -1,0 +1,8 @@
+1793273119708064 hook 19924479 events 0x0003-0x0003 process 0 desktop window 65548
+1793273124571700 event=0x0003 hwnd=852044 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30729171
+1793273124597362 event=0x0003 hwnd=65798 class=Progman text='Program Manager' obj=0 child=0 raised by explorer (5748) thread 5752 window process 5748 desktop=False tick=30729203
+1793273128748108 event=0x0003 hwnd=1312428 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30733359
+1793273132760965 event=0x0003 hwnd=983116 class=VirtualDesktopHotkeySwitcher text='Virtual desktop hotkey switching preview' obj=0 child=0 raised by explorer (5748) thread 7700 window process 5748 desktop=False tick=30737375
+1793273136823978 event=0x0003 hwnd=1048652 class=XamlExplorerHostIslandWindow text='Task View' obj=0 child=0 raised by explorer (5748) thread 7792 window process 5748 desktop=False tick=30741421
+1793273141664113 event=0x0003 hwnd=65762 class=Shell_TrayWnd text='' obj=0 child=0 raised by explorer (5748) thread 7588 window process 5748 desktop=False tick=30746265
+1793273189741333 end

@@ -1,0 +1,15 @@
+1793273936281568 key win+d (sent 4 inputs)
+1793273938862317 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273938874416 key win (sent 2 inputs)
+1793273941405347 focus: ControlType.Edit name='Search box' class=RichEditBox window 0 process 7908
+1793273941419160 key escape (sent 2 inputs)
+1793273943432812 focus: ControlType.Pane name='FolderView' class=SysListView32 window 65804 process 5748
+1793273943436826 key win+x (sent 4 inputs)
+1793273945950396 focus: ControlType.MenuItem name='Installed apps' class=MenuFlyoutItem window 0 process 5748
+1793273945958430 key escape (sent 2 inputs)
+1793273947963706 focus: ControlType.Button name='Search - Avebury henge, Wiltshire, England' class=Button window 0 process 5748
+1793273947965715 key tab (sent 2 inputs)
+1793273949971628 focus: ControlType.Button name='Task View' class=ToggleButton window 0 process 5748
+1793273949975641 key tab (sent 2 inputs)
+1793273951997189 focus: ControlType.Button name='File Explorer pinned' class=Taskbar.TaskListButtonAutomationPeer window 0 process 5748
+foreground: 65762 '' class=Shell_TrayWnd process=explorer (5748)
