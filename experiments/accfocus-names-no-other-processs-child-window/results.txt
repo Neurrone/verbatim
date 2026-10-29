@@ -1,0 +1,28 @@
+RESULT exp=acc_focus attached_c=true
+RESULT exp=acc_focus setup p_pid=5964 c_pid=1848 attached=true
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc109ec)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved n=0 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=true after_is_own_child=false took_ms=0.1 answer=Some("vt 0") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc109ec)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved n=1 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=true after_is_own_child=false took_ms=0.0 answer=Some("vt 0") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc109ec)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved n=2 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=true after_is_own_child=false took_ms=0.1 answer=Some("vt 0") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc109ec)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved n=3 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=true after_is_own_child=false took_ms=0.5 answer=Some("vt 0") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc109ec)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved n=4 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=true after_is_own_child=false took_ms=0.1 answer=Some("vt 0") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc03ee)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved-own-child n=0 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=true took_ms=0.1 answer=Some("object window_is_c=false window_is_own_child=false name=None") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc03ee)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved-own-child n=1 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=true took_ms=0.2 answer=Some("object window_is_c=false window_is_own_child=false name=None") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc03ee)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved-own-child n=2 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=true took_ms=0.1 answer=Some("object window_is_c=false window_is_own_child=false name=None") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc03ee)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved-own-child n=3 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=true took_ms=0.6 answer=Some("object window_is_c=false window_is_own_child=false name=None") c=[none]
+RESULT exp=acc_focus set_focus_previous=Ok(HWND(0xc03ee)) error="The system cannot find the file specified."
+RESULT exp=acc_focus arm=moved-own-child n=4 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=true took_ms=0.5 answer=Some("object window_is_c=false window_is_own_child=false name=None") c=[none]
+RESULT exp=acc_focus arm=control n=0 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=false took_ms=0.0 answer=Some("child 0") c=[none]
+RESULT exp=acc_focus arm=control n=1 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=false took_ms=0.0 answer=Some("child 0") c=[none]
+RESULT exp=acc_focus arm=control n=2 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=false took_ms=0.0 answer=Some("child 0") c=[none]
+RESULT exp=acc_focus arm=control n=3 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=false took_ms=0.0 answer=Some("child 0") c=[none]
+RESULT exp=acc_focus arm=control n=4 checked_is_p=true owner_is_p=true front=true acquired=true after_is_c=false after_is_own_child=false took_ms=0.0 answer=Some("child 0") c=[none]
+SUMMARY done

@@ -75,6 +75,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [outpost-focused-element-study.md](design/outpost-focused-element-study.md)
     — whether an outpost can read its own application's focus with no
     risk of connecting to another.
+  - [cross-process-calls-study.md](design/cross-process-calls-study.md)
+    — every call that can reach another application, measured, with a
+    verdict on the rule that only an application's own outpost calls it.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read

@@ -1,0 +1,30 @@
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index a0d14ed2..411c9c5a 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -126,3 +126,7 @@ harness = false
+ 
+ [lints]
+ workspace = true
++
++[[test]]
++name = "xproc"
++harness = false
+diff --git a/crates/mockapp/tests/common/mod.rs b/crates/mockapp/tests/common/mod.rs
+index 09d994c0..91c86945 100644
+--- a/crates/mockapp/tests/common/mod.rs
++++ b/crates/mockapp/tests/common/mod.rs
+@@ -371,6 +371,13 @@ pub fn spawn_hiding_window_handle(fixture: &str, title: &str) -> MockApp {
+     spawn_with(fixture, "uia", title, &["--hide-window-handle"])
+ }
+ 
++/// Experiment (cross-process calls study, 2026-10-29): [`spawn`] with its
++/// window shown (`--show`).
++#[must_use]
++pub fn spawn_shown(fixture: &str, backend: &str, title: &str) -> MockApp {
++    spawn_with(fixture, backend, title, &["--show"])
++}
++
+ fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> MockApp {
+     contain_children();
+     let exe = env!("CARGO_BIN_EXE_mockapp");

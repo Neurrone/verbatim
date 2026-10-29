@@ -1,0 +1,17 @@
+RESULT exp=hook part=scope hook_scoped_to=raiser event=0x8005 notified thread=13304
+RESULT exp=hook part=scope hook_scoped_to=raiser event=0x800c notified thread=13304
+RESULT exp=hook part=scope hook_scoped_to=raiser received=[]
+RESULT exp=hook part=scope hook_scoped_to=window-owner event=0x8005 notified thread=13304
+RESULT exp=hook part=scope hook_scoped_to=window-owner event=0x800c notified thread=13304
+RESULT exp=hook part=scope hook_scoped_to=window-owner received=[(32773, 4851390, -4, 8), (32780, 4851390, -4, 8)]
+RESULT exp=hook part=outpost arm=a-in-front n=0 took_ms=0.5 said=[] a=[none] b=[none]
+RESULT exp=hook part=outpost arm=a-in-front n=1 took_ms=0.1 said=[] a=[none] b=[none]
+RESULT exp=hook part=outpost arm=a-in-front n=2 took_ms=0.1 said=[] a=[none] b=[none]
+RESULT exp=hook part=outpost arm=a-in-front n=3 took_ms=0.1 said=[] a=[none] b=[none]
+RESULT exp=hook part=outpost arm=a-in-front n=4 took_ms=0.1 said=[] a=[none] b=[none]
+RESULT exp=hook part=outpost arm=b-in-front n=0 took_ms=6.8 said=[] a=[none] b=[WM_GETOBJECT=2,accParent=2,get_accChild=1,get_accRole=1,get_accState=1,accFocus=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=1,WM_GETOBJECT(another object id)=1]
+RESULT exp=hook part=outpost arm=b-in-front n=1 took_ms=0.9 said=[] a=[none] b=[WM_GETOBJECT=1,accParent=2,get_accChild=1,get_accRole=1,get_accState=1,accFocus=1,WM_GETOBJECT(another object id)=1]
+RESULT exp=hook part=outpost arm=b-in-front n=2 took_ms=0.8 said=[] a=[none] b=[WM_GETOBJECT=1,accParent=2,get_accChild=1,get_accRole=1,get_accState=1,accFocus=1,WM_GETOBJECT(another object id)=1]
+RESULT exp=hook part=outpost arm=b-in-front n=3 took_ms=0.8 said=[] a=[none] b=[WM_GETOBJECT=1,accParent=2,get_accChild=1,get_accRole=1,get_accState=1,accFocus=1,WM_GETOBJECT(another object id)=1]
+RESULT exp=hook part=outpost arm=b-in-front n=4 took_ms=0.8 said=[] a=[none] b=[WM_GETOBJECT=1,accParent=2,get_accChild=1,get_accRole=1,get_accState=1,accFocus=1,WM_GETOBJECT(another object id)=1]
+SUMMARY done

@@ -1,0 +1,18 @@
+RESULT exp=register arm=uia-front-stalled n=0 in_front=true since_stall_ms=3023.0 registered 3009.0 ok=true app=[WM_GETOBJECT=4,ProviderOptions=11,HostRawElementProvider=4,Navigate=4,GetEmbeddedFragmentRoots=2,FragmentRoot=3,GetFocus=1,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=3]
+RESULT exp=register arm=uia-front-stalled n=1 in_front=true since_stall_ms=3019.3 registered 3008.3 ok=true app=[WM_GETOBJECT=4,ProviderOptions=11,HostRawElementProvider=4,Navigate=4,GetEmbeddedFragmentRoots=2,FragmentRoot=3,GetFocus=1,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=3]
+RESULT exp=register arm=uia-front-stalled n=2 in_front=true since_stall_ms=3016.8 registered 3004.2 ok=true app=[WM_GETOBJECT=4,ProviderOptions=11,HostRawElementProvider=4,Navigate=4,GetEmbeddedFragmentRoots=2,FragmentRoot=3,GetFocus=1,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=3]
+RESULT exp=register arm=uia-hidden-stalled n=0 in_front=false since_stall_ms=39.7 registered 28.3 ok=true app=[none]
+RESULT exp=register arm=uia-hidden-stalled n=1 in_front=false since_stall_ms=35.9 registered 24.6 ok=true app=[none]
+RESULT exp=register arm=uia-hidden-stalled n=2 in_front=false since_stall_ms=35.5 registered 23.8 ok=true app=[none]
+RESULT exp=register arm=uia-front-free n=0 in_front=true since_stall_ms=44.6 registered 32.5 ok=true app=[WM_GETOBJECT=6,ProviderOptions=18,HostRawElementProvider=6,Navigate=6,GetEmbeddedFragmentRoots=2,FragmentRoot=3,GetFocus=1,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=2,WM_GETOBJECT(UiaRootObjectId, zero wParam)=4]
+RESULT exp=register arm=uia-front-free n=1 in_front=true since_stall_ms=46.0 registered 32.6 ok=true app=[WM_GETOBJECT=6,ProviderOptions=18,HostRawElementProvider=6,Navigate=6,GetEmbeddedFragmentRoots=2,FragmentRoot=3,GetFocus=1,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=2,WM_GETOBJECT(UiaRootObjectId, zero wParam)=4]
+RESULT exp=register arm=uia-front-free n=2 in_front=true since_stall_ms=44.9 registered 31.9 ok=true app=[WM_GETOBJECT=6,ProviderOptions=18,HostRawElementProvider=6,Navigate=6,GetEmbeddedFragmentRoots=2,FragmentRoot=3,GetFocus=1,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=2,WM_GETOBJECT(UiaRootObjectId, zero wParam)=4]
+RESULT exp=register arm=msaa-front-stalled n=0 in_front=true since_stall_ms=3013.3 registered 3001.6 ok=true app=[WM_GETOBJECT=3,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=2]
+RESULT exp=register arm=msaa-front-stalled n=1 in_front=true since_stall_ms=3013.7 registered 3002.5 ok=true app=[WM_GETOBJECT=3,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=2]
+RESULT exp=register arm=msaa-front-stalled n=2 in_front=true since_stall_ms=3015.9 registered 3004.3 ok=true app=[WM_GETOBJECT=3,WM_GETOBJECT(UiaRootObjectId, nonzero wParam)=1,WM_GETOBJECT(UiaRootObjectId, zero wParam)=2]
+SUMMARY done
+RESULT exp=register arm=uia-front-stalled n=0 in_front=true since_stall_ms=6056.4 registered 6044.2 ok=true app=[none]
+RESULT exp=register arm=uia-front-stalled n=1 in_front=true since_stall_ms=6067.4 registered 6055.0 ok=true app=[none]
+RESULT exp=register arm=msaa-front-stalled n=0 in_front=true since_stall_ms=6058.5 registered 6045.4 ok=true app=[none]
+RESULT exp=register arm=msaa-front-stalled n=1 in_front=true since_stall_ms=6069.8 registered 6057.8 ok=true app=[none]
+SUMMARY done

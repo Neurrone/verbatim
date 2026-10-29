@@ -1,0 +1,10 @@
+RESULT exp=msaa_onward arm=free n=0 reported_after_ms=7.6 names=["First", "Mockapp Events Fixture", "Mockapp Counts Fixture", "Settings"] kind=Event { trace_id: TraceId(1), observed_a
+RESULT exp=msaa_onward arm=free n=1 reported_after_ms=6.1 names=["First", "Mockapp Events Fixture", "Mockapp Counts Fixture", "Settings"] kind=Event { trace_id: TraceId(3), observed_a
+RESULT exp=msaa_onward arm=free n=2 reported_after_ms=6.2 names=["First", "Mockapp Events Fixture", "Mockapp Counts Fixture", "Settings"] kind=Event { trace_id: TraceId(5), observed_a
+RESULT exp=msaa_onward arm=parent-stalled-4s n=0 reported_after_ms=4007.3 names=["First", "Mockapp Events Fixture", "Mockapp Counts Fixture", "Settings"] kind=Event { trace_id: TraceId(7), observed_a
+RESULT exp=msaa_onward arm=parent-stalled-4s n=1 reported_after_ms=4006.6 names=["First", "Mockapp Events Fixture", "Mockapp Counts Fixture", "Settings"] kind=Event { trace_id: TraceId(9), observed_a
+RESULT exp=msaa_onward arm=parent-stalled-4s n=2 reported_after_ms=4006.9 names=["First", "Mockapp Events Fixture", "Mockapp Counts Fixture", "Settings"] kind=Event { trace_id: TraceId(11), observed_
+RESULT exp=msaa_onward arm=parent-stalled-12s n=0 reported_after_ms=30002.2 names=[] kind=Err(Timeout)
+RESULT exp=msaa_onward arm=parent-stalled-12s n=1 reported_after_ms=30003.1 names=[] kind=Err(Timeout)
+RESULT exp=msaa_onward arm=parent-stalled-12s n=2 reported_after_ms=30001.9 names=[] kind=Err(Timeout)
+SUMMARY done

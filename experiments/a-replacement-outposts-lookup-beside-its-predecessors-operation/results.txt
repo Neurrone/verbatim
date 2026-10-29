@@ -1,0 +1,13 @@
+RESULT exp=retire arm=queued n=0 stall_ended_us=1793279443333390 since_stall_ms=3021.9 new="new done 2970.6 refused-or-failed \"the element is served only by UIA's own proxies\"" old=Some("op done 1001.3 Ok(\"Mockapp Counts Fixture\")")
+RESULT exp=retire arm=queued n=1 stall_ended_us=1793279446355439 since_stall_ms=3011.1 new="new done 2959.7 refused-or-failed \"the element is served only by UIA's own proxies\"" old=Some("op done 1001.0 Ok(\"Mockapp Counts Fixture\")")
+RESULT exp=retire arm=queued n=2 stall_ended_us=1793279449366746 since_stall_ms=3017.3 new="new done 2965.8 refused-or-failed \"the element is served only by UIA's own proxies\"" old=Some("op done 1000.9 Ok(\"Mockapp Counts Fixture\")")
+RESULT exp=retire arm=queued n=3 stall_ended_us=1793279452384229 since_stall_ms=3013.7 new="new done 2962.1 refused-or-failed \"the element is served only by UIA's own proxies\"" old=Some("op done 1001.0 Ok(\"Mockapp Counts Fixture\")")
+RESULT exp=retire arm=queued n=4 stall_ended_us=1793279455398102 since_stall_ms=3015.4 new="new done 2964.4 refused-or-failed \"the element is served only by UIA's own proxies\"" old=Some("op done 1001.2 Ok(\"Mockapp Counts Fixture\")")
+RESULT exp=retire arm=queued n=5 stall_ended_us=1793279458413561 since_stall_ms=3015.3 new="new done 2964.0 refused-or-failed \"the element is served only by UIA's own proxies\"" old=Some("op done 1000.9 Ok(\"Mockapp Counts Fixture\")")
+RESULT exp=retire arm=busy-only n=0 stall_ended_us=1793279461428885 since_stall_ms=1002.9 new="new done 1002.2 own name=Some(\"Mockapp Counts Fixture\") pids=[14348, 4584]" old=None
+RESULT exp=retire arm=busy-only n=1 stall_ended_us=1793279462431557 since_stall_ms=1002.2 new="new done 1001.5 own name=Some(\"Mockapp Counts Fixture\") pids=[14348, 4584]" old=None
+RESULT exp=retire arm=busy-only n=2 stall_ended_us=1793279463433977 since_stall_ms=1002.4 new="new done 1001.6 own name=Some(\"Mockapp Counts Fixture\") pids=[14348, 4584]" old=None
+RESULT exp=retire arm=busy-only n=3 stall_ended_us=1793279464436647 since_stall_ms=1002.5 new="new done 1002.0 own name=Some(\"Mockapp Counts Fixture\") pids=[14348, 4584]" old=None
+RESULT exp=retire arm=busy-only n=4 stall_ended_us=1793279465439199 since_stall_ms=1002.4 new="new done 1001.8 own name=Some(\"Mockapp Counts Fixture\") pids=[14348, 4584]" old=None
+RESULT exp=retire arm=busy-only n=5 stall_ended_us=1793279466441586 since_stall_ms=1004.7 new="new done 1004.0 own name=Some(\"Mockapp Counts Fixture\") pids=[14348, 4584]" old=None
+SUMMARY done
