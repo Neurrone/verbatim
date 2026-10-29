@@ -256,16 +256,27 @@ code is in `reduce.rs` unless named.
 - Repeats and staleness (`docs/parity/focus-events.md`, "Duplicate focus
   suppression" and "Stale focus events"). A focus that `repeats_focus`
   judges a repeat is dropped before anything else judges it, its newer
-  reading kept unspoken. Across outposts, a focus observed before the
+  reading kept unspoken; what Core last spoke of the focus is left as it
+  was, so a change the repeat carried in is spoken when its event comes. Across outposts, a focus observed before the
   applied one is dropped (`observed_at_us`, a tie being no earlier).
 - Background speech across a foreground change
   (`docs/design/focus-pipeline.md`, section 7): a background event
   observed before the newest applied foreground change is dropped.
-- Changes (`docs/parity/changes-and-selection.md`). A name change speaks
+- Changes (`docs/parity/changes-and-selection.md`). Each focus keeps two
+  things: the reading Core holds (`FocusContext::snapshot` and
+  `ancestors`), which review reads and a repeat updates, and what Core
+  last spoke of it (`FocusContext::spoken`, a `SpokenRecord`): the
+  focus's name, value, description and states, and each ancestor's
+  states. Only speech moves the record: a focus taken, and a change that
+  reaches its speech. An ancestor the previous focus line held, the
+  previous focus among them, keeps its entry, so an expansion of a combo
+  box the focus has just left for its item, arriving after the item's
+  report, is still spoken; an ancestor with no entry is compared with its
+  reading. Every change is compared with the record. A name change speaks
   the new name on the focus; a description change the new description; a
   value change on the focus the bare value, unless unchanged, an edit
   field or document, or a role that never speaks a value. A states change
-  on the focus or a spoken ancestor is diffed against the snapshot: gained
+  on the focus or a spoken ancestor is diffed against the record: gained
   states, and lost ones spoken by their absence. A focus that reported
   itself focused (`FocusContext::reported_focused`) and loses the focused
   state keeps its states silently. An expansion carrying `child_count`

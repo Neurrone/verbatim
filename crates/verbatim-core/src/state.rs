@@ -10,8 +10,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{
     CaretKey, Fetches, ForegroundWindow, HeldAnchors, HookForeground, NodeId, NodeSnapshot,
-    OutpostId, Pid, QueryId, ReaderSettings, ReviewCommand, Selection, SpeechMark, TextAttributes,
-    TextChunk, TextPosition, TextUnit, TraceId, WindowFacts, WindowHandle,
+    OutpostId, Pid, QueryId, ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet,
+    TextAttributes, TextChunk, TextPosition, TextUnit, TraceId, WindowFacts, WindowHandle,
 };
 
 /// The focused node and what the reducer knows about where it sits.
@@ -22,7 +22,10 @@ pub(crate) struct FocusContext {
     /// The focus event's window facts, when it carried any. The top-level
     /// window is what a foreground change is compared against.
     pub(crate) window: Option<WindowFacts>,
-    /// The focused node as last announced or updated.
+    /// The focused node as last read: the reading Core holds, which review
+    /// and reporting the focus read, and which a repeat of the focus updates
+    /// with what it carries. Changes are compared with
+    /// [`spoken`](Self::spoken), not with this.
     pub(crate) snapshot: NodeSnapshot,
     /// The focused node's ancestors, outermost first, as the `FocusChanged`
     /// event carried them. The next focus change diffs its own ancestry
@@ -65,6 +68,94 @@ pub(crate) struct FocusContext {
     /// clock (0 when not known).
     #[serde(default)]
     pub(crate) observed_at_us: u64,
+    /// What Core last spoke of the focus and its ancestors, which only
+    /// speech updates; `None` in a recording made before it was kept, when
+    /// the reading stands in ([`FocusContext::spoken`]).
+    #[serde(default)]
+    pub(crate) spoken: Option<SpokenRecord>,
+}
+
+/// What Core last spoke of the focus, against which a change of its name,
+/// value, description or states is compared, as NVDA compares a change with
+/// the properties it last spoke of the object ("When values and
+/// descriptions are spoken" in `docs/nvda/speech.md`; "Repeats, stamps and
+/// the hold" in `docs/design/focus-pipeline-rework.md`). A repeat of the
+/// focus updates the reading Core holds, never this, so a change it carried
+/// in is still spoken when its own event comes.
+///
+/// Of the ancestors only the states are kept, the one change Core speaks of
+/// an ancestor. An ancestor the previous focus line held, the previous
+/// focus among them, keeps its entry from it, so a state change of a focus
+/// just left that arrives after the new focus's report, which already
+/// carries the new state, is still spoken. An ancestor with no entry, read
+/// by a repeat after the focus was taken, is compared with its reading.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SpokenRecord {
+    pub(crate) name: Option<String>,
+    pub(crate) value: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) states: StateSet,
+    /// Each ancestor's states as last spoken, outermost first, shared as
+    /// the chain is, so a checkpoint copies a pointer.
+    #[serde(
+        serialize_with = "serialize_shared",
+        deserialize_with = "deserialize_shared"
+    )]
+    pub(crate) ancestors: Arc<[(NodeId, StateSet)]>,
+}
+
+impl SpokenRecord {
+    /// The record of `node`, just spoken or taken as the focus, with the
+    /// ancestors' entries given.
+    pub(crate) fn of(node: &NodeSnapshot, ancestors: Arc<[(NodeId, StateSet)]>) -> Self {
+        Self {
+            name: node.name.clone(),
+            value: node.value.clone(),
+            description: node.details.description.clone(),
+            states: node.states,
+            ancestors,
+        }
+    }
+}
+
+impl FocusContext {
+    /// The spoken record, made from the reading the first time it is needed
+    /// when a recording made before it was kept left it out.
+    pub(crate) fn spoken(&mut self) -> &mut SpokenRecord {
+        let (snapshot, ancestors) = (&self.snapshot, &self.ancestors);
+        self.spoken.get_or_insert_with(|| {
+            SpokenRecord::of(
+                snapshot,
+                ancestors
+                    .iter()
+                    .map(|ancestor| (ancestor.id, ancestor.states))
+                    .collect(),
+            )
+        })
+    }
+
+    /// The states last spoken of `node`, the focus or one of its ancestors,
+    /// or its reading's when nothing was recorded for it; `None` for a node
+    /// not in the focus line.
+    pub(crate) fn spoken_states(&self, node: NodeId) -> Option<StateSet> {
+        if node == self.snapshot.id {
+            return Some(
+                self.spoken
+                    .as_ref()
+                    .map_or(self.snapshot.states, |spoken| spoken.states),
+            );
+        }
+        self.spoken
+            .as_ref()
+            .and_then(|spoken| spoken.ancestors.iter().find(|(id, _)| *id == node))
+            .map(|(_, states)| *states)
+            .or_else(|| {
+                self.ancestors
+                    .iter()
+                    .find(|ancestor| ancestor.id == node)
+                    .map(|ancestor| ancestor.states)
+            })
+    }
 }
 
 /// The application and window of the most recent foreground change (decision
@@ -1016,18 +1107,18 @@ impl SrState {
 }
 
 /// Serializes a shared slice as a plain sequence.
-fn serialize_shared<S: Serializer>(
-    items: &Arc<[NodeSnapshot]>,
+fn serialize_shared<S: Serializer, T: Serialize>(
+    items: &Arc<[T]>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     items[..].serialize(serializer)
 }
 
 /// Deserializes a plain sequence into a shared slice.
-fn deserialize_shared<'de, D: Deserializer<'de>>(
+fn deserialize_shared<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,
-) -> Result<Arc<[NodeSnapshot]>, D::Error> {
-    Vec::<NodeSnapshot>::deserialize(deserializer).map(Arc::from)
+) -> Result<Arc<[T]>, D::Error> {
+    Vec::<T>::deserialize(deserializer).map(Arc::from)
 }
 
 /// Serializes a shared chunk as a plain chunk.

@@ -30,7 +30,11 @@ listener").
 - Core drops a focus on the node of the live focus it holds, before the
   stale and foreground checks, so it neither moves attention nor counts
   as the newest focus a later focus from another application is judged
-  stale against; its newer reading is kept. Core compares the node id
+  stale against; its newer reading is kept, and what Core last spoke of
+  the focus is not moved, so a change the repeat read before its own
+  event came is spoken when the event comes, as NVDA compares a change
+  with what it last spoke (Core's
+  `a_name_change_after_a_repeat_carried_it_is_spoken`). Core compares the node id
   only, not the states, name, or ancestors, which a second report can
   read mid-change (Notepad's edit control settling, File Explorer's title
   being filled in), and not the selected item inside a list; a new

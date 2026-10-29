@@ -26,8 +26,8 @@ use crate::focus_rules::{
     change_target, repeats_focus, selection_target,
 };
 use crate::state::{
-    Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation, SrState,
-    TextFollowUp,
+    Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation,
+    SpokenRecord, SrState, TextFollowUp,
 };
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
@@ -412,7 +412,9 @@ fn is_duplicate_focus(state: &SrState, node: &NodeSnapshot) -> bool {
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
 /// which an earlier report can have read mid-change, and its ancestors when
-/// they were read in time. The selected item already announced is kept, so
+/// they were read in time. What was last spoken of the focus stays as it
+/// was ([`SpokenRecord`]), so a change the repeat carried in is still
+/// spoken when its own event comes. The selected item already announced is kept, so
 /// a selection event for a new one is still spoken; a navigator the user
 /// moved away stays where it is.
 fn keep_newer_reading(
@@ -935,6 +937,7 @@ fn reduce_focus_changed(
         source,
         window: focus_window.clone(),
         snapshot: report.node.clone(),
+        spoken: Some(spoken_record(state.focus.as_ref(), report, &ancestors)),
         ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
@@ -1020,6 +1023,33 @@ fn reduce_focus_changed(
         (report.text, report.observed_at_ms()),
     ));
     effects
+}
+
+/// The spoken record of a new focus, `report`'s node under `ancestors`
+/// ([`SpokenRecord`]): the node as it is about to be spoken, and for each
+/// ancestor the states last spoken of it in the previous focus line, the
+/// previous focus included, or else its reading, from which an entered
+/// container is spoken. With the ancestors unknown, the previous chain is
+/// kept, and its entries with it.
+fn spoken_record(
+    previous: Option<&FocusContext>,
+    report: &FocusReport<'_>,
+    ancestors: &[NodeSnapshot],
+) -> SpokenRecord {
+    let kept = previous
+        .filter(|_| report.ancestors_unknown)
+        .and_then(|previous| previous.spoken.as_ref())
+        .map(|spoken| Arc::clone(&spoken.ancestors));
+    let entries = kept.unwrap_or_else(|| {
+        ancestors
+            .iter()
+            .map(|ancestor| {
+                let spoken = previous.and_then(|previous| previous.spoken_states(ancestor.id));
+                (ancestor.id, spoken.unwrap_or(ancestor.states))
+            })
+            .collect()
+    });
+    SpokenRecord::of(report.node, entries)
 }
 
 /// Moves attention and the foreground to a focus in the system's
@@ -1324,9 +1354,10 @@ fn change_on(state: &SrState, kind: ChangeKind, node_id: NodeId) -> Option<Chang
     )
 }
 
-/// Handles a name change: when the focused node's name changes, the new name
-/// alone is spoken, queued behind current speech, as NVDA does. A name
-/// change on any other node, including an ancestor of the focus, is silent.
+/// Handles a name change: when the focused node's name differs from the one
+/// last spoken of it ([`SpokenRecord`]), the new name alone is spoken,
+/// queued behind current speech, as NVDA does. A name change on any other
+/// node, including an ancestor of the focus, is silent.
 fn reduce_name_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -1339,10 +1370,13 @@ fn reduce_name_changed(
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
     };
-    if focus.snapshot.name.as_ref() == name {
+    let spoken = focus.spoken();
+    let unchanged = spoken.name.as_ref() == name;
+    spoken.name = name.cloned();
+    focus.snapshot.name = name.cloned();
+    if unchanged {
         return Vec::new();
     }
-    focus.snapshot.name = name.cloned();
     let Some(text) = name.filter(|name| !name.trim().is_empty()) else {
         return Vec::new();
     };
@@ -1964,7 +1998,8 @@ fn reduce_controlled_selection(
 
 /// Shared handling for `ValueChanged` and `PropertyChanged(Value(..))`: both
 /// speak the bare new value, only when the changed node is the focused one,
-/// the value differs from the one last known, and the role speaks its
+/// the value differs from the one last spoken of it ([`SpokenRecord`]), and
+/// the role speaks its
 /// value at all. An edit field or document never speaks its changes of
 /// value ("When values and descriptions are spoken" in
 /// `docs/nvda/speech.md`).
@@ -1980,10 +2015,13 @@ fn reduce_value_changed(
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
     };
-    if focus.snapshot.value == value {
+    let spoken = focus.spoken();
+    let unchanged = spoken.value == value;
+    spoken.value.clone_from(&value);
+    focus.snapshot.value.clone_from(&value);
+    if unchanged {
         return Vec::new();
     }
-    focus.snapshot.value.clone_from(&value);
     let role = focus.snapshot.role;
     let Some(text) = value.filter(|_| speaks_value(role) && !reports_text_itself(role)) else {
         return Vec::new();
@@ -2091,13 +2129,13 @@ fn reduce_states_changed(
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
     };
-    let old_states = focus.snapshot.states;
+    let role = focus.snapshot.role;
+    let utterance_source = source_of(&focus.snapshot);
+    let old_states = focus.spoken().states;
+    focus.snapshot.states = new_states;
     if old_states == new_states {
         return Vec::new();
     }
-    let role = focus.snapshot.role;
-    let utterance_source = source_of(&focus.snapshot);
-    focus.snapshot.states = new_states;
     // NVDA speaks a state change only while the changed object is its
     // focus, which a focus event changes when NVDA handles it, in the order
     // the events came (`docs/nvda/events.md`, "The focus gate"). An outpost
@@ -2110,6 +2148,7 @@ fn reduce_states_changed(
     if focus.reported_focused && !new_states.contains(State::Focused) {
         return Vec::new();
     }
+    focus.spoken().states = new_states;
 
     let gained = StateSet::from_iter(
         new_states
@@ -2176,8 +2215,9 @@ fn state_change_segments(
 /// change handler speaks one on the focus's ancestors ("The focus gate" in
 /// `docs/nvda/events.md`): pressing a focused button can change the state of
 /// a container above it, such as the sort state of a column header. The
-/// change is diffed against the ancestor's states as the focus was reported
-/// with them, which then become the new ones; queued, as on the focus.
+/// change is diffed against the states last spoken of the ancestor
+/// ([`SpokenRecord`]), which then become the new ones, as does its reading;
+/// queued, as on the focus.
 /// Ignored for a node that is neither the focus nor one of its ancestors.
 fn reduce_ancestor_states_changed(
     state: &mut SrState,
@@ -2196,13 +2236,22 @@ fn reduce_ancestor_states_changed(
         return Vec::new();
     };
     let ancestor = &focus.ancestors[index];
-    let (role, old_states, source) = (ancestor.role, ancestor.states, source_of(ancestor));
+    let (role, source) = (ancestor.role, source_of(ancestor));
+    let old_states = focus.spoken_states(node_id).unwrap_or(ancestor.states);
+    if ancestor.states != new_states {
+        let mut ancestors = focus.ancestors.to_vec();
+        ancestors[index].states = new_states;
+        focus.ancestors = Arc::from(ancestors);
+    }
     if old_states == new_states {
         return Vec::new();
     }
-    let mut ancestors = focus.ancestors.to_vec();
-    ancestors[index].states = new_states;
-    focus.ancestors = Arc::from(ancestors);
+    let spoken = focus.spoken();
+    if let Some(entry) = spoken.ancestors.iter().position(|(id, _)| *id == node_id) {
+        let mut entries = spoken.ancestors.to_vec();
+        entries[entry].1 = new_states;
+        spoken.ancestors = Arc::from(entries);
+    }
     let segments = state_change_segments(role, old_states, new_states);
     if segments.is_empty() {
         return Vec::new();
@@ -2219,7 +2268,8 @@ fn reduce_ancestor_states_changed(
 
 /// A description change on the focus, spoken as NVDA's base handler speaks
 /// it ("The focus gate" in `docs/nvda/events.md`): the new description
-/// alone, queued, when it differs from the one last known and has text, and
+/// alone, queued, when it differs from the one last spoken of it
+/// ([`SpokenRecord`]) and has text, and
 /// is not the focus's name over again. Ignored for any other node.
 /// An editable field's suggestions appeared (`open`) or went away: the
 /// focus's opening plays the suggestions-opened indication, and any other
@@ -2245,10 +2295,13 @@ fn reduce_description_changed(
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
     };
-    if focus.snapshot.details.description.as_ref() == description {
+    let spoken = focus.spoken();
+    let unchanged = spoken.description.as_ref() == description;
+    spoken.description = description.cloned();
+    focus.snapshot.details.description = description.cloned();
+    if unchanged {
         return Vec::new();
     }
-    focus.snapshot.details.description = description.cloned();
     let Some(text) = description
         .filter(|text| !text.trim().is_empty())
         .filter(|text| focus.snapshot.name.as_ref() != Some(*text))

@@ -1434,6 +1434,32 @@ The aside screen (`docs/design/terminal-model.md`, "Reading rules", rule
 one is held, and one hash lookup per row of a read that keeps nothing of
 the last read.
 
+### What Core last spoke of the focus
+
+Core keeps, beside the reading of the focus it holds, what it last spoke
+of it (`SpokenRecord` in `crates/verbatim-core/src/state.rs`), against
+which name, value, description and state changes are compared
+([verbatim-core](crates/verbatim-core.md), "Focus"). No call, wake-up or
+timer is added.
+
+- Memory: the state grows by 96 bytes inline, and each focus holds a
+  shared list of its ancestors' spoken states, 24 bytes an ancestor and
+  16 for the list, with copies of the focus's name, value and
+  description. A checkpoint copies a pointer to the list.
+- Per focus change: one allocation of that list, and for each new
+  ancestor a search of the previous focus line's entries, as the entered
+  containers already search the previous chain. With the ancestors
+  unknown the previous list is shared, with no allocation. The step of
+  `tests/alloc.rs`, a button under three new containers after a chain of
+  ten, allocates 92 bytes more, 3,263 in all.
+- Per change event on the focus: one comparison with the record and one
+  more copy of the new text; an ancestor's state change copies the
+  entries' list once when it is spoken.
+- Measured on 2026-10-30 on this machine (release, three runs, 20,000
+  steps each, the state cloned before each focus step): the focus step
+  2.6 to 2.7 µs against 1.9 to 2.2 before; a name change on the focus
+  0.39 to 0.53 µs against 0.27 to 0.33.
+
 ### A terminal's reads in Core
 
 Each read crosses the pipe as a snapshot and is aligned on the reducer

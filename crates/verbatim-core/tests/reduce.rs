@@ -2377,11 +2377,102 @@ fn the_same_focus_reported_again_after_its_window_was_renamed_is_silent() {
         None,
         StateSet::new(),
     );
-    let (_, effects) = reduce(
+    let (state, effects) = reduce(
         &state,
         &focus_event_with_ancestors(TraceId::mint(), source, item, vec![renamed]),
     );
     assert!(effects.is_empty(), "already the focus");
+    // The repeat updates the reading Core holds, which review reads; what
+    // Core spoke stays as it was.
+    let (_, ancestors, _) = state.focus_report();
+    assert_eq!(
+        ancestors
+            .iter()
+            .map(|ancestor| ancestor.name.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("vbtest - File Explorer")],
+        "the reading takes the new title"
+    );
+}
+
+#[test]
+fn a_name_change_after_a_repeat_carried_it_is_spoken() {
+    // A repeat of the focus reads the new name before the name change's own
+    // event comes; the change is compared with the name last spoken.
+    let source = Pid(1);
+    let first = node(42, Role::Button, Some("Connect"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, first),
+    );
+    let renamed = node(42, Role::Button, Some("Disconnect"), None, StateSet::new());
+    let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), source, renamed));
+    assert_eq!(heard(&effects), vec![], "already the focus");
+    let name_changed = event_in(
+        source,
+        None,
+        NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(42),
+            change: PropertyChange::Name(Some("Disconnect".to_string())),
+            child_count: None,
+        },
+    );
+    let (_, effects) = reduce(&state, &name_changed);
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::label("Disconnect")])]
+    );
+}
+
+#[test]
+fn an_expand_of_the_focus_left_reported_after_the_new_focus_is_spoken() {
+    // Alt+Down on a Settings combo box: the item's focus, whose ancestor is
+    // the combo box already expanded, reaches Core before the combo box's
+    // own state change (settings_combo_box_expanded, 2 of 10 runs,
+    // 2026-10-30). The change is compared with what was last spoken of the
+    // combo box, its collapsed state as the focus.
+    let source = Pid(1);
+    let collapsed = node(
+        50,
+        Role::ComboBox,
+        Some("Theme"),
+        None,
+        states(&[State::Collapsed]),
+    );
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::mint(), source, collapsed),
+    );
+    let expanded = node(
+        50,
+        Role::ComboBox,
+        Some("Theme"),
+        None,
+        states(&[State::Expanded]),
+    );
+    let item = node(51, Role::ListItem, Some("Dark"), None, StateSet::new());
+    let (reader, effects) = reduce(
+        &reader,
+        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![expanded]),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 51, &[50], None),
+            vec![vec![UtteranceSegment::label("Dark")]]
+        ),
+        "the combo box is not entered anew"
+    );
+    let (_, effects) = reduce(
+        &reader,
+        &states_changed_input(
+            TraceId::mint(),
+            source,
+            NodeId::new(50),
+            states(&[State::Expanded]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![queued(vec![state(State::Expanded)])]);
 }
 
 #[test]
