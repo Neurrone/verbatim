@@ -46,68 +46,15 @@ where NVDA is clear, recorded as provisional.
 
 ### The focus pipeline rework
 
-The scope, order of work and study are in
-[the focus pipeline rework](design/focus-pipeline-rework.md). Agreed with Dickson on 2026-10-25 after a study of the pipeline found its
-shape forced by three measured UIA facts (an element cannot leave the
-process that received its event; a focus registration is desktop-wide;
-a hung window named in a focus WinEvent holds every UIA event of a
-process registered for focus), but about half of its ninety mechanisms
-making Verbatim's processes agree on copies of one fact. Each item
-removes one such reconciliation; the shape (the listener reads every UIA
-focus, the outposts the rest, Core decides) stays.
-
-Scope widened by Dickson on 2026-10-29: the rework settles every
-disagreement and reconciling mechanism the study lists, not only the
-decisions below, so that each mechanism left either goes or is the only
-one of its kind with a stated reason; and it fixes every non-deliberate
-difference from NVDA's focus handling found by an audit of the UIA, MSAA
-and `WinEvent` paths and of the announcement, which compares each step's
-rule, order, behaviour on a slow or failed call, and speech. A revised
-design states the whole result before anything is built.
-
-The decisions and their order of work, each in the design's
-"Decisions" and "Order of work", are:
-
-- Measure first: the repeats per scenario, and the relay's latency at an
-  outpost's start over fifty starts.
-- Repeats judged in Core: the listener keeps the last focus each
-  application's reading thread read and resends it, judged by
-  `CompareElements` and a live `CurrentHasKeyboardFocus`, as an ordinary
-  focus fact for Core's duplicate rule; the outpost does the same for a
-  repeated MSAA focus. It removes `CoreFocus` and the reconciliations
-  around it, and closes the hole where a focus returning to an element
-  while Core's notice is in flight is never spoken.
-- The wait for a missing UIA focus moves into the listener, on one clock;
-  the outpost's own read of that focus stays (decision 11).
-- The hand-over to a new outpost holds the outpost's own hook copies until
-  forwarding's end is known, instead of matching copies by counting.
-- Every observation stamped in microseconds from one clock, so focus
-  ordering is a total order.
-- The marker that holds an application's later events until the
-  listener's read arrives stays; build `text_box_first_character_after_tab`
-  (`docs/design/focus-pipeline.md`, section 14), which measures what its
-  removal would lose.
-- Check, and fix if real, the four possible defects the study found.
-- Count how often the outpost's own focus read fires with NVDA closed and
-  with it running, to test whether NVDA's presence causes UIA's
-  undelivered focuses.
-- Added after the design (Dickson, 2026-10-26): the window part of a
-  focus's ancestry from window state Windows keeps, which never waits on the application's thread: the top-level window
-  by `GetAncestor` with `GA_ROOT` of the nearest-window handle the
-  listener already has, its title by `GetWindowText`, and its class name,
-  so a slow application can delay only the inner elements its UIA parent
-  walk adds, never the "<title> window" announcement. NVDA instead names
-  the window from its parent walk (`api.setFocusObject`), waiting on the
-  application, so how the window is named is settled in the revised
-  design. Its bounds are Verbatim's existing ones, not NVDA's 10-second
-  watchdog (Dickson, 2026-10-29). The reason is reliability (Dickson,
-  2026-10-26): Windows Terminal raises its focus event before it has
-  finished showing its window, and its one UI thread then blocks in
-  `DwmExtendFrameIntoClientArea`, which on the test VM's software
-  compositor took 0.3 to 1.5 seconds, so a parent step past the focus
-  read's 2-second budget left only "<title> terminal". Not a longer
-  budget or retries, and nothing specific to Terminal: every call into a
-  busy application stalls alike.
+Designed, reviewed and agreed with Dickson on 2026-10-29: every
+reconciliation between Verbatim's processes that the study of 2026-10-25
+found, so that each mechanism left either goes or is the only one of its
+kind, and every non-deliberate difference from NVDA's focus handling in
+[the focus pipeline audit](design/focus-pipeline-audit.md). The shape
+stays (the listener reads every UIA focus, the outposts the rest, Core
+decides). The decisions, the design and the order of work are in
+[the focus pipeline rework](design/focus-pipeline-rework.md), the one
+source for them; its first step is the measurements and captures.
 
 ### The caret and selection rework
 
@@ -381,7 +328,9 @@ precondition, because the extension surface exposes the messages it moves.
   reads included; kept verdicts dropped when rule tables are reloaded; the
   Windows Terminal second-identity hook restated against repeats judged in
   Core; and File Explorer's search band refusal (the focus pipeline
-  audit's difference 24) as a rule of the File Explorer built-in.
+  audit's difference 24) as a rule of the File Explorer built-in, with
+  NVDA's `StartButton` rule beside it if the rework's first step finds a
+  keyboard route to the MSAA focus on File Explorer's `Start` window.
 
 Out of M5 by decision (Dickson, 2026-10-22): module settings and storage,
 the utterance, settings-changed, timer and response hooks, asynchronous
