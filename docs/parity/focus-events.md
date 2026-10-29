@@ -203,7 +203,11 @@ once (`outpost::acceptance`; decision D14, "Where the rules run"), for
 the outposts and the focus listener, with the window's relation to the
 foreground window (`foreground_relation`) reported with an event's
 window facts, which the reducer judges a focus by after the read
-(`verbatim_core::focus_rules::ForegroundRelation::related`).
+(`verbatim_core::focus_rules::ForegroundRelation::related`). NVDA's hold
+for a foreground event's window is not built: the outpost judges a
+foreground change when it comes ("Attention" below); a hold of NVDA's
+length is designed, pending Dickson's acceptance
+(`docs/design/focus-pipeline-rework.md`, "The foreground wait").
 
 - Each outpost's worker makes NVDA's test, rule by rule in NVDA's order,
   with local calls only, before any call into the application, for MSAA
