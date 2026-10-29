@@ -41,27 +41,29 @@ whole wait is out of date when stored ([The UIA client](../nvda/uia.md),
 "The per-window UIA decision").
 
 Verbatim: **different** (`docs/design/listener-without-connections.md`,
-decision 2; the outposts' probe decided by Dickson on 2026-10-20): the
-focus listener and the outposts ask the same question with one raw
-`WM_GETOBJECT` for `UiaRootObjectId`, counting only the answer `0x10000`
-as a provider and waiting at most 3 seconds, rather than with
+decision 2; the outposts' probe decided by Dickson on 2026-10-20; the one
+verdict per window decided by Dickson on 2026-10-30,
+`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
+the verdicts): each outpost alone probes its application's windows, with
+one raw `WM_GETOBJECT` for `UiaRootObjectId`, counting only the answer
+`0x10000` as a provider and waiting at most 3 seconds, rather than with
 `UiaHasServerSideProvider`, which answered "no" falsely beside another
-process's queued remote operation (`e34`), under `e38`'s trigger, and
-for the outposts on new console and File Explorer windows. No connection
-to the window follows the probe, where NVDA's probe connects as part of
-it, so a new File Explorer window gets no UIA connection at Verbatim's
-first sight of it. The window is asked once. A window that did not answer
-the probe within its 3 seconds has an unknown verdict: the listener keeps
-nothing of it and drops the focus, naming the window; an outpost reads the
-window through MSAA for the rest of the entry that probed it, as NVDA
-takes a cancelled probe as "no provider", and keeps that "no" for 500 ms
-from the probe's end, where NVDA times its cache from before the probe
-(`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
-the verdicts). A provider probe so stays within the outpost's deadline.
-The 3 seconds stay, though `UiaHasServerSideProvider` waits about 5
-seconds on a window that does not pump, since the listener's read
-deadline is derived from them
-(`experiments/focus-pipeline-rework-measurements/server-side-provider-under-stall.txt`).
+process's queued remote operation (`e34`), under `e38`'s trigger, and on
+new console and File Explorer windows. Its verdict is the one verdict per
+window, as NVDA's one cache is, judging both routes' events by the verdict
+that stood at each event's observation; the focus listener makes none and
+reads every UIA focus whose window's class is not on NVDA's MSAA list. No
+connection to the window follows the probe, where NVDA's probe connects as
+part of it, so a new File Explorer window gets no UIA connection at
+Verbatim's first sight of it. The window is asked once. A window that did
+not answer the probe within its 3 seconds has an unknown verdict: the
+outpost reads the window through MSAA, as NVDA takes a cancelled probe as
+"no provider", and keeps that "no" for the events observed until 500 ms
+after the probe's end, where NVDA times its cache from before the probe. A
+provider probe so stays within the outpost's deadline. The 3 seconds stay,
+though `UiaHasServerSideProvider` waits about 5 seconds on a window that
+does not pump (Dickson, 2026-10-30;
+`experiments/focus-pipeline-rework-measurements/server-side-provider-under-stall.txt`).
 
 ### UIA timeouts
 

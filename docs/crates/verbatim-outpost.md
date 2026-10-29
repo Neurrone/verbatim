@@ -105,7 +105,13 @@ receives the event's own element, judges and reads a UIA focus
 - The thread judges and reads each event in order
   (`focus_read::FocusReader::read`; `check_fact` for a selection or
   notification). A hung window or the console window's own element is
-  dropped before any call; a shell window that only stages a switch is read
+  dropped before any call; so is a focus whose nearest window's class is on
+  NVDA's MSAA class list (`focus_read::MSAA_CLASS`), by the class verdict
+  every outpost's arbitrator gives (`arbitration::class_verdict`), unless a
+  backend override forcing UIA holds for its application
+  (`SetBackendOverride` with its `pid`, `FocusReader::forces_uia`); the
+  listener makes no other backend verdict, no probe and no console check,
+  which are its outpost's. A shell window that only stages a switch is read
   and Core drops it. Repeats are judged against the focus Core holds
   (`docs/architecture.md`, "Where the rules run (D14)";
   `verbatim_core::focus_rules::repeats_focus`): Core tells the listener of
@@ -136,22 +142,22 @@ receives the event's own element, judges and reads a UIA focus
 - The read (`DeliveredFact::UiaFocusRead`, whose `focus` says focus or menu
   opening) or the drop (`DeliveredFact::UiaFocusDropped`, whose `focus`
   says the same) follows the marker through verbatim.exe, never coalesced
-  or dropped. A focus dropped on the listener's own verdict on its nearest
-  window (`Judged::DroppedOnVerdict`) carries `on_verdict`, a
-  `VerdictDrop`: the window and `DroppedVerdict::NotUia`, or
-  `DroppedVerdict::Unknown` when its raw probe did not answer in time, of
-  which the reading thread keeps nothing. A focus whose nearest window's
-  lookup timed out (`focus_read::NEAREST_TIMED_OUT`) is dropped with no
-  other call.
+  or dropped. Every drop carries its answer to its outpost's gap record
+  (`answer`, a `protocol::GapAnswer` from `focus_read::gap_answer`), placed
+  in the top-level window of the window its read found, the cached window
+  or the nearest window (`Reading::outcome`'s `placed`, one local
+  `GetAncestor`), or in none when it found neither. A focus whose nearest
+  window's lookup timed out (`focus_read::NEAREST_TIMED_OUT`) is dropped
+  with no other call.
 - Budget. A read has one budget, `READ_BUDGET` (2 seconds), asked before
-  each call after the first (`Budget`), not counting the raw probe's wait
-  of up to 3 seconds. Past it the read makes no calls but still makes
-  every check that needs none, taking the keyboard focus from the cached
-  `HasKeyboardFocus` (also when a live read fails by UIA's transaction
-  timeout); the repeat check is skipped, a deliberate divergence from NVDA.
-  A call over a second is logged at info (`FocusQuery::before_call`).
-- Watchdog. A read past `READ_DEADLINE`, 11 seconds (the budget, the
-  probe's 3, the 5-second transaction timeout, and a second), is abandoned;
+  each call after the first (`Budget`). Past it the read makes no calls
+  but still makes every check that needs none, the class-list skip among
+  them, taking the keyboard focus from the cached `HasKeyboardFocus` (also
+  when a live read fails by UIA's transaction timeout); the repeat check is
+  skipped, a deliberate divergence from NVDA. A call over a second is
+  logged at info (`FocusQuery::before_call`).
+- Watchdog. A read past `READ_DEADLINE`, 8 seconds (the budget, the
+  5-second transaction timeout, and a second), is abandoned;
   the timeout bounds each provider call, not an operation
   (`docs/uia-bugs.md`). A focus's or menu opening's read is also abandoned
   after `MOVED_ON_GRACE` (half a second) once the window in front belongs
@@ -172,80 +178,87 @@ receives the event's own element, judges and reads a UIA focus
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
-The gap record (`gap_record`; `docs/design/focus-pipeline-rework.md`, "Who
-owns each duplicated fact", the gap's evidence;
-`docs/design/listener-without-connections.md`, decision 11). UI Automation
-sometimes delivers an application's focus late or never while its
-`WinEvent` focus comes, so the listener keeps, in the reading threads'
-shared state, one record per application whose outpost has its hook in
-(`Readers::hook_installed`, ended by `Readers::outpost_ended`): the oldest
-focus `WinEvent` copy no UIA focus has answered, with its window,
-top-level window (`window::top_level_of`) and microsecond stamp, on one
-clock, with no call and no verdict of its own.
+The gap record (`outpost::gap_record`, in the intake's shared state;
+`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
+the gap's evidence; `docs/design/listener-without-connections.md`,
+decision 11). UI Automation sometimes delivers an application's focus late
+or never while its `WinEvent` focus comes, so the outpost keeps, beside the
+verdict that dropped its own copy, one record: a focus copy it dropped
+because it judged the window UIA, with its window, top-level window
+(`window::top_level_of`), stamp, and the bound's due time, on one clock.
 
-- Opening. The `WinEvent` callback gives every focus and foreground event
-  to the records (`Readers::observed`, `gap_record::Observed`). A focus of
-  a hooked application with no record open opens one, unless a UIA focus
-  observed up to 100 ms before it (`gap_record::ANSWERED_BEFORE_US`), in
-  its top-level window, has already answered it.
-- Answers. A UIA focus event observed within 100 ms before the copy or
-  after it answers it once its outcome is reported, under the readers'
-  lock (`focus_read::gap_answer`, `gap_record::Answer`): a read, a drop on
-  the listener's verdict, or a verdict of NVDA's checks
-  (`focus_read::VERDICTS`: hung, not related to the foreground, the
-  console window's own focus, the hidden frame, a repeat) answers a copy
-  in the top-level window of the window the read found, the cached
-  window or, for a windowless sender, its nearest window, found outside
-  the lock; the listener giving up on the application
-  (`focus_read::GAVE_UP`, the timed-out nearest-window lookup among them)
-  answers a copy in any window; and a drop for no window above the sender
-  (`focus_read::NO_WINDOW`) answers it to be read at once, focus-missing
-  sent behind the drop, as is a later copy that drop answers. A focus or
-  foreground `WinEvent` observed in another top-level window of the
-  application or in another application answers it too. A drop for no
-  keyboard focus (`focus_read::NOT_FOCUSED`), one a newer event of its
-  element replaced, and the other drops that could not establish the
-  focus leave it open, since they come in fast navigation; so does
-  anything but a focus.
-- The bound (`gap_record::BOUND`, one second from the copy's
-  observation) is armed by the callback when the application has no UIA
-  event waiting or being read, waking the watchdog, and otherwise by the
-  reading thread when the application's reads finish with the record
-  open (`Readers::push` disarms it); the readers' watchdog times it, so no
-  reading thread waits on it. Unanswered at the bound, the watchdog sends
-  `DeliveredFact::FocusMissing` with the copy's window, stamped with its
-  observation (`Reading::focus_missing`), relayed in order and never
-  dropped (`DeliveredFact::is_focus_read`).
-- The idle barrier's round waits, in the listener, for every record
-  opened before it (`Readers::when_idle`), so a read for focus-missing is
-  queued ahead of the outpost's query: at most about 12.2 seconds for one
-  focus marker on an application that answers (the bound, the read
-  deadline, the relay, and the read), within the harness's 15-second idle
-  timeout.
-- The outpost (`Worker::focus_missing`) reads its application's focus
-  only when its own verdict for that window is UIA, with the focus-now
-  read (`read::focused_control_in`, trigger `read::FocusRead::FocusMissing`),
-  and reports it as a UIA focus, logged at info with whether a listener
-  UIA focus had reached it before the copy (`uia_focus_before`) and
-  whether the copy's window was gone (`sender_gone`), stamped with the
-  copy's observation so Core's stale rule drops it when a later focus
-  elsewhere was applied first; a late UIA focus of the same element is
-  reported under the read's node, which Core takes as a duplicate. In a
-  window it judges MSAA, or that its application no longer serves, it
-  does nothing, having handled its MSAA copy.
+- Opening. The worker opens it when it drops a focus copy, its own hook's
+  or the listener's forwarded before the hook is in, because its verdict
+  on the copy's window is UIA (`Worker::copy_dropped_for_uia`,
+  `Intake::gap_copy_dropped`). It looks back first: an answer kept for the
+  copy's top-level window or for any window, observed up to 100 ms before
+  the copy or after it (`gap_record::ANSWERED_BEFORE_US`), stands for it,
+  and nothing opens; otherwise a drop for no window above the sender
+  observed so has the focus read at once in the copy's place, stamped with
+  the copy's observation. A copy handled through MSAA opens nothing.
+- Restamps. While it is open, a later copy the worker drops for UIA in its
+  top-level window, or a foreground change into that window the worker
+  accepts (after its acceptance, front, repeat and readability tests and
+  before its window's verdict), gives it that event's observation and
+  window, its bound unchanged (`GapRecord::copy_dropped`,
+  `GapRecord::accepted`). The stamp only moves forward: an older event, as
+  in a focus run tried newest first, neither restamps nor answers it.
+- Answers. Each UIA focus's outcome is applied as it resolves its marker
+  (`Intake::push`, with no wake of the worker): a focus's read placed in
+  its own window's top-level window, or its nearest window's, one local
+  `GetAncestor`, and a drop by the answer it carries. An answer for the
+  record's top-level window, or for any window, observed up to 100 ms
+  before its stamp or after it, closes it, and is kept, the newest per
+  top-level window, pruned when the window is destroyed
+  (`Intake::gap_window_destroyed`), and the newest for any window. A drop
+  for no window closes the record it answers and takes its marker's place
+  as the record's read (`Item::GapRead`), and is kept as the newest
+  no-window stamp. A drop for no keyboard focus, one replaced, and any
+  other drop that could not establish the focus leave it open, as does
+  anything but a focus. A newer copy accepted in another top-level window,
+  through either backend, or an accepted foreground change into one,
+  answers it. Every answer is final.
+- The bound (`gap_record::BOUND_US`, one second from the first copy) is
+  timed by one one-shot threadpool timer per outpost
+  (`gap_timer::ThreadpoolGapTimer`, behind the `GapTimer` trait), set when
+  the record opens and cancelled when it is answered (`TimerAction`); no
+  thread waits on it. Its callback pushes `Item::GapBound` into the
+  intake, behind every marker queued before it. Handled with the record
+  open and its bound passed by the observation clock
+  (`Intake::gap_bound_reached`), the record closes and is read; a timer
+  that fired early is set again for the rest. A test sets its own timer
+  (`Outpost::set_gap_timer`) and reaches the bound itself
+  (`Outpost::gap_bound_reacher`).
+- The read (`Worker::gap_read`, `read::gap_focus_read`, trigger
+  `read::FocusRead::Gap`) is the focus-now read through UIA only, made
+  once: refused with local calls when the foreground thread's focus window
+  is not the application's, is Core's hidden frame, cannot be read, or is
+  one the outpost judges not UIA; and refused after
+  `GetFocusedElementBuildCache` when the focus window, taken again with
+  `GetGUIThreadInfo`, has changed to one the outpost does not judge UIA
+  without a probe (`arbitration::known_to_use_uia`), since a focus that
+  moved into an MSAA window meanwhile comes back as UIA's MSAA proxy for
+  it, and a proxied list item has no window handle to judge. It is
+  reported as a UIA focus, stamped with the record's stamp, logged at info
+  with both windows, whether a listener UIA focus had reached the outpost
+  before the stamp (`uia_focus_before`) and whether the record's window was
+  gone (`sender_gone`); a late UIA focus of the same element is reported
+  under the read's node, which Core takes as a duplicate.
+- The idle barrier's answer waits while the record is open
+  (`worker::answer_idle`); a drop that closes it as its marker resolves,
+  leaving the worker nothing to handle, pushes `Item::Wake` while a round
+  waits, so the answer still goes.
 
-The verdicts. The listener and the outpost judge a window's backend with
-the same code (`arbitration`) and send no verdict to each other; the
-outpost's decides which backend's focus counts in each of its windows
-(`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
-the verdicts). A listener's read in a window the outpost judges MSAA, by
-the read's nearest window, is dropped (`Worker::uia_focus`). A drop with
-`on_verdict` takes its marker's place in the intake, as a read does, and
-the worker judges its window (`Worker::focus_dropped_on_verdict`): in a
-window it judges UIA it reads the application's focus at once with the
-focus-now read (`read::focused_control_in`), stamped with the dropped
-event's observation; in one it judges MSAA it does nothing. Such a drop
-answers the listener's gap record, so that read is made once.
+The verdicts. The outpost's verdict is the one verdict per window; the
+listener makes none (`docs/design/focus-pipeline-rework.md`, "Who owns
+each duplicated fact", the verdicts). A listener's read in a window the
+outpost judges not UIA, by the read's nearest window, judged at the read's
+observation, is dropped (`Worker::uia_focus`), its answer having already
+been applied to the gap record. Until step 11 of the rework removes
+`HeldElements`, such a read stays unjudged in the listener, whose
+duplicate test is off while it waits, so a repeat in such a window costs a
+full read, which Core's duplicate rule drops: an interim cost, with no
+message (Dickson, 2026-10-30).
 
 ### Console windows and frames of another process
 
@@ -272,8 +285,8 @@ whose cached process is not the outpost's application, the console host
 for a console, or that has none cached, is read no further: no
 enrichment, walk, subscription or report, `None` answered, and a debug
 line naming both processes. Each read is logged at debug with what asked
-for it (`read::FocusRead`: a focus-now query, focus-missing, the read
-after a listener's drop on its verdict, or a cut walk, below). The one connection the call makes into
+for it (`read::FocusRead`: a focus-now query, the gap's read, or a cut
+walk, below). The one connection the call makes into
 the other application cannot be prevented.
 
 Every window the worker judges or acts on for an event, whether its own
@@ -369,8 +382,9 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
 `protocol` is the wire vocabulary the supervisor and each child speak.
 
 - `SupervisorToOutpost`: `SetBackendOverride` (one backend for every
-  window, or normal arbitration); `DeliverFact` (a routed fact: a UIA
-  focus's marker, read, or drop, focus-missing, an MSAA focus or
+  window, or normal arbitration; one forcing UIA also goes to the listener
+  with the application's `pid`); `DeliverFact` (a routed fact: a UIA
+  focus's marker, read, or drop with its `GapAnswer`, an MSAA focus or
   menu-popup address, a foreground window, with the listener's trace id, its `EventTiming`, whose
   `observed_at_us` is the observation the fact is ordered by, and for a
   `WinEvent` its `WinEventStamp`); `HookInstalled`
@@ -454,40 +468,53 @@ outpost frame.
 
 ### The arbitrator
 
-`Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`).
-`verdict(hwnd, &WindowClasses)` answers from the good class list, the
-Windows 11 shell rule, the bad class list, a `SetBackendOverride`, or a kept
-probe, and `None` when only the probe can decide; the window is then
-probed with the raw probe (`verbatim_uia::raw_probe`), by the worker
-through `arbitration::uses_uia_keeping` and by the listener through
-`arbitration::window_verdict`, and its answer recorded (`record_probe`).
-Each process keeps its own verdicts; neither copies the other's. No
-connection follows a probe (`docs/design/listener-without-connections.md`,
-decision 2).
+`Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`),
+each outpost's one verdict per window. `verdict(hwnd, &WindowClasses)`
+answers from the good class list, the Windows 11 shell rule, the bad class
+list, a `SetBackendOverride`, or a kept probe, and `None` when only the
+probe can decide; the worker then probes the window with the raw probe
+(`verbatim_uia::raw_probe`) through `arbitration::uses_uia_keeping`, and
+its answer is recorded (`record_probe`). No connection follows a probe
+(`docs/design/listener-without-connections.md`, decision 2). The listener
+makes no verdict; it skips a read only by `arbitration::class_verdict`,
+the class lists alone, from the same tables and code.
 
 - `WindowClasses::of(hwnd)` reads the raw class, the class normalized as
   NVDA does (`normalize_class_name`), and the root ancestor's class.
 - `post_probe_check` names NVDA's check before using a provider: a list
-  view's Windows Forms origin, or a console's formatted text (read by an
-  outpost from the window and by the listener from the sender). A provider
-  that fails is recorded with `record_excluded`, MSAA for the window's
-  lifetime.
+  view's Windows Forms origin, or a console's formatted text, read from
+  the window. A provider that fails is recorded with `record_excluded`,
+  MSAA for the window's lifetime.
 - A "yes" is kept for the window's lifetime and dropped by `forget` on
-  destruction (decision D15). A "no" lasts `NEGATIVE_VERDICT_LIFETIME`
-  (500 ms, NVDA's cache period), since a busy application answers late. A
-  timed-out probe is an unknown verdict (`arbitration::Verdict::Unknown`):
-  the listener keeps nothing of it, and an outpost's worker reads the
-  window through MSAA and keeps it as "no" for the rest of the entry that
-  made it, on that thread, and for every thread for
-  `NEGATIVE_VERDICT_LIFETIME` from the probe's end, never renewed with the
-  entry (`record_timed_out`, `begin_entry`); a verdict kept for the
-  window's lifetime meanwhile stays.
-  `lasting_verdict` answers only a verdict that lasts the window's
+  destruction (decision D15). A "no" is kept for events observed until
+  `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's cache period) after the
+  probe's end, since a busy application answers late. A timed-out probe is
+  an unknown verdict (`arbitration::Verdict::Unknown`), which the worker
+  reads through MSAA and keeps as "no" the same way (`record_timed_out`); a
+  verdict kept for the window's lifetime meanwhile stays.
+- A kept verdict is compared with the observation of the event it judges,
+  never with when the worker handles it: each worker entry is judged at
+  its event's observation, or at its start for an entry with no event
+  (`Arbitrator::begin_entry`, `end_entry`), and a verdict judges the
+  events observed from its probe's beginning, stamped with the observation
+  of the judgement that probed, until its keep ends. A verdict judges no
+  event observed before its probe began; each window keeps its previous
+  verdict for those (`kept_at`), one being enough behind the intake's
+  marker barrier.
+- Only the worker in charge records a verdict (`Arbitrator::set_in_charge`,
+  set by the watchdog under the watch lock as it abandons a worker): a
+  probe returning on an abandoned worker records nothing, but a timed-out
+  probe is kept as unknown whichever worker made it.
+- `lasting_verdict` answers only a verdict that lasts the window's
   lifetime.
-- `Clock`, `Arbitrator::set_clock`, and `Arbitrator::now` time the verdicts
-  and the classic walk budgets (`PATH_BUDGET`, `ENRICHMENT_BUDGET`, through
+- `Clock`, `Arbitrator::set_clock`, and `Arbitrator::now` time the classic
+  walk budgets (`PATH_BUDGET`, `ENRICHMENT_BUDGET`, through
   `arbitration::time_limit`); `Outpost::set_clock` and
-  `FocusReader::set_clock` set it for tests that count calls.
+  `FocusReader::set_clock` set it for tests that count calls. The keeps'
+  ends and an entry with no event are stamped by the `ObservationClock`
+  (`Arbitrator::set_observation_clock`), the run's shared clock, which
+  `Outpost::set_observation_clock` sets, with the stamps of the outpost's
+  own events, for a test that moves that time on.
 - Both class lists are lifted from NVDA and pinned by unit tests naming
   their sources (`badUIAWindowClassNames` and `goodUIAWindowClassNames` in
   `nvda/source/UIAHandler/__init__.py`, and `isGoodUIAWindow` in
@@ -514,8 +541,12 @@ decision 2).
   place of the I/O thread; `with_options`; `with_focused_element_reader` (a
   `FocusedElementReader` in place of `Uia::focused`);
   `set_foreground_reader` (a `ForegroundReader` in place of
-  `GetForegroundWindow`, for acceptance and the window a focus entered); and
-  `set_focus_window_reader` (a `FocusWindowReader` for focus-now).
+  `GetForegroundWindow`, for acceptance and the window a focus entered);
+  `set_focus_window_reader` (a `FocusWindowReader` for focus-now and the
+  gap's read); `set_observation_clock` (an `arbitration::ObservationClock`
+  for the outpost's own events' stamps and its verdicts' keeps); and
+  `set_gap_timer` (a `GapTimer` for the gap record's bound, which
+  `gap_bound_reacher` reaches).
 - `Outpost::settle` waits until everything queued is handled, follow-ups
   included, the subscription has made every move asked, every published
   message is written, and the event thread has taken every nudge. It covers
@@ -705,8 +736,10 @@ section 6.3).
   (`foreground::ForegroundWatch`). The app receives it as
   `OutpostMessage::ForegroundWindow` (a `ForegroundReport`).
 - It handles `Ping`, `HookInstalled`, `HookRemoved` (which also ends the
-  application's reading thread), `CoreFocus`, `IdleQuery`, and `Shutdown`,
-  and ignores the rest. A replacement gets `--hooks-in`
+  application's reading thread and its override), `SetBackendOverride`
+  with a `pid` (an override forcing UIA, after which that application's
+  readers skip nothing by class), `CoreFocus`, `IdleQuery`, and
+  `Shutdown`, and ignores the rest. A replacement gets `--hooks-in`
   (`listener::parse_hooks_in`) and does without each thread's last focus,
   at the cost of one fuller ancestor read per application. It makes no
   remote operation, so takes no `--classic-uia`.
@@ -999,7 +1032,8 @@ foreground application for its focus unless a newer focus was applied.
 ### Window destruction and held objects
 
 - Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
-  its classic mark, and its MSAA nodes.
+  the gap record's answer kept for it, its classic mark, and its MSAA
+  nodes.
 - Held objects: both registries keep every node reported with its live
   element or object. Each message that carries node ids
   (`OutpostToSupervisor::carries_nodes`) takes the next position as it is
@@ -1290,17 +1324,17 @@ progress. The round is in band, so it covers pipes and backlogs.
   ending listener counts as having answered.
 - The listener passes it through its `WinEvent` thread (`Nudger::nudge`) to
   the reading threads (`Readers::when_idle`), which answer once no event
-  queued before it is waiting or being read and every gap record opened
-  before it is answered or sent as focus-missing, behind a menu end still
-  in its grace and every earlier fact.
+  queued before it is waiting or being read, behind a menu end still in
+  its grace and every earlier fact.
 - The relay then asks every outpost in the same pass, telling the app which
   first (`IdleQueried`); outposts being launched are asked once every launch
   has reported, a starting outpost behind its held facts. The query gets
   through a full queue.
 - An outpost queues it (`Item::IdleQuery`), dividing what waits and ending
   its batch; a noted caret goes just ahead (`Intake::push_ahead`). It is
-  answered once nothing before it is handled and no caret watch or
-  terminal read owed to Core remains, checked after every entry; terminals'
+  answered once nothing before it is handled, no caret watch or terminal
+  read owed to Core remains, and the gap record is closed, checked after
+  every entry; terminals'
   owed requests have their own lock, never held across a call. Entries after
   the query are not waited for. An outpost that ends answers by its `Ended`.
 

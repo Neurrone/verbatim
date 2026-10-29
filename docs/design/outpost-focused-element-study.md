@@ -32,7 +32,7 @@ For a window judged MSAA the read is already by handle: `verbatim_ia2::acquire::
 ### Its callers today
 
 - The focus-now answer (`read::focus_now`, called from the worker's `Query::FocusNow`, `crates/verbatim-outpost/src/outpost/worker.rs`). Core's app asks for it when an outpost becomes ready with a focus wanted (a new application, a replacement, a retirement), when the listener is replaced, when a menu or the task switcher ends (the fake focus), and on the shell's `FocusNow` command (`crates/verbatim-app/src/main.rs`).
-- The read for focus-missing (`Worker::focus_missing` in `worker.rs`): when the listener's gap record sends focus-missing, one second after a `WinEvent` focus no UIA focus answered, or at once after the listener drops a focus for having no window above it, in a window the outpost judges UIA.
+- The gap's read (`Worker::gap_read` in `worker.rs`): at the outpost's gap record's bound, one second after a `WinEvent` focus the worker dropped as UIA that no UIA focus answered, or at once after the listener drops a focus for having no window above it, through UIA only.
 
 Nothing else in the product calls `GetFocusedElement`. The end-to-end agent calls it in two test-only reads (`crates/verbatim-agent/src/focus.rs`), which decision 10 of the listener design keeps.
 

@@ -275,67 +275,108 @@ Rules that hold for every UIA focus:
 - Bound: one step per ancestor until a known one, so the count grows only
   with how far the focus moved up the tree.
 
-### A WinEvent focus no UIA focus answers, and the read for focus-missing
+### A WinEvent focus no UIA focus answers, and the gap's read
 
-- Per focus or foreground `WinEvent` the listener's hook observes: one
-  local `GetAncestor` for its top-level window and one take of the reading
-  threads' lock, on the `WinEvent` thread, to answer the gap records
-  elsewhere and open its application's (`gap_record`, `Readers::observed`);
-  no call into any application. Per UIA focus outcome with a window: one
-  local `GetAncestor` on the reading thread, before the lock. The outpost
-  makes neither any more, nor any work for a copy it drops.
-- Wake-ups: a copy that reaches the listener while its application has
-  no UIA event waiting or being read, the usual order since the
-  `WinEvent` nearly always comes first, arms its record's bound and wakes
-  the readers' watchdog once to time it; the UIA focus's read, whose start
-  wakes the watchdog as before, disarms it, so the watchdog does not wake
-  again at the bound. A record still open when its application's reads
-  finish is armed by the reading thread, one watchdog wake-up more, and
-  costs one more at its bound. So a focus change costs the listener one
-  watchdog wake-up more than before, and the outpost none.
-- Per record unanswered at its bound, a second after its copy's
-  observation, or at once when a UIA focus whose sender has no window
-  answered it (`docs/design/listener-without-connections.md`, risk 13):
-  one focus-missing message to the outpost, one worker wake-up, and, in a
-  window the outpost judges UIA, the focus-now query's read
-  (`read::focused_control_in`), local checks first so a hung application
-  is not called, then one `GetFocusedElementBuildCache`, whose request
-  caches one property more, the element's process, checked locally
-  against the application with no extra call (an element of another
-  process is read no further), the enrichment, the MSAA continuation
-  above the process boundary, and one `ElementFromHandleBuildCache` more
-  for a window's own element read without its handle, as the console
-  host's is (`docs/uia-bugs.md`). In a window the outpost judges MSAA, or
-  one its application no longer serves, nothing. The late UIA focus then
-  costs one connection more, its element found by path
-  (`find_focus_element`).
+The wait is the outpost's gap record, beside the verdict that dropped its
+copy (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+fact", the gap's evidence).
+
+- Per focus or foreground `WinEvent` the listener's hook observes:
+  nothing for the gap, where the listener's records cost one local
+  `GetAncestor` and one take of the reading threads' lock. Per UIA focus
+  outcome with a window: one local `GetAncestor` on the reading thread,
+  before the lock, placing a drop's answer, as before.
+- Per MSAA focus copy the worker judges, through either backend: one local
+  `GetAncestor` and one take of the intake's lock. A copy dropped for UIA
+  that opens the record sets the threadpool timer, one
+  `SetThreadpoolTimer`; a restamp is a compare and two stores under the
+  same lock. Per accepted foreground change: one `GetAncestor` and the
+  lock. Per UIA focus read the intake takes in: one `GetAncestor` before
+  the lock, placing it; per drop, none. An answer that closes the record
+  cancels the timer, one `SetThreadpoolTimer`.
+- Wake-ups: none on the steady path. A record answered before its bound
+  costs no wake-up: its timer is cancelled before it fires, and the
+  answer is applied as the marker resolves, with no wake of the worker,
+  where the listener's record woke its readers' watchdog once per focus
+  change to arm the bound. So a focus change costs one wake-up fewer.
+- Per record unanswered at its bound, a second after its first copy: one
+  threadpool callback, one intake entry and one worker wake-up, with no
+  message, where the listener's record cost a watchdog wake-up, one
+  focus-missing message through the supervisor's relay and the outpost's
+  pipe thread, and the worker's wake-up; or, after a drop for no window
+  above the sender (`docs/design/listener-without-connections.md`, risk
+  13), the read at once in the drop's or the copy's place, with no timer.
+  The read is the focus-now query's (`read::gap_focus_read`) through UIA
+  only: local checks first, so a hung application or a focus window
+  another application's or judged not UIA is not called, then one
+  `GetFocusedElementBuildCache`, whose request caches the element's
+  process, checked locally, then one local `GetGUIThreadInfo` for the
+  focus window again, the enrichment, the MSAA continuation above the
+  process boundary, and one `ElementFromHandleBuildCache` more for a
+  window's own element read without its handle, as the console host's is
+  (`docs/uia-bugs.md`). The late UIA focus then costs one connection
+  more, its element found by path (`find_focus_element`). A marker in
+  flight at the bound, or a return whose copy came more than 100 ms before
+  its foreground change, costs one read that Core drops as a duplicate.
 - Per event the worker judges a window for, an MSAA event, a foreground
-  change, a menu opening, a UIA selection, a listener's read or drop, or
-  focus-missing: the check that its application serves the window
-  (`served_by`), local calls and no call into any application; an event
-  naming another application's window is dropped there, before any probe
+  change, a menu opening, a UIA selection, or a listener's read: the check
+  that its application serves the window (`served_by`), local calls and
+  no call into any application; an event naming another application's
+  window is dropped there, before any probe
   (`a_focus_event_naming_another_applications_window_is_not_read`).
-- Per listener drop on its verdict ("not UIA" or "unknown") in a window
-  the outpost judges UIA, a disagreement of the two processes' verdicts:
-  the same focus-now read, at once, in the drop's place; the drop answers
-  the listener's record, so it is not read again
-  (`a_focus_the_listener_dropped_in_a_window_the_outpost_judges_uia_is_read`).
-  In a window the outpost judges MSAA too, its verdict alone: kept, from
-  the class lists, or its own probe when it has none.
-- Memory: one record and two observation stamps per application whose
-  outpost has its hook in; each watchdog wake and each observed
-  `WinEvent` walks those applications, tens at most.
+- Memory: one record, the newest answer per top-level window of the
+  application, pruned when the window is destroyed, and two stamps, in the
+  outpost; nothing in the listener.
 - Reads made in vain are accepted: in `measure_focus_explorer` a record
   can come to a read after the focus moved to another process's window,
   whose foreground event comes about 200 ms early; the read ends at its
   local check, about 110 µs.
-- The harness's idle barrier: the listener answers a round only once
-  every record opened before it is answered or sent as focus-missing, at
-  most about 12.2 seconds for one focus marker (the bound and the
-  listener's 11-second `READ_DEADLINE`), within its 15-second idle
-  timeout.
-- Target: no call per focus and at most one read per record; met, at one
-  watchdog wake-up per focus change in the listener.
+- The harness's idle barrier: the outpost answers a round only once its
+  record is closed, at most a second and the gap's read after the record's
+  first copy; the listener no longer waits on records.
+- Target: no call per focus and at most one read per record; met, with no
+  wake-up per focus change.
+
+### The listener's reads in a window the outpost judges MSAA
+
+The listener makes no backend verdict and no probe; it skips a focus only
+when its nearest window's class is on NVDA's MSAA class list, and reads
+every other one (Dickson, 2026-10-30; `docs/design/focus-pipeline-rework.md`,
+the verdicts).
+
+- A focus in an MSAA window off the class lists, as UIA's MSAA proxy
+  delivers it: the listener reads it, 3 UIA calls for mockapp's window
+  element (the keyboard focus, the cache, the step to the desktop's root),
+  for which the proxy makes 14 calls into the application's `IAccessible`
+  (`a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost`),
+  about five calls per element of the chain in general, and sends the read
+  in place of a drop, a larger message; the count of messages and wake-ups
+  is unchanged. The outpost drops it by its verdict, kept or probed, so
+  entries arriving after its marker wait for the read rather than the
+  drop, a few milliseconds more. Where the listener made a raw probe, 1
+  window message, at a window's first focus and each focus more than
+  500 ms after its last, it makes none: probes per such focus change, one,
+  the outpost's, as NVDA makes one.
+- A focus in a window on the class lists: the class verdict, local calls
+  only, and the drop, as before, its message about 10 bytes larger for its
+  answer.
+- The listener's exposure to a busy MSAA application: its read through the
+  proxy calls into the application's `IAccessible`, one call per proxied
+  property and per ancestor of the walk. UIA's transaction timeout bounds
+  the proxy's calls: with mockapp's MSAA window stalled for 12 seconds,
+  the listener's read returned after 5,008 and 5,016 ms, its keyboard
+  focus read failing by the timeout and the focus let through from its
+  event (measured 2026-10-30 with a scratch mockapp test, `--backend
+  msaa` under `stall`, not kept). Each read is bounded by `READ_DEADLINE`,
+  now 8 seconds (the read's budget of 2, the transaction timeout of 5 and a
+  second), which lost the probe's 3 seconds with the probe, and the
+  application's reading threads by `ABANDONED_LIMIT`; each application has
+  its own reading thread, so no other application waits.
+- Until the rework's step 11 removes `HeldElements`, a read the outpost
+  drops reaches no judgement of Core's, so it stays unjudged in the
+  listener and its duplicate test is off while it waits: a repeat in such a
+  window costs a full read, which Core's duplicate rule drops, with nothing
+  more heard (Dickson, 2026-10-30).
 
 ### A focus behind other objects' events
 
@@ -352,25 +393,26 @@ was answered (measured 2026-10-07).
 - Minimum: 1 window message and 4 UIA calls for a windowless sender, 3
   for a sender that is a window, plus one step per ancestor up to the
   desktop's root: the nearest window, the window's provider probed once in
-  its lifetime (the listener's raw probe), the keyboard focus, the cache
+  its lifetime (the outpost's raw probe), the keyboard focus, the cache
   refreshed, and the steps; no comparison, since no focus was taken
   before.
-- Today: 6 UIA calls and 2 window messages: the listener's nearest
-  window, keyboard focus, cache, three steps (to the group, the window and
-  the desktop's root), and raw probe, and the outpost's own raw probe of
-  the window, which it judges with its own verdict before it reports the
-  listener's read (`docs/design/focus-pipeline-rework.md`, "Who owns each
-  duplicated fact", the verdicts), once in the window's lifetime. 359
-  provider calls with the outpost's remote walk and 350 with its classic
-  walk, 12 of them the grid item's row and column and the ancestors'
-  automation ids, and 5 the outpost's probe.
-- Probes per new window, each process's (step 1's baseline,
-  `experiments/focus-pipeline-rework-measurements/probes-per-new-window.txt`):
-  in a UIA window, the listener's 1 at the first focus and the outpost's
-  1, where the outpost made none before by copying the listener's
-  verdict; in an MSAA window not on the class lists, unchanged, the
-  outpost's 1 at its first MSAA focus and the listener's 1 for UIA's proxy
-  focus, then none while each process's "no" lasts, 500 ms.
+- Today: the minimum, 6 UIA calls and 1 window message: the listener's
+  nearest window, keyboard focus, cache and three steps (to the group, the
+  window and the desktop's root), and the outpost's raw probe of the
+  window, the one verdict, before it reports the listener's read
+  (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
+  fact", the verdicts), once in the window's lifetime; the listener makes
+  no probe. 354 provider calls with the outpost's remote walk and 345 with
+  its classic walk, 12 of them the grid item's row and column and the
+  ancestors' automation ids, and 5 the outpost's probe; the listener's
+  probe, which went, cost 5 (1 `WM_GETOBJECT`, 2 `ProviderOptions`, 1
+  `HostRawElementProvider` and 1 `Navigate`).
+- Probes per new window: in a UIA window, the outpost's 1; in an MSAA
+  window not on the class lists, the outpost's 1 at its first MSAA focus,
+  then none while its "no" lasts, 500 ms, from the probe's end, for events
+  observed until then; the listener makes none (step 1's baseline, with
+  the listener's, is in
+  `experiments/focus-pipeline-rework-measurements/probes-per-new-window.txt`).
 - Target: the minimum. The walk could stop at the desktop's root, which
   is known locally, instead of asking for its parent.
 - Bound: the depth of the focus below the desktop.
@@ -385,7 +427,7 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 - Minimum: the listener's calls of a cold focus, none a step into the
   parent's process, and the outpost's MSAA reads of the parent's client
   area and the chain above it.
-- Today: the listener's 5 UIA calls and 1 window message, its two steps
+- Today: the listener's 5 UIA calls and no window message, its two steps
   ending at the child's window. The outpost makes 8 MSAA calls, the client
   area and the chain above it, and no probe of the parent
   (`docs/design/listener-without-connections.md`, section 4.3); above a
@@ -594,10 +636,13 @@ outpost reads time from the test, so no count depends on the test's
 speed. The two focuses it pins this way are arrows between list items
 whose previous focus was itself reached by an arrow, 31 MSAA calls each:
 one `accRole` more than an arrow whose previous focus was reached from
-the list, for a reason not yet known. A probe that times out after 3
-seconds is kept as "no" by an outpost for the rest of its entry and for
-500 ms from the probe's end, so an entry sends the window one probe at
-most; the listener keeps nothing of it, and drops the focus as unknown.
+the list, for a reason not yet known. A verdict is compared with the
+observation of the event it judges, so the ratchet's outpost stamps its
+own events on the test's time too (`Outpost::set_observation_clock`). A
+probe that times out after 3 seconds is kept as "no" by an outpost for
+the events observed until 500 ms after the probe's end, its entry's
+included, so an entry sends the window one probe at most; the listener
+makes no probe.
 
 ### A selection, MSAA
 
@@ -1048,7 +1093,7 @@ window (`text_field_focuses_cost_exactly`). It is paid for every text
 focus the outpost handles, superseded or not, as NVDA reads an object's
 text for every focus it queues. A UIA focus's parts:
 
-- the listener's read: 5 UIA calls and 1 window message;
+- the listener's read: 5 UIA calls;
 - the outpost's search for its element, made before the report for a focus
   that may have text: 2 UIA calls and 1 connection remotely, 4 calls and
   the connection classically;
@@ -1062,13 +1107,13 @@ Counts, with the outpost's verdict on the window made before the focus,
 as it is once any event of the window has been handled; at a cold focus
 its probe adds 1 window message (above):
 
-- Minimum: each part's own: 9 UIA calls, 1 window message and 1
-  connection remotely with nothing selected, 10 with a selection.
+- Minimum: each part's own: 9 UIA calls and 1 connection remotely with
+  nothing selected, 10 with a selection.
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
-  protected or not, each with 1 window message and 1 connection, so the
+  protected or not, each with 1 connection and no window message, so the
   minimum is met remotely; classically 45, and 57 with a selection. A UIA
   terminal (`terminal_reading.json`) 9 remotely and 27 classically, each
-  with 1 window message and 1 connection. A classic edit control through
+  with 1 connection and no window message. A classic edit control through
   MSAA 37 MSAA calls and 6 window messages. A focus without text is
   reported before its search.
 - A windowless text focus whose walk up the listener cut, so that no route

@@ -77,6 +77,9 @@ complete name tables. The fields:
   UIA provider can serve MSAA too, so a Win32 control inside it has an
   MSAA parent with the root's states, the focused state included.
 - `window_class`, on the root: the host window's class. For example
+  `tests/fixtures/msaa_class_window.json` is a window of a class on NVDA's
+  MSAA class list, `MozillaWindowClass`, whose focus the listener skips by
+  its class; and
   `tests/fixtures/console_window.json` is a console host's window,
   `ConsoleWindowClass`, whose text area reports the automation id "Text
   Area" as the console's does; `console_terminal.json` is the same window
@@ -358,14 +361,20 @@ a walk of the window's whole tree would wait on its
   out, its probe's `WM_GETOBJECT` is made, and a classic walk's time
   budget is spent only where the test says. The test hands the outpost
   focus facts as the listener would, and the outpost reads the focused
-  element from the test rather than the system. The stand-in keeps the
-  listener's gap records (`verbatim_outpost::gap_record`) as the
-  listener's hook does: each `WinEvent` copy handed over opens or answers
-  one, each marker, read and drop handed over is a read waiting and its
-  outcome (`listener_outcome` gives a drop's reason), and once the
-  test's time passes a record's bound with no read waiting it hands the
-  outpost focus-missing; an idle round (`idle_round`) reaches the outpost
-  only once the records opened before it are closed.
+  element from the test rather than the system. The outpost under test
+  keeps its own gap record: each drop handed over carries its answer and
+  top-level window (`listener_outcome` places it as the listener does),
+  and the test injects the record's timer's firing rather than waiting for
+  it, once the time it passes (`pass_time`) reaches the bound the outpost
+  set, rounded up to a tenth of a second, or at once for a bound already
+  past (`gap_timer_set` says whether one is set). The outpost stamps its
+  own events and times its verdicts' keeps by the run's clock moved on by
+  that time (`observed_now`), with which the facts handed over are
+  stamped. An idle round (`idle_round`) reaches the outpost's idle answer,
+  which waits while its record is open. `focus_moves_during_the_read`
+  moves the focus window as the outpost reads the focused element, and
+  `listener_forces_uia` tells the listener's reader of a backend override
+  forcing UIA.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each
