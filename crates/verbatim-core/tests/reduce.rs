@@ -2538,6 +2538,75 @@ fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
 }
 
 #[test]
+fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
+    // The application renames the focus before any event; navigating to the
+    // parent and back reads the focus's node afresh, a separate object, so
+    // reporting it leaves what was last spoken of the focus alone and the
+    // name change's own event is still spoken.
+    let source = Pid(1);
+    let first = node(45, Role::Button, Some("Connect"), None, StateSet::new());
+    let state = focused(source, first);
+    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let query = only_fetch(&effects);
+    let window = node(10, Role::Window, Some("App"), None, StateSet::new());
+    let (state, _) = reduce(
+        &state,
+        &Input::FetchCompleted {
+            trace_id: TraceId::mint(),
+            query_id: query.query_id,
+            kind: query.kind,
+            result: FetchResult::Node(window),
+        },
+    );
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::FirstChild, 0),
+    );
+    let query = only_fetch(&effects);
+    // The outpost answers with the id it gave the focus.
+    let mut fetched = node(45, Role::Button, Some("Disconnect"), None, StateSet::new());
+    fetched.assign_outpost(outpost_of(source));
+    let (state, effects) = reduce(
+        &state,
+        &Input::FetchCompleted {
+            trace_id: TraceId::mint(),
+            query_id: query.query_id,
+            kind: query.kind,
+            result: FetchResult::Node(fetched),
+        },
+    );
+    assert_eq!(
+        said(&effects),
+        vec![UtteranceSegment::label("Disconnect"), role(Role::Button)]
+    );
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![
+            UtteranceSegment::label("Disconnect"),
+            role(Role::Button),
+        ])]
+    );
+    let name_changed = event_in(
+        source,
+        None,
+        NormalizedEvent::PropertyChanged {
+            node_id: NodeId::new(45),
+            change: PropertyChange::Name(Some("Disconnect".to_string())),
+            child_count: None,
+        },
+    );
+    let (_, effects) = reduce(&state, &name_changed);
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::label("Disconnect")])]
+    );
+}
+
+#[test]
 fn an_expand_of_the_focus_left_reported_after_the_new_focus_is_spoken() {
     // Alt+Down on a Settings combo box: the item's focus, whose ancestor is
     // the combo box already expanded, reaches Core before the combo box's

@@ -68,9 +68,13 @@ pub(crate) struct FocusContext {
     /// clock (0 when not known).
     #[serde(default)]
     pub(crate) observed_at_us: u64,
-    /// What Core last spoke of the focus and its ancestors, which only
-    /// speech updates; `None` in a recording made before it was kept, when
-    /// the reading stands in ([`FocusContext::spoken`]).
+    /// What Core last spoke of the focus and its ancestors. A focus taken
+    /// writes it, as does a report that speaks the focus's reading, a name,
+    /// value or description change on the focus, a state change on the
+    /// focus other than the focused state's loss on a focus that reported
+    /// itself focused, and a state change of an ancestor with an entry; a
+    /// repeat never does. `None` in a recording made before it was kept,
+    /// when the reading stands in ([`FocusContext::spoken`]).
     #[serde(default)]
     pub(crate) spoken: Option<SpokenRecord>,
 }

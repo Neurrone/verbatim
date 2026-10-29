@@ -268,11 +268,17 @@ code is in `reduce.rs` unless named.
   last spoke of it (`FocusContext::spoken`, a `SpokenRecord`): the
   focus's name, value, description and states, and each ancestor's
   states. A repeat never moves the record. A focus taken moves it, and
-  so does a report of the focus's object (the report-focus command,
-  reporting the current object while the navigator is on the focus, and
-  the navigator's return to the focus), whatever the reason it is spoken.
-  A name, value, description or state change on the focus moves it to the
-  new reading even when nothing is spoken, as NVDA's property cache does.
+  so does a report that speaks the focus's reading (the report-focus
+  command, reporting the current object while the navigator holds the
+  reading, and the navigator's return to the focus), whatever the reason
+  it is spoken. A navigation that lands on the focus's node fetches a
+  separate object, so reporting it moves the record only when it equals
+  the reading. A name, value or description change on the focus moves it
+  to the new reading even when nothing is spoken, as NVDA's property
+  cache does, and so does a state change on the focus, except one without
+  the focused state on a focus that reported itself focused, which the
+  focus has left. A state change of an ancestor with an entry moves that
+  entry.
   An ancestor the previous focus line held, the
   previous focus among them, keeps its entry, so an expansion of a combo
   box the focus has just left for its item, arriving after the item's

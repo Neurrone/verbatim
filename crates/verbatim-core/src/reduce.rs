@@ -1646,6 +1646,14 @@ fn announce_navigator(
 /// `docs/nvda/speech.md`), so a change a report has already spoken is not
 /// spoken again when its event comes. The ancestors' entries stay, since
 /// the announcement speaks none of them.
+///
+/// `object` is the focus only when it equals the focus's reading. A
+/// navigation that lands on the focus's node fetches a separate object with
+/// the same id, which may differ from the reading, and speaking that says
+/// nothing of what was spoken of the focus. A navigator seeded from the
+/// focus is kept equal to the reading after every event
+/// (`sync_navigator_with_focus`), and a fetched copy equal to the reading
+/// speaks the reading, so moving the record to it is right as well.
 fn announce_focus_object(
     state: &mut SrState,
     trace_id: TraceId,
@@ -1655,7 +1663,7 @@ fn announce_focus_object(
     if let Some(focus) = state
         .focus
         .as_mut()
-        .filter(|focus| focus.snapshot.id == object.id)
+        .filter(|focus| focus.snapshot == *object)
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
         focus.spoken = Some(SpokenRecord::of(object, ancestors));
