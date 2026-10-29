@@ -85,6 +85,11 @@ The decisions and their order of work, each in the design's
 - Control+Z, Control+Y, Control+X, Control+V and Escape in a text field
   match NVDA: not held and silent, replacing the decision of 2026-10-08
   that spoke them; the `caret_keys` scenarios' expectations change.
+- A caret key that moves nothing speaks its unit, as NVDA does, so that
+  Up Arrow on a one-line field reads the line, replacing the decision of
+  2026-10-08 that made it silent; and Alt+Up and Alt+Down Arrow move by
+  sentence where the application does not, as NVDA does (Dickson,
+  2026-10-29).
 - One time stamp per caret report; then the outbound merge's clause
   against merging across a reply is checked and removed, its stated
   reason predating 505e3ad8.
@@ -155,7 +160,7 @@ Text and selection:
 - Settle where NVDA's say-all starts from NVDA's speech log before any say-all expectation changes: in every capture of 2026-10-23 NVDA's recorded speech began at the line after the caret's, in Notepad and in the text box, which is either this NVDA build or the capture add-on missing the first chunk.
 - Notepad's Find box differs from NVDA's capture: Control+F says Notepad's notification "Press F6 to go to new notification" first and "Find edit" and "selected beta" as two utterances, where NVDA says "Popup window", then "Find edit selected beta" as one, then the notification; settle it with a capture that does not depend on the text Notepad remembers in the box.
 - The order of a selection change's parts: NVDA speaks every text selected, then every text unselected (`speakSelectionChange`, `nvda/source/speech/speech.py` 1367 to 1417), where Verbatim says them in text order, so a replaced selection and one crossing its anchor are spoken the other way round; no capture has the replaced selection yet.
-- Alt+Up and Alt+Down Arrow in the Windows Forms text box: NVDA, finding the caret unmoved after its wait, moves by sentence itself and says "delta epsilon", where Verbatim says nothing; whether Verbatim moves by sentence awaits Dickson's decision. The ledger's statement that these keys speak the line when the application moves the caret has no capture behind it.
+- The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it. Moving by sentence where the application does not is scheduled in the caret and selection rework.
 - The remote caret program could leave out its two comparisons of the old and new selections' ends when the old selection is known at build time to hold nothing (`previous_collapsed`, `crates/verbatim-uia-rops/src/caret.rs`), since that case is a whole change already.
 - The outpost's per-text-node selection baseline is not judged against the focus Core holds, as the listener's repeats are (D14, "Where the rules run"); whether it should be is a question for Dickson.
 

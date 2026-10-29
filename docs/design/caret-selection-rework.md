@@ -12,6 +12,8 @@ The shape is right: a caret key is held while the focus's outpost reads the care
 - Removed: Core's history of eight caret reports and its prediction of what Backspace and Delete remove; the outpost's history of eight reads, now, so that until uiAccess (M8.1) a caret key pressed while an elevated window is in front is judged from the last read when the request arrives, and is sometimes silent; the time-zero record of Core's own caret move; the "since" check limited to a line; report numbers; the three modes of the selection baseline; the separate watch request and its first check; and the single superseded slot.
 - A node's last read lives while Core holds the node (`NodesHeld`), and Core's choice between a new and a repeated focus decides what is spoken: Core speaks a repeated focus's changes and ignores a new focus's (2026-10-25; amended 2026-10-29, since the focus pipeline rework removes `CoreFocus`, by which the outpost was to forget a node's last read when Core's focus left it).
 - Control+Z, Control+Y, Control+X, Control+V and Escape in a text field match NVDA, which binds no script to them: they are not held, and nothing is said for them. This replaces the decision of 2026-10-08 that spoke them; the `caret_keys` scenarios' expectations change.
+- A caret key that moves nothing speaks its unit, as NVDA does: Up Arrow on the first line and Down Arrow on the last read the line (Dickson, 2026-10-29). This replaces the decision of 2026-10-08 that made such a key silent, whose reason, a 100 ms wait that held the outpost's worker, the watch removed. How Verbatim knows that no evidence will come is being settled.
+- Alt+Up and Alt+Down Arrow match NVDA (Dickson, 2026-10-29): when the application leaves the caret where it was, Verbatim moves the caret by sentence itself and speaks the sentence, finding sentences within each paragraph by Unicode's sentence boundaries (UAX #29), as NVDA does; in a field read through UI Automation, which has no sentence unit, NVDA's move fails and its script says nothing, and so does Verbatim's.
 - The judgement of whether a key's evidence has arrived stays in the outpost, named in D14 as the one read-time decision outside Core, because it bounds reads on text changes.
 - One time stamp per caret report.
 - The outbound merge's clause against merging a caret report across a reply is verified and removed, its stated reason predating 505e3ad8.
@@ -21,7 +23,7 @@ The shape is right: a caret key is held while the focus's outpost reads the care
 1. Pin today's defects with tests first: Control+A followed by a repeated focus is announced; a superseded key's answer becomes Core's caret; a caret event's report and a key's answer are ordered by one stamp.
 2. The single baseline and one request per key, a node's last read living while Core holds the node.
 3. Remove the second layer listed above, the outpost's eight-read history included.
-4. The editing chords as NVDA: not held, silent; the `caret_keys` expectations change.
+4. The keys as NVDA: the editing chords not held and silent, a key that moves nothing speaking its unit, and Alt+Up and Alt+Down moving by sentence; the `caret_keys` expectations change.
 5. One time stamp; then verify and remove the outbound merge clause.
 6. The measurements and new tests listed under "What must be measured before trusting it" below.
 7. The documents: D14, the key-holding design, the parity entries on text and input, and the crate guides describe the result.
