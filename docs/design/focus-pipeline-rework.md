@@ -306,7 +306,7 @@ Each: the fix, where it runs, and what is heard.
 - Speech cut at any top-level change (21): NVDA's difference level, from complete chains. Heard: a combo box's drop-down opening does not cut speech, once the raw-view probe confirms its parent.
 - The secure desktop's return (22): the listener hooks `EVENT_SYSTEM_DESKTOPSWITCH` and tells the user's desktop with `OpenInputDesktop`, local; Core, 200 ms after a return, asks the foreground application for its focus and takes the answer without its duplicate rule, as `_handleUserDesktop` queues `gainFocus` directly (`IAccessibleHandler/__init__.py` 786 to 813). Heard: the focus again after UAC.
 - The virtual desktop's name (23): once the first step finds the process that raises the desktop window's name change, the listener adds a hook for that event scoped to that process to its one hook set; Core speaks the window's text after the foreground window and before the entered containers, or 250 ms after with no focus (`eventHandler.py` 338 to 375). If no such hook is possible, the listener reads the desktop window's text with each foreground change it reports, and a rename is not spoken, a deliberate difference (decided). Heard: "Desktop 2" after Windows+Control+Right.
-- File Explorer's search band focus (24): the outpost refuses an MSAA focus on a pane whose window class is "Search Box" or "UniversalSearchBand" in File Explorer, as `SearchBoxClient` (`appModules/explorer.py` 48 to 51, 235 to 241). Heard: "Search edit" without "pane".
+- File Explorer's search band focus (24): a rule of the File Explorer built-in module in M5, refusing an MSAA focus on a pane in a "Search Box" or "UniversalSearchBand" window, as `SearchBoxClient` (`appModules/explorer.py` 48 to 51, 235 to 241), since application-specific logic is not core code (Dickson, 2026-10-22). Heard, from M5: "Search edit" without "pane".
 - Events lost between an outpost's death and `HookRemoved` (25): the process wait.
 
 Recorded but never decided: the foreground object becomes the real foreground window's entry (above); the menu-item clause of focus speech culling is judged for every waiting utterance, each carrying its own focus, in `verbatim-speech`; the synthesizer's stop of all it was handed is a bug fixed outside this rework.
@@ -335,6 +335,15 @@ Fixed costs: one more global `WinEvent` kind and possibly one process-scoped hoo
 - The menu opening. A focus observed before it but arriving after it, from another outpost, cannot count as pending, a limit. A walk request after the 2-second keep, or after a newer menu opening replaced the element, is answered gone. The menu opening's speech waits for the walk: one round trip and the walk's calls. Unit tests in Core for the duplicate-then-menu case and the redirect; a mockapp test of the walk on request.
 - The gap in the listener, the hold and the marker: measured as the order of work says.
 - The delayed pump, the speech cut and the desktop's name are built only after their captures and probes.
+
+### Room for extensions
+
+Extensions arrive in M5 ([extensions](extensions.md)), whose host runs in the outposts and Core and never in the listener, and whose window and event rules compile into tables the listener and the outposts both consult. This rework builds none of it, but keeps four things M5 needs, so that a module's veto or redirect of a focus never costs a read NVDA would not make (Dickson, 2026-10-29):
+
+- The listener's checks before a read stay data-driven tables in NVDA's order, with a place for M5's window, event and node rules judged from the event's cache alone. NVDA's base cache request, which the listener's registration copies, already carries the framework, automation id, class name, control type, name and process id (`UIAHandler/__init__.py` 61 to 74), so a veto declared as a rule drops the focus before any read.
+- The read request to the listener is general, not the menu opening's alone: the listener can keep an event's element and read it when asked. M5 uses it for a module whose veto or redirect is code: the listener sends the focus from its cache, the module's hook judges it in the outpost from those facts, and only an allowed focus is read.
+- Kept verdicts can be dropped: each process drops its verdicts when it installs a new version of the rule tables, since a reloaded module can change a window's backend.
+- Repeats judged in Core change what the Windows Terminal second-identity hook ([design](windows-terminal-twin-focus.md)) assumes, the listener's comparison before the read and `focus()` as Core's focus; M5 restates it against the resend and the followed focus.
 
 ### Why no smaller design
 

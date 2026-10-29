@@ -506,6 +506,16 @@ precondition, because the extension surface exposes the messages it moves.
   slower runner, so that can still fail scenarios. Evidence:
   `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`.
 
+- Focus vetoes and redirects with no read NVDA would not make (Dickson,
+  2026-10-29; [the focus pipeline rework](design/focus-pipeline-rework.md),
+  "Room for extensions"): a veto declared as a rule judged by the listener
+  from the event's cache; a hook's veto or redirect judged in the outpost
+  from the event's cached facts before the listener reads, through the
+  read request; kept verdicts dropped when rule tables are reloaded; the
+  Windows Terminal second-identity hook restated against repeats judged in
+  Core; and File Explorer's search band refusal (the focus pipeline
+  audit's difference 24) as a rule of the File Explorer built-in.
+
 Out of M5 by decision (Dickson, 2026-10-22): module settings and storage,
 the utterance, settings-changed, timer and response hooks, asynchronous
 imports, global modules, updating or reordering installed extensions,
