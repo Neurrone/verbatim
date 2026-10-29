@@ -70,6 +70,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [focus-pipeline-rework.md](design/focus-pipeline-rework.md) — the
     reconciliations between the listener, the outposts and Core to
     remove.
+  - [focus-pipeline-outpost-reads.md](design/focus-pipeline-outpost-reads.md)
+    — the alternative in which the outposts, not the listener, read each
+    UIA focus.
   - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
     difference from NVDA's focus handling found on 2026-10-29.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
