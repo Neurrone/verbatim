@@ -1,6 +1,6 @@
 # Calls that reach another application: a study
 
-Status: study of 2026-10-29; Dickson took its five decisions, each as recommended, on 2026-10-29. Decisions 1, 4 and 5 are in the order of work and edge cases of `docs/design/focus-pipeline-rework.md` ("Decisions"); decisions 2 and 3 are two small changes made outside that rework's order of work, and decision 2 is built (`docs/crates/verbatim-outpost.md`, "How focus reaches an outpost"). The corrections it lists for other documents are applied. The experiments behind its figures are listed under "Evidence" at the end.
+Status: study of 2026-10-29; Dickson took its five decisions, each as recommended, on 2026-10-29. Decisions 1, 4 and 5 are in the order of work and edge cases of `docs/design/focus-pipeline-rework.md` ("Decisions"); decisions 2 and 3 are two small changes made outside that rework's order of work, and decision 2 is built (`docs/crates/verbatim-outpost.md`, "How focus reaches an outpost"). Decision 2 amended on 2026-10-30 by Dickson: the hooks still go in first and the registration still runs on a thread of its own, but `Ready` is said only once the registration returns, because the listener's `Ready` gates Verbatim's readiness to take input and no input may be taken before UIA focus events can arrive. The corrections it lists for other documents are applied. The experiments behind its figures are listed under "Evidence" at the end.
 
 ## In short
 

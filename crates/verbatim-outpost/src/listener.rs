@@ -947,16 +947,20 @@ impl Listener {
     }
 
     /// Sets up the listener, sending through `sender`: installs its
-    /// `WinEvent` hooks, and then announces readiness, so the supervisor and Core know the `WinEvent`s, menus
-    /// included, are seen from then on; announcing it before the hooks
-    /// were in let a menu opened right after Verbatim started go unseen.
-    /// The desktop-wide UIA subscriptions are made by `install` on a
-    /// thread of their own, started after the announcement, because UIA
-    /// reads the system's focus for the focus registration and waits on
-    /// the foreground application for it, up to about 6 seconds for one
-    /// that does not answer (`docs/design/cross-process-calls-study.md`,
-    /// instance 2); their failure is reported as a fault, after the
-    /// announcement. Every UIA event is dropped until `install` returns
+    /// `WinEvent` hooks, and then has `install` make the desktop-wide UIA
+    /// subscriptions on a thread of their own, which announces readiness
+    /// once `install` returns, so the supervisor and Core know the
+    /// `WinEvent`s, menus included, and the UIA events are seen from then
+    /// on; Verbatim takes input only once the listener is ready, so a
+    /// scenario's first key waits for it. The hooks go in first, so MSAA
+    /// facts flow during the installation, and it runs on its own thread,
+    /// so the pipe thread answers the supervisor's pings meanwhile,
+    /// because UIA reads the system's focus for the focus registration and
+    /// waits on the foreground application for it, up to about 6 seconds
+    /// for one that does not answer
+    /// (`docs/design/cross-process-calls-study.md`, instance 2). Their
+    /// failure is reported as a fault, before the announcement. Every UIA
+    /// event is dropped until `install` returns
     /// ([`Outgoing::uia_event_process`]); a `WinEvent` focus whose UIA
     /// focus is dropped meanwhile is left to the gap record.
     ///
@@ -1070,13 +1074,6 @@ impl Listener {
         // after it.
         nudger.nudge((0, NUDGE_FOREGROUND_START));
 
-        // The listener has no target application; `target_pid` is a sentinel
-        // the supervisor only logs.
-        outgoing.urgent(OutpostToSupervisor::Ready {
-            outpost_pid: Pid(std::process::id()),
-            target_pid: Pid(0),
-        });
-
         let registering = install_on_its_thread(&outgoing, &readers, install)?;
 
         Ok(Self {
@@ -1183,7 +1180,8 @@ impl Listener {
 
 /// Starts the thread that makes the listener's desktop-wide UIA
 /// subscriptions with `install`, takes UIA events from then on
-/// ([`Outgoing::uia_installation_ended`]), logs the time it took, and
+/// ([`Outgoing::uia_installation_ended`]), logs the time it took, says
+/// the listener is `Ready`, whether or not they were installed, and
 /// returns them.
 ///
 /// # Errors
@@ -1207,6 +1205,12 @@ fn install_on_its_thread(
                 installed = registration.is_some(),
                 "the listener's desktop-wide UIA subscriptions ended their installation"
             );
+            // The listener has no target application; `target_pid` is a
+            // sentinel the supervisor only logs.
+            outgoing.urgent(OutpostToSupervisor::Ready {
+                outpost_pid: Pid(std::process::id()),
+                target_pid: Pid(0),
+            });
             registration
         })
 }
@@ -2073,40 +2077,104 @@ mod tests {
         assert_eq!(outgoing.uia_event_process(Some(5)), Some(Pid(5)));
     }
 
-    /// The listener's hooks are in and its `Ready` sent while its UIA
-    /// subscriptions' installation still waits, as on a foreground
-    /// application that does not answer; UIA events are dropped until it
-    /// returns.
+    /// The listener says `Ready` only once its UIA subscriptions'
+    /// installation returns, as on a foreground application that does not
+    /// answer, with its hooks in during the wait: an MSAA event raised
+    /// meanwhile is forwarded with no `Ready` before it, UIA events are
+    /// dropped, and `Ready` arrives once the installation is released.
     #[test]
-    fn the_listener_is_ready_while_its_uia_subscriptions_are_installed() {
+    fn the_listener_is_ready_once_its_uia_subscriptions_are_installed() {
+        use windows::Win32::UI::Accessibility::NotifyWinEvent;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CHILDID_SELF, CreateWindowExW, DestroyWindow, EVENT_SYSTEM_ALERT, OBJID_CLIENT,
+            WINDOW_EX_STYLE, WS_OVERLAPPED,
+        };
+        use windows::core::w;
+
         let (ours, theirs) =
             pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
         let (sender, _finishing) =
             Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
         let mut reader = BufReader::new(File::from(theirs));
         let (release, released) = mpsc::channel::<()>();
-        let returned = Arc::new(AtomicBool::new(false));
-        let install_returned = Arc::clone(&returned);
         let install: InstallSubscriptions = Box::new(move |_, _| {
-            // Released once the test has read `Ready`; the bound only ends
-            // a run in which `Ready` waits for this installation.
+            // Released once the test has read the alert below; the bound
+            // only ends a run whose alert is never forwarded, which then
+            // fails on the `Ready` that follows.
             let _ = released.recv_timeout(Duration::from_secs(10));
-            install_returned.store(true, Ordering::Release);
             None
         });
         let listener = Listener::start(sender, IgnoredProcesses::default(), &[], install)
             .expect("the listener starts");
-        // The global hooks forward this desktop's events too.
-        let ready = std::iter::from_fn(|| read_message(&mut reader).expect("read"))
-            .find(|message| matches!(message, OutpostToSupervisor::Ready { .. }));
-        assert!(ready.is_some(), "the listener says it is ready");
-        assert!(
-            !returned.load(Ordering::Acquire),
-            "ready before the UIA subscriptions' installation returned"
+
+        // A hidden window of this thread's, with no parent, to raise an
+        // alert from while the installation waits.
+        // SAFETY: a window with no parent, made on this thread.
+        let window = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("STATIC"),
+                w!(""),
+                WS_OVERLAPPED,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("a window to raise an alert from");
+        // SAFETY: raising an event for a live window of this thread.
+        unsafe {
+            NotifyWinEvent(
+                EVENT_SYSTEM_ALERT,
+                window,
+                OBJID_CLIENT.0,
+                CHILDID_SELF.cast_signed(),
+            );
+        };
+        let alert = ListenerFact {
+            pid: Pid(std::process::id()),
+            fact: DeliveredFact::Alert {
+                hwnd: window.0 as isize,
+                id_object: OBJID_CLIENT.0,
+                id_child: CHILDID_SELF.cast_signed(),
+            },
+        };
+        // The global hooks forward this desktop's events too: the first of
+        // the alert and `Ready` to arrive, `Ready` as `None`.
+        let first =
+            std::iter::from_fn(|| read_message(&mut reader).expect("read")).find_map(|message| {
+                match message {
+                    OutpostToSupervisor::Ready { .. } => Some(None),
+                    OutpostToSupervisor::FocusFact { fact, .. } if fact == alert => {
+                        Some(Some(fact))
+                    }
+                    _ => None,
+                }
+            });
+        assert_eq!(
+            first,
+            Some(Some(alert)),
+            "the alert, with no Ready before it"
         );
         assert_eq!(listener.outgoing.uia_event_process(Some(5)), None);
 
         release.send(()).expect("the installation waits");
+        let ready = std::iter::from_fn(|| read_message(&mut reader).expect("read"))
+            .find(|message| matches!(message, OutpostToSupervisor::Ready { .. }));
+        assert_eq!(
+            ready,
+            Some(OutpostToSupervisor::Ready {
+                outpost_pid: Pid(std::process::id()),
+                target_pid: Pid(0),
+            })
+        );
+        assert_eq!(listener.outgoing.uia_event_process(Some(5)), Some(Pid(5)));
+
         let Listener {
             outgoing,
             readers,
@@ -2116,9 +2184,10 @@ mod tests {
         } = listener;
         drop(event_thread);
         assert!(registering.join().expect("the installation ends").is_none());
-        assert_eq!(outgoing.uia_event_process(Some(5)), Some(Pid(5)));
         readers.stop();
         outgoing.close();
+        // SAFETY: the window made above, on this thread.
+        unsafe { DestroyWindow(window) }.expect("the window destroyed");
     }
 
     #[test]

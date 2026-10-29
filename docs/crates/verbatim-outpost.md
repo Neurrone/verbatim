@@ -25,12 +25,17 @@ element's application (below). The supervisor routes every fact to its
 application's outpost, which handles it as it handles its own hook's
 events.
 
-The listener installs its global MSAA hooks and says `Ready` before its
-desktop-wide UIA subscriptions, which a thread of their own installs
-(`Listener::start`), because UIA reads the system's focus for the focus
-registration and waits on the foreground application for it, up to about
-6 seconds for one that does not answer
-(`docs/design/cross-process-calls-study.md`, instance 2). An event the
+The listener installs its global MSAA hooks before its desktop-wide UIA
+subscriptions, which a thread of their own installs (`Listener::start`),
+because UIA reads the system's focus for the focus registration and waits
+on the foreground application for it, up to about 6 seconds for one that
+does not answer (`docs/design/cross-process-calls-study.md`, instance 2):
+MSAA facts flow meanwhile, and the pipe thread answers the supervisor's
+pings. That thread says `Ready` once the installation returns, whether or
+not it succeeded, because the listener's `Ready` gates Verbatim's
+readiness to take input, which the end-to-end harness waits for before a
+scenario's first key, and no input may be taken before UIA focus events
+can arrive. An event the
 listener receives before those subscriptions are all installed is dropped
 (`Outgoing::uia_event_process` in `crates/verbatim-outpost/src/listener.rs`),
 as NVDA drops events before its global handlers are registered; Verbatim's
@@ -789,8 +794,7 @@ How it works:
   outpost ended for any reason but its pipe's end has `Ended` sent at once,
   and the app drops what it wrote after.
 - The listener is supervised the same way; a replacement's `Ready` makes
-  Core ask the attention application for its focus, which its outpost
-  reads whether or not the listener's UIA subscriptions are in yet.
+  Core ask the attention application for its focus.
 - `process` holds the roles' command lines and log names and two local
   queries; launching is [verbatim-process](verbatim-process.md)'s.
 
