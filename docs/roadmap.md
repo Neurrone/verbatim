@@ -137,6 +137,17 @@ Crashes and stalls:
 
 Focus and File Explorer:
 
+- A scenario's final check that nothing more was said sees only events an
+  application raised before Verbatim answered the idle barrier, so a
+  focus raised just after, such as File Explorer's focus on the Start
+  button after Escape closes the Windows+X menu, let `quick_link_menu`
+  pass in some runs while expecting silence where NVDA and Verbatim both
+  speak (found 2026-10-30); a scenario expecting silence after a key needs
+  evidence that the key's effects have all been raised.
+- `cargo xtask nvda compare quick_link_menu` flattens NVDA's Windows+X
+  item to "Installed apps Alt, p1 of 17" where the scenario has "p 1 of
+  17", so the step is judged "differs"; find whether the compare tool
+  joins NVDA's speech parts without a space or NVDA runs them together.
 - File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view. On 2026-10-29 it failed this way in 22 of 23 runs in a row on the development machine, on builds before and after that day's changes, while `explorer_folder_window` passed, after a "Low disk space" dialog had taken the foreground during a batch; the state that makes it constant is not found.
 - In one runner run the `delta` item inside Inner still carried the parent folder's window title; check whether File Explorer's title lags or an ancestor name is stale (`explorer_folder_window`).
 - The listener's read in File Explorer scenarios once came 285 ms late, locally mostly the first nearest-window lookup waiting on a busy File Explorer; confirm on GitHub's runner (deferred, Dickson, 2026-10-21).
