@@ -338,7 +338,9 @@ route's walk finishes without it is answered gone
 (`read::resolve_uia_element`), while a walk that fails, a window lookup
 timed out or refused or a classic walk past its budget among them, fails
 the query (`focus_path::find`), since a slow application has not shown
-the element gone; and a
+the element gone. The limit: a slow classic walk that truly finds nothing,
+but whose last call returned after `PATH_BUDGET`, fails the query rather
+than answering the node gone. A
 listener's selection is reported with what its event's cache holds
 (`verbatim_uia::ListenerSelection`), since a search of a subtree enters
 any child window another process serves (the study's instance 3). The supervisor's `App` table holds each application's

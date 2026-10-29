@@ -10,7 +10,8 @@
 //! follows nothing when it has no path, until a later focus brings one;
 //! which application's focused element it takes for a focus whose walk up
 //! was cut; that a query whose walk down the focus's route runs out of
-//! time fails rather than answering the node gone;
+//! time fails rather than answering the node gone, and one that shows it
+//! gone answers it gone;
 //! how a change raised after a focus event waits for the focus's read,
 //! how the old focus's state change queued behind a focus inside it is
 //! handled before that focus, and its value change after it;
@@ -831,6 +832,10 @@ fn a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element() {
 /// four levels below mockapp's window; the walk is the classic one, whose
 /// budget is checked between its calls, and the outpost's time runs out
 /// after the walk sets its budget's end.
+///
+/// The test counts the query's clock reads (`run_out_of_time_after(2)`):
+/// a read added on the query's path before the walk sets its budget
+/// (`time_limit`) needs the count updated.
 fn a_route_walk_out_of_time_fails_rather_than_answering_gone() {
     let title = common::unique_title("mockapp-route-out-of-time");
     let mut app = common::spawn("ancestry.json", "uia", &title);
@@ -871,6 +876,40 @@ fn a_route_walk_out_of_time_fails_rather_than_answering_gone() {
         other => panic!("the outpost said {other:?}, not the step's answer"),
     }
     outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// An ancestor of the focus, whose element the outpost does not hold, is
+/// answered gone when the walk down the focus's route shows it gone: once
+/// mockapp has disconnected "Inner group", four levels below its window,
+/// a call on the element fails as on one that is gone. The walk is the
+/// classic one.
+fn a_route_walk_that_finds_its_element_gone_answers_gone() {
+    let title = common::unique_title("mockapp-route-gone");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let mut outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+
+    app.send("set-focus notes");
+    let reported = outpost.uia_focus(&client.focused());
+    let group = reported
+        .ancestors
+        .iter()
+        .find(|ancestor| ancestor.name.as_deref() == Some("Inner group"))
+        .expect("the focus's chain has the inner group")
+        .id;
+    app.send("disconnect group2");
+    outpost.gone(Query::Navigate {
+        node_id: group,
+        kind: QueryKind::FirstChild,
+    });
 
     drop(outpost);
     app.quit();
@@ -3151,6 +3190,10 @@ fn main() {
         (
             "a_route_walk_out_of_time_fails_rather_than_answering_gone",
             a_route_walk_out_of_time_fails_rather_than_answering_gone,
+        ),
+        (
+            "a_route_walk_that_finds_its_element_gone_answers_gone",
+            a_route_walk_that_finds_its_element_gone_answers_gone,
         ),
         (
             "a_text_change_after_the_focus_returns_to_a_document_is_heard",

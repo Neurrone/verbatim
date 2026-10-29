@@ -1,6 +1,6 @@
 # The outpost's read of its own focused element: a study
 
-Status: study of 2026-10-29, for Dickson's decision; nothing is built, and the changes it proposes to [the focus pipeline rework](focus-pipeline-rework.md) are not applied. The experiment behind its figures is `experiments/the-outposts-focus-read-below-its-checked-window/`.
+Status: study of 2026-10-29, decided by Dickson on 2026-10-29: keep `GetFocusedElementBuildCache` with the process-id check, and use it for difference 5 too, as [the focus pipeline rework](focus-pipeline-rework.md) records under "Decisions". The study's analysis below stays as the record of the options weighed. The experiment behind its figures is `experiments/the-outposts-focus-read-below-its-checked-window/`.
 
 ## In short
 

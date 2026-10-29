@@ -152,7 +152,7 @@ The listener's marker starts the outpost, usually by giving the application a sp
 
 ### 12.7 Cost per focus change
 
-One cache fill for the listener's registration, one read in the listener, and in the outpost one `ElementFromHandle` and one remote operation to find its element: after the report for a focus without text, before it for one with text. No process reads the system focus or searches a subtree, and no other process handles the event. Measured figures are in `docs/performance.md`.
+One cache fill for the listener's registration, one read in the listener, and in the outpost one `ElementFromHandle` and one remote operation to find its element: after the report for a focus without text, before it for one with text. No process searches a subtree, and no other process handles the event. The outpost reads its application's focused element (`GetFocusedElementBuildCache`), and takes it only when the element's process is the outpost's application, on the paths [the focus pipeline rework](focus-pipeline-rework.md) decides under "Decisions" alone: a focus-now query, the listener's focus-missing, its drop of a focus on its verdict, and a windowless text focus whose walk up the listener cut. Measured figures are in `docs/performance.md`.
 
 ## 13. The stale-focus race between the listener and the outpost
 
