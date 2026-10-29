@@ -196,6 +196,13 @@ NVDA capture.
   the flat `ReviewCurrentLine` arm) moves the review offset to the line's
   start, where NVDA's current-line command does not move the review
   position; it is fixed with this item ([review parity](parity/review.md)).
+  Object navigation from a node whose element is gone: Verbatim moves the
+  navigator to the focus and announces it, where NVDA says "No next" or
+  "No objects inside", or takes the window for a parent step
+  (`NVDAObjects/UIA/__init__.py` 2136 to 2196); settled here against a
+  capture. Such answers are more frequent since the outpost's runtime-id
+  search was removed (719b4ed4, 2026-10-29), so a node with no kept
+  element and no focus route answers gone.
 
 The remaining work is two sessions (Dickson, 2026-10-21): one takes
 toasts, the foreground UIA progress bar, and the differences in a list
