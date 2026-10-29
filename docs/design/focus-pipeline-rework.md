@@ -15,6 +15,11 @@ The pipeline's shape is forced: three measured facts about UI Automation (an ele
 - Every observation is stamped in microseconds from one clock read, in every process, so the order of focuses is a total order.
 - The marker that holds an application's later events until the listener's read arrives stays.
 
+Added by Dickson on 2026-10-29, with the scope widened to every reconciliation and every difference in [the NVDA audit](focus-pipeline-audit.md). The aim is NVDA's focus logic wherever the multi-process model allows, with one owner for each fact and as few calls as possible:
+
+- A window in the focus's ancestry is named by NVDA's rule: a plain window named by `InternalGetWindowText` for the desktop, a ghost window or a hung application, otherwise the window's UIA or MSAA object chosen as NVDA chooses it. When that read has not answered within Verbatim's existing bounds (`MOVED_ON_GRACE` when the focus has moved to a new window, the read's budget otherwise), the window is named by `InternalGetWindowText`, a deliberate difference.
+- Core's second test of an accepted focus against the foreground goes: a focus is judged against the foreground once, as NVDA does.
+
 ## Order of work
 
 1. Measure first: the repeats per scenario from the listener's and outposts' debug logs (`notepad_`, `windows_terminal_`, `explorer_folder_window`, `rapid_tabbing_in_settings`), with the read's cost, as the cost of judging repeats in Core; and the relay's latency at an outpost's start over fifty starts, as the cost of the hand-over's hold.
