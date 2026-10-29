@@ -3345,13 +3345,17 @@ fn a_focus_after_a_failed_acc_parent_reaches_its_dialog() {
 
 /// NVDA's focused-state test of an MSAA focus walks up the object's
 /// parents (`shouldAllowIAccessibleFocusEvent`), and where an `accParent`
-/// fails it goes on along the parent windows, each a plain window, focused
-/// when it is its thread's focus window (the audit's difference 19): the
-/// "Save" button, without the focused state, in a child window of
-/// mockapp's dialog whose window has its thread's focus (`window-focus`),
-/// read so independently first, is reported when its `accParent` fails.
-/// Ended at the failure, the test would drop it as nothing having the
-/// focused state.
+/// fails it goes on from the parent window's own object
+/// (`Window._get_parent`), reading its states and then its parents', a
+/// plain window never focused (the audit's difference 19): the "Save"
+/// button, without the focused state, in a child window of mockapp's
+/// dialog, whose `accParent` fails, has the dialog's client area read,
+/// which has no focused state, then the dialog's window object, whose
+/// parent is the desktop, and is dropped with nothing said. The dialog's
+/// window has its thread's focus (`window-focus`), read so independently
+/// first, which does not make it focused. Read as a plain window focused
+/// as its thread's focus window, the dialog's window had the button
+/// reported.
 fn the_focused_state_test_continues_past_a_failed_acc_parent() {
     let (mut app, host, child) = save_as_dialog("mockapp-focused-state-past-failure");
     app.send("set-states save focusable");
@@ -3363,13 +3367,22 @@ fn the_focused_state_test_continues_past_a_failed_acc_parent() {
     );
     let outpost = OutpostUnderTest::new(&app);
     app.send("fail-acc-parent save");
-    let reported = outpost.msaa_focus(child, 1);
-    assert_eq!(
-        (reported.node.role, reported.node.name.as_deref()),
-        (Role::Button, Some("Save")),
-        "the focus reported"
-    );
+    common::reset_hits(host);
+    // The button, index 1, at its object id in the child window.
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: child.0 as isize,
+        id_object: 2,
+        id_child: 0,
+    });
     outpost.settled();
+    assert_eq!(
+        common::read_get_objects(host)
+            .into_iter()
+            .filter(|&(kind, _)| kind == "OBJID_CLIENT")
+            .collect::<Vec<_>>(),
+        [("OBJID_CLIENT", 1)],
+        "the dialog's client area is asked for once"
+    );
     drop(outpost);
     app.quit();
 }
@@ -3491,6 +3504,160 @@ fn a_hung_ancestor_window_is_named_by_its_text_with_no_call() {
     app.quit();
 }
 
+/// mockapp's UIA window of `uia_island.json`, titled after `label`, its
+/// window, and the child window that is a native UIA provider of its own
+/// (`"native": "uia_window"`), which holds the focused button "OK" under
+/// its root, the grouping "Embedded", as a XAML island is inside an
+/// application's frame.
+fn uia_island(label: &str) -> (common::MockApp, HWND, HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let title = common::unique_title(label);
+    let app = common::spawn("uia_island.json", "uia", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("VerbatimMockAppUiaWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the UIA window");
+    (app, host, island)
+}
+
+/// A hung application's window above a UIA focus ends the listener's walk
+/// at the step into it, by NVDA's rule (`NVDAObjects/window/__init__.py`
+/// 85 to 97): NVDA makes that one step, reads the window as a plain window
+/// and goes on by the window hierarchy with no further call. The button
+/// "OK", in mockapp's UIA child window, has its ancestors read by the
+/// listener up to the host window's element, which the step reaches, and
+/// the host window is judged hung, as Windows judges a window whose thread
+/// has not answered for five seconds: the listener keeps "Embedded" and not
+/// the host's element, and names the host window to go on from, which the
+/// outpost reports as a plain window, named by its title. The listener
+/// makes five calls: the button's nearest window, its keyboard focus, its
+/// fresh cache, and the two steps, to "Embedded" and to the host's
+/// element. Without the rule, it steps on from the host's element, a sixth
+/// call, and the host's element, named by its fixture, is the outermost
+/// ancestor.
+fn a_hung_window_above_a_uia_focus_ends_the_listeners_walk() {
+    let (app, host, island) = uia_island("mockapp-hung-uia-listener");
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.judge_hung(host);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    let (judged, listener_calls) = outpost.listener_read(&ok);
+    let Judged::Read(read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(
+        (
+            read.ancestors.as_ref().map(|ancestors| ancestors
+                .iter()
+                .map(|ancestor| ancestor.snapshot.name.as_deref())
+                .collect::<Vec<_>>()),
+            read.ancestors_end,
+            listener_calls.uia
+        ),
+        (
+            Some(vec![Some("Embedded")]),
+            verbatim_outpost::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
+            5
+        ),
+        "the listener's walk and its calls"
+    );
+    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    assert_eq!(
+        roles_and_names(&reported),
+        [
+            (Role::Window, Some(app.title.as_str())),
+            (Role::Group, Some("Embedded")),
+            (Role::Button, Some("OK"))
+        ],
+        "the outpost's chain"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// [`a_hung_window_above_a_uia_focus_ends_the_listeners_walk`] for a
+/// focus-now query, which the outpost reads itself, with a remote operation
+/// when `remote`: a remote program cannot judge a window between its steps,
+/// so with the host window above the focus judged hung the outpost reads
+/// the ancestors by the classic walk, which stops at its step into the
+/// host's element, and reports the host window as a plain window; without
+/// remote operations its own walk stops there too, and the host window is
+/// not probed for its verdict. The outpost makes, after the focused
+/// element's read, two steps, and with `remote` the focus's keyboard focus
+/// read first, which the classic walk of a focus-now query makes, and one
+/// window message, the child window's probe; the host window takes only
+/// the three requests for its root provider with a zero `wParam` that the
+/// reads of the child window's elements and the step bring, and no
+/// connection. Without the rule, the remote program reads on into the
+/// host's element and connects to the host window twice, and the classic
+/// walk probes the host window and steps on from its element; the host's
+/// element, named by its fixture, is the outermost ancestor either way.
+fn hung_window_above_a_focus_now(remote: bool) {
+    let path = if remote { "remote" } else { "classic" };
+    let (app, host, island) = uia_island(&format!("mockapp-hung-uia-focus-now-{path}"));
+    let mut outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    outpost.judge_hung(host);
+    // The keyboard focus is in the UIA child window.
+    outpost.set_foreground(island);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    outpost.read_focus_as(ok.live().element());
+    common::reset_hits(host);
+    let (answer, calls) = outpost.focus_now_answer();
+    let focus = answer.focus.expect("the focus now's focused control");
+    assert_eq!(
+        focus.ancestors.as_ref().map(|ancestors| ancestors
+            .iter()
+            .chain(std::iter::once(&focus.node))
+            .map(|node| (node.role, node.name.as_deref()))
+            .collect::<Vec<_>>()),
+        Some(vec![
+            (Role::Window, Some(app.title.as_str())),
+            (Role::Group, Some("Embedded")),
+            (Role::Button, Some("OK"))
+        ]),
+        "{path}: the focus now's chain"
+    );
+    assert_eq!(
+        (
+            (calls.uia, calls.window_messages),
+            common::read_get_objects(host)
+        ),
+        (
+            (if remote { 4 } else { 3 }, 1),
+            vec![("UiaRootObjectId, zero wParam", 3)]
+        ),
+        "{path}: the outpost's calls and the host window's messages"
+    );
+    drop(outpost);
+    app.quit();
+}
+
+fn a_hung_window_above_a_focus_now_is_a_plain_window_remote() {
+    hung_window_above_a_focus_now(true);
+}
+
+fn a_hung_window_above_a_focus_now_is_a_plain_window_classic() {
+    hung_window_above_a_focus_now(false);
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
@@ -3513,6 +3680,18 @@ fn main() {
         (
             "the_focused_state_test_continues_past_a_failed_acc_parent",
             the_focused_state_test_continues_past_a_failed_acc_parent,
+        ),
+        (
+            "a_hung_window_above_a_uia_focus_ends_the_listeners_walk",
+            a_hung_window_above_a_uia_focus_ends_the_listeners_walk,
+        ),
+        (
+            "a_hung_window_above_a_focus_now_is_a_plain_window_remote",
+            a_hung_window_above_a_focus_now_is_a_plain_window_remote,
+        ),
+        (
+            "a_hung_window_above_a_focus_now_is_a_plain_window_classic",
+            a_hung_window_above_a_focus_now_is_a_plain_window_classic,
         ),
         (
             "a_chain_cut_at_the_depth_limit_is_completed_by_its_windows",

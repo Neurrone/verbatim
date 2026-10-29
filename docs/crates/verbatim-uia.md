@@ -160,8 +160,8 @@ ancestors, each read as the `Ancestor` shape, outermost first, as
 over the raw view, capped by the caller and stopped by `AncestorStops`:
 at a window read through the other API, at an ancestor the caller
 already knows (`AncestorWalk::MetKnown`), or at the caller's
-`out_of_time` check, a hop the transaction timeout ended, or `max_hops`
-(`AncestorWalk::Cut`, with the outermost element's nearest window, from
+`out_of_time` check, a hop the transaction timeout ended, or a parent
+found past `max_hops` ancestors (`AncestorWalk::Cut`, with the outermost element's nearest window, from
 which the caller completes the chain by plain windows). The root has no
 parent, which ends the walk as complete; any other failed hop, or one that
 finds no parent, below the root ends it as `AncestorWalk::Failed`, carrying
@@ -470,6 +470,8 @@ shapes, are described in `docs/crates/verbatim-outpost.md`.
   top-level window, its owner while the owner is visible; `None` for a
   top-level window with no visible owner. Local calls only; the boundary
   is defined in `docs/design/listener-without-connections.md`.
+  `raw_view_parent_window(hwnd)` is that window whatever process serves
+  it.
 - `console_reports_formatting(hwnd)`: the check NVDA makes on a console
   window with a provider before using it, whether its text area reports
   one visible range with its font. `held_console_reports_formatting(uia,

@@ -32,8 +32,8 @@ use crate::protocol::{DumpedTree, FocusNow, FocusedControl, now_us};
 use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, foreground_window_of, main_window_of, parent_window, plain_window_states,
-    served_by, top_level_of, window_belongs_to_hidden_frame, window_exists, window_facts,
+    desktop_window, foreground_window_of, main_window_of, parent_window, served_by, top_level_of,
+    window_belongs_to_hidden_frame, window_disabled, window_exists, window_facts,
     window_is_hidden_frame, window_text,
 };
 
@@ -310,8 +310,9 @@ pub(super) fn uia_enrichment(
 
 /// A UIA element's ancestors, outermost first, its own window handle
 /// `element_window` and its nearest window `nearest`, 0 when not known.
-/// Where the walk reaches the root of a window read through MSAA, or stops
-/// below the process boundary, it goes on from that window
+/// Where the walk reaches the root of a window read through MSAA or as a
+/// plain window ([`uia_walk_leaves`]), or stops below the process
+/// boundary, it goes on from that window
 /// ([`window_onward`]), as NVDA switches API when its walk crosses into
 /// such a window: in File Explorer, the folder window above the UIA file
 /// list is then the client area a foreground report already named, not a
@@ -327,12 +328,7 @@ fn uia_ancestors(
     (previous, parent_automation_id): (&[NodeSnapshot], &mut Option<String>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Vec<NodeSnapshot> {
-    let desktop = desktop_window();
-    // A window this outpost reads through MSAA, or as a plain window, is
-    // not read through UIA: a step can still reach another process's
-    // window, as when an owner is shown between the walk's boundary check
-    // and its step.
-    let read_by_msaa = |hwnd: isize| hwnd != desktop && !own_window_uses_uia(context, hwnd);
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let Ok((chain, crossed, walked)) = uia.ancestors(
         (element, element_window, nearest),
@@ -357,6 +353,21 @@ fn uia_ancestors(
         previous,
         out_of_time,
     )
+}
+
+/// Whether a UIA walk stops at the root element of window `hwnd`, the
+/// chain going on from that window ([`window_onward`]): a window read as a
+/// plain window ([`reads_as_plain`]), another process's, a ghost's or a
+/// hung one, asked first, so that no probe calls into it; or one this
+/// outpost reads through MSAA. NVDA makes the step that reached it and,
+/// for a plain window, reads that window as a plain window and goes on by
+/// the window hierarchy with no further call (`correctAPIForRelation`,
+/// `NVDAObjects/window/__init__.py` 85 to 97); a step can also reach
+/// another process's window, as when an owner is shown between the walk's
+/// boundary check and its step. The desktop ends a walk instead. Local
+/// calls, and the verdict's probe for a window of this application.
+fn uia_walk_leaves(context: &Context, hwnd: isize) -> bool {
+    hwnd != desktop_window() && (reads_as_plain(context, hwnd) || !window_uses_uia(context, hwnd))
 }
 
 /// How a chain goes on above its outermost entry
@@ -433,20 +444,17 @@ pub(super) fn reads_as_plain(context: &Context, hwnd: isize) -> bool {
 }
 
 /// Window `hwnd` as a plain window (the design's Terms): role window,
-/// named by `InternalGetWindowText`, unavailable when its style disables
-/// it, and focused when it is its thread's focus window, read from Windows'
-/// own state with no call into any application. It is kept at its window
-/// object's address, so a node read from it acquires the window's own
-/// object. Invisibility, which NVDA also gives it, waits for the model to
-/// carry that state (the order of work's step 8).
+/// named by `InternalGetWindowText`, and unavailable when its style
+/// disables it, read from Windows' own state with no call into any
+/// application. It is never focused, as NVDA's `Window` states hold only
+/// invisible and unavailable. It is kept at its window object's address,
+/// so a node read from it acquires the window's own object. Invisibility,
+/// which NVDA also gives it, waits for the model to carry that state (the
+/// order of work's step 8).
 pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
-    let (disabled, focused) = plain_window_states(hwnd);
     let mut states = StateSet::new();
-    if disabled {
+    if window_disabled(hwnd) {
         states = states.with(State::Disabled);
-    }
-    if focused {
-        states = states.with(State::Focused);
     }
     NodeSnapshot {
         id: context
@@ -462,6 +470,37 @@ pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
             ..NodeDetails::default()
         },
     }
+}
+
+/// How the MSAA focused-state test reads window `hwnd`, a parent window it
+/// goes on to past a failed `accParent`
+/// (`verbatim_ia2::acquire::FocusCandidate::has_focused_state`), by the
+/// object NVDA's `Window._get_parent` chooses: above the process boundary,
+/// a plain window, as is every window above it; a ghost's or a hung one, a
+/// plain window; else by the outpost's verdict, its UIA element's focused
+/// state, one call, or its MSAA client, which the test reads. A plain
+/// window is never focused.
+pub(super) fn parent_window_for_focused_state(
+    context: &Context,
+    client: &mut Client,
+    hwnd: isize,
+) -> verbatim_ia2::acquire::ParentWindow {
+    use verbatim_ia2::acquire::ParentWindow;
+    if !serves(context, hwnd) {
+        return ParentWindow::AboveBoundary;
+    }
+    if context.window_unreadable(hwnd).is_some() {
+        return ParentWindow::Plain;
+    }
+    if !window_uses_uia(context, hwnd) {
+        return ParentWindow::Msaa;
+    }
+    let focused = client
+        .uia_with(context, Context::node_request)
+        .ok()
+        .and_then(|(uia, nodes)| uia.window_element(hwnd, &nodes).ok())
+        .map(|element| element.read().states.has_focus);
+    ParentWindow::Uia(focused)
 }
 
 /// The plain windows from `hwnd` up to the desktop, which is none of them,
@@ -605,11 +644,7 @@ pub(super) fn uia_chain_from_read(
     previous: &[NodeSnapshot],
 ) -> Vec<NodeSnapshot> {
     use crate::protocol::AncestorsEnd;
-    let desktop = desktop_window();
-    // Another process's window is read through MSAA without a probe: a
-    // step can still reach one, as when an owner is shown between the
-    // walk's boundary check and its step.
-    let read_by_msaa = |hwnd: isize| hwnd != desktop && !own_window_uses_uia(context, hwnd);
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let parents: Vec<verbatim_uia::AncestorParts> = ancestors
         .iter()
@@ -687,7 +722,11 @@ pub(super) struct NotFocused;
 /// operations are off or `window`, the window the focus is in, is read the
 /// classic way: the caller reads it as before. A UIA focus event's
 /// ancestors are the focus listener's read instead
-/// ([`uia_chain_from_read`]).
+/// ([`uia_chain_from_read`]). A focus with a ghost's or a hung
+/// application's window above its own ([`plain_window_above`]) is read by
+/// the classic walk instead, since the program cannot judge a window
+/// between its steps: the walk stops at its step into that window, and
+/// the chain goes on from it as a plain window ([`window_onward`]).
 ///
 /// A program that fails is answered by the classic walk for this call,
 /// and logged with the instruction that failed and the Rust line that
@@ -741,11 +780,16 @@ pub(super) fn uia_remote_enrichment(
         // The node's cache holds it, so the classic fallback asks nothing
         // of a combo box for it.
         value_available: Some(element.read().states.value_available),
+        plain: Some(&|hwnd| context.window_unreadable(hwnd).is_some()),
     };
+    // The program cannot judge a window between its steps, so a focus
+    // with a ghost's or a hung application's window above its own is read
+    // by the classic walk, which stops at the step into it.
+    let remote = !window.is_some_and(|window| plain_window_above(context, window));
     // One remote operation, one transaction, which UIA's transaction
     // timeout bounds; the classic walk it falls back to checks the
     // budget between its calls.
-    let (mut ancestry, path) = match focus_ancestry(uia, &query, true) {
+    let (mut ancestry, path) = match focus_ancestry(uia, &query, remote) {
         Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
         Ok((FocusAncestry::NotFocused, _)) => return Some(Err(NotFocused)),
         Err(error) => {
@@ -790,10 +834,7 @@ pub(super) fn uia_remote_enrichment(
         .selected_child
         .as_ref()
         .map(|child| child.snapshot(registry));
-    let desktop = desktop_window();
-    // Another process's window is read through MSAA without a probe, as in
-    // the outpost's other walks.
-    let read_by_msaa = |hwnd: isize| hwnd != desktop && !own_window_uses_uia(context, hwnd);
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, hwnd);
     let is_known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let (chain, crossed, mut walked) = Uia::ancestors_from(
         &ancestry.ancestors,
@@ -804,6 +845,9 @@ pub(super) fn uia_remote_enrichment(
             out_of_time: None,
         },
     );
+    // The classic walk stopped at a step into a window read as a plain
+    // window: the chain goes on from it.
+    let crossed = crossed.or(ancestry.plain_window);
     // The program stops at any known ancestor, while only a reported one
     // ends the chain: a known ancestor that is not reported (the previous
     // focus, a list item, say) is still where the previous chain takes
@@ -855,6 +899,28 @@ pub(super) fn uia_remote_enrichment(
         "UIA focus ancestry read"
     );
     Some(Ok((Some(ancestors), selected)))
+}
+
+/// Whether a window above `window`, as UIA's raw view goes up
+/// ([`verbatim_uia::raw_view_parent_window`]), below the process boundary,
+/// cannot be read: a ghost's or a hung application's
+/// ([`Context::window_unreadable`]). Local calls, a few per window.
+fn plain_window_above(context: &Context, window: isize) -> bool {
+    let desktop = desktop_window();
+    let mut current = window;
+    for _ in 0..MAX_ANCESTOR_HOPS {
+        let Some(above) = verbatim_uia::raw_view_parent_window(current) else {
+            return false;
+        };
+        if above == desktop || !serves(context, above) {
+            return false;
+        }
+        if context.window_unreadable(above).is_some() {
+            return true;
+        }
+        current = above;
+    }
+    false
 }
 
 /// The window whose own element an ancestor is, by its runtime id, `[42,

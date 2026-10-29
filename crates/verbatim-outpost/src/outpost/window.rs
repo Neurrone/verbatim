@@ -244,26 +244,15 @@ pub(super) fn parent_window(handle: isize) -> isize {
     unsafe { GetAncestor(hwnd(handle), GA_PARENT) }.0 as isize
 }
 
-/// What Windows' own state says of window `handle` as a plain window
-/// (`NVDAObjects/window/__init__.py`, `Window`): whether its style disables
-/// it (`WS_DISABLED`), and whether it is its thread's focus window
-/// (`GetGUIThreadInfo`). Local calls.
-pub(super) fn plain_window_states(handle: isize) -> (bool, bool) {
+/// Whether window `handle`'s style disables it (`WS_DISABLED`), the one
+/// state Windows' own state gives it as a plain window that the model
+/// carries (`NVDAObjects/window/__init__.py`, `Window._get_states`). A
+/// local call.
+pub(super) fn window_disabled(handle: isize) -> bool {
     // SAFETY: GetWindowLongPtrW tolerates any handle, answering 0 for an
     // invalid one.
     let style = unsafe { GetWindowLongPtrW(hwnd(handle), GWL_STYLE) };
-    let disabled = style.cast_unsigned() & usize::try_from(WS_DISABLED.0).unwrap_or(0) != 0;
-    let (thread, _) = window_owner(handle);
-    let mut info = GUITHREADINFO {
-        cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
-        ..Default::default()
-    };
-    // SAFETY: `info` has cbSize set before the call; the call fails safely,
-    // and thread 0, for a window that no longer exists, is not asked.
-    let focused = thread != 0
-        && unsafe { GetGUIThreadInfo(thread, &raw mut info) }.is_ok()
-        && info.hwndFocus.0 as isize == handle;
-    (disabled, focused)
+    style.cast_unsigned() & usize::try_from(WS_DISABLED.0).unwrap_or(0) != 0
 }
 
 /// Whether `handle` is a window that exists. A local call.

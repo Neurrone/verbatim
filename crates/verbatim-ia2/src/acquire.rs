@@ -455,21 +455,32 @@ impl FocusCandidate {
     /// A simple child's first ancestor is the object it is a child of. The
     /// object's own state word is kept for the read that follows.
     ///
-    /// Where an `accParent` fails or names nothing, the test goes on along
-    /// the parent windows of the object's window as NVDA's parent does
-    /// (`Window._get_parent`), each a plain window, focused when it is its
-    /// thread's focus window, with local calls only (the audit's
-    /// difference 19). `plain` says which windows are read as plain
-    /// windows, with no call: another process's, a ghost or a hung one.
-    /// The test follows which window it is in by each object's role: a
-    /// window's own window object, whose parent is its parent window's
-    /// client, is the one step that leaves a window. A parent window that
-    /// is plain is not stepped into, and the test goes on from it by plain
-    /// windows; since an `accParent` names whatever it names when it is
-    /// called, the parent window is checked again after the step, and one
-    /// reparented under a plain window meanwhile has its parent not read
+    /// Where an `accParent` fails or names nothing, the test goes on from
+    /// the parent window of the object's window as NVDA's parent does
+    /// (`Window._get_parent`), by that window's own object, as
+    /// `parent_window` says the outpost chooses it ([`ParentWindow`]): its
+    /// MSAA client, whose state is read and from which the test goes on by
+    /// `accParent`; its UIA element's focused state, read by the caller; or,
+    /// for a plain window, which is never focused (NVDA's `Window` states
+    /// hold only invisible and unavailable), nothing, the test going on from
+    /// the window's parent window, or ending, above the process boundary,
+    /// where every window to the desktop is plain. `plain` says which
+    /// windows are read as plain windows, with no call: another process's,
+    /// a ghost or a hung one. The test follows which window it is in by
+    /// each object's role: a window's own window object, whose parent is
+    /// its parent window's client, is the one step that leaves a window. A
+    /// parent window that is plain is not stepped into, and the test goes
+    /// on from it by the window hierarchy; since an `accParent` names
+    /// whatever it names when it is called, the parent window is checked
+    /// again after the step, and one reparented under a plain window
+    /// meanwhile has its parent not read
     /// (`docs/design/cross-process-calls-study.md`, instance 6).
-    pub fn has_focused_state(&mut self, max_hops: u32, plain: &dyn Fn(isize) -> bool) -> bool {
+    pub fn has_focused_state(
+        &mut self,
+        max_hops: u32,
+        plain: &dyn Fn(isize) -> bool,
+        parent_window: &mut dyn FnMut(isize) -> ParentWindow,
+    ) -> bool {
         let focused = |state: Option<i32>| {
             state.is_some_and(|state| {
                 states_from_msaa(state.cast_unsigned()).contains(verbatim_model::State::Focused)
@@ -489,7 +500,9 @@ impl FocusCandidate {
         } else {
             (self.acc.with_child(CHILDID_SELF), true)
         };
-        for _ in 0..=max_hops {
+        let mut hops = 0u32;
+        while hops <= max_hops {
+            hops += 1;
             if read_state && focused(current.state()) {
                 return true;
             }
@@ -499,27 +512,38 @@ impl FocusCandidate {
             // stays in it.
             let leaves = current.role() == Some(ROLE_SYSTEM_WINDOW.cast_signed());
             let above = window::parent(current_hwnd);
-            if leaves {
-                if above == 0 || above == desktop {
-                    return false;
+            // The window the test goes on from by the window hierarchy,
+            // when the object's parent is not read or not found.
+            let onward = if leaves && (above == 0 || above == desktop) {
+                return false;
+            } else if leaves && plain(above) {
+                above
+            } else if let Ok(Some(parent)) = current.parent() {
+                if leaves {
+                    // The window may have been reparented since the check:
+                    // the parent is then in the window it has now.
+                    let now = window::parent(current_hwnd);
+                    if now != above && now != 0 && now != desktop && plain(now) {
+                        now
+                    } else {
+                        current_hwnd = now;
+                        current = parent;
+                        continue;
+                    }
+                } else {
+                    current = parent;
+                    continue;
                 }
-                if plain(above) {
-                    return plain_window_is_focused(above);
-                }
-            }
-            let Ok(Some(parent)) = current.parent() else {
-                return plain_window_is_focused(above);
+            } else {
+                above
             };
-            if leaves {
-                // The window may have been reparented since the check: the
-                // parent is then in the window it has now.
-                let now = window::parent(current_hwnd);
-                if now != above && now != 0 && now != desktop && plain(now) {
-                    return plain_window_is_focused(now);
+            match onward_from_window(onward, (&mut hops, max_hops), parent_window) {
+                Onward::Answered(answer) => return answer,
+                Onward::Client(client, hwnd) => {
+                    current = client;
+                    current_hwnd = hwnd;
                 }
-                current_hwnd = now;
             }
-            current = parent;
         }
         false
     }
@@ -542,19 +566,68 @@ impl FocusCandidate {
     }
 }
 
-/// Whether window `hwnd` or a window above it, below the desktop, is focused
-/// as a plain window is: its thread's focus window. The focused-state test
-/// past a failed `accParent`, along parent windows. Local calls only.
-fn plain_window_is_focused(hwnd: isize) -> bool {
+/// How the focused-state test reads a parent window it goes on to past a
+/// failed `accParent` ([`FocusCandidate::has_focused_state`]), by the
+/// object NVDA's `Window._get_parent` chooses for it, as the outpost's
+/// verdict and its readability judgement say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParentWindow {
+    /// Above the process boundary: it and every window above it to the
+    /// desktop are plain windows, none focused, so the test ends.
+    AboveBoundary,
+    /// A plain window, a ghost's or a hung application's: never focused,
+    /// the test going on from its parent window.
+    Plain,
+    /// Read through MSAA: its client area, as NVDA's parent object for a
+    /// window, whose state is read and from which the test goes on.
+    Msaa,
+    /// Read through UIA by the caller: whether the window's own element has
+    /// the focused state. From an element without it the test goes on from
+    /// the window's parent window, as NVDA's UIA parent of a window's
+    /// element is its parent window's element, read through that window's
+    /// own API again (`correctAPIForRelation`). `None` when the element
+    /// cannot be read: the window's MSAA client is read instead, as NVDA
+    /// falls back to its next API class.
+    Uia(Option<bool>),
+}
+
+/// Where the focused-state test goes on after a window
+/// ([`onward_from_window`]).
+enum Onward {
+    /// The test's answer: a window's UIA element has the focused state, or
+    /// the desktop, the process boundary, or the hop limit was reached
+    /// with nothing focused.
+    Answered(bool),
+    /// From this client object of this window, whose state is read next.
+    Client(Accessible, isize),
+}
+
+/// The focused-state test from window `hwnd` up by the window hierarchy:
+/// each window read by its own object, as `parent_window` chooses it
+/// ([`ParentWindow`]), a plain window never focused, until a window's MSAA
+/// client is acquired, from which the test goes on by `accParent`, or an
+/// answer. Each window counts as a hop of `hops`, up to `max_hops`.
+fn onward_from_window(
+    mut hwnd: isize,
+    (hops, max_hops): (&mut u32, u32),
+    parent_window: &mut dyn FnMut(isize) -> ParentWindow,
+) -> Onward {
     let desktop = window::desktop();
-    let mut current = hwnd;
-    while current != 0 && current != desktop {
-        if window::is_thread_focus_window(current) {
-            return true;
+    while *hops <= max_hops && hwnd != 0 && hwnd != desktop {
+        *hops += 1;
+        match parent_window(hwnd) {
+            ParentWindow::AboveBoundary => return Onward::Answered(false),
+            ParentWindow::Uia(Some(true)) => return Onward::Answered(true),
+            ParentWindow::Plain | ParentWindow::Uia(Some(false)) => {}
+            ParentWindow::Msaa | ParentWindow::Uia(None) => {
+                if let Some(client) = Accessible::from_event(hwnd, OBJID_CLIENT.0, CHILDID_SELF) {
+                    return Onward::Client(client, hwnd);
+                }
+            }
         }
-        current = window::parent(current);
+        hwnd = window::parent(hwnd);
     }
-    false
+    Onward::Answered(false)
 }
 
 /// NVDA's `processFocusWinEvent` redirect: when a focus event names a list
@@ -794,15 +867,17 @@ pub fn ancestor_chain_until(
     // its parent window's client.
     let mut at_window_object = false;
     while walked == Walked::Complete {
-        if hops_used >= max_hops {
-            walked = Walked::Cut(current_hwnd);
-            break;
-        }
         if out_of_time() {
             walked = Walked::Cut(current_hwnd);
             break;
         }
+        // The hop limit cuts the chain only where an ancestor is left: the
+        // object a simple child belongs to, or a parent found.
         if !at_self {
+            if hops_used >= max_hops {
+                walked = Walked::Cut(current_hwnd);
+                break;
+            }
             let self_hwnd = current.window().unwrap_or(hwnd);
             let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             // The object a simple child belongs to sits at the client address
@@ -863,6 +938,10 @@ pub fn ancestor_chain_until(
             && ((limits.read_by_other_api)(parent_hwnd) || (limits.plain)(parent_hwnd))
         {
             walked = Walked::Onward(parent_hwnd);
+            break;
+        }
+        if hops_used >= max_hops {
+            walked = Walked::Cut(current_hwnd);
             break;
         }
         // A parent that is one of a window's own standard objects names its
@@ -1334,7 +1413,21 @@ pub fn focused_snapshot(
         FocusTarget::ChildId(child_id) => (client.with_child(child_id), true),
         FocusTarget::None => (client, true),
     };
-    let node_hwnd = acc.window().unwrap_or(hwnd);
+    // A child object `accFocus` named is in whatever window it is in, and
+    // one placed in no window is not known to be served by the
+    // application, so it is not read; the client and its children by id
+    // are in `hwnd`.
+    let node_hwnd = match acc.window() {
+        Some(window) => window,
+        None if at_address => hwnd,
+        None => {
+            tracing::debug!(
+                hwnd,
+                "accFocus named an object in no window; nothing more is read"
+            );
+            return None;
+        }
+    };
     if node_hwnd != hwnd && !serves(node_hwnd) {
         tracing::debug!(
             hwnd,

@@ -174,7 +174,10 @@ pub enum AncestorsEnd {
     /// A step to a parent failed or found none below the root: the chain
     /// goes on from this window's own object, the parent window of the
     /// outermost ancestor's nearest window, as NVDA's parent read falls
-    /// back to the window hierarchy (`Window._get_parent`); 0 for none.
+    /// back to the window hierarchy (`Window._get_parent`); 0 for none. Or
+    /// a step reached this window, a ghost's or a hung application's,
+    /// other than the nearest window: the chain goes on from it, which the
+    /// outpost reads as a plain window, as NVDA does after that one step.
     ContinueFrom(isize),
     /// The walk was cut by the read's budget or its depth limit: the chain
     /// is completed by plain windows from this window, the outermost

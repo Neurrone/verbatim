@@ -89,6 +89,18 @@ pub struct FocusQuery<'a> {
     /// afresh, or ask it live without one. The remote program asks it
     /// inside the provider and does not read this.
     pub value_available: Option<bool>,
+    /// Whether a window is read as a plain window, with no call: a ghost's
+    /// or a hung application's, by NVDA's rule
+    /// (`NVDAObjects/window/__init__.py` 85 to 97). The classic walk asks
+    /// it of the window of each parent a step reaches, other than the
+    /// nearest window, and stops there without keeping the parent
+    /// ([`Ancestry::plain_window`]), as NVDA makes the one step and then
+    /// reads that window as a plain window and goes on by the window
+    /// hierarchy. Local calls only, never made into the application.
+    /// `None` reads no window as plain. The remote program cannot ask it
+    /// between its steps and does not read this: a caller with such a
+    /// window above the focus runs the classic walk instead.
+    pub plain: Option<&'a dyn Fn(isize) -> bool>,
 }
 
 /// The answer to a [`FocusQuery`].
@@ -135,6 +147,11 @@ pub struct Ancestry {
     /// element can report one it does not host, does not make the walk
     /// complete.
     pub failed_hop: Option<FailedHop>,
+    /// The window a step reached that reads as a plain window
+    /// ([`FocusQuery::plain`]): the walk stopped there, the parent in it
+    /// not kept, and the chain goes on from that window as a plain window.
+    /// Set by the classic walk only.
+    pub plain_window: Option<isize>,
     /// For a list or tab control, the first selected child, filled by the
     /// query's element fill: what `verbatim_uia::Uia::selected_node` reports; for a
     /// combo box without the `Value` pattern, its first selected item, its
@@ -717,6 +734,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         depth_limited,
         out_of_time: false,
         failed_hop,
+        plain_window: None,
         selected_child: claimed(outcome.get(selected)?, outcome.get(selected_absent)?),
         window: (window != 0).then_some(window as isize),
         previous_focused: match query.previous {
@@ -849,7 +867,8 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// fill's request and the element and its selected child by its element
 /// fill's. Stops at a known ancestor, at the
 /// depth limit, below the desktop root, below the process boundary
-/// (`docs/design/listener-without-connections.md`, terms), and when the
+/// (`docs/design/listener-without-connections.md`, terms), at a step into a
+/// window that reads as a plain window ([`FocusQuery::plain`]), and when the
 /// query's time is up, which is asked before every call but the first
 /// focus read, so that at most the call under way runs past it.
 ///
@@ -942,6 +961,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         depth_limited: false,
         out_of_time: false,
         failed_hop: None,
+        plain_window: None,
         selected_child,
         window: own_window(input.hwnd).or(query.nearest_window),
         previous_focused,
@@ -1000,6 +1020,22 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         // owner is shown between the check above and the step: the parent
         // is that process's, and the walk is complete below it.
         if stepped_across(current_window, ancestry.window) {
+            complete = true;
+            break;
+        }
+        // The step reached a window other than the nearest one that reads
+        // as a plain window, a ghost's or a hung application's: NVDA makes
+        // this one step, reads that window as a plain window and goes on by
+        // the window hierarchy (`correctAPIForRelation`,
+        // `NVDAObjects/window/__init__.py` 85 to 97), so the parent is not
+        // kept and nothing more is asked of the application. Local calls.
+        if current_window != 0
+            && ancestry
+                .window
+                .is_some_and(|nearest| nearest != current_window)
+            && query.plain.is_some_and(|plain| plain(current_window))
+        {
+            ancestry.plain_window = Some(current_window);
             complete = true;
             break;
         }

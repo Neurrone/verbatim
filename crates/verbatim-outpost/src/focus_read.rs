@@ -781,6 +781,11 @@ pub struct FocusReader {
     /// Told the name of each call of the classic walk before it is made,
     /// when a test asks ([`observe_calls`](Self::observe_calls)).
     calls: Option<CallObserver>,
+    /// Judges whether a window a step of the classic walk reaches can be
+    /// read, or is a ghost's or a hung application's: the system's
+    /// judgement, unless a test supplies its own
+    /// ([`set_window_readability_reader`](Self::set_window_readability_reader)).
+    window_readability: crate::WindowReadabilityReader,
 }
 
 /// Told the name of each call a focus read's classic walk is about to make
@@ -815,6 +820,7 @@ impl FocusReader {
             forced_uia: Arc::default(),
             window: WatchedRead::default(),
             calls: None,
+            window_readability: Arc::new(crate::window_unreadable),
         })
     }
 
@@ -825,6 +831,15 @@ impl FocusReader {
     /// forced.
     pub fn observe_calls(&mut self, observer: CallObserver) {
         self.calls = Some(observer);
+    }
+
+    /// Judges with `reader` from now on, in place of the system, whether a
+    /// window a step of its reads' classic walk reaches cannot be read, as
+    /// an outpost does (`Outpost::set_window_readability_reader`): a test
+    /// that cannot wait for Windows to judge an application hung says
+    /// which window is.
+    pub fn set_window_readability_reader(&mut self, reader: crate::WindowReadabilityReader) {
+        self.window_readability = reader;
     }
 
     /// Reads the foreground window with `reader` from now on, in place of
@@ -987,6 +1002,10 @@ impl FocusReader {
                     }),
                     // Read from the element's fresh copy.
                     value_available: None,
+                    // A ghost's or a hung application's window that a step
+                    // reaches ends the walk, by the system's judgement: local
+                    // calls.
+                    plain: Some(&|window| (self.window_readability)(window).is_some()),
                 };
                 focus_ancestry_classic(&self.uia, &query)
             });
@@ -1183,7 +1202,13 @@ impl FocusReader {
                 ),
             )
         };
-        let ancestors_end = if ancestry.failed_hop.is_some() {
+        // A walk that stopped at a step into a window read as a plain
+        // window, a ghost's or a hung application's, goes on from that
+        // window, which the outpost reads as a plain window, and on by the
+        // window hierarchy, as NVDA goes on from its plain window.
+        let ancestors_end = if let Some(plain) = ancestry.plain_window {
+            AncestorsEnd::ContinueFrom(plain)
+        } else if ancestry.failed_hop.is_some() {
             AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(outermost()))
         } else if ancestry.out_of_time || ancestry.depth_limited {
             AncestorsEnd::PlainFrom(outermost())

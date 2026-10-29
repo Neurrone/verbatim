@@ -3459,12 +3459,16 @@ impl Worker<'_> {
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
         // which weeds out stale and spurious focus events. It checks the
         // states after the duplicate test, reading them live, going on
-        // past a failed `accParent` along parent windows, and above the
-        // process boundary by plain windows, with no call there.
+        // past a failed `accParent` from the parent window's own object,
+        // and above the process boundary by plain windows, never focused,
+        // with no call there.
         let context = self.context;
-        if !candidate.has_focused_state(read::MAX_ANCESTOR_HOPS, &|window| {
-            read::reads_as_plain(context, window)
-        }) {
+        let client = &mut *self.client;
+        if !candidate.has_focused_state(
+            read::MAX_ANCESTOR_HOPS,
+            &|window| read::reads_as_plain(context, window),
+            &mut |window| read::parent_window_for_focused_state(context, client, window),
+        ) {
             tracing::debug!(
                 hwnd,
                 id_object,

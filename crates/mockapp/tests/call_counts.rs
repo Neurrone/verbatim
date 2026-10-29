@@ -1772,6 +1772,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
             nearest_window: Some(hwnd.0 as isize),
             before_call: None,
             value_available: None,
+            plain: None,
         },
     )
     .expect("the walk");
@@ -2761,6 +2762,7 @@ fn uia_selected_children_cost_exactly() {
                     nearest_window: None,
                     before_call: None,
                     value_available: None,
+                    plain: None,
                 },
                 true,
             )

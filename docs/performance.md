@@ -450,6 +450,36 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 - Bound: none above the boundary; local calls, about four per plain
   window.
 
+### A focus below a hung window, UIA
+
+The focus is in a UIA child window of its application whose top-level
+window's thread has hung, judged so by the test's readability seam
+(`focus_reports.rs`'s `a_hung_window_above_a_uia_focus_ends_the_listeners_walk`
+and `a_hung_window_above_a_focus_now_is_a_plain_window_remote` and
+`_classic`).
+
+- Minimum: NVDA's, the one step into the hung window's element and no
+  call after it, the window being a plain window read from Windows' own
+  state.
+- Today: the listener makes 5 UIA calls, its two steps ending with the
+  one into the host's element, where it made 6 before, stepping on from
+  that element. A focus-now query makes 3 UIA calls with the classic
+  walk and 4 with remote operations on, which then reads by the classic
+  walk, the focus's keyboard focus read first; before, the remote program
+  made 2 calls but connected to the hung window twice (`UiaRootObjectId`
+  with a nonzero wParam), and the classic walk made 5 and probed the hung
+  window for its verdict. Either way the hung window now takes only the
+  3 `UiaRootObjectId` messages with a zero wParam that UIA's client side
+  sends it for reads of the child window's elements and the step, and
+  the outpost 1 window message, the child window's probe.
+- Target: met for the walk.
+- Cost on the steady path: the hung check (`IsWindow`,
+  `GhostWindowFromHungWindow`, `IsHungAppWindow`) of each window whose
+  own element a UIA step reaches, a few local calls, and for a
+  focus-now query read by a remote program, the same check of each
+  window above the focus's own to the process boundary. No wake-up, lock
+  or allocation is added.
+
 ### A focus change into a list, UIA
 
 The focus lands on the list, and its selected item is read with it.

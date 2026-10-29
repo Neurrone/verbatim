@@ -168,8 +168,15 @@ element's raw-view ancestors and what a focus report needs besides. A
   details without a second call;
 - for the classic walk only, `out_of_time`, checked before each call
   after the first; `before_call`, told each call's name as it begins so
-  the caller can time it; and `nearest_window` and `value_available`,
-  answers the caller already has, each saving a call.
+  the caller can time it; `nearest_window` and `value_available`,
+  answers the caller already has, each saving a call; and `plain`, which
+  says, by local calls, whether a window is a ghost's or a hung
+  application's: a step that reaches such a window, other than the
+  nearest window, ends the walk there with the parent not kept
+  (`Ancestry::plain_window`), as NVDA makes that one step and reads the
+  window as a plain window. The remote program cannot judge a window
+  between its steps; a caller with such a window above the focus runs the
+  classic walk instead.
 
 It answers `FocusAncestry::NotFocused` when `require_focus` is set and
 the element does not have the focus, and otherwise an `Ancestry`:
@@ -193,6 +200,9 @@ the element does not have the focus, and otherwise an `Ancestry`:
   complete a walk cut by its time or depth limit by plain windows from that
   nearest window (`docs/design/focus-pipeline-rework.md`, "A window's name,
   and the one fallback").
+- `plain_window`: the window, read as plain by the query's `plain`, at
+  whose step the classic walk stopped; callers go on from it as a plain
+  window and by the window hierarchy.
 - `selected_child`: for a list or tab control, the first selected child,
   which the outpost reports as its node; for a combo box without the
   `Value` pattern, its first selected item, which is its value

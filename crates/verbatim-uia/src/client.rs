@@ -625,8 +625,8 @@ impl Uia {
     /// focus's chain, with that ancestor outermost, as NVDA's focus
     /// ancestry stops where it meets the previous focus's ancestors; and
     /// when `stops.out_of_time` says its time is up, a hop finds the
-    /// provider did not answer within UIA's transaction timeout, or the
-    /// hop limit is reached, reporting the chain as cut
+    /// provider did not answer within UIA's transaction timeout, or a step
+    /// past the hop limit finds a parent, reporting the chain as cut
     /// ([`AncestorWalk::Cut`]); and at a hop that otherwise fails, or finds
     /// no parent, from an element below the root, reporting where the
     /// chain goes on ([`AncestorWalk::Failed`]): only the root ends a
@@ -688,7 +688,7 @@ impl Uia {
             );
         };
         let out_of_time = || out_of_time.is_some_and(|out_of_time| out_of_time());
-        for _ in 0..max_hops {
+        loop {
             if out_of_time() {
                 chain.reverse();
                 log(hops, "out of time");
@@ -736,6 +736,13 @@ impl Uia {
                     return Ok((chain, None, AncestorWalk::Failed(hop, onward)));
                 }
             };
+            // A parent past the hop limit is an ancestor left: the chain is
+            // cut, the parent not taken.
+            if hops > max_hops {
+                chain.reverse();
+                log(hops, "hop limit");
+                return Ok((chain, None, AncestorWalk::Cut(outermost(&trail))));
+            }
             let read = parent.read();
             current_window = read.node.role.hwnd;
             trail.push(current_window);
@@ -756,9 +763,6 @@ impl Uia {
                 }
             }
         }
-        chain.reverse();
-        log(hops, "hop limit");
-        Ok((chain, None, AncestorWalk::Cut(outermost(&trail))))
     }
 
     /// The same result as [`ancestors`](Self::ancestors), from `parents`

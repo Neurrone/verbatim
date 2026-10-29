@@ -20,8 +20,8 @@
 //! cannot see; asking for `IUnknown`, the object's identity, is always
 //! answered locally and is not counted. Nor are local window functions on
 //! the application's window handles (`IsWindow`, `GetClassName`,
-//! `GetAncestor`, `GetWindow`, `IsWindowVisible`, `IsChild`,
-//! `GetGUIThreadInfo`), which never reach its message loop, nor the
+//! `GetAncestor`, `GetWindow`, `IsWindowVisible`, `IsChild`), which never
+//! reach its message loop, nor the
 //! reference counting COM does when an object is kept or released.
 //!
 //! The count is per thread, since each outpost has one worker thread making

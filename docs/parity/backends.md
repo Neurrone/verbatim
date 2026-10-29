@@ -140,7 +140,14 @@ Verbatim: **matched (unverified)**, case by case:
 - An MSAA focus is accepted only when the object or one of its ancestors
   has the focused state (`shouldAllowIAccessibleFocusEvent`); the states
   are checked first and read live, as NVDA reads them, ancestors
-  included. A repeated MSAA focus is dropped before it is read, as NVDA's
+  included. Past an `accParent` that fails or names nothing the test goes
+  on from the parent window's own object, as NVDA's `Window._get_parent`
+  builds it: its MSAA client or its UIA element, by the outpost's verdict;
+  a plain window, a ghost's, a hung one or one above the process boundary,
+  is never focused, as NVDA's `Window` has no focused state (Fable,
+  2026-10-30, pending Dickson's acceptance;
+  `the_focused_state_test_continues_past_a_failed_acc_parent` pins the
+  drop). A repeated MSAA focus is dropped before it is read, as NVDA's
   `isDuplicateIAccessibleEvent` drops it (`docs/parity/focus-events.md`,
   "Duplicate focus suppression"). `msaa_focus_changes_cost_exactly` pins
   both.

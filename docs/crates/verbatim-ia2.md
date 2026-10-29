@@ -204,16 +204,20 @@ Public API:
   handled once), `focus_candidate` (the same acquisition and redirect,
   reading no more than the redirect needs, so the outpost can make NVDA's
   checks before the read: `key()` is the address after the redirect, for
-  NVDA's duplicate check; `has_focused_state(max_hops, plain)` is NVDA's
-  `shouldAllowIAccessibleFocusEvent`, the object's state and then each
-  ancestor's read live through `accParent`, the window it is in followed by
-  each object's role, a window's own window object being the one step that
-  leaves a window; it goes on past an `accParent` that fails or names
-  nothing along the parent windows, each a plain window, focused when it is
-  its thread's focus window, and never steps into a parent window `plain`
-  names (another process's, a ghost's or a hung one), going on from it by
-  plain windows, the parent window checked again after the step for a
-  window reparented meanwhile; `read(registry)` reads it
+  NVDA's duplicate check; `has_focused_state(max_hops, plain,
+  parent_window)` is NVDA's `shouldAllowIAccessibleFocusEvent`, the
+  object's state and then each ancestor's read live through `accParent`,
+  the window it is in followed by each object's role, a window's own
+  window object being the one step that leaves a window; past an
+  `accParent` that fails or names nothing it goes on from the parent
+  window by that window's own object, as `parent_window` says the caller
+  chooses it (`ParentWindow`: its MSAA client, read and walked up from;
+  its UIA element's focused state, read by the caller; a plain window,
+  never focused, gone past to its parent window; or above the process
+  boundary, where it ends), as NVDA's `Window._get_parent` does; it never
+  steps into a parent window `plain` names (another process's, a ghost's
+  or a hung one), going on from it by the window hierarchy, the parent
+  window checked again after the step for a window reparented meanwhile; `read(registry)` reads it
   without reading again the role and state words the checks read;
   `snapshot_from_focus_event` is a candidate read at once),
   `event_object` (an event's object acquired and nothing read:

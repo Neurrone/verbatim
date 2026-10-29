@@ -26,8 +26,8 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
-    ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
-    GetDesktopWindow, GetGUIThreadInfo, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GWL_STYLE, GetAncestor, GetClassNameW,
+    GetDesktopWindow, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SMTO_ABORTIFHUNG, SMTO_BLOCK,
     SendMessageTimeoutW,
 };
@@ -141,22 +141,6 @@ pub(crate) fn related(hwnd: isize, command: GET_WINDOW_CMD) -> isize {
     unsafe { GetWindow(handle(hwnd), command) }
         .unwrap_or_default()
         .0 as isize
-}
-
-/// Whether the window is its thread's focus window (`GetGUIThreadInfo` for
-/// the thread that owns it), which is how a plain window is focused
-/// (`NVDAObjects/window/__init__.py`). Local.
-pub(crate) fn is_thread_focus_window(hwnd: isize) -> bool {
-    let thread = thread_of(hwnd);
-    if thread == 0 {
-        return false;
-    }
-    let mut info = GUITHREADINFO {
-        cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
-        ..Default::default()
-    };
-    // SAFETY: `info` is a local with `cbSize` set, which the call fills in.
-    unsafe { GetGUIThreadInfo(thread, &raw mut info) }.is_ok() && info.hwndFocus.0 as isize == hwnd
 }
 
 /// How long a message waits for the window to answer: the list view's and

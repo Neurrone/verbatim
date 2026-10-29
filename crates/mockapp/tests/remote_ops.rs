@@ -203,6 +203,7 @@ fn query<'a>(
         nearest_window: None,
         before_call: None,
         value_available: None,
+        plain: None,
     }
 }
 

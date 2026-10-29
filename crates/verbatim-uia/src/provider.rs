@@ -164,6 +164,17 @@ fn threads_own_window(pid: u32, hwnd: isize) -> bool {
 /// console window costs its client's lookup too.
 #[must_use]
 pub fn parent_across_process_boundary(hwnd: isize) -> Option<isize> {
+    let above = raw_view_parent_window(hwnd)?;
+    (provider(hwnd)? != provider(above)?).then_some(above)
+}
+
+/// The window UIA's raw view goes up to from `hwnd`'s element, as
+/// [`parent_across_process_boundary`] finds it, whatever process serves it:
+/// its parent window, or, for a top-level window, its owner while the owner
+/// is visible. `None` for a top-level window with no visible owner and for
+/// a window that no longer exists. Local calls only.
+#[must_use]
+pub fn raw_view_parent_window(hwnd: isize) -> Option<isize> {
     let window = HWND(hwnd as *mut _);
     // SAFETY: GetAncestor tolerates any handle, answering null for an
     // invalid one.
@@ -184,8 +195,7 @@ pub fn parent_across_process_boundary(hwnd: isize) -> Option<isize> {
     } else {
         parent
     };
-    let above = above.0 as isize;
-    (provider(hwnd)? != provider(above)?).then_some(above)
+    Some(above.0 as isize)
 }
 
 /// The parent window of `hwnd` (`GetAncestor` with `GA_PARENT`), 0 for

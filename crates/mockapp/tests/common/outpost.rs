@@ -716,19 +716,24 @@ impl OutpostUnderTest {
         self.reader.borrow_mut().observe_calls(observer);
     }
 
-    /// Has the outpost judge window `hung` as a hung application's, as
-    /// Windows judges a window whose thread has not answered for five
+    /// Has the outpost, and the listener's reader in the walk it reads a
+    /// focus's ancestors with, judge window `hung` as a hung application's,
+    /// as Windows judges a window whose thread has not answered for five
     /// seconds, and every other window by the system's judgement.
     pub fn judge_hung(&self, hung: HWND) {
         let hung = hung.0 as isize;
+        let reader: verbatim_outpost::WindowReadabilityReader = Arc::new(move |hwnd| {
+            if hwnd == hung {
+                Some("its application is not responding")
+            } else {
+                verbatim_outpost::window_unreadable(hwnd)
+            }
+        });
         self.outpost
-            .set_window_readability_reader(Arc::new(move |hwnd| {
-                if hwnd == hung {
-                    Some("its application is not responding")
-                } else {
-                    verbatim_outpost::window_unreadable(hwnd)
-                }
-            }));
+            .set_window_readability_reader(Arc::clone(&reader));
+        self.reader
+            .borrow_mut()
+            .set_window_readability_reader(reader);
     }
 
     /// Now on the outpost's observation clock ([`TestClock`]), which a fact

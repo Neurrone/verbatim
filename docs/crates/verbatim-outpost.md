@@ -148,7 +148,9 @@ receives the event's own element, judges and reads a UIA focus
   reports the focus from its event, ancestors unknown. A test can be told
   each call the classic walk is about to make
   (`FocusReader::observe_calls`, a `CallObserver`), to change the
-  application between two of them. Each read is logged at debug with the sender's runtime
+  application between two of them. A step that reaches a ghost's or a
+  hung application's window ends the walk there, named to go on from
+  (`ContinueFrom`). Each read is logged at debug with the sender's runtime
   id, class, framework (read only with debug logging on), and window.
 - The read (`DeliveredFact::UiaFocusRead`, whose `focus` says focus or menu
   opening) or the drop (`DeliveredFact::UiaFocusDropped`, whose `focus`
@@ -323,9 +325,9 @@ as plain windows, with no call into the other process
 (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
 fallback"; the decision of 2026-10-29). A plain window (`read::plain_window`)
 is read from Windows' own state alone: role window, named by
-`InternalGetWindowText`, unavailable when its style disables it, focused
-when it is its thread's focus window, kept under its window object's
-address. The outpost connects to, probes, and walks up into only its
+`InternalGetWindowText`, unavailable when its style disables it, never
+focused, as NVDA's `Window` states hold only invisible and unavailable,
+kept under its window object's address. The outpost connects to, probes, and walks up into only its
 application's windows (`read::serves`): its UIA walk
 (`read::uia_ancestors`) stops below the boundary, a step that reaches
 another process's window anyway is not read further, the MSAA walk does
@@ -346,12 +348,26 @@ element when the outpost judges it UIA, its MSAA client otherwise, and
 walked up by that backend; a window another process serves and every
 window above it, a ghost's or a hung application's window, and a window
 whose object cannot be acquired is a plain window, the chain going on from
-the parent window of the last two. A walk cut by its time
+the parent window of the last two. Every UIA walk, the listener's
+classic walk (`FocusQuery::plain`, judged with the listener's
+`FocusReader::set_window_readability_reader`) and the outpost's
+(`read::uia_walk_leaves`), checks the window each step reaches, and a
+ghost's or a hung application's window other than the focus's nearest one
+ends the walk there, the parent in it not kept, as NVDA makes that one
+step and then reads the window as a plain window: the listener names it
+to go on from (`AncestorsEnd::ContinueFrom`), and the outpost goes on from
+it. The check is asked before the outpost's verdict for the window, so a
+hung window is never probed. A remote program cannot judge a window
+between its steps, so a focus-now query whose focus has such a window
+above its own (`read::plain_window_above`, local calls by
+`verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
+walk instead. A walk cut by its time
 (`ENRICHMENT_BUDGET`) or its depth limit of 64 is completed by plain
 windows from its outermost element's nearest window, included. Whether a
 window can be read is the system's judgement (`window_unreadable`), which a
 test that cannot wait five seconds for Windows to judge an application
-hung replaces (`Outpost::set_window_readability_reader`, a
+hung replaces (`Outpost::set_window_readability_reader` and
+`FocusReader::set_window_readability_reader`, each a
 `WindowReadabilityReader`).
 
 ### Starting an outpost and asking for the focus
@@ -1054,9 +1070,13 @@ unredirected, never unspawned.
   the top. Object navigation's ancestor query reads the whole chain.
 - NVDA's focused-state test of an MSAA focus
   (`FocusCandidate::has_focused_state`) goes on past an `accParent` that
-  fails or names nothing along the parent windows, each a plain window,
-  focused when it is its thread's focus window (the audit's difference 19),
-  and above the process boundary by plain windows, with no call there.
+  fails or names nothing from the parent window's own object, chosen by
+  `read::parent_window_for_focused_state` (the audit's difference 19): by
+  the outpost's verdict, its MSAA client, read and walked up from, or its
+  UIA element's focused state, one call; a ghost's or a hung window is a
+  plain window, never focused, and the test goes on from its parent
+  window; above the process boundary every window is plain, and the test
+  ends with no call there.
 - A focus-now's UIA ancestry is one remote operation
   (`verbatim_uia_rops::focus_ancestry`): keyboard focus, selected child,
   parents with the base cache, and nearest window, made into a chain by
