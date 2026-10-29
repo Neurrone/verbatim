@@ -45,7 +45,6 @@ These hold for every session and every subagent; a subagent brief points here ra
 - At most two subagents build at once on Dickson's machine, each in its own target directory, because more exhausts its disk and memory.
 - A subagent that finds its brief's design cannot work, or that wants to do anything beyond its brief, stops and reports instead of improvising, and the parent never commits such a choice for later acceptance, because improvised choices committed as "pending" each cost a review and often a reversal.
 - Builder subagents end at unit tests and `cargo xtask ci`; the parent runs the end-to-end scenarios, one batch at a time from one background script, because agents that waited on the desktop with a large context spent hours polling and fought over it.
-- Split a step that would take a subagent more than about a hundred tool calls into steps handed over by a short written note, because a subagent's cost grows with its length times its context.
 
 ## NVDA provenance
 
