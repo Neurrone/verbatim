@@ -44,4 +44,10 @@ Start at 93691570 or later. Apply `scratch-support.patch`, copy the program to `
 
 ## Results
 
-Pending, run by the parent.
+Run on 2026-10-29 on the development machine's console, Windows 11 25H2, debug build, no other UIA client running; the full output is `results.txt`.
+
+- Focus moved to B after the check: in 20 of 20 rounds the call returned B's element ("Second", B's process in its provider description), and B's provider was called each time, A's never. Each round B answered `WM_GETOBJECT` with `UiaRootObjectId` (UIA's connection request), `GetFocus`, and about 70 provider calls in all (`ProviderOptions` 14, `GetPatternProvider` 14, `GetPropertyValue` 22, among others).
+- Control, focus left on A: in 20 of 20 rounds the call returned A's element and B was never called.
+- From the check to the call's return: 24.0 ms at the fastest, 27.9 ms at the median and 40.1 ms at the slowest, the experiment's own move of the focus included.
+
+So when the focus moves to another application between the outpost's check and its `GetFocusedElementBuildCache`, the call connects into that application and returns its element: shown here with the order forced. How often the order happens unforced is measured by the scratch build's `focused_read` line (`experiments/focus-pipeline-rework-measurements/`).
