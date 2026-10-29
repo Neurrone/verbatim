@@ -79,8 +79,8 @@ suite, the VM harness, NVDA captures and troubleshooting.
     — every call that can reach another application, measured, with a
     verdict on the rule that only an application's own outpost calls it.
   - [focus-backend-ownership-study.md](design/focus-backend-ownership-study.md)
-    — which process decides which backend speaks a focus, so that the
-    verdicts and the gap cannot lose or double one.
+    — the outpost's one verdict per window for both routes and its gap
+    record beside it, so a focus is spoken twice only where NVDA does.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
