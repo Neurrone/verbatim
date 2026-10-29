@@ -1,0 +1,62 @@
+NVDA's path for the bare "Settings"
+
+Taken on 2026-10-30 on Windows 11 build 26200 (x64), NVDA alpha-58022,732d1ce2 (the pin; the compare report said "The pin is the installed build") in session 1, started with -c from a scratch configuration (eSpeak NG, defaults, the update check off, the transcript add-on copied in, log level debug with the MSAA and events debug categories) and -f to a log of its own, through cargo xtask nvda compare settings_system_page five times in a row; NVDA was then closed with nvda -q. Each compare gave the scenario's step 2, launching ms-settings from the desktop, as "Settings", "Settings window", "Search box, Find a setting edit blank", the verdict "same".
+
+Below, for each launch, the log's lines for the frame's (ApplicationFrameWindow) foreground and focus winEvents, NVDA's foreground defer, the focus winEvents it processed for the frame and for the content's window (Windows.UI.Core.CoreWindow, whose MSAA focus NVDA then drops as native UIA, the content's focus coming from UIA), and the speech, shortened to the time and the message. The full log was read and not kept.
+
+Launch 1
+06:19:43.019 EVENT_SYSTEM_FOREGROUND, window 24906410 (ApplicationFrameWindow), OBJID_WINDOW
+06:19:43.019 EVENT_OBJECT_FOCUS, window 24906410 (ApplicationFrameWindow), OBJID_CLIENT
+06:19:43.020 Foreground still 65798 (Progman). Deferring until foreground is 24906410 (ApplicationFrameWindow), defer count 1
+06:19:43.038 Foreground still 65798 (Progman). Deferring until foreground is 24906410 (ApplicationFrameWindow), defer count 2
+06:19:43.054 Processing focus winEvent: window 24906410 (ApplicationFrameWindow), OBJID_CLIENT
+06:19:43.131 Speaking ['Settings']
+06:19:43.527 Processing focus winEvent: window 72353162 (Windows.UI.Core.CoreWindow), OBJID_CLIENT
+06:19:43.619 Speaking ['Settings', 'window']
+06:19:43.633 Speaking ['Search box, Find a setting', 'edit', 'blank']
+
+Launch 2
+06:19:51.153 EVENT_SYSTEM_FOREGROUND, window 24512278 (ApplicationFrameWindow), OBJID_WINDOW
+06:19:51.156 EVENT_OBJECT_FOCUS, window 24512278 (ApplicationFrameWindow), OBJID_CLIENT
+06:19:51.157 Foreground still 65798 (Progman). Deferring until foreground is 24512278 (ApplicationFrameWindow), defer count 1
+06:19:51.167 Foreground still 65798 (Progman). Deferring until foreground is 24512278 (ApplicationFrameWindow), defer count 2
+06:19:51.181 Processing focus winEvent: window 24512278 (ApplicationFrameWindow), OBJID_CLIENT
+06:19:51.271 Speaking ['Settings']
+06:19:51.679 Processing focus winEvent: window 46139314 (Windows.UI.Core.CoreWindow), OBJID_CLIENT
+06:19:51.765 Speaking ['Settings', 'window']
+06:19:51.777 Speaking ['Search box, Find a setting', 'edit', 'blank']
+
+Launch 3
+06:19:58.635 EVENT_SYSTEM_FOREGROUND, window 43125708 (ApplicationFrameWindow), OBJID_WINDOW
+06:19:58.639 EVENT_OBJECT_FOCUS, window 43125708 (ApplicationFrameWindow), OBJID_CLIENT
+06:19:58.639 Foreground still 65798 (Progman). Deferring until foreground is 43125708 (ApplicationFrameWindow), defer count 1
+06:19:58.649 Foreground still 65798 (Progman). Deferring until foreground is 43125708 (ApplicationFrameWindow), defer count 2
+06:19:58.662 Foreground took too long to change. Foreground still 65798 (Progman). Should be 43125708 (ApplicationFrameWindow)
+06:19:59.165 Processing focus winEvent: window 24249812 (Windows.UI.Core.CoreWindow), OBJID_CLIENT
+06:19:59.249 Speaking ['Settings']
+06:19:59.254 Speaking ['Settings', 'window']
+06:19:59.315 Speaking ['Search box, Find a setting', 'edit', 'blank']
+
+Launch 4
+06:20:06.298 EVENT_SYSTEM_FOREGROUND, window 33097388 (ApplicationFrameWindow), OBJID_WINDOW
+06:20:06.298 EVENT_OBJECT_FOCUS, window 33097388 (ApplicationFrameWindow), OBJID_CLIENT
+06:20:06.298 Foreground still 65798 (Progman). Deferring until foreground is 33097388 (ApplicationFrameWindow), defer count 1
+06:20:06.306 Foreground still 65798 (Progman). Deferring until foreground is 33097388 (ApplicationFrameWindow), defer count 2
+06:20:06.336 Processing focus winEvent: window 33097388 (ApplicationFrameWindow), OBJID_CLIENT
+06:20:06.393 Speaking ['Settings']
+06:20:06.892 Processing focus winEvent: window 44108526 (Windows.UI.Core.CoreWindow), OBJID_CLIENT
+06:20:06.999 Speaking ['Settings', 'window']
+06:20:07.012 Speaking ['Search box, Find a setting', 'edit', 'blank']
+
+Launch 5
+06:20:13.915 EVENT_SYSTEM_FOREGROUND, window 44174062 (ApplicationFrameWindow), OBJID_WINDOW
+06:20:13.919 EVENT_OBJECT_FOCUS, window 44174062 (ApplicationFrameWindow), OBJID_CLIENT
+06:20:13.920 Foreground still 65798 (Progman). Deferring until foreground is 44174062 (ApplicationFrameWindow), defer count 1
+06:20:13.941 Foreground still 65798 (Progman). Deferring until foreground is 44174062 (ApplicationFrameWindow), defer count 2
+06:20:13.952 Processing focus winEvent: window 44174062 (ApplicationFrameWindow), OBJID_CLIENT
+06:20:14.033 Speaking ['Settings']
+06:20:14.435 Processing focus winEvent: window 27133154 (Windows.UI.Core.CoreWindow), OBJID_CLIENT
+06:20:14.543 Speaking ['Settings', 'window']
+06:20:14.557 Speaking ['Search box, Find a setting', 'edit', 'blank']
+
+What it shows. The frame raises its MSAA focus on its client within 4 ms of its foreground event, and NVDA's defer holds both. In launches 1, 2, 4 and 5 the pump after the second deferral, 27 to 38 ms after the event, found the frame in front (no "took too long" line), and NVDA processed the frame's focus winEvent, the newest focus event of the batch, so the foreground event itself was never processed; that focus is the frame's client, a pane, spoken by its name, 0.4 to 0.6 s before the content's focus. In launch 3 the defer ran out 27 ms after the event with Program Manager still in front, NVDA processed neither of the frame's events, and "Settings" came 5 ms before "Settings window", with the content's focus: the frame's client pane entered as a focus ancestor, the object NVDA's UIA parent step makes for the frame's window with the relation "parent". The words are the same either way.

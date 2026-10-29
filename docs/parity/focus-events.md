@@ -205,9 +205,11 @@ foreground window (`foreground_relation`) reported with an event's
 window facts, which the reducer judges a focus by after the read
 (`verbatim_core::focus_rules::ForegroundRelation::related`). NVDA's hold
 for a foreground event's window is not built: the outpost judges a
-foreground change when it comes ("Attention" below); a hold of NVDA's
-length is designed, pending Dickson's acceptance
-(`docs/design/focus-pipeline-rework.md`, "The foreground wait").
+foreground change when it comes ("Attention" below). A study found
+that the hold changes no word on entering the Settings app, the one
+window measured to lag, and proposes leaving it unbuilt, pending
+Dickson's acceptance (`docs/design/focus-pipeline-rework.md`, "The
+foreground wait").
 
 - Each outpost's worker makes NVDA's test, rule by rule in NVDA's order,
   with local calls only, before any call into the application, for MSAA

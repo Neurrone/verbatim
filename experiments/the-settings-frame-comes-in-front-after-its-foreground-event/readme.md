@@ -30,11 +30,16 @@ The frame ignores the show state: in all 20 launches it opened restored and took
 
 In the pilot's first launch, a frame left from an earlier Settings session (Settings had been closed and was running suspended before the probe started) came in front 230 ms after the launch with no foreground event at all (`runs/pilot/run.log`, the frame `0x22309a6`). Every later launch, 26 of them in the pilot, in two short trial runs not kept and in the full run, made a new frame with one event. It was seen once and not made again.
 
+## NVDA's path for the bare "Settings"
+
+The review then asked how NVDA says "Settings" in 5 of 5 launches when the frame is in front within NVDA's defer in only 8 of 20. A capture of five launches with NVDA's MSAA debug log (`nvda-capture.txt`) answers it: the frame raises its MSAA focus on its client within 4 ms of its foreground event, and NVDA speaks that client, a pane named "Settings", by one of two paths. In 4 of 5 the pump after NVDA's second deferral, 27 to 38 ms after the event, found the frame in front and processed the frame's focus winEvent, 0.4 to 0.6 s before the content's focus. In 1 of 5 the defer ran out at 27 ms, both of the frame's events were dropped, and the same pane was entered as a focus ancestor of the content's focus, 5 ms before "Settings window". NVDA's foreground object is never spoken. The design that follows from it is "The foreground wait" in `docs/design/focus-pipeline-rework.md`.
+
 ## Files
 
 - `main.rs`, `Cargo.toml.txt`: the probe.
 - `runs/full/`: the full run. `summary.txt`, the distributions and each trial's events; `events.tsv`, each foreground event (trial, kind, time in ms, window, class, title, image, object and child ids, the foreground window's class read in the callback, the lag, and the read before the change relative to the event); `foreground-changes.tsv`, each change the poller saw; `steps.tsv`, the driver's steps; `slow-reads.tsv`, the reads that started or took more than 2 ms late; `run.log`, the probe's log.
 - `runs/pilot/`: the pilot run, one launch of each kind with the timer-driven poller, kept for the frame that came in front with no event; its lags are not valid.
+- `nvda-capture.txt`: NVDA's log lines and speech for five launches of `settings_system_page` under `cargo xtask nvda compare`, with the setup.
 
 ## Rerunning
 
