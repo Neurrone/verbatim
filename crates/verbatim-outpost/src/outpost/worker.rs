@@ -3622,7 +3622,7 @@ impl Worker<'_> {
             read::uia_chain_from_read(
                 context,
                 self.client,
-                (ancestors, read.hwnd, read.ancestors_end),
+                (ancestors, read.hwnd, read.window, read.ancestors_end),
                 &previous,
             )
         });

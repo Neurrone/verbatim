@@ -328,7 +328,7 @@ fn uia_ancestors(
     (previous, parent_automation_id): (&[NodeSnapshot], &mut Option<String>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Vec<NodeSnapshot> {
-    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, hwnd);
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let Ok((chain, crossed, walked)) = uia.ancestors(
         (element, element_window, nearest),
@@ -364,10 +364,20 @@ fn uia_ancestors(
 /// the window hierarchy with no further call (`correctAPIForRelation`,
 /// `NVDAObjects/window/__init__.py` 85 to 97); a step can also reach
 /// another process's window, as when an owner is shown between the walk's
-/// boundary check and its step. The desktop ends a walk instead. Local
-/// calls, and the verdict's probe for a window of this application.
-fn uia_walk_leaves(context: &Context, hwnd: isize) -> bool {
-    hwnd != desktop_window() && (reads_as_plain(context, hwnd) || !window_uses_uia(context, hwnd))
+/// boundary check and its step. The desktop ends a walk instead. The
+/// focus's nearest window `nearest`, 0 when not known, is never taken for
+/// a ghost's or a hung one: NVDA switches API only where a parent's window
+/// differs from its child's, so the element of the window the focus is in
+/// stays a UIA ancestor, as the listener's walk keeps it; another
+/// process's window, and one read through MSAA, still end the walk there.
+/// Local calls, and the verdict's probe for a window of this application.
+fn uia_walk_leaves(context: &Context, nearest: isize, hwnd: isize) -> bool {
+    let plain = if hwnd == nearest {
+        !serves(context, hwnd)
+    } else {
+        reads_as_plain(context, hwnd)
+    };
+    hwnd != desktop_window() && (plain || !window_uses_uia(context, hwnd))
 }
 
 /// How a chain goes on above its outermost entry
@@ -624,7 +634,8 @@ fn window_object_onward(
 
 /// A UIA focus's ancestors, outermost first, from `ancestors`, the
 /// raw-view chain the focus listener read from the event's own element,
-/// nearest first, and `end`, how its walk ended: filtered as a walk here
+/// nearest first, `nearest`, the focus's nearest window the listener
+/// found, and `end`, how its walk ended: filtered as a walk here
 /// filters them, stopping at a container of `previous` and reusing the
 /// rest, and completed above as [`complete`] says: from a window read
 /// through MSAA that the chain reaches, from the window above the process
@@ -636,15 +647,16 @@ fn window_object_onward(
 pub(super) fn uia_chain_from_read(
     context: &Context,
     client: &mut Client,
-    (ancestors, own_window, end): (
+    (ancestors, own_window, nearest, end): (
         &[crate::protocol::UiaAncestorFact],
         isize,
+        Option<isize>,
         crate::protocol::AncestorsEnd,
     ),
     previous: &[NodeSnapshot],
 ) -> Vec<NodeSnapshot> {
     use crate::protocol::AncestorsEnd;
-    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, hwnd);
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest.unwrap_or(0), hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let parents: Vec<verbatim_uia::AncestorParts> = ancestors
         .iter()
@@ -834,7 +846,8 @@ pub(super) fn uia_remote_enrichment(
         .selected_child
         .as_ref()
         .map(|child| child.snapshot(registry));
-    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, hwnd);
+    let nearest = ancestry.window.or(window).unwrap_or(0);
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let is_known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let (chain, crossed, mut walked) = Uia::ancestors_from(
         &ancestry.ancestors,

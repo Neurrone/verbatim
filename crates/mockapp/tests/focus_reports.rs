@@ -3601,9 +3601,13 @@ fn a_hung_window_above_a_uia_focus_ends_the_listeners_walk() {
 /// the three requests for its root provider with a zero `wParam` that the
 /// reads of the child window's elements and the step bring, and no
 /// connection. Without the rule, the remote program reads on into the
-/// host's element and connects to the host window twice, and the classic
-/// walk probes the host window and steps on from its element; the host's
-/// element, named by its fixture, is the outermost ancestor either way.
+/// host's element and connects to the host window twice, which the
+/// assertion on the calls and the host window's messages catches: the
+/// chain is the same, since the outpost still takes the host's element it
+/// read to the host window as a plain window. The classic walk without
+/// the rule probes the host window and steps on from its element, which
+/// the chain's assertion catches: the host's element, named by its
+/// fixture, is the outermost ancestor.
 fn hung_window_above_a_focus_now(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
     let (app, host, island) = uia_island(&format!("mockapp-hung-uia-focus-now-{path}"));
@@ -3658,6 +3662,44 @@ fn a_hung_window_above_a_focus_now_is_a_plain_window_classic() {
     hung_window_above_a_focus_now(false);
 }
 
+/// A focus whose own nearest window is judged hung keeps the ancestors the
+/// listener read, by NVDA's rule (`NVDAObjects/window/__init__.py` 85 to
+/// 97), which switches API only where a parent's window differs from its
+/// child's: the button "OK" of `uia_island.json`, with the UIA child window
+/// that holds it judged hung, has its chain read through UIA, the host
+/// window's element named by its fixture, the child window's root
+/// "Embedded", and the button. Without the rule, the outpost takes
+/// "Embedded" to the child window and puts that window, as a plain window
+/// with no name, in its place.
+fn a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors() {
+    let (app, _host, island) = uia_island("mockapp-hung-nearest-listener");
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.judge_hung(island);
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    let (judged, _) = outpost.listener_read(&ok);
+    let Judged::Read(read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    assert_eq!(
+        roles_and_names(&reported),
+        [
+            (Role::Window, Some("Mockapp Island Fixture")),
+            (Role::Group, Some("Embedded")),
+            (Role::Button, Some("OK"))
+        ],
+        "the outpost's chain"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
@@ -3692,6 +3734,10 @@ fn main() {
         (
             "a_hung_window_above_a_focus_now_is_a_plain_window_classic",
             a_hung_window_above_a_focus_now_is_a_plain_window_classic,
+        ),
+        (
+            "a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors",
+            a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors,
         ),
         (
             "a_chain_cut_at_the_depth_limit_is_completed_by_its_windows",

@@ -214,7 +214,9 @@ Public API:
   chooses it (`ParentWindow`: its MSAA client, read and walked up from;
   its UIA element's focused state, read by the caller; a plain window,
   never focused, gone past to its parent window; or above the process
-  boundary, where it ends), as NVDA's `Window._get_parent` does; it never
+  boundary, where it ends), as NVDA's `Window._get_parent` does (its
+  UIA, plain-window and above-the-boundary cases, `ParentWindow::Uia`,
+  `Plain` and `AboveBoundary`, have no test, a known gap); it never
   steps into a parent window `plain` names (another process's, a ghost's
   or a hung one), going on from it by the window hierarchy, the parent
   window checked again after the step for a window reparented meanwhile; `read(registry)` reads it
