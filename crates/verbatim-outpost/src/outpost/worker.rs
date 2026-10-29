@@ -1064,6 +1064,26 @@ fn suggestions_open(element: &Cached<SuggestionsRefresh>) -> Option<bool> {
 /// A focus that is not reported, for the reason logged where it was found.
 struct Dropped;
 
+/// The listener's UIA focus read, observed at `observed_at_us` in the
+/// top-level window `top_level`, as `judged`, the outpost's checks of it,
+/// keeps or drops it: a kept read answers `gap`, returning the gap it
+/// closed, and a dropped one answers nothing, leaving the gap to its
+/// bound, so that a disagreement on a window's backend costs a read, never
+/// a lost focus (`docs/design/focus-pipeline-rework.md`, "Who owns each
+/// duplicated fact", the verdicts). A menu opening's read, not a `focus`,
+/// answers no gap.
+fn kept_read_answers<T>(
+    gap: &mut FocusGap,
+    (focus, observed_at_us, top_level): (bool, u64, Option<isize>),
+    judged: impl FnOnce() -> Result<T, Dropped>,
+) -> Result<(T, Option<gap::Open>), Dropped> {
+    let kept = judged()?;
+    let answered = focus
+        .then(|| gap.uia_answered(observed_at_us, top_level))
+        .flatten();
+    Ok((kept, answered))
+}
+
 /// One entry's handling, by the worker in charge.
 struct Worker<'a> {
     context: &'a Context,
@@ -1410,7 +1430,7 @@ impl Worker<'_> {
         let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < open.observed_at_us;
         let sender_gone = !window_exists(open.hwnd);
         let Some((hwnd, control)) =
-            read::focused_control_in(context, self.client, read::FocusRead::Gap)
+            read::focused_control_in(context, self.client, read::FocusRead::Gap).ok()
         else {
             tracing::info!(
                 hwnd = open.hwnd,
@@ -1464,8 +1484,10 @@ impl Worker<'_> {
     /// that event (`docs/design/focus-pipeline-rework.md`, "Who owns each
     /// duplicated fact", the verdicts). It answers the wait for a UIA focus
     /// after a `WinEvent` focus as a read in that top-level window does, so
-    /// that wait does not read again. In a window it judges MSAA, the
-    /// window's MSAA focus speaks for it, and nothing is done.
+    /// that wait does not read again, unless the read's own checks refused
+    /// it ([`read::FocusReadMiss::Refused`]): then the wait reads at its
+    /// bound. In a window it judges MSAA, the window's MSAA focus speaks for
+    /// it, and nothing is done.
     fn focus_dropped_on_verdict(
         &mut self,
         window: isize,
@@ -1487,17 +1509,18 @@ impl Worker<'_> {
             }
             Some(true) => {}
         }
+        let read = read::focused_control_in(context, self.client, read::FocusRead::VerdictDrop);
         let top_level = Some(top_level_of(window)).filter(|&top| top != 0);
-        if self.gap.uia_answered(observed_at_us, top_level).is_some() {
+        if !matches!(read, Err(read::FocusReadMiss::Refused))
+            && self.gap.uia_answered(observed_at_us, top_level).is_some()
+        {
             tracing::debug!(
                 %trace,
                 window,
                 "the wait for a UIA focus is answered by the read after the listener's drop"
             );
         }
-        let Some((hwnd, control)) =
-            read::focused_control_in(context, self.client, read::FocusRead::VerdictDrop)
-        else {
+        let Ok((hwnd, control)) = read else {
             tracing::info!(
                 %trace,
                 window,
@@ -3733,36 +3756,40 @@ impl Worker<'_> {
             .or(read.window)
             .map(top_level_of)
             .filter(|&top| top != 0);
-        let answered_gap_ms = focus
-            .then(|| self.gap.uia_answered(observed_at_us, read_top_level))
-            .flatten()
-            .map(|open| {
-                self.clock_now
-                    .saturating_duration_since(open.opened)
-                    .as_millis()
-            });
-        // NVDA's acceptance test against the foreground window was made by
-        // the listener, before it read the focus, as NVDA makes it before
-        // it queues one (`docs/design/focus-pipeline.md`, section 16.2).
-        let Ok(reported) = self.uia_focus_window(read.hwnd, read.window) else {
+        let judged = kept_read_answers(self.gap, (focus, observed_at_us, read_top_level), || {
+            // NVDA's acceptance test against the foreground window was
+            // made by the listener, before it read the focus, as NVDA
+            // makes it before it queues one
+            // (`docs/design/focus-pipeline.md`, section 16.2).
+            let reported = Self::uia_focus_window(context, read.hwnd, read.window)?;
+            // The listener read the focus because it judged its window
+            // UIA; the outpost's own verdict decides which backend's
+            // focus counts in each of its windows
+            // (`docs/design/focus-pipeline-rework.md`, "Who owns each
+            // duplicated fact", the verdicts): in a window it judges
+            // MSAA, its MSAA focus speaks, and the listener's report is
+            // dropped.
+            let judged_window = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0));
+            if let Some(window) = judged_window
+                && read::own_window_verdict(context, window) != Some(true)
+            {
+                tracing::debug!(
+                    %trace,
+                    window,
+                    "UIA focus dropped: the outpost judges its window MSAA, whose focus speaks for it, or another application serves it"
+                );
+                return Err(Dropped);
+            }
+            Ok(reported)
+        });
+        let Ok((reported, answered)) = judged else {
             return;
         };
-        // The listener read the focus because it judged its window UIA; the
-        // outpost's own verdict decides which backend's focus counts in
-        // each of its windows (`docs/design/focus-pipeline-rework.md`, "Who
-        // owns each duplicated fact", the verdicts): in a window it judges
-        // MSAA, its MSAA focus speaks, and the listener's report is dropped.
-        let judged_window = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0));
-        if let Some(window) = judged_window
-            && read::own_window_verdict(context, window) != Some(true)
-        {
-            tracing::debug!(
-                %trace,
-                window,
-                "UIA focus dropped: the outpost judges its window MSAA, whose focus speaks for it, or another application serves it"
-            );
-            return;
-        }
+        let answered_gap_ms = answered.map(|open| {
+            self.clock_now
+                .saturating_duration_since(open.opened)
+                .as_millis()
+        });
         let runtime_id = &read.snapshot.runtime_id;
         if read.same_as_last == Some(false) {
             tracing::debug!(
@@ -3880,7 +3907,7 @@ impl Worker<'_> {
     /// it takes one (`isNativeUIAElement`; `docs/design/focus-pipeline.md`,
     /// section 18), and is not decided again here.
     fn uia_focus_window(
-        &self,
+        context: &Context,
         fact_hwnd: isize,
         remote_window: Option<isize>,
     ) -> Result<Option<isize>, Dropped> {
@@ -3894,7 +3921,7 @@ impl Worker<'_> {
         } else {
             remote_window
         };
-        let judged = reported.or_else(|| focus_window_of(self.context.target_pid()));
+        let judged = reported.or_else(|| focus_window_of(context.target_pid()));
         if judged.is_some_and(window_belongs_to_hidden_frame) {
             return Err(Dropped);
         }
@@ -4326,6 +4353,43 @@ mod tests {
                 ..facts
             }
         );
+    }
+
+    /// A listener's UIA focus read that the outpost's checks drop, as in a
+    /// child window whose probe timed out for the outpost though the
+    /// listener's said UIA, answers nothing of the gap a `WinEvent` focus
+    /// copy opened in its top-level window: the gap is read at its bound.
+    /// The same read kept closes the gap, and nothing is read.
+    #[test]
+    fn a_listener_read_the_outpost_drops_leaves_the_gap_to_its_bound() {
+        const BOUND: Duration = Duration::from_secs(1);
+        let start = Instant::now();
+        let copy = Instant::now();
+        let mut gap = FocusGap::default();
+        assert!(gap.dropped_for_uia((7, 70), 5_000_000, (start, 5_000_000)));
+        let read = (true, 5_030_000, Some(70));
+        assert!(kept_read_answers(&mut gap, read, || Err::<(), _>(Dropped)).is_err());
+        let open = gap::Open {
+            hwnd: 7,
+            top_level: 70,
+            observed_at_us: 5_000_000,
+            opened: start,
+        };
+        assert_eq!(gap.take_due(start + BOUND, BOUND), Some(open));
+        assert!(gap.dropped_for_uia((7, 70), 5_100_000, (copy, 5_100_000)));
+        let kept = kept_read_answers(&mut gap, (true, 5_130_000, Some(70)), || Ok(()));
+        assert_eq!(
+            kept.ok(),
+            Some((
+                (),
+                Some(gap::Open {
+                    observed_at_us: 5_100_000,
+                    opened: copy,
+                    ..open
+                })
+            ))
+        );
+        assert_eq!(gap.take_due(copy + BOUND, BOUND), None);
     }
 
     /// A focus in window `window`, from the MSAA event `event`, reported

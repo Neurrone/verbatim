@@ -189,13 +189,16 @@ the same code (`arbitration`) and send no verdict to each other; the
 outpost's decides which backend's focus counts in each of its windows
 (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
 the verdicts). A listener's read in a window the outpost judges MSAA, by
-the read's nearest window, is dropped (`Worker::uia_focus`). A `Verdict`
+the read's nearest window, is dropped (`Worker::uia_focus`), and answers
+no gap: a read answers the gap only once every check that can drop it has
+passed (`kept_read_answers`). A `Verdict`
 drop takes its marker's place in the intake, as a read does, and the
 worker judges its window (`Worker::focus_dropped_on_verdict`): in a window
 it judges UIA it reads the application's focus at once with the focus-now
 read (`read::focused_control_in`), stamped with the dropped event's
 observation, which answers the gap as a read in that top-level window
-does; in one it judges MSAA it does nothing.
+does, unless the read's own checks refused it (`read::FocusReadMiss`),
+when the gap is read at its bound; in one it judges MSAA it does nothing.
 
 ### Console windows and frames of another process
 

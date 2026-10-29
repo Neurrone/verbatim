@@ -946,15 +946,17 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// with it: on a mismatch, or with no process cached, nothing more is read
 /// and `None` is answered, so a stray element is never reported, followed,
 /// or sent a remote operation. `trigger`, what asked for the read, is
-/// logged with it.
+/// logged with it. Answering nothing, it says whether these checks refused
+/// the read or the read failed ([`FocusReadMiss`]).
 pub(super) fn focused_control_in(
     context: &Context,
     client: &mut Client,
     trigger: FocusRead,
-) -> Option<(isize, FocusedControl)> {
-    let hwnd = control_window(context.target_pid(), || context.focus_window())?;
+) -> Result<(isize, FocusedControl), FocusReadMiss> {
+    let hwnd = control_window(context.target_pid(), || context.focus_window())
+        .ok_or(FocusReadMiss::Refused)?;
     if window_belongs_to_hidden_frame(hwnd) {
-        return None;
+        return Err(FocusReadMiss::Refused);
     }
     if let Some(reason) = event_window_unreadable(hwnd) {
         tracing::debug!(
@@ -962,15 +964,20 @@ pub(super) fn focused_control_in(
             reason,
             "the focus window cannot be read; its focus is not read"
         );
-        return None;
+        return Err(FocusReadMiss::Refused);
     }
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
-        let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
-        let ancestor_request = context.ancestor_request(uia).ok()?;
-        let focused_request = nodes.with_process().ok()?;
+        let (uia, nodes) = client
+            .uia_with(context, Context::node_request)
+            .map_err(|_| FocusReadMiss::Failed)?;
+        let ancestor_request = context
+            .ancestor_request(uia)
+            .map_err(|_| FocusReadMiss::Failed)?;
+        let focused_request = nodes.with_process().map_err(|_| FocusReadMiss::Failed)?;
         tracing::debug!(?trigger, hwnd, "the application's focused element is read");
-        let element = (context.focused_element)(uia, &focused_request).ok()?;
+        let element =
+            (context.focused_element)(uia, &focused_request).map_err(|_| FocusReadMiss::Failed)?;
         let serving = context.target_pid();
         let found = element.cached_process();
         if found != Some(serving) {
@@ -981,7 +988,7 @@ pub(super) fn focused_control_in(
                 ?found,
                 "the focused element read belongs to another process than the one serving the focus window; nothing more is read"
             );
-            return None;
+            return Err(FocusReadMiss::Refused);
         }
         let mut node = with_legacy_checked_state(
             element.live().element(),
@@ -1019,7 +1026,7 @@ pub(super) fn focused_control_in(
         if fields.value_from_selection() {
             node.value = selected_child.take().and_then(|child| child.name);
         }
-        Some((
+        Ok((
             hwnd,
             FocusedControl {
                 node,
@@ -1031,9 +1038,10 @@ pub(super) fn focused_control_in(
         ))
     } else {
         let node =
-            verbatim_ia2::acquire::focused_snapshot(context.target_pid(), &context.msaa_registry)?;
+            verbatim_ia2::acquire::focused_snapshot(context.target_pid(), &context.msaa_registry)
+                .ok_or(FocusReadMiss::Failed)?;
         let (ancestors, selected_child) = msaa_enrichment(context, client, &node, &[]);
-        Some((
+        Ok((
             hwnd,
             FocusedControl {
                 node,
@@ -1044,6 +1052,17 @@ pub(super) fn focused_control_in(
             },
         ))
     }
+}
+
+/// Why [`focused_control_in`] answered no focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FocusReadMiss {
+    /// Its own checks refused the read: the focus window is not this
+    /// application's, or is on Core's hidden frame, or cannot be read, or
+    /// the focused element read belongs to another process.
+    Refused,
+    /// The read itself failed.
+    Failed,
 }
 
 /// What asked [`focused_control_in`] to read the application's focus,
@@ -1104,7 +1123,9 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Op
                 window_facts(hwnd),
             )
         });
-    let (control_window, focus) = focused_control_in(context, client, FocusRead::FocusNow).unzip();
+    let (control_window, focus) = focused_control_in(context, client, FocusRead::FocusNow)
+        .ok()
+        .unzip();
     (
         FocusNow {
             window,
