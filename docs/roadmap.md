@@ -182,6 +182,15 @@ making Verbatim's processes agree on copies of one fact. Each item
 removes one such reconciliation; the shape (the listener reads every UIA
 focus, the outposts the rest, Core decides) stays.
 
+Scope widened by Dickson on 2026-10-29: the rework settles every
+disagreement and reconciling mechanism the study lists, not only the
+decisions below, so that each mechanism left either goes or is the only
+one of its kind with a stated reason; and it fixes every non-deliberate
+difference from NVDA's focus handling found by an audit of the UIA, MSAA
+and `WinEvent` paths and of the announcement, which compares each step's
+rule, order, behaviour on a slow or failed call, and speech. A revised
+design states the whole result before anything is built.
+
 The decisions and their order of work, each in the design's
 "Decisions" and "Order of work", are:
 
@@ -213,9 +222,10 @@ The decisions and their order of work, each in the design's
   by `GetAncestor` with `GA_ROOT` of the nearest-window handle the
   listener already has, its title by `GetWindowText`, and its class name,
   so a slow application can delay only the inner elements its UIA parent
-  walk adds, never the "<title> window" announcement; NVDA takes its
-  foreground object from the operating system's foreground window in the
-  same way (`api.setFocusObject`). The reason is reliability (Dickson,
+  walk adds, never the "<title> window" announcement. NVDA instead names
+  the window from its parent walk (`api.setFocusObject`), waiting on the
+  application, so how the window is named is settled in the revised
+  design. The reason is reliability (Dickson,
   2026-10-26): Windows Terminal raises its focus event before it has
   finished showing its window, and its one UI thread then blocks in
   `DwmExtendFrameIntoClientArea`, which on the test VM's software
