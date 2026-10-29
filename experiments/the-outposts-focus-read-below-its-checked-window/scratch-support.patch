@@ -1,0 +1,12 @@
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index a0d14ed2..aa6f67d7 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -126,3 +126,7 @@ harness = false
+ 
+ [lints]
+ workspace = true
++
++[[test]]
++name = "focus_by_handle_study"
++harness = false

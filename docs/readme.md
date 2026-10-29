@@ -72,6 +72,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
     remove.
   - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
     difference from NVDA's focus handling found on 2026-10-29.
+  - [outpost-focused-element-study.md](design/outpost-focused-element-study.md)
+    — whether an outpost can read its own application's focus with no
+    risk of connecting to another.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
