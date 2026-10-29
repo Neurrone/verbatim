@@ -341,7 +341,11 @@ The listener's contract: **its callbacks and its writer never make a
 cross-process call**; its registration thread's one desktop-wide
 registration, made at its start, waits on the foreground application while
 UIA reads the system's focus, up to about 6 seconds for one that does not
-answer (`docs/design/cross-process-calls-study.md`, instance 2). An MSAA
+answer (`docs/design/cross-process-calls-study.md`, instance 2). So the
+listener installs its WinEvent hooks and says `Ready` first, and makes that
+registration on a thread of its own: its MSAA facts flow at once, and its
+UIA events are dropped until the registration returns, a WinEvent focus
+whose UIA focus is dropped so being recovered by the gap record. An MSAA
 WinEvent delivers raw window and object ids, which are forwarded
 untouched; the only other reads in the callbacks and the writer are
 hang-safe local ones (the window's owning process id, its class name, and
@@ -452,7 +456,7 @@ holds the listener's UIA events (shared with NVDA; `docs/uia-bugs.md`, "A
 hung window named in a system focus event holds a process's UIA events");
 a window above the process boundary holds the reading of the focus below
 it, in the listener and in that focus's outpost; and the foreground
-application holds the listener's start
+application holds the listener's UIA events at its start
 (`docs/design/cross-process-calls-study.md`, instances 1 and 2). That is
 why the listener is a process of its own and not threads in one UIA host
 beside the outposts: nothing short of a process boundary isolates the

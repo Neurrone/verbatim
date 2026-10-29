@@ -122,6 +122,7 @@ use std::os::windows::io::OwnedHandle;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::FILETIME;
@@ -780,6 +781,12 @@ impl Outgoing {
     }
 }
 
+/// What makes the listener's desktop-wide UIA subscriptions, on the
+/// thread [`Listener::start`] starts for it, returning them, or `None`
+/// when their installation failed.
+type InstallSubscriptions =
+    Box<dyn FnOnce(&Arc<Outgoing>, &Arc<Readers<UiaFocusReading>>) -> Option<Registration> + Send>;
+
 /// The focus listener: owns its subscriptions for the whole life of the
 /// process.
 struct Listener {
@@ -788,7 +795,9 @@ struct Listener {
     /// The elements of the focuses the reading threads accepted, by how
     /// Core judged them ([`SupervisorToOutpost::CoreFocus`]).
     held_elements: HeldElements,
-    _registration: Option<Registration>,
+    /// The thread making the desktop-wide UIA registration, which returns
+    /// it, or `None` when it failed ([`Listener::start`]).
+    registering: JoinHandle<Option<Registration>>,
     /// What nudges the `WinEvent` thread: the idle barrier's query goes
     /// through it, behind every event delivered to it before.
     nudger: Nudger,
@@ -910,13 +919,46 @@ impl Reading for UiaFocusReading {
 }
 
 impl Listener {
-    /// Sets up the listener, sending through `sender`: installs every
-    /// subscription,
-    /// reporting a failure as a fault, and only then announces readiness,
-    /// so the supervisor and Core know focus and menus are seen from then
-    /// on. Installing the UIA focus registration can take hundreds of
-    /// milliseconds; announcing readiness first let events in that time go
-    /// unseen, such as a menu opened right after Verbatim started.
+    /// Sets up the listener, sending through `sender`, with its
+    /// desktop-wide UIA subscriptions ([`install_desktop_subscriptions`]):
+    /// see [`Self::start`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::start`].
+    fn new(
+        sender: Sender<Waiting>,
+        ignored: IgnoredProcesses,
+        hooks_in: &[(Pid, OutpostId)],
+    ) -> io::Result<Self> {
+        Self::start(
+            sender,
+            ignored,
+            hooks_in,
+            Box::new(|outgoing, readers| {
+                install_desktop_subscriptions(
+                    outgoing,
+                    readers,
+                    focus_subscription(outgoing, readers),
+                    menu_subscription(outgoing, readers),
+                )
+            }),
+        )
+    }
+
+    /// Sets up the listener, sending through `sender`: installs its
+    /// `WinEvent` hooks, and then announces readiness, so the supervisor and Core know the `WinEvent`s, menus
+    /// included, are seen from then on; announcing it before the hooks
+    /// were in let a menu opened right after Verbatim started go unseen.
+    /// The desktop-wide UIA subscriptions are made by `install` on a
+    /// thread of their own, started after the announcement, because UIA
+    /// reads the system's focus for the focus registration and waits on
+    /// the foreground application for it, up to about 6 seconds for one
+    /// that does not answer (`docs/design/cross-process-calls-study.md`,
+    /// instance 2); their failure is reported as a fault, after the
+    /// announcement. Every UIA event is dropped until `install` returns
+    /// ([`Outgoing::uia_event_process`]); a `WinEvent` focus whose UIA
+    /// focus is dropped meanwhile is left to the gap record.
     ///
     /// The applications in `hooks_in` have outposts with their own hooks
     /// in already: none of their `WinEvent`s is forwarded, and each outpost
@@ -925,11 +967,13 @@ impl Listener {
     ///
     /// # Errors
     ///
-    /// Returns the error of creating the menu end's grace timer.
-    fn new(
+    /// Returns the error of creating the menu end's grace timer, or of
+    /// starting the thread that installs the UIA subscriptions.
+    fn start(
         sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
         hooks_in: &[(Pid, OutpostId)],
+        install: InstallSubscriptions,
     ) -> io::Result<Self> {
         let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
         // Every event this listener's hook takes in is raised after the
@@ -951,14 +995,6 @@ impl Listener {
         for &(pid, _) in hooks_in {
             readers.hook_installed(pid);
         }
-        let registration = install_desktop_subscriptions(
-            &outgoing,
-            &readers,
-            focus_subscription(&outgoing, &readers),
-            menu_subscription(&outgoing, &readers),
-        );
-        outgoing.uia_installation_ended();
-
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
         let make_handlers: MakeHandlers = Arc::new(move || {
@@ -1041,11 +1077,13 @@ impl Listener {
             target_pid: Pid(0),
         });
 
+        let registering = install_on_its_thread(&outgoing, &readers, install)?;
+
         Ok(Self {
             outgoing,
             readers,
             held_elements,
-            _registration: registration,
+            registering,
             nudger,
             _event_thread: event_thread,
         })
@@ -1053,7 +1091,9 @@ impl Listener {
 
     /// Shuts the listener down cleanly ([`SupervisorToOutpost::Shutdown`]),
     /// returning once it is done: the `WinEvent` hooks are removed with the
-    /// thread that pumped them, the desktop-wide UIA focus handler and the
+    /// thread that pumped them, the desktop-wide UIA subscriptions'
+    /// installation is waited for if it has not ended, the desktop-wide UIA
+    /// focus handler and the
     /// other desktop-wide handlers are removed (the registering thread
     /// waits for a callback in progress), every reading thread finishes the read in hand, each abandoned
     /// one returning once UIA gives up on its call, what waits to be
@@ -1067,11 +1107,14 @@ impl Listener {
             outgoing,
             readers,
             held_elements: _,
-            _registration: registration,
+            registering,
             nudger: _,
             _event_thread: event_thread,
         } = self;
         drop(event_thread);
+        let registration = registering
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         let registration_failed_reads = registration.as_ref().map_or(0, Registration::failed_reads);
         drop(registration);
         let reading_threads = readers.stop();
@@ -1136,6 +1179,36 @@ impl Listener {
             answer_when_reads_are_done(&self.readers, &self.outgoing, round);
         }
     }
+}
+
+/// Starts the thread that makes the listener's desktop-wide UIA
+/// subscriptions with `install`, takes UIA events from then on
+/// ([`Outgoing::uia_installation_ended`]), logs the time it took, and
+/// returns them.
+///
+/// # Errors
+///
+/// Returns the error of starting the thread.
+fn install_on_its_thread(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+    install: InstallSubscriptions,
+) -> io::Result<JoinHandle<Option<Registration>>> {
+    let outgoing = Arc::clone(outgoing);
+    let readers = Arc::clone(readers);
+    std::thread::Builder::new()
+        .name("listener UIA subscriptions".to_owned())
+        .spawn(move || {
+            let started = Instant::now();
+            let registration = install(&outgoing, &readers);
+            outgoing.uia_installation_ended();
+            tracing::info!(
+                elapsed_ms = started.elapsed().as_millis(),
+                installed = registration.is_some(),
+                "the listener's desktop-wide UIA subscriptions ended their installation"
+            );
+            registration
+        })
 }
 
 /// Answers the idle barrier's round `round` once no reading thread has an
@@ -1998,6 +2071,54 @@ mod tests {
         assert_eq!(outgoing.uia_event_process(Some(5)), None);
         outgoing.uia_installation_ended();
         assert_eq!(outgoing.uia_event_process(Some(5)), Some(Pid(5)));
+    }
+
+    /// The listener's hooks are in and its `Ready` sent while its UIA
+    /// subscriptions' installation still waits, as on a foreground
+    /// application that does not answer; UIA events are dropped until it
+    /// returns.
+    #[test]
+    fn the_listener_is_ready_while_its_uia_subscriptions_are_installed() {
+        let (ours, theirs) =
+            pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
+        let mut reader = BufReader::new(File::from(theirs));
+        let (release, released) = mpsc::channel::<()>();
+        let returned = Arc::new(AtomicBool::new(false));
+        let install_returned = Arc::clone(&returned);
+        let install: InstallSubscriptions = Box::new(move |_, _| {
+            // Released once the test has read `Ready`; the bound only ends
+            // a run in which `Ready` waits for this installation.
+            let _ = released.recv_timeout(Duration::from_secs(10));
+            install_returned.store(true, Ordering::Release);
+            None
+        });
+        let listener = Listener::start(sender, IgnoredProcesses::default(), &[], install)
+            .expect("the listener starts");
+        // The global hooks forward this desktop's events too.
+        let ready = std::iter::from_fn(|| read_message(&mut reader).expect("read"))
+            .find(|message| matches!(message, OutpostToSupervisor::Ready { .. }));
+        assert!(ready.is_some(), "the listener says it is ready");
+        assert!(
+            !returned.load(Ordering::Acquire),
+            "ready before the UIA subscriptions' installation returned"
+        );
+        assert_eq!(listener.outgoing.uia_event_process(Some(5)), None);
+
+        release.send(()).expect("the installation waits");
+        let Listener {
+            outgoing,
+            readers,
+            registering,
+            _event_thread: event_thread,
+            ..
+        } = listener;
+        drop(event_thread);
+        assert!(registering.join().expect("the installation ends").is_none());
+        assert_eq!(outgoing.uia_event_process(Some(5)), Some(Pid(5)));
+        readers.stop();
+        outgoing.close();
     }
 
     #[test]
