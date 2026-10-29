@@ -13,5 +13,5 @@
 1793273140229852 key enter (sent 2 inputs)
 1793273141447731 focus: ControlType.Button name='New desktop' class=Button window 0 process 5748
 1793273141449742 key escape (sent 2 inputs)
-1793273144471673 focus: ControlType.Button name='Widgets 25øC Mostly cloudy' class=ToggleButton window 0 process 5748
+1793273144471673 focus: ControlType.Button name='Widgets 25Â°C Mostly cloudy' class=ToggleButton window 0 process 5748
 1793273144474182 touch C:\Users\Dickson\Desktop\projects\verbatim\experiments\focus-pipeline-rework-measurements\captures\run\g\end1
