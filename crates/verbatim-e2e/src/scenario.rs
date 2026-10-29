@@ -1285,6 +1285,26 @@ impl Scenario {
         self.bring_window_forward(&harness_marker(name))
     }
 
+    /// Brings the desktop back to the foreground as a scenario's start puts
+    /// it there ([`AgentClient::minimize_all`]), for a teardown whose body
+    /// left the keyboard focus in the shell rather than in a window the
+    /// harness closes: after Escape closes the Windows+X menu, the taskbar
+    /// keeps the foreground and its Start button's tooltip stays shown, a
+    /// window cleanup would find left open.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a request fails or the desktop does not take the
+    /// foreground, naming what kept it, as the start does.
+    pub fn return_to_desktop(&mut self) -> io::Result<()> {
+        self.begin_action("bring the desktop back to the foreground");
+        let (minimized, desktop_in_front, desktop) = self.agent.minimize_all(MINIMIZE_TIMEOUT)?;
+        match minimize_failure(minimized, desktop_in_front, &desktop) {
+            Some(failure) => Err(io::Error::other(failure)),
+            None => Ok(()),
+        }
+    }
+
     /// Brings the window titled with `marker`, one the scenario opened and
     /// another window has since taken the foreground from, to the
     /// foreground as clicking its taskbar button does, and waits on window
