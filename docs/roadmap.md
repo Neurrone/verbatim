@@ -328,9 +328,10 @@ precondition, because the extension surface exposes the messages it moves.
   reads included; kept verdicts dropped when rule tables are reloaded; the
   Windows Terminal second-identity hook restated against repeats judged in
   Core; and File Explorer's search band refusal (the focus pipeline
-  audit's difference 24) as a rule of the File Explorer built-in, with
-  NVDA's `StartButton` rule beside it if the rework's first step finds a
-  keyboard route to the MSAA focus on File Explorer's `Start` window.
+  audit's difference 24) as a rule of the File Explorer built-in, needed
+  on Windows 11 24H2 and not on 25H2, with no `StartButton` rule, since
+  the rework's first step found no keyboard route to the MSAA focus on
+  File Explorer's `Start` window.
 
 Out of M5 by decision (Dickson, 2026-10-22): module settings and storage,
 the utterance, settings-changed, timer and response hooks, asynchronous
