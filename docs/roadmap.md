@@ -30,13 +30,12 @@ M4.1".
 - Windows Terminal: diff-based output announcement with flood policy; the
   "cat a huge file" scenario is an E2E latency test.
 
-Exit: Notepad editing and Terminal sessions are solid; terminal flood E2E
-shows bounded latency and no hang.
+Exit: Notepad editing is solid, and the focus pipeline and caret and
+selection reworks are built.
 
-M4 ends when the four groups below land: the terminal redesign, the
-audio step, the focus pipeline rework, and the caret and selection
-rework, the last two each in a session of its own (Dickson, 2026-10-15
-and 2026-10-25). Within a group the items are in the order they are done
+M4 ends when the two groups below land: the focus pipeline rework, then
+the caret and selection rework, each in a session of its own (Dickson,
+2026-10-25). Within a group the items are in the order they are done
 (Dickson, 2026-10-10 and 2026-10-13). The rest of the open work found
 during M4 is scheduled in the milestones that follow, and a Deferred list
 closes the section with items that are not M4's. Each item is one
@@ -44,131 +43,6 @@ change, checked with `cargo xtask ci` and its related scenarios ten
 times, with the full suite where every scenario is affected. A change in
 what is heard goes to Dickson first; while he is away, it follows NVDA
 where NVDA is clear, recorded as provisional.
-
-### The terminal redesign
-
-Built from [the terminal model](design/terminal-model.md) (accepted by
-Dickson on 2026-10-25), which states what is read, the rules and the
-limits; each part is one step in the sense of `REVIEW.md`, with nothing
-pushed until the last. The model in `verbatim-text`, its move into Core's
-reducer, "Report status bar" and moving by command are built. What
-remains, in order:
-
-- Pi's regular mode in the moving-by-command and "Report status bar"
-  scenarios, once Pi is installed on the test machine.
-- Recordings for the conformance corpus, after checking that the NVDA pin
-  equals the installed build: Pi's regular mode resized, set aside until
-  the corpus can record a resize (Dickson, 2026-10-25); fzf, once Dickson
-  installs it. htop is dropped (Dickson, 2026-10-25).
-- End-to-end scenarios: the existing terminal scenarios brought back to
-  passing; then cargo's build bar below its output; the landing rule's
-  keys; Control+W, Control+U and Control+K; tab completion; suggestions; a
-  completion list; menu completion; history search; output while typing;
-  pasting; slow echo; a spinner with a message; several progress lines;
-  resizing; a list shown by colour; a checkbox list; a refreshing
-  full-screen script; fzf-like filtering; the review cursor kept through a
-  footer redraw and moved with its text through a scroll; output just
-  after the focus with an interactive shell; the console host's real
-  password prompt; and Pi in both modes. Then, as decided on 2026-10-24,
-  Verbatim's own streaming program (`verbatim-stream-test`) at up to 60
-  frames a second in each way programs stream, with a footer, a header and
-  a middle status row, expected to speak the streamed text once, in order,
-  with no word split, whatever the reads' timing.
-- The measurements after, in [performance](performance.md), for typing, a
-  20,000-line flood, a Pi stream at its recorded pace, a clock ticking
-  once a second, and a full-screen program refreshing rows, against the
-  baseline of processor time, wake-ups and change-to-speech time taken on
-  2026-10-23 on the build before the reading changes (runs under
-  `target/perf/terminal-baseline-*`; the memory baseline in
-  [performance](performance.md), "Memory use").
-- [The terminals parity entry](parity/terminals.md), the crates'
-  documents and these entries brought in line with the model.
-- The whole terminal suite, `cargo xtask ci`, and the push.
-
-Related items, each to be settled within the redesign or after it:
-
-- Provisional, awaiting Dickson (2026-10-11): the console host raises no
-  text change for a write that leaves the cursor where it was, as a full
-  history scrolling whole lines may (the model's "The terminals"); if a
-  measurement on the installed build confirms it, follow NVDA, which has
-  the same gap.
-- An unsettled terminal read with nothing queued behind it is never
-  retried; `conhost_leave_flood` once heard no "blank" for an empty new
-  console window, its first read giving nothing within 15 seconds.
-- Windows Terminal sometimes raises no TextChanged event for a typed
-  character, only caret moves, so about 5% of runs do not echo it; settle
-  whether Windows Terminal or UIA loses the event, with about 60 runs and
-  a second, independent UIA client listening. The model's reading on
-  caret events (its "Reading rules", rule 1) comes back with the outpost
-  and Core step (Dickson, 2026-10-17).
-- `windows_terminal_two_windows` may say "<title> terminal" two or three
-  times, from Windows Terminal's second runtime identity (Dickson,
-  2026-10-19; [UIA faults](uia-bugs.md), "Windows Terminal raises focus
-  from a second runtime identity"); the rule is M5's.
-- The console host's say-all repeats one row: its text pattern clamps an
-  expansion below the last row with text back onto that row, and nothing
-  checks that the expanded line contains its point. Proposed fix: take a
-  unit that does not contain its point as the end of the text, one
-  comparison inside the existing remote program, judged by a fake-source
-  unit test, a mockapp provider whose expansion clamps, and a console host
-  scenario step from a fresh NVDA capture.
-- `conhost_full_screen` races its program: a read taken before
-  `altscreen.ps1` parks the cursor speaks "row N changed", on the base
-  build too.
-- A lost read was seen to ask twice for the whole document, where one
-  whole-document read should answer it.
-- "hellook1" is heard in the recorded hand streams.
-- Windows Terminal's launch focus sometimes speaks "... terminal" without
-  "... window", and the desktop's announcement is sometimes cancelled
-  (the `*_up_typing`, `*_typing` and `*_commands` scenarios).
-- `conhost_typing` missed a typed "o" in 2 of 6 runs on the base build.
-- The reader's fix for a caret ahead of the typing covers only a line
-  showing none of the pending typing: with "a" and "b" typed, a line
-  showing "a" with the caret one cell ahead gives Gained "a" and then
-  Changed "ab".
-- Enter that erases a grey suggestion speaks the input line again.
-- Up Arrow and then "e" typed before the recalled line is read gives Echo
-  "e" and then Gained "cho one".
-- Backspace erasing "o", Control+Backspace erasing "tw", and tab
-  completion have no exact reader tests.
-- A trimmed caret line taller than the kept screen could miscount the
-  caret's column along its line.
-- The reader ignores the colours of a colours re-read that comes late.
-- The outpost takes a read's `ended_ms` after converting its text from
-  UTF-16, so the conversion's time counts as part of the read.
-- A review command's history read is placed with gaps in its checks: its
-  answer carries no `from_start`, so a start the outpost refused during
-  the read is placed as if counted from the read it names; an
-  `Unanswered` history read is placed as no rows above the start; and a
-  whole-document history read is placed by the end of the memory's rows
-  rather than by a start, so more than a screen of unshown output printed
-  during the round trip shifts every placed row (ReviewTop then
-  ReviewNextLine read the wrong line). The outpost could count a whole
-  read's rows from its newest start too, so Core places it by start.
-
-### The audio step
-
-Decided by Dickson and not yet built.
-
-- The audio step of the communication design
-  ([communication](design/communication.md), section 11; Dickson,
-  2026-10-08): the audio stream stays awake after speech, writing silence,
-  for a configurable period, 30 seconds by default as in NVDA, because
-  Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or
-  delay the next speech; cancelling keeps Stop and Reset, as NVDA does,
-  since shared mode has no other way to discard queued audio; the engine
-  period trial; and the earcon re-mix, where speech that starts while an
-  earcon plays is mixed into audio not yet played, re-mixing what was
-  already handed to the device, so an indication's sound and its speech
-  start together and cancelling an utterance cancels both. Speech now
-  waits behind the roughly 40 ms of earcon already queued, which delays
-  every start-up's first announcement. The latency ledger stops counting
-  the tail of earlier speech as "mixer and device", which made
-  back-to-back utterances look slow there. Each is measured with the
-  device stages of the communication design's section 10.1.
-- Passing runs log 1 to 10 warnings "the device ran dry in the middle of
-  an utterance: an audible gap" from `verbatim::audio` (debug build); look
-  at them with the audio step.
 
 ### The focus pipeline rework
 
@@ -300,33 +174,24 @@ Tests and tooling:
 - Four mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_combo_box_costs_exactly`, `call_counts::uia_focus_chains_stop_below_the_process_boundary`, `arbitration::a_probe_that_timed_out_is_made_once_in_its_entry` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause.
 - `uia_combo_box_costs_exactly` depends on UIA keeping an element's state about 500 ms after `FindFirstBuildCache` (warm, the combo box costs 6 provider calls fewer); what it pins awaits Dickson's decision.
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s). `measure_focus_explorer`'s key waits end on their key's item, which two keys share ("alpha 2 of 4" for Down 1 and Up 1), so a late repeat can end the next key's wait; the targets are `explorer_folder_window`'s, so renaming cannot fix it.
-- Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`) and the hosted end-to-end `windows_terminal_two_windows` and `windows_terminal_leave_flood` failures on main before 2026-10-15; neither reproduces here.
-- Repeat `line_key_flood` on GitHub's runner, where it once read a half-written line (deferred, Dickson, 2026-10-21).
+- Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
 - Compare mode presses Verbatim+V (`kb:verbatim+v`) as Insert+V, which under NVDA types "v" into Notepad and corrupts the later steps of `notepad_editing`'s comparison.
 - The platform-neutral dependency check (`check_platform_neutral_deps` in `xtask/src/main.rs`) runs `cargo tree -e normal`, so a build-dependency on `windows-sys` or a Windows-specific workspace crate is not caught, `winapi` is on neither banned list, and a dependency on a Windows-only workspace crate that uses no bindings itself passes.
 - `cargo xtask trace scenario` and `cargo xtask measure` look for the build under `<worktree>\target` and ignore `CARGO_TARGET_DIR`, so a worktree building elsewhere measures a stale or missing build.
 - A double-click is checked only by hand: the agent has no mouse request, so no scenario pins "beta selected" for a double-click inside a word.
-- The cleanup of a stuck flood console, which once outlived its scenario until the agent was force-killed, is not tested.
-- The focus ordering's tests: `a_hooked_event_is_stamped_before_its_bookkeeping` (`crates/verbatim-outpost/src/outpost/mod.rs`) exercises only `take_in_hooked`, not the hook callback's call; mockapp's `a_focus_now_answer_is_stamped_to_the_microsecond` cannot tell one clock read from two; and `observed_no_earlier`, mixing millisecond and microsecond stamps, is not a total order, so `crates/verbatim-outpost/src/outpost/held.rs`'s running maximum can depend on arrival order.
 - Key holding's gaps: no test of a waiting key following the newest watch (`crates/verbatim-core/src/editing.rs`); no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a held key whose release is never seen stays in `held_downs`; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
 
 Crashes and stalls:
 
-- An outpost crash inside UIA's saved-event delivery (`ProtobufHelper::GetCacheResponse` reading a null element reference on a UIA worker thread): with the focus pipeline's section 17 built, `conhost_leave_flood`'s console host outpost failed fast again; read its full dump, kept outside the repository, and make section 17's fifty-run check.
 - Verbatim's own outpost once left a fact in its intake for 6.37 seconds; reproduce it with the intake and menu logs.
-- The listener's watchdog abandon path (`crates/verbatim-outpost/src/focus_read.rs`): a listener-read focus abandoned before it is sent is never judged by Core, so the listener drops no repeats in that application until a later focus is judged; it costs reads, not speech (pending Dickson).
-- What Verbatim does for a user whose first OneCore activation after logon takes longer than the synthesizer host's ten-second hang bound is open (Dickson, 2026-10-21).
 
 Focus and File Explorer:
 
-- UIA's late or missing delivery of a new process's focus events, and the burst of gone senders ([the listener design](design/listener-without-connections.md), risks 2 and 13), are recovered by decision 11's step; read the first `settings_system_page` or File Explorer run that meets the fault for the outpost's "the focus is read and reported" line and the speech after it.
 - File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view.
 - In one runner run the `delta` item inside Inner still carried the parent folder's window title; check whether File Explorer's title lags or an ancestor name is stale (`explorer_folder_window`).
 - The listener's read in File Explorer scenarios once came 285 ms late, locally mostly the first nearest-window lookup waiting on a busy File Explorer; confirm on GitHub's runner (deferred, Dickson, 2026-10-21).
 - On a fresh GitHub runner the first Verbatim start can say "Start toggle button not pressed" instead of "Desktop list", because the taskbar rehosts the Start button in a new PopupHost window and raises a UIA focus NVDA would accept too; the choice between a throwaway warm-up start and an experiment to find the trigger is deferred (Dickson, 2026-10-21).
-- A console window read through MSAA is "pane" where NVDA gives its client object the legacy console overlay with the terminal role (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733, and `IAccessible/winConsole.py`; deferred, Dickson, 2026-10-21).
-- A console whose provider's formatting check gets no answer is probed and checked twice in one arbitration entry, through the `None` branch of `decide` in `crates/verbatim-outpost/src/arbitration.rs`.
 - A focus-now answer carries no application name and no Alt state, so an application rule such as the Alt+Tab switcher's cannot apply to a focus read on request.
 
 Events and controls:
@@ -404,7 +269,7 @@ These are decided designs that daily use needs.
   242 user-visible settings against Verbatim's): the
   missing settings for behaviour Verbatim already has (capital pitch
   change, OneCore's pause after punctuation, the audio output device,
-  sounds' volume following the voice, the audio device awake time,
+  sounds' volume following the voice,
   handling keys from other applications, the multiple key press timeout,
   the review cursor following focus, reporting tooltips, reporting
   notifications, the word segmentation standard, cancelling speech for
@@ -601,6 +466,162 @@ inside UIA (`docs/design/listener-without-connections.md`).
   of 20 seconds, which Verbatim lowered to 5 seconds on 2026-10-10, and a
   timeout bounds each provider call, not an operation; its bound is
   settled with the order above.
+
+## M6.3 — Speech and audio pipeline
+
+The speech and audio pipeline looked at as a whole, after M6 adds a
+second real engine (Dickson, 2026-10-29).
+
+- An audit of the speech and audio pipeline against NVDA, as the focus
+  pipeline's was made: for each step, the rule, the order, what happens
+  on a slow or failed engine, and what is heard, across the speech
+  manager's priorities and cancellation, the culling of expired focus
+  speech, index marks and say-all's continuation, the synthesizer host
+  and the mixer; every difference no decision covers is fixed here.
+- When anything handed to the synthesizer or the mixer has expired,
+  everything handed on is stopped and the still-valid utterances are
+  handed on again, as NVDA's speech manager does; today they are lost
+  (`crates/verbatim-speech/src/manager.rs`, `drop_expired`), a critical
+  bug (Dickson, 2026-10-29).
+- The menu-item clause of the culling of expired focus speech judged for
+  every waiting utterance, as NVDA does, where Verbatim judges it only
+  for the focus just left (the focus pipeline audit).
+- The audio step of the communication design
+  ([communication](design/communication.md), section 11; Dickson,
+  2026-10-08): the audio stream stays awake after speech, writing silence,
+  for a configurable period, 30 seconds by default as in NVDA, because
+  Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or
+  delay the next speech; cancelling keeps Stop and Reset, as NVDA does,
+  since shared mode has no other way to discard queued audio; the engine
+  period trial; and the earcon re-mix, where speech that starts while an
+  earcon plays is mixed into audio not yet played, re-mixing what was
+  already handed to the device, so an indication's sound and its speech
+  start together and cancelling an utterance cancels both. Speech now
+  waits behind the roughly 40 ms of earcon already queued, which delays
+  every start-up's first announcement. The latency ledger stops counting
+  the tail of earlier speech as "mixer and device", which made
+  back-to-back utterances look slow there. Each is measured with the
+  device stages of the communication design's section 10.1.
+- Passing runs log 1 to 10 warnings "the device ran dry in the middle of
+  an utterance: an audible gap" from `verbatim::audio` (debug build); look
+  at them with the audio step.
+- The audio device awake time setting, with the awake period above.
+- What Verbatim does for a user whose first OneCore activation after logon takes longer than the synthesizer host's ten-second hang bound is open (Dickson, 2026-10-21).
+
+## M6.4 — Terminal residuals
+
+What remains of the terminal redesign (Dickson, 2026-10-29).
+
+Built from [the terminal model](design/terminal-model.md) (accepted by
+Dickson on 2026-10-25), which states what is read, the rules and the
+limits; each part is one step in the sense of `REVIEW.md`, with nothing
+pushed until the last. The model in `verbatim-text`, its move into Core's
+reducer, "Report status bar" and moving by command are built. What
+remains, in order:
+
+- Pi's regular mode in the moving-by-command and "Report status bar"
+  scenarios, once Pi is installed on the test machine.
+- Recordings for the conformance corpus, after checking that the NVDA pin
+  equals the installed build: Pi's regular mode resized, set aside until
+  the corpus can record a resize (Dickson, 2026-10-25); fzf, once Dickson
+  installs it. htop is dropped (Dickson, 2026-10-25).
+- End-to-end scenarios: the existing terminal scenarios brought back to
+  passing; then cargo's build bar below its output; the landing rule's
+  keys; Control+W, Control+U and Control+K; tab completion; suggestions; a
+  completion list; menu completion; history search; output while typing;
+  pasting; slow echo; a spinner with a message; several progress lines;
+  resizing; a list shown by colour; a checkbox list; a refreshing
+  full-screen script; fzf-like filtering; the review cursor kept through a
+  footer redraw and moved with its text through a scroll; output just
+  after the focus with an interactive shell; the console host's real
+  password prompt; and Pi in both modes. Then, as decided on 2026-10-24,
+  Verbatim's own streaming program (`verbatim-stream-test`) at up to 60
+  frames a second in each way programs stream, with a footer, a header and
+  a middle status row, expected to speak the streamed text once, in order,
+  with no word split, whatever the reads' timing.
+- The measurements after, in [performance](performance.md), for typing, a
+  20,000-line flood, a Pi stream at its recorded pace, a clock ticking
+  once a second, and a full-screen program refreshing rows, against the
+  baseline of processor time, wake-ups and change-to-speech time taken on
+  2026-10-23 on the build before the reading changes (runs under
+  `target/perf/terminal-baseline-*`; the memory baseline in
+  [performance](performance.md), "Memory use").
+- [The terminals parity entry](parity/terminals.md), the crates'
+  documents and these entries brought in line with the model.
+- The whole terminal suite, `cargo xtask ci`, and the push.
+
+Related items, each to be settled within the redesign or after it:
+
+- Provisional, awaiting Dickson (2026-10-11): the console host raises no
+  text change for a write that leaves the cursor where it was, as a full
+  history scrolling whole lines may (the model's "The terminals"); if a
+  measurement on the installed build confirms it, follow NVDA, which has
+  the same gap.
+- An unsettled terminal read with nothing queued behind it is never
+  retried; `conhost_leave_flood` once heard no "blank" for an empty new
+  console window, its first read giving nothing within 15 seconds.
+- Windows Terminal sometimes raises no TextChanged event for a typed
+  character, only caret moves, so about 5% of runs do not echo it; settle
+  whether Windows Terminal or UIA loses the event, with about 60 runs and
+  a second, independent UIA client listening. The model's reading on
+  caret events (its "Reading rules", rule 1) comes back with the outpost
+  and Core step (Dickson, 2026-10-17).
+- `windows_terminal_two_windows` may say "<title> terminal" two or three
+  times, from Windows Terminal's second runtime identity (Dickson,
+  2026-10-19; [UIA faults](uia-bugs.md), "Windows Terminal raises focus
+  from a second runtime identity"); the rule is M5's.
+- The console host's say-all repeats one row: its text pattern clamps an
+  expansion below the last row with text back onto that row, and nothing
+  checks that the expanded line contains its point. Proposed fix: take a
+  unit that does not contain its point as the end of the text, one
+  comparison inside the existing remote program, judged by a fake-source
+  unit test, a mockapp provider whose expansion clamps, and a console host
+  scenario step from a fresh NVDA capture.
+- `conhost_full_screen` races its program: a read taken before
+  `altscreen.ps1` parks the cursor speaks "row N changed", on the base
+  build too.
+- A lost read was seen to ask twice for the whole document, where one
+  whole-document read should answer it.
+- "hellook1" is heard in the recorded hand streams.
+- Windows Terminal's launch focus sometimes speaks "... terminal" without
+  "... window", and the desktop's announcement is sometimes cancelled
+  (the `*_up_typing`, `*_typing` and `*_commands` scenarios).
+- `conhost_typing` missed a typed "o" in 2 of 6 runs on the base build.
+- The reader's fix for a caret ahead of the typing covers only a line
+  showing none of the pending typing: with "a" and "b" typed, a line
+  showing "a" with the caret one cell ahead gives Gained "a" and then
+  Changed "ab".
+- Enter that erases a grey suggestion speaks the input line again.
+- Up Arrow and then "e" typed before the recalled line is read gives Echo
+  "e" and then Gained "cho one".
+- Backspace erasing "o", Control+Backspace erasing "tw", and tab
+  completion have no exact reader tests.
+- A trimmed caret line taller than the kept screen could miscount the
+  caret's column along its line.
+- The reader ignores the colours of a colours re-read that comes late.
+- The outpost takes a read's `ended_ms` after converting its text from
+  UTF-16, so the conversion's time counts as part of the read.
+- A review command's history read is placed with gaps in its checks: its
+  answer carries no `from_start`, so a start the outpost refused during
+  the read is placed as if counted from the read it names; an
+  `Unanswered` history read is placed as no rows above the start; and a
+  whole-document history read is placed by the end of the memory's rows
+  rather than by a start, so more than a screen of unshown output printed
+  during the round trip shifts every placed row (ReviewTop then
+  ReviewNextLine read the wrong line). The outpost could count a whole
+  read's rows from its newest start too, so Core places it by start.
+
+Follow-ups:
+
+- Root-cause, from the GitHub run logs, the hosted end-to-end `windows_terminal_two_windows` and `windows_terminal_leave_flood` failures on main before 2026-10-15; neither reproduces here.
+- Repeat `line_key_flood` on GitHub's runner, where it once read a half-written line (deferred, Dickson, 2026-10-21).
+- The cleanup of a stuck flood console, which once outlived its scenario until the agent was force-killed, is not tested.
+- An outpost crash inside UIA's saved-event delivery (`ProtobufHelper::GetCacheResponse` reading a null element reference on a UIA worker thread): with the focus pipeline's section 17 built, `conhost_leave_flood`'s console host outpost failed fast again; read its full dump, kept outside the repository, and make section 17's fifty-run check.
+- A console window read through MSAA is "pane" where NVDA gives its client object the legacy console overlay with the terminal role (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733, and `IAccessible/winConsole.py`; deferred, Dickson, 2026-10-21).
+- A console whose provider's formatting check gets no answer is probed and checked twice in one arbitration entry, through the `None` branch of `decide` in `crates/verbatim-outpost/src/arbitration.rs`.
+
+Exit: Terminal sessions are solid; terminal flood E2E shows bounded
+latency and no hang.
 
 ## M7 — Browse mode, browsers, and the injection helper
 
