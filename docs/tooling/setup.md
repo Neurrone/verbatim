@@ -158,7 +158,12 @@ build into their own `target` directory; do not point them at one shared
 checkouts overwrite each other's output, every switch between checkouts
 recompiles them all, and the suite stages Verbatim from the worktree's own
 `target\debug`, not the shared one. Share only wxWidgets, by setting
-`VERBATIM_WX_DIR` to one directory for all of them. A worktree whose path
+`VERBATIM_WX_DIR` to one directory for all of them. A worktree's build is
+used for one piece of work, so build it with `CARGO_INCREMENTAL=0`, which
+leaves out the incremental state (about half of a worktree's target
+directory, 2.7 of 5.4 GB measured on 2026-10-29), and delete its target
+directory when the worktree is removed: on 2026-10-29 four kept worktree
+target directories and the main one filled the development machine's disk. A worktree whose path
 is deep (such as one under `.claude\worktrees`) also needs
 `CMAKE_GENERATOR=Ninja`, since MSBuild's tracking files in eSpeak NG's
 CMake build exceed the path length limit there. On a 16 GB machine, build
