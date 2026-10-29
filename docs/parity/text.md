@@ -19,12 +19,14 @@ that is neither has no text.
   ("Rich edit text" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
 - Rich edit paragraphs: **different** until M6.5. NVDA reads a rich edit
-  control of version 2.0 or later through its object model
-  (`ITextDocumentTextInfo`, `nvda/source/NVDAObjects/window/edit.py` 1041
-  to 1045), whose paragraph is the text between line breaks; Verbatim
-  reads it through window messages, and its paragraph is the line as
-  shown, so Control+Up and Control+Down Arrow move by wrapped lines
-  there.
+  control through its object model whenever it can get that model
+  (`ITextDocumentTextInfo` for any `editAPIVersion` other than 0,
+  `nvda/source/NVDAObjects/window/edit.py` 1041 to 1045), whose
+  paragraph is the text between line breaks; Verbatim reads it through
+  window messages, and its paragraph unit is the line as shown, so after
+  Control+Up or Control+Down Arrow, which the application moves by its
+  own paragraphs in both, Verbatim speaks the wrapped line where NVDA
+  speaks the paragraph.
 - NVDA's `caretMovementFailed` event is not offered.
 
 The layer's cases are the entries that follow, from "Caret keys and

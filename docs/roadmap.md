@@ -578,13 +578,15 @@ one milestone (Dickson, 2026-10-29).
 Formatting and the rich edit control:
 
 - A rich edit control read through its own object model
-  (`ITextDocument`), as NVDA reads rich edit 2.0 and later
-  (`ITextDocumentTextInfo`, `nvda/source/NVDAObjects/window/edit.py`
-  1041 to 1045): its own paragraphs, so that Control+Up and Control+Down
-  Arrow move by them, its own sentences for Alt+Up and Alt+Down, its
-  embedded objects named, its paragraph alignment and its links.
-  Verbatim reads a rich edit control through window messages, its
-  paragraph being its line as shown.
+  (`ITextDocument`), as NVDA reads a rich edit control whenever it can
+  get that model (`ITextDocumentTextInfo`,
+  `nvda/source/NVDAObjects/window/edit.py` 1041 to 1045): its own
+  paragraphs, so that Control+Up and Control+Down Arrow speak the
+  paragraph rather than the wrapped line, its own sentences for Alt+Up
+  and Alt+Down and say-all, its embedded objects named, its paragraph
+  alignment and its links. Verbatim reads a rich edit control through
+  window messages, its paragraph unit being its line as shown
+  (`docs/parity/text.md`, "Rich edit paragraphs").
 - Formatting in classic edit controls, plain and rich, as NVDA reads it;
   they read none today.
 - Formatting in review commands and say-all, which read none today
@@ -602,6 +604,7 @@ Text and selection:
 Typing and keys:
 
 - Verbatim echoes a typed character from its keyboard hook, before the application handles the key, where NVDA echoes from the application's typed-character event; a letter typed within about 40 ms of Tab is not echoed (Dickson, 2026-10-10, for a later milestone).
+- Any key press that cuts speech marks a caret key's answer as having a later key (`later_key`), a typed character included, where NVDA's caret script gives way only to another script (`isScriptWaiting`, `nvda/source/editableText.py` 94 to 95); so a letter typed within 100 ms of a key that moves nothing silences that key, where NVDA speaks its unit.
 - Key holding's gaps: no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a held key whose release is never seen stays in `held_downs`; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
 
 Exit: each entry is matched (verified) by a scenario or a test, with a
