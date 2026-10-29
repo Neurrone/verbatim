@@ -21,6 +21,8 @@ The lines read, all under the log target rework_measure but the gap's:
   focus).
 - outpost-*.log: what="msaa_focus" (one per MSAA focus that reached the
   duplicate test), what="hook_in" and what="forwarding_ended"; and the
+  outpost's what="focused_read" (one per GetFocusedElementBuildCache the
+  outpost made, for a focus-now answer or a gap read); and the
   outpost's own lines for the gap: "MSAA focus dropped: UIA owns the
   window" (a WinEvent copy in a UIA window) and "no UIA focus followed a
   WinEvent focus in a UIA window" (a firing), with its uia_focus_before
@@ -48,6 +50,10 @@ Definitions:
   core_focus line with taken=false and held_other_of_app=true.
 - The hold's cost: in one outpost log, the time from hook_in to the next
   forwarding_ended.
+- A mismatch: a focused_read line with differ=true, the element the call
+  found being in another process than the checked window's provider. A
+  read that failed (error not empty) has no element to compare and is
+  counted apart.
 - A text request's round trip: text_reduced's at_us less text_sent's, by
   query id within one run; caret watches (op AwaitCaret), which wait for
   the application to act, are left out.
@@ -146,6 +152,7 @@ class Tally:
         self.gap_copies_opened = 0
         self.gap_firings = Counter()
         self.text_us = defaultdict(list)
+        self.focused_reads = Counter()
 
     def add(self, other):
         self.runs += other.runs
@@ -163,6 +170,7 @@ class Tally:
         self.gap_firings.update(other.gap_firings)
         for op, samples in other.text_us.items():
             self.text_us[op].extend(samples)
+        self.focused_reads.update(other.focused_reads)
 
 
 def tally_run(folder):
@@ -271,6 +279,12 @@ def tally_run(folder):
                 )
                 if truth(found.get("today_repeat")):
                     tally.focus["msaa"]["dropped as a repeat today"] += 1
+            elif what == "focused_read":
+                tally.focused_reads["reads"] += 1
+                if truth(found.get("differ")):
+                    tally.focused_reads["mismatches"] += 1
+                if found.get("error"):
+                    tally.focused_reads["failed"] += 1
             elif what == "hook_in":
                 if hook_in is not None:
                     tally.unended_starts += 1
@@ -332,6 +346,11 @@ def report(name, tally):
         f"  WinEvent copies in a UIA window: {tally.gap_copies} ({tally.gap_copies_opened} opened a gap); "
         f"gap firings: {sum(tally.gap_firings.values())}, {ratio} per copy"
         + (f"; by field: {firings}" if firings else "")
+    )
+    reads = tally.focused_reads
+    out.append(
+        f"  outpost focused-element reads: {reads['reads']}; element in another process than the "
+        f"checked window's provider: {reads['mismatches']}; failed, so not compared: {reads['failed']}"
     )
     every = [sample for samples in tally.text_us.values() for sample in samples]
     out.append(f"  text request round trip, caret watches left out: {figures(every)}")

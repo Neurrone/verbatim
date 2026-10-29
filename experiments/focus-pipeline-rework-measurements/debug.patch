@@ -1,8 +1,8 @@
 From 489574483c76675d7a59a444d239b2ef22b2a4f8 Mon Sep 17 00:00:00 2001
 From: Dickson Tan <dickson.tan.2013@gmail.com>
 Date: Thu, 29 Oct 2026 17:13:42 +0800
-Subject: [PATCH] Scratch: log the focus pipeline rework's step 1 measurements
- under rework_measure
+Subject: [PATCH 1/2] Scratch: log the focus pipeline rework's step 1
+ measurements under rework_measure
 
 Never merged; kept as experiments/focus-pipeline-rework-measurements/debug.patch.
 
@@ -816,6 +816,129 @@ index 00000000..2a0b36eb
 +    }
 +    (current, unplaced)
 +}
+-- 
+2.55.0.windows.5
+
+
+From b22c90f2fcd3f926ecb29d3f4fcbd2fc60fcc4c9 Mon Sep 17 00:00:00 2001
+From: Dickson Tan <dickson.tan.2013@gmail.com>
+Date: Thu, 29 Oct 2026 19:31:16 +0800
+Subject: [PATCH 2/2] Scratch: log each focused-element read of the outpost
+ under rework_measure
+
+After GetFocusedElementBuildCache returns in focused_control_in, a
+what="focused_read" line gives the checked window, its provider process
+(the outpost's application, which the check proved), the element's cached
+process id, whether the two differ, the call's error if any, and the
+microseconds from the check to the call's return. The process id is not
+in the outpost's requests, so Uia::focused adds it to a copy of the
+request for this build only.
+
+Never merged; kept as experiments/focus-pipeline-rework-measurements/debug.patch.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NWMYDM8JjBtW9KLNaarPHF
+---
+ crates/verbatim-outpost/src/outpost/read.rs | 49 ++++++++++++++++++++-
+ crates/verbatim-uia/src/client.rs           |  9 +++-
+ 2 files changed, 56 insertions(+), 2 deletions(-)
+
+diff --git a/crates/verbatim-outpost/src/outpost/read.rs b/crates/verbatim-outpost/src/outpost/read.rs
+index f93dd772..38460a02 100644
+--- a/crates/verbatim-outpost/src/outpost/read.rs
++++ b/crates/verbatim-outpost/src/outpost/read.rs
+@@ -921,6 +921,8 @@ pub(super) fn focused_control_in(
+     client: &mut Client,
+ ) -> Option<(isize, FocusedControl)> {
+     let hwnd = control_window(context.target_pid(), || context.focus_window())?;
++    // Measurement (scratch): the check's end, for the `focused_read` line.
++    let checked_at = std::time::Instant::now();
+     if window_belongs_to_hidden_frame(hwnd) {
+         return None;
+     }
+@@ -936,7 +938,9 @@ pub(super) fn focused_control_in(
+     if window_uses_uia(context, hwnd) {
+         let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
+         let ancestor_request = context.ancestor_request(uia).ok()?;
+-        let element = (context.focused_element)(uia, &nodes).ok()?;
++        let focused = (context.focused_element)(uia, &nodes);
++        measure_focused_read(context, hwnd, checked_at, &focused);
++        let element = focused.ok()?;
+         let mut node = with_legacy_checked_state(
+             element.live().element(),
+             element.snapshot(&context.uia_registry),
+@@ -1000,6 +1004,49 @@ pub(super) fn focused_control_in(
+     }
+ }
+ 
++/// Measurement (scratch): logs whether the focused element
++/// [`focused_control_in`]'s call found, `focused`, is in another process
++/// than the checked window `hwnd`'s provider, which `control_window` proved
++/// is the outpost's application, with the time from the check, at
++/// `checked_at`, to the call's return.
++fn measure_focused_read(
++    context: &Context,
++    hwnd: isize,
++    checked_at: std::time::Instant,
++    focused: &windows::core::Result<Cached<Node>>,
++) {
++    let returned_at = std::time::Instant::now();
++    let element_pid = focused.as_ref().ok().and_then(|element| {
++        element
++            .observe_cached(
++                windows::Win32::UI::Accessibility::UIA_ProcessIdPropertyId,
++                false,
++            )
++            .ok()
++            .and_then(|value| i32::try_from(&value).ok())
++            .map(i32::cast_unsigned)
++    });
++    let checked_provider = context.target_pid();
++    tracing::debug!(
++        target: crate::rework_measure::TARGET,
++        what = "focused_read",
++        pid = checked_provider,
++        checked_window = hwnd,
++        checked_provider,
++        element_pid = element_pid.unwrap_or(0),
++        differ = element_pid.is_some_and(|pid| pid != checked_provider),
++        error = focused
++            .as_ref()
++            .err()
++            .map(ToString::to_string)
++            .unwrap_or_default(),
++        check_to_return_us =
++            u64::try_from((returned_at - checked_at).as_micros()).unwrap_or(u64::MAX),
++        at_us = now_us(),
++        "measure"
++    );
++}
++
+ /// The window whose focused element [`focused_control_in`] reads for the
+ /// application `target_pid`: the focus window `focus` answers, only when
+ /// that application serves it ([`served_by`]), so a console's client never
+diff --git a/crates/verbatim-uia/src/client.rs b/crates/verbatim-uia/src/client.rs
+index ac05381a..bdaabb94 100644
+--- a/crates/verbatim-uia/src/client.rs
++++ b/crates/verbatim-uia/src/client.rs
+@@ -268,9 +268,16 @@ impl Uia {
+         // A new connection to the focused application, made only by that
+         // application's outpost (`docs/design/listener-without-connections.md`,
+         // section 2).
++        // Measurement (scratch): the element's process id, which the
++        // outpost's requests do not cache, added to a copy of the request
++        // for the outpost's `focused_read` line. Local.
++        // SAFETY: `cache` is a live cache request; the copy is this call's.
++        let cache = unsafe { cache.Clone() }?;
++        // SAFETY: a live cache request; a plain property id.
++        unsafe { cache.AddProperty(windows::Win32::UI::Accessibility::UIA_ProcessIdPropertyId) }?;
+         // SAFETY: `cache` is a live cache request from this client; the
+         // call is a normal cross-process fetch.
+-        let element = unsafe { self.client.GetFocusedElementBuildCache(cache) }?;
++        let element = unsafe { self.client.GetFocusedElementBuildCache(&cache) }?;
+         crate::answered::checked(0, element)
+     }
+ 
 -- 
 2.55.0.windows.5
 

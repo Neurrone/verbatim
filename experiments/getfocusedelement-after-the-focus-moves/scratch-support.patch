@@ -1,0 +1,12 @@
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index a0d14ed2..5108e323 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -126,3 +126,7 @@ harness = false
+ 
+ [lints]
+ workspace = true
++
++[[test]]
++name = "getfocusedelement_after_the_focus_moves"
++harness = false
