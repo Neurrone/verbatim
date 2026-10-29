@@ -1,0 +1,821 @@
+From 489574483c76675d7a59a444d239b2ef22b2a4f8 Mon Sep 17 00:00:00 2001
+From: Dickson Tan <dickson.tan.2013@gmail.com>
+Date: Thu, 29 Oct 2026 17:13:42 +0800
+Subject: [PATCH] Scratch: log the focus pipeline rework's step 1 measurements
+ under rework_measure
+
+Never merged; kept as experiments/focus-pipeline-rework-measurements/debug.patch.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NWMYDM8JjBtW9KLNaarPHF
+---
+ Cargo.lock                                    |   1 +
+ crates/mockapp/Cargo.toml                     |   6 +
+ crates/mockapp/tests/rework_measure_check.rs  |  64 +++++++++++
+ crates/verbatim-app/src/main.rs               |  79 +++++++++++++
+ crates/verbatim-core/src/lib.rs               |   2 +-
+ crates/verbatim-core/src/reduce.rs            |  36 +++++-
+ crates/verbatim-outpost/src/focus_read.rs     |  94 ++++++++++++++++
+ crates/verbatim-outpost/src/lib.rs            |   1 +
+ crates/verbatim-outpost/src/listener.rs       |  35 ++++++
+ crates/verbatim-outpost/src/outpost/mod.rs    |  14 +++
+ crates/verbatim-outpost/src/outpost/worker.rs |  66 ++++++++++-
+ crates/verbatim-outpost/src/rework_measure.rs | 105 ++++++++++++++++++
+ 12 files changed, 499 insertions(+), 4 deletions(-)
+ create mode 100644 crates/mockapp/tests/rework_measure_check.rs
+ create mode 100644 crates/verbatim-outpost/src/rework_measure.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index dec99382..201e8045 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1034,6 +1034,7 @@ dependencies = [
+  "clap",
+  "serde",
+  "serde_json",
++ "tracing-subscriber",
+  "verbatim-core",
+  "verbatim-ia2",
+  "verbatim-model",
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index a0d14ed2..b78f6bae 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -22,6 +22,8 @@ verbatim-ia2.workspace = true
+ verbatim-outpost.workspace = true
+ verbatim-uia.workspace = true
+ verbatim-uia-rops.workspace = true
++# Scratch: the measurement patch's check prints its lines.
++tracing-subscriber.workspace = true
+ 
+ # The test binaries that use UIA as a client run through their own runner,
+ # which ends the process without running DLL detach code; the reason is in
+@@ -83,6 +85,10 @@ harness = false
+ name = "native_controls"
+ harness = false
+ 
++[[test]]
++name = "rework_measure_check"
++harness = false
++
+ [[test]]
+ name = "remote_ops"
+ harness = false
+diff --git a/crates/mockapp/tests/rework_measure_check.rs b/crates/mockapp/tests/rework_measure_check.rs
+new file mode 100644
+index 00000000..bff98a26
+--- /dev/null
++++ b/crates/mockapp/tests/rework_measure_check.rs
+@@ -0,0 +1,64 @@
++//! Scratch check for the focus pipeline rework's measurement patch (never
++//! merged): a listener read and an outpost, on a desktop of their own,
++//! print the patch's `rework_measure` lines to standard error.
++
++mod common;
++#[path = "common/harness.rs"]
++mod harness;
++
++use verbatim_outpost::focus_read::{FocusEvent, Judged};
++use verbatim_outpost::protocol::DeliveredFact;
++use verbatim_uia::Uia;
++
++use common::outpost::OutpostUnderTest;
++
++/// A UIA focus read twice by the listener's reader and handed to an outpost
++/// whose hand-over ends, then an MSAA focus handed twice to another.
++fn the_measurement_lines_are_logged() {
++    tracing_subscriber::fmt()
++        .with_env_filter("rework_measure=debug")
++        .with_writer(std::io::stderr)
++        .init();
++
++    let title = common::unique_title("rework-check-uia");
++    let mut app = common::spawn("small.json", "uia", &title);
++    let hwnd = common::find_window(&title);
++    let uia = Uia::new().expect("a UIA client");
++    let outpost = OutpostUnderTest::new(&app);
++    outpost.forwarding_ended(verbatim_ia2::event_clock());
++    app.send("set-focus btn1");
++    let first = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
++    assert_eq!(first.node.name.as_deref(), Some("Original Name"));
++    let (judged, _) = outpost.listener_read(&common::listener_focus(&uia, hwnd.0 as isize));
++    assert!(
++        matches!(judged, Judged::Dropped(_)),
++        "today's listener drops the repeat"
++    );
++    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
++    outpost.settled();
++    drop(outpost);
++    app.quit();
++
++    let title = common::unique_title("rework-check-msaa");
++    let mut app = common::spawn("small.json", "msaa", &title);
++    let hwnd = common::find_window(&title);
++    let outpost = OutpostUnderTest::new(&app);
++    app.send("set-focus btn1");
++    let first = outpost.msaa_focus(hwnd, 1);
++    assert_eq!(first.node.name.as_deref(), Some("Original Name"));
++    outpost.deliver(DeliveredFact::MsaaFocus {
++        hwnd: hwnd.0 as isize,
++        id_object: 2,
++        id_child: 0,
++    });
++    outpost.settled();
++    drop(outpost);
++    app.quit();
++}
++
++fn main() {
++    harness::run_isolated(&[(
++        "the_measurement_lines_are_logged",
++        the_measurement_lines_are_logged,
++    )]);
++}
+diff --git a/crates/verbatim-app/src/main.rs b/crates/verbatim-app/src/main.rs
+index eb9c7d0d..a77aba88 100644
+--- a/crates/verbatim-app/src/main.rs
++++ b/crates/verbatim-app/src/main.rs
+@@ -1655,6 +1655,7 @@ impl ReducerThread<'_> {
+ 
+     /// Runs one input through the reducer, records it in the flight
+     /// recorder, and executes the resulting effects.
++    #[allow(clippy::too_many_lines)]
+     fn apply(&mut self, input: Input) {
+         let trace_id = match &input {
+             Input::Event { trace_id, .. }
+@@ -1684,7 +1685,69 @@ impl ReducerThread<'_> {
+             } => Some((*trace_id, node.id.outpost())),
+             _ => None,
+         };
++        // Measurement (scratch): what Core made of each focus report.
++        let measured = match &input {
++            Input::Event {
++                trace_id,
++                observed_at_us,
++                source,
++                backend,
++                event:
++                    verbatim_model::NormalizedEvent::FocusChanged {
++                        node, foreground, ..
++                    },
++                ..
++            } => Some((
++                *trace_id,
++                *observed_at_us,
++                *source,
++                *backend,
++                node.id,
++                *foreground,
++                self.state.focused().map(|(_, focus)| focus.id) == Some(node.id),
++            )),
++            _ => None,
++        };
++        let completed = match &input {
++            Input::TextCompleted {
++                trace_id, query_id, ..
++            } => Some((*trace_id, query_id.0)),
++            _ => None,
++        };
+         let effects = reduce(&mut self.state, &input);
++        let verdict = verbatim_core::take_focus_verdict();
++        if let Some((trace, observed_us, source, backend, node, foreground, was_focus)) = measured {
++            let after = self.state.focused().map(|(pid, focus)| (pid, focus.id));
++            let node_text =
++                |id: verbatim_model::NodeId| format!("{}:{}", id.outpost().0, id.number());
++            tracing::debug!(
++                target: "rework_measure",
++                what = "core_focus",
++                trace = %trace,
++                pid = source.0,
++                backend = ?backend,
++                node = node_text(node),
++                foreground,
++                observed_us,
++                was_focus,
++                taken = self.state.focuses_queued() != queued,
++                verdict,
++                held_other_of_app = after.is_some_and(|(pid, id)| pid == source && id != node),
++                focus_after = after.map(|(_, id)| node_text(id)).unwrap_or_default(),
++                applied_us = verbatim_process::clock::now_us(),
++                "measure"
++            );
++        }
++        if let Some((trace, query)) = completed {
++            tracing::debug!(
++                target: "rework_measure",
++                what = "text_reduced",
++                trace = %trace,
++                query,
++                at_us = verbatim_process::clock::now_us(),
++                "measure"
++            );
++        }
+         self.tell_core_focus(judged, queued, held_before);
+         if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
+         {
+@@ -1917,6 +1980,12 @@ impl ReducerThread<'_> {
+         } else {
+             self.requests.begin(outpost, asker)
+         };
++        let op_kind = format!("{op:?}");
++        let op_kind = op_kind
++            .split(['(', ' ', '{'])
++            .next()
++            .unwrap_or_default()
++            .to_owned();
+         let command = SupervisorToOutpost::Query {
+             trace_id,
+             request_id: id.0,
+@@ -1924,6 +1993,16 @@ impl ReducerThread<'_> {
+             timing: EventTiming::default(),
+         };
+         self.send(outpost, id, command);
++        tracing::debug!(
++            target: "rework_measure",
++            what = "text_sent",
++            trace = %trace_id,
++            query = query_id.0,
++            outpost = outpost.0,
++            op = op_kind,
++            at_us = verbatim_process::clock::now_us(),
++            "measure"
++        );
+     }
+ 
+     /// Sends request `id` to `outpost`, failing it at once when it cannot be
+diff --git a/crates/verbatim-core/src/lib.rs b/crates/verbatim-core/src/lib.rs
+index 1005ce31..74a860dd 100644
+--- a/crates/verbatim-core/src/lib.rs
++++ b/crates/verbatim-core/src/lib.rs
+@@ -35,6 +35,6 @@ pub use dump::{
+ pub use flight_recorder::FlightRecorder;
+ pub use focus_rules::is_selection_container;
+ pub use recorder::{RecordedInput, ReducerRecorder, replay};
+-pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};
++pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce, take_focus_verdict};
+ pub use state::SrState;
+ pub use terminal_model::{read_at, read_of, snapshot_of};
+diff --git a/crates/verbatim-core/src/reduce.rs b/crates/verbatim-core/src/reduce.rs
+index f9f4b560..0cbcd37f 100644
+--- a/crates/verbatim-core/src/reduce.rs
++++ b/crates/verbatim-core/src/reduce.rs
+@@ -36,6 +36,29 @@ use crate::{editing, review, review_text, say_all, shell, terminal, terminal_mod
+ /// acceptance"); the supervisor starts an outpost for no other notification.
+ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
+ 
++thread_local! {
++    /// Measurement (scratch, never merged): what the last focus report
++    /// reduced on this thread became, for the host's log.
++    static FOCUS_VERDICT: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
++}
++
++fn verdict(what: &'static str) {
++    FOCUS_VERDICT.with(|cell| cell.set(what));
++}
++
++fn unrelated() -> Vec<Effect> {
++    verdict("not related to the foreground window");
++    Vec::new()
++}
++
++/// Measurement (scratch, never merged): what the last focus report reduced
++/// on this thread became, emptied as it is read; empty when no focus
++/// report reached Core's focus rules.
++#[must_use]
++pub fn take_focus_verdict() -> &'static str {
++    FOCUS_VERDICT.with(|cell| cell.replace(""))
++}
++
+ /// Advances `state` by one `input`, changing it in place, and returns the
+ /// effects the imperative shell must execute.
+ ///
+@@ -597,9 +620,11 @@ fn focus_dropped_first(
+         return false;
+     };
+     if !foreground && crate::applications::refuses_focus(window, node) {
++        verdict("an application's rule refuses it");
+         return true;
+     }
+     if is_duplicate_focus(state, node) {
++        verdict("a duplicate of the focus Core holds");
+         let (ancestors, ancestors_unknown) =
+             focus_ancestors(window, node, (ancestors, *ancestors_unknown));
+         keep_newer_reading(state, node, ancestors, ancestors_unknown);
+@@ -607,7 +632,11 @@ fn focus_dropped_first(
+         editing::keep_focus_caret(state, node.id, text.as_deref(), observed.0);
+         return true;
+     }
+-    is_stale_focus(state, node.id.outpost(), observed, window)
++    let dropped_stale = is_stale_focus(state, node.id.outpost(), observed, window);
++    if dropped_stale {
++        verdict("stale");
++    }
++    dropped_stale
+ }
+ 
+ /// A focus's ancestors and whether they are unknown, as Core takes them:
+@@ -680,7 +709,7 @@ fn reduce_event(
+         window,
+         event,
+     ) {
+-        Acceptance::Dropped => return Vec::new(),
++        Acceptance::Dropped => return unrelated(),
+         Acceptance::Background => return reduce_background(state, trace_id, observed_at_ms, event),
+         Acceptance::Attended => {}
+     }
+@@ -889,6 +918,7 @@ fn reduce_focus_changed(
+             && let (Some(focus_window), Some(window)) = (focus.window.as_ref(), window)
+             && focus_window.top_level == window.top_level
+         {
++            verdict("a foreground report of the window holding the focus");
+             return Vec::new();
+         }
+     } else if let Some(window) = window {
+@@ -944,6 +974,7 @@ fn reduce_focus_changed(
+     {
+         // The silent re-read: the replacement outpost reports the focus the
+         // user already heard, so take its ids without speaking.
++        verdict("taken silently, a replacement outpost's re-read");
+         state.focus = Some(new_focus);
+         state.focuses_queued += 1;
+         if state.navigator.is_none() {
+@@ -988,6 +1019,7 @@ fn reduce_focus_changed(
+     // Entering a menu cuts speech too, at its place among the entered
+     // containers (`focus_speech`).
+     end_text_activity(state, report.node.id, foreground_changed, &mut effects);
++    verdict("taken");
+     state.focus = Some(new_focus);
+     state.focuses_queued += 1;
+     state.navigator = Some(navigator);
+diff --git a/crates/verbatim-outpost/src/focus_read.rs b/crates/verbatim-outpost/src/focus_read.rs
+index e3681056..7e430b6d 100644
+--- a/crates/verbatim-outpost/src/focus_read.rs
++++ b/crates/verbatim-outpost/src/focus_read.rs
+@@ -548,6 +548,11 @@ struct LastFocus {
+     /// Its raw-view ancestors, nearest first, or `None` when its read left
+     /// them unknown: the next read then reuses nothing of this focus.
+     ancestors: Option<Vec<UiaAncestorFact>>,
++    /// Measurement: the event it was read for, its observation, and the
++    /// top-level window of the window it was judged with.
++    trace: TraceId,
++    observed_us: u64,
++    top: isize,
+ }
+ 
+ /// The elements of the UIA focuses the listener's readers accepted, by
+@@ -846,11 +851,91 @@ impl FocusReader {
+     /// Judges and reads the UIA focus event, or menu opening (`kind`),
+     /// whose sender is `sender`, as the registration delivers it, and which
+     /// came as `arrival`.
++    ///
++    /// Measurement (scratch): for a focus, first NVDA's duplicate test
++    /// against this thread's kept read (`CompareElements` and the kept
++    /// element's live `HasKeyboardFocus`, made only when the runtime ids
++    /// are equal, as UIA compares elements by them), and whether that read
++    /// is current by the Terms' rule, logged with today's outcome.
+     pub fn read(
+         &mut self,
+         sender: &Cached<ListenerEvent>,
+         kind: FocusEvent,
+         arrival: Arrival,
++    ) -> Judged {
++        if kind != FocusEvent::Focus {
++            return self.read_today(sender, kind, arrival);
++        }
++        let fields = sender.read();
++        let pid = fields.process_id.unwrap_or(0);
++        let hwnd = fields.role.hwnd;
++        let runtime_id = sender.runtime_id();
++        let kept = self.last.as_ref().map(|last| {
++            (
++                last.trace,
++                last.observed_us,
++                last.top,
++                last.runtime_id == runtime_id,
++                last.element.clone(),
++            )
++        });
++        let (kept_trace, nvda_repeat, test, current, unplaced) = match kept {
++            None => (None, false, "no kept read", false, 0),
++            Some((trace, kept_at, top, same_id, kept_element)) => {
++                let (current, unplaced) =
++                    crate::rework_measure::current(pid, kept_at, top, arrival.observed_at_us);
++                let (repeat, test) = if !same_id {
++                    (false, "another runtime id")
++                } else if hwnd != 0 && window_is_hung(hwnd) {
++                    (false, "its window is hung; not compared")
++                } else {
++                    match self
++                        .uia
++                        .compare_elements(sender.live().element(), &kept_element)
++                    {
++                        Ok(true) => match kept_element.has_keyboard_focus() {
++                            Ok(focused) => (focused, "compared"),
++                            Err(_) => (false, "the kept element's keyboard focus read failed"),
++                        },
++                        Ok(false) => (false, "compared"),
++                        Err(_) => (false, "the comparison failed"),
++                    }
++                };
++                (Some(trace), repeat, test, current, unplaced)
++            }
++        };
++        let judged_us = now_us();
++        let judged = self.read_today(sender, kind, arrival);
++        let outcome = match &judged {
++            Judged::Read(_) => "read",
++            Judged::Dropped(reason) => reason,
++            Judged::Passed(_) => "passed",
++        };
++        tracing::debug!(
++            target: crate::rework_measure::TARGET,
++            what = "uia_focus",
++            trace = %arrival.trace,
++            pid,
++            observed_us = arrival.observed_at_us,
++            judged_us,
++            kept_trace = kept_trace.map(|trace| trace.to_string()).unwrap_or_default(),
++            nvda_repeat,
++            test,
++            current,
++            unplaced,
++            outcome,
++            "measure"
++        );
++        judged
++    }
++
++    /// Today's judgement and read of [`read`](Self::read).
++    #[allow(clippy::too_many_lines)]
++    fn read_today(
++        &mut self,
++        sender: &Cached<ListenerEvent>,
++        kind: FocusEvent,
++        arrival: Arrival,
+     ) -> Judged {
+         let fields = sender.read();
+         let element = sender.live().element();
+@@ -869,6 +954,9 @@ impl FocusReader {
+                 Ok(nearest) => nearest,
+                 Err(reason) => return Judged::Dropped(reason),
+             };
++        if hwnd == 0 {
++            crate::rework_measure::place(arrival.trace, nearest);
++        }
+         let previous = self
+             .last
+             .as_ref()
+@@ -963,6 +1051,9 @@ impl FocusReader {
+                     runtime_id: event.runtime_id.clone(),
+                     element: element.clone(),
+                     ancestors: None,
++                    trace: arrival.trace,
++                    observed_us: arrival.observed_at_us,
++                    top: crate::outpost::window::top_level_of(nearest),
+                 });
+                 self.held_elements
+                     .accept(self.number, element, (nearest, arrival), &self.window);
+@@ -1154,6 +1245,9 @@ impl FocusReader {
+             runtime_id: snapshot.runtime_id.clone(),
+             element: element.clone(),
+             ancestors: ancestors.clone(),
++            trace: arrival.trace,
++            observed_us: arrival.observed_at_us,
++            top: crate::outpost::window::top_level_of(nearest),
+         });
+         self.held_elements
+             .accept(self.number, element, (nearest, arrival), &self.window);
+diff --git a/crates/verbatim-outpost/src/lib.rs b/crates/verbatim-outpost/src/lib.rs
+index ee2a6f0f..3556636a 100644
+--- a/crates/verbatim-outpost/src/lib.rs
++++ b/crates/verbatim-outpost/src/lib.rs
+@@ -31,6 +31,7 @@ pub mod integrity;
+ pub mod listener;
+ pub mod outpost;
+ pub mod protocol;
++pub mod rework_measure;
+ pub mod supervisor;
+ pub mod terminal;
+ pub mod text;
+diff --git a/crates/verbatim-outpost/src/listener.rs b/crates/verbatim-outpost/src/listener.rs
+index 977c5c21..c03d08d3 100644
+--- a/crates/verbatim-outpost/src/listener.rs
++++ b/crates/verbatim-outpost/src/listener.rs
+@@ -960,6 +960,11 @@ impl Listener {
+                     // change to forward, as NVDA takes none, but the window
+                     // in front for the keyboard hook's view.
+                     if event.kind == WinEventKind::ShellForeground {
++                        crate::rework_measure::observed_win_event(
++                            outgoing.now(),
++                            event.hwnd,
++                            window_pid(event.hwnd),
++                        );
+                         let step = watch.borrow_mut().foreground(Front {
+                             window: event.hwnd,
+                             thread: event.thread,
+@@ -1186,10 +1191,19 @@ fn menu_subscription(
+     Subscription::Event {
+         event: UIA_MenuOpenedEventId,
+         callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
++            let observed_at_us = outgoing.now();
+             let fields = sender.read();
+             // The event's process from its cache, the pid its focuses are
+             // read under: no call.
+             if readers.focus_pending(fields.process_id.map(Pid)) {
++                tracing::debug!(
++                    target: crate::rework_measure::TARGET,
++                    what = "uia_menu",
++                    pid = fields.process_id.unwrap_or(0),
++                    observed_us = observed_at_us,
++                    dropped_behind_focus = true,
++                    "measure"
++                );
+                 tracing::debug!("UIA menu opening dropped: a focus is pending");
+                 return;
+             }
+@@ -1225,6 +1239,24 @@ fn queue_for_reading(
+     // Every event's arrival, by its marker, whatever its read makes of it,
+     // so a delay before the listener received it shows.
+     tracing::debug!(%pid, marker = meta.marker, ?kind, ?runtime_id, "UIA focus event received");
++    match kind {
++        FocusEvent::Focus => crate::rework_measure::observed_uia_focus(
++            meta.timing.observed_at_us,
++            fields.role.hwnd,
++            pid.0,
++            meta.trace,
++        ),
++        FocusEvent::MenuOpened => tracing::debug!(
++            target: crate::rework_measure::TARGET,
++            what = "uia_menu",
++            trace = %meta.trace,
++            pid = pid.0,
++            observed_us = meta.timing.observed_at_us,
++            dropped_behind_focus = false,
++            "measure"
++        ),
++        FocusEvent::Selection | FocusEvent::Notification => {}
++    }
+     // The marker goes first, so the read or the drop can only follow it.
+     outgoing.focus_read(
+         pid,
+@@ -1399,6 +1431,9 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
+     if owner == 0 {
+         return false;
+     }
++    if matches!(kind, WinEventKind::Focus | WinEventKind::Foreground) {
++        crate::rework_measure::observed_win_event(observed_at_us, hwnd, owner);
++    }
+     let class = window_class_name(hwnd);
+     let console = class == CONSOLE_WINDOW_CLASS;
+     let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)) else {
+diff --git a/crates/verbatim-outpost/src/outpost/mod.rs b/crates/verbatim-outpost/src/outpost/mod.rs
+index e7a4dd1b..21609eca 100644
+--- a/crates/verbatim-outpost/src/outpost/mod.rs
++++ b/crates/verbatim-outpost/src/outpost/mod.rs
+@@ -1131,6 +1131,13 @@ impl Outpost {
+             fault(context, detail.clone());
+             return Err(detail);
+         }
++        tracing::debug!(
++            target: crate::rework_measure::TARGET,
++            what = "hook_in",
++            pid = target_pid,
++            at_us = now_us(),
++            "measure"
++        );
+         // A verdict the worker kept before the hook was in changed nothing.
+         context.nudge_event_thread(narrowing::Nudge::Decide);
+         tracing::info!(
+@@ -1338,6 +1345,13 @@ impl Outpost {
+                 },
+             ),
+             SupervisorToOutpost::ForwardingEnded { through } => {
++                tracing::debug!(
++                    target: crate::rework_measure::TARGET,
++                    what = "forwarding_ended",
++                    pid = context.target_pid(),
++                    at_us = now_us(),
++                    "measure"
++                );
+                 context
+                     .handover()
+                     .forwarding_ended(*through, std::time::Instant::now());
+diff --git a/crates/verbatim-outpost/src/outpost/worker.rs b/crates/verbatim-outpost/src/outpost/worker.rs
+index 77ef750a..6f2dcb1a 100644
+--- a/crates/verbatim-outpost/src/outpost/worker.rs
++++ b/crates/verbatim-outpost/src/outpost/worker.rs
+@@ -320,6 +320,22 @@ pub(super) struct Tracking {
+     /// selection of one of its items is a change of its value
+     /// ([`Worker::selection_as_value`]).
+     value_from_selection: Option<NodeId>,
++    /// Measurement (scratch): the last MSAA focus this outpost read in
++    /// full, as the rework's kept read.
++    measure_kept: Option<MeasureKept>,
++}
++
++/// Measurement (scratch): the outpost's kept read, the last MSAA focus it
++/// read in full: its event's trace and address, whether it was a simple
++/// child, its top-level window, and whether it is still current by the
++/// Terms' rule (no focus or foreground event of its hook's in another
++/// top-level window since).
++struct MeasureKept {
++    trace: TraceId,
++    address: (isize, i32, i32),
++    simple_child: bool,
++    top: isize,
++    current: bool,
+ }
+ 
+ /// A focus-now answer's control, which the outpost adopts as its focus and
+@@ -3249,6 +3265,27 @@ impl Worker<'_> {
+     /// in: an MSAA focus, foreground change, menu opening, alert, or
+     /// tooltip, whichever brought it.
+     fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
++        // Measurement (scratch): a focus or foreground event in another
++        // top-level window than the kept read's leaves it not current, once
++        // it has been judged itself.
++        let moved = match &fact {
++            DeliveredFact::Foreground { hwnd } | DeliveredFact::MsaaFocus { hwnd, .. } => {
++                Some(top_level_of(*hwnd))
++            }
++            _ => None,
++        };
++        self.fact_today(fact, trace, observed_at_ms);
++        if let Some(top) = moved
++            && let Some(kept) = self.context.tracking().measure_kept.as_mut()
++            && kept.trace != trace
++            && kept.top != top
++        {
++            kept.current = false;
++        }
++    }
++
++    /// Today's handling of [`fact`](Self::fact).
++    fn fact_today(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
+         match fact {
+             DeliveredFact::Foreground { hwnd } => self.foreground(hwnd, trace, observed_at_ms),
+             DeliveredFact::MsaaFocus {
+@@ -3502,6 +3539,7 @@ impl Worker<'_> {
+     }
+ 
+     /// An MSAA focus fact.
++    #[allow(clippy::too_many_lines)]
+     fn msaa_focus(
+         &mut self,
+         hwnd: isize,
+@@ -3566,7 +3604,26 @@ impl Worker<'_> {
+         // while a focus this outpost reported waits for Core's judgement,
+         // unless every one of them is the same object.
+         let resolved_child = candidate.resolved_child();
+-        if self.msaa_focus_repeats(candidate.key()) {
++        let today_repeat = self.msaa_focus_repeats(candidate.key());
++        {
++            let tracking = self.context.tracking();
++            let kept = tracking.measure_kept.as_ref();
++            tracing::debug!(
++                target: crate::rework_measure::TARGET,
++                what = "msaa_focus",
++                trace = %trace,
++                pid = self.context.target_pid(),
++                observed_us = self.timing.observed_at_us,
++                judged_us = now_us(),
++                kept_trace = kept.map(|kept| kept.trace.to_string()).unwrap_or_default(),
++                at_kept = kept.is_some_and(|kept| kept.address == (hwnd, id_object, id_child)),
++                kept_not_simple = kept.is_some_and(|kept| !kept.simple_child),
++                current = kept.is_some_and(|kept| kept.current),
++                today_repeat,
++                "measure"
++            );
++        }
++        if today_repeat {
+             tracing::debug!(
+                 hwnd,
+                 id_object,
+@@ -3601,6 +3658,13 @@ impl Worker<'_> {
+             .as_ref()
+             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
+         self.msaa_event = Some(((hwnd, id_object, id_child), resolved_child > 0));
++        self.context.tracking().measure_kept = Some(MeasureKept {
++            trace,
++            address: (hwnd, id_object, id_child),
++            simple_child: resolved_child > 0,
++            top: top_level_of(hwnd),
++            current: true,
++        });
+         self.emit_focus(
+             trace,
+             self.entry_stamp(observed_at_ms),
+diff --git a/crates/verbatim-outpost/src/rework_measure.rs b/crates/verbatim-outpost/src/rework_measure.rs
+new file mode 100644
+index 00000000..2a0b36eb
+--- /dev/null
++++ b/crates/verbatim-outpost/src/rework_measure.rs
+@@ -0,0 +1,105 @@
++//! Scratch measurement for the focus pipeline rework's step 1 (never
++//! merged): the listener's record of the focus and foreground events its
++//! callbacks observed, by top-level window, for the Terms' currency rule
++//! of a kept read (`docs/design/focus-pipeline-rework.md`, "Terms"). Every
++//! line it feeds is logged under the target [`TARGET`].
++
++use std::collections::VecDeque;
++use std::sync::{Mutex, PoisonError};
++
++use verbatim_model::TraceId;
++
++use crate::outpost::window::top_level_of;
++
++/// The log target of every measurement line.
++pub const TARGET: &str = "rework_measure";
++
++/// How long an observation is kept: longer than any kept read waits for its
++/// next event in a scenario.
++const KEPT_US: u64 = 120_000_000;
++
++/// One focus or foreground event a listener callback observed.
++struct Move {
++    at_us: u64,
++    /// Its top-level window, or `None` for a UIA sender with no window of
++    /// its own, until its reading thread places it.
++    top: Option<isize>,
++    pid: u32,
++    /// The trace of a UIA focus, by which its reading thread places it.
++    trace: Option<TraceId>,
++}
++
++static MOVES: Mutex<VecDeque<Move>> = Mutex::new(VecDeque::new());
++
++fn record(entry: Move) {
++    let mut moves = MOVES.lock().unwrap_or_else(PoisonError::into_inner);
++    let oldest = entry.at_us.saturating_sub(KEPT_US);
++    while moves.front().is_some_and(|front| front.at_us < oldest) {
++        moves.pop_front();
++    }
++    moves.push_back(entry);
++}
++
++/// A `WinEvent` focus or foreground change in `hwnd`, of `pid`, observed at
++/// `at_us`: one `GetAncestor`.
++pub fn observed_win_event(at_us: u64, hwnd: isize, pid: u32) {
++    record(Move {
++        at_us,
++        top: Some(top_level_of(hwnd)),
++        pid,
++        trace: None,
++    });
++}
++
++/// A UIA focus traced `trace` whose sender's cached window is `hwnd` (0
++/// for none), of `pid`, observed at `at_us`.
++pub fn observed_uia_focus(at_us: u64, hwnd: isize, pid: u32, trace: TraceId) {
++    record(Move {
++        at_us,
++        top: (hwnd != 0).then(|| top_level_of(hwnd)),
++        pid,
++        trace: Some(trace),
++    });
++}
++
++/// The reading thread found the nearest window `nearest` of the UIA focus
++/// traced `trace`, whose sender has no window of its own.
++pub fn place(trace: TraceId, nearest: isize) {
++    let mut moves = MOVES.lock().unwrap_or_else(PoisonError::into_inner);
++    if let Some(entry) = moves
++        .iter_mut()
++        .rev()
++        .find(|entry| entry.trace == Some(trace) && entry.top.is_none())
++    {
++        entry.top = Some(top_level_of(nearest));
++    }
++}
++
++/// Whether a kept read of `pid`'s, read for the event observed at
++/// `kept_at_us` in top-level window `kept_top`, is current for the event
++/// observed at `judged_at_us`: no focus or foreground event in another
++/// top-level window was observed strictly between the two. Another
++/// application's windowless UIA sender counts as elsewhere; one of `pid`'s
++/// counts by the window its reading thread placed it in, and one it has not
++/// placed counts as elsewhere. Answers the currency and how many of
++/// `pid`'s windowless senders were unplaced.
++pub fn current(pid: u32, kept_at_us: u64, kept_top: isize, judged_at_us: u64) -> (bool, u32) {
++    let moves = MOVES.lock().unwrap_or_else(PoisonError::into_inner);
++    let mut current = true;
++    let mut unplaced = 0;
++    for entry in moves
++        .iter()
++        .filter(|entry| entry.at_us > kept_at_us && entry.at_us < judged_at_us)
++    {
++        match entry.top {
++            Some(top) if top != kept_top => current = false,
++            Some(_) => {}
++            None if entry.pid != pid => current = false,
++            None => {
++                unplaced += 1;
++                current = false;
++            }
++        }
++    }
++    (current, unplaced)
++}
+-- 
+2.55.0.windows.5
+

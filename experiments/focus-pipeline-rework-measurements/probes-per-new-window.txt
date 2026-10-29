@@ -1,0 +1,6 @@
+Run on 2026-10-29 at ee618c31 (main), Windows 11 build 26200, x64, by rework_programs.rs on a desktop of its own: probes_per_new_window
+a no-provider verdict is kept for 500 ms
+uia window, focus 1 (btn1): listener probes 1, read true; outpost probes 0 for its report
+uia window, focus 2 (slider1): listener probes 0, read true; outpost probes 0 for its report
+msaa window, focus 1 (btn1): outpost probes 1 for its report; listener probes 1 for UIA's proxy focus, dropped: its window does not use UIA, so its MSAA events speak for it
+msaa window, focus 2 (slider1): outpost probes 0 for its report; listener probes 0 for UIA's proxy focus, dropped: its window does not use UIA, so its MSAA events speak for it

@@ -1,0 +1,7 @@
+Run on 2026-10-29 at ee618c31 (main), Windows 11 build 26200, x64, by rework_programs.rs on a desktop of its own: provider_description_with_a_focus_event
+uia: focus event 1: name "Level", control type 50015, class "", framework "", process 13300, provider description "[pid:13300,providerId:0x0 Main(parent link):Unidentified Provider (unmanaged:mockapp.exe)]"
+msaa: focus event 1: name "Level", control type 50015, class "", framework "", process 4716, provider description "[pid:4716,providerId:0x0 Main(parent link):Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]"
+msaa: focus event 2: name "Level", control type 50015, class "", framework "", process 4716, provider description "[pid:4716,providerId:0x0 Main(parent link):Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]"
+msaa: focus event 3: name "Level", control type 50015, class "", framework "", process 4716, provider description "[pid:4716,providerId:0x0 Main(parent link):Microsoft: MSAA Proxy (unmanaged:uiautomationcore.dll)]"
+win32: no focus event within 3 s
+win32: tried SetFocus on the plain window, SetFocus on the fixture's native Button (group_box.json), and EVENT_OBJECT_FOCUS raised by the test on that button; none reached the desktop-wide focus registration on the isolated desktop, so this backend's description was not read.

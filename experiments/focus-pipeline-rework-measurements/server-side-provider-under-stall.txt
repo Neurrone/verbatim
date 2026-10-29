@@ -1,0 +1,17 @@
+Run on 2026-10-29 at ee618c31 (main), Windows 11 build 26200, x64, by rework_programs.rs on a desktop of its own: server_side_provider_under_stall
+unstalled: UiaHasServerSideProvider true
+stall 3000 ms, run 1: UiaHasServerSideProvider answered true after 3001 ms (returned before the stall ended: false); raw probe answered TimedOut after 3000 ms
+stall 3000 ms, run 2: UiaHasServerSideProvider answered true after 3001 ms (returned before the stall ended: false); raw probe answered Provider after 3000 ms
+stall 3000 ms, run 3: UiaHasServerSideProvider answered true after 3001 ms (returned before the stall ended: false); raw probe answered Provider after 3000 ms
+stall 3000 ms, run 4: UiaHasServerSideProvider answered true after 3001 ms (returned before the stall ended: false); raw probe answered Provider after 3000 ms
+stall 3000 ms, run 5: UiaHasServerSideProvider answered true after 3001 ms (returned before the stall ended: false); raw probe answered Provider after 3000 ms
+stall 10000 ms, run 1: UiaHasServerSideProvider answered false after 5004 ms (returned before the stall ended: true); raw probe answered TimedOut after 3007 ms
+stall 10000 ms, run 2: UiaHasServerSideProvider answered false after 5010 ms (returned before the stall ended: true); raw probe answered TimedOut after 3012 ms
+stall 10000 ms, run 3: UiaHasServerSideProvider answered false after 5001 ms (returned before the stall ended: true); raw probe answered TimedOut after 3008 ms
+stall 10000 ms, run 4: UiaHasServerSideProvider answered false after 5002 ms (returned before the stall ended: true); raw probe answered TimedOut after 3010 ms
+stall 10000 ms, run 5: UiaHasServerSideProvider answered false after 5004 ms (returned before the stall ended: true); raw probe answered TimedOut after 3000 ms
+stall 30000 ms, run 1: UiaHasServerSideProvider answered false after 5014 ms (returned before the stall ended: true); raw probe answered TimedOut after 3015 ms
+stall 30000 ms, run 2: UiaHasServerSideProvider answered false after 5009 ms (returned before the stall ended: true); raw probe answered TimedOut after 3015 ms
+stall 30000 ms, run 3: UiaHasServerSideProvider answered false after 5011 ms (returned before the stall ended: true); raw probe answered TimedOut after 3008 ms
+stall 30000 ms, run 4: UiaHasServerSideProvider answered false after 5008 ms (returned before the stall ended: true); raw probe answered TimedOut after 3003 ms
+stall 30000 ms, run 5: UiaHasServerSideProvider answered false after 5006 ms (returned before the stall ended: true); raw probe answered TimedOut after 3011 ms
