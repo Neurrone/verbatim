@@ -136,8 +136,19 @@ receives the event's own element, judges and reads a UIA focus
   ancestors with their window handles, up to the first the thread knew or
   the desktop root, never across the process boundary
   (`verbatim_uia::parent_across_process_boundary`); and a menu item's
-  legacy MSAA state. A read that fails reports the focus from its event,
-  ancestors unknown. Each read is logged at debug with the sender's runtime
+  legacy MSAA state. Where the walk ends below the top it names where the
+  chain goes on (`UiaFocusRead::ancestors_end`, a `protocol::AncestorsEnd`),
+  since it connects to no window: after a step to a parent that fails or
+  finds none, the parent window of its outermost element's nearest window
+  (`ContinueFrom`, `verbatim_uia::outermost_nearest_window`), as NVDA's
+  parent read falls back to the window hierarchy; after the read's budget
+  or its depth limit of 64, that nearest window, from which the chain is
+  completed by plain windows (`PlainFrom`). It reuses, from where a later
+  read meets it, only a chain that reached the top. A read that fails
+  reports the focus from its event, ancestors unknown. A test can be told
+  each call the classic walk is about to make
+  (`FocusReader::observe_calls`, a `CallObserver`), to change the
+  application between two of them. Each read is logged at debug with the sender's runtime
   id, class, framework (read only with debug logging on), and window.
 - The read (`DeliveredFact::UiaFocusRead`, whose `focus` says focus or menu
   opening) or the drop (`DeliveredFact::UiaFocusDropped`, whose `focus`
@@ -306,19 +317,42 @@ console client's focus-now query to its host.
 
 A focus whose top-level window belongs to another process, as the Settings
 page inside `ApplicationFrameHost`'s frame, is read by the listener up to
-the window below the boundary, and the outpost continues the chain from
-that window's parent or owner through MSAA (`read::uia_chain_onward`), as
-NVDA switches API at a window boundary, even for a parent with a UIA
-provider (`docs/design/listener-without-connections.md`, sections 4.2 to
-4.4, decisions 7 and 13). The outpost connects to, probes, and walks up
-into only its application's windows (`read::serves`): its UIA walk
+the window below the boundary, and the outpost completes the chain with
+that window's parent or owner, and every window above it to the desktop,
+as plain windows, with no call into the other process
+(`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
+fallback"; the decision of 2026-10-29). A plain window (`read::plain_window`)
+is read from Windows' own state alone: role window, named by
+`InternalGetWindowText`, unavailable when its style disables it, focused
+when it is its thread's focus window, kept under its window object's
+address. The outpost connects to, probes, and walks up into only its
+application's windows (`read::serves`): its UIA walk
 (`read::uia_ancestors`) stops below the boundary, a step that reaches
-another process's window anyway switches to MSAA there
-(`read::own_window_uses_uia`), the MSAA walk does not probe such a window,
-and a focus route through one is not followed (`Context::focus_route`). The
-accepted exception is object navigation's raw-view step (`Uia::neighbor`),
-which reads such a neighbor through UIA before `read::corrected_backend`
-switches it to MSAA.
+another process's window anyway is not read further, the MSAA walk does
+not step from a window's own window object into a parent window it reads
+as plain (`read::reads_as_plain`) and does not read a parent an
+`accParent` named in one, and a focus route through one is not followed
+(`Context::focus_route`). The accepted exception is object navigation's
+raw-view step (`Uia::neighbor`), which reads such a neighbor through UIA
+before `read::corrected_backend` switches it to MSAA.
+
+Where a walk ends below the desktop, the chain goes on from a window
+(`read::window_onward`), as NVDA's `Window._get_parent` does: after an
+MSAA `accParent` that fails or names nothing, or a UIA step that fails, the
+parent window of the outermost object's window; after a window read
+through the other API, that window; above the boundary, the parent or
+owner. Each window is read by its own object as NVDA chooses it, its UIA
+element when the outpost judges it UIA, its MSAA client otherwise, and
+walked up by that backend; a window another process serves and every
+window above it, a ghost's or a hung application's window, and a window
+whose object cannot be acquired is a plain window, the chain going on from
+the parent window of the last two. A walk cut by its time
+(`ENRICHMENT_BUDGET`) or its depth limit of 64 is completed by plain
+windows from its outermost element's nearest window, included. Whether a
+window can be read is the system's judgement (`window_unreadable`), which a
+test that cannot wait five seconds for Windows to judge an application
+hung replaces (`Outpost::set_window_readability_reader`, a
+`WindowReadabilityReader`).
 
 ### Starting an outpost and asking for the focus
 
@@ -881,11 +915,18 @@ unredirected, never unspawned.
   `NodeDetails::top_level_client`, read as a pane and presented by its
   title, as NVDA's `isPresentableFocusAncestor` presents it.
 - Focus-now answers the foreground window, when the application holds the
-  foreground (`GetForegroundWindow`, never `hwndFocus`), and the focused
-  control (`hwndFocus`, through its window's backend) with its ancestors or
-  them unknown (`ancestors_unknown` in Core), selected child, and caret
-  (`read_focus_text`; a console's text area reads as a nameless terminal,
-  `read::console_text_area`). There are no retries.
+  foreground (the outpost's foreground reader, `GetForegroundWindow`, never
+  `hwndFocus`), and the focused control (`hwndFocus`, through its window's
+  backend) with its ancestors or them unknown (`ancestors_unknown` in
+  Core), selected child, and caret (`read_focus_text`; a console's text area
+  reads as a nameless terminal, `read::console_text_area`). A foreground or
+  focus window that is a ghost's or a hung application's is answered as a
+  plain window, the focus with the plain windows above it, with no call, a
+  deliberate difference from NVDA, which says nothing (Dickson,
+  2026-10-29). Through MSAA the focus is the focus window's client's
+  `accFocus`, and an object it names in a window this application does not
+  serve answers no focused control
+  (`verbatim_ia2::acquire::focused_snapshot`). There are no retries.
 - Hidden-frame suppression (decision D9): Core's hidden 1x1 frame, marked
   with `verbatim_model::HIDDEN_FRAME_WINDOW_PROP`, is never announced. Every
   `FocusChanged` path checks the property (`GetPropW`) on the window and its
@@ -938,7 +979,8 @@ unredirected, never unspawned.
   16.2), its backend decided, its runtime id given a new node when the
   listener read that the earlier element under it lost focus or is gone. Its
   ancestors are the listener's chain, filtered, spliced at the previous
-  chain, and continued through MSAA (`read::uia_chain_from_read`). Every UIA
+  chain, and completed above as the listener's walk ended
+  (`read::uia_chain_from_read`). Every UIA
   focus is handled, oldest first; Core culls expired speech.
 - The outpost then finds its own copy by the chain's runtime ids
   (`docs/design/focus-pipeline.md`, section 16.5), after the report for a
@@ -995,12 +1037,20 @@ unredirected, never unspawned.
   focused selection container (`focus_rules::is_selection_container`).
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
   `read::msaa_enrichment`) stop at the previous chain and splice it, within
-  `ENRICHMENT_BUDGET`. A walk that fails or finds no parent below the root
-  (or below a top-level window, for the remote program and
-  `Uia::ancestors`) reports the ancestors unknown, never empty
-  (`Ancestry::ancestors_unknown`, `AncestorWalk::Unknown`). The listener
-  does not stop its next read at such a focus. Object navigation's ancestor
-  query reads the whole chain.
+  `ENRICHMENT_BUDGET`. A walk that finds no parent, or whose step fails,
+  below the root (or below a top-level window, for the remote program and
+  `Uia::ancestors`) goes on from the parent window of its outermost
+  element's nearest window (`Ancestry::failed_hop`, `AncestorWalk::Failed`,
+  `verbatim_ia2::acquire::Walked::Onward`), and one cut by its time or depth
+  limit is completed by plain windows (`AncestorWalk::Cut`, `Walked::Cut`);
+  only a remote program that fails reports the ancestors unknown. The
+  listener does not stop its next read at a focus whose walk did not reach
+  the top. Object navigation's ancestor query reads the whole chain.
+- NVDA's focused-state test of an MSAA focus
+  (`FocusCandidate::has_focused_state`) goes on past an `accParent` that
+  fails or names nothing along the parent windows, each a plain window,
+  focused when it is its thread's focus window (the audit's difference 19),
+  and above the process boundary by plain windows, with no call there.
 - A focus-now's UIA ancestry is one remote operation
   (`verbatim_uia_rops::focus_ancestry`): keyboard focus, selected child,
   parents with the base cache, and nearest window, made into a chain by

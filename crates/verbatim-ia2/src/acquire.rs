@@ -28,6 +28,7 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::UI::Accessibility::{
     NAVDIR_FIRSTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS, ROLE_SYSTEM_CLIENT, ROLE_SYSTEM_GROUPING,
+    ROLE_SYSTEM_WINDOW,
 };
 use windows::Win32::UI::Controls::{TVGN_CHILD, TVGN_NEXT, TVGN_PARENT, TVGN_PREVIOUS};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -452,7 +453,22 @@ impl FocusCandidate {
     /// UIA parent.
     /// A simple child's first ancestor is the object it is a child of. The
     /// object's own state word is kept for the read that follows.
-    pub fn has_focused_state(&mut self, max_hops: u32) -> bool {
+    ///
+    /// Where an `accParent` fails or names nothing, the test goes on along
+    /// the parent windows of the object's window as NVDA's parent does
+    /// (`Window._get_parent`), each a plain window, focused when it is its
+    /// thread's focus window, with local calls only (the audit's
+    /// difference 19). `plain` says which windows are read as plain
+    /// windows, with no call: another process's, a ghost or a hung one.
+    /// The test follows which window it is in by each object's role: a
+    /// window's own window object, whose parent is its parent window's
+    /// client, is the one step that leaves a window. A parent window that
+    /// is plain is not stepped into, and the test goes on from it by plain
+    /// windows; since an `accParent` names whatever it names when it is
+    /// called, the parent window is checked again after the step, and one
+    /// reparented under a plain window meanwhile has its parent not read
+    /// (`docs/design/cross-process-calls-study.md`, instance 6).
+    pub fn has_focused_state(&mut self, max_hops: u32, plain: &dyn Fn(isize) -> bool) -> bool {
         let focused = |state: Option<i32>| {
             state.is_some_and(|state| {
                 states_from_msaa(state.cast_unsigned()).contains(verbatim_model::State::Focused)
@@ -463,22 +479,46 @@ impl FocusCandidate {
         if focused(state) {
             return true;
         }
-        let mut current = if self.acc.child() == CHILDID_SELF {
-            match self.acc.parent() {
-                Ok(Some(parent)) => parent,
-                Ok(None) | Err(_) => return false,
-            }
+        let desktop = window::desktop();
+        let mut current_hwnd = self.key.0;
+        // The object's own state is read; a simple child's next is that of
+        // the object it is a child of, a full object's that of its parent.
+        let (mut current, mut read_state) = if self.acc.child() == CHILDID_SELF {
+            (self.acc.clone(), false)
         } else {
-            self.acc.with_child(CHILDID_SELF)
+            (self.acc.with_child(CHILDID_SELF), true)
         };
-        for _ in 0..max_hops {
-            if focused(current.state()) {
+        for _ in 0..=max_hops {
+            if read_state && focused(current.state()) {
                 return true;
             }
-            current = match current.parent() {
-                Ok(Some(parent)) => parent,
-                Ok(None) | Err(_) => return false,
+            read_state = true;
+            // A window's own window object's parent is its parent window's
+            // client, the one step that leaves a window; every other step
+            // stays in it.
+            let leaves = current.role() == Some(ROLE_SYSTEM_WINDOW.cast_signed());
+            let above = window::parent(current_hwnd);
+            if leaves {
+                if above == 0 || above == desktop {
+                    return false;
+                }
+                if plain(above) {
+                    return plain_window_is_focused(above);
+                }
+            }
+            let Ok(Some(parent)) = current.parent() else {
+                return plain_window_is_focused(above);
             };
+            if leaves {
+                // The window may have been reparented since the check: the
+                // parent is then in the window it has now.
+                let now = window::parent(current_hwnd);
+                if now != above && now != 0 && now != desktop && plain(now) {
+                    return plain_window_is_focused(now);
+                }
+                current_hwnd = now;
+            }
+            current = parent;
         }
         false
     }
@@ -499,6 +539,21 @@ impl FocusCandidate {
             registry,
         )
     }
+}
+
+/// Whether window `hwnd` or a window above it, below the desktop, is focused
+/// as a plain window is: its thread's focus window. The focused-state test
+/// past a failed `accParent`, along parent windows. Local calls only.
+fn plain_window_is_focused(hwnd: isize) -> bool {
+    let desktop = window::desktop();
+    let mut current = hwnd;
+    while current != 0 && current != desktop {
+        if window::is_thread_focus_window(current) {
+            return true;
+        }
+        current = window::parent(current);
+    }
+    false
 }
 
 /// NVDA's `processFocusWinEvent` redirect: when a focus event names a list
@@ -616,6 +671,7 @@ pub fn ancestor_chain(
         max_hops,
         known: &|_| false,
         read_by_other_api: &|_| false,
+        plain: &|_| false,
         out_of_time: None,
     };
     ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
@@ -623,7 +679,8 @@ pub fn ancestor_chain(
 
 /// What bounds an ancestor walk besides reaching the root.
 pub struct AncestorLimits<'a> {
-    /// The most ancestors to read.
+    /// The most ancestors to read: the walk is then cut
+    /// ([`Walked::Cut`]).
     pub max_hops: u32,
     /// Whether an ancestor is already known, from the previous focus's
     /// chain: the walk stops there, as NVDA's focus ancestry stops where it
@@ -631,25 +688,39 @@ pub struct AncestorLimits<'a> {
     pub known: &'a dyn Fn(NodeId) -> bool,
     /// Whether a window is read through the other API: the walk stops
     /// before a parent in a different window for which this holds, as NVDA
-    /// switches API where a parent lies in such a window.
+    /// switches API where a parent lies in such a window
+    /// ([`Walked::Onward`]).
     pub read_by_other_api: &'a dyn Fn(isize) -> bool,
-    /// Whether the walk's time is up, checked between its calls: it then
-    /// gives up ([`Walked::OutOfTime`]).
+    /// Whether a window is read as a plain window, with no call: another
+    /// process's, a ghost or a hung one. The walk does not step from a
+    /// window's own window object into such a parent window, and stops
+    /// before a parent an `accParent` named in such a window, unread
+    /// ([`Walked::Onward`]).
+    pub plain: &'a dyn Fn(isize) -> bool,
+    /// Whether the walk's time is up, checked between its calls: it is
+    /// then cut ([`Walked::Cut`]).
     pub out_of_time: Option<&'a dyn Fn() -> bool>,
 }
 
 /// How an ancestor walk ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Walked {
-    /// It reached the root, or a hop found no parent.
+    /// It reached the root.
     Complete,
     /// It reached this known ancestor, the outermost one in the chain.
     MetKnown(NodeId),
-    /// It ran out of time, so the chain is incomplete.
-    OutOfTime,
-    /// The next parent is in this window, which is read through the other
-    /// API; the chain ends below it.
-    Crossed(isize),
+    /// It ran out of time or reached its hop limit with ancestors left: the
+    /// chain is completed by plain windows from this window, the outermost
+    /// ancestor's own, included (`docs/design/focus-pipeline-rework.md`,
+    /// "A window's name, and the one fallback").
+    Cut(isize),
+    /// The chain goes on from this window's own object, chosen by the
+    /// caller as NVDA chooses it (`Window._get_parent`), the chain ending
+    /// below it: the next parent is in a window read through the other API
+    /// or as a plain window, or a hop's `accParent` failed or named
+    /// nothing, when the window is the parent window of the outermost
+    /// ancestor's own, as NVDA's parent falls back to.
+    Onward(isize),
 }
 
 /// [`ancestor_chain`] within `limits`: the chain, outermost first, and how
@@ -708,18 +779,26 @@ pub fn ancestor_chain_until(
                 break;
             }
             if out_of_time() {
-                walked = Walked::OutOfTime;
+                walked = Walked::Cut(hwnd);
                 break;
             }
         }
     }
 
+    let desktop = window::desktop();
     let mut current = acc.with_child(CHILDID_SELF);
     let mut current_hwnd = hwnd;
     let mut at_self = !is_simple_child;
-    while walked == Walked::Complete && hops_used < max_hops {
+    // Whether `current` is a window's own window object, whose parent is
+    // its parent window's client.
+    let mut at_window_object = false;
+    while walked == Walked::Complete {
+        if hops_used >= max_hops {
+            walked = Walked::Cut(current_hwnd);
+            break;
+        }
         if out_of_time() {
-            walked = Walked::OutOfTime;
+            walked = Walked::Cut(current_hwnd);
             break;
         }
         if !at_self {
@@ -730,6 +809,7 @@ pub fn ancestor_chain_until(
             let self_at = at && id_object == OBJID_CLIENT.0 && self_hwnd == hwnd;
             let snapshot = read_snapshot_with(&current, self_key, context(self_at), registry);
             let id = snapshot.id;
+            at_window_object = snapshot.role == Role::Window;
             chain.push(snapshot);
             current_hwnd = self_hwnd;
             at_self = true;
@@ -739,18 +819,49 @@ pub fn ancestor_chain_until(
             }
             continue;
         }
+        // A window's own window object's parent is its parent window's
+        // client: a parent window read as a plain window is not stepped
+        // into, as another process's is never called. Local calls.
+        let above = window::parent(current_hwnd);
+        if at_window_object && above != 0 && above != desktop && (limits.plain)(above) {
+            walked = Walked::Onward(above);
+            break;
+        }
         let Ok(Some(parent_acc)) = current.parent() else {
+            // A failed or empty `accParent` below the desktop: the chain
+            // goes on from the parent window's object, as NVDA's parent
+            // falls back to the window hierarchy (`Window._get_parent`,
+            // `NVDAObjects/window/__init__.py` 287 to 293). The desktop
+            // ends it.
+            if above != 0 && above != desktop {
+                walked = Walked::Onward(above);
+            }
             break;
         };
         let parent_window = parent_acc.window();
-        let parent_hwnd = parent_window.unwrap_or(hwnd);
+        // A parent that names no window is in the window the walk is in,
+        // or, above a window's own window object, in its parent window,
+        // where it is now: the window may have been reparented since the
+        // check above.
+        let parent_hwnd = parent_window.unwrap_or_else(|| {
+            if at_window_object {
+                window::parent(current_hwnd)
+            } else {
+                current_hwnd
+            }
+        });
         // The desktop is the root, never an ancestor: NVDA's focus ancestors
         // stop below it, so it is never announced as an entered container.
-        if parent_hwnd == window::desktop() {
+        if parent_hwnd == desktop {
             break;
         }
-        if parent_hwnd != current_hwnd && (limits.read_by_other_api)(parent_hwnd) {
-            walked = Walked::Crossed(parent_hwnd);
+        // The `accParent` named another window's object: one read through
+        // the other API, or as a plain window, which is not read further,
+        // since a window can be reparented after the check above.
+        if parent_hwnd != current_hwnd
+            && ((limits.read_by_other_api)(parent_hwnd) || (limits.plain)(parent_hwnd))
+        {
+            walked = Walked::Onward(parent_hwnd);
             break;
         }
         // A parent that is one of a window's own standard objects names its
@@ -773,6 +884,7 @@ pub fn ancestor_chain_until(
         hops_used += 1;
         current = parent_acc;
         current_hwnd = parent_hwnd;
+        at_window_object = is_window_object;
         if (limits.known)(id) {
             walked = Walked::MetKnown(id);
             continue;
@@ -791,6 +903,7 @@ pub fn ancestor_chain_until(
             hops_used += 1;
             current = group;
             current_hwnd = group_hwnd;
+            at_window_object = false;
             if (limits.known)(id) {
                 walked = Walked::MetKnown(id);
             }
@@ -1197,15 +1310,21 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
     }
 }
 
-/// Reads the currently focused object of `target_pid`, for a focus-now query
-/// (including Core's after a menu closes). Uses `GetGUIThreadInfo` then `accFocus`,
-/// with a fallback to the focused window itself. Blocking; worker only.
+/// Reads the focused object in `hwnd`, the window with the keyboard focus,
+/// for a focus-now query (including Core's after a menu closes): its
+/// client's `accFocus`, with a fallback to the client itself. `accFocus`
+/// names whatever it names when it is called, so the window of the object
+/// it names is checked with `serves` before anything else is read of it:
+/// an object of a window the caller's application does not serve answers
+/// `None`, no focused control, and is read no further
+/// (`docs/design/cross-process-calls-study.md`, instance 8). Blocking;
+/// worker only.
 #[must_use]
-pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
-    let (hwnd, pid) = window::focused()?;
-    if pid != target_pid {
-        return None;
-    }
+pub fn focused_snapshot(
+    hwnd: isize,
+    registry: &NodeIdRegistry,
+    serves: &dyn Fn(isize) -> bool,
+) -> Option<NodeSnapshot> {
     let client = Accessible::client_of_window(hwnd)?;
     // A child object reached through `accFocus` has no address of its
     // own; the client and its children by id do.
@@ -1215,6 +1334,14 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
         FocusTarget::None => (client, true),
     };
     let node_hwnd = acc.window().unwrap_or(hwnd);
+    if node_hwnd != hwnd && !serves(node_hwnd) {
+        tracing::debug!(
+            hwnd,
+            named = node_hwnd,
+            "accFocus named an object of a window the application does not serve; nothing more is read"
+        );
+        return None;
+    }
     let key = (node_hwnd, OBJID_CLIENT.0, acc.child());
     Some(read_snapshot(&acc, key, at_address, registry))
 }

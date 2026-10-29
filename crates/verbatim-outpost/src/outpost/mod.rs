@@ -282,6 +282,10 @@ pub(crate) struct Context {
     /// How a focus-now query reads the window with the keyboard focus
     /// ([`Outpost::set_focus_window_reader`]).
     focus_window: Mutex<FocusWindowReader>,
+    /// How the worker judges whether a window can be read, or is no
+    /// window, a ghost's or a hung application's
+    /// ([`Outpost::set_window_readability_reader`]).
+    window_readability: Mutex<WindowReadabilityReader>,
     /// The events application support asked for from any window of the
     /// application, whatever the foreground ([`acceptance`]).
     requested_events: acceptance::RequestedEvents,
@@ -345,6 +349,21 @@ pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
 /// test whose application cannot take the keyboard focus on the desktop it
 /// runs on supplies its own ([`Outpost::set_focus_window_reader`]).
 pub type FocusWindowReader = Arc<dyn Fn() -> Option<isize> + Send + Sync>;
+
+/// Why a window cannot be read, `None` when it can: it is no window, a
+/// ghost window stands in for it, or its application is hung. An outpost
+/// asks the system ([`window::event_window_unreadable`]); a test that cannot
+/// wait for Windows to judge an application hung supplies its own
+/// ([`Outpost::set_window_readability_reader`]).
+pub type WindowReadabilityReader = Arc<dyn Fn(isize) -> Option<&'static str> + Send + Sync>;
+
+/// Why window `hwnd` cannot be read, by the system's judgement, `None` when
+/// it can: what an outpost's [`WindowReadabilityReader`] answers unless a
+/// test supplies its own. Local calls.
+#[must_use]
+pub fn window_unreadable(hwnd: isize) -> Option<&'static str> {
+    window::event_window_unreadable(hwnd)
+}
 
 /// Reads the UIA element that has the keyboard focus, filled by the given
 /// request, with the given client, on the worker's thread, for a
@@ -497,6 +516,18 @@ impl Context {
                 .unwrap_or_else(PoisonError::into_inner),
         );
         reader()
+    }
+
+    /// Why window `hwnd` cannot be read, `None` when it can, by the reader
+    /// the outpost was given ([`Outpost::set_window_readability_reader`]).
+    fn window_unreadable(&self, hwnd: isize) -> Option<&'static str> {
+        let reader = Arc::clone(
+            &self
+                .window_readability
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        reader(hwnd)
     }
 
     /// The foreground window's handle, by the reader the outpost was given
@@ -1093,6 +1124,7 @@ impl Outpost {
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             focus_window: Mutex::new(Arc::new(window::focus_window)),
+            window_readability: Mutex::new(Arc::new(window::event_window_unreadable)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             // Read again as the hook is installed ([`Outpost::assign`]).
@@ -1417,6 +1449,18 @@ impl Outpost {
         *self
             .context
             .focus_window
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = reader;
+    }
+
+    /// Judges whether a window can be read with `reader` rather than by
+    /// asking the system: for a test that has a window judged hung, which
+    /// Windows does only after the application has not answered for five
+    /// seconds.
+    pub fn set_window_readability_reader(&self, reader: WindowReadabilityReader) {
+        *self
+            .context
+            .window_readability
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = reader;
     }

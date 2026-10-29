@@ -159,6 +159,29 @@ pub struct UiaAncestorFact {
     pub content: bool,
 }
 
+/// Where the chain above a UIA focus read's ancestors goes on, as the
+/// listener's walk ended (`docs/design/focus-pipeline-rework.md`, "A
+/// window's name, and the one fallback"). The listener connects to no
+/// window, so it names the window and the outpost of the focus's
+/// application goes on from it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AncestorsEnd {
+    /// The ancestors reach the desktop root, the process boundary, or a
+    /// known ancestor, and the rest as read before: the outpost goes on
+    /// above the boundary, or from a window it reads through MSAA.
+    #[default]
+    Top,
+    /// A step to a parent failed or found none below the root: the chain
+    /// goes on from this window's own object, the parent window of the
+    /// outermost ancestor's nearest window, as NVDA's parent read falls
+    /// back to the window hierarchy (`Window._get_parent`); 0 for none.
+    ContinueFrom(isize),
+    /// The walk was cut by the read's budget or its depth limit: the chain
+    /// is completed by plain windows from this window, the outermost
+    /// ancestor's nearest window, included.
+    PlainFrom(isize),
+}
+
 /// A UIA focus as the focus listener judged and read it from the event's
 /// own element, on the thread for the element's application
 /// (`docs/design/focus-pipeline.md`, section 12.1): the element had the
@@ -177,6 +200,9 @@ pub struct UiaFocusRead {
     /// thread already knew from the focus before, and the rest as they were
     /// read then. `None` when they could not be read.
     pub ancestors: Option<Vec<UiaAncestorFact>>,
+    /// Where the chain goes on above them, as the walk ended.
+    #[serde(default)]
+    pub ancestors_end: AncestorsEnd,
     /// For a list or tab control, its first selected child; never for a
     /// focus whose value is its first selected item
     /// ([`Self::value_from_selection`]).
@@ -1736,6 +1762,7 @@ mod tests {
                 hwnd: 0x40,
                 content: true,
             }]),
+            ancestors_end: crate::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
             window: Some(0x40),

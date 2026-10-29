@@ -187,9 +187,12 @@ the element does not have the focus, and otherwise an `Ancestry`:
 - `failed_hop`: how a step to a parent failed below the top, a
   `FailedHop` (`verbatim_uia::FailedHop`, re-exported): `Error` with the
   failing code, or `NoParent`. `Ancestry::ancestors_unknown` is true for a
-  walk out of time or with a failed step, and callers report such a focus
-  with its ancestors unknown, as NVDA falls back to the window hierarchy
-  when its parent read fails.
+  walk out of time or with a failed step. Callers go on from the parent
+  window of the outermost element's nearest window after a failed step, as
+  NVDA falls back to the window hierarchy when its parent read fails, and
+  complete a walk cut by its time or depth limit by plain windows from that
+  nearest window (`docs/design/focus-pipeline-rework.md`, "A window's name,
+  and the one fallback").
 - `selected_child`: for a list or tab control, the first selected child,
   which the outpost reports as its node; for a combo box without the
   `Value` pattern, its first selected item, which is its value

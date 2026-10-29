@@ -1,0 +1,13 @@
+{
+  "id": "root",
+  "role": "dialog",
+  "name": "Save As",
+  "children": [
+    {
+      "id": "save",
+      "role": "button",
+      "name": "Save",
+      "states": ["focusable", "focused"]
+    }
+  ]
+}

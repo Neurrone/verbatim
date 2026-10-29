@@ -12,9 +12,9 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GetAncestor, GetForegroundWindow,
-    GetGUIThreadInfo, GetPropW, GetWindowThreadProcessId, InternalGetWindowText, IsChild,
-    IsHungAppWindow, IsWindow, IsWindowVisible,
+    EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor,
+    GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId,
+    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_DISABLED,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
@@ -234,6 +234,36 @@ pub(super) fn desktop_window() -> isize {
 pub(crate) fn window_is_hung(handle: isize) -> bool {
     // SAFETY: IsHungAppWindow tolerates any handle.
     unsafe { IsHungAppWindow(hwnd(handle)) }.as_bool()
+}
+
+/// The parent window of `handle` (`GetAncestor` with `GA_PARENT`), 0 for
+/// none. A local call.
+pub(super) fn parent_window(handle: isize) -> isize {
+    // SAFETY: GetAncestor tolerates any handle, answering null for an
+    // invalid one.
+    unsafe { GetAncestor(hwnd(handle), GA_PARENT) }.0 as isize
+}
+
+/// What Windows' own state says of window `handle` as a plain window
+/// (`NVDAObjects/window/__init__.py`, `Window`): whether its style disables
+/// it (`WS_DISABLED`), and whether it is its thread's focus window
+/// (`GetGUIThreadInfo`). Local calls.
+pub(super) fn plain_window_states(handle: isize) -> (bool, bool) {
+    // SAFETY: GetWindowLongPtrW tolerates any handle, answering 0 for an
+    // invalid one.
+    let style = unsafe { GetWindowLongPtrW(hwnd(handle), GWL_STYLE) };
+    let disabled = style.cast_unsigned() & usize::try_from(WS_DISABLED.0).unwrap_or(0) != 0;
+    let (thread, _) = window_owner(handle);
+    let mut info = GUITHREADINFO {
+        cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
+        ..Default::default()
+    };
+    // SAFETY: `info` has cbSize set before the call; the call fails safely,
+    // and thread 0, for a window that no longer exists, is not asked.
+    let focused = thread != 0
+        && unsafe { GetGUIThreadInfo(thread, &raw mut info) }.is_ok()
+        && info.hwndFocus.0 as isize == handle;
+    (disabled, focused)
 }
 
 /// Whether `handle` is a window that exists. A local call.

@@ -564,24 +564,28 @@ event as `NO_WINDOW`; there Verbatim differs, as "A focus UIA does not
 deliver" records: the outpost reads the focus at once and speaks where
 it now is. In NVDA's second case the listener's classic read of the
 sender fails, and the listener reports the focus as the event's cache
-gives it, its ancestors unknown; so does a read out of its time budget,
-and a walk whose step from an element below the desktop root to its
-parent fails or finds no parent, as NVDA's failed parent read falls back
-to the window hierarchy rather than ending the chain. The outpost's own
-walks report the ancestors unknown the same way, so a focus carries no
-partial chain as if it were whole, and the next focus, even one inside
-it, is read to its window as a first focus is
-(`docs/crates/verbatim-uia-rops.md`, `failed_hop`;
-`docs/crates/verbatim-outpost.md`, "Reading the focus").
+gives it, its ancestors unknown. A walk whose step from an element below
+the desktop root to its parent fails or finds no parent goes on, as NVDA's
+failed parent read falls back to the window hierarchy
+(`Window._get_parent`), from the parent window of its outermost element's
+nearest window, by that window's own object: the listener, which connects
+to no window, names the window, and the outpost goes on from it; the
+outpost's own walks go on the same way, and a walk cut by the read's time
+budget or its depth limit is completed by plain windows from that nearest
+window, a deliberate difference (`docs/design/focus-pipeline-rework.md`,
+"A window's name, and the one fallback", decided 2026-10-29, which replaces
+reporting such ancestors unknown, decided 2026-10-21). The listener reuses
+only a chain that reached the top, and the outpost, as NVDA's focus line,
+meets the previous chain where the new one meets it, so the next focus
+inside such a focus keeps its chain (`docs/crates/verbatim-uia-rops.md`,
+`failed_hop`; `docs/crates/verbatim-outpost.md`, "Reading the focus").
 
-Different, by decision (Dickson, 2026-10-21): NVDA builds a known chain
-from the window hierarchy, where Verbatim reports the ancestors unknown
-and Core keeps the previous focus's chain; for the File Explorer
-placeholder the spoken result is the same. The placeholder's element can
-answer its properties after it has left the tree, so only the parent
-step fails (run 39613639083, with `read=0`; reported as known and empty,
-the next focus counted every container as entered and spoke the window's
-title). It is spoken without its list, and always with its name, which
+For the File Explorer placeholder the spoken result is to be checked by
+`explorer_folder_window`: the placeholder's element can answer its
+properties after it has left the tree, so only the parent step fails
+(run 39613639083, with `read=0`; reported as known and empty, before the
+chain went on from a window, the next focus counted every container as
+entered and spoke the window's title). It is spoken without its list, and always with its name, which
 NVDA loses when a main-loop pass came between. The time in which the
 element must go differs: in NVDA from the callback to the main thread's
 handling; in Verbatim the consecutive calls on one listener thread
@@ -598,19 +602,21 @@ No capture of NVDA exists for this case.
 Tests: `remote_ops.rs` in `mockapp`,
 `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`,
 `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`,
-and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`
+and `a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent`
 (the failed step and the missing parent) for the listener's report;
-`a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`,
-`a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown`,
-`a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`,
+`a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_windows_parent`,
+`a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_goes_on_from_that_window`,
+`a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent`,
 and
-`a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown`
-for the outpost's own walks; `call_counts.rs`'s
+`a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent`
+for the outpost's own walks; `focus_reports.rs`'s
+`a_focus_after_a_failed_acc_parent_reaches_its_dialog` and
+`a_chain_cut_at_the_depth_limit_is_completed_by_its_windows`; `call_counts.rs`'s
 `uia_focus_chains_stop_below_the_process_boundary`, whose "child,
 remote" case is a remote walk complete at a window below the process
 boundary;
-`a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain`
-for the listener's next read; the unit test
+`a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there`
+for the next read; the unit test
 `a_failed_step_is_told_by_its_code` in `verbatim-uia-rops`; and
 `focus_reports.rs`'s `focus_without_a_path` and its caller
 `a_focus_without_a_path_is_followed_from_its_next_focus_event`.

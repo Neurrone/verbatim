@@ -187,6 +187,14 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             }
         }
         Command::ClientIdentity => give_client_identity(tree, hwnd),
+        Command::ChildWindow | Command::WindowFocus => {
+            return Err("applied by the window".into());
+        }
+        Command::AccFocusWindow(window) => {
+            tree.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .acc_focus_window = Some(window);
+        }
         Command::DisableClient => disable_client(tree, hwnd),
         Command::FocusChild(container, child) => {
             let parent = tree
@@ -811,7 +819,7 @@ mod handler {
         fn accFocus(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccFocus);
             alive(&self.tree, self.index)?;
-            let (focused, simple_child) = {
+            let (focused, simple_child, elsewhere) = {
                 let guard = self
                     .tree
                     .lock()
@@ -825,8 +833,25 @@ mod handler {
                             .position(|&node| node == focused)
                     })
                     .flatten();
-                (guard.focused, simple_child)
+                (guard.focused, simple_child, guard.acc_focus_window)
             };
+            // Another window's client object (`acc-focus-window`).
+            if let Some(window) = elsewhere {
+                let mut object: *mut core::ffi::c_void = std::ptr::null_mut();
+                // SAFETY: `object` is a local that receives an `IDispatch`
+                // on success; the handle may name any window, which the
+                // call answers an error for when it is gone.
+                unsafe {
+                    windows::Win32::UI::Accessibility::AccessibleObjectFromWindow(
+                        HWND(window as *mut _),
+                        OBJID_CLIENT.0.cast_unsigned(),
+                        &IDispatch::IID,
+                        &raw mut object,
+                    )
+                }?;
+                // SAFETY: on success `object` holds an owned `IDispatch`.
+                return Ok(dispatch_variant(unsafe { IDispatch::from_raw(object) }));
+            }
             // A simple child is named by its child id (`focus-child`).
             if let Some(position) = simple_child {
                 return Ok(VARIANT::from(

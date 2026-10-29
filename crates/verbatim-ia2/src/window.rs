@@ -143,29 +143,20 @@ pub(crate) fn related(hwnd: isize, command: GET_WINDOW_CMD) -> isize {
         .0 as isize
 }
 
-/// The window with the keyboard focus, or else the active window, of the
-/// thread in the foreground (`GetGUIThreadInfo`), and the process that owns
-/// it; `None` when there is neither.
-pub(crate) fn focused() -> Option<(isize, u32)> {
+/// Whether the window is its thread's focus window (`GetGUIThreadInfo` for
+/// the thread that owns it), which is how a plain window is focused
+/// (`NVDAObjects/window/__init__.py`). Local.
+pub(crate) fn is_thread_focus_window(hwnd: isize) -> bool {
+    let thread = thread_of(hwnd);
+    if thread == 0 {
+        return false;
+    }
     let mut info = GUITHREADINFO {
         cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
         ..Default::default()
     };
     // SAFETY: `info` is a local with `cbSize` set, which the call fills in.
-    unsafe { GetGUIThreadInfo(0, &raw mut info) }.ok()?;
-    let hwnd = if info.hwndFocus.0.is_null() {
-        info.hwndActive
-    } else {
-        info.hwndFocus
-    };
-    if hwnd.0.is_null() {
-        return None;
-    }
-    let mut pid = 0u32;
-    // SAFETY: a window handle the call tolerates even if stale, and a local
-    // out-parameter.
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
-    Some((hwnd.0 as isize, pid))
+    unsafe { GetGUIThreadInfo(thread, &raw mut info) }.is_ok() && info.hwndFocus.0 as isize == hwnd
 }
 
 /// How long a message waits for the window to answer: the list view's and

@@ -38,7 +38,7 @@ pub mod text;
 pub use listener::run_listener;
 pub use outpost::{
     FocusWindowReader, FocusedElementReader, ForegroundReader, GapTimer, Heard, HeardObserver,
-    Outpost, OutpostOptions, run_attach, run_pipe,
+    Outpost, OutpostOptions, WindowReadabilityReader, run_attach, run_pipe, window_unreadable,
 };
 pub use supervisor::{EventSink, ForegroundReport, OutpostMessage, Supervisor, Undelivered};
 /// The process that serves a window's UI Automation, and a console client's

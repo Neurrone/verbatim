@@ -3469,8 +3469,13 @@ impl Worker<'_> {
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
         // which weeds out stale and spurious focus events. It checks the
-        // states after the duplicate test, reading them live.
-        if !candidate.has_focused_state(read::MAX_ANCESTOR_HOPS) {
+        // states after the duplicate test, reading them live, going on
+        // past a failed `accParent` along parent windows, and above the
+        // process boundary by plain windows, with no call there.
+        let context = self.context;
+        if !candidate.has_focused_state(read::MAX_ANCESTOR_HOPS, &|window| {
+            read::reads_as_plain(context, window)
+        }) {
             tracing::debug!(
                 hwnd,
                 id_object,
@@ -3620,8 +3625,13 @@ impl Worker<'_> {
             .selected_child
             .as_ref()
             .map(|child| Self::uia_node(context, child, None));
-        let ancestors = read.ancestors.as_ref().and_then(|ancestors| {
-            read::uia_chain_from_read(context, self.client, (ancestors, read.hwnd), &previous)
+        let ancestors = read.ancestors.as_ref().map(|ancestors| {
+            read::uia_chain_from_read(
+                context,
+                self.client,
+                (ancestors, read.hwnd, read.ancestors_end),
+                &previous,
+            )
         });
         *context.focus_path() = Some(FocusPath::of(read));
         tracing::debug!(

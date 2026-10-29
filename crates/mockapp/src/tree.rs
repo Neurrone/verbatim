@@ -133,6 +133,9 @@ pub(crate) struct Tree {
     /// which the node's `accFocus` names its focused child by child id and
     /// its `accChild` has no object for any child. MSAA-only.
     pub(crate) simple_children: Option<usize>,
+    /// The window whose client object every node's `accFocus` answers,
+    /// once `acc-focus-window` has named one. MSAA-only.
+    pub(crate) acc_focus_window: Option<isize>,
 }
 
 /// A tree shared between the window thread (which owns every provider COM
@@ -166,6 +169,7 @@ impl Tree {
             focused,
             selected: None,
             simple_children: None,
+            acc_focus_window: None,
         }
     }
 

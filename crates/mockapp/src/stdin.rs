@@ -17,7 +17,8 @@
 //! `take-runtime-id <id> <from>`, `replace-items <id>`, `disconnect <id>`,
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
-//! `client-identity`, `disable-client`, `hold`, `release`, and `quit`.
+//! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
+//! `child-window`, `window-focus`, `hold`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -278,6 +279,23 @@ pub(crate) enum Command {
     /// and `EVENT_OBJECT_STATECHANGE` is raised on the client area.
     /// MSAA-only.
     DisableClient,
+    /// `acc-focus-window <hwnd>`: every node's `accFocus` answers the
+    /// client object of window `hwnd`, a decimal handle, from then on,
+    /// acquired with `AccessibleObjectFromWindow` as it is asked, as an
+    /// application whose own `accFocus` names an object another process
+    /// serves would. MSAA-only.
+    AccFocusWindow(isize),
+    /// `child-window`: makes a child window of the host window, of the
+    /// host's class, which answers `WM_GETOBJECT` as the host does, so an
+    /// event can name a node at its object id in a window of its own
+    /// inside the host's, as a control's window is inside a dialog's. Its
+    /// objects are the node's own in that window, and `accParent` names
+    /// the node's parent in it.
+    ChildWindow,
+    /// `window-focus`: the host window takes the keyboard focus within its
+    /// thread (`SetFocus`), so it is its thread's focus window, as a
+    /// window whose application has activated it is.
+    WindowFocus,
     /// `hold`: the next provider call, whichever client makes it, prints
     /// `held <method>` on stdout as it begins and then waits until
     /// `release`, so a test knows a call is in progress and decides when it
@@ -419,6 +437,7 @@ fn write_on_read(rest: &str) -> Option<Command> {
 /// Parses one stdin line into a [`Command`]. Blank lines and unrecognized
 /// verbs yield `None` (a stray blank line is ignored; the caller hands an
 /// unknown verb on as [`Command::Unrecognized`], to be rejected).
+#[expect(clippy::too_many_lines, reason = "one arm per stdin command")]
 pub(crate) fn parse_command(line: &str) -> Option<Command> {
     let line = line.trim();
     if line.is_empty() {
@@ -485,6 +504,9 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "client-name" => Some(Command::ClientName(rest.to_owned())),
         "client-identity" => Some(Command::ClientIdentity),
         "disable-client" => Some(Command::DisableClient),
+        "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
+        "child-window" => Some(Command::ChildWindow),
+        "window-focus" => Some(Command::WindowFocus),
         "focus-child" => {
             let (container, child) = rest.split_once(' ')?;
             Some(Command::FocusChild(

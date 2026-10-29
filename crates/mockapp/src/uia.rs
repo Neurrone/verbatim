@@ -277,6 +277,12 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::DisableClient => {
             return Err("disable-client is not supported on the uia backend".into());
         }
+        Command::AccFocusWindow(_) => {
+            return Err("acc-focus-window is not supported on the uia backend".into());
+        }
+        Command::ChildWindow | Command::WindowFocus => {
+            return Err("applied by the window".into());
+        }
         Command::TakeRuntimeId(id, from) => tree
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

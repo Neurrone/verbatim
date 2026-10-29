@@ -53,20 +53,27 @@ pub struct AncestorStops<'a> {
 /// How an ancestor walk ended ([`Uia::ancestors`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AncestorWalk {
-    /// It reached the root, a window read through the other API, the
-    /// process boundary, or its hop limit.
+    /// It reached the root, a window read through the other API, or the
+    /// process boundary.
     Complete,
     /// It reached this known ancestor, the outermost one in the chain.
     MetKnown(verbatim_model::NodeId),
-    /// It ran out of time, so the chain is incomplete.
-    OutOfTime,
-    /// A step to a parent failed this way from an element below the root,
-    /// so the chain is incomplete, as when the walk runs out of time: in
-    /// the raw view a top-level window's parent is the root, so a missing
-    /// parent below it is abnormal, and NVDA reads the window hierarchy
-    /// when its parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to
-    /// 2145, `NVDAObjects/window/__init__.py` 287 to 293).
-    Unknown(FailedHop),
+    /// It ran out of time, a step found the provider did not answer within
+    /// UIA's transaction timeout, or it reached its hop limit with
+    /// ancestors left: the chain is completed by plain windows from this
+    /// window, the outermost element's nearest window, included
+    /// ([`outermost_nearest_window`](crate::outermost_nearest_window)), 0
+    /// when not known (`docs/design/focus-pipeline-rework.md`, "A window's
+    /// name, and the one fallback").
+    Cut(isize),
+    /// A step to a parent failed this way from an element below the root:
+    /// in the raw view a top-level window's parent is the root, so a
+    /// missing parent below it is abnormal, and the chain goes on from this
+    /// window's own object, the parent window of the outermost element's
+    /// nearest window, as NVDA reads the window hierarchy when its parent
+    /// read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
+    /// `NVDAObjects/window/__init__.py` 287 to 293); 0 for none.
+    Failed(FailedHop, isize),
 }
 
 /// How a walk's step to a parent failed.
@@ -617,12 +624,17 @@ impl Uia {
     /// first reported ancestor `stops.known` recognizes, from the previous
     /// focus's chain, with that ancestor outermost, as NVDA's focus
     /// ancestry stops where it meets the previous focus's ancestors; and
-    /// when `stops.out_of_time` says its time is up, or a hop finds the provider did not
-    /// answer within UIA's transaction timeout, reporting the chain as
-    /// incomplete; and at a hop that otherwise fails, or finds no parent,
-    /// from an element below the root, reporting the chain as unknown
-    /// ([`AncestorWalk::Unknown`]): only the root ends a known walk. Ancestors that are not presentable focus context are
+    /// when `stops.out_of_time` says its time is up, a hop finds the
+    /// provider did not answer within UIA's transaction timeout, or the
+    /// hop limit is reached, reporting the chain as cut
+    /// ([`AncestorWalk::Cut`]); and at a hop that otherwise fails, or finds
+    /// no parent, from an element below the root, reporting where the
+    /// chain goes on ([`AncestorWalk::Failed`]): only the root ends a
+    /// complete walk. Ancestors that are not presentable focus context are
     /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
+    /// `nearest` is `element`'s nearest window, from which the outermost
+    /// element's is followed ([`outermost_nearest_window`](crate::outermost_nearest_window)),
+    /// 0 when not known.
     ///
     /// The walk never steps across the process boundary: before each hop,
     /// from an element whose own window, `element_window` for `element`
@@ -646,7 +658,7 @@ impl Uia {
     /// walk as above.
     pub fn ancestors(
         &self,
-        (element, element_window): (&Live, isize),
+        (element, element_window, nearest): (&Live, isize, isize),
         request: &Request<Ancestor>,
         registry: &NodeIdRegistry,
         (max_hops, parent_automation_id): (u32, &mut Option<String>),
@@ -661,6 +673,10 @@ impl Uia {
         let mut chain = Vec::new();
         let mut current = element.clone();
         let mut current_window = element_window;
+        // The outermost element's nearest window, followed as the walk goes.
+        let mut trail = vec![element_window];
+        let outermost =
+            |trail: &[isize]| crate::outermost_nearest_window(nearest, trail.iter().copied());
         let started = std::time::Instant::now();
         let mut hops = 0u32;
         let log = |hops: u32, ending: &str| {
@@ -676,7 +692,7 @@ impl Uia {
             if out_of_time() {
                 chain.reverse();
                 log(hops, "out of time");
-                return Ok((chain, None, AncestorWalk::OutOfTime));
+                return Ok((chain, None, AncestorWalk::Cut(outermost(&trail))));
             }
             if let Some(across) = (current_window != 0)
                 .then(|| crate::parent_across_process_boundary(current_window))
@@ -700,7 +716,7 @@ impl Uia {
                     chain.reverse();
                     if crate::timed_out(&error) || out_of_time() {
                         log(hops, "out of time");
-                        return Ok((chain, None, AncestorWalk::OutOfTime));
+                        return Ok((chain, None, AncestorWalk::Cut(outermost(&trail))));
                     }
                     let at_root = self
                         .root_element()
@@ -716,11 +732,13 @@ impl Uia {
                         elapsed_us = started.elapsed().as_micros(),
                         "UIA ancestor walk ended at a failed step below the root"
                     );
-                    return Ok((chain, None, AncestorWalk::Unknown(hop)));
+                    let onward = crate::parent_window(outermost(&trail));
+                    return Ok((chain, None, AncestorWalk::Failed(hop, onward)));
                 }
             };
             let read = parent.read();
             current_window = read.node.role.hwnd;
+            trail.push(current_window);
             if hops == 1 {
                 *parent_automation_id = read.automation_id;
             }
@@ -740,15 +758,16 @@ impl Uia {
         }
         chain.reverse();
         log(hops, "hop limit");
-        Ok((chain, None, AncestorWalk::Complete))
+        Ok((chain, None, AncestorWalk::Cut(outermost(&trail))))
     }
 
     /// The same result as [`ancestors`](Self::ancestors), from `parents`
     /// already fetched as [`Ancestor`]s, nearest first, as one remote
     /// operation returns them: the same stops at a window read through the
     /// other API and at a known ancestor, and the same filtering of what is
-    /// reported. A fetch cut short by a depth limit is reported as complete
-    /// up to there, like the walk's hop limit.
+    /// reported. A fetch cut short by a depth limit, or ended by a failed
+    /// step, is reported as complete up to there: the caller, which knows
+    /// how the fetch ended, completes the chain.
     #[must_use]
     pub fn ancestors_from(
         parents: &[Cached<Ancestor>],

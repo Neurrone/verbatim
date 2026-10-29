@@ -132,6 +132,10 @@ struct RawNode {
     content: bool,
     #[serde(default)]
     msaa_client: bool,
+    /// How many groups of its own the node is placed under, between it and
+    /// its parent: for a tree deeper than a fixture's JSON can nest.
+    #[serde(default)]
+    nested: u32,
     #[serde(default)]
     /// Kept as JSON values, each made a node only when it is converted:
     /// deserializing a node's many fields takes a large stack frame in a
@@ -365,6 +369,7 @@ fn convert(
     if !seen_ids.insert(raw.id.clone()) {
         return Err(FixtureError::DuplicateId(raw.id));
     }
+    let nested = raw.nested;
     let role = role_from_fixture_str(&raw.role).ok_or_else(|| FixtureError::UnknownRole {
         id: raw.id.clone(),
         role: raw.role.clone(),
@@ -383,7 +388,7 @@ fn convert(
         let child: RawNode = serde_json::from_value(child).map_err(FixtureError::Json)?;
         children.push(convert(child, seen_ids)?);
     }
-    Ok(FixtureNode {
+    let node = FixtureNode {
         id: raw.id,
         role,
         name: raw.name,
@@ -417,7 +422,31 @@ fn convert(
         content: raw.content,
         msaa_client: raw.msaa_client,
         children,
-    })
+    };
+    nest(node, nested, seen_ids)
+}
+
+/// `node` placed under `nested` groups of its own (a node's `nested`),
+/// outermost first `<id>-nest-1`, named `Nest 1`, to `<id>-nest-<nested>`
+/// right above it.
+fn nest(
+    mut node: FixtureNode,
+    nested: u32,
+    seen_ids: &mut std::collections::HashSet<String>,
+) -> Result<FixtureNode, FixtureError> {
+    let id = node.id.clone();
+    for level in (1..=nested).rev() {
+        let raw: RawNode = serde_json::from_value(serde_json::json!({
+            "id": format!("{id}-nest-{level}"),
+            "role": "group",
+            "name": format!("Nest {level}"),
+        }))
+        .map_err(FixtureError::Json)?;
+        let mut group = convert(raw, seen_ids)?;
+        group.children = vec![node];
+        node = group;
+    }
+    Ok(node)
 }
 
 /// Maps a fixture's snake-case role name to a [`Role`]. `None` for any name

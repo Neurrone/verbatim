@@ -855,18 +855,25 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
 }
 
 /// A focus whose walk's step to a parent fails, or finds no parent, below
-/// the desktop root is reported with its containers unknown, never as
-/// having none: only the root ends a known walk, as NVDA reads the window
-/// hierarchy when its parent read fails (`NVDAObjects/UIA/__init__.py`
-/// 2142 to 2145). The listener's read is always the classic walk, so
-/// remote operations, an outpost option, are left at their default. Its
-/// classic read steps from the focus to its parent after its nearest
-/// window has been found, as File Explorer's "Working on it..."
+/// the desktop root goes on from the parent window of its outermost
+/// element's nearest window, as NVDA reads the window hierarchy when its
+/// parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
+/// `Window._get_parent`), never left unknown: the listener, which connects
+/// to no window, names that window, here the desktop, the parent of the
+/// focus's top-level window, and the outpost reports the focus with the
+/// ancestors read and nothing above them. The listener's read is always
+/// the classic walk, so remote operations, an outpost option, are left at
+/// their default. Its classic read steps from the focus to its parent after
+/// its nearest window has been found, as File Explorer's "Working on it..."
 /// placeholder answers its properties after it has left the tree. UIA
-/// hands the client no parent both when the provider's `Navigate` fails
-/// and when it answers none (verified), so a step that fails with a code
-/// is covered by the walk's own unit test.
-fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
+/// hands the client no parent both when the provider's `Navigate` fails and
+/// when it answers none (verified), so a step that fails with a code is
+/// covered by the walk's own unit test.
+fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
+    use verbatim_outpost::protocol::AncestorsEnd;
+    use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
+    // SAFETY: GetDesktopWindow has no preconditions.
+    let desktop = unsafe { GetDesktopWindow() }.0 as isize;
     for case in ["fail", "none"] {
         let mut fixture = Fixture::start(&format!("mockapp-rops-parent-{case}"));
         let outpost = OutpostUnderTest::new(&fixture.app);
@@ -888,7 +895,19 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
         // The listener's walk to the nearest window steps to the focus's
         // parent once first; the step after it is the classic read's.
         fixture.app.send(&format!("answer-parent deep {case} 1"));
-        outpost.deliver(outpost.listener_fact(&deep));
+        let fact = outpost.listener_fact(&deep);
+        let DeliveredFact::UiaFocusRead { read, .. } = &fact else {
+            panic!("{case}: the listener sent {fact:?}, not its read");
+        };
+        assert_eq!(
+            (
+                read.ancestors.as_deref().map(<[_]>::len),
+                read.ancestors_end
+            ),
+            (Some(0), AncestorsEnd::ContinueFrom(desktop)),
+            "{case}: the listener names the window its chain goes on from"
+        );
+        outpost.deliver(fact);
         match outpost.next() {
             OutpostToSupervisor::Event {
                 event:
@@ -901,7 +920,7 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
                 ..
             } => {
                 assert_eq!(node.name.as_deref(), Some("Deep button"), "{case}");
-                assert!(ancestors_unknown, "{case}: the containers are unknown");
+                assert!(!ancestors_unknown, "{case}: the containers are known");
                 assert_eq!(ancestors, [], "{case}");
             }
             other => panic!("{case}: the outpost said {other:?}, not the focus"),
@@ -992,44 +1011,54 @@ fn focus_now_with_a_missing_grandparent(
 
 /// A focus-now query whose remote program's walk ends at a missing parent
 /// below the top-level window, which the program finds as the window
-/// where its walk ends, reports the focus's ancestors unknown, never the
-/// ancestors read before the missing parent as if they were the whole
-/// chain. NVDA reads the window hierarchy when its parent read fails
-/// (`NVDAObjects/UIA/__init__.py` 2142 to 2145). The read's UIA calls are
-/// the program's: the focused element's read and the program, one call
-/// each, so a fallback to the classic walk, which steps hop by hop, cannot
-/// pass for the program's answer.
-fn a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown() {
+/// where its walk ends, goes on from the parent window of the outermost
+/// element's nearest window, as NVDA reads the window hierarchy when its
+/// parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
+/// `Window._get_parent`): here the desktop, so the chain is the ancestors
+/// read, and NVDA's too skips the top-level window. The read's UIA calls
+/// are the program's: the focused element's read and the program, one
+/// call each, so a fallback to the classic walk, which steps hop by hop,
+/// cannot pass for the program's answer.
+fn a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_windows_parent() {
     assert_eq!(
         focus_now_with_a_missing_grandparent(true, "none", &[]),
-        (Some("Deep button".to_owned()), None, 2)
+        (
+            Some("Deep button".to_owned()),
+            Some(vec![Some("Inner group".to_owned())]),
+            2
+        )
     );
 }
 
 /// The same when the element above the missing parent, "Inner group", a
 /// fragment element, reports a window handle it does not host, of a window
-/// that no longer exists, so UIA reads it as that window's element with no
-/// parent: the walk found a window handle but did not reach a top-level
-/// window, so its ancestors are unknown too, where they were taken as
-/// complete before. A walk is complete only when it reached the top.
-fn a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown()
+/// that no longer exists, so UIA reads it as that window's element, with
+/// no name and no parent: the walk found a window handle but did not reach
+/// a top-level window, so it goes on from that window's parent window,
+/// which a window that no longer exists has none of, and the chain is the
+/// element read. A walk is complete only when it reached the top.
+fn a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_goes_on_from_that_window()
  {
     assert_eq!(
         focus_now_with_a_missing_grandparent(true, "none", &["report-window group2"]),
-        (Some("Deep button".to_owned()), None, 2)
+        (Some("Deep button".to_owned()), Some(vec![None]), 2)
     );
 }
 
 /// The same with remote operations off: the outpost's classic walk's
 /// step to a parent that fails, or answers none, below the desktop root
-/// leaves the focus's ancestors unknown. UIA hands the client no parent
-/// both ways (verified), so both are asked of the provider.
-fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown() {
+/// goes on from the parent window of the outermost element's nearest
+/// window, the desktop here. UIA hands the client no parent both ways
+/// (verified), so both are asked of the provider.
+fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent() {
     for answer in ["fail", "none"] {
         let (name, ancestors, _) = focus_now_with_a_missing_grandparent(false, answer, &[]);
         assert_eq!(
             (name, ancestors),
-            (Some("Deep button".to_owned()), None),
+            (
+                Some("Deep button".to_owned()),
+                Some(vec![Some("Inner group".to_owned())])
+            ),
             "{answer}"
         );
     }
@@ -1038,10 +1067,11 @@ fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancesto
 /// The focus the outpost reads itself after a `WinEvent` focus in its UIA
 /// window that no UIA focus follows, read once the wait's bound has passed
 /// by the outpost's clock, whose step from its container "Inner group" to
-/// that container's parent finds none, is reported with its ancestors
-/// unknown, never as having no containers, as the focus-now query's read
-/// reports them.
-fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown() {
+/// that container's parent finds none, goes on from the parent window of
+/// the outermost element's nearest window, the desktop here, as the
+/// focus-now query's read does.
+fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent()
+{
     let mut fixture = Fixture::start("mockapp-rops-gap-none");
     let outpost = OutpostUnderTest::on_frozen_time_with_options(
         &fixture.app,
@@ -1077,8 +1107,14 @@ fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancest
             ..
         } => {
             assert_eq!(node.name.as_deref(), Some("Deep button"));
-            assert!(ancestors_unknown, "the containers are unknown");
-            assert_eq!(ancestors, []);
+            assert!(!ancestors_unknown, "the containers are known");
+            assert_eq!(
+                ancestors
+                    .iter()
+                    .map(|node| node.name.as_deref())
+                    .collect::<Vec<_>>(),
+                [Some("Inner group")]
+            );
         }
         other => panic!("the outpost said {other:?}, not the focus"),
     }
@@ -1087,12 +1123,15 @@ fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancest
     fixture.app.quit();
 }
 
-/// A focus whose walk's step to a parent fails leaves nothing for the
-/// next focus's read to reuse: the next focus, inside it, is read up to
-/// the window as a first focus is, and reported with its real ancestors,
-/// never with the failed focus as its outermost container and nothing
-/// above it.
-fn a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain() {
+/// A focus whose walk's step to a parent fails has a chain that goes on
+/// from the parent window of its window, here the desktop, so nothing is
+/// above it: the next focus, inside it, meets that chain at it and is
+/// reported with it as its outermost container, as NVDA's focus line,
+/// built from the previous one where the two meet (`api.setFocusObject`),
+/// keeps the failed focus's ancestry. The listener reads the next focus up
+/// to the window as a first focus is, since it reuses only a chain that
+/// reached the top, and the outpost meets its own chain.
+fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     let mut fixture = Fixture::start("mockapp-rops-after-unknown");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let group = fixture.focus_delivered("group2", "Inner group");
@@ -1107,7 +1146,7 @@ fn a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain() {
                     ancestors_unknown, ..
                 },
             ..
-        } => assert!(ancestors_unknown, "the group's containers are unknown"),
+        } => assert!(!ancestors_unknown, "the group's containers are known"),
         other => panic!("the outpost said {other:?}, not the group's focus"),
     }
     outpost.settled();
@@ -1132,13 +1171,7 @@ fn a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain() {
                     .iter()
                     .map(|node| node.name.as_deref())
                     .collect::<Vec<_>>(),
-                // The unnamed pane is crossed, not presentable.
-                [
-                    Some("Mockapp Ancestry Fixture"),
-                    Some("Outer group"),
-                    Some("Tools"),
-                    Some("Inner group")
-                ]
+                [Some("Inner group")]
             );
         }
         other => panic!("the outpost said {other:?}, not the button's focus"),
@@ -1598,32 +1631,32 @@ fn main() {
             a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown,
         ),
         (
-            "a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown",
-            a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown,
+            "a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent",
+            a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent,
         ),
         (
             "a_slow_parent_answers_the_parent_step_late_after_the_steps_it_lets_pass",
             a_slow_parent_answers_the_parent_step_late_after_the_steps_it_lets_pass,
         ),
         (
-            "a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown",
-            a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown,
+            "a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_windows_parent",
+            a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_windows_parent,
         ),
         (
-            "a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown",
-            a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown,
+            "a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_goes_on_from_that_window",
+            a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_goes_on_from_that_window,
         ),
         (
-            "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown",
-            a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown,
+            "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent",
+            a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_its_windows_parent,
         ),
         (
-            "a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown",
-            a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown,
+            "a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent",
+            a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_its_windows_parent,
         ),
         (
-            "a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain",
-            a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain,
+            "a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there",
+            a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there,
         ),
         (
             "a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus",

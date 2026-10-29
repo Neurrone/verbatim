@@ -201,9 +201,16 @@ Public API:
   handled once), `focus_candidate` (the same acquisition and redirect,
   reading no more than the redirect needs, so the outpost can make NVDA's
   checks before the read: `key()` is the address after the redirect, for
-  NVDA's duplicate check; `has_focused_state(max_hops)` is NVDA's
+  NVDA's duplicate check; `has_focused_state(max_hops, plain)` is NVDA's
   `shouldAllowIAccessibleFocusEvent`, the object's state and then each
-  ancestor's read live through `accParent`; `read(registry)` reads it
+  ancestor's read live through `accParent`, the window it is in followed by
+  each object's role, a window's own window object being the one step that
+  leaves a window; it goes on past an `accParent` that fails or names
+  nothing along the parent windows, each a plain window, focused when it is
+  its thread's focus window, and never steps into a parent window `plain`
+  names (another process's, a ghost's or a hung one), going on from it by
+  plain windows, the parent window checked again after the step for a
+  window reparented meanwhile; `read(registry)` reads it
   without reading again the role and state words the checks read;
   `snapshot_from_focus_event` is a candidate read at once),
   `event_object` (an event's object acquired and nothing read:
@@ -223,20 +230,30 @@ Public API:
   object, and no location read, since a read of many objects, an ancestor
   chain, never reads one (`docs/design/uia-shapes.md`, decision 9) and a
   change reports none; ancestor walks read for context too),
-  `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
-  for the synthetic focus event an outpost emits after a foreground
-  change), and the node-relative operations, which take a `NodeId` and
+  `focused_snapshot(hwnd, registry, serves)` ("what is focused right now"
+  in `hwnd`, the window with the keyboard focus: its client's `accFocus`,
+  for a focus-now query; the window of the object `accFocus` names is
+  checked with `serves` before anything is read of it, and an object of a
+  window the caller's application does not serve answers `None`), and the
+  node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from
   local window data, which has no object, is acquired at its address).
   `navigate`, `activate`, and `ancestor_chain` answer `AcquireError::Gone`
   when the node is no longer kept, its window no longer exists, or its
   object has disconnected, and `selected_child` answers `None`:
   `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
-  (stopping at a known ancestor, when the caller's `out_of_time` check
-  says its time is up, or at a parent in a different
-  window that `read_by_other_api` says is read through UIA, and saying
-  which as `Walked`, whose `Crossed(hwnd)` lets the outpost continue the
-  walk through UIA; a control's window object met on the way has as its
+  (stopping at a known ancestor, `Walked::MetKnown`; when the caller's
+  `out_of_time` check says its time is up, or at `max_hops`, `Walked::Cut`
+  with the outermost ancestor's window, which the outpost completes by
+  plain windows; and `Walked::Onward` with the window the chain goes on
+  from by its own object, for a parent in a different window that
+  `read_by_other_api` says is read through UIA or `plain` says is read as a
+  plain window, the walk not stepping from a window's own window object
+  into a parent window `plain` names, and for an `accParent` that fails or
+  names nothing below the desktop, the parent window of the outermost
+  ancestor's window, as NVDA's `Window._get_parent` falls back to; a parent
+  that names no window is taken to be in the walk's window, or above a
+  window's own window object in its parent window; a control's window object met on the way has as its
   next ancestor the group box enclosing it, a `Button` window with
   `BS_GROUPBOX` before it in z-order, as NVDA's `findGroupboxObject`
   finds it, and the walk goes on from the group box) (per-hop `accParent` walks, outermost first, with the simple-child

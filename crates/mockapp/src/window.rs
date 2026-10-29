@@ -22,12 +22,15 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::{
     IAccessible, LresultFromObject, UiaReturnRawElementProvider, UiaRootObjectId,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VIRTUAL_KEY, VK_CONTROL};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetFocus, GetKeyState, SetFocus, VIRTUAL_KEY, VK_CONTROL,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
-    GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-    WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    GetClassNameW, GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW,
+    PostQuitMessage, RegisterClassExW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
+    WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN, WNDCLASSEXW,
+    WS_CHILD, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
@@ -433,7 +436,7 @@ fn handle_get_object(
     unsafe { DefWindowProcW(hwnd, WM_GETOBJECT, wparam, lparam) }
 }
 
-fn drain_commands(hwnd: HWND, context: &WindowContext) {
+fn drain_commands(hwnd: HWND, context: &'static WindowContext) {
     while let Ok(command) = context.receiver.try_recv() {
         if !apply(hwnd, context, command) {
             return;
@@ -443,7 +446,7 @@ fn drain_commands(hwnd: HWND, context: &WindowContext) {
 
 /// Applies one command on the window thread and acknowledges it; false
 /// once the command closed the window.
-fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
+fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool {
     if matches!(command, Command::Quit) {
         // SAFETY: `hwnd` is this window's own live handle.
         let _ = unsafe { DestroyWindow(hwnd) };
@@ -498,6 +501,25 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         acknowledge("applied");
         return true;
     }
+    if let Command::WindowFocus = command {
+        // SAFETY: `hwnd` is this thread's own live window. The previous
+        // focus window the call answers is not needed.
+        let _ = unsafe { SetFocus(Some(hwnd)) };
+        // SAFETY: reads this thread's focus window; always sound.
+        if unsafe { GetFocus() } == hwnd {
+            acknowledge("applied");
+        } else {
+            acknowledge("rejected: the window did not take the focus");
+        }
+        return true;
+    }
+    if let Command::ChildWindow = command {
+        match child_window(hwnd, context) {
+            Ok(()) => acknowledge("applied"),
+            Err(error) => acknowledge(&format!("rejected: {error}")),
+        }
+        return true;
+    }
     let applied = match command {
         Command::Unrecognized(line) => Err(format!("unrecognized command: {line}")),
         command => match context.backend {
@@ -514,6 +536,45 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         Err(reason) => acknowledge(&format!("rejected: {reason}")),
     }
     true
+}
+
+/// `child-window`: a hidden child window of `hwnd`, of its class, whose
+/// window procedure finds `context` as the host's does, so it answers
+/// `WM_GETOBJECT` as the host does.
+fn child_window(hwnd: HWND, context: &'static WindowContext) -> windows::core::Result<()> {
+    let mut class = [0u16; 256];
+    // SAFETY: `hwnd` is this thread's live window; the buffer outlives the
+    // call, which writes at most its length.
+    let length = unsafe { GetClassNameW(hwnd, &mut class) };
+    if length == 0 {
+        return Err(windows::core::Error::from_thread());
+    }
+    // SAFETY: retrieves this module's own instance handle; always sound.
+    let hinstance = unsafe { GetModuleHandleW(None) }?;
+    // SAFETY: `class` holds the host's registered class name, NUL-ended by
+    // the call above; the parent is this thread's live window.
+    let child = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            PCWSTR(class.as_ptr()),
+            PCWSTR::null(),
+            WS_CHILD,
+            0,
+            0,
+            10,
+            10,
+            Some(hwnd),
+            None::<HMENU>,
+            Some(hinstance.into()),
+            None,
+        )
+    }?;
+    // SAFETY: `child` is the window just created on this thread; `context`
+    // is the host's leaked context, live for the process's lifetime.
+    unsafe {
+        SetWindowLongPtrW(child, GWLP_USERDATA, std::ptr::from_ref(context) as isize);
+    }
+    Ok(())
 }
 
 /// Writes one acknowledgement line to stdout, where `ready` went, and

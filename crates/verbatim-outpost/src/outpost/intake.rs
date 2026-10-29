@@ -1988,6 +1988,7 @@ mod tests {
                 hwnd,
                 snapshot: snapshot(runtime_id),
                 ancestors: Some(Vec::new()),
+                ancestors_end: crate::protocol::AncestorsEnd::Top,
                 selected_child: None,
                 value_from_selection: false,
                 window: Some(hwnd),

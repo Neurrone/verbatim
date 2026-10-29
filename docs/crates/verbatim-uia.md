@@ -152,21 +152,29 @@ call waits up to `CONNECTION_TIMEOUT` to connect and
 
 ## Ancestors
 
-`Uia::ancestors((element, element_window), request, registry, (max_hops,
-parent_automation_id), stops)` gives the chain of an element's
+`Uia::ancestors((element, element_window, nearest), request, registry,
+(max_hops, parent_automation_id), stops)` gives the chain of an element's
 ancestors, each read as the `Ancestor` shape, outermost first, as
 `NodeSnapshot`s, with the automation id of the raw-view parent put in
 `parent_automation_id`. It is a per-hop `GetParentElementBuildCache` walk
 over the raw view, capped by the caller and stopped by `AncestorStops`:
 at a window read through the other API, at an ancestor the caller
 already knows (`AncestorWalk::MetKnown`), or at the caller's
-`out_of_time` check or a hop the transaction timeout ended
-(`AncestorWalk::OutOfTime`). The root has no parent, which ends the walk
-as complete; any other failed hop, or one that finds no parent, below the
-root ends it as `AncestorWalk::Unknown`, carrying a `FailedHop` (`Error`
-with the code, or `NoParent`), which callers treat as `OutOfTime`, as
-NVDA reads the window hierarchy when its UIA parent read fails. Telling
-the root is two local calls, made only when a hop fails.
+`out_of_time` check, a hop the transaction timeout ended, or `max_hops`
+(`AncestorWalk::Cut`, with the outermost element's nearest window, from
+which the caller completes the chain by plain windows). The root has no
+parent, which ends the walk as complete; any other failed hop, or one that
+finds no parent, below the root ends it as `AncestorWalk::Failed`, carrying
+a `FailedHop` (`Error` with the code, or `NoParent`) and the window the
+chain goes on from, the parent window of the outermost element's nearest
+window, as NVDA reads the window hierarchy when its UIA parent read fails.
+`nearest` is the element's nearest window, 0 when not known; the outermost
+element's is followed by `outermost_nearest_window(nearest, hwnds)`, local
+calls: an element that is its window's own has that window, one with none
+above one that had its own is hosted by that window's parent window, and
+one with none above one with none has the same window as it
+(`parent_window` is `GetAncestor` with `GA_PARENT`). Telling the root is
+two local calls, made only when a hop fails.
 
 The walk never steps across the process boundary
 (`docs/design/listener-without-connections.md`, section 3): before each
@@ -187,7 +195,9 @@ description whatever the theme, as NVDA's `presentationType` does
 
 - `Uia::ancestors_from(parents, registry, stops)` gives the same result
   from ancestors already fetched as `Ancestor`s, nearest first, such as
-  those `verbatim_uia_rops::focus_ancestry` returns.
+  those `verbatim_uia_rops::focus_ancestry` returns; a fetch cut short or
+  ended by a failed step is reported as complete up to there, and the
+  caller, which knows how the fetch ended, completes the chain.
 - `Uia::ancestor_chain_from_parts(parents, registry, stops)` does the
   same for ancestors another process read and sent as their parts
   (`AncestorParts`: the cached parts, the own window handle, and whether

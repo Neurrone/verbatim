@@ -36,14 +36,16 @@ dialog to its owner, reading each window through UIA when it has a
 provider and through MSAA otherwise ([The UIA client](../nvda/uia.md),
 "The per-window UIA decision"). Verbatim: the focus listener stops at
 the process boundary, and the outpost of the focus's application
-continues the chain from the host or owner window through MSAA
-(`docs/design/listener-without-connections.md`, decision 7 and section
-4.4). **different** (decision 7 of that design, Dickson, 2026-10-18):
-the ancestors above the host window are read through MSAA, where NVDA
-reads those with a provider through UIA, so such a window, a WinUI
-host's "title window" among them, may be named and roled differently;
-for a host without a provider, such as Quick Assist's, both read the
-same object. Reading them through the host window's own outpost by UIA
+completes the chain with the host or owner window and every window above
+it as plain windows, named by their text, with no call into the other
+process (`docs/design/listener-without-connections.md`, decision 7 and
+section 4.4; `docs/design/focus-pipeline-rework.md`, "Calls that reach
+another application"). **different** (decision 7 of that design,
+Dickson, 2026-10-18, amended 2026-10-29): such a window is named by its
+text with the window role, where NVDA reads it through UIA or MSAA. For
+the Settings frame NVDA's object in the chain is a window named by its
+title too, which it never speaks; at entry the frame's own foreground
+focus is spoken. Reading them through the host window's own outpost by UIA
 is reconsidered if an NVDA capture of entering such a host differs from
 Verbatim's announcement (Dickson, 2026-10-20). An owned dialog seen on
 2026-10-19: the Windows Security credential dialog

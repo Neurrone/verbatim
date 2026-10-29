@@ -130,7 +130,8 @@ use crate::outpost::window::{
     window_is_hung,
 };
 use crate::protocol::{
-    DeliveredFact, EventTiming, GapAnswer, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
+    AncestorsEnd, DeliveredFact, EventTiming, GapAnswer, UiaAncestorFact, UiaFocusRead,
+    UiaSnapshotFact, now_us,
 };
 use verbatim_core::focus_rules::{RepeatEvidence, repeats_focus};
 
@@ -777,7 +778,14 @@ pub struct FocusReader {
     /// whether it was abandoned before its focus is accepted
     /// ([`judge_watched`](Self::judge_watched)).
     window: WatchedRead,
+    /// Told the name of each call of the classic walk before it is made,
+    /// when a test asks ([`observe_calls`](Self::observe_calls)).
+    calls: Option<CallObserver>,
 }
+
+/// Told the name of each call a focus read's classic walk is about to make
+/// ([`FocusReader::observe_calls`]).
+pub type CallObserver = Arc<dyn Fn(&'static str) + Send + Sync>;
 
 impl Drop for FocusReader {
     fn drop(&mut self) {
@@ -806,7 +814,17 @@ impl FocusReader {
             clock: Arc::new(Instant::now),
             forced_uia: Arc::default(),
             window: WatchedRead::default(),
+            calls: None,
         })
+    }
+
+    /// Tells `observer` the name of each call its reads' classic walk is
+    /// about to make, before it is made (`FocusQuery::before_call`): a
+    /// test that changes the application between two of a walk's calls,
+    /// as between its boundary check and its step, so that the order is
+    /// forced.
+    pub fn observe_calls(&mut self, observer: CallObserver) {
+        self.calls = Some(observer);
     }
 
     /// Reads the foreground window with `reader` from now on, in place of
@@ -869,6 +887,10 @@ impl FocusReader {
     /// Judges and reads the UIA focus event, or menu opening (`kind`),
     /// whose sender is `sender`, as the registration delivers it, and which
     /// came as `arrival`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the read's checks, query and outcome, read top to bottom as they run"
+    )]
     pub fn read(
         &mut self,
         sender: &Cached<ListenerEvent>,
@@ -957,7 +979,12 @@ impl FocusReader {
                     require_focus: false,
                     refresh: true,
                     nearest_window: Some(nearest),
-                    before_call: Some(&|call| budget.call(call)),
+                    before_call: Some(&|call| {
+                        budget.call(call);
+                        if let Some(observer) = &self.calls {
+                            observer(call);
+                        }
+                    }),
                     // Read from the element's fresh copy.
                     value_available: None,
                 };
@@ -997,6 +1024,7 @@ impl FocusReader {
                     hwnd,
                     snapshot,
                     ancestors: None,
+                    ancestors_end: AncestorsEnd::Top,
                     selected_child: None,
                     value_from_selection: false,
                     window: Some(nearest),
@@ -1074,6 +1102,10 @@ impl FocusReader {
     /// the event's element, and its value, states, and details afresh; its
     /// ancestors as read, followed by those of the focus before above the
     /// one the read stopped at. `arrival` is the event it came in.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the focus, its ancestors and where they end, built in the order they are read"
+    )]
     fn focused(
         &mut self,
         element: &IUIAutomationElement,
@@ -1132,28 +1164,50 @@ impl FocusReader {
                 .flatten();
             add_legacy_checked_state(&mut snapshot.states, legacy);
         }
-        // A walk out of time, or one whose step to a parent failed or found
-        // none below the root, leaves the ancestors unknown, as NVDA's
-        // failed parent read falls back to the window hierarchy rather
-        // than ending the chain.
-        let ancestors = (!ancestry.ancestors_unknown()).then(|| {
-            let tail = match (ancestry.met_known, &self.last) {
-                (
-                    Some(met),
-                    Some(LastFocus {
-                        ancestors: Some(before),
-                        ..
-                    }),
-                ) => reused_ancestors(before, met),
-                _ => Vec::new(),
-            };
+        // A walk whose step to a parent failed or found none below the root
+        // goes on from the parent window of its outermost element's nearest
+        // window, as NVDA's failed parent read falls back to the window
+        // hierarchy rather than ending the chain; one cut by the read's
+        // budget or the depth limit is completed by plain windows from that
+        // nearest window. The listener connects to neither: it names the
+        // window, and the outpost goes on from it.
+        // Local calls, made only for a walk that did not reach the top.
+        let outermost = || {
+            verbatim_uia::outermost_nearest_window(
+                nearest,
+                std::iter::once(hwnd).chain(
+                    ancestry
+                        .ancestors
+                        .iter()
+                        .map(|ancestor| ancestor.read().node.role.hwnd),
+                ),
+            )
+        };
+        let ancestors_end = if ancestry.failed_hop.is_some() {
+            AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(outermost()))
+        } else if ancestry.out_of_time || ancestry.depth_limited {
+            AncestorsEnd::PlainFrom(outermost())
+        } else {
+            AncestorsEnd::Top
+        };
+        let tail = match (ancestry.met_known, &self.last) {
+            (
+                Some(met),
+                Some(LastFocus {
+                    ancestors: Some(before),
+                    ..
+                }),
+            ) => reused_ancestors(before, met),
+            _ => Vec::new(),
+        };
+        let ancestors = Some(
             ancestry
                 .ancestors
                 .iter()
                 .map(ancestor_fact)
                 .chain(tail)
-                .collect::<Vec<_>>()
-        });
+                .collect::<Vec<_>>(),
+        );
         tracing::debug!(
             path,
             read = ancestry.ancestors.len(),
@@ -1173,10 +1227,14 @@ impl FocusReader {
         // the process boundary itself; the window is the nearest window
         // found for the acceptance test when the walk named none.
         let window = ancestry.window.or(Some(nearest));
+        // Only a chain that reaches the top is where a later read may stop
+        // and reuse the rest, since the outpost goes on from a cut one.
         self.last = Some(LastFocus {
             runtime_id: snapshot.runtime_id.clone(),
             element: element.clone(),
-            ancestors: ancestors.clone(),
+            ancestors: ancestors
+                .clone()
+                .filter(|_| ancestors_end == AncestorsEnd::Top),
         });
         self.held_elements
             .accept(self.number, element, (nearest, arrival), &self.window);
@@ -1191,6 +1249,7 @@ impl FocusReader {
             hwnd,
             snapshot,
             ancestors,
+            ancestors_end,
             selected_child,
             value_from_selection,
             window,
@@ -2482,6 +2541,7 @@ mod tests {
                 details: NodeDetails::default(),
             },
             ancestors: None,
+            ancestors_end: crate::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
             window: None,

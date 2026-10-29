@@ -188,6 +188,43 @@ pub fn parent_across_process_boundary(hwnd: isize) -> Option<isize> {
     (provider(hwnd)? != provider(above)?).then_some(above)
 }
 
+/// The parent window of `hwnd` (`GetAncestor` with `GA_PARENT`), 0 for
+/// none. A local call.
+#[must_use]
+pub fn parent_window(hwnd: isize) -> isize {
+    // SAFETY: GetAncestor tolerates any handle, answering null for an
+    // invalid one.
+    unsafe { GetAncestor(HWND(hwnd as *mut _), GA_PARENT) }.0 as isize
+}
+
+/// The nearest window of the outermost element of a walk up the raw view,
+/// by local calls (`docs/design/focus-pipeline-rework.md`, "A window's name,
+/// and the one fallback"): a walk cut short is completed by plain windows
+/// from it, and one whose step to a parent failed goes on from its parent
+/// window, as NVDA's parent read falls back to the window hierarchy
+/// (`NVDAObjects/UIA/__init__.py` 2142 to 2145, `Window._get_parent`).
+/// `nearest` is the first element's nearest window, and `hwnds` each
+/// element's own native window handle, from the first outward, 0 for one
+/// that is not a window: an element that is a window's own has that
+/// window; one with none above one that had its own is hosted, in the raw
+/// view, by that window's parent window; and one with none above one with
+/// none has the same window as it. 0 when not known.
+#[must_use]
+pub fn outermost_nearest_window(nearest: isize, hwnds: impl IntoIterator<Item = isize>) -> isize {
+    let mut window = nearest;
+    let mut own = false;
+    for hwnd in hwnds {
+        if hwnd != 0 {
+            window = hwnd;
+            own = true;
+        } else if own {
+            window = parent_window(window);
+            own = false;
+        }
+    }
+    window
+}
+
 /// Whether `hwnd` is a top-level window, its own root window (`GetAncestor`
 /// with `GA_ROOT`); `false` for a child window and for a window that no
 /// longer exists. A local call.

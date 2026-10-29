@@ -35,6 +35,9 @@ const PATH_BUDGET: Duration = Duration::from_secs(1);
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct FocusPath {
     chain: Vec<(Vec<i32>, isize)>,
+    /// Whether the listener's walk up from the focus did not reach the
+    /// top: its read failed, or the walk was cut or ended at a failed step.
+    cut: bool,
 }
 
 /// Where an element of a [`FocusPath`] is found from: the window whose
@@ -61,14 +64,19 @@ impl FocusPath {
                     .map(|ancestor| (ancestor.snapshot.runtime_id.clone(), ancestor.hwnd)),
             )
             .collect();
-        Self { chain }
+        let cut =
+            read.ancestors.is_none() || read.ancestors_end != crate::protocol::AncestorsEnd::Top;
+        Self { chain, cut }
     }
 
-    /// Whether the chain holds only the focus `runtime_id` names, which has
-    /// no window of its own: the listener's walk up from it was cut, so no
-    /// route leads to its element ([`Self::route_to`]).
+    /// Whether the chain begins with the focus `runtime_id` names, holds no
+    /// window of its own anywhere, and the listener's walk up from it did
+    /// not reach the top: the walk was cut below the focus's nearest
+    /// window, so no route leads to its element ([`Self::route_to`]).
     pub(super) fn is_cut_at(&self, runtime_id: &[i32]) -> bool {
-        matches!(self.chain.as_slice(), [(id, 0)] if id == runtime_id)
+        self.cut
+            && self.chain.first().is_some_and(|(id, _)| id == runtime_id)
+            && self.chain.iter().all(|&(_, hwnd)| hwnd == 0)
     }
 
     /// The route to the element of the chain whose runtime id is
@@ -203,6 +211,7 @@ mod tests {
                     })
                     .collect(),
             ),
+            ancestors_end: crate::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
             window: None,

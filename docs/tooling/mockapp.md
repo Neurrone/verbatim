@@ -216,6 +216,19 @@ parses them.
 - `disable-client` (MSAA only) disables the window, as a modal dialog's
   owner is: the root node gains the unavailable state and
   `EVENT_OBJECT_STATECHANGE` is raised on the client area.
+- `acc-focus-window <hwnd>` (MSAA only) makes every node's `accFocus`
+  answer the client object of window `hwnd`, a decimal handle, from then
+  on, acquired with `AccessibleObjectFromWindow` as it is asked, as an
+  application whose own `accFocus` names an object another process serves
+  would.
+- `child-window` makes a hidden child window of the host window, of the
+  host's class, which answers `WM_GETOBJECT` as the host does, so an event
+  can name a node at its object id in a window of its own inside the
+  host's, as a control's window is inside a dialog's; a test finds it with
+  `FindWindowExW` under the host.
+- `window-focus` gives the host window the keyboard focus within its
+  thread (`SetFocus`), so it is its thread's focus window, and is
+  rejected if the window did not take it.
 - `hold` makes the next provider call, whichever client makes it, print
   `held <method>` as it begins and wait until `release`, so a test knows a
   client's call is in progress and decides when it ends.

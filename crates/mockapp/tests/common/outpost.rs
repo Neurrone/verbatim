@@ -709,6 +709,28 @@ impl OutpostUnderTest {
         self.reader.borrow().forces_uia(forced);
     }
 
+    /// Tells `observer` the name of each call the listener's reader's
+    /// classic walk is about to make, before it makes it, so a test can
+    /// change mockapp's windows between two of them.
+    pub fn listener_observes_calls(&self, observer: verbatim_outpost::focus_read::CallObserver) {
+        self.reader.borrow_mut().observe_calls(observer);
+    }
+
+    /// Has the outpost judge window `hung` as a hung application's, as
+    /// Windows judges a window whose thread has not answered for five
+    /// seconds, and every other window by the system's judgement.
+    pub fn judge_hung(&self, hung: HWND) {
+        let hung = hung.0 as isize;
+        self.outpost
+            .set_window_readability_reader(Arc::new(move |hwnd| {
+                if hwnd == hung {
+                    Some("its application is not responding")
+                } else {
+                    verbatim_outpost::window_unreadable(hwnd)
+                }
+            }));
+    }
+
     /// Now on the outpost's observation clock ([`TestClock`]), which a fact
     /// the test hands over is stamped by.
     pub fn observed_now(&self) -> u64 {

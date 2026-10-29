@@ -76,6 +76,10 @@ complete name tables. The fields:
   MSAA's client object with the scripted root, as a window with a native
   UIA provider can serve MSAA too, so a Win32 control inside it has an
   MSAA parent with the root's states, the focused state included.
+- `nested`: how many groups of its own the node is placed under, between
+  it and its parent, `<id>-nest-1` named "Nest 1", outermost, to
+  `<id>-nest-<nested>` right above it, for a tree deeper than a fixture's
+  JSON can nest (`tests/fixtures/nested.json`, a button under 66 groups).
 - `window_class`, on the root: the host window's class. For example
   `tests/fixtures/msaa_class_window.json` is a window of a class on NVDA's
   MSAA class list, `MozillaWindowClass`, whose focus the listener skips by

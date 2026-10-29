@@ -425,16 +425,18 @@ it a cold focus with two mockapps, one's UIA window a child of the
 other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 
 - Minimum: the listener's calls of a cold focus, none a step into the
-  parent's process, and the outpost's MSAA reads of the parent's client
-  area and the chain above it.
+  parent's process, and no call of the outpost's into the parent's
+  process, the parent and the windows above it being plain windows read
+  from Windows' own state (`docs/design/focus-pipeline-rework.md`, "A
+  window's name, and the one fallback").
 - Today: the listener's 5 UIA calls and no window message, its two steps
-  ending at the child's window. The outpost makes 8 MSAA calls, the client
-  area and the chain above it, and no probe of the parent
-  (`docs/design/listener-without-connections.md`, section 4.3); above a
-  parent with a UIA provider, 21 MSAA calls and no UIA call
-  (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`).
-  Either way it probes the child's window, its own application's, once:
-  1 window message.
+  ending at the child's window. The outpost makes no call into the parent,
+  with or without a UIA provider
+  (`uia_focus_chains_name_a_parent_with_a_provider_as_a_plain_window`);
+  before the plain window it made 8 MSAA calls there, and 21 above a parent
+  with a provider. It probes the child's window, its own application's,
+  once: 1 window message. A parent stalled for 4 seconds does not delay the
+  report (`a_window_above_the_process_boundary_is_a_plain_window_with_no_call`).
   UIA's client side still connects to that parent when a read returns the
   child window's element, once remotely, twice classically and once in a
   focus-now query, each connection a `UiaRootObjectId` `WM_GETOBJECT`
@@ -445,7 +447,8 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 - Target: no message to the parent, which UIA's client side does not
   allow while the child window's element is held; accepted as a known
   limit (`docs/design/listener-without-connections.md`, decision 13).
-- Bound: the chain above the boundary, read once.
+- Bound: none above the boundary; local calls, about four per plain
+  window.
 
 ### A focus change into a list, UIA
 
@@ -571,14 +574,15 @@ name (`tests/fixtures/tree_view.json`, `msaa_tree_view_costs_exactly`),
 after a focus on another root item. Only the client's calls are pinned,
 since the provider is comctl32's.
 
-- Today: 33 MSAA calls and 12 window messages: the item's position
+- Today: 35 MSAA calls and 12 window messages: the item's position
   (mapping its child id to its item and counting its siblings both ways),
   its check state from its state image (`TVM_GETITEMSTATE`, as NVDA reads
   it), and its logical parent through the control's messages, read as an
   ancestor, so its siblings and location are not. The focused-state check
   comes first, as in NVDA; the test gives the control no keyboard focus,
   so the check reads the tree view's, its window's and mockapp's root
-  state, 7 MSAA calls a real focused item does not need.
+  state, and the roles that tell it which window it is in, 9 MSAA calls a
+  real focused item does not need.
 - Bound: the item's depth in the tree.
 
 ### A focus on a report view item, MSAA
@@ -587,10 +591,12 @@ An item of a real list view in report view
 (`tests/fixtures/list_view.json`, `msaa_list_view_costs_exactly`), after
 another item, named by its four columns as NVDA names it.
 
-- Today: 28 MSAA calls and 14 window messages: the view, the header and
+- Today: 30 MSAA calls and 14 window messages: the view, the header and
   its item count, the column order, each column's rectangle (4), each
   shown column's text (3), the header of each but the first (2), and the
-  item count for the position.
+  item count for the position; and 2 roles of the focused-state check,
+  which the test's list view, without the keyboard focus, makes, telling
+  it which window it is in.
 - Bound: the number of columns.
 
 ### A tree view item expanded or collapsed, MSAA
@@ -692,7 +698,9 @@ before anything else (`docs/parity/focus-events.md`, "Event acceptance";
   and the acquisition's `WM_GETOBJECT`.
 - A focus event on an object neither focused nor inside a focused one:
   its role, `accFocus`, and its and each ancestor's state are read, as
-  NVDA reads the states first; mockapp answers 12 provider calls and the
+  NVDA reads the states first, and each one's role, which tells the test
+  the step that leaves a window, so that it never steps into a window it
+  reads as a plain window; mockapp answers 14 provider calls and the
   `WM_GETOBJECT` for an object two levels below its root.
 
 ### Entering a dialog, MSAA
@@ -1114,7 +1122,8 @@ its probe adds 1 window message (above):
   minimum is met remotely; classically 45, and 57 with a selection. A UIA
   terminal (`terminal_reading.json`) 9 remotely and 27 classically, each
   with 1 connection and no window message. A classic edit control through
-  MSAA 37 MSAA calls and 6 window messages. A focus without text is
+  MSAA 39 MSAA calls and 6 window messages, 2 of them the roles of the
+  focused-state check of a control without the keyboard focus. A focus without text is
   reported before its search.
 - A windowless text focus whose walk up the listener cut, so that no route
   leads to its element: the application's focused element is read in
