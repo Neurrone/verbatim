@@ -18,6 +18,13 @@ that is neither has no text.
   decoded by what its buffer holds, UTF-16 or ANSI, as NVDA decodes it
   ("Rich edit text" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
+- Rich edit paragraphs: **different** until M6.5. NVDA reads a rich edit
+  control of version 2.0 or later through its object model
+  (`ITextDocumentTextInfo`, `nvda/source/NVDAObjects/window/edit.py` 1041
+  to 1045), whose paragraph is the text between line breaks; Verbatim
+  reads it through window messages, and its paragraph is the line as
+  shown, so Control+Up and Control+Down Arrow move by wrapped lines
+  there.
 - NVDA's `caretMovementFailed` event is not offered.
 
 The layer's cases are the entries that follow, from "Caret keys and
@@ -415,15 +422,16 @@ Verbatim: **different**: a setting Verbatim does not have yet
 
 ### Not yet built
 
-Selection detection cases not built. Verbatim: **not yet (unscheduled)**.
+Selection detection cases not built. Verbatim: **not yet**.
 
 - A kept selection with no text, as the by-parts select path keeps it,
   is not checked for its range no longer holding its text until its
-  ends move.
+  ends move; the caret and selection rework's last read keeps the text
+  from every path (`docs/design/caret-selection-rework.md`).
 - NVDA's classic edit control drops a caret event whose selection
   offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to
-  1075); Verbatim reads each caret event.
-- Terminals are unresolved: NVDA's console class replaces the detection
+  1075); Verbatim reads each caret event (M6.5).
+- Unscheduled: terminals are unresolved: NVDA's console class replaces the detection
   (`NVDAObjects/UIA/winConsoleUIA.py` line 416), which is not yet
   traced, and Verbatim reports no selection change in a terminal.
 

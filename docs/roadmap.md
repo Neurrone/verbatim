@@ -106,13 +106,6 @@ The decisions, in brief:
 - Review keys straight to the reducer
   ([communication](design/communication.md), section 11) is reconsidered
   when the command set is settled (Dickson, 2026-10-14).
-- For a later milestone (Dickson, 2026-10-10): Verbatim echoes a typed
-  character from its keyboard hook, before the application handles the
-  key, where NVDA echoes from the application's typed-character event; a
-  letter typed within about 40 ms of Tab is not echoed.
-- The caret read made with a focus chooses remote or classic reading by
-  the previous focus's window, since the outpost's window tracking is
-  updated after the focus is published; only the read's cost differs.
 - A question for Dickson: `notepad_editing` reads Notepad's spelling
   marks once before its second Control+Home, since Notepad raises no
   event when it marks a word, and fails when the idle-time spell check
@@ -136,7 +129,7 @@ Tests and tooling:
 - The platform-neutral dependency check (`check_platform_neutral_deps` in `xtask/src/main.rs`) runs `cargo tree -e normal`, so a build-dependency on `windows-sys` or a Windows-specific workspace crate is not caught, `winapi` is on neither banned list, and a dependency on a Windows-only workspace crate that uses no bindings itself passes.
 - `cargo xtask trace scenario` and `cargo xtask measure` look for the build under `<worktree>\target` and ignore `CARGO_TARGET_DIR`, so a worktree building elsewhere measures a stale or missing build.
 - A double-click is checked only by hand: the agent has no mouse request, so no scenario pins "beta selected" for a double-click inside a word.
-- Key holding's gaps: no test of a waiting key following the newest watch (`crates/verbatim-core/src/editing.rs`); no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a held key whose release is never seen stays in `held_downs`; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
+- Key holding has no test of a waiting key following the newest watch (`crates/verbatim-core/src/editing.rs`); its other gaps are in M6.5.
 
 Crashes and stalls:
 
@@ -160,13 +153,8 @@ Events and controls:
 
 Text and selection:
 
-- `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. Likely cause, unconfirmed: Core compares "alpha" while the outpost's word unit reads "alpha " with its white space; make the two agree.
-- Settle where NVDA's say-all starts from NVDA's speech log before any say-all expectation changes: in every capture of 2026-10-23 NVDA's recorded speech began at the line after the caret's, in Notepad and in the text box, which is either this NVDA build or the capture add-on missing the first chunk.
-- Notepad's Find box differs from NVDA's capture: Control+F says Notepad's notification "Press F6 to go to new notification" first and "Find edit" and "selected beta" as two utterances, where NVDA says "Popup window", then "Find edit selected beta" as one, then the notification; settle it with a capture that does not depend on the text Notepad remembers in the box.
-- The order of a selection change's parts: NVDA speaks every text selected, then every text unselected (`speakSelectionChange`, `nvda/source/speech/speech.py` 1367 to 1417), where Verbatim says them in text order, so a replaced selection and one crossing its anchor are spoken the other way round; no capture has the replaced selection yet.
-- The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it. Moving by sentence where the application does not is scheduled in the caret and selection rework.
-- The remote caret program could leave out its two comparisons of the old and new selections' ends when the old selection is known at build time to hold nothing (`previous_collapsed`, `crates/verbatim-uia-rops/src/caret.rs`), since that case is a whole change already.
-- The outpost's per-text-node selection baseline is not judged against the focus Core holds, as the listener's repeats are (D14, "Where the rules run"); whether it should be is a question for Dickson.
+- `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. The caret and selection rework removes the first check and runs the scenario ten times; if it still fails, the likely cause, unconfirmed, is Core comparing "alpha" while the outpost's word unit reads "alpha " with its white space.
+- The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it; the caret and selection rework's captures settle it.
 
 ## M4.2 — Parity small items
 
@@ -581,6 +569,43 @@ Follow-ups:
 
 Exit: Terminal sessions are solid; terminal flood E2E shows bounded
 latency and no hang.
+
+## M6.5 — Text residuals
+
+The text work left after M4's caret and selection rework, gathered in
+one milestone (Dickson, 2026-10-29).
+
+Formatting and the rich edit control:
+
+- A rich edit control read through its own object model
+  (`ITextDocument`), as NVDA reads rich edit 2.0 and later
+  (`ITextDocumentTextInfo`, `nvda/source/NVDAObjects/window/edit.py`
+  1041 to 1045): its own paragraphs, so that Control+Up and Control+Down
+  Arrow move by them, its own sentences for Alt+Up and Alt+Down, its
+  embedded objects named, its paragraph alignment and its links.
+  Verbatim reads a rich edit control through window messages, its
+  paragraph being its line as shown.
+- Formatting in classic edit controls, plain and rich, as NVDA reads it;
+  they read none today.
+- Formatting in review commands and say-all, which read none today
+  (`docs/crates/verbatim-core.md`, "Formatting").
+
+Text and selection:
+
+- Settle where NVDA's say-all starts from NVDA's speech log before any say-all expectation changes: in every capture of 2026-10-23 NVDA's recorded speech began at the line after the caret's, in Notepad and in the text box, which is either this NVDA build or the capture add-on missing the first chunk.
+- Notepad's Find box differs from NVDA's capture: Control+F says Notepad's notification "Press F6 to go to new notification" first and "Find edit" and "selected beta" as two utterances, where NVDA says "Popup window", then "Find edit selected beta" as one, then the notification; settle it with a capture that does not depend on the text Notepad remembers in the box.
+- The order of a selection change's parts: NVDA speaks every text selected, then every text unselected (`speakSelectionChange`, `nvda/source/speech/speech.py` 1367 to 1417), where Verbatim says them in text order, so a replaced selection and one crossing its anchor are spoken the other way round; no capture has the replaced selection yet.
+- NVDA's classic edit control drops a caret event whose selection offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to 1075); Verbatim reads each caret event (`docs/parity/text.md`, "Not yet built").
+- The remote caret program could leave out its two comparisons of the old and new selections' ends when the old selection is known at build time to hold nothing (`previous_collapsed`, `crates/verbatim-uia-rops/src/caret.rs`), since that case is a whole change already.
+- The caret read made with a focus chooses remote or classic reading by the previous focus's window, since the outpost's window tracking is updated after the focus is published; only the read's cost differs.
+
+Typing and keys:
+
+- Verbatim echoes a typed character from its keyboard hook, before the application handles the key, where NVDA echoes from the application's typed-character event; a letter typed within about 40 ms of Tab is not echoed (Dickson, 2026-10-10, for a later milestone).
+- Key holding's gaps: no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a held key whose release is never seen stays in `held_downs`; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
+
+Exit: each entry is matched (verified) by a scenario or a test, with a
+declared deviation where Dickson chose one.
 
 ## M7 — Browse mode, browsers, and the injection helper
 
