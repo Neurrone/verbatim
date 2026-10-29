@@ -135,7 +135,7 @@ Crashes and stalls:
 
 Focus and File Explorer:
 
-- File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view.
+- File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view. On 2026-10-29 it failed this way in 22 of 23 runs in a row on the development machine, on builds before and after that day's changes, while `explorer_folder_window` passed, after a "Low disk space" dialog had taken the foreground during a batch; the state that makes it constant is not found.
 - In one runner run the `delta` item inside Inner still carried the parent folder's window title; check whether File Explorer's title lags or an ancestor name is stale (`explorer_folder_window`).
 - The listener's read in File Explorer scenarios once came 285 ms late, locally mostly the first nearest-window lookup waiting on a busy File Explorer; confirm on GitHub's runner (deferred, Dickson, 2026-10-21).
 - On a fresh GitHub runner the first Verbatim start can say "Start toggle button not pressed" instead of "Desktop list", because the taskbar rehosts the Start button in a new PopupHost window and raises a UIA focus NVDA would accept too; the choice between a throwaway warm-up start and an experiment to find the trigger is deferred (Dickson, 2026-10-21).
