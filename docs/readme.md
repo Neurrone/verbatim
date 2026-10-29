@@ -70,6 +70,8 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [focus-pipeline-rework.md](design/focus-pipeline-rework.md) — the
     reconciliations between the listener, the outposts and Core to
     remove.
+  - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
+    difference from NVDA's focus handling found on 2026-10-29.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read

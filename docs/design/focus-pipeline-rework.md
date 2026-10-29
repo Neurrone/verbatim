@@ -1,6 +1,6 @@
 # The focus pipeline rework
 
-Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The focus pipeline rework"). The study of the present pipeline follows them, with file and line references into the code as of 2026-10-25; the process and thread model it starts from is `docs/architecture.md`, section 1.
+Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The focus pipeline rework"). The study of the present pipeline follows them, with file and line references into the code as of 2026-10-25; the process and thread model it starts from is `docs/architecture.md`, section 1. The scope was widened on 2026-10-29 to every reconciliation below and every difference in [the NVDA audit](focus-pipeline-audit.md).
 
 ## What was found
 

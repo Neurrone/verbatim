@@ -273,6 +273,14 @@ The decisions and their order of work, each in the design's
 
 ### Deferred
 
+- Cancelling stuck UIA and MSAA calls, as NVDA's watchdog does with
+  `CoCancelCall`, is handled apart from the focus pipeline rework
+  (Dickson, 2026-10-29): it would return threads that are now abandoned,
+  but changes nothing spoken. First an experiment on whether
+  `CoCancelCall` ends a UIA client call, as
+  `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/`
+  did for MSAA, whose decision of 2026-10-21 not to build it stands until
+  then.
 - Review keys straight to the reducer
   ([communication](design/communication.md), section 11) is reconsidered
   when the command set is settled (Dickson, 2026-10-14).
