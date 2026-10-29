@@ -334,7 +334,11 @@ side's connections to a parent across the boundary, and the focus-read and
 walk-up races (`docs/design/listener-without-connections.md`, section 2),
 so no lock is needed around them. No node is searched for by runtime id:
 a UIA node whose kept element is gone, or that has none, and whose focus
-route finds nothing is answered gone (`read::resolve_uia_element`), and a
+route's walk finishes without it is answered gone
+(`read::resolve_uia_element`), while a walk that fails, a window lookup
+timed out or refused or a classic walk past its budget among them, fails
+the query (`focus_path::find`), since a slow application has not shown
+the element gone; and a
 listener's selection is reported with what its event's cache holds
 (`verbatim_uia::ListenerSelection`), since a search of a subtree enters
 any child window another process serves (the study's instance 3). The supervisor's `App` table holds each application's

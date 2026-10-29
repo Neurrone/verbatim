@@ -3712,8 +3712,8 @@ impl Worker<'_> {
 
     /// The element `runtime_id` names, an element of the chain the
     /// listener read for the focus this outpost last reported, found by its
-    /// path ([`focus_path::find`]); `None` when it is not in that chain, or
-    /// its path does not lead to it.
+    /// path ([`focus_path::find`]); `None` when it is not in that chain, its
+    /// path does not lead to it, or the walk failed.
     fn element_by_focus_path(&mut self, runtime_id: &[i32]) -> Option<Cached<Kept>> {
         let context = self.context;
         let route = context.focus_route(runtime_id)?;
@@ -3726,7 +3726,7 @@ impl Worker<'_> {
             context.read_classically(route.window);
         }
         // Read as `Kept`: the callers keep it, or read only its runtime id.
-        found.map(|found| found.narrow())
+        found.ok().flatten().map(|found| found.narrow())
     }
 
     /// The element of a windowless focus whose walk up the listener cut

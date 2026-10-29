@@ -8,6 +8,9 @@
 //! window is in front, as NVDA's acceptance test has it; how the outpost
 //! finds its own copy of the element by its path and follows it, and
 //! follows nothing when it has no path, until a later focus brings one;
+//! which application's focused element it takes for a focus whose walk up
+//! was cut; that a query whose walk down the focus's route runs out of
+//! time fails rather than answering the node gone;
 //! how a change raised after a focus event waits for the focus's read,
 //! how the old focus's state change queued behind a focus inside it is
 //! handled before that focus, and its value change after it;
@@ -33,13 +36,13 @@ use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
     Backend, CallCounts, Effect, Fetches, FocusText, Input, NodeDetails, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, PropertyChange, Role, SegmentContent, State, StateSet,
-    TextFormat, TraceId,
+    NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent, State,
+    StateSet, TextFormat, TraceId,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
 use verbatim_outpost::protocol::{
-    DeliveredFact, DroppedVerdict, OutpostToSupervisor, SupervisorToOutpost, UiaFocusRead,
-    UiaSnapshotFact, VerdictDrop, WinEventStamp,
+    DeliveredFact, DroppedVerdict, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
+    UiaFocusRead, UiaSnapshotFact, VerdictDrop, WinEventStamp,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
@@ -655,6 +658,217 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
             );
         }
         other => panic!("the outpost said {other:?}, not the field's focus"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The listener's read of mockapp's "Notes", the focus, with the chain it
+/// sends cut to the field alone, as a walk up cut below the field's nearest
+/// window sends it: the chain the outpost finds the field's element after a
+/// cut walk for.
+fn cut_read_of_notes(
+    outpost: &OutpostUnderTest,
+    notes: &Cached<ListenerEvent>,
+) -> Box<UiaFocusRead> {
+    let (judged, _) = outpost.listener_read(notes);
+    let Judged::Read(mut read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(read.hwnd, 0, "the field has no window of its own");
+    read.ancestors = None;
+    read
+}
+
+/// Hands the outpost `read`, a focus on "Notes" whose element no route
+/// leads to, and asserts it reports the field with its text `text`, after
+/// the calls `calls`.
+fn assert_notes_reported(
+    outpost: &OutpostUnderTest,
+    read: Box<UiaFocusRead>,
+    text: &FocusText,
+    calls: CallCounts,
+) {
+    outpost.deliver(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node, text: found, ..
+                },
+            timing,
+            ..
+        } => assert_eq!(
+            (node.name.as_deref(), found.as_deref(), timing.calls),
+            (Some("Notes"), Some(text), calls)
+        ),
+        other => panic!("the outpost said {other:?}, not the field's focus"),
+    }
+    outpost.settled();
+}
+
+/// After a cut walk, the application's focused element is taken as the
+/// focus's only when its runtime id is the focus's: here it is the button
+/// "Deep button", the field's sibling, so the field is not found and its
+/// text is not read, `NotRead`; taken, the button would give `NoText`. The
+/// window's probe, one message, and the focused-element read, one UIA call.
+fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
+    let title = common::unique_title("mockapp-cut-walk-other-id");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus notes");
+    let read = cut_read_of_notes(&outpost, &client.focused());
+    outpost.read_focus_as(client.named("Deep button").live().element());
+    assert_notes_reported(
+        &outpost,
+        read,
+        &FocusText::NotRead,
+        CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 1,
+            connections: 0,
+        },
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// After a cut walk, the application's focused element is taken only when
+/// the process serving the focus window serves it: here it is the "Notes"
+/// of a second mockapp, whose runtime id the focus has, read by the
+/// listener there and sent as this application's, so the field is not
+/// found and its text is not read, `NotRead`; taken, it would give
+/// `NoText`. The window's probe, one message, and the focused-element read,
+/// one UIA call.
+fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
+    let title = common::unique_title("mockapp-cut-walk-own");
+    let app = common::spawn("ancestry.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let other_title = common::unique_title("mockapp-cut-walk-other");
+    let mut other = common::spawn("ancestry.json", "uia", &other_title);
+    let other_hwnd = common::find_window(&other_title);
+    let other_client = Client::new(other_hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    other.send("set-focus notes");
+    let notes = other_client.focused();
+    outpost.set_foreground(other_hwnd);
+    let mut read = cut_read_of_notes(&outpost, &notes);
+    outpost.set_foreground(hwnd);
+    read.window = Some(hwnd.0 as isize);
+    outpost.read_focus_as(notes.live().element());
+    assert_notes_reported(
+        &outpost,
+        read,
+        &FocusText::NotRead,
+        CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 1,
+            connections: 0,
+        },
+    );
+
+    drop(outpost);
+    other.quit();
+    app.quit();
+}
+
+/// A focus with no window of its own whose chain holds its ancestors, none
+/// with a window either, has no route, but its walk up was not cut, so the
+/// application's focused element is not read for it, though that element
+/// is the field: the field is not found and its text is not read,
+/// `NotRead`, with the window's probe, one message, and no UIA call; read,
+/// it would give `NoText`.
+fn a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element() {
+    let title = common::unique_title("mockapp-uncut-walk");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus notes");
+    let notes = client.focused();
+    let (judged, _) = outpost.listener_read(&notes);
+    let Judged::Read(mut read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(read.hwnd, 0, "the field has no window of its own");
+    for ancestor in read.ancestors.iter_mut().flatten() {
+        ancestor.hwnd = 0;
+    }
+    outpost.read_focus_as(notes.live().element());
+    assert_notes_reported(
+        &outpost,
+        read,
+        &FocusText::NotRead,
+        CallCounts {
+            uia: 0,
+            msaa: 0,
+            window_messages: 1,
+            connections: 0,
+        },
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// An ancestor of the focus, whose element the outpost does not hold, is
+/// found by the focus's route; a walk down that route that runs past its
+/// time budget, as against a slow application, has not shown the element
+/// gone, so a query on the ancestor fails rather than answering it gone,
+/// and Core keeps its navigator there. The ancestor is "Inner group",
+/// four levels below mockapp's window; the walk is the classic one, whose
+/// budget is checked between its calls, and the outpost's time runs out
+/// after the walk sets its budget's end.
+fn a_route_walk_out_of_time_fails_rather_than_answering_gone() {
+    let title = common::unique_title("mockapp-route-out-of-time");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let mut outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+
+    app.send("set-focus notes");
+    let reported = outpost.uia_focus(&client.focused());
+    let group = reported
+        .ancestors
+        .iter()
+        .find(|ancestor| ancestor.name.as_deref() == Some("Inner group"))
+        .expect("the focus's chain has the inner group")
+        .clone();
+    // The query's entry reads the time first, and the walk's budget's end
+    // is set by the next reading; every later one is past it.
+    outpost.run_out_of_time_after(2);
+    let request_id = outpost.ask(Query::Navigate {
+        node_id: group.id,
+        kind: QueryKind::FirstChild,
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Reply {
+            request_id: answered,
+            outcome,
+            ..
+        } if answered == request_id => assert_eq!(
+            outcome,
+            QueryOutcome::Failed(
+                "walking the focus's route: the walk ran past its time budget".to_owned()
+            )
+        ),
+        other => panic!("the outpost said {other:?}, not the step's answer"),
     }
     outpost.settled();
 
@@ -2921,6 +3135,22 @@ fn main() {
         (
             "a_slow_windowless_text_focus_is_found_as_the_focused_element",
             a_slow_windowless_text_focus_is_found_as_the_focused_element,
+        ),
+        (
+            "a_cut_walks_focused_element_with_another_runtime_id_is_not_taken",
+            a_cut_walks_focused_element_with_another_runtime_id_is_not_taken,
+        ),
+        (
+            "a_cut_walks_focused_element_of_another_process_is_not_taken",
+            a_cut_walks_focused_element_of_another_process_is_not_taken,
+        ),
+        (
+            "a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element",
+            a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element,
+        ),
+        (
+            "a_route_walk_out_of_time_fails_rather_than_answering_gone",
+            a_route_walk_out_of_time_fails_rather_than_answering_gone,
         ),
         (
             "a_text_change_after_the_focus_returns_to_a_document_is_heard",

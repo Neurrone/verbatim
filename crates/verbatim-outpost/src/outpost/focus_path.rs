@@ -22,6 +22,8 @@ use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 use crate::arbitration::{Clock, time_limit};
 use crate::protocol::UiaFocusRead;
 
+use super::window::window_exists;
+
 /// How long the classic walk down a path, used where a remote operation
 /// cannot import the window's element, may take: checked between its
 /// calls, each of which UIA ends after its call timeout.
@@ -95,9 +97,12 @@ impl FocusPath {
 /// The element `route` leads to, filled by `nodes`: the route's
 /// window's element, read with one connection call, then the walk down the
 /// route's runtime ids, one remote operation where `remote` allows it, else
-/// the classic walk within [`PATH_BUDGET`] by `clock`. `None` when the
-/// window's element cannot be read or the path does not lead to the
-/// element; and whether a
+/// the classic walk within [`PATH_BUDGET`] by `clock`. `Ok(None)` when the
+/// walk finished and the path does not lead to the element, or a call said
+/// the window or an element on the way is gone; an error when the walk
+/// failed, a lookup of the window that timed out or was refused, a classic
+/// walk past its budget, or any other failed call, since an application
+/// that is only slow has not shown the element gone. With it, whether a
 /// remote operation could not import the window's element (a client-side
 /// proxy), so the caller reads that window the classic way from then on.
 pub(crate) fn find(
@@ -106,17 +111,21 @@ pub(crate) fn find(
     nodes: &Request<Node>,
     remote: bool,
     clock: &Clock,
-) -> (Option<Cached<Node>>, bool) {
+) -> (Result<Option<Cached<Node>>, String>, bool) {
     let root = match uia.window_element(route.window, nodes) {
         Ok(root) => root,
+        Err(error) if verbatim_uia::element_is_gone(&error) || !window_exists(route.window) => {
+            tracing::debug!(window = route.window, %error, "a path's window is gone");
+            return (Ok(None), false);
+        }
         Err(error) => {
             tracing::debug!(window = route.window, %error, "a path's window could not be read");
-            return (None, false);
+            return (Err(format!("reading the route's window: {error}")), false);
         }
     };
     if route.path.is_empty() {
         let same = root.runtime_id() == route.runtime_id;
-        return (same.then_some(root), false);
+        return (Ok(same.then_some(root)), false);
     }
     let fill = Fill::new(nodes);
     let out_of_time = time_limit(clock, PATH_BUDGET);
@@ -133,11 +142,28 @@ pub(crate) fn find(
             if let Path::Fallback(error) = &path {
                 tracing::warn!(window = route.window, %error, "a remote operation failed; read the classic way");
             }
-            (found, import_failed)
+            // A classic walk stops with nothing found once its budget is
+            // spent, whether or not the path leads on.
+            if found.is_none() && !matches!(path, Path::Remote) && out_of_time() {
+                tracing::debug!(window = route.window, "a path's walk ran past its budget");
+                return (
+                    Err("the walk ran past its time budget".to_owned()),
+                    import_failed,
+                );
+            }
+            (Ok(found), import_failed)
+        }
+        Err(error)
+            if error.hresult().is_some_and(|code| {
+                verbatim_uia::element_is_gone(&windows::core::Error::from(code))
+            }) =>
+        {
+            tracing::debug!(window = route.window, %error, "an element on a path is gone");
+            (Ok(None), false)
         }
         Err(error) => {
             tracing::debug!(window = route.window, %error, "a path could not be walked");
-            (None, false)
+            (Err(format!("walking the route: {error}")), false)
         }
     }
 }

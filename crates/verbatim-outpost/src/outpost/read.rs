@@ -905,8 +905,9 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
                     (Some(element), _) => element.resolve().ok()?.live().clone(),
                     (None, Some(route)) => {
                         let nodes = uia.request::<Node>(gates).ok()?;
-                        let found =
-                            super::focus_path::find(uia, &route, &nodes, remote, &clock).0?;
+                        let found = super::focus_path::find(uia, &route, &nodes, remote, &clock)
+                            .0
+                            .ok()??;
                         found.live().clone()
                     }
                     (None, None) => return None,
@@ -1192,7 +1193,9 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Op
 /// application's windows enters any child window another process serves
 /// (`docs/design/cross-process-calls-study.md`, instance 3). A kept element
 /// that fails for another reason, such as a busy provider timing out, is
-/// kept and the read fails: it may well still be alive.
+/// kept and the read fails: it may well still be alive. So does a route's
+/// walk that fails rather than finishing without the element, one past its
+/// time budget above all ([`super::focus_path::find`]).
 fn resolve_uia_element(
     context: &Context,
     uia: &Uia,
@@ -1224,7 +1227,11 @@ fn resolve_uia_element(
     if import_failed {
         context.read_classically(route.window);
     }
-    let element = found.ok_or(ReadError::Gone)?;
+    // A walk that failed, against a slow application above all, may have
+    // missed a live element; only one that finished without it says gone.
+    let element = found
+        .map_err(|reason| ReadError::Failed(format!("walking the focus's route: {reason}")))?
+        .ok_or(ReadError::Gone)?;
     let _ = context
         .uia_registry
         .id_for_element(&runtime_id, &element.narrow());
