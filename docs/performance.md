@@ -457,9 +457,17 @@ Next sibling and parent, from a node the outpost holds.
   neighbor's backend (`verbatim_uia_rops::navigation_step`).
 - Today, remotely: 1 each, met, from the held element without refreshing
   it: the program fails at once when the element is gone, and the outpost
-  then searches for it. 91 provider calls for the next sibling and 92 for
-  the parent. A step from a top-level window is taken classically, since
-  a program's walk ends there.
+  then finds it by the focus's route or answers it gone. 91 provider calls
+  for the next sibling and 92 for the parent. A step from a top-level
+  window is taken classically, since a program's walk ends there.
+- A node with no kept element and no focus route, for navigation, the
+  ancestors query and activation alike: 0 calls and no provider call,
+  answered gone with no search by runtime id
+  (`a_node_with_no_kept_element_and_no_route_is_gone_with_no_call`); the
+  search it replaces made one connection and one `FindFirstBuildCache` per
+  top-level window of the application, and 481 provider calls in a child
+  window's process when another process served one
+  (`docs/design/cross-process-calls-study.md`, instance 3).
 - Today, classically: 3 each: the held element's cache refreshed, which
   proves it still answers, its nearest window, and the step; 141 provider
   calls for the next sibling and 142 for the parent.
@@ -1620,7 +1628,7 @@ for every event, so each request holds only what is read from it.
 - The listener's desktop-wide registrations carry NVDA's base cache
   request, thirteen properties and the Text pattern, as the
   `verbatim_uia::ListenerEvent` shape with two more; the rest is read from
-  the sender, or by the outpost from its focus's subtree in one search.
+  the sender, and a selection is reported with what its cache holds.
 - The outpost's text registration asks for 3 properties (`TextEvent`),
   since the worker reads the text itself, and its property registration
   for 23 (`PropertyEvent`), without a node's details or its off-screen

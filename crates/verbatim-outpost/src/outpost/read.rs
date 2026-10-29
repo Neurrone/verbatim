@@ -25,7 +25,7 @@ use verbatim_core::focus_rules::already_entered;
 
 use crate::dialog_text::is_dialog;
 
-use crate::arbitration::{WindowClasses, time_limit, window_class_name};
+use crate::arbitration::{time_limit, window_class_name};
 use crate::gates;
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl, now_us};
 
@@ -33,8 +33,8 @@ use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
     desktop_window, event_window_unreadable, foreground_window_of, main_window_of, served_by,
-    top_level_of, top_level_windows, window_belongs_to_hidden_frame, window_facts,
-    window_is_hidden_frame, window_text,
+    top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
+    window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -1139,10 +1139,14 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Op
 
 /// Resolves a UIA node to a live element filled by `nodes`: the registry's
 /// kept element first (refreshing its cache both updates it and proves it
-/// still answers), then, if that element is gone, a runtime-id search of the
-/// application's top-level windows. A kept element that fails for another
-/// reason, such as a busy provider timing out, is kept and the read fails:
-/// it may well still be alive, and the search would miss a virtualized one.
+/// still answers), then, if that element is gone or none is kept, the route
+/// to it through the chain the focus listener read for the focus
+/// ([`super::focus_path`]). A node found by neither is gone, as NVDA's object
+/// for a gone element is: no search is made for it, since a search of the
+/// application's windows enters any child window another process serves
+/// (`docs/design/cross-process-calls-study.md`, instance 3). A kept element
+/// that fails for another reason, such as a busy provider timing out, is
+/// kept and the read fails: it may well still be alive.
 fn resolve_uia_element(
     context: &Context,
     uia: &Uia,
@@ -1166,64 +1170,19 @@ fn resolve_uia_element(
         .runtime_id_of(node_id)
         .ok_or(ReadError::Gone)?;
     // An element of the chain the focus listener read for the focus is
-    // found by its path, without a search.
-    if let Some(route) = context.focus_route(&runtime_id) {
-        let remote = context.tries_remote(Some(route.window));
-        let (found, import_failed) =
-            super::focus_path::find(uia, &route, nodes, remote, &context.clock());
-        if import_failed {
-            context.read_classically(route.window);
-        }
-        if let Some(element) = found {
-            let _ = context
-                .uia_registry
-                .id_for_element(&runtime_id, &element.narrow());
-            return Ok(element);
-        }
+    // found by its path.
+    let route = context.focus_route(&runtime_id).ok_or(ReadError::Gone)?;
+    let remote = context.tries_remote(Some(route.window));
+    let (found, import_failed) =
+        super::focus_path::find(uia, &route, nodes, remote, &context.clock());
+    if import_failed {
+        context.read_classically(route.window);
     }
-    // Gone only when every search finished without finding it; a search
-    // that failed, a timeout above all, may have missed a live element.
-    // Nothing of a window's own element is read: it is searched under. A
-    // window a kept probe found to have a provider of its own, and whose
-    // classes do not decide it, is looked up under the proxy rule, and a
-    // lookup refused, as one of an application busy past the connection
-    // timeout is, is a search that failed, not one that found nothing. A
-    // verdict from the class lists or a forced one does not say the window
-    // has a provider: the taskbar's `Shell_TrayWnd` is UIA by class and
-    // served only by UIA's proxies, and the focus listener keeps a probe for
-    // every UIA focus it reports, those of windows UIA by class included.
-    let mut failed = None;
-    for hwnd in top_level_windows(context.target_pid()) {
-        let root = if probe_found_provider(context, hwnd) {
-            match uia.answered_window_live(hwnd) {
-                Ok(root) => root,
-                Err(error) => {
-                    failed = Some(error);
-                    continue;
-                }
-            }
-        } else {
-            let Ok(root) = uia.window_live(hwnd) else {
-                continue;
-            };
-            root
-        };
-        match uia.find_by_runtime_id(&root, &runtime_id, nodes) {
-            Ok(Some(element)) => return Ok(element),
-            Ok(None) => {}
-            Err(error) => failed = Some(error),
-        }
-    }
-    Err(failed.map_or(ReadError::Gone, |error| {
-        ReadError::Failed(format!("searching for the element: {error}"))
-    }))
-}
-
-/// Whether a kept probe found that `hwnd` has a UIA provider of its own on
-/// a window its classes do not decide, without probing it. Local.
-fn probe_found_provider(context: &Context, hwnd: isize) -> bool {
-    let classes = WindowClasses::of(hwnd);
-    context.arbitrator().probe_found_provider(hwnd, &classes)
+    let element = found.ok_or(ReadError::Gone)?;
+    let _ = context
+        .uia_registry
+        .id_for_element(&runtime_id, &element.narrow());
+    Ok(element)
 }
 
 /// A UIA node's live element, filled as a node, or the error a query
@@ -1324,7 +1283,8 @@ type Stepped = (Option<NodeSnapshot>, Option<isize>);
 /// for the node's window, the registry keeps no live element, the node is
 /// a top-level window (a program's walk ends there, while the step from it
 /// reaches the desktop or another application's window), or the element is
-/// gone, which the classic way answers by searching for it.
+/// gone, which the classic way answers from the focus's route or as gone
+/// ([`resolve_uia_element`]).
 fn uia_remote_step(
     context: &Context,
     client: &mut Client,
@@ -1364,7 +1324,7 @@ fn uia_remote_step(
                 verbatim_uia::element_is_gone(&windows::core::Error::from(code))
             }) =>
         {
-            // Searched for, the classic way.
+            // Found by the focus's route, or gone, the classic way.
             context.uia_registry.evict_element(node_id);
             return Ok(None);
         }

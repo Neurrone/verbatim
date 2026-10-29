@@ -85,18 +85,19 @@ call waits up to `CONNECTION_TIMEOUT` to connect and
   the window looking it up again. `focused(request)` is the focused element under
   the same rule. `any_window_element(hwnd, request)` is the lookup without
   the rule, for a window with no provider.
-- `window_live(hwnd)` and `answered_window_live(hwnd)`: a window's element
-  with no cache, for a caller that only searches under it, the second
-  under the proxy rule; one call each.
+- `window_live(hwnd)`: a window's element with no cache, for a caller
+  that only searches under it; one call.
 - `request_fixed::<S>()` and `request::<S>(gates)`: a shape's request,
   without gates or for the gates given; local.
 - `children(parent, request)`: `parent`'s raw-view children, each filled
   by `request`, in one `BuildUpdatedCache` on a copy of the request scoped
   to the children, as NVDA fetches children; a dialog's own text and the
   tree dump are gathered this way.
-- `find_by_runtime_id(root, runtime_id, request)`: a search under `root`,
-  the fallback when no element is kept; `find_child_by_runtime_id(parent,
-  runtime_id, request)` searches `parent`'s children only. The runtime id
+- `find_child_by_runtime_id(parent, runtime_id, request)`: a search of
+  `parent`'s children only. No search of a whole subtree by runtime id is
+  offered but the controlled-element search's, since one enters any child
+  window another process serves
+  (`docs/design/cross-process-calls-study.md`, instance 3). The runtime id
   condition's `VARIANT` is built by `InitVariantFromInt32Array`, so no raw
   array is handled; `windows`'s `VARIANT` clears its array on drop. A
   search that finds nothing is `Ok(None)`, and so is one that passed over

@@ -29,8 +29,7 @@ use crate::com::init_mta;
 use crate::element::{ElementExt, current_selection, invoke, select, toggle};
 use crate::registry::NodeIdRegistry;
 use crate::shape::{
-    Ancestor, Cached, Direction, ElementValue, Live, Node, ProviderOrigin, Request,
-    SelectionContainer, Shape,
+    Ancestor, Cached, Direction, ElementValue, Live, Node, Request, SelectionContainer, Shape,
 };
 
 /// A UIA client bound to the current thread's multithreaded apartment.
@@ -436,49 +435,6 @@ impl Uia {
         unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }.map(Live::new)
     }
 
-    /// [`window_live`](Self::window_live) for an outpost's own
-    /// application's window with a provider, under the proxy rule as
-    /// [`window_element`](Self::window_element) is: the lookup caches only
-    /// the provider description the rule reads, and an element only
-    /// `UIAutomationCore.dll`'s own proxies serve is refused. Cross-process,
-    /// one call, as `window_live` is.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the handle has no UIA element or the call
-    /// fails, and an error when the proxy rule refuses the element.
-    pub fn answered_window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
-        let origin = self.request_fixed::<ProviderOrigin>()?;
-        let (cache, ()) = origin.parts();
-        self.element_from_handle(hwnd, cache).map(Live::new)
-    }
-
-    /// Re-finds the element `runtime_id` names inside `root`'s subtree, its
-    /// cache filled by `request`, for answering a node re-read when no live
-    /// element is kept (the registry's kept element is the fast path; see
-    /// its module doc); `Ok(None)` when it is not there. `root` scopes the
-    /// search: `FindFirst` has no index behind it, so an unscoped search
-    /// from the desktop root walks every application's tree, the cost that
-    /// made object navigation feel stuck on a busy desktop before elements
-    /// were kept. Callers pass the target application's own top-level
-    /// window elements. Cross-process; the outpost's worker only.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if building the condition or the search fails for
-    /// a reason other than the element being absent.
-    pub fn find_by_runtime_id<S: Shape>(
-        &self,
-        root: &Live,
-        runtime_id: &[i32],
-        request: &Request<S>,
-    ) -> windows::core::Result<Option<Cached<S>>> {
-        let (cache, gates) = request.parts();
-        Ok(self
-            .element_by_runtime_id(root.element(), runtime_id, cache)?
-            .map(|found| Cached::filled(found, gates)))
-    }
-
     /// The child of `parent` that `runtime_id` names, its cache filled by
     /// `request`, or `Ok(None)` when no child of it has that runtime id:
     /// one search of `parent`'s children. Cross-process; the outpost's
@@ -565,17 +521,12 @@ impl Uia {
         ))
     }
 
-    /// Re-finds an element by its UIA runtime id inside `root`'s subtree,
-    /// for answering a node re-read when no live element is cached (the
-    /// registry's element cache is the fast path — see its module doc).
-    /// Returns `Ok(None)` when the element no longer exists there.
-    /// Cross-process; the outpost's worker only.
-    ///
-    /// `root` scopes the search: `FindFirst` has no index behind it, so an
-    /// unscoped search from the desktop root walks every application's
-    /// tree — the cost that made pre-cache object navigation feel stuck on
-    /// a busy desktop. Callers pass the target application's own top-level
-    /// window element(s).
+    /// The element `runtime_id` names inside `root`'s subtree, rebuilt with
+    /// `cache`, for the controlled-element search
+    /// ([`controlled_descendant`](Self::controlled_descendant)); `Ok(None)`
+    /// when it is not there. `FindFirst` has no index behind it, so the
+    /// search walks `root`'s whole subtree. Cross-process; the outpost's
+    /// worker only.
     ///
     /// # Errors
     ///

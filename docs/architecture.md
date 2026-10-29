@@ -436,9 +436,10 @@ operation and no connection by handle. Only an application's own outpost
 sends it a remote operation or connects to one of its windows, and an
 outpost connects to, probes and walks up into only its own application's
 windows, except one connection where the focus or the window hierarchy
-changes between its check and its call, and its runtime-id search, which
-enters any child window of another process below its application's
-top-level window (`docs/design/cross-process-calls-study.md`); it reads
+changes between its check and its call
+(`docs/design/cross-process-calls-study.md`), and it searches for no node
+by runtime id, since such a search enters any child window of another
+process; it reads
 another process's window above the focus through MSAA; object navigation's
 step, which can read a neighbor in another process's window through UIA,
 is an accepted exception (`docs/design/listener-without-connections.md`,

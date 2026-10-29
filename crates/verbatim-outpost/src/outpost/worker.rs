@@ -41,8 +41,7 @@ use verbatim_model::{
     PropertyChange, Role, State, StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts,
 };
 use verbatim_uia::{
-    Cached, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
-    nearest_window_handle,
+    Cached, Fill, HelpTextRefresh, Kept, SelectedItem, SuggestionsRefresh, nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
@@ -2923,8 +2922,12 @@ impl Worker<'_> {
             }
             _ => {}
         }
-        let (parts, element) = self.fresh_selection(&event, element);
-        let node = Self::uia_node(self.context, &parts, element.as_ref());
+        // A selection the listener heard carries the item's identity, role
+        // and name alone, NVDA's base cache request, and is reported with
+        // them: no search is made for its element, which could enter a
+        // child window another process serves
+        // (`docs/design/cross-process-calls-study.md`, instance 3).
+        let node = Self::uia_node(self.context, &event.parts, element.as_ref());
         let normalized = match event.kind {
             UiaKind::Property(id) => {
                 let refreshed = refreshed_for(self.client.uia(), id, element.as_ref());
@@ -3133,59 +3136,6 @@ impl Worker<'_> {
     fn expected_uia_focus(&self) -> Option<Vec<i32>> {
         let node = self.context.held().expected()?.node.id;
         self.context.uia_registry.runtime_id_of(node)
-    }
-
-    /// The parts and element an event is reported with: its own, but for a
-    /// selection the listener heard, which carries the item's identity,
-    /// role, and name alone, NVDA's base cache request: its states, value,
-    /// and details are read afresh, as NVDA reads them when it handles the
-    /// event, from the focus's own subtree, where a selection Core speaks
-    /// lies ([`selected_element`](Self::selected_element)); not found
-    /// there, it keeps what it came with.
-    fn fresh_selection(
-        &mut self,
-        event: &UiaEvent,
-        element: Option<Cached<Kept>>,
-    ) -> (UiaSnapshotFact, Option<Cached<Kept>>) {
-        let fresh = (matches!(event.kind, UiaKind::Selection) && element.is_none())
-            .then(|| self.selected_element(&event.parts.runtime_id))
-            .flatten();
-        match fresh {
-            Some(found) => {
-                let parts = found.read().parts(found.runtime_id());
-                (
-                    UiaSnapshotFact {
-                        runtime_id: parts.runtime_id,
-                        role: parts.role,
-                        name: parts.name,
-                        value: parts.value,
-                        states: parts.states,
-                        details: parts.details,
-                    },
-                    Some(found.narrow()),
-                )
-            }
-            None => (event.parts.clone(), element),
-        }
-    }
-
-    /// The element a selection event of the listener's names, `runtime_id`,
-    /// found in the subtree of the focus this outpost reported, when it
-    /// holds the focus's element, with the cache request the active theme's
-    /// details call for: one search, made inside the application. `None`
-    /// when the focus's element is not held or the item is not under it.
-    fn selected_element(&mut self, runtime_id: &[i32]) -> Option<Cached<Node>> {
-        let focus_id = self.expected_uia_focus()?;
-        let registry = &self.context.uia_registry;
-        let focused = registry
-            .existing_id(&focus_id)
-            .and_then(|id| registry.element_of(id))
-            .and_then(|agile| agile.resolve().ok())?;
-        let uia = self.client.uia()?;
-        let nodes = self.context.node_request(uia).ok()?;
-        uia.find_by_runtime_id(focused.live(), runtime_id, &nodes)
-            .ok()
-            .flatten()
     }
 
     /// A snapshot from a UIA element's cached parts, its id minted by the

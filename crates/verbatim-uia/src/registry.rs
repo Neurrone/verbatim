@@ -12,14 +12,14 @@
 //! read only as the [`Kept`] shape, which every shape whose elements are
 //! kept covers, so a reader knows what it may read whichever request filled
 //! the element (`docs/design/uia-shapes.md`, section 6). A reader that
-//! needs more refreshes the element into a declared shape. Re-acquiring an element by
-//! runtime id means a `FindFirst` search, which has no index behind it —
-//! measured live, it walks enough of the tree to cost hundreds of
-//! milliseconds against a busy desktop, and it can miss virtualized
-//! elements entirely. NVDA never re-finds: it holds the live element on its
-//! `NVDAObject`. Caching here gives the same property: object navigation and
-//! node re-reads resolve the cached element directly, falling back to a
-//! (scoped) search only when the element has died.
+//! needs more refreshes the element into a declared shape. NVDA never
+//! re-finds an element: it holds the live element on its `NVDAObject`.
+//! Caching here gives the same property: object navigation and node
+//! re-reads resolve the cached element directly. A node whose element is
+//! not kept is not searched for by runtime id, since a `FindFirst` search
+//! has no index behind it and enters any child window another process
+//! serves (`docs/design/cross-process-calls-study.md`, instance 3); the
+//! outpost finds it only by the focus's route, or answers it gone.
 //!
 //! Nodes stay until the outpost releases them ([`NodeIdRegistry::retain`]),
 //! which it does for every node Core no longer holds

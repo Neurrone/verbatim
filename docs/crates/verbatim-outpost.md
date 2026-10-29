@@ -326,10 +326,14 @@ round in its place. Spares' failures are replaced with their own backoff.
 Only an application's own outpost sends it a remote operation or makes a
 new UIA connection to its windows by a call of Verbatim's, with the
 exceptions `docs/design/cross-process-calls-study.md` lists: UIA's client
-side's connections to a parent across the boundary, the focus-read and
-walk-up races, and the runtime-id search's entry into another process's
-child window (`docs/design/listener-without-connections.md`, section 2),
-so no lock is needed around them. The supervisor's `App` table holds each application's
+side's connections to a parent across the boundary, and the focus-read and
+walk-up races (`docs/design/listener-without-connections.md`, section 2),
+so no lock is needed around them. No node is searched for by runtime id:
+a UIA node whose kept element is gone, or that has none, and whose focus
+route finds nothing is answered gone (`read::resolve_uia_element`), and a
+listener's selection is reported with the identity, role and name it
+came with, since a search of a subtree enters any child window another
+process serves (the study's instance 3). The supervisor's `App` table holds each application's
 process open while it has a record, so its pid is never reused while an
 outpost or reading thread serves it. Registrations scope windows' subtrees
 by their elements (`Scope::Subtrees`), with no connection by handle.
@@ -444,9 +448,6 @@ decision 2).
   outpost from the window and by the listener from the sender). A provider
   that fails is recorded with `record_excluded`, MSAA for the window's
   lifetime.
-- `probe_found_provider` answers whether a kept probe found the window's own
-  provider where the class lists do not decide; the runtime-id search
-  applies the proxy rule only there.
 - A "yes" is kept for the window's lifetime and dropped by `forget` on
   destruction (decision D15). A "no" lasts `NEGATIVE_VERDICT_LIFETIME`
   (500 ms, NVDA's cache period), since a busy application answers late. A
@@ -943,8 +944,8 @@ unredirected, never unspawned.
 - A UIA navigation step (`read::uia_remote_step`) is one remote operation
   (`verbatim_uia_rops::navigation_step`) from the kept element, but classic
   from a top-level window (a program's walk ends there), with remote
-  operations off, or in a window marked classic. A gone element is found by
-  runtime id and stepped from classically.
+  operations off, or in a window marked classic. A gone element is found
+  by the focus's route and stepped from classically, or answered gone.
 - A dialog's own text (`read::describe_dialogs`) is given as the
   description of every newly entered dialog in the chain
   (`focus_rules::already_entered`), and of a dialog focus, without one,

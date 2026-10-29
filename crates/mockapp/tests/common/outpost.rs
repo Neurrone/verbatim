@@ -1272,6 +1272,24 @@ impl OutpostUnderTest {
         answer
     }
 
+    /// Asks the outpost `query`, as Core would, and returns the calls it
+    /// made answering it gone; the reply must be the next thing the outpost
+    /// says, and the only thing.
+    pub fn gone(&mut self, query: Query) -> CallCounts {
+        let request_id = self.ask(query);
+        let calls = match self.next() {
+            OutpostToSupervisor::Reply {
+                request_id: answered,
+                outcome: QueryOutcome::Gone,
+                timing,
+                ..
+            } if answered == request_id => timing.calls,
+            other => panic!("the outpost said {other:?}, not that the node is gone"),
+        };
+        self.settled();
+        calls
+    }
+
     /// Asks the outpost for a node's ancestors, as Core would, and returns
     /// them, outermost first, and the calls it made; the reply must be the
     /// next thing the outpost says, and the only thing.

@@ -67,8 +67,8 @@ use verbatim_model::{
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
-use verbatim_outpost::focus_read::FocusEvent;
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
+use verbatim_outpost::focus_read::{FocusEvent, Judged};
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, SupervisorToOutpost};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
@@ -2243,6 +2243,81 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
         ],
     );
 
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA node whose element the outpost does not keep and that the
+/// focus's route does not lead to is answered gone by object navigation,
+/// the ancestors query and activation, with no call and no provider hit:
+/// no `FindFirst` over the application's windows by its runtime id, which
+/// would enter any child window another process serves
+/// (`docs/design/cross-process-calls-study.md`, decision 3). The node is a
+/// focus on the button `First`, which has no window of its own, sent by
+/// the listener with its ancestors and nearest window unknown, so the
+/// outpost has no route to its element.
+fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
+    let title = common::unique_title("mockapp-counts-uia-gone");
+    let mut app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus first");
+    let (judged, _) = outpost.listener_read(&under_test.focused(hwnd));
+    let Judged::Read(mut read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(read.hwnd, 0, "the button has no window of its own");
+    read.ancestors = None;
+    read.window = None;
+    outpost.deliver(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    let node = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    ancestors_unknown: true,
+                    ..
+                },
+            ..
+        } => node,
+        other => panic!("the outpost said {other:?}, not a focus with its ancestors unknown"),
+    };
+    assert_eq!(node.name.as_deref(), Some("First"));
+    outpost.settled();
+
+    let mut ratchet = Ratchet::default();
+    for (operation, query) in [
+        (
+            "UIA next sibling of a node gone",
+            Query::Navigate {
+                node_id: node.id,
+                kind: QueryKind::NextSibling,
+            },
+        ),
+        (
+            "UIA ancestors of a node gone",
+            Query::Ancestors { node_id: node.id },
+        ),
+        (
+            "UIA activation of a node gone",
+            Query::Activate { node_id: node.id },
+        ),
+    ] {
+        common::reset_hits(hwnd);
+        let calls_made = outpost.gone(query);
+        let cost = Cost {
+            calls: calls_made,
+            hits: common::read_hits(hwnd),
+            failed_reads: outpost.take_failed_reads(),
+        };
+        ratchet.check(operation, &cost, calls(0, 0, 0), 0, &[]);
+    }
     ratchet.finish();
     drop(outpost);
     app.quit();
@@ -4753,6 +4828,10 @@ fn main() {
         (
             "uia_ancestors_with_descriptions_off_cost_exactly",
             uia_ancestors_with_descriptions_off_cost_exactly,
+        ),
+        (
+            "a_node_with_no_kept_element_and_no_route_is_gone_with_no_call",
+            a_node_with_no_kept_element_and_no_route_is_gone_with_no_call,
         ),
         (
             "uia_event_registrations_cost_exactly",

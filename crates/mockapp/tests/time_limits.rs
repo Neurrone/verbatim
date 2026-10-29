@@ -111,7 +111,7 @@ fn a_held_search_ends_at_its_deadline() {
     let warm = window.clone();
     let found = bounded.run(common::WAIT_TIMEOUT, move |uia| {
         let nodes = uia.request::<Node>(Node::all_on())?;
-        uia.find_by_runtime_id(warm.resolve()?.live(), &[42, 42], &nodes)
+        uia.find_child_by_runtime_id(warm.resolve()?.live(), &[42, 42], &nodes)
             .map(|found| found.is_some())
     });
     assert!(matches!(found, Ok(Ok(false))), "{found:?}");
@@ -120,7 +120,7 @@ fn a_held_search_ends_at_its_deadline() {
     let started = Instant::now();
     let found = bounded.run(SEARCH_DEADLINE, move |uia| {
         let nodes = uia.request::<Node>(Node::all_on())?;
-        uia.find_by_runtime_id(window.resolve()?.live(), &[42, 42], &nodes)
+        uia.find_child_by_runtime_id(window.resolve()?.live(), &[42, 42], &nodes)
             .map(|found| found.is_some())
     });
     let elapsed = started.elapsed();
