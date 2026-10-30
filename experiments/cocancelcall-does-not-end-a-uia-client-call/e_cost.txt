@@ -1,0 +1,20 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running tests\cocancel_uia.rs (C:/Users/Dickson/Desktop/projects/verbatim-target-cancel\debug\deps\cocancel_uia-e628a73b9c60149d.exe)
+
+running 1 test
+RESULT cost round=1 enabled=false toggle=0x80010140 toggle_us=12.0 names_ms=108.7 failed 0
+RESULT cost round=1 enabled=true toggle=S_OK toggle_us=2.6 names_ms=107.9 failed 0
+RESULT cost round=2 enabled=false toggle=S_OK toggle_us=8.8 names_ms=109.8 failed 0
+RESULT cost round=2 enabled=true toggle=S_OK toggle_us=6.6 names_ms=132.4 failed 0
+RESULT cost round=3 enabled=false toggle=S_OK toggle_us=6.5 names_ms=116.0 failed 0
+RESULT cost round=3 enabled=true toggle=S_OK toggle_us=2.8 names_ms=93.8 failed 0
+RESULT cost round=4 enabled=false toggle=S_OK toggle_us=9.4 names_ms=92.7 failed 0
+RESULT cost round=4 enabled=true toggle=S_OK toggle_us=10.4 names_ms=91.7 failed 0
+RESULT cost round=5 enabled=false toggle=S_OK toggle_us=7.8 names_ms=100.9 failed 0
+RESULT cost round=5 enabled=true toggle=S_OK toggle_us=5.5 names_ms=105.2 failed 0
+RESULT cost round=6 enabled=false toggle=S_OK toggle_us=4.8 names_ms=104.6 failed 0
+RESULT cost round=6 enabled=true toggle=S_OK toggle_us=4.1 names_ms=96.3 failed 0
+test e_cost ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 1.34s
+

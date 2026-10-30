@@ -100,8 +100,10 @@ many property getters that catch only `COMError` let it through. NVDA's
 own comment on `UiaHasServerSideProvider` calls it "a blocking
 cross-process call that the watchdog cannot otherwise cancel"
 (`UIAHandler._isUIAWindowHelper`); that UIA client calls in general
-are not cancelled by `CoCancelCall` is a reasonable inference from
-it, not something the source states.
+are not cancelled by `CoCancelCall` is not something the source
+states, but Verbatim measured it: UIA's client waits for its answer on
+a channel of its own, not in a COM call, so the cancel finds nothing to
+end (`experiments/cocancelcall-does-not-end-a-uia-client-call/`).
 
 ## When an application stops responding
 

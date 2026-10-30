@@ -1,0 +1,19 @@
+   Compiling mockapp v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim-wt-cancel\crates\mockapp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.51s
+     Running tests\cocancel_uia.rs (C:/Users/Dickson/Desktop/projects/verbatim-target-cancel\debug\deps\cocancel_uia-e628a73b9c60149d.exe)
+
+running 1 test
+RESULT Focus setup ok
+RESULT Focus uncancelled first ok
+
+thread 'main' (18040) panicked at crates\mockapp\tests\common\mod.rs:333:33:
+mockapp did not acknowledge a call to be held within 15s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test e_focus ... FAILED
+
+failures:
+    e_focus
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 15.06s
+
+error: test failed, to rerun pass `-p mockapp --test cocancel_uia`

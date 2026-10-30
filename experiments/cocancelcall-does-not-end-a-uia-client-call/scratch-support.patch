@@ -1,0 +1,12 @@
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index d954ec15..fd0bf00a 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -130,3 +130,7 @@ workspace = true
+ [[test]]
+ name = "object_equality"
+ harness = false
++
++[[test]]
++name = "cocancel_uia"
++harness = false
