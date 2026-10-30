@@ -96,20 +96,16 @@ impl HeldNode {
     }
 }
 
-/// What a judge knows of one focus event against the focus Core holds
-/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+/// What Core knows of one focus event against the focus it holds
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression"). Core is
+/// the one judge: every reader reads a repeat in full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepeatEvidence {
-    /// Core has judged every focus the judge sent it, so the focus it holds
-    /// is the focus it will compare the event with. Core itself always has.
-    pub settled: bool,
-    /// The event names the element of the focus Core holds, by the judge's
-    /// evidence of identity: the node id in Core, UI Automation's
-    /// comparison in the focus listener, the event's address in an outpost.
+    /// The event names the element of the focus Core holds: the same node
+    /// id.
     pub same_element: bool,
-    /// That element still has the focus: the node still alive in Core, its
-    /// keyboard focus read live in the focus listener, its address a whole
-    /// object rather than a child id that can be reused in an outpost.
+    /// That element still has the focus: what its reader read of the
+    /// element it held under the node, or else the node still alive.
     pub still_focused: bool,
 }
 
@@ -117,7 +113,7 @@ pub struct RepeatEvidence {
 /// before anything else judges it.
 #[must_use]
 pub fn repeats_focus(evidence: RepeatEvidence) -> bool {
-    evidence.settled && evidence.same_element && evidence.still_focused
+    evidence.same_element && evidence.still_focused
 }
 
 /// A property change, by what it changes.
@@ -352,15 +348,10 @@ mod tests {
     #[test]
     fn a_repeat_needs_every_piece_of_evidence() {
         let all = RepeatEvidence {
-            settled: true,
             same_element: true,
             still_focused: true,
         };
         assert!(repeats_focus(all));
-        assert!(!repeats_focus(RepeatEvidence {
-            settled: false,
-            ..all
-        }));
         assert!(!repeats_focus(RepeatEvidence {
             same_element: false,
             ..all

@@ -412,7 +412,6 @@ fn is_duplicate_focus(
 ) -> bool {
     state.focus.as_ref().is_some_and(|focus| {
         repeats_focus(RepeatEvidence {
-            settled: true,
             same_element: focus.snapshot.id == node.id,
             still_focused: earlier
                 .map_or(focus.alive, |earlier| earlier == EarlierElement::Focused),
