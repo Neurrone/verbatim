@@ -459,4 +459,6 @@ Public API:
   releasing one can call into its process), `forget_window` drops a
   destroyed window's nodes so a reused handle never inherits them, and
   `take_touched` reports the nodes issued or looked up since the last
-  call, so the outpost can record which message reported them.
+  call, so the outpost can record which message reported them, and
+  `touch_kept(node)` records a kept node a message names without a
+  lookup.

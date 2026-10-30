@@ -2476,38 +2476,6 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
     app.quit();
 }
 
-/// A UIA focus repeated on the last focus accepted, which still has the
-/// keyboard focus, is reported when its read's time is up once its
-/// nearest window has been looked up: NVDA's repeat check needs that
-/// element's keyboard focus read live, which the time no longer allows, so
-/// it is not made, a deliberate divergence from NVDA, which would drop it
-/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
-fn a_repeated_focus_out_of_time_is_reported() {
-    let title = common::unique_title("mockapp-repeat-out-of-time");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus btn1");
-    let _ = outpost.uia_focus(&client.focused());
-    // The read's first reading of the time sets its budget's end; every
-    // later one is past it.
-    outpost.run_out_of_time_after(1);
-    let (judged, calls) = outpost.listener_read(&client.focused());
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not read the repeated focus: {judged:?}");
-    };
-    assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
-    assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (1, 0, 0),
-        "the nearest window alone: no comparison or keyboard focus read"
-    );
-
-    drop(outpost);
-    app.quit();
-}
-
 /// A UIA menu opening compared with the current focus, which it is not,
 /// asks the read's time before it looks up its windowless sender's nearest
 /// window, the comparison having been the read's first call: once the time
@@ -4362,10 +4330,6 @@ fn main() {
         (
             "a_focus_whose_keyboard_focus_read_times_out_is_reported",
             a_focus_whose_keyboard_focus_read_times_out_is_reported,
-        ),
-        (
-            "a_repeated_focus_out_of_time_is_reported",
-            a_repeated_focus_out_of_time_is_reported,
         ),
         (
             "a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window",

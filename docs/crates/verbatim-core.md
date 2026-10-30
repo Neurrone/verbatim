@@ -29,10 +29,8 @@ guide maps those behaviors onto the crate's types and modules.
     which an outpost reports in an event's window facts, and which the
     reducer judges a focus by, `of_facts(facts).related()`.
   - `RepeatEvidence` and `repeats_focus(evidence)`: a focus repeats the
-    held one when Core has judged every focus the judge sent, the event
-    names the element of the focus Core holds, and that element still has
-    the focus; Core, the listener and the outposts gather the evidence
-    each by their own means.
+    held one when it names the element of the focus Core holds and that
+    element still has the focus; only Core judges repeats.
   - `ChangeKind`, `ChangeTarget`, `change_target` and `change_candidates`:
     a name, description, or value change is spoken on the focus, a state
     change on the focus or an ancestor whose state changes are spoken.
@@ -56,14 +54,9 @@ guide maps those behaviors onto the crate's types and modules.
     `already_entered(previous, new)` counts the new line's entries,
     outermost first, at or above where it meets `previous`, by which an
     outpost gathers a newly entered dialog's own text. Neither allocates.
-  - `HeldFocus` and `HeldNode`: the focus Core holds as it sends it, the
-    trace of the event it came from, its observation time, the focus and
-    its ancestors (id, backend, role, name, states, and the window a node
-    is, when it is one, left out of the message when absent), its
-    top-level window, and whether it is alive; `HeldNode::of(snapshot)`
-    builds a held node from a snapshot; `for_outpost(outpost)` keeps an
-    outpost's own nodes, their ids unstamped, or gives `None` for another
-    outpost's focus.
+  - `HeldNode`: one node of a focus line as an outpost records its
+    reports (id, backend, role, name, states, and the window a node is,
+    when it is one); `HeldNode::of(snapshot)` builds one from a snapshot.
 - `is_selection_container(role)`: re-exported from `focus_rules`.
 - `SrState`, the reducer's state:
   - `new()`.
@@ -71,14 +64,6 @@ guide maps those behaviors onto the crate's types and modules.
     application the focus belongs to; `focus_report()`, the focus's
     snapshot, its ancestors, and the navigator object, which the control
     plane's `DumpFocus` answers with.
-  - `focuses_queued()`, how many focuses the reducer has taken, and
-    `held_focus_owner()`, the outpost of the held focus and whether it is
-    alive: what the host compares across an input to tell whether its
-    focus changed, without copying the focus.
-  - `held_focus()`, the focus Core holds, which the host tells the focus
-    listener and the outposts concerned after every focus event the
-    reducer judges and every change of its focus
-    (`SupervisorToOutpost::CoreFocus`).
   - `latest_focus_observed_at()`, when the newest focus the reducer took
     was observed, in microseconds (the applied stamp), which lets the
     shell skip a fake focus after a menu closes when a later focus has

@@ -534,17 +534,11 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
   `observed_at_us` is the observation the fact is ordered by, and for a
   `WinEvent` its `WinEventStamp`); `HookInstalled`
   and `HookRemoved` (to the listener) and `ForwardingEnded` (to an
-  outpost); `CoreFocus`; `Query`; `Cancel` (withdraws a query not
-  started); `Ping`; `IdleQuery`; `Shutdown`; `Assign`; `NodesHeld`; and
-  `Fetches`.
-- `CoreFocus` is sent to the listener, to the outpost whose focus event
-  Core just judged, and to the outposts whose focus Core's focus was or now
-  is, whenever Core judges a focus event or its focus changes: `judged`
-  (the trace judged), `focus` (a `verbatim_core::focus_rules::HeldFocus`:
-  trace, focus and ancestors, each with its window's handle when it is
-  a window, top-level window, alive; to the listener
-  without ancestors, to an outpost only when the focus is its own, with its
-  own node ids, `HeldFocus::for_outpost`).
+  outpost); `Query`; `Cancel` (withdraws a query not started); `Ping`;
+  `IdleQuery`; `Shutdown`; `Assign`; `NodesHeld`; and `Fetches`. No
+  message carries Core's focus: every reader reads for what it has not
+  released, and Core is the one judge of focuses
+  (`docs/design/ownership-one-judge.md`).
 - `Query` is a request id and a `Query`: `FocusNow`, `Navigate` (a model
   `QueryKind`), `Activate`, `Ancestors`, `DumpTree`, `Text` (a node and a
   model `TextOp`), `ShellItems`, or `ShellItemPosition`.
@@ -716,8 +710,15 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   position changed event. The console host's text area takes the group
   without its text events (`Group::ExtendedWithoutTextEvents`), and the
   console's caret events are its caret events
-  (`docs/design/wake-ups.md`, item 15). Both are on the focused element
-  only (`docs/parity/backends.md`, "UIA event registration"). A focus
+  (`docs/design/wake-ups.md`, item 15). Each is on the element of every
+  UIA report whose focus node the outpost has not released, the newest
+  one's moved as each focus is followed and the older ones' kept until
+  their release (`FollowState::kept_groups`), never on the elements'
+  descendants (`docs/parity/backends.md`, "UIA event registration"). An
+  event is attributed to its node by its cached runtime id, and a caret
+  or text event of an older report's element is read for that node, which
+  Core targets; a terminal's output is read for every terminal with a
+  follow entry, which keeps its entry until its node is released. A focus
   whose parent is a UIA slider of class `SensitiveSlider`
   (`verbatim_core::focus_rules::is_sensitive_slider`) has that parent
   given the value group too (`Group::Value`, value and range value
@@ -887,9 +888,11 @@ and the inherited pipe handles.
   line segmented by `verbatim-text`'s rules, as NVDA finds it).
   `caret_report`, `caret_report_since` (with `LastSelection` and
   `ReportedCaret`), and `caret_report_checking` read the caret for
-  `CaretMoved`. `Anchors` keeps a backend's anchors by node and never
-  forgets those in `HeldAnchors` (`Anchors::sharing`), with
-  `note_content_changed` and `forget_selection`; `NodeText` is one node's
+  `CaretMoved`. `Anchors` keeps a backend's anchors by node until
+  `forget_anchors` or the node's release, adding each it mints or reports
+  to the shared `TouchedAnchors` (`Anchors::sharing`) for the next message
+  to carry, with `note_content_changed` and `forget_selection`;
+  `NodeText` is one node's
   (`position_at`, `forget_selection`). `check_caret` checks a caret key's
   watch with one read and answers `Watched::Answered` or
   `Watched::Watching`; `CaretSignal` is what the check knows besides the
@@ -962,8 +965,8 @@ section 6.3).
 - It handles `Ping`, `HookInstalled`, `HookRemoved` (which also ends the
   application's reading thread and its override), `SetBackendOverride`
   with a `pid` (an override forcing UIA, after which that application's
-  readers skip nothing by class), `CoreFocus`, `IdleQuery`, and
-  `Shutdown`, and ignores the rest. A replacement gets `--hooks-in`
+  readers skip nothing by class), `IdleQuery`, and `Shutdown`, and ignores
+  the rest. A replacement gets `--hooks-in`
   (`listener::parse_hooks_in`) and does without each thread's last focus,
   at the cost of one fuller ancestor read per application. It makes no
   remote operation, so takes no `--classic-uia`.
@@ -986,8 +989,10 @@ section 6.3).
 - `send_to_outpost(outpost_id, command)` queues a command without waiting,
   failing at once with a `QueueError` when the generation ended or its
   queue is full.
-- `note_views(attention, holding)`, `core_focus(judged, focus, outposts)`,
-  `leave_nodes_held`, `query_idle(round)`, `is_ignored`, and `frames`.
+- `note_views(attention, holding)`, `leave_nodes_held` (left in the
+  writer's slot for the next command), `send_nodes_held` (written behind
+  what waits, in place of a list left), `query_idle(round)`, `is_ignored`,
+  and `frames`.
 - `SPARES` is two; Verbatim's readiness waits for them.
 
 The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
@@ -1082,13 +1087,15 @@ unredirected, never unspawned.
   once the change is made (`docs/parity/focus-events.md`, "Stale focus
   events"). It counts among its thread's other events and among focus events
   in the batch limits, so later focus events do not crowd it out.
-- A foreground fact in front is also dropped, uncounted, when the last
-  focus or foreground change reported (`Tracking`'s queued focus) is in its
-  window or a child (`window::is_descendant_window`), or came from its own
-  address as the client object, and no focus Core queued from another
-  application has replaced it: NVDA's two tests
-  (`worker::foreground_repeats_focus`).
-- Otherwise it is reported at once as a focus on the window, stamped when
+- A foreground fact in front is reported, whatever the focus: NVDA's two
+  tests against its last queued focus are Core's, which refuses a
+  foreground report of the window its focus is in. In a focus group, a
+  reported change whose window holds a report's line lets the older entry
+  be tried, and every report of the group carries its number and rank
+  (`verbatim_model::FocusGroup`), so Core takes the older entry only when
+  it refused the change; a reported change of any other window ends the
+  group, as a reported focus does.
+- It is reported at once as a focus on the window, stamped when
   confirmed in front. The window's own object is read (`window_element`, or
   `OBJID_CLIENT`), so a focus on its client area is the same node; a popup
   menu window (`#32768`) reads as a menu (`read::window_snapshot`). An
@@ -1213,25 +1220,34 @@ unredirected, never unspawned.
   tested with. Notifications are not tested, as NVDA tests none, nor are a
   text focus's caret, text, and active text position events.
 - An MSAA focus is acquired with NVDA's child-0-on-a-list redirect and the
-  `accFocus` redirect (`focus_candidate`). It is dropped as a repeat
-  (`focus_rules::repeats_focus`) when Core's focus and every unjudged focus
-  of this outpost is the object it names, counting as reported, and
-  accepted only when it or an ancestor has the focused state, read live.
+  `accFocus` redirect (`focus_candidate`), read in full even when it
+  repeats the focus, since Core judges repeats, and accepted only when it
+  or an ancestor has the focused state, read live. A focus in a window of
+  a process the outpost inherits as ignored (`IGNORE_PIDS_ENV`) is not
+  reported, and every focus report carries window facts.
   A child's own focus event from the same `SetFocus` as its control's
   redirected one is dropped (`Intake::take_redirected_focus`).
-- Focuses events are judged against (`outpost::held`;
-  `docs/architecture.md`, "Where the rules run (D14)"): Core's focus when it
-  is this outpost's, and every focus reported that Core has not judged. A
-  change is read when it can be spoken for any; a focus is a repeat only of
-  all. With each the outpost keeps its MSAA address, whether a simple child,
-  and the window in front as it was entered. The followed focus
-  (`Tracking::focus`, `focus_role`, `window`, `chain`) is what the outpost
-  reads text from; no rule judges by it.
-- MSAA name, value, and state changes are spoken by the reducer's rule
-  (`focus_rules::change_target`): name, description, and value for a focus,
-  state for a focus or ancestor. The object is identified
-  (`EventObject::which_of`, against `focus_rules::change_candidates`)
-  before any read, and only the named property is read. A newly expanded
+- The reports (`outpost::held`;
+  `docs/design/ownership-one-judge.md`, "The reports, from the store"):
+  every focus or foreground report whose focus node the outpost has not
+  released, added at the worker's commit and removed by its release, one
+  per node and line. Core's focus line is always among them. With each
+  the outpost keeps its MSAA address, whether a simple child, the window in
+  front as it was entered (inherited from the newest report in its
+  top-level window, set by a foreground change of it), and the text each
+  dialog of its line was given. The newest is `expected()`. A report of
+  the newest report's node whose own evidence says the same element still
+  has the focus leaves the states last read as they were. The followed
+  focus (`Tracking::focus`, `focus_role`, `window`, `chain`) is the newest
+  report of a control, which the caret, text and terminal output follow.
+- MSAA name, value, and state changes are read for the nodes the outpost
+  has not released, and Core targets what is spoken
+  (`focus_rules::change_target`): name, description, and value for a
+  report's focus, state for any node of a report's line or carried by a
+  message still waiting (`Outbound::waiting_nodes`). The object is
+  identified (`EventObject::which_of`, against
+  `focus_rules::change_candidates`) before any read, and only the named
+  property is read, with its role for a carried node no line has. A newly expanded
   `SysTreeView32` item carries its child count; a progress bar's value
   change reads role, states, value, and location (`EventObject::progress`).
   A selection on a focus or ancestor is a state change
@@ -1278,12 +1294,13 @@ unredirected, never unspawned.
   operations off, or in a window marked classic. A gone element is found
   by the focus's route and stepped from classically, or answered gone.
 - A dialog's own text (`read::describe_dialogs`) is given as the
-  description of every newly entered dialog in the chain
-  (`focus_rules::already_entered`: below where its line meets that of
-  any focus events are judged against), and of a dialog focus, without one,
-  while descriptions are read, so Core speaks it where NVDA does. The
-  splice carries it while the focus stays inside, and a foreground report's
-  (`Tracking`'s `dialog`) serves the focus that follows.
+  description of every dialog in the chain no report's line is already
+  inside (`focus_rules::already_entered`), and of a dialog focus, without
+  one, while descriptions are read; a dialog a report's line is inside
+  carries the text that report gave it, with no call, so Core, which
+  speaks it when its own line enters the dialog, always has it. A
+  foreground report's (`Tracking`'s `dialog`) serves the focus that
+  follows.
 
 ### Menus
 
@@ -1302,17 +1319,22 @@ foreground application for its focus unless a newer focus was applied.
 - Held objects: both registries keep every node reported with its live
   element or object. Each message that carries node ids
   (`OutpostToSupervisor::carries_nodes`) takes the next position as it is
-  written, and the nodes issued or looked up since the last publish are
-  recorded at it, so positions are those Core counts. The app sends
-  `NodesHeld` (the reducer's nodes and text anchors in that outpost and the
-  last position handled) when any changes, never on its own: it waits in the
-  writer's slot (`Supervisor::leave_nodes_held`) for the next command, a
-  request or a ping within three seconds, behind every command queued
-  before it. The worker in charge then releases every unheld node reported
-  at or before that position, under the watch lock and the sender's lock,
-  dropping the objects after, so a replacement worker never reports a
-  vanishing node. A released node answers `Gone`. Only the newest list is
-  kept.
+  written, and what it carries is recorded at it (`outbound::Carried`): the
+  nodes issued or looked up since the last publish, `existing_id` lookups
+  and spliced entries included, and the text anchors minted or reported
+  since. A walk splices only from entries the store still holds
+  (`read::held_prefix`). The app writes `NodesHeld` (the reducer's nodes
+  and text anchors in that outpost and the last position handled) when the
+  node set changed or after a focus report
+  (`Supervisor::send_nodes_held`); any other change waits in the writer's
+  slot (`Supervisor::leave_nodes_held`) for the next command, a request or
+  a ping within three seconds. The worker in charge then releases every
+  unheld node and anchor reported at or before that position, under the
+  watch lock and the sender's lock, with the reports whose focus node it
+  is and the focus-following groups of their elements, dropping the
+  objects after, so a replacement worker never reports a vanishing node. A
+  released node answers `Gone`, a forgotten anchor `AnchorLost`. Only the
+  newest list is kept.
 
 ### What to read
 
@@ -1507,8 +1529,8 @@ Caret and text events:
   host's updates for it are dropped as pushed
   (`Intake::absorb_console_updates`) while no watch is open, the mark
   cleared before a terminal request, a caret key, or a new focus.
-- A focus-now answer's control has its caret read with it, is recorded as
-  an unjudged focus (`outpost::held`), as NVDA's fake focus is, and then
+- A focus-now answer's control has its caret read with it, is recorded
+  among the reports (`outpost::held`), as NVDA's fake focus is, and then
   becomes the followed focus (`adopt_focus`, as `emit_focus` does): another
   node's watch ends, the intake is told (`note_focused`), and the tracking
   takes it, unless it is already followed under the same node. It is

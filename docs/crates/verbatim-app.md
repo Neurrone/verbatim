@@ -176,15 +176,19 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 - `Effect::CopyToClipboard`, which select-then-copy emits, goes to the
   clipboard thread like every copy.
 - The held anchors (`SrState::held_anchors`) go to each outpost with its
-  held nodes. The list is never written on its own: when it, or the
-  position of the outpost's last message handled, changed
-  (`Live::held_changed`), the app leaves it in that outpost's writer
-  (`Supervisor::leave_nodes_held`), and the next command written there, a
-  request or the relay's ping within three seconds, carries it in the
-  same write, after its own frame (`docs/design/communication.md`, step
-  11). The list only lets the outpost release what Core no longer holds,
-  and a terminal's output changes it with every message
-  (`docs/design/wake-ups.md`, item 4).
+  held nodes. The list is written on its own (`Supervisor::send_nodes_held`)
+  when the node set changed, or after a focus report of that outpost was
+  handled, taken or refused, so the outpost releases what Core let go of
+  within one pipe hop and reads changes for no more than it must
+  (`docs/design/ownership-one-judge.md`, "Manageability"). Any other change
+  (`Live::held_changed` answers `HeldChange::Other`: the anchors, or the
+  position of the outpost's last message handled alone) is left in that
+  outpost's writer (`Supervisor::leave_nodes_held`), and the next command
+  written there, a request or the relay's ping within three seconds,
+  carries it in the same write, after its own frame
+  (`docs/design/communication.md`, step 11): the caret's anchor changes
+  with every key, and a terminal's output changes the position with every
+  message (`docs/design/wake-ups.md`, item 4).
 
 Milestone M4's themes and earcons are wired here too
 ([verbatim-model](verbatim-model.md), "Themes"):
@@ -296,10 +300,10 @@ knowing for review:
   supervisor the derived views (`send_views`) when they change: the
   application holding attention and the outposts in which the reducer holds
   nodes. It also tells each live outpost which of its nodes the reducer
-  holds (`leave_nodes_held`, carried by the next command written to it),
-  with the position of the last of that outpost's messages it has
-  handled, whenever either changes, so the outpost can release everything
-  else
+  holds, with the position of the last of that outpost's messages it has
+  handled, whenever either changes, written at once or left for the next
+  command as the held anchors are (below), so the outpost can release
+  everything else
   ([verbatim-outpost](verbatim-outpost.md), "Held objects"). A focus-now
   answer is a foreground change and then a focus: held nodes sent after
   the first alone, with the answer's position as acknowledged, had the

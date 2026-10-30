@@ -662,7 +662,10 @@ its process. They are not dropped when their window is destroyed, since a
 runtime id has no documented structure naming its window, so a node Core
 still holds after its window closed is the node for any new element
 given the same runtime id; NVDA has the same exposure. `take_touched`
-reports the nodes issued or looked up since the last call. A runtime id is
+reports the nodes issued or looked up since the last call, `existing_id`
+lookups included, and `touch_kept(node)` records a kept node a message
+names without a lookup, such as an entry spliced from an earlier chain,
+so the outpost records every node a message carries. A runtime id is
 unique only among live elements (File Explorer gives a dead element's id
 to a new one); the node keeps its id, and `evict_element_if` takes the
 kept element out, only if it is still the one kept, compared by agile

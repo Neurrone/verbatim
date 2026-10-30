@@ -14,56 +14,40 @@ has no test for a foreground or menu focus
 ([Event handling](../nvda/events.md),
 [The UIA client](../nvda/uia.md)).
 
-Verbatim: **matched (verified)**, with one rule of its own; the two
-differences are the next two entries. The rule is defined once
-(`verbatim_core::focus_rules::repeats_focus`; decision D14, "Where the
-rules run"): a focus repeats when its event names the element of the
-focus Core holds, which still has the focus, and Core has judged every
-focus the judge sent it. Core applies it, and the focus listener and the
-outposts apply it before they read, against the focus Core holds, which
-Core tells them after every focus event it judges and every change of
-its focus (`SupervisorToOutpost::CoreFocus`;
-`docs/design/focus-pipeline.md`, sections 4.2 and 16.3;
-`docs/crates/verbatim-outpost.md`, "A UIA focus, judged and read by the
-listener").
+Verbatim: **matched (verified)**, with one rule of its own; the
+difference is the next entry. The rule is defined once
+(`verbatim_core::focus_rules::repeats_focus`), and only Core applies it
+(`docs/design/ownership-one-judge.md`, "Repeats"): a focus repeats when
+its event names the node of the focus Core holds, whose element still
+has the focus. Every reader reads a repeat in full and reports it, and
+Core judges it in the order the focuses were observed.
 
-- Core drops a focus on the node of the live focus it holds, before the
-  stale and foreground checks, so it neither moves attention nor counts
-  as the newest focus a later focus from another application is judged
-  stale against; its newer reading is kept, and what Core last spoke of
-  the focus is not moved, so a change the repeat read before its own
-  event came is spoken when the event comes, as NVDA compares a change
-  with what it last spoke (Core's
-  `a_name_change_after_a_repeat_carried_it_is_spoken`). Core compares the node id
-  only, not the states, name, or ancestors, which a second report can
-  read mid-change (Notepad's edit control settling, File Explorer's title
-  being filled in), and not the selected item inside a list; a new
-  selected item is announced by its selection event. This rule across
-  backends is Verbatim's own, kept in the reducer because only Core sees
-  focus across applications
+- Core drops a focus on the node of the live focus it holds after the
+  stale and foreground checks, which record its observation, so a focus
+  from another application observed before the repeat and arriving after
+  it is stale, as NVDA's in-order queue would have handled it first; its
+  newer reading is kept, and what Core last spoke of the focus is not
+  moved, so a change the repeat read before its own event came is spoken
+  when the event comes, as NVDA compares a change with what it last spoke
+  (Core's `a_name_change_after_a_repeat_carried_it_is_spoken`). Core
+  compares the node id only, not the states, name, or ancestors, which a
+  second report can read mid-change (Notepad's edit control settling,
+  File Explorer's title being filled in), and not the selected item inside
+  a list; a new selected item is announced by its selection event. This
+  rule across backends is Verbatim's own, kept in the reducer because only
+  Core sees focus across applications
   ([verbatim-core](../crates/verbatim-core.md), M3 noise suppression); it
-  covers MSAA's focuses and the answers to a focus-now query. Core's
-  `a_duplicate_focus_does_not_make_a_later_focus_stale` and
+  covers MSAA's focuses, UIA's, and the answers to a focus-now query.
+  Core's `a_duplicate_focus_makes_a_focus_observed_before_it_stale`,
+  `the_repeat_hole_in_the_order_observed_speaks_the_return` and
   `the_same_focus_after_another_applications_focus_is_announced`.
-- The focus listener makes NVDA's UIA test itself, in NVDA's order,
-  before it reads anything of the event's sender: an event whose sender
-  `CompareElements` equates with the element of the focus Core holds,
-  while that element's `HasKeyboardFocus` reads true, is dropped; a
-  comparison or read that fails lets the event through. A repeat costs
-  those two calls. A focus Core refused, as a shell window that only
-  stages a switch, is never compared with. Mockapp's
-  `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`,
-  `a_focus_is_no_repeat_once_core_holds_another`, and
-  `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus`.
-- Each outpost makes NVDA's MSAA test against the focus Core holds, by
-  its address, a whole object rather than a child by id: a focus event at
-  that address is a repeat when Core holds a focus of this outpost's and
-  it, and every focus this outpost reported that Core has not judged yet,
-  is that object. A foreground change Core takes, and a focus Core takes
-  from another application or from a UIA focus of the same one, replace
-  it. Mockapp's
-  `a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object` and
-  `a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus`.
+- The focus listener makes no repeat test: a UIA focus that passes NVDA's
+  other checks is read in full (mockapp's
+  `a_repeated_focus_on_the_still_focused_element_is_read_in_full`). An
+  outpost makes none either: an MSAA focus at the address of its last
+  report is read in full and reported, under the same node for a whole
+  object (mockapp's `a_repeated_msaa_focus_is_read_in_full`). The read is
+  the cost (`docs/performance.md`, "One judge").
 - A runtime id is unique only among live elements, and File Explorer
   reuses them: going back from a subfolder, an item of the parent folder
   can take the runtime id of the subfolder's item, destroyed with its
@@ -75,21 +59,7 @@ listener").
   lost the focus or is gone. Mockapp's `focus_reports` tests and Core's
   `a_reused_runtime_id_whose_element_is_gone_is_announced_and_its_selection_follows`.
 
-### A repeat while a focus waits for Core's judgement
-
-NVDA compares with the last focus it queued, which becomes the focus it
-holds when it handles the event. Verbatim: **different (D14)**, "Where
-the rules run": Verbatim's judges compare with the focus Core holds,
-which a focus they sent becomes only once Core has judged it. While one
-waits, nothing is a repeat: the listener reads a repeat of a focus it
-read moments before (mockapp's
-`a_focus_waiting_for_core_s_judgement_is_no_repeat`), and an outpost
-reports an MSAA focus repeated at the address it reported moments
-before, unless Core holds a focus of its and every focus it judges
-against is that object. Core's own rule then drops the repeat, its newer
-reading kept unspoken, so nothing heard changes; the read is the cost.
-
-### A repeat when a read's time is up
+### A focus when a read's time is up
 
 NVDA reads the sender's keyboard focus live, and a live read that fails
 lets the focus through (`except COMError: return True`,
@@ -97,18 +67,15 @@ lets the focus through (`except COMError: return True`,
 
 Verbatim: **different** (Dickson, 2026-10-20): once the listener's read
 of a focus has used its time budget, 2 seconds, it makes no more calls
-into the application, and the repeat test is skipped, since it needs the
-last focus's keyboard focus read live; a repeat in an application that
-slow is spoken where NVDA drops it. Its other checks are made where no
-call is needed (`docs/design/listener-without-connections.md`, section
-5), and the sender's keyboard focus is taken from the event's cache:
-anything but a cached `true` drops the focus. A provider that answers
-the property empty, or whose answer fails, leaves UIA's default,
-`false`, in the cache, and NVDA's live read of such a provider gets the
-same `false` and drops the focus too. Mockapp's
-`a_repeated_focus_out_of_time_is_reported` pins the skipped repeat test,
+into the application. Its other checks are made where no call is needed
+(`docs/design/listener-without-connections.md`, section 5), and the
+sender's keyboard focus is taken from the event's cache: anything but a
+cached `true` drops the focus. A provider that answers the property
+empty, or whose answer fails, leaves UIA's default, `false`, in the
+cache, and NVDA's live read of such a provider gets the same `false` and
+drops the focus too. Mockapp's
 `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
-the drop from the cache, the events test
+pins the drop from the cache, the events test
 `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
 what UIA stores for an empty or failed answer, and `verbatim-uia`'s
 `a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the

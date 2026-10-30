@@ -1099,35 +1099,66 @@ performance counter, in microseconds, for every event kind.
   message carries one stamp. With no millisecond field, an event message
   is 31 bytes smaller for a focus and 16 for any other event, a listener
   fact and its relay to the outpost and a focus-now answer 31 bytes
-  smaller, Core's `CoreFocus` notice 10, and a menu's end 3 bytes larger.
+  smaller, and a menu's end 3 bytes larger.
   No thread, timer, message or wake-up.
 - What it does not catch: a switcher focus Windows raises after the
   console's (11 ms after its foreground event and 15 ms after its focus)
   happened later, so no ordering drops it; Core's refusal of the
   switcher's pane covers it ("The task switcher's frame").
 
-### The focus Core holds, told to the judges before a read
+### One judge: reading for every node the outpost has not released
 
-Decision D14, "Where the rules run": the listener and the outposts judge
-events against the focus Core holds (`SupervisorToOutpost::CoreFocus`),
-never a copy of the focus they last reported.
+An outpost reads changes for every node it has not released, and Core
+alone judges focuses (`docs/design/ownership-one-judge.md`); no message
+carries Core's focus to the listener or the outposts.
 
-- Minimum: one notice per change of Core's focus to each process that
-  judges against it, none on the event path's threads.
-- Today: after every focus the reducer judges, taken or refused, one
-  `OwnerEvent` to the supervisor's owner thread, which writes one
-  `CoreFocus` to the listener, one to the judged event's outpost, and on a
-  change of application one to the outpost left; the outpost's pipe thread
-  takes it without waking the worker. Local calls added: the acceptance
-  test's foreground relation reads all three facts, and the listener one
-  window property (`GetPropW`) per UIA focus, to drop a focus in Core's
-  hidden frame before its read. While a focus awaits judgement, a repeat
-  is read in full and Core's duplicate rule drops it.
-- Over the three `measure_focus_` scenarios a key to its speech queued at
-  a median of 0.6 ms and a 99th percentile of 6.1 (debug, 2026-10-25).
-- Target: the minimum, but for the reporting outpost's notice of a refused
-  focus, which keeps a refused focus from standing as the one it judges
-  against.
+- An MSAA repeat of the focus is read in full: 23 MSAA calls in
+  `call_counts`' arrow back onto the same list item ("MSAA focus
+  repeated"), where the outpost's own repeat test dropped it after
+  acquiring it and reading its role, five provider calls and none
+  counted. A foreground change in front of a report's window is read and
+  reported, 8 MSAA calls once the window's backend is known and 11 for a
+  second report of the same window (`msaa_events`), where the outpost's
+  own tests dropped it with local calls; within a focus group its older
+  entry is read too, 20 MSAA calls for the list item beside the change.
+  Each costs one message to Core, one reducer input, and the `NodesHeld`
+  written after it.
+- A change of a node the outpost has not released but Core no longer
+  targets is read: an MSAA change outside Core's line costs its
+  acquisition and the one property read, 1 `WM_GETOBJECT` and 1
+  `get_accChild` before the property, as before, plus one message;
+  a state change of a node only a waiting message carries reads its role
+  too. Only while its window is in front, and only until Core's list
+  releases it, one pipe hop after Core handled the report.
+- A UIA selection is read against every report's focus newest first,
+  one remote operation (`ControllerFor`) per UIA report until one
+  controls the selection: in steady state Core's line can hold two UIA
+  reports (a list and the item focused inside it), so a selection in a
+  list no focus controls costs one remote operation more than when only
+  the newest focus was asked. `call_counts`' combo box pins the cost with
+  the older report released.
+- The focus-following subscription keeps its group on the element of
+  every UIA report the outpost has not released: one more element with a
+  group for one round trip after each focus, removed at release with one
+  `RemoveEventHandlerGroup`, and none re-added for an element the focus
+  returns to within that round trip. Not yet counted, for the scenarios
+  to measure (`text_box_editing`, `settings_system_page`): the normalize
+  call for an event of a XAML element with no cached window that is not
+  the newest focus, `caret_of`'s text calls for a `TextSelection` event of
+  an older element, and the refresh for a `HelpText` or `ControllerFor`
+  change of an older element.
+- `NodesHeld` is written on its own after each focus report and each
+  change of the node set Core holds in an outpost: one pipe write and the
+  outpost's reader wake, about what the `CoreFocus` notice to the focus's
+  outpost cost. Saved: the notices to the listener and to the other
+  outposts concerned, and the supervisor owner thread's wake for each. A
+  change of anchors or of the acknowledged position alone still rides on
+  the next command or the 3-second ping, so typing adds no write.
+- Text anchors are released by message position, as nodes are: the
+  64-anchor slack is gone, and an outpost keeps the anchors minted since
+  Core's last list, bounded by the keys typed between two lists.
+- Not measured here: `held_nodes` per outpost in the scenarios' flight
+  dumps, which the scenarios record.
 
 ### The task switcher's frame
 
@@ -1172,10 +1203,8 @@ window's node carries (`NodeDetails::window`).
   (`RoleCore`), the MSAA one the address the object was read at, and a
   plain window's its own. Every snapshot is 16 bytes larger in memory; in
   a message a window's node is about 20 bytes larger and any other node
-  unchanged, the field being left out when absent. The focus Core holds
-  carries the handle too, so a `CoreFocus` notice is about 20 bytes larger
-  for each of its nodes that is a window, and each held node 16 bytes
-  larger in memory. Core's comparison adds one test of two handles per
+  unchanged, the field being left out when absent. Each node of an
+  outpost's reports is 16 bytes larger in memory. Core's comparison adds one test of two handles per
   pair of chain entries it compares, and an outpost's for a dialog's text
   the same.
 
