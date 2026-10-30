@@ -54,6 +54,20 @@ impl EditText {
         }
     }
 
+    /// The text's length, if this request has read it: what a request cut
+    /// in two programs carries to its second
+    /// ([`EditText::knowing_length`]).
+    pub(crate) fn length_read(&self) -> Option<u32> {
+        self.length
+    }
+
+    /// The same text, with its length as the request's first program read
+    /// it, so the second reads it no more than the request read uncut.
+    #[must_use]
+    pub(crate) fn knowing_length(self, length: Option<u32>) -> Self {
+        Self { length, ..self }
+    }
+
     /// The text's length, read once per request.
     fn length(&mut self) -> TextResult<u32> {
         if let Some(length) = self.length {

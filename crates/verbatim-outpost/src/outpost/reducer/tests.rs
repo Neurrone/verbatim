@@ -87,6 +87,7 @@ impl Replay {
                 request,
                 reported,
                 panicked: false,
+                cut: None,
             },
             at_ms,
         )
@@ -1272,4 +1273,179 @@ fn a_programs_text_change_reaches_the_next_programs_copy() {
     let text = &program(&effects).facts.text;
     assert_eq!(text.edit(1), Some(&edit_part(3, 4)));
     assert_eq!(text.edit(2), None);
+}
+
+/// The caret's location change of edit control 9, raised by thread 3.
+fn edit_caret() -> Item {
+    Item::Msaa {
+        kind: WinKind::Caret,
+        hwnd: 9,
+        id_object: -8,
+        id_child: 0,
+        raiser: 3,
+    }
+}
+
+/// The value change of edit control 9's client area, raised by thread 3.
+fn edit_value_change() -> Item {
+    Item::Msaa {
+        kind: WinKind::ValueChange,
+        hwnd: 9,
+        id_object: intake::OBJID_CLIENT,
+        id_child: 0,
+        raiser: 3,
+    }
+}
+
+/// A caret read of edit control 9's client area, node 1, cut at its value
+/// change check for `finish`.
+fn cut(finish: Finish) -> Box<Cut> {
+    Box::new(Cut {
+        edit: 9,
+        node: NodeId::new(1),
+        length: None,
+        read_at: Some(1_000),
+        timing: EventTiming::default(),
+        calls: CallCounts::default(),
+        finish,
+    })
+}
+
+/// What a caret read cut over the selection of "hello" found: the caret
+/// after "h", nothing selected.
+fn report_cut() -> Finish {
+    Finish::Report {
+        trace: TraceId::mint(),
+        observed_at_us: 1_000,
+        read: ReportCut {
+            caret: 1,
+            selection: None,
+            moved: false,
+            read_at_ms: 1,
+            last: KeptSelection {
+                ends: (0, 5),
+                collapsed: false,
+                text: None,
+                report: 1,
+            },
+        },
+    }
+}
+
+impl Replay {
+    /// Ends `request`'s program at `at_ms`, a caret read cut as `cut`.
+    fn finish_cut(&mut self, request: Request, cut: Box<Cut>, at_ms: u64) -> Vec<Effect> {
+        self.input(
+            Input::Finished {
+                request,
+                reported: false,
+                panicked: false,
+                cut: Some(cut),
+            },
+            at_ms,
+        )
+    }
+}
+
+/// The finish `program` is: what it finishes, and whether the reducer
+/// found the edit control's value change waiting.
+fn finishes(program: &Program) -> (&'static str, bool) {
+    match &program.work {
+        Work::Finish { cut, waiting } => {
+            let what = match cut.finish {
+                Finish::Report { .. } => "report",
+                Finish::Key { .. } => "key",
+                Finish::Watch { .. } => "watch",
+            };
+            (what, *waiting)
+        }
+        work => panic!("a finish, not {work:?}"),
+    }
+}
+
+/// The control raises its value change while it answers the caret read,
+/// before the read part's sync returns, so the change is ahead of the read
+/// part's end: the finish of the caret event's report is dispatched at
+/// once, told the change waits, and the change is handled after it.
+#[test]
+fn a_value_change_ahead_of_a_cut_read_is_found_waiting() {
+    let mut replay = Replay::new();
+    let read = program(&replay.push(edit_caret(), Source::Hook, 1)).request;
+    assert!(
+        programs(&replay.push(edit_value_change(), Source::Hook, 2)).is_empty(),
+        "the read part is in flight"
+    );
+    let effects = replay.finish_cut(read, cut(report_cut()), 3);
+    let finish = program(&effects);
+    assert_eq!(finish.request.number, read.number + 1);
+    assert_eq!(finishes(finish), ("report", true));
+    let effects = replay.finish(finish.request, false, 4);
+    assert_eq!(handles(program(&effects)), (2, None));
+}
+
+/// A value change raised after the read part's sync is behind its end:
+/// the finish is told nothing waits, as the change reached nothing the
+/// read part asked about.
+#[test]
+fn a_value_change_behind_a_cut_read_is_not_found_waiting() {
+    let mut replay = Replay::new();
+    let read = program(&replay.push(edit_caret(), Source::Hook, 1)).request;
+    let effects = replay.finish_cut(read, cut(report_cut()), 2);
+    let finish = program(&effects);
+    assert_eq!(finishes(finish), ("report", false));
+    assert!(
+        programs(&replay.push(edit_value_change(), Source::Hook, 3)).is_empty(),
+        "the finish is in flight"
+    );
+    let effects = replay.finish(finish.request, false, 4);
+    assert_eq!(handles(program(&effects)), (3, None));
+}
+
+/// The open watch's check, cut at its value change check, is finished by
+/// a program that takes over the read part's deadline and the watch's
+/// query, which the read part took out of the follow state: abandoned at
+/// the read part's deadline, it answers that query "abandoned".
+#[test]
+fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
+    let mut replay = Replay::new();
+    let key = program(&replay.push(caret_key(7), Source::Other, 1)).request;
+    let open = OpenWatch {
+        poll: None,
+        ..polling_watch(7, 1)
+    };
+    replay.commit(key, opens(&open), 2);
+    assert!(programs(&replay.finish(key, false, 3)).is_empty());
+    let read = program(&replay.push(edit_caret(), Source::Hook, 10)).request;
+    replay.commit(
+        read,
+        Change {
+            watch: Some(WatchChange::Take(NodeId::new(1))),
+            ..Change::default()
+        },
+        11,
+    );
+    let finish = cut(Finish::Watch {
+        open: Box::new(open),
+        read: AnswerCut {
+            caret: 1,
+            selection: None,
+            read_at_ms: 11,
+            line: None,
+            unit: TextUnit::Character,
+            same_line: None,
+            compared: KeptSelection {
+                ends: (0, 5),
+                collapsed: false,
+                text: None,
+                report: 1,
+            },
+        },
+    });
+    let effects = replay.finish_cut(read, finish, 12);
+    let finish = program(&effects);
+    assert_eq!(finishes(finish), ("watch", false));
+    assert!(replay.tick(10 + 9_999).is_empty());
+    let effects = replay.tick(10 + 10_000);
+    assert!(abandons(&effects));
+    assert_eq!(replies(&effects), [(7, "abandoned")]);
 }

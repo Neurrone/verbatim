@@ -86,6 +86,15 @@ impl Hold {
         matches!(self.state, State::Holding { .. })
     }
 
+    /// The copies held, in the order they came.
+    pub(in crate::outpost) fn held(&self) -> impl Iterator<Item = &Entry> {
+        let held = match &self.state {
+            State::Holding { held, .. } => held.as_slice(),
+            State::Unhooked | State::Over => &[],
+        };
+        held.iter()
+    }
+
     /// A copy from the outpost's own hook: held while the hold lasts,
     /// handed back to be handled otherwise.
     pub(in crate::outpost) fn hooked_copy(&mut self, entry: Entry) -> Option<Entry> {

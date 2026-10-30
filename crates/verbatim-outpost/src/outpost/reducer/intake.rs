@@ -825,23 +825,33 @@ impl Intake {
 
     /// The caret events waiting, planned or not, observed at or after
     /// `since_ms`, in whole milliseconds, by what names their nodes, none
-    /// with no `since_ms`; and every edit control's value change waiting.
+    /// with no `since_ms`.
     pub(in crate::outpost) fn waiting_carets(
         &self,
         since_ms: Option<u64>,
     ) -> Vec<super::WaitingCaret> {
+        let Some(since_ms) = since_ms else {
+            return Vec::new();
+        };
+        self.entries()
+            .filter(|entry| entry.observed_at_us / 1_000 >= since_ms)
+            .filter_map(|entry| super::waiting_caret(&entry.item))
+            .collect()
+    }
+
+    /// Whether a value change of edit control `hwnd`'s client area waits,
+    /// planned or not: a cut caret read's check ([`super::Cut`]).
+    pub(in crate::outpost) fn value_change_waiting(&self, hwnd: isize) -> bool {
+        self.entries()
+            .any(|entry| super::edit_value_change(&entry.item) == Some(hwnd))
+    }
+
+    /// The entries waiting, then those planned and not yet handed out.
+    fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.waiting
             .iter()
             .map(|waiting| &waiting.entry)
             .chain(self.batch.iter().flat_map(Planned::entries))
-            .filter_map(|entry| {
-                let waiting = super::waiting_caret(&entry.item)?;
-                let caret = !matches!(waiting, super::WaitingCaret::ValueChange(_));
-                let counted = !caret
-                    || since_ms.is_some_and(|since_ms| entry.observed_at_us / 1_000 >= since_ms);
-                counted.then_some(waiting)
-            })
-            .collect()
     }
 
     /// What the planning reads of the focus, which programs are given a

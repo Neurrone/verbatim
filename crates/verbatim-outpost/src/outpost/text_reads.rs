@@ -43,10 +43,12 @@ use verbatim_uia_rops::Path;
 use crate::arbitration::{normalize_class_name, window_class_name};
 use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
-use crate::text::{self, CaretSignal, LastSelection, NodeTextCopy, Slot, TextError, Watched};
+use crate::text::{
+    self, CaretSignal, Checked, LastSelection, NodeTextCopy, Slot, TextError, Watched,
+};
 
 use super::commit::Effects;
-use super::reducer::{NodeAnchors, RangeKey, TextChange};
+use super::reducer::{AnswerCut, NodeAnchors, RangeKey, ReportCut, TextChange};
 use super::store::TextWrite;
 use super::{Context, RequestContext};
 
@@ -290,19 +292,6 @@ impl CaretSignal for Signal<'_> {
         }
         self.read_at = Some(self.context.observed_now());
     }
-
-    /// An edit control's value change waiting, as a caret event's report
-    /// checks for one ([`report_caret`]): NVDA answers a selecting key at
-    /// the key's caret event, which notes a pending value change
-    /// (`Edit.event_caret`, `nvda/source/NVDAObjects/window/edit.py` 1068
-    /// to 1082). The control raised it while it handled the key, before
-    /// the read that found the key's evidence returned, but the `WinEvent`
-    /// thread may not have queued it yet, so the check waits for that
-    /// thread to take every event raised before the check first. A UIA
-    /// text's change is never noted.
-    fn text_change_waiting(&mut self) -> bool {
-        value_change_raised(self.context, self.node_id)
-    }
 }
 
 /// Whether a caret event of `node_id` observed at or after the key the
@@ -334,7 +323,6 @@ fn caret_event_waiting(context: &RequestContext<'_>, node_id: NodeId) -> bool {
         WaitingCaret::Uia(id) => runtime_id.as_ref() == Some(id),
         WaitingCaret::Console(hwnd) => console == Some(*hwnd),
         WaitingCaret::Edit(hwnd) => edit == Some(*hwnd),
-        WaitingCaret::ValueChange(_) => false,
     })
 }
 
@@ -692,14 +680,17 @@ fn before_reply<P>(read: Result<text::ReportedCaret<P>, TextError>, read_at_ms: 
 /// ([`text::check_caret`]): the answer once there is evidence, or the reply
 /// that ends the request when the node has no text or is gone; otherwise
 /// the watch stays open. `caret_event` says whether a caret event prompted
-/// the check. Also when the caret read began, if it was read, for the
+/// the check. With `cuts`, the check of an edit control's client area is
+/// cut where its answer would ask whether the control's value change waits
+/// ([`value_change_cut`]), and the cut is returned with the control's
+/// window instead. Also when the caret read began, if it was read, for the
 /// commit of what the check sends.
 pub(super) fn check_watch(
     context: &RequestContext<'_>,
     node_id: NodeId,
     watch: &CaretWatch,
-    caret_event: bool,
-) -> (Watched, Option<u64>) {
+    (caret_event, cuts): (bool, bool),
+) -> (WatchCheck, Option<u64>) {
     let source = match source(context, node_id) {
         Ok(source) => source,
         // A UIA element that answered no text pattern, or did not answer:
@@ -709,9 +700,9 @@ pub(super) fn check_watch(
         Err(TextReply::NoText | TextReply::Unanswered)
             if context.store.runtime_id_of(node_id).is_some() =>
         {
-            return (Watched::Watching, None);
+            return (Checked::Done(Watched::Watching), None);
         }
-        Err(reply) => return (Watched::Answered(reply), None),
+        Err(reply) => return (Checked::Done(Watched::Answered(reply)), None),
     };
     let mut signal = Signal {
         context,
@@ -721,23 +712,112 @@ pub(super) fn check_watch(
         read_at: None,
     };
     let named: Vec<u64> = watch.since.iter().map(|since| since.anchor.0).collect();
-    let watched = match source {
+    let checked = match source {
         Source::Uia(mut source) => {
             let mut call = uia_call(context, node_id, &named);
             let watched = text::check_caret(&mut source, &mut call.text(), watch, &mut signal);
             put_uia(context, node_id, call);
             note_fallback(context, &mut source);
             keep_support(context, node_id, &source);
-            watched
+            Checked::Done(watched)
         }
         Source::Edit(mut source) => {
+            let edit = edit_client(context, node_id).filter(|_| cuts);
             let mut call = edit_call(context, node_id, &named);
-            let watched = text::check_caret(&mut source, &mut call.text(), watch, &mut signal);
+            let checked = text::check_caret_cut(
+                &mut source,
+                &mut call.text(),
+                watch,
+                (&mut signal, edit.is_some()),
+            );
+            let checked =
+                match (checked, edit) {
+                    (Checked::Cut(read), Some(edit)) => Checked::Cut(EditCut {
+                        edit,
+                        length: source.length_read(),
+                        read,
+                    }),
+                    (Checked::Cut(cut), None) => Checked::Done(Watched::Answered(
+                        text::finish_answer(&mut source, &mut call.text(), cut, false),
+                    )),
+                    (Checked::Done(watched), _) => Checked::Done(watched),
+                };
             put_edit(context, node_id, call);
-            watched
+            if matches!(checked, Checked::Cut(_)) {
+                value_change_cut(context);
+            }
+            checked
         }
     };
-    (watched, signal.read_at)
+    (checked, signal.read_at)
+}
+
+/// [`check_watch`], never cut: the console poll's check, of a UIA text.
+pub(super) fn check_watch_uncut(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    watch: &CaretWatch,
+) -> (Watched, Option<u64>) {
+    match check_watch(context, node_id, watch, (false, false)) {
+        (Checked::Done(watched), read_at) => (watched, read_at),
+        (Checked::Cut(cut), read_at) => (
+            Watched::Answered(finish_watch(
+                context,
+                node_id,
+                (cut.length, cut.read),
+                false,
+            )),
+            read_at,
+        ),
+    }
+}
+
+/// A check of a caret key's watch ([`check_watch`]): what it found, or
+/// the check cut at its value change check.
+pub(super) type WatchCheck = Checked<Watched, EditCut<AnswerCut<u32>>>;
+
+/// A read of an edit control's client area cut at its value change check
+/// ([`value_change_cut`]): the control's window, the text's length if the
+/// read part read it, and what the read part found.
+pub(super) struct EditCut<C> {
+    pub(super) edit: isize,
+    pub(super) length: Option<u32>,
+    pub(super) read: C,
+}
+
+/// The edit control `node_id`'s text, for the part that finishes a read
+/// cut at its value change check, with the text's length the read part
+/// read: the node is the client area of an edit control, as when the read
+/// part read it, unless it is gone.
+fn edit_source(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    length: Option<u32>,
+) -> Result<EditText, TextReply> {
+    match source(context, node_id)? {
+        Source::Edit(source) => Ok(source.knowing_length(length)),
+        Source::Uia(_) => Err(TextReply::NoText),
+    }
+}
+
+/// Finishes the check of a caret key's watch on edit control `node_id` that
+/// [`check_watch`] cut: the answer, whose comparison of selections is in
+/// general terms when the control's value change waited (`waiting`), or
+/// the reply that ends the request when the text cannot be read.
+pub(super) fn finish_watch(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    (length, cut): (Option<u32>, AnswerCut<u32>),
+    waiting: bool,
+) -> TextReply {
+    let mut source = match edit_source(context, node_id, length) {
+        Ok(source) => source,
+        Err(reply) => return reply,
+    };
+    let mut call = edit_call(context, node_id, &[]);
+    let watched = text::finish_answer(&mut source, &mut call.text(), cut, waiting);
+    put_edit(context, node_id, call);
+    watched
 }
 
 /// Why there is no caret to report.
@@ -764,9 +844,10 @@ pub(super) struct SelectionReport {
     pub(super) new_selection: Option<SelectionChange>,
 }
 
-/// What [`report_caret`] found, and when its read began, if it was made.
+/// What [`report_caret`] found, or the read cut at its value change check,
+/// and when its read began, if it was made.
 pub(super) type CaretReading = (
-    Result<(CaretReport, bool, SelectionReport), NoCaret>,
+    Result<Checked<(CaretReport, bool, SelectionReport), EditCut<ReportCut<u32>>>, NoCaret>,
     Option<u64>,
 );
 
@@ -850,7 +931,7 @@ pub(super) fn report_caret(
                         .as_ref()
                         .is_some_and(|(sent, _)| text::same_caret(sent, &read.report));
                 let (report, selection) = selection_report(read);
-                (report, unchanged, selection)
+                Checked::Done((report, unchanged, selection))
             });
             put_uia(context, node_id, call);
             note_fallback(context, &mut source);
@@ -858,7 +939,6 @@ pub(super) fn report_caret(
             report
         }
         Source::Edit(mut source) => {
-            let mut call = edit_call(context, node_id, &[]);
             // An edit control's value change waiting behind this caret
             // event: the text changed since the selection was last
             // reported, so the change is spoken in general terms, as after
@@ -867,38 +947,51 @@ pub(super) fn report_caret(
             // caret event (`Edit.event_caret`,
             // `nvda/source/NVDAObjects/window/edit.py` 1068 to 1084). The
             // check is made once the caret is read, behind the `WinEvent`
-            // thread's queue ([`value_change_raised`]): the control may
-            // raise the change while it answers the read, as the Windows
-            // Forms text box raises a typed character's after its caret
-            // event. A UIA text change is never noted: NVDA handles UIA's
-            // text changed event as a text change only for Word and the
-            // two terminals (`nvda/source/UIAHandler/__init__.py` 145 to
-            // 151 and 778 to 799), so a UIA text's comparison always reads
-            // the old selection's range as it now is.
+            // thread's queue, by the reducer, the read cut there
+            // ([`value_change_cut`]): the control may raise the change while
+            // it answers the read, as the Windows Forms text box raises a
+            // typed character's after its caret event. A UIA text change is
+            // never noted: NVDA handles UIA's text changed event as a text
+            // change only for Word and the two terminals
+            // (`nvda/source/UIAHandler/__init__.py` 145 to 151 and 778 to
+            // 799), so a UIA text's comparison always reads the old
+            // selection's range as it now is.
+            let edit = edit_client(context, node_id).filter(|_| purpose == CaretFor::Event);
+            let mut call = edit_call(context, node_id, &[]);
             let report = text::caret_report_checking(
                 &mut source,
                 &mut call.text(),
                 &mut super::now_ms,
                 (formats, None, last),
-                &mut || purpose == CaretFor::Event && value_change_raised(context, node_id),
+                edit.is_some(),
             )
-            .map(|read| {
-                let (report, selection) = selection_report(read);
-                (report, false, selection)
+            .and_then(|checked| match (checked, edit) {
+                (Checked::Cut(read), Some(edit)) => Ok(Checked::Cut(EditCut {
+                    edit,
+                    length: source.length_read(),
+                    read,
+                })),
+                (Checked::Cut(read), None) => {
+                    text::finish_report(&mut source, &mut call.text(), read, false)
+                        .map(Checked::Done)
+                }
+                (Checked::Done(read), _) => Ok(Checked::Done(read)),
+            })
+            .map(|checked| match checked {
+                Checked::Done(read) => {
+                    let (report, selection) = selection_report(read);
+                    Checked::Done((report, false, selection))
+                }
+                Checked::Cut(cut) => Checked::Cut(cut),
             });
             put_edit(context, node_id, call);
+            if matches!(report, Ok(Checked::Cut(_))) {
+                value_change_cut(context);
+            }
             report
         }
     };
-    let report = match report {
-        Ok(report) => Ok(report),
-        Err(TextError::Gone) => Err(NoCaret::NotRead),
-        Err(TextError::Failed(reason)) => {
-            tracing::debug!(reason, "the caret could not be read");
-            Err(NoCaret::NotRead)
-        }
-    };
-    (report, read_at)
+    (report.map_err(not_read), read_at)
 }
 
 /// A caret read's report, and its selection changes as a caret event's
@@ -957,34 +1050,63 @@ pub(super) fn note_value_change(context: &RequestContext<'_>, node_id: NodeId) {
     );
 }
 
-/// Whether a value change of `node_id`, an edit control's client area,
-/// raised before now waits to be handled: the check waits for the
-/// `WinEvent` thread to take every event raised before it first
-/// (`Nudger::sync`), up to two wakes of that thread and no call to the
-/// application, since the control may have raised it while it answered a
-/// read the caller just made. A UIA text's change is never checked for.
-/// What waits is the program's copy of the intake's value changes, and
-/// what the mailbox took or holds since the program was dispatched
-/// (`super::shell::Mailbox::value_change_since_dispatch`).
-fn value_change_raised(context: &RequestContext<'_>, node_id: NodeId) -> bool {
+/// The window of the edit control whose client area `node_id` is, if it is
+/// one: the node whose caret reads are cut at their value change check
+/// ([`value_change_cut`]). A UIA text's change is never checked for.
+fn edit_client(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
     if context.store.runtime_id_of(node_id).is_some() {
-        return false;
+        return None;
     }
-    let Some(edit) = context
+    context
         .store
         .key_of(node_id)
         .filter(|&(_, object, child)| object == OBJID_CLIENT.0 && child == CHILDID_SELF)
         .map(|(hwnd, ..)| hwnd)
-    else {
-        return false;
-    };
+}
+
+/// Ends the read part of a caret read of an edit control's client area
+/// cut at its value change check (`docs/design/ownership-outpost-reducer.md`,
+/// "The value change check"): waits for the `WinEvent` thread to take
+/// every event raised before now (`Nudger::sync`), up to two wakes of that
+/// thread and no call to the application, since the control may have
+/// raised its value change while it answered the read just made. Every
+/// such value change is then ahead of the read part's end in the mailbox,
+/// where the reducer looks for it among its entries not yet dispatched.
+fn value_change_cut(context: &RequestContext<'_>) {
     if let Some(nudger) = context.event_thread.get() {
         nudger.sync();
     }
-    context
-        .waiting()
-        .contains(&super::reducer::WaitingCaret::ValueChange(edit))
-        || context.mailbox.value_change_since_dispatch(edit)
+}
+
+/// Finishes the caret event's report of edit control `node_id` that
+/// [`report_caret`] cut: the comparison, in general terms when the
+/// control's value change waited (`waiting`), and the report.
+pub(super) fn finish_caret(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    (length, cut): (Option<u32>, ReportCut<u32>),
+    waiting: bool,
+) -> Result<(CaretReport, SelectionReport), NoCaret> {
+    let mut source = match edit_source(context, node_id, length) {
+        Ok(source) => source,
+        Err(TextReply::NoText) => return Err(NoCaret::NoText),
+        Err(_) => return Err(NoCaret::NotRead),
+    };
+    let mut call = edit_call(context, node_id, &[]);
+    let report = text::finish_report(&mut source, &mut call.text(), cut, waiting);
+    put_edit(context, node_id, call);
+    match report {
+        Ok(read) => Ok(selection_report(read)),
+        Err(error) => Err(not_read(error)),
+    }
+}
+
+/// Why a caret read that failed with `error` reports nothing.
+fn not_read(error: TextError) -> NoCaret {
+    if let TextError::Failed(reason) = error {
+        tracing::debug!(reason, "the caret could not be read");
+    }
+    NoCaret::NotRead
 }
 
 /// A terminal's caret as a read found it ([`terminal_read`]).

@@ -77,9 +77,9 @@ use super::focus_path;
 use super::inbox::{Inbox, Taken};
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, CARET_WATCH_BOUND, Change, Entry, Evidence, FocusPath, GapNote, GapRead, Handling, Item,
-    Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent, UiaKind,
-    VerdictChange, WatchChange, WinKind, Work, wake_for,
+    self, CARET_WATCH_BOUND, Change, Cut, Entry, Evidence, Finish, FocusPath, GapNote, GapRead,
+    Handling, Item, Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent,
+    UiaKind, VerdictChange, WatchChange, WinKind, Work, wake_for,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads::{self, ProgramText};
@@ -92,7 +92,7 @@ use super::{Context, RequestContext};
 use crate::arbitration::Judgement as _;
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
-use crate::text::Watched;
+use crate::text::{Checked, Watched};
 use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
 
 pub(super) use super::reducer::is_state_property;
@@ -384,6 +384,7 @@ fn run_job(
         request_context.keep_commits();
     }
     let mut reported = false;
+    let mut cut = None;
     let handled = catch_unwind(AssertUnwindSafe(|| match work {
         Work::Entry {
             entry,
@@ -408,10 +409,10 @@ fn run_job(
                 worker.handle(entry);
             }
             reported = worker.reported;
+            cut = worker.cut.take();
         }
         Work::Owed(owed) => {
-            let mut worker = Worker::new(&request_context, client, 0, EventTiming::default());
-            worker.attempt_owed(owed);
+            Worker::new(&request_context, client, 0, EventTiming::default()).attempt_owed(owed);
         }
         Work::Settle(_) => {
             if let Some(registration) = context.focus_events.get() {
@@ -426,6 +427,9 @@ fn run_job(
         Work::Poll(watch) => {
             let mut worker = Worker::new(&request_context, client, 0, EventTiming::default());
             worker.poll(watch, inbox, held);
+        }
+        Work::Finish { cut, waiting } => {
+            Worker::new(&request_context, client, 0, cut.timing).finish(*cut, waiting);
         }
     }));
     // Text writes no commit after them carried: a program's text calls
@@ -461,6 +465,7 @@ fn run_job(
         request,
         reported,
         panicked: handled.is_err(),
+        cut,
     });
     (carried, text)
 }
@@ -487,6 +492,7 @@ fn describe(work: &Work) -> String {
         Work::Settle(id) => format!("settle {id}"),
         Work::Drop => "drop".to_owned(),
         Work::Poll(watch) => format!("the console poll of {watch}"),
+        Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
     }
 }
 
@@ -777,6 +783,10 @@ struct Worker<'a> {
     owed_attempt: Option<NodeId>,
     /// A caret read made for owed work, committed with what follows it.
     pending_caret_read: Option<(NodeId, u64)>,
+    /// The caret read the entry's handling cut at its value change check,
+    /// which ends the program: the reducer decides the check and
+    /// dispatches its finish ([`Work::Finish`]).
+    cut: Option<Box<Cut>>,
     /// Whether the focus about to be reported was reached by redirecting
     /// a control's own focus event to its focused child.
     redirected: bool,
@@ -818,6 +828,7 @@ impl<'a> Worker<'a> {
             refused: std::cell::Cell::new(false),
             owed_attempt: None,
             pending_caret_read: None,
+            cut: None,
             redirected: false,
             value_from_selection: None,
             focus_path: None,
@@ -899,29 +910,26 @@ impl Worker<'_> {
         if self.refused() {
             return;
         }
-        let (watched, read_at) = text_reads::check_watch(self.context, node_id, watch, false);
+        let (watched, read_at) =
+            text_reads::check_watch(self.context, node_id, watch, (false, true));
         let caret_read = read_at.map(|at| (node_id, at));
         match watched {
-            Watched::Answered(reply) => {
-                let sent_caret = self.reply_caret(node_id, &reply);
-                let result = self.reply_message(
+            Checked::Cut(cut) => self.cut_read(
+                node_id,
+                (cut.edit, cut.length, read_at),
+                Finish::Key {
                     request_id,
                     trace,
-                    QueryOutcome::Done(QueryResult::Text(reply)),
-                );
-                self.commit(Effects {
-                    result: Some(result),
-                    sent_caret,
-                    caret_read,
-                    ..Effects::default()
-                });
-                // Core's reading rules answer the key from a read that shows
-                // what it did, taken now whatever read came before.
-                if !self.refused() && self.focused_terminal(node_id) {
-                    self.terminal_output(node_id, trace, 0);
-                }
-            }
-            Watched::Watching => {
+                    read: cut.read,
+                },
+            ),
+            Checked::Done(Watched::Answered(reply)) => self.key_answered(
+                (request_id, trace),
+                node_id,
+                reply,
+                (caret_read, CallCounts::default()),
+            ),
+            Checked::Done(Watched::Watching) => {
                 let calls = take_calls();
                 let opened = self.context.now();
                 // The console host raises its caret event only on its
@@ -954,12 +962,47 @@ impl Worker<'_> {
         }
     }
 
+    /// Answers the caret key of query `request_id` with `reply`, the
+    /// evidence its first check found on `node_id`, committed with the read
+    /// noted (`caret_read`), carrying `calls`, made by an earlier part of
+    /// the check, with the calls since the last message.
+    fn key_answered(
+        &mut self,
+        (request_id, trace): (u64, TraceId),
+        node_id: NodeId,
+        reply: TextReply,
+        (caret_read, calls): (Option<(NodeId, u64)>, CallCounts),
+    ) {
+        let sent_caret = self.reply_caret(node_id, &reply);
+        let result = with_calls(
+            self.reply_message(
+                request_id,
+                trace,
+                QueryOutcome::Done(QueryResult::Text(reply)),
+            ),
+            calls,
+        );
+        self.commit(Effects {
+            result: Some(result),
+            sent_caret,
+            caret_read,
+            ..Effects::default()
+        });
+        // Core's reading rules answer the key from a read that shows
+        // what it did, taken now whatever read came before.
+        if !self.refused() && self.focused_terminal(node_id) {
+            self.terminal_output(node_id, trace, 0);
+        }
+    }
+
     /// Checks the open caret key's watch on `node_id`, if there is one, as
     /// the application reports a caret change (`caret_event`), a text
     /// change, or a selection change in it: answers the key once the
     /// evidence is there, and otherwise keeps the watch open. Returns
-    /// whether it answered. An event observed before the caret was last
-    /// read shows nothing that read did not see, and checks nothing.
+    /// whether it answered, or cut its check at the value change check, to
+    /// be answered by the program that finishes it: either ends the entry's
+    /// handling. An event observed before the caret was last read shows
+    /// nothing that read did not see, and checks nothing.
     fn check_open_watch(&mut self, node_id: NodeId, caret_event: bool) -> bool {
         if self
             .context
@@ -977,7 +1020,9 @@ impl Worker<'_> {
     /// and a terminal that moves its caret after its text raises no event
     /// for it (Windows Terminal, `PSReadLine`'s menu). The watch is taken
     /// out, its query made the one an abandonment answers, in one commit,
-    /// and put back or answered in another.
+    /// and put back or answered in another, or, when the check of an edit
+    /// control is cut at its value change check, answered by the program
+    /// that finishes it, which takes over that query.
     fn check_watch_now(&mut self, node_id: NodeId, caret_event: bool) -> bool {
         let context = self.context;
         let (committed, taken) = context.commit(Effects {
@@ -991,10 +1036,10 @@ impl Worker<'_> {
             return false;
         };
         let (watched, read_at) =
-            text_reads::check_watch(context, node_id, &open.watch, caret_event);
+            text_reads::check_watch(context, node_id, &open.watch, (caret_event, true));
         let caret_read = read_at.map(|at| (node_id, at));
         match watched {
-            Watched::Watching => {
+            Checked::Done(Watched::Watching) => {
                 open.calls += take_calls();
                 self.commit(Effects {
                     watch: Some(WatchChange::PutBack(open)),
@@ -1003,38 +1048,63 @@ impl Worker<'_> {
                 });
                 false
             }
-            Watched::Answered(reply) => {
-                let sent_caret = self.reply_caret(node_id, &reply);
-                let calls = take_calls();
-                tracing::debug!(
-                    trace = %open.trace,
-                    waited_ms = self.context.now().saturating_sub(open.opened).as_millis(),
-                    "a caret key's watch is answered"
-                );
-                let answer = OutpostToCore::Reply {
-                    trace_id: open.trace,
-                    request_id: open.request_id,
-                    outcome: QueryOutcome::Done(QueryResult::Text(reply)),
-                    timing: EventTiming {
-                        // The watch waited until the evidence was taken
-                        // from the queue; the read after it is the
-                        // answer's.
-                        awaited_at_us: self.timing.dequeued_at_us,
-                        awaited_calls: open.calls,
-                        calls: open.calls + calls,
-                        published_at_us: now_us(),
-                        ..open.timing
+            Checked::Done(Watched::Answered(reply)) => {
+                self.watch_answered(&open, node_id, reply, (caret_read, CallCounts::default()))
+            }
+            Checked::Cut(cut) => {
+                self.cut_read(
+                    node_id,
+                    (cut.edit, cut.length, read_at),
+                    Finish::Watch {
+                        open: Box::new(open),
+                        read: cut.read,
                     },
-                };
-                self.commit(Effects {
-                    aside: Some((open.request_id, answer)),
-                    watch: Some(WatchChange::Wake(None)),
-                    sent_caret,
-                    caret_read,
-                    ..Effects::default()
-                }) == Committed::Applied
+                );
+                true
             }
         }
+    }
+
+    /// Answers `open`, the caret key's watch taken out to be checked, with
+    /// `reply`, the evidence found on `node_id`, committed with the read
+    /// noted (`caret_read`), carrying `calls`, made by an earlier part of
+    /// the check, with the calls since the last message. Whether the
+    /// answer was committed.
+    fn watch_answered(
+        &mut self,
+        open: &OpenWatch,
+        node_id: NodeId,
+        reply: TextReply,
+        (caret_read, calls): (Option<(NodeId, u64)>, CallCounts),
+    ) -> bool {
+        let sent_caret = self.reply_caret(node_id, &reply);
+        let calls = calls + take_calls();
+        tracing::debug!(
+            trace = %open.trace,
+            waited_ms = self.context.now().saturating_sub(open.opened).as_millis(),
+            "a caret key's watch is answered"
+        );
+        let answer = OutpostToCore::Reply {
+            trace_id: open.trace,
+            request_id: open.request_id,
+            outcome: QueryOutcome::Done(QueryResult::Text(reply)),
+            timing: EventTiming {
+                // The watch waited until the evidence was taken from the
+                // queue; the read after it is the answer's.
+                awaited_at_us: self.timing.dequeued_at_us,
+                awaited_calls: open.calls,
+                calls: open.calls + calls,
+                published_at_us: now_us(),
+                ..open.timing
+            },
+        };
+        self.commit(Effects {
+            aside: Some((open.request_id, answer)),
+            watch: Some(WatchChange::Wake(None)),
+            sent_caret,
+            caret_read,
+            ..Effects::default()
+        }) == Committed::Applied
     }
 
     /// The node of the open caret key's watch, when it is the client area
@@ -1126,7 +1196,7 @@ impl Worker<'_> {
                 continue;
             }
             let awaited_at_us = now_us();
-            let (watched, read_at) = text_reads::check_watch(context, node_id, &open.watch, false);
+            let (watched, read_at) = text_reads::check_watch_uncut(context, node_id, &open.watch);
             if let Some(at) = read_at {
                 caret_read = Some((node_id, at));
             }
@@ -1323,13 +1393,123 @@ impl Worker<'_> {
             text_reads::CaretFor::Event
         };
         let (report, read_at) = text_reads::report_caret(self.context, node_id, purpose);
-        let caret_read = read_at.map(|at| (node_id, at));
         // A caret event's read, which a terminal's output causes too, as
         // its cursor moves.
         tracing::debug!(
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
             "caret read timing"
         );
+        let report = match report {
+            Ok(Checked::Cut(cut)) => {
+                let read = cut.read;
+                self.cut_read(
+                    node_id,
+                    (cut.edit, cut.length, read_at),
+                    Finish::Report {
+                        trace,
+                        observed_at_us,
+                        read,
+                    },
+                );
+                return;
+            }
+            Ok(Checked::Done(report)) => Ok(report),
+            Err(missed) => Err(missed),
+        };
+        let caret_read = read_at.map(|at| (node_id, at));
+        self.send_caret(
+            node_id,
+            (trace, observed_at_us),
+            (report, terminal),
+            (caret_read, CallCounts::default()),
+        );
+    }
+
+    /// Ends the program at the caret read of edit control `node_id`, its
+    /// window `edit`, cut at its value change check: the read, with the
+    /// text's length if it was read and when the read began, goes to the
+    /// reducer with the program's end, and the calls made since the last
+    /// message go with it to the finish's message ([`Work::Finish`]).
+    fn cut_read(
+        &mut self,
+        node_id: NodeId,
+        (edit, length, read_at): (isize, Option<u32>, Option<u64>),
+        finish: Finish,
+    ) {
+        self.cut = Some(Box::new(Cut {
+            edit,
+            node: node_id,
+            length,
+            read_at,
+            timing: self.timing,
+            calls: take_calls(),
+            finish,
+        }));
+    }
+
+    /// Finishes `cut`, a caret read cut at its value change check, with
+    /// the reducer's decision, `waiting`: makes the comparison and the rest
+    /// of the read's calls, and sends and commits what the read would have
+    /// uncut, its message carrying the read part's calls with its own.
+    fn finish(&mut self, cut: Cut, waiting: bool) {
+        let Cut {
+            node: node_id,
+            length,
+            read_at,
+            calls,
+            finish,
+            ..
+        } = cut;
+        let caret_read = read_at.map(|at| (node_id, at));
+        match finish {
+            Finish::Report {
+                trace,
+                observed_at_us,
+                read,
+            } => {
+                let report =
+                    text_reads::finish_caret(self.context, node_id, (length, read), waiting)
+                        .map(|(caret, selection)| (caret, false, selection));
+                self.send_caret(
+                    node_id,
+                    (trace, observed_at_us),
+                    (report, false),
+                    (caret_read, calls),
+                );
+            }
+            Finish::Key {
+                request_id,
+                trace,
+                read,
+            } => {
+                let reply =
+                    text_reads::finish_watch(self.context, node_id, (length, read), waiting);
+                self.key_answered((request_id, trace), node_id, reply, (caret_read, calls));
+            }
+            Finish::Watch { open, read } => {
+                let reply =
+                    text_reads::finish_watch(self.context, node_id, (length, read), waiting);
+                self.watch_answered(&open, node_id, reply, (caret_read, calls));
+            }
+        }
+    }
+
+    /// Sends the caret `report` of `node_id` read for the caret event of
+    /// `trace` observed at `observed_at_us`, as `CaretMoved`, unless it was
+    /// not read or is the caret last sent to Core for the terminal it is
+    /// (`terminal`), committing it with the read noted (`caret_read`), and
+    /// carrying `calls`, made by an earlier part of the read, with the
+    /// calls since the last message.
+    fn send_caret(
+        &mut self,
+        node_id: NodeId,
+        (trace, observed_at_us): (TraceId, u64),
+        (report, terminal): (
+            Result<(CaretReport, bool, text_reads::SelectionReport), text_reads::NoCaret>,
+            bool,
+        ),
+        (caret_read, calls): (Option<(NodeId, u64)>, CallCounts),
+    ) {
         let (event, sent_caret) = match report {
             Ok((caret, false, selection)) => (
                 NormalizedEvent::CaretMoved {
@@ -1360,7 +1540,10 @@ impl Worker<'_> {
             Backend::Msaa
         };
         let window = self.context.tracked_window();
-        let message = self.event_message(trace, observed_at_us, backend, window, event);
+        let message = with_calls(
+            self.event_message(trace, observed_at_us, backend, window, event),
+            calls,
+        );
         self.commit(Effects {
             result: Some(message),
             sent_caret,
@@ -1777,7 +1960,7 @@ impl Worker<'_> {
         let (read, read_at) =
             text_reads::report_caret(context, node_id, text_reads::CaretFor::Focus);
         let text = match read {
-            Ok((caret, _, _)) => {
+            Ok(Checked::Done((caret, _, _))) => {
                 let selected_text = caret.selection.and_then(|selection| {
                     let op = TextOp::ReadRange {
                         start: TextPoint::At(selection.start),
@@ -1795,7 +1978,8 @@ impl Worker<'_> {
                 }
             }
             Err(text_reads::NoCaret::NoText) => FocusText::NoText,
-            Err(text_reads::NoCaret::NotRead) => {
+            // Only a caret event's read is cut, never a focus's.
+            Ok(Checked::Cut(_)) | Err(text_reads::NoCaret::NotRead) => {
                 tracing::debug!("the focus's caret could not be read");
                 FocusText::NotRead
             }
@@ -4245,6 +4429,16 @@ fn judged_focus(
         simple_child,
         dialog_texts,
     }
+}
+
+/// `message`, carrying `calls` too, made by the read part of a caret read
+/// cut in two programs ([`Work::Finish`]).
+fn with_calls(mut message: OutpostToCore, calls: CallCounts) -> OutpostToCore {
+    if let OutpostToCore::Event { timing, .. } | OutpostToCore::Reply { timing, .. } = &mut message
+    {
+        timing.calls += calls;
+    }
+    message
 }
 
 /// `event` as the message that reports it, from an entry of `timing`,

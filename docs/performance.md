@@ -667,7 +667,9 @@ wake-ups and processor time per event.
   already awake; where the worker alone woke once, three. An event the
   push drops wakes nobody; one the reducer drops wakes only its thread.
   Each further program of one entry, a run's next try, the gap's read a
-  dropped copy asks for, or the owed work, adds two. Each timer, a
+  dropped copy asks for, the owed work, or the finish of an edit
+  control's caret read cut at its value change check (only with a
+  selection before or after), adds two. Each timer, a
   deadline, a grace, a walk's bound or the gap record's bound, costs one
   wake where the watchdog took two (its own, then a post), and the gap
   record's threadpool timer is gone. The console host's caret poll is one
@@ -679,8 +681,9 @@ wake-ups and processor time per event.
   wait's return, expected at tens of microseconds.
 - Processor time: per program, a copy of the facts it reads: the reports'
   lines, the follow state's chain and the marks, and the caret events
-  and value changes waiting, a scan of the intake when a caret key's
-  watch is open or a caret key is dispatched.
+  waiting, a scan of the intake when a caret key's watch is open or a
+  caret key is dispatched; and a scan of the intake for an edit control's
+  value change when a caret read is cut at its value change check.
 - Locks: the watch lock and the commit's nested locks are gone. The
   reducer's thread takes the mailbox's lock to drain it, the store's for
   a commit's writes, a worker's charge for a publication, and the
@@ -1639,9 +1642,10 @@ before the offset, and the text's length (`EM_GETTEXTLENGTHEX`) once per
 request, to find no word at the end, as NVDA does.
 
 An answer that compares selections waits once for the `WinEvent` thread to
-take every event raised before it (`Nudger::sync`) and scans the intake
-once for the control's value change, so an edit is said in general terms;
-no call to the application. The sync posts one thread message and raises
+take every event raised before it (`Nudger::sync`), then ends its
+program, and the reducer scans its waiting entries once for the control's
+value change and dispatches the answer's finish, so an edit is said in
+general terms; no call to the application, and two more wakes. The sync posts one thread message and raises
 one marker with `NotifyWinEvent`, because a posted message alone can
 overtake an event raised before it: about 25 to 36 µs at the median
 (release, 20,000 syncs of an idle thread), and no `WM_GETOBJECT`. A sync is
@@ -1655,7 +1659,8 @@ made only here, in the caret report below, and in `Outpost::settle`.
   comparison in general terms reads the new selection's text with the
   same two messages instead.
 - Beside the calls: the two offsets kept and, for a report that compares a
-  selection, one sync and one intake scan. Each value change of the focused
+  selection, one sync, one scan of the reducer's waiting entries, and a
+  second program, two more wakes. Each value change of the focused
   control locks the edit controls' anchors once.
 
 ### Typed-character echo

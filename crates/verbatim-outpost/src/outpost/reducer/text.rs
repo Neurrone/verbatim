@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use verbatim_model::TextPosition;
+use verbatim_model::{TextPosition, TextUnit};
 
 /// The key the store keeps a UIA position's range under.
 pub(crate) type RangeKey = u64;
@@ -237,6 +237,54 @@ impl<P: Clone> NodeAnchors<P> {
         self.reported
             .retain(|(anchor, _), _| !forgotten.contains(anchor));
     }
+}
+
+/// A caret event's report of an edit control cut at its value change
+/// check (`docs/design/ownership-outpost-reducer.md`, "The value change
+/// check"): what the read part found, which the part that finishes it
+/// compares and reports from. `P` is a position, an offset.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReportCut<P> {
+    /// The caret and the selection's ends, when something is selected.
+    pub(crate) caret: P,
+    pub(crate) selection: Option<(P, P)>,
+    /// The caret is no longer where the read was asked to compare with.
+    pub(crate) moved: bool,
+    /// When the caret read finished, in milliseconds since the Unix epoch.
+    pub(crate) read_at_ms: u64,
+    /// The selection the report compares with.
+    pub(crate) last: KeptSelection<P>,
+}
+
+/// A caret key's answer from an edit control cut at its value change check,
+/// the evidence found: what the read part found, which the part that
+/// finishes it answers from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AnswerCut<P> {
+    /// The caret and the selection's ends, when something is selected.
+    pub(crate) caret: P,
+    pub(crate) selection: Option<(P, P)>,
+    /// When the caret read finished, in milliseconds since the Unix epoch.
+    pub(crate) read_at_ms: u64,
+    /// The caret's line, when the read part read it.
+    pub(crate) line: Option<CutLine<P>>,
+    /// The watch's unit.
+    pub(crate) unit: TextUnit,
+    /// Whether the caret landed on the line it was on, when the watch asks.
+    pub(crate) same_line: Option<bool>,
+    /// The selection the answer compares with.
+    pub(crate) compared: KeptSelection<P>,
+}
+
+/// The caret's line as a cut read part read it: its ends, its UTF-16 text,
+/// whether the text was cut at the limit, and the caret's offset in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CutLine<P> {
+    pub(crate) start: P,
+    pub(crate) end: P,
+    pub(crate) text: Vec<u16>,
+    pub(crate) truncated: bool,
+    pub(crate) offset: usize,
 }
 
 /// One change of a node's text facts, as a program's text call makes it.

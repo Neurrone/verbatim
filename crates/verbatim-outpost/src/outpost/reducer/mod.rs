@@ -40,7 +40,7 @@ use std::time::Duration;
 use verbatim_model::protocol::{
     EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, WALK_DEADLINE,
 };
-use verbatim_model::{FocusGroup, TextOp, TraceId};
+use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 
 pub(in crate::outpost) use self::entry::{
     Entry, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
@@ -53,7 +53,10 @@ pub(in crate::outpost) use self::follow::{
 pub(in crate::outpost) use self::gap_record::{CopyDropped, GapRead};
 pub(in crate::outpost) use self::held::{Evidence, Focus, Held};
 pub(in crate::outpost) use self::intake::{Handling, Marks, Object, Planned, TimerAction};
-pub(crate) use self::text::{Anchor, CaretSeen, KeptSelection, NodeAnchors, RangeKey, TextChange};
+pub(crate) use self::text::{
+    Anchor, AnswerCut, CaretSeen, CutLine, KeptSelection, NodeAnchors, RangeKey, ReportCut,
+    TextChange,
+};
 pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
@@ -140,6 +143,62 @@ pub(in crate::outpost) enum Work {
     /// console poll"): reads until it answers, reaches its last read, or
     /// yields to the next program, which the reducer dispatches beside it.
     Poll(u64),
+    /// Finishes the caret read `cut`, cut at its value change check, with
+    /// the reducer's decision: whether a value change of its edit control
+    /// waited when the read part ended (`waiting`).
+    Finish { cut: Box<Cut>, waiting: bool },
+}
+
+/// A caret read of an edit control's client area cut at its value change
+/// check (`docs/design/ownership-outpost-reducer.md`, "The value change
+/// check"): the read part read the caret and synced with the `WinEvent`
+/// thread, so every value change the control raised before the sync waits
+/// ahead of the read part's end in the mailbox. The part that finishes it
+/// makes the comparison and the rest of the read's calls.
+#[derive(Clone, Debug)]
+pub(in crate::outpost) struct Cut {
+    /// The edit control's window, whose client area's value change the
+    /// reducer looks for.
+    pub(in crate::outpost) edit: isize,
+    /// The edit control's client area, and its text's length if the read
+    /// part read it, so the finish reads it no more than the read uncut.
+    pub(in crate::outpost) node: NodeId,
+    pub(in crate::outpost) length: Option<u32>,
+    /// When the read began, on the observation clock, committed with what
+    /// the finish sends.
+    pub(in crate::outpost) read_at: Option<u64>,
+    /// The timing of the entry the read part handled, and the calls it
+    /// made that no message has carried, which the finish's message
+    /// carries with its own.
+    pub(in crate::outpost) timing: EventTiming,
+    pub(in crate::outpost) calls: CallCounts,
+    /// What finishes it.
+    pub(in crate::outpost) finish: Finish,
+}
+
+/// What a cut caret read was for.
+#[derive(Clone, Debug)]
+pub(in crate::outpost) enum Finish {
+    /// A caret event's report, of the event with this trace and
+    /// observation.
+    Report {
+        trace: TraceId,
+        observed_at_us: u64,
+        read: ReportCut<u32>,
+    },
+    /// The first check of a caret key's watch, which answers query
+    /// `request_id`.
+    Key {
+        request_id: u64,
+        trace: TraceId,
+        read: AnswerCut<u32>,
+    },
+    /// A check of the open watch, which the read part took out of the
+    /// follow state, its query the program's to answer.
+    Watch {
+        open: Box<OpenWatch>,
+        read: AnswerCut<u32>,
+    },
 }
 
 /// A program for the worker in charge: its request, its copies, and its
@@ -151,9 +210,7 @@ pub(in crate::outpost) struct Program {
     pub(in crate::outpost) work: Work,
     /// The caret events observed since the key of the watch the program
     /// may check was pressed that wait to be handled, a read of the
-    /// watch's node covering one of its own, and the edit controls' value
-    /// changes waiting, which a caret read's comparison asks after
-    /// (`super::text_reads`).
+    /// watch's node covering one of its own (`super::text_reads`).
     pub(in crate::outpost) waiting: Vec<WaitingCaret>,
 }
 
@@ -167,9 +224,6 @@ pub(in crate::outpost) enum WaitingCaret {
     /// The caret's location change or the text selection change of this
     /// edit control's window.
     Edit(isize),
-    /// A value change of this edit control's client area, whenever it was
-    /// observed.
-    ValueChange(isize),
 }
 
 /// What the reducer asks of the shell, in order.
@@ -259,11 +313,13 @@ pub(in crate::outpost) enum Input {
     /// for the reducer to publish it from its progress.
     WalkReturned { request: Request, past: bool },
     /// A program ended: whether it reported a focus that ends its group,
-    /// and whether it panicked.
+    /// whether it panicked, and the caret read it cut at its value change
+    /// check, for the reducer to decide and finish.
     Finished {
         request: Request,
         reported: bool,
         panicked: bool,
+        cut: Option<Box<Cut>>,
     },
     /// An abandoned worker returned from its call.
     Returned,
@@ -488,7 +544,8 @@ impl Reducer {
                 request,
                 reported,
                 panicked,
-            } => self.finished(request, reported, panicked, now, &mut effects),
+                cut,
+            } => self.finished(request, (reported, panicked), cut, now, &mut effects),
             Input::Returned => {
                 self.abandoned = self.abandoned.saturating_sub(1);
                 effects.push(Effect::Returned {
@@ -1021,12 +1078,13 @@ impl Reducer {
         );
     }
 
-    /// A program ended.
+    /// A program ended, having cut a caret read at its value change check
+    /// when `cut` is given.
     fn finished(
         &mut self,
         request: Request,
-        reported: bool,
-        panicked: bool,
+        (reported, panicked): (bool, bool),
+        cut: Option<Box<Cut>>,
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
@@ -1037,6 +1095,10 @@ impl Reducer {
         let Some(current) = self.current.take_if(|current| current.request == request) else {
             return;
         };
+        if let Some(cut) = cut.filter(|_| !panicked && !current.claimed) {
+            self.dispatch_finish(current, cut, effects);
+            return;
+        }
         // A query its program left unanswered, because it panicked or
         // returned without its reply, still gets its one reply.
         if let Some((request_id, trace)) = current.running {
@@ -1366,6 +1428,30 @@ impl Reducer {
         })));
     }
 
+    /// Dispatches the program that finishes `cut`, the caret read the
+    /// program `read` cut at its value change check, before anything else
+    /// and even while the outpost shuts down, as the read's program would
+    /// have gone on: it takes over that program's deadline, its moved-on
+    /// grace and the query it answers. The check is decided here: every
+    /// value change the control raised before the read part's sync is
+    /// ahead of its end in the mailbox, so among the entries not yet
+    /// dispatched, in the intake or held.
+    fn dispatch_finish(&mut self, read: Current, cut: Box<Cut>, effects: &mut Vec<Effect>) {
+        let waiting = self.intake.value_change_waiting(cut.edit)
+            || self
+                .hold
+                .held()
+                .any(|entry| edit_value_change(&entry.item) == Some(cut.edit));
+        let request = self.next_request();
+        self.current = Some(Current { request, ..read });
+        effects.push(Effect::Dispatch(Box::new(Program {
+            request,
+            facts: self.facts.clone(),
+            work: Work::Finish { cut, waiting },
+            waiting: Vec::new(),
+        })));
+    }
+
     /// Dispatches the console poll of the open caret key's watch, if the
     /// watch polls and its poll is not in flight, under
     /// [`HANDLING_DEADLINE`], its query the watch's.
@@ -1408,8 +1494,7 @@ impl Reducer {
 
     /// The caret events waiting in the intake observed since the key of
     /// the watch `work` may check was pressed, the open watch's or the one
-    /// a caret key's query opens, and the edit controls' value changes
-    /// waiting ([`Program::waiting`]).
+    /// a caret key's query opens ([`Program::waiting`]).
     fn waiting(&self, work: &Work) -> Vec<WaitingCaret> {
         let pressed_ms = match work {
             Work::Entry {
@@ -1459,13 +1544,21 @@ fn waiting_caret(item: &Item) -> Option<WaitingCaret> {
             hwnd,
             ..
         } => Some(WaitingCaret::Edit(*hwnd)),
+        _ => None,
+    }
+}
+
+/// The edit control whose client area's value change `item` is, if it is
+/// one: what a cut caret read's check looks for ([`Cut`]).
+fn edit_value_change(item: &Item) -> Option<isize> {
+    match item {
         Item::Msaa {
             kind: WinKind::ValueChange,
             hwnd,
             id_object: intake::OBJID_CLIENT,
             id_child: 0,
             ..
-        } => Some(WaitingCaret::ValueChange(*hwnd)),
+        } => Some(*hwnd),
         _ => None,
     }
 }

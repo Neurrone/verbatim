@@ -34,7 +34,7 @@ use super::alarm::Alarm;
 use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Change, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program, Reducer,
+    Change, Cut, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program, Reducer,
     Request, Source, Subscription, Verdicts, Work,
 };
 use super::store::{Removed, Store, Tag};
@@ -84,11 +84,13 @@ pub(super) enum Posted {
     Armed { request: Request, bound_at: Instant },
     /// A program's walk returned, past its bound or not.
     WalkReturned { request: Request, past: bool },
-    /// A program ended.
+    /// A program ended, with the caret read it cut at its value change
+    /// check, if it cut one.
     Finished {
         request: Request,
         reported: bool,
         panicked: bool,
+        cut: Option<Box<Cut>>,
     },
     /// An abandoned worker returned from its call.
     Returned,
@@ -124,34 +126,6 @@ struct MailboxState {
     /// taken by the first to set it.
     asleep: bool,
     closed: bool,
-    /// The edit controls whose client area's value change the shell took
-    /// since the last program was dispatched: with those still posted, what
-    /// waits that the program's copy does not hold
-    /// ([`Mailbox::value_change_since_dispatch`]).
-    value_changes: Vec<isize>,
-}
-
-/// The edit control whose client area's value change `posted` is, if it is
-/// one.
-fn value_change_of(posted: &Posted) -> Option<isize> {
-    match posted {
-        Posted::Entry {
-            entry:
-                Entry {
-                    item:
-                        Item::Msaa {
-                            kind: super::reducer::WinKind::ValueChange,
-                            hwnd,
-                            id_object,
-                            id_child: 0,
-                            ..
-                        },
-                    ..
-                },
-            ..
-        } if *id_object == windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0 => Some(*hwnd),
-        _ => None,
-    }
 }
 
 impl Mailbox {
@@ -234,28 +208,7 @@ impl Mailbox {
             state = self.lock();
             state.asleep = false;
         }
-        let posted = std::mem::take(&mut state.posted);
-        let taken: Vec<isize> = posted.iter().filter_map(value_change_of).collect();
-        state.value_changes.extend(taken);
-        posted
-    }
-
-    /// A program is dispatched: its copy holds every value change taken
-    /// so far.
-    fn dispatched(&self) {
-        self.lock().value_changes.clear();
-    }
-
-    /// Whether a value change of `edit`'s client area was posted and not
-    /// yet given to the reducer, or given to it since the last program was
-    /// dispatched, and so is not in that program's copy.
-    pub(super) fn value_change_since_dispatch(&self, edit: isize) -> bool {
-        let state = self.lock();
-        state.value_changes.contains(&edit)
-            || state
-                .posted
-                .iter()
-                .any(|posted| value_change_of(posted) == Some(edit))
+        std::mem::take(&mut state.posted)
     }
 
     /// Closes the mailbox to producers.
@@ -673,10 +626,12 @@ impl Shell {
                 request,
                 reported,
                 panicked,
+                cut,
             } => Input::Finished {
                 request,
                 reported,
                 panicked,
+                cut,
             },
             Posted::Returned => Input::Returned,
             Posted::GapTimerGiven => Input::GapTimerGiven,
@@ -799,7 +754,6 @@ impl Shell {
             None
         };
         let garbage = std::mem::take(&mut self.garbage);
-        self.context.mailbox.dispatched();
         let job = Job {
             program,
             garbage,
@@ -817,6 +771,7 @@ impl Shell {
                 request,
                 reported: false,
                 panicked: true,
+                cut: None,
             });
         }
     }

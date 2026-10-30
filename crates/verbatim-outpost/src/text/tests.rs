@@ -1243,3 +1243,80 @@ fn a_selection_read_before_a_cut_with_its_line_after_is_no_answer() {
     assert_eq!(reply.caret.line.text, " def");
     assert_eq!(reply.caret.selection, None);
 }
+
+/// A caret event's report with nothing selected before or after has no
+/// change to tell and nothing to ask about the text: it is not cut, so the
+/// caret move stays one program.
+#[test]
+fn a_caret_move_with_no_selection_is_not_cut() {
+    let mut source = Fake::new("hello world", 0);
+    let mut anchors = store();
+    report(&mut source, &mut anchors);
+    source.caret = 3;
+    let checked = caret_report_checking(
+        &mut source,
+        &mut anchors.node(1),
+        &mut || REPORTED_AT,
+        (false, None, LastSelection::Compare),
+        true,
+    )
+    .expect("the fake answers");
+    let Checked::Done(read) = checked else {
+        panic!("the report is made whole");
+    };
+    assert_eq!(
+        (
+            read.selection_changes,
+            read.content_changed,
+            read.state.caret
+        ),
+        (Vec::new(), false, 3)
+    );
+}
+
+/// A caret event's report over a selection typed over is cut where it
+/// would ask whether the text's change waits, with the caret it read and
+/// the selection it compares with; finished with the change waiting, it
+/// says the change in general terms, as after a noted change.
+#[test]
+fn a_selection_typed_over_is_cut_then_finished_in_general_terms() {
+    let mut source = Fake::new("hello world", 0);
+    source.selection = Some((0, 5));
+    let mut anchors = store();
+    report(&mut source, &mut anchors);
+    source.selection = None;
+    source.caret = 1;
+    let checked = caret_report_checking(
+        &mut source,
+        &mut anchors.node(1),
+        &mut || REPORTED_AT,
+        (false, None, LastSelection::Compare),
+        true,
+    )
+    .expect("the fake answers");
+    let Checked::Cut(cut) = checked else {
+        panic!("the report is cut");
+    };
+    assert_eq!(
+        (cut.caret, cut.selection, cut.last.ends, cut.last.collapsed),
+        (1, None, (0, 5), false)
+    );
+    let read =
+        finish_report(&mut source, &mut anchors.node(1), cut, true).expect("the fake answers");
+    assert_eq!(
+        (
+            read.selection_changes,
+            read.content_changed,
+            read.new_selection
+        ),
+        (
+            vec![SelectionChange {
+                selected: false,
+                text: String::new(),
+                characters: 0,
+            }],
+            true,
+            None
+        )
+    );
+}

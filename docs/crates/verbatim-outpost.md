@@ -730,7 +730,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   release, the store's for a commit's writes, and a worker's charge.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
-  settle, a release's drop, or the console poll, with copies of what it
+  settle, a release's drop, the console poll, or the finish of a caret
+  read cut at its value change check ("Text and caret"), with copies of
+  what it
   reads
   (`reducer::Facts`: the reports, the follow state, the marks, the
   verdicts), and posts
@@ -742,9 +744,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   writes only it makes, to the store and its table of the elements the
   subscription follows (`commit::Writes`), the program's text writes
   among them, then the reducer's change. A
-  program receives too the caret events and edit controls' value changes
-  waiting when it was dispatched (`reducer::WaitingCaret`), which a caret
-  key's check and a caret read's comparison ask after. The inbox
+  program receives too the caret events waiting when it was dispatched
+  (`reducer::WaitingCaret`), which a caret key's check asks after. The inbox
   (`outpost::inbox`) is a channel of jobs with the worker's own alarm as
   its doorbell: the shell sends a job and then sets the alarm's event,
   and lets go of an abandoned generation's sender before a last ring, so
@@ -1636,12 +1637,28 @@ layer"):
   text no longer matches what its ends hold (through UIA,
   `CaretRequest::read_selection_text`, `KeptSelection::text`,
   `CaretRequest::read_previous_text`); or when the control's value change
-  waits once the caret is read (`text_reads::value_change_raised`,
-  `CaretSignal::text_change_waiting`), for the Windows Forms text box. That
-  check first syncs with the `WinEvent` thread (`Nudger::sync`), which
-  raises a `verbatim_ia2::SyncMarker` event, since a posted message can
-  overtake a `WinEvent`. So "x" typed over a selection in Notepad says
-  "selection removed" where NVDA says "x unselected".
+  waits once the caret is read, for the Windows Forms text box. That check
+  is the reducer's, so the read is cut in two programs there
+  (`text::Checked::Cut`, `text::caret_report_checking`,
+  `text::check_caret_cut`), only for an edit control's client area with a
+  selection in the compared one or the new one: the read part syncs with
+  the `WinEvent` thread (`text_reads::value_change_cut`, `Nudger::sync`,
+  which raises a `verbatim_ia2::SyncMarker` event, since a posted message
+  can overtake a `WinEvent`) and ends, carrying its offsets, the caret's
+  line if read, the selection compared with, the text's length if read
+  (`EditText::length_read`), the entry's timing and its calls not yet sent
+  (`reducer::Cut`) with its program's end. Every value change raised
+  before the sync is then ahead of that end in the mailbox; the reducer
+  looks for one of the control's client area among its entries not yet
+  dispatched (`Intake::value_change_waiting`, `Hold::held`) and dispatches
+  the finish at once (`Work::Finish`, `Worker::finish`), under the read
+  part's deadline and query, which makes the comparison and the report or
+  the answer (`text::finish_report`, `text::finish_answer`) with the read
+  part's calls in its message. So "x" typed over a selection in Notepad
+  says "selection removed" where NVDA says "x unselected". What the design
+  weighed, and what may come between the two parts, is in
+  [its design](../design/ownership-outpost-reducer.md), "The value change
+  check".
 - Two waiting caret reports merge with both reports' changes in order
   (`Merge for OutpostToCore` in `verbatim_model::protocol`); one with
   changes never merges across a reply or with a report in general terms.

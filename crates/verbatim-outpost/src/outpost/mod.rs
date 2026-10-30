@@ -97,7 +97,8 @@ use commit::{Committed, Effects};
 use outbound::Outbound;
 pub use reducer::Verdicts;
 pub(crate) use reducer::{
-    Anchor, CaretSeen, KeptSelection, NodeAnchors, Probe, Probed, VerdictChange,
+    Anchor, AnswerCut, CaretSeen, CutLine, KeptSelection, NodeAnchors, Probe, Probed, ReportCut,
+    VerdictChange,
 };
 use reducer::{
     Entry, Facts, FollowState, Item, Object, OpenWatch, Source, UiaEvent, UiaKind, WaitingCaret,
@@ -353,8 +354,8 @@ struct RequestContext<'a> {
     /// not yet committed ([`text_reads::ProgramText`]).
     program_text: RefCell<text_reads::ProgramText>,
     /// The program's own, when the context is a program's: its request,
-    /// the caret events and value changes waiting when it was dispatched,
-    /// and its worker's charge.
+    /// the caret events waiting when it was dispatched, and its worker's
+    /// charge.
     program: Option<Program<'a>>,
     /// The observation its verdicts are judged at: its entry's event's, or,
     /// when `None`, now on the arbitrator's observation clock at each
@@ -473,8 +474,7 @@ impl<'a> RequestContext<'a> {
         &self.program().charge
     }
 
-    /// The caret events and value changes waiting when the program was
-    /// dispatched.
+    /// The caret events waiting when the program was dispatched.
     fn waiting(&self) -> &[WaitingCaret] {
         self.program
             .as_ref()
