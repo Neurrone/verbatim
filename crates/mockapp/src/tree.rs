@@ -101,6 +101,9 @@ pub(crate) struct NodeData {
     pub(crate) reports_window: Option<isize>,
     /// Whether UIA counts the node as content (`IsContentElement`).
     pub(crate) content: bool,
+    /// Whether MSAA reads the node's role as a window's client area's
+    /// (the fixture's `client_role`).
+    pub(crate) client_role: bool,
 }
 
 /// A text's formatting: stretches that are spelling errors, that are bold,
@@ -376,6 +379,7 @@ fn insert(
         generation: 0,
         reports_window: None,
         content: node.content,
+        client_role: node.client_role,
     });
     by_fixture_id.insert(node.id, index);
     if let Some(controlled) = node.controller_for {
@@ -433,6 +437,7 @@ mod tests {
             edit_version_6: false,
             content: true,
             msaa_client: false,
+            client_role: false,
             location: [0; 4],
             children,
         }

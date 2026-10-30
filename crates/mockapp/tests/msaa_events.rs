@@ -1029,6 +1029,50 @@ fn a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried() {
     app.quit();
 }
 
+/// A foreground change and a focus in its window in one batch, the focus
+/// newest, after Core's focus left for another application: the focus is
+/// tried first and ends the group's tries, so the foreground change is
+/// never read, and the window's name is still said before the focus, as
+/// NVDA's `doPreGainFocus` speaks the foreground object on entering a new
+/// top-level window. The window's client area, a Windows Forms form's as
+/// mockapp's form fixture models it, is reached through `accParent` with
+/// no identity string; the walk reads it again at its own address and
+/// marks it as a top-level window's client (`docs/parity/focus-context.md`,
+/// "Top-level windows in the ancestry").
+fn a_window_entered_by_a_focus_beside_its_unread_foreground_change_is_said() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-form-entered");
+    let mut app = common::spawn("form.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    app.send("set-focus ok");
+    outpost.release_all();
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    outpost.deliver(msaa_focus_fact(hwnd, FORM_BUTTON));
+    outpost.release_worker();
+    let reported = outpost.reported_focus();
+    outpost.settled();
+    assert_eq!(
+        spoken(&mut state, focus_event(&reported)),
+        [
+            vec![SegmentContent::Label("Mockapp Form Fixture".to_owned())],
+            vec![
+                SegmentContent::Label("OK".to_owned()),
+                SegmentContent::Role(verbatim_model::Role::Button)
+            ],
+        ]
+    );
+    app.quit();
+}
+
+/// The form fixture's button, by its index in mockapp's tree.
+const FORM_BUTTON: usize = 1;
+
 /// The group a focus report carries, with the report.
 fn group_of(event: &NormalizedEvent) -> Option<FocusGroup> {
     match event {
@@ -1339,6 +1383,10 @@ fn main() {
         (
             "a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried",
             a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried,
+        ),
+        (
+            "a_window_entered_by_a_focus_beside_its_unread_foreground_change_is_said",
+            a_window_entered_by_a_focus_beside_its_unread_foreground_change_is_said,
         ),
         (
             "a_foreground_change_of_the_focus_s_window_and_the_focus_beside_it_are_reported_ranked",

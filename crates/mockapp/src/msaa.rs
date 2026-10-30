@@ -799,7 +799,12 @@ mod handler {
                 .tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let role = role_to_msaa(guard.nodes[target].role);
+            let node = &guard.nodes[target];
+            let role = if node.client_role {
+                windows::Win32::UI::Accessibility::ROLE_SYSTEM_CLIENT
+            } else {
+                role_to_msaa(node.role)
+            };
             Ok(VARIANT {
                 Anonymous: VARIANT_0 {
                     Anonymous: ManuallyDrop::new(VARIANT_0_0 {

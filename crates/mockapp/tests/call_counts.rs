@@ -698,6 +698,49 @@ fn msaa_dialog_text_costs_exactly() {
 /// not read, and the hits it counts are other clients', the UIA clients of
 /// this process's other tests among them, answering the control's
 /// creation events at times of their own.
+/// A focus in a window whose client area is reached through `accParent`
+/// with no identity string, as a Windows Forms form's
+/// (`tests/fixtures/form.json`): the walk, reaching the top-level window,
+/// reads its client area again at its own address, marked as a top-level
+/// window's client. A second focus in the window meets the first's chain
+/// below the client area and reads it no more.
+fn msaa_form_focus_costs_exactly() {
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-form");
+    let mut app = common::spawn("form.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut ratchet = Ratchet::default();
+
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("ok", FORM_OK));
+    assert_eq!(reported.chain(), [Some("Mockapp Form Fixture"), Some("OK")]);
+    assert!(
+        reported.ancestors[0].details.top_level_client,
+        "the client area, read at its address"
+    );
+    ratchet.check_calls("MSAA focus in a form, cold", cost.calls, calls(0, 26, 1));
+    outpost.settled();
+
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("cancel", FORM_CANCEL));
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Form Fixture"), Some("Cancel")]
+    );
+    ratchet.check_calls(
+        "MSAA focus in a form, steady state",
+        cost.calls,
+        calls(0, 20, 0),
+    );
+    outpost.settled();
+
+    ratchet.finish();
+    app.quit();
+}
+
+/// The form fixture's buttons, by their indexes in mockapp's tree.
+const FORM_OK: usize = 1;
+const FORM_CANCEL: usize = 2;
+
 fn msaa_tree_view_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-tree-view");
@@ -5148,6 +5191,10 @@ fn main() {
             msaa_state_change_costs_exactly,
         ),
         ("msaa_tree_view_costs_exactly", msaa_tree_view_costs_exactly),
+        (
+            "msaa_form_focus_costs_exactly",
+            msaa_form_focus_costs_exactly,
+        ),
         ("msaa_list_view_costs_exactly", msaa_list_view_costs_exactly),
         (
             "uia_dialog_text_costs_exactly",

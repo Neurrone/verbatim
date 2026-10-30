@@ -683,6 +683,23 @@ are any.
   ancestors, and the walk keeps the window it is in. mockapp answered 33
   provider calls.
 
+### A focus entering a Windows Forms window, MSAA
+
+A focus on a button in a top-level window whose client area is reached
+through `accParent` with no identity string, as a Windows Forms form's
+(`tests/fixtures/form.json`, `msaa_form_focus_costs_exactly`).
+
+- Today, cold: 26 MSAA calls and 1 window message, 19 before the walk
+  read the client area again at its own address when it reaches the
+  top-level window (`docs/parity/focus-context.md`, "Top-level windows in
+  the ancestry"): the acquisition (1) and the client area's name, value,
+  role, state, description and keyboard shortcut (6).
+- Today, steady state: 20, unchanged: a second focus in the window meets
+  the first's chain below the top and reads nothing again.
+- Target: 20 cold, the client area read once, at its address, rather than
+  also at the address the walk made up. Bound: one such read per walk that
+  reaches the top.
+
 ### A focus change into a list, MSAA
 
 - Minimum: 28 MSAA calls: the focus (8), `accFocus` on the list (1,

@@ -132,6 +132,8 @@ struct RawNode {
     content: bool,
     #[serde(default)]
     msaa_client: bool,
+    #[serde(default)]
+    client_role: bool,
     /// Its MSAA location, left, top, width and height.
     #[serde(default)]
     location: [i32; 4],
@@ -286,6 +288,10 @@ pub(crate) struct FixtureNode {
     /// has an MSAA parent that reports the scripted root's states, the
     /// focused state included.
     pub(crate) msaa_client: bool,
+    /// On the MSAA backend: whether the node answers its role as
+    /// `ROLE_SYSTEM_CLIENT`, a window's client area's, as a Windows Forms
+    /// form's client area does, rather than its role's own MSAA role.
+    pub(crate) client_role: bool,
     /// Its MSAA location, left, top, width and height (fixture
     /// `location`, all 0 when left out).
     pub(crate) location: [i32; 4],
@@ -427,6 +433,7 @@ fn convert(
         edit_version_6: raw.edit_version_6,
         content: raw.content,
         msaa_client: raw.msaa_client,
+        client_role: raw.client_role,
         location: raw.location,
         children,
     };

@@ -76,6 +76,10 @@ complete name tables. The fields:
   MSAA's client object with the scripted root, as a window with a native
   UIA provider can serve MSAA too, so a Win32 control inside it has an
   MSAA parent with the root's states, the focused state included.
+- `client_role`: on the MSAA backend the node answers its role as
+  `ROLE_SYSTEM_CLIENT`, a window's client area's, as a Windows Forms
+  form's does (`tests/fixtures/form.json`, a root with no identity string
+  reached through `accParent`).
 - `nested`: how many groups of its own the node is placed under, between
   it and its parent, `<id>-nest-1` named "Nest 1", outermost, to
   `<id>-nest-<nested>` right above it, for a tree deeper than a fixture's

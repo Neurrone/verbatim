@@ -125,16 +125,29 @@ folder window published at its bound said its title with "window",
 another "window" and "ShellView window", where the walk read in full
 says the title once. A window whose element the cut walk had already
 read is not added again: plain windows start from its parent window. A client object reached through `accParent` with no
-identity string, as a Windows Forms form's, is not marked: NVDA knows a
-client's object id only from its event or its identity string
-(`NVDAObjects/IAccessible/__init__.py` 803 to 808), and presents it by
-its title only then, so it does not say the form's title when the focus
-enters it (the capture above). There is no separate foreground
-announcement.
+identity string, as a Windows Forms form's, is not marked as it is
+reached: NVDA knows a client's object id only from its event or its
+identity string (`NVDAObjects/IAccessible/__init__.py` 803 to 808), and
+presents it as a focus ancestor by its title only then. NVDA still says
+the form's title on entering its window: when the focus line changes
+just below the desktop, `doPreGainFocus` speaks the foreground object,
+the window's client read at its own address, its object id known
+(`eventHandler.py` 402 to 413, `NVDAObjects/IAccessible/__init__.py` 564
+to 578), whether or not a foreground event was read. So an MSAA walk that reaches a top-level window with a system menu,
+holding its client area read as a pane at an address it made up, reads
+that client area again at its own address, marked; the outpost does not
+judge whether the window is new, and Core speaks it only as an entered
+container, so a focus that stays in the window says nothing more
+(Dickson's decision, 2026-10-30, after `text_box_editing` lost the form's
+title when its focus was read before its foreground change). The cost is one acquisition and six reads for a
+walk that reaches the top; a walk that meets the previous line below it
+pays nothing. There is no separate foreground announcement.
 **matched (unverified)**: reducer tests for the marked pane and for a
-pane without the mark, and mockapp's
+pane without the mark, mockapp's
 `a_window_above_the_process_boundary_is_a_plain_window_with_no_call`
-for the windows above the boundary.
+for the windows above the boundary, and
+`a_window_entered_by_a_focus_beside_its_unread_foreground_change_is_said`
+for a form's client reached with no identity string.
 
 ### Window announcement on switching applications
 
