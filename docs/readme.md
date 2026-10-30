@@ -71,6 +71,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [ownership-input.md](design/ownership-input.md) — the input
     build's design: one key-number minter and one ordered route for
     user input.
+  - [ownership-output.md](design/ownership-output.md) — the output
+    build's design: one settings saver with one writer per section, the
+    settings mirror following the synthesizer, and real-time audio.
   - [ownership-messages.md](design/ownership-messages.md) — the
     messages build's design: the wire types in the model, their kinds,
     the merges, responders and the supervisor's typestates.

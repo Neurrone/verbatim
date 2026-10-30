@@ -1,0 +1,211 @@
+# The output build
+
+Status: design, written on 2026-10-31 against main at 98b0388d. It applies [the ownership model](ownership.md)'s rules "One owner per fact" and the audio thread's part of "Who may block on whom" to the settings file, the settings dialog's mirror of the synthesizer, the mixer and the WAV recorder, and takes the synthesizer's display name from Core's registry. Its brief, starting draft and known traps are "The output build" in [the ownership builds](ownership-builds.md). It runs beside the outpost's reducer build and shares no code with it. The refactor preserves what is heard, and this build changes no speech.
+
+Two parts replace recently built mechanisms, with their behaviour kept. The settings host's owed commit and revert during a synthesizer switch (`Owed`, `crates/verbatim-speech/src/host.rs` lines 50 to 60 and 109 to 138, built in 0d791a13 on 2026-10-08) go, because a commit and a revert now run on the synth thread in order behind the switch, which gives the same outcome. The mixer's lock-free cancel by generation and its atomic pause are the mixer half of the communication design's step 10, which was not adopted for latency (`docs/design/communication.md`, section 8); Dickson adopted real-time audio on ownership grounds on 2026-10-30, and the speech queue thread that step 10 also removed stays.
+
+## Feasibility
+
+The goal is achievable against the current code. No sequence was found that defeats it; "Sequences that would break it" lists those the design must prevent. Four facts of the code change the draft:
+
+- The speech section has a writer the draft does not name. Besides the GUI thread's commit (`crates/verbatim-gui/src/lib.rs` lines 502 to 514, through `SettingsHost::commit`, `host.rs` lines 254 to 268), the synth thread commits when a switch ends with a commit owed (`host.rs` lines 122 to 128, run from the switch's reply on the synth thread, `crates/verbatim-speech/src/manager.rs` lines 1236 to 1247), and the synth thread reads the section under the store's lock each time a synthesizer starts (`saved_settings_fn`, `crates/verbatim-app/src/main.rs` lines 681 to 686). The synth thread is therefore made the speech section's one owner, reader and writer, rather than the settings host.
+- Updating the mirror from the synth thread's answer is not enough on its own. The commit reads the mirror on the GUI thread (`host.rs` line 256), so a commit made while a refused value's answer is still on its way saves the refused value. NVDA saves the driver's own values, read from the driver when it saves (`nvda/source/autoSettingsUtils/autoSettings.py` line 163, `getattr(clsOrInst, setting.id)`, called from `gui/settingsDialogs.py` line 1632), on the thread that applied the change. The commit and the revert are therefore carried out on the synth thread, in order behind every setting change and switch.
+- The mixer's requests wait for the audio thread. `cancel_all`, `pause` and `fail` block their caller until the audio thread has carried them out (`Shared::request`, `crates/verbatim-audio/src/mixer.rs` lines 427 to 442), and a writer waits on the same lock for room (`append`, lines 674 to 727). Requests through queues that never block the audio thread must also never block their senders on it, so the cancel and the pause become generation counters the audio thread reads, as step 10 drafted.
+- The exit sound blocks the reducer thread. `play_earcon_heard` writes the sound's length of silence into the events' source (`manager.rs` line 525), which waits for room behind about 80 ms of audio. It becomes one request: a sound whose ending is reported when it has played.
+
+## Terms
+
+- A section: one part of `settings.toml` with one owner: the speech section (`[speech]`), the reader section (`[reader]`) and the theme section (`[theme]`). The global fields (locale, log filter, Verbatim keys, keyboard, UIA) have no writer while Verbatim runs.
+- The saver: the thread that owns `settings.toml` and writes it whole (`crates/verbatim-app/src/saver.rs` (planned)).
+- A section writer: a non-`Clone` handle that hands the saver one section's new value, one per section, made by the saver's constructor.
+- A lane: one producer thread's bounded single-producer, single-consumer queue of requests to the audio thread, made before the audio thread starts and moved to that thread.
+- The cancel generation: a source's count of cancels, raised by the speech queue thread; every utterance is registered under the generation current when it was handed on, and a cancel ends every utterance registered under an older one.
+- The format generation: the mixer's count of device formats (`State::generation` today, `mixer.rs` line 162).
+- The delivery thread: the thread that takes the audio thread's records from its outbound ring and runs the playback listeners, logs and drops what the audio thread is done with.
+
+## The current code
+
+- The settings store is one `Arc<Mutex<ConfigStore>>` (`main.rs` line 233) whose every writer writes the whole file under the lock: the GUI thread's speech commit (`persist_fn`, lines 709 to 728) and theme choice (`AppThemeHost::persist`, `crates/verbatim-app/src/themes.rs` lines 65 to 74), the synth thread's owed commit after a switch (above), and the reducer thread's reader settings, after a toggle key (`Effect::SettingsChanged`, `main.rs` lines 1786 to 1788) or a Terminal page change (`change_terminal_settings`, lines 1561 to 1566), both through `save_reader_settings` (lines 751 to 757). Readers: the synth thread at every synthesizer start, the Theme page (`themes.rs` lines 41 to 54), the Terminal page (`crates/verbatim-app/src/terminal_settings.rs` lines 26 to 33), and startup. The write is a temporary file renamed over the target (`crates/verbatim-config/src/lib.rs` lines 535 to 542).
+- The mirror (`HostState`, `host.rs` lines 37 to 48) is written by the GUI thread, which sets `current` before the change reaches the driver (lines 236 to 252), and by the synth thread at a switch's end. A change reaches the driver on the synth thread (`manager.rs` lines 1225 to 1229), which only logs a refusal; `HostedSynth` keeps its own copy of the values and updates it only when the host accepts (`crates/verbatim-synth-hosted/src/lib.rs` lines 465 to 482). A refused value stays in the mirror: the Speech page shows it when next built (`crates/verbatim-gui/src/settings.rs` line 75), the commit saves it, and the next start refuses it again and keeps the synthesizer's own (`manager.rs`, `apply_saved_settings`, lines 1311 to 1330).
+- The mixer is one `Mutex<State>` with a `Condvar` (`mixer.rs` lines 152 to 174). The audio thread holds the lock across `GetCurrentPadding`, `GetBuffer`, `ReleaseBuffer`, `Start`, `Stop`, `Reset` and the clock's `GetPosition` (`run`, lines 1038 to 1127, through `poll_device`, `device.write`, `device.start`, `device.stop` and `heard_by_clock`), and across the WAV tap (lines 1056 to 1064). Every other thread that plays takes the same lock: the synth thread for every write, mark, sound, finish and fail; the speech queue thread for every registration, cancel and pause (`manager.rs` lines 964, 1047, 1120 and 1165); the reducer thread for every earcon (`play_earcon`, lines 464 to 482); the GUI thread for the Theme page's sounds (`play_sound`, line 560).
+- The audio thread is the WASAPI device's: shared mode, event-driven, a buffer of 40 ms requested (`crates/verbatim-audio-wasapi/src/lib.rs` line 47), registered with MMCSS as "Pro Audio" (lines 307 to 317). It wakes on the device's event each device period while playing, about every 10 ms, and waits with no time limit when idle (`mixer.rs` lines 64 to 71 and 1132).
+- Each pass allocates: the `notes` vector (line 1037), the tap's block (`feed_tap`'s `collect`, line 1270, then `to_vec` in the recorder, `crates/verbatim-audio/src/wav.rs` line 167, sent on a `std::sync::mpsc` channel), and growth of `mix`, `tap_pending`, `segments` and the sources' `data`, `events` and `voices`. The underrun warning formats a log line on the audio thread (lines 1165 to 1174).
+- The playback listeners run on the audio thread (`deliver`, line 1131): the speech source's listener (`manager.rs` lines 823 to 870) updates the latency ledger under its mutex (`crates/verbatim-app/src/latency.rs`, `update`, lines 693 to 727), fans frames out under the control server's registry and history locks (`crates/verbatim-control/src/server.rs` lines 1176 to 1199), writes the latency line through `tracing` (`latency.rs` line 637), and posts to the speech queue's and the reducer's ports, each post allocating a box; the events' source listener takes the `Waiters` mutex (`manager.rs` lines 685 to 694).
+- The display name. `driver_state` takes `driver.display_name()` (`manager.rs` lines 91 to 100), at startup (line 1215) and after a switch (line 1241). A hosted driver's name comes from the host process (`HostedSynth::display_name`, `crates/verbatim-synth-hosted/src/lib.rs` line 449; the host's `crates/verbatim-synth-host/src/lib.rs` line 162), which never loads the user's locale: only verbatim.exe calls `load_locale_dir` (`main.rs` line 554). The registry's names are verbatim.exe's (`main.rs` lines 583 to 594). Today both read "eSpeak NG" and "Windows OneCore voices", because only English ships.
+
+## The model this build applies
+
+### One saver, one writer per section
+
+The saver thread owns `settings.toml`. `Saver::start(root, settings)` takes the whole `Settings` loaded at startup and returns the saver and three section writers: `SpeechWriter`, `ReaderWriter` and `ThemeWriter`, none `Clone`. A writer's `save(section)` posts the section to the saver's completion-port queue (`crates/verbatim-process/src/port_queue.rs`, `Poster::send`, lines 150 to 174), which takes no lock of user mode and never waits. The saver takes everything waiting, replaces each section with its newest value, and writes the file once, as today, temporary file then rename; a failed write is logged with today's message. Reason: no thread on the path waits on a file, and one thread writing means one temporary file and no lost update between sections.
+
+Each writer moves to its section's one owner at start:
+
+- The speech section to the synth thread, inside the app's `SpeechSettings` (planned), which holds the section and its writer and implements a new `verbatim-speech` trait, `SpeechSettingsStore`: `saved(&self, synth)` for a start and `persist(&mut self, synth, chosen, values)` for a commit. It replaces `SavedSettingsFn` and `PersistFn`. Reason: the synth thread already reads the section at every start and commits after a switch, and the commit must follow the driver's answers (below).
+- The reader section to the reducer thread, in `ReducerContext` in place of the store. The reducer thread also publishes the reader settings in a view, a monitor over a `ReaderSettings` value that it alone writes and the Terminal page reads, each a copy under a lock never held across a call. Reason: the Terminal page reads the reducer's own settings, which today it reads from the store the reducer saved.
+- The theme section to the GUI thread, inside `AppThemeHost`, which keeps the section it last saved and answers `configured` from it.
+
+`ConfigStore` stays as the file's format and the startup load; the app no longer shares it. The hook's configuration, the keyboard layout, the outpost options, the locale and the initial theme are read from the loaded settings before the saver starts, as today.
+
+At exit, after the exit sound has been heard or its 2-second bound has passed (`EXIT_SOUND_TIMEOUT`, `main.rs` line 482), the main thread asks the speech pipeline to settle, a query the synth thread answers once it has carried out everything posted before it, then asks the saver to finish, which it answers once everything posted before has been written; both within the same bound. Reason: a commit or a toggle made just before Exit is saved, as today, where every write finished before its caller went on.
+
+### The mirror follows the synth thread
+
+- `set_setting` validates against the mirror and records the requested value in `current` as today, counts one more change of that setting outstanding, and posts it. The synth thread applies it, and then sets the mirror's value to the driver's own (`driver.setting(id)`), whether the driver accepted it or not, once no later change of that setting is outstanding. Reason: the mirror then shows what the driver has, as `HostedSynth` keeps its copy.
+- `commit` posts `QueueEvent::Commit` (planned), which the queue thread passes to the synth thread in order with every change and switch. The synth thread reads every value from the driver and calls `SpeechSettingsStore::persist` with them, the active synthesizer and its `chosen` flag, and keeps them as the committed values. Reason: what is saved is what the driver has, as NVDA saves.
+- `revert` posts `QueueEvent::Revert` (planned); the synth thread applies its committed values to the driver and answers the mirror with the driver's values.
+- `chosen` and the committed values move from the mirror to the synth thread. A switch that succeeds sets `chosen`, and its committed values are the new synthesizer's as it started, as `switch_ended` does today (`host.rs` lines 113 to 119).
+
+A commit or revert made during a switch is behind it on the synth thread: a commit saves the synthesizer the switch ended with, and a revert after a failed switch restores the previous synthesizer's committed values; after a successful one it restores the values the new synthesizer started with, which it already has. That is today's outcome (`docs/parity/speech-audio.md`, "Settings dialog during a synthesizer switch"), without `Owed`.
+
+### Real-time audio
+
+The audio thread owns the mixer's state, `State` without its `Mutex` and `Condvar`, and nothing outside it reads or writes that state. Everything it takes in and gives out goes through queues built before it starts:
+
+- Lanes. `MixerBuilder` (planned) makes the sources and one lane per producing thread before `start`: the synth thread's lane on the speech source; the reducer thread's lane and the GUI thread's lane on the events' source. A lane is a pair of rings from the `rtrb` crate, one of records and, for the synth thread, one of samples. `rtrb`'s `Producer::push` and `Consumer::pop` are a bounds check, one slot read or write and one `Release` store of the index, with no lock, loop or wait (`src/lib.rs`, `push`, `pop`, `next_tail`, `next_head`), and the ring allocates its slots once in `new`; neither end waits on the other. The reducer's lane lives in its `SpeakToken`, so `play_earcon` and `play_earcon_heard` take `&mut SpeakToken`; the GUI's lane lives in `AppThemeHost`.
+- Records carry what the lock carried: `Register` (utterance, trace, cancel generation), `Frames` (utterance, format generation, sample count, the samples following in the sample ring), `Mark`, `Sound` and `Play` (a voice, its frames an `Arc<[f32]>` converted on the producer's thread), `PlayToEnd` (a voice whose utterance ends when the voice has played, for the exit sound), `Finish` and `Fail`.
+- The cancel and the pause are not records. The speech queue thread raises the source's cancel generation, an `AtomicU64`, and sets its pause, an `AtomicBool`; the audio thread reads both each pass. A raised generation or a changed pause discards the device's queue and rewinds, as a request does today (`mixer.rs` lines 1069 to 1082). Reason: the queue thread never waits and its lane can never be full, so a cancel is never refused.
+- Registration moves to the synth thread's lane, under the generation the queue thread gave the job when it handed it on (today `manager.rs` line 1165, on the queue thread). The synth thread registers every job it takes, a cancelled one too (today `run_job` returns before anything for a job cancelled before it started, line 1342), so that every utterance ends exactly once.
+- The order of a pass: drain every lane, then read each source's cancel generation and pause, then fire events, then mix. Reason: a record pushed after the synth thread saw a cancel is drained in the same pass as the raised generation it follows (the sequence of 3ebb7be0, below).
+- Backpressure: the synth thread keeps today's bound, a device queue and 40 ms ahead of what has played (`source_capacity`, lines 730 to 734). The audio thread publishes each source's played position and the format generation, its sample rate and channels in one `AtomicU64`, with the buffer's frames in a second; the synth thread compares its own count of frames written. When it is full, it stores how much room it wants in the lane, checks the room again, and parks (`std::thread::park`); the audio thread, finding that room free, clears the want and unparks it. `unpark` is one atomic swap and, if the thread was parked, one `WakeByAddressSingle` (std's `sys/sync/thread_parking/futex.rs`, the implementation selected for Windows), so the audio thread neither waits nor takes a lock to wake it.
+- The audio thread takes a record from a lane only when its own store has room for it: 64 utterances tracked and 1,024 pending events per source, 32 voices, and the samples of the source's capacity (a 40 ms buffer and 40 ms ahead) at the largest format it accepts, 8 channels at 192 kHz. A record that does not fit waits in its lane. A full lane makes the synth thread park as above; a reducer or GUI play that finds its lane full (64 records) is refused and logged by the producer, and that sound is not heard.
+- The outbound ring, also `rtrb`, carries records out: each playback event with the time the audio thread read, each underrun, and everything the audio thread is done with that owns memory (a voice's frames, a failure's reason), so the audio thread never frees. An event is taken off its source's pending list only when the ring has room, so none is lost; a full ring delays reports. The audio thread unparks the delivery thread after a pass that pushed anything.
+- The delivery thread runs the listeners as today, with the time the audio thread read, logs the underrun warning with today's message, and drops what it is handed. It runs at `THREAD_PRIORITY_HIGHEST` through the priority callback, since it only moves messages (`docs/design/communication.md`, section 6.1). After draining a full ring it wakes the audio thread through the device's waker, so pending events go out without waiting for the next period.
+- Every per-pass buffer is allocated when the device opens: `mix`, the tap's pending samples, and each source's stores. A device that reopens in another format reallocates them on the recovery path, which also opens the device and logs; the recovery path lives in its own module, not the loop's.
+- The WAV tap pushes each played block into a ring of samples and a ring of block headers (count and time), which the recorder's thread drains and writes as today. A block that finds the ring full is dropped and counted; the recorder fills the gap with silence from the clock as it already does for gaps (`wav.rs` lines 97 to 120), and logs the count once. The rings hold one second at 48 kHz stereo, created only when recording.
+
+`Mixer::format` and `Mixer::underruns` read the published atomics. Shutdown is an `AtomicBool` and the device's waker: the audio thread ends every tracked utterance as cancelled, unparks every parked producer, and stops; each lane then answers `Break`.
+
+### The display name from Core's registry
+
+`driver_state` takes the `SynthChoice` from the registry by the driver's id, at startup and after a switch, so the mirror's active name is the name the Select Synthesizer list shows. `SynthDriver::display_name` stays for the host's own logs. Reason: the host never loads the user's locale, and the registry's names are verbatim.exe's.
+
+### The ownership check on the audio loop
+
+The loop's module (`crates/verbatim-audio/src/mixer/run.rs` (planned)) joins `xtask/src/ownership.rs` under an audio rule: it may `use` only `std::sync::atomic`, `std::sync::Arc`, `std::thread::Thread`, `std::time`, `std::collections::VecDeque`, `rtrb` and the crate's own device, record and store types, and may not name `Mutex`, `RwLock`, `Condvar`, `lock`, `mpsc`, `crossbeam`, `park`, `sleep`, `recv`, `Vec::new`, `vec!`, `Box::new`, `to_vec`, `to_owned`, `collect`, `format!`, `String`, the `tracing` macros or `std::fs`. Like the other rules it reads text, so a method that allocates inside an allowed type is a review rule, held by the allocation test.
+
+## Where each part runs
+
+- Saver thread (`verbatim-settings-saver` (planned)), normal priority: waits on its port, writes the file.
+- Synth thread: owns the speech section, the committed values and `chosen`; applies changes, commits and reverts; answers the mirror; writes frames, marks and sounds into its lane; parks when its source is full.
+- Speech queue thread: hands jobs on with their cancel generation; raises the generation and sets the pause; passes commits and reverts on.
+- Reducer thread: owns the reader section and its view; plays earcons through its lane.
+- GUI thread: owns the theme section; plays the Theme page's sounds through its lane; reads the mirror and the reader view.
+- Audio thread, MMCSS "Pro Audio": drains lanes, mixes, writes the device, pushes records out; waits only in the device's `wait`.
+- Delivery thread (`verbatim-audio-events` (planned)), `HIGHEST`: runs the listeners and frees.
+- WAV recorder thread: drains the tap's rings and writes the file.
+- Main thread at exit: settles the speech pipeline, then the saver, within the exit bound.
+
+## Edge cases and what is heard
+
+- A toggle key while a slow disk holds a commit's write: the toggle's speech is heard at once; both sections reach the file, the toggle's in the next write.
+- A refused value, for example a voice the host refuses: the slider or choice still shows what the user chose, as in NVDA, whose controls are not refreshed after a change (`gui/settingsDialogs.py` lines 1330 and 1352 to 1356); speech keeps the driver's value; OK saves the driver's value; reopening the dialog shows the driver's value; the next start applies the saved value with no refusal.
+- OK during a switch: the synthesizer the switch started is saved with its values; a switch that fails leaves the previous synthesizer saved with its values.
+- Cancel during a switch that fails: the previous synthesizer's committed values are restored.
+- OK then Exit at once: saved, unless the synth thread is held by a host that has stopped answering (up to its 10-second limit, `HANG_TIMEOUT`, `crates/verbatim-synth-hosted/src/lib.rs` line 79) past the exit bound; then the commit is lost and a warning logged.
+- Verbatim killed between a post and the saver's write: that change is lost. Today the window is the write itself.
+- A key that cancels speech while the synth thread is returning from a woken driver: the cut utterance ends cancelled, never completed, and its marks are reported cut.
+- An utterance handed on just before a cancel and registered just after it: ended cancelled at once; nothing of it is heard.
+- An utterance handed on just after a cancel and registered before the audio thread reads the raised generation: heard in full.
+- Pause and resume within one device period: nothing held, as heard today.
+- The exit sound: heard to its end; the reducer no longer waits for the mixer's room while it plays.
+- More than 32 sounds at once, or an earcon while 64 others wait for a stalled audio thread: the newest is not heard, and a warning is logged.
+- A device reopened in another format while the synth thread writes: the utterance fails as today; frames of the old format still in the lane are discarded; the next write answers `Break`.
+- The recorder's disk too slow for a second: a gap of silence in the recording, and a warning; nothing heard changes.
+- After a switch, with a second locale in M8: the active synthesizer's name reads in that locale, as the list does.
+
+## Sequences that would break it
+
+Each was checked against the code at 98b0388d.
+
+- A slow write in front of a toggle (the draft's): the GUI thread's commit holds the store's lock in `persist_fn` (`main.rs` lines 711 to 727) while `write_toml_atomic` waits on the disk; the user presses Verbatim+2; the reducer's `Effect::SettingsChanged` calls `save_reader_settings`, which waits on that lock (line 752), and every later key's speech waits behind it. Confirmed. Prevented: the reducer's save is a port post.
+- A commit before a refusal's answer: the user moves Rate; `set_setting` records the value in `current` (`host.rs` line 240) and posts it; the user presses OK; `commit` reads `current` (line 256) and saves it; the synth thread then applies the change, the driver refuses it, and only a warning is logged (`manager.rs` lines 1226 to 1228). Confirmed. Prevented: the commit runs on the synth thread after the change and saves the driver's values.
+- A commit owed by a switch, written on the synth thread under the same lock (`host.rs` lines 124 to 125 and `persist_fn`), while the reducer waits for it: the same stall as the first, from a third writer. Prevented: the synth thread posts to the saver.
+- Lost sections between writers: none today, since every write serialises the one in-memory `Settings` under the lock. Kept: the saver holds the newest of each section and writes them together.
+- A Terminal page change overtaking a toggle: both are merged on the reducer thread (`main.rs` lines 1561 to 1566), so neither undoes the other; kept, since the reducer stays the section's one writer. The Terminal page reading a view one toggle old shows that old value until reopened; a change it makes is still a delta.
+- A priority inversion on the mixer lock (the draft's): the synth thread, at normal priority, holds the lock inside `append` (lines 676 to 726) and is pre-empted; the audio thread, woken by the device's event, waits in `shared.lock()` (line 1038) past its period, and the device runs dry. Confirmed. Prevented: the audio thread takes no lock.
+- A WASAPI call blocked by a device change (the draft's): the audio thread holds the lock in `poll_device` (line 1043), whose `GetCurrentPadding` waits while the endpoint is torn down; the reducer's `play_earcon` waits in `add_voice` (line 582) and no key is reduced meanwhile. Confirmed. Prevented: the reducer's push never waits; the audio thread alone waits on the device.
+- The ledger's reader (the draft's): `verbatim-inspect latency` calls `recent`, which clones up to 256 timelines under the ledger's mutex (`latency.rs` lines 642 to 665); the audio thread's listener waits in `update` for `audio_started`. Confirmed. Prevented: the listener runs on the delivery thread.
+- A cancel racing the woken driver (3ebb7be0): the queue thread cancels the job's token, the driver's waker returns it at once, and the synth thread finishes the empty utterance; if the audio thread applied that `Finish` and fired before it saw the cancel, the utterance would complete and its marks be reported reached. Prevented: the queue thread raises the cancel generation before it cancels the token (`Release`, then the token's `Release` store, `crates/verbatim-speech/src/driver.rs` line 330), so the `Finish` the synth thread pushes after seeing the token is ordered after the raised generation, and the pass reads the generations after draining the lanes and before firing.
+- A registration after its cancel: the queue thread hands U on under generation 4, then cancels, raising 5; the synth thread, still finishing the previous job, registers U afterwards. Prevented: U's generation is older than the source's, so it is ended cancelled on arrival and its frames discarded.
+- The next utterance cut by the previous cancel: the queue thread raises 5 and hands V on under 5; the audio thread drains V's registration before it reads 5. Prevented: the cancel ends only utterances registered under an older generation.
+- Frames of a replaced format: the device reopens at 44.1 kHz while the synth thread converts for 48 kHz. Prevented: `Frames` names its format generation; the audio thread discards frames of an older one, whose utterance `end_all` already failed (lines 1453 to 1462).
+- A lost wake of the synth thread: it reads the room as full, the audio thread frees room before the want is stored, and the synth thread parks for ever. Prevented: the synth thread stores the want, then reads the room again before parking, and `park` returns at once after an `unpark` that came first.
+- The audio thread freeing the last reference: a voice's frames are the theme's cached `Arc`; the theme is switched while the voice plays, so the voice holds the last reference when it ends. Prevented: the voice leaves through the outbound ring and the delivery thread drops it.
+- Events lost to a full ring: the delivery thread is stalled on the ledger while many marks fire. Prevented: an event leaves its source only when the ring has room; the delivery thread wakes the audio thread when it drains a full ring.
+- Exit with saves outstanding: a toggle reduced just before Exit, a theme chosen and OK pressed. Prevented: the reducer posts its section before it answers `Exiting`; the GUI's posts precede the end of its loop; the main thread settles the speech pipeline, then the saver, in that order, so the synth thread's commit is posted before the saver is asked to finish.
+- A producer parked at shutdown: the synth thread waits for room when the mixer is dropped. Prevented: the audio thread unparks every producer as it stops, and a lane on a stopped mixer answers `Break`.
+
+## The facts and their owners
+
+- `settings.toml`: the saver.
+- The speech section, the committed synthesizer values and `chosen`: the synth thread.
+- The reader section: the reducer thread; its view, a monitor written only by the reducer thread.
+- The theme section: the GUI thread.
+- The driver's setting values: the synth thread; the mirror is a monitor whose `current` the GUI thread writes for an outstanding change and the synth thread for its answer. This is the one fact left with two writers, inside one monitor, because the dialog must show a change before the synth thread takes it; once a change is answered and no later one is outstanding, the synth thread's answer is what it holds.
+- The mixer's state: the audio thread.
+- A source's cancel generation and pause: the speech queue thread.
+- The published played positions, format and underrun count: the audio thread.
+- The active synthesizer's display name: the registry, built by verbatim.exe.
+
+## Limitations
+
+- A change is on disk a write after it is made, not before the next key; a kill in between loses it.
+- A commit waits on the synth thread, so a host that has stopped answering delays it up to 10 seconds, and past the exit bound loses it.
+- Earcons beyond 64 waiting or 32 playing are dropped.
+- Each source reserves samples for 8 channels at 192 kHz: about 480 KiB for the synth thread's ring and as much for the speech source's store; a device format beyond that is refused by the mixer and played as silence.
+- The audio rule reads text, and the delivery thread's listeners still take the ledger's and the control server's locks, now off the audio thread.
+- The `SilentDevice` used by test audio wakes its waiter with a `Mutex` and `Condvar` (`crates/verbatim-audio/src/silent.rs` line 28); it is a test device, outside the loop's module. `DeviceNotices` keeps its `retry_at` mutex (`crates/verbatim-audio/src/notices.rs` line 52), taken only by the audio thread, so it never waits.
+- Verbatim still writes the file on every change; NVDA writes it only on exit or on its save command (`nvda/source/config/__init__.py` lines 108 to 118), which this build does not change.
+
+## Cost
+
+- The audio thread: its period and priority are unchanged, a wake each device period while playing and none idle, at MMCSS "Pro Audio". Per pass it takes no lock where it took the mixer's at least once, and makes no allocation or free where it made several; it loads a few atomics per source and pops each lane.
+- The delivery thread: one wake per pass that produced records, about three per utterance (started, heard, ended) and one per mark, wakes that today happen on the audio thread. A mark and an ending reach the reducer and the speech queue one hop later; at `HIGHEST` the hop pre-empts normal-priority work (`docs/design/communication.md`, section 6.1). The ledger's stages keep the audio thread's times, so measured latency is unaffected.
+- The synth thread: no lock per write; one park and unpark when its source is full, where today it waited on the condition variable.
+- The queue thread and the reducer: a cancel, a pause and an earcon no longer wait for the audio thread.
+- Settings: a toggle key's save is one port post instead of a file write on the reducer thread; the saver wakes once per batch; the GUI thread no longer writes the file.
+- Memory: about 1 MiB for the speech source's ring and store, 64 KiB of record rings, and 375 KiB for the tap's rings when recording.
+- The builder records the audio and delivery threads' wakes and processor time per utterance, the reducer's per key, and the "device ran dry" warnings, from `measure_speech_real` and `measure_keys_notepad` before and after (`docs/tooling/measuring.md`), in `docs/performance.md`.
+
+## Tests
+
+### Added
+
+- The saver (`saver.rs` tests, with an injected file that records each write and can hold one): a write held open; a reader section posted meanwhile returns at once; once released, the file was written twice, first with the speech section, then with both. A second case: three sections posted while one write is held are written in one write.
+- The speech crate (`crates/verbatim-speech/tests/pipeline.rs`), with a test driver that refuses rate 60: `set_setting(rate, 60)`, then `commit`; the store's `persist` is called with rate 50, and `setting(rate)` then answers 50.
+- The speech crate: a change and a commit during a switch that succeeds persist the new synthesizer with its values; a revert during one that fails restores the previous committed values. These replace `a_commit_during_a_switch_saves_the_synth_the_switch_started` and `a_revert_during_a_switch_that_fails_restores_the_committed_values` (lines 1306 and 1347), rewritten against the synth thread.
+- The speech crate: a synthesizer registered as "Registry Name" whose driver reports "Driver Name" is the active choice "Registry Name" at startup and after a switch to it.
+- The mixer (`crates/verbatim-audio/tests/mixer.rs`, on its `ManualDevice`): an utterance registered under generation 1 after the cancel generation reached 2 ends cancelled with no frame written to the device; one registered under 2 plays in full. An empty utterance whose `Finish` is pushed after a raise of the generation, in one pass, ends cancelled.
+- The mixer: the allocation test. The test binary's global allocator counts allocations and frees per thread in a `const` thread-local; the `ManualDevice`, called on the audio thread, copies that thread's counts into the test's atomics at each `write` and `wait`. After 20 passes of warm-up, 200 passes that play speech with marks, a sound in an utterance, an earcon, a cancel, a pause and a resume, and the tap, add no allocation and no free.
+- The mixer: a producer parked for room is unparked when half its room is free, and at shutdown, where its write answers `Break`.
+- The ownership check: a `Mutex` and a `vec!` in the loop's module are found.
+
+### Removed or made cheaper
+
+- `cancelling_ends_every_unheard_utterance_and_spares_later_ones` and `a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped` (`crates/verbatim-audio/tests/mixer.rs`, lines 454 and 491) wait for the ending event instead of relying on the request having returned.
+- `a_writer_blocked_on_a_full_source_writes_again_only_once_half_its_room_is_free` (line 384) becomes the parked-producer test above.
+- No scenario is removed: the settings scenarios are the only end-to-end proof that the dialog's pages reach the file through the GUI.
+
+### Scenarios
+
+Three runs each: `menu_and_settings_dialog`, `settings_dialog_keys`, `switch_to_onecore`, `synth_host_crash_recovery`, `terminal_settings_page`, `theme_panel`, `measure_speech_real`, counting the "device ran dry" warnings against the build before. Also `notepad_say_all`, since marks now reach the reducer through the delivery thread.
+
+## The known traps, against the code
+
+- Review 3, nit: the WAV recorder's tap copies and sends on every pass (`wav.rs` line 167, `mixer.rs` line 1270); it moves to preallocated rings, above.
+- Review 2, length section: every drafted sequence was checked against the code at 98b0388d, under "Sequences that would break it", and each was confirmed. The draft's mirror change alone does not stop a refused value being saved; the commit moves to the synth thread for that reason.
+
+The builder updates the crate guides of `verbatim-config`, `verbatim-speech`, `verbatim-audio`, `verbatim-audio-wasapi` and `verbatim-app`; the documents commit corrects the communication design's thread list and section 6.6, whose mixer lock is gone.
+
+## Decisions
+
+Taken as NVDA or the model settle them, recorded pending Dickson's acceptance:
+
+- The synth thread, not the settings host, owns the speech section, and a commit saves the driver's values, as NVDA saves (`autoSettings.py` line 163).
+- After a refusal the dialog's control is left as the user set it, as NVDA leaves it.
+- A play refused by a full lane is dropped and logged rather than waited for, since the reducer never waits on the audio thread.
+
+## Open questions for Dickson
+
+- The exit bound for saving. A commit stuck behind a host that has stopped answering can only be saved by waiting up to 10 seconds at exit. Recommendation: keep the one 2-second exit bound and log the loss, since a host that has stopped answering is already being replaced and the user would otherwise wait for Verbatim to exit.
