@@ -1367,6 +1367,189 @@ impl OutpostToCore {
     }
 }
 
+/// The node ids and text anchors a message names
+/// ([`OutpostToCore::named`]): what an outpost records as carried by the
+/// message, so it keeps each until Core has seen the message and does not
+/// hold it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Named {
+    /// The nodes, in the order the message names them, repeats kept.
+    pub nodes: Vec<NodeId>,
+    /// The text anchors, likewise.
+    pub anchors: Vec<crate::TextAnchor>,
+}
+
+impl Named {
+    fn node(&mut self, node: &NodeSnapshot) {
+        self.nodes.push(node.id);
+    }
+
+    fn tree(&mut self, tree: &TreeNode) {
+        self.node(&tree.snapshot);
+        for child in &tree.children {
+            self.tree(child);
+        }
+    }
+
+    fn chunk(&mut self, chunk: &crate::TextChunk) {
+        self.anchors.push(chunk.start);
+    }
+
+    fn caret(&mut self, caret: &crate::CaretReport) {
+        self.chunk(&caret.line);
+        if let Some(selection) = &caret.selection {
+            self.anchors.push(selection.start.anchor);
+            self.anchors.push(selection.end.anchor);
+        }
+        if let Some(line) = &caret.selection_line {
+            self.chunk(line);
+        }
+    }
+
+    fn focus_text(&mut self, text: Option<&crate::FocusText>) {
+        if let Some(crate::FocusText::Caret { caret, .. }) = text {
+            self.caret(caret);
+        }
+    }
+
+    fn text_reply(&mut self, reply: &TextReply) {
+        match reply {
+            TextReply::Caret(reply) => {
+                self.caret(&reply.caret);
+                if let Some(unit) = &reply.unit {
+                    self.chunk(unit);
+                }
+            }
+            TextReply::Read { chunk, .. } => self.chunk(chunk),
+            TextReply::Chunks { chunks, .. } => {
+                for chunk in chunks {
+                    self.chunk(chunk);
+                }
+            }
+            TextReply::TerminalSnapshot(snapshot) => {
+                if let Some(caret) = &snapshot.caret {
+                    self.caret(caret);
+                }
+            }
+            TextReply::Range { .. }
+            | TextReply::Done
+            | TextReply::Selected(_)
+            | TextReply::TerminalUnchanged
+            | TextReply::TerminalHistory { .. }
+            | TextReply::TerminalFound { .. }
+            | TextReply::Location { .. }
+            | TextReply::UnsupportedUnit(_)
+            | TextReply::Unsupported
+            | TextReply::NoText
+            | TextReply::AnchorLost
+            | TextReply::Gone
+            | TextReply::Unanswered
+            | TextReply::WatchEnded => {}
+        }
+    }
+
+    fn event(&mut self, event: &NormalizedEvent) {
+        match event {
+            NormalizedEvent::FocusChanged {
+                node,
+                ancestors,
+                selected_child,
+                text,
+                ..
+            } => {
+                self.node(node);
+                for ancestor in ancestors {
+                    self.node(ancestor);
+                }
+                if let Some(selected) = selected_child {
+                    self.node(selected);
+                }
+                self.focus_text(text.as_deref());
+            }
+            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node } => {
+                self.node(node);
+            }
+            NormalizedEvent::ProgressChanged { bar } => self.nodes.push(bar.id),
+            NormalizedEvent::ControlledSelection { controller, node } => {
+                self.nodes.push(*controller);
+                self.node(node);
+            }
+            NormalizedEvent::CaretMoved { node_id, caret, .. } => {
+                self.nodes.push(*node_id);
+                self.caret(caret);
+            }
+            NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
+                self.nodes.push(*node_id);
+                if let Some(caret) = &snapshot.caret {
+                    self.caret(caret);
+                }
+            }
+            NormalizedEvent::ActiveTextPositionChanged { node_id, position } => {
+                self.nodes.push(*node_id);
+                self.anchors.push(position.anchor);
+            }
+            NormalizedEvent::PropertyChanged { node_id, .. }
+            | NormalizedEvent::ValueChanged { node_id, .. }
+            | NormalizedEvent::Notification { node_id, .. }
+            | NormalizedEvent::TextChanged { node_id } => self.nodes.push(*node_id),
+        }
+    }
+}
+
+impl OutpostToCore {
+    /// Every node id and text anchor this message names: the nodes
+    /// [`assign_outpost`](Self::assign_outpost) stamps, and the anchors of
+    /// its text, a caret's line and selection, a read's chunks, and an
+    /// active text position. Empty for a message that names none.
+    #[must_use]
+    pub fn named(&self) -> Named {
+        let mut named = Named::default();
+        match self {
+            OutpostToCore::Event { event, .. } => named.event(event),
+            OutpostToCore::Reply {
+                outcome: QueryOutcome::Done(result),
+                ..
+            } => match result {
+                QueryResult::Focus(focus) => {
+                    if let Some((window, _)) = &focus.window {
+                        named.node(window);
+                    }
+                    if let Some(control) = &focus.focus {
+                        named.node(&control.node);
+                        for ancestor in &control.ancestors {
+                            named.node(ancestor);
+                        }
+                        if let Some(selected) = &control.selected_child {
+                            named.node(selected);
+                        }
+                        named.focus_text(control.text.as_deref());
+                    }
+                }
+                QueryResult::Navigated(Some(node)) => named.node(node),
+                QueryResult::Ancestors(chain) => {
+                    for node in chain {
+                        named.node(node);
+                    }
+                }
+                QueryResult::Tree(dumped) => named.tree(&dumped.root),
+                QueryResult::Text(reply) => named.text_reply(reply),
+                QueryResult::Navigated(None)
+                | QueryResult::Activated(_)
+                | QueryResult::ShellItems(_)
+                | QueryResult::ShellItemPosition(_) => {}
+            },
+            OutpostToCore::Reply { .. }
+            | OutpostToCore::Ready { .. }
+            | OutpostToCore::SpareReady { .. }
+            | OutpostToCore::Pong { .. }
+            | OutpostToCore::Fault { .. }
+            | OutpostToCore::TargetExited
+            | OutpostToCore::IdleAnswer { .. } => {}
+        }
+        named
+    }
+}
+
 /// The reducer's input an outpost's event is, `source` being the
 /// application the outpost watches: the event's own application when it
 /// names one, a console's client for an event in its console window, else

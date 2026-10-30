@@ -26,7 +26,7 @@ use verbatim_model::{NodeId, Role, State, StateSet};
 use crate::accessible::{Accessible, Related};
 use crate::com::{CHILDID_SELF, non_empty, visible_text};
 use crate::map::{STATE_SYSTEM_INVISIBLE, role_from_msaa, states_from_msaa};
-use crate::registry::NodeIdRegistry;
+use crate::registry::Interning;
 use crate::window;
 
 /// The states of an object: the model's, and whether it is invisible, which
@@ -91,7 +91,7 @@ impl DialogObject {
     /// The object this outpost reported as `node`, to gather its text from;
     /// `None` when the node is gone or was not issued here.
     #[must_use]
-    pub fn of_node(node: NodeId, registry: &NodeIdRegistry) -> Option<Self> {
+    pub fn of_node(node: NodeId, registry: &dyn Interning) -> Option<Self> {
         let (acc, (hwnd, id_object, child), _) = crate::acquire::locate(node, registry).ok()?;
         let client = id_object == OBJID_CLIENT.0 && child == CHILDID_SELF;
         Some(Self::new(acc, hwnd, client))

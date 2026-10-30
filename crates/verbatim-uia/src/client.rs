@@ -27,7 +27,7 @@ use verbatim_model::{CallKind, NodeSnapshot, QueryKind};
 use crate::calls::count;
 use crate::com::init_mta;
 use crate::element::{ElementExt, current_selection, invoke, select, toggle};
-use crate::registry::NodeIdRegistry;
+use crate::registry::Interning;
 use crate::shape::{
     Ancestor, Cached, Direction, ElementValue, Live, Node, Request, SelectionContainer, Shape,
 };
@@ -661,7 +661,7 @@ impl Uia {
         &self,
         (element, element_window, nearest): (&Live, isize, isize),
         request: &Request<Ancestor>,
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
         (max_hops, parent_automation_id): (u32, &mut Option<String>),
         stops: &AncestorStops<'_>,
     ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>, AncestorWalk)> {
@@ -777,7 +777,7 @@ impl Uia {
     #[must_use]
     pub fn ancestors_from(
         parents: &[Cached<Ancestor>],
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
         stops: &AncestorStops<'_>,
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
         let mut chain = Vec::new();
@@ -814,7 +814,7 @@ impl Uia {
     #[must_use]
     pub fn ancestor_chain_from_parts(
         parents: &[AncestorParts],
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
         stops: &AncestorStops<'_>,
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
         let mut chain = Vec::new();
@@ -856,7 +856,7 @@ impl Uia {
         &self,
         container: &Live,
         request: &Request<Node>,
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         Ok(self
             .selected(container, request)?
@@ -967,7 +967,7 @@ impl Uia {
         &self,
         element: &Live,
         request: &Request<Node>,
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
         direction: QueryKind,
     ) -> windows::core::Result<Option<NodeSnapshot>> {
         let walker = self.raw_view_walker()?;
@@ -1068,7 +1068,7 @@ enum Taken {
 /// description only when the theme's gate fetched it.
 fn take_shaped_ancestor(
     parent: &Cached<Ancestor>,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     read_by_other_api: &dyn Fn(isize) -> bool,
     known: &dyn Fn(verbatim_model::NodeId) -> bool,
     chain: &mut Vec<NodeSnapshot>,
@@ -1094,7 +1094,7 @@ fn take_shaped_ancestor(
 /// element kept.
 fn take_ancestor_parts(
     parent: &AncestorParts,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     read_by_other_api: &dyn Fn(isize) -> bool,
     known: &dyn Fn(verbatim_model::NodeId) -> bool,
     chain: &mut Vec<NodeSnapshot>,

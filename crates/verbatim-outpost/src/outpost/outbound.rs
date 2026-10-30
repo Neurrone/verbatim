@@ -23,14 +23,15 @@
 //!   is therefore bounded by the nodes and kinds there are, by Core's
 //!   requests, and by the intake's own limits.
 //! - The messages that carry node ids are numbered as Core counts them, as
-//!   each is written, and the nodes and text anchors each may have reported
-//!   are recorded at its number then; one a message still waiting may
-//!   report has no number yet. So the worker releases only nodes and
-//!   anchors Core has seen ([`Outbound::release`]).
+//!   each is written, and the nodes and text anchors each names, which the
+//!   object store listed in its [`Recorded`], are recorded at its number
+//!   then; one a message still waiting carries has no number yet. So the
+//!   store releases only nodes and anchors Core has seen
+//!   ([`super::store::Store::release`]).
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 
@@ -38,6 +39,7 @@ use verbatim_model::NormalizedEvent;
 use verbatim_model::protocol::{Merge, OutpostToCore, Urgent, merge_into};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
+use super::store::Recorded;
 use crate::protocol::{now_us, put_message};
 
 /// Something a message may carry that the outpost keeps until Core has
@@ -59,8 +61,7 @@ pub(crate) enum Outgoing {
     /// A message that goes ahead of everything waiting: a pong, `Ready`,
     /// `TargetExited` or `SpareReady`, none of which carries a node.
     Urgent(Urgent),
-    /// An ordinary message, with the nodes issued or looked up and the
-    /// anchors minted or reported since the last one, which it may carry.
+    /// An ordinary message, with the nodes and anchors it names.
     Message(OutpostToCore, Vec<Carried>),
     /// Answered once every message sent before it is written, every write
     /// before it having completed. Nothing sent after it is merged into a
@@ -156,22 +157,25 @@ impl Pending {
         }
     }
 
-    /// Takes the nodes and anchors to release for a held list
-    /// acknowledging position `acknowledged`: those not held that were
-    /// reported at or before it, and that no message still waiting may
-    /// report. One reported later, or never reported, is kept, since Core
-    /// may not have seen it yet.
-    fn take_releasable(&mut self, held: &HashSet<Carried>, acknowledged: u64) -> HashSet<Carried> {
-        let released: HashSet<Carried> = self
-            .reported
-            .iter()
-            .filter(|&(number, report)| {
-                report.waiting == 0 && report.position <= acknowledged && !held.contains(number)
-            })
-            .map(|(&number, _)| number)
-            .collect();
-        self.reported.retain(|number, _| !released.contains(number));
-        released
+    /// When `carried` was carried: the position of the last message
+    /// written that carried it, and how many messages that carry it still
+    /// wait; `None` when no message carried it.
+    pub(super) fn report(&self, carried: Carried) -> Option<(u64, u32)> {
+        self.reported
+            .get(&carried)
+            .map(|report| (report.position, report.waiting))
+    }
+
+    /// Forgets what was recorded of each node and anchor `gone` answers,
+    /// which the store has released.
+    pub(super) fn forget(&mut self, gone: impl Fn(Carried) -> bool) {
+        self.reported.retain(|&carried, _| !gone(carried));
+    }
+
+    /// How many messages that carry node ids have been written: the
+    /// position of the last one, as Core counts them.
+    pub(super) fn position(&self) -> u64 {
+        self.position
     }
 
     /// The nodes a message still waiting to be written may carry.
@@ -280,16 +284,17 @@ impl Outbound {
         sent(&self.sender.send(Outgoing::Urgent(message)));
     }
 
-    /// Sends an ordinary message that reports no node, without waiting.
+    /// Sends a test's message, which names no node, without waiting.
+    #[cfg(test)]
     pub(crate) fn send(&self, message: OutpostToCore) {
-        self.publish(message, Vec::new());
+        sent(&self.sender.send(Outgoing::Message(message, Vec::new())));
     }
 
-    /// Sends an ordinary message without waiting, recording each of
-    /// `touched`, the nodes issued or looked up and the anchors minted or
-    /// reported since the last message, as reported by it.
-    pub(crate) fn publish(&self, message: OutpostToCore, touched: Vec<Carried>) {
-        sent(&self.sender.send(Outgoing::Message(message, touched)));
+    /// Sends an ordinary message without waiting, recording the nodes and
+    /// anchors it names as carried by it when it is written.
+    pub(crate) fn publish(&self, recorded: Recorded) {
+        let (message, carried) = recorded.into_parts();
+        sent(&self.sender.send(Outgoing::Message(message, carried)));
     }
 
     /// The nodes a message still waiting to be written may carry, which the
@@ -298,25 +303,12 @@ impl Outbound {
         self.sender.with_backlog(|pending| pending.waiting_nodes())
     }
 
-    /// Takes the nodes and anchors to release for Core's held list `held`,
-    /// which acknowledges position `acknowledged`, and runs `forget` on
-    /// them before any message sent afterwards can record them again.
-    /// `None` when there is nothing to release. Returns the position
-    /// reached too, for the log.
-    pub(crate) fn release<R>(
-        &self,
-        held: &HashSet<Carried>,
-        acknowledged: u64,
-        forget: impl FnOnce(&HashSet<Carried>) -> R,
-    ) -> (u64, Option<(HashSet<Carried>, R)>) {
-        self.sender.with_backlog(|pending| {
-            let released = pending.take_releasable(held, acknowledged);
-            if released.is_empty() {
-                return (pending.position, None);
-            }
-            let forgotten = forget(&released);
-            (pending.position, Some((released, forgotten)))
-        })
+    /// Runs `read` on the queue's record of what was carried, under the
+    /// backlog's lock, so no message is queued or numbered meanwhile: the
+    /// store's release, which takes its own lock inside
+    /// ([`super::store::Store::release`]).
+    pub(super) fn with_pending<R>(&self, read: impl FnOnce(&mut Pending) -> R) -> R {
+        self.sender.with_backlog(read)
     }
 
     /// Takes nothing more, writes what waits, and then closes the pipe, for
@@ -475,14 +467,6 @@ mod tests {
             .map(|&number| Carried::Node(number))
             .collect();
         assert!(pending.push(Outgoing::Message(message, touched)).is_ok());
-    }
-
-    /// The nodes `numbers`.
-    fn nodes(numbers: &[u64]) -> HashSet<Carried> {
-        numbers
-            .iter()
-            .map(|&number| Carried::Node(number))
-            .collect()
     }
 
     /// Writes what waits, as the sender does: each item taken and encoded
@@ -677,64 +661,27 @@ mod tests {
         // A message without node ids takes no position.
         push(&mut pending, reply(4), &[4]);
         assert_eq!(write(&mut pending).len(), 3);
-        assert_eq!(pending.position, 2, "Core counts two messages");
+        assert_eq!(pending.position(), 2, "Core counts two messages");
+        let reports: Vec<Option<(u64, u32)>> = [1, 2, 3, 4, 5]
+            .map(|number| pending.report(Carried::Node(number)))
+            .to_vec();
         assert_eq!(
-            pending.take_releasable(&nodes(&[]), 1),
-            nodes(&[2]),
-            "only the nodes of the first message written"
+            reports,
+            vec![Some((2, 0)), Some((1, 0)), Some((2, 0)), Some((2, 0)), None]
         );
-        assert_eq!(
-            pending.take_releasable(&nodes(&[3]), 2),
-            nodes(&[1, 4]),
-            "the second's, and the reply's, but not a node Core holds"
-        );
-        assert_eq!(pending.take_releasable(&nodes(&[]), 2), nodes(&[3]));
     }
 
     #[test]
-    fn a_node_a_waiting_message_may_report_is_kept_though_core_saw_it_earlier() {
+    fn a_node_a_waiting_message_carries_is_counted_as_waiting_until_written() {
         let mut pending = pending();
         push(&mut pending, text_changed(1), &[1]);
         assert_eq!(write(&mut pending).len(), 1);
         push(&mut pending, text_changed(2), &[1]);
-        assert!(
-            pending.take_releasable(&nodes(&[]), 1).is_empty(),
-            "the second message, not yet written, may report node 1 again"
-        );
+        assert_eq!(pending.report(Carried::Node(1)), Some((1, 1)));
         assert_eq!(write(&mut pending).len(), 1);
-        assert!(pending.take_releasable(&nodes(&[]), 1).is_empty());
-        assert_eq!(pending.take_releasable(&nodes(&[]), 2), nodes(&[1]));
-    }
-
-    /// A text anchor is released as a node is: kept while Core's list
-    /// holds it or acknowledges a position before the last message that
-    /// carried it, and released once a list past that message omits it.
-    #[test]
-    fn an_anchor_is_kept_until_an_acknowledgement_past_its_carrier_omits_it() {
-        let mut pending = pending();
-        assert!(
-            pending
-                .push(Outgoing::Message(text_changed(1), vec![Carried::Anchor(5)]))
-                .is_ok()
-        );
-        assert!(
-            pending.take_releasable(&nodes(&[]), 0).is_empty(),
-            "not yet written"
-        );
-        assert_eq!(write(&mut pending).len(), 1);
-        assert!(
-            pending.take_releasable(&nodes(&[]), 0).is_empty(),
-            "acknowledged before its carrier"
-        );
-        let held = HashSet::from([Carried::Anchor(5)]);
-        assert!(
-            pending.take_releasable(&held, 1).is_empty(),
-            "Core holds it"
-        );
-        assert_eq!(
-            pending.take_releasable(&nodes(&[]), 1),
-            HashSet::from([Carried::Anchor(5)])
-        );
+        assert_eq!(pending.report(Carried::Node(1)), Some((2, 0)));
+        pending.forget(|carried| carried == Carried::Node(1));
+        assert_eq!(pending.report(Carried::Node(1)), None);
     }
 
     /// The nodes a message still waiting may carry are those the outpost

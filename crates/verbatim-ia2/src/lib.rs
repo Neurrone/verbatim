@@ -58,4 +58,6 @@ pub use hook::{
     APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker, SyncMarkerCallback, WinEvent,
     WinEventCallback, WinEventHook, WinEventKind, WindowCache, event_clock, suspend_kinds,
 };
-pub use registry::{MsaaKey, NodeIdRegistry, Released};
+pub use registry::{
+    Facts, Found, Held, Interning, Kept, KeptObject, MsaaKey, NodeIdRegistry, Released,
+};

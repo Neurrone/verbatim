@@ -355,7 +355,7 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     for _ in 0..100 {
         report(&mut source, &mut anchors);
     }
-    anchors.forget_anchors(&std::collections::HashSet::from([first.0]));
+    drop(anchors.forget_anchors(&std::collections::HashSet::from([first.0])));
     let read = |anchors: &mut Anchors<usize>, source: &mut Fake, anchor| {
         perform(
             source,

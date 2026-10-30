@@ -656,20 +656,24 @@ live element behind each as an `Agile<Kept>` (decision 2 of
 the UIA and MSAA registries in one outpost never hand out the same id.
 `id_for(runtime_id)` and `id_for_element(runtime_id, element)` mint or
 look up a node, the second keeping a `Cached<Kept>`, which a keeper of
-any shape covering `Kept` makes with `narrow`; `existing_id`, `ids`, and
-`runtime_id_of` look up; `element_of(node)` gives the `Agile<Kept>`
-back, which a reader refreshes into a declared shape when it needs more;
-`evict_element` forgets a node's element. Nodes stay until the outpost
+any shape covering `Kept` makes with `narrow`, its agile reference made
+before the lock; `keep(runtime_id, agile)` does the same from an agile
+reference made already, returning the element it replaced; `existing_id`,
+`holds`, `ids`, and `runtime_id_of` look up; `element_of(node)` gives the
+`Agile<Kept>` back, which a reader refreshes into a declared shape when
+it needs more; `evict_element` takes a node's element out, returning it.
+The walks (`Uia::ancestors`, `ancestors_from`, `selected_node`,
+`neighbor`, the shapes' `snapshot`, and `verbatim-uia-rops`'s tree dump)
+take an `Interning` (`&dyn Interning`: `id_for`, `id_for_element`) rather
+than the registry, which the outpost's object store implements to tag
+each node issued or looked up with the request that named it, and the
+registry implements untagged. Nodes stay until the outpost
 releases them with `retain`, which returns them as `Released`, to be
 dropped once no lock is held, since releasing an element can call into
 its process. They are not dropped when their window is destroyed, since a
 runtime id has no documented structure naming its window, so a node Core
 still holds after its window closed is the node for any new element
-given the same runtime id; NVDA has the same exposure. `take_touched`
-reports the nodes issued or looked up since the last call, `existing_id`
-lookups included, and `touch_kept(node)` records a kept node a message
-names without a lookup, such as an entry spliced from an earlier chain,
-so the outpost records every node a message carries. A runtime id is
+given the same runtime id; NVDA has the same exposure. A runtime id is
 unique only among live elements (File Explorer gives a dead element's id
 to a new one); the node keeps its id, and `evict_element_if` takes the
 kept element out, only if it is still the one kept, compared by agile

@@ -42,7 +42,8 @@ use verbatim_model::{
     TextReply, TraceId, WindowFacts,
 };
 use verbatim_uia::{
-    Cached, Fill, HelpTextRefresh, Kept, SelectedItem, SuggestionsRefresh, nearest_window_handle,
+    Cached, Fill, HelpTextRefresh, Interning as _, Kept, SelectedItem, SuggestionsRefresh,
+    nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
@@ -71,6 +72,7 @@ use super::held;
 use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of};
 use super::outbound::Carried;
 use super::read::{self, Client, ReadError};
+use super::store::Tag;
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
     MOVED_ON_GRACE, alt_is_held, console_client, event_window_unreadable, foreground_window_handle,
@@ -122,6 +124,12 @@ pub(super) struct WatchState {
     arms: u64,
     /// The number of the walk of the entry in hand published at its bound.
     bound_published: Option<u64>,
+    /// The mint tag of the entry in hand, the request the store tags what
+    /// it issues or looks up with ([`super::store`]), until the entry ends.
+    request: Option<Tag>,
+    /// Whether the entry in hand's request was claimed by its walk's
+    /// publication at its bound: nothing it reads afterwards is kept.
+    claimed: bool,
     /// What the outpost follows, changed only in a commit.
     pub(super) follow: FollowState,
 }
@@ -136,6 +144,7 @@ impl WatchState {
         self.deadline = None;
         self.started = None;
         self.end_walk();
+        self.request = None;
         if self
             .follow
             .owed
@@ -145,6 +154,16 @@ impl WatchState {
             self.follow.owed = None;
         }
         self.running.take()
+    }
+
+    /// The tags of the requests still live: the entry in hand's, unless its
+    /// walk's publication claimed it. Every other request of this outpost
+    /// has ended, or is an abandoned generation's.
+    pub(super) fn live_tags(&self) -> Vec<Tag> {
+        self.request
+            .filter(|tag| !self.claimed && tag.generation == self.generation)
+            .into_iter()
+            .collect()
     }
 
     /// The entry in hand has ended: no walk of it is watched.
@@ -203,6 +222,19 @@ impl Watch {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The watch lock, held, when the program the calling thread runs is
+    /// still live ([`WatchState::live_tags`]): what it read may then be put
+    /// in the store while the lock is held, so no abandonment or claim
+    /// falls between the judgement and the write; `None` otherwise, when
+    /// what it read is not kept.
+    pub(super) fn hold_if_live(&self) -> Option<std::sync::MutexGuard<'_, WatchState>> {
+        let state = self.lock();
+        state
+            .live_tags()
+            .contains(&super::store::current())
+            .then_some(state)
+    }
+
     /// Reads the follow state with `read`, under the watch lock: never
     /// called with the watch lock held, nor with any lock a commit takes
     /// after it (`super::commit`).
@@ -214,14 +246,12 @@ impl Watch {
     /// check: only for the outpost's shutdown, once no worker runs.
     pub(super) fn reset_follow(&self) {
         let mut state = self.lock();
-        let terminals = std::mem::take(&mut state.follow.terminals);
         let leftover = std::mem::take(&mut state.follow.leftover);
         let followed = state.follow.followed_element.take();
         let kept = std::mem::take(&mut state.follow.kept_groups);
         state.follow.caret_watch = None;
         drop(state);
         // Outside the lock: they may hold an application's objects.
-        drop(terminals);
         drop(leftover);
         drop(followed);
         drop(kept);
@@ -261,6 +291,10 @@ impl Watch {
         state.started = Some((now, window));
         state.running = running;
         state.end_walk();
+        // The program the worker runs for the entry, which it entered
+        // before starting it.
+        state.request = Some(super::store::current());
+        state.claimed = false;
         alarm.set(next_check(now, now + deadline, now, window));
     }
 
@@ -442,7 +476,14 @@ impl Watch {
         let walk = state
             .walk
             .take_if(|walk| walk.generation == generation && walk.armed == armed)?;
+        // The plain windows the publication completes the chain with are
+        // the walk's request's, which the publication claims.
+        let program = context
+            .store
+            .enter(state.request.unwrap_or(super::store::Tag::NONE));
         let effects = publication(context, &walk);
+        drop(program);
+        state.claimed = true;
         let (_, displaced) = Self::commit_locked(state, context, effects);
         state.bound_published = Some(walk.armed);
         if let Some(wake) = state.next_wake(Instant::now()) {
@@ -460,6 +501,7 @@ impl Watch {
             state.deadline = None;
             state.started = None;
             state.end_walk();
+            state.request = None;
             self.alarm.cancel();
             Ok(state.running.take())
         } else {
@@ -512,9 +554,9 @@ fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> held:
 /// or its MSAA event address, as the intake records the focus.
 fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
     match node.backend {
-        Backend::Uia => context.uia_registry.runtime_id_of(node.id).map(Object::Uia),
+        Backend::Uia => context.store.runtime_id_of(node.id).map(Object::Uia),
         Backend::Msaa => context
-            .msaa_registry
+            .store
             .key_of(node.id)
             .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child)),
     }
@@ -527,24 +569,6 @@ fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
 /// 104 to 106); the fact forwarded carries the window alone.
 fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
     (hwnd, OBJID_CLIENT.0, CHILDID_SELF)
-}
-
-/// The nodes issued or looked up, and the text anchors minted or
-/// reported, since the last take.
-pub(super) fn take_touched(context: &Context) -> Vec<Carried> {
-    context
-        .uia_registry
-        .take_touched()
-        .into_iter()
-        .chain(context.msaa_registry.take_touched())
-        .map(|node| Carried::Node(node.number()))
-        .chain(
-            context
-                .take_touched_anchors()
-                .into_iter()
-                .map(Carried::Anchor),
-        )
-        .collect()
 }
 
 /// The cross-process calls this thread has made through either backend
@@ -696,7 +720,7 @@ fn watchdog(context: &Arc<Context>) {
             "the worker is abandoned and replaced"
         );
         if let Some((request_id, trace_id)) = running {
-            context.outbound.send(OutpostToCore::Reply {
+            context.send(OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Abandoned,
@@ -880,7 +904,7 @@ pub(super) fn answer_idle(context: &Context) {
     let answered = context.idle_query().take();
     if let Some(round) = answered {
         tracing::debug!(round, "the idle barrier's query is answered");
-        context.outbound.send(OutpostToCore::IdleAnswer { round });
+        context.send(OutpostToCore::IdleAnswer { round });
     }
 }
 
@@ -901,6 +925,9 @@ fn run_entry(
         ..entry.timing
     };
     let (deadline, running) = budget(&entry);
+    // The entry is one request of this generation, whose tag the store
+    // gives what it issues or looks up.
+    let program = context.store.enter(context.store.next_tag(generation));
     context
         .watch
         .start(deadline, running, window_of(&entry.item));
@@ -957,7 +984,7 @@ fn run_entry(
             if handled.is_err() {
                 tracing::error!(request_id, "the worker failed handling a query");
             }
-            context.outbound.send(OutpostToCore::Reply {
+            context.send(OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
@@ -970,6 +997,7 @@ fn run_entry(
             }
         }
     }
+    drop(program);
     Ok(reported)
 }
 
@@ -978,6 +1006,7 @@ fn run_entry(
 /// was not attempting it ([`Worker::attempt_owed`]). `Err` when this
 /// worker was abandoned meanwhile and must exit.
 fn owed_first(context: &Context, client: &mut Client, generation: u64) -> Result<(), ()> {
+    let _program = context.store.enter(context.store.next_tag(generation));
     let handled = catch_unwind(AssertUnwindSafe(|| {
         Worker::new(context, client, generation, 0, EventTiming::default()).attempt_owed();
     }));
@@ -1510,7 +1539,7 @@ impl Worker<'_> {
             .context
             .watch
             .follow(|follow| follow.caret_watch.as_ref().map(|open| open.node_id))?;
-        (self.context.msaa_registry.key_of(node_id) == Some((hwnd, OBJID_CLIENT.0, CHILDID_SELF)))
+        (self.context.store.key_of(node_id) == Some((hwnd, OBJID_CLIENT.0, CHILDID_SELF)))
             .then_some(node_id)
     }
 
@@ -1761,9 +1790,9 @@ impl Worker<'_> {
 
     /// Whether `node_id` is the focus this outpost last reported.
     fn is_focus(&self, node_id: NodeId) -> bool {
-        let object = if let Some(runtime_id) = self.context.uia_registry.runtime_id_of(node_id) {
+        let object = if let Some(runtime_id) = self.context.store.runtime_id_of(node_id) {
             Object::Uia(runtime_id)
-        } else if let Some((hwnd, object, child)) = self.context.msaa_registry.key_of(node_id) {
+        } else if let Some((hwnd, object, child)) = self.context.store.key_of(node_id) {
             Object::Msaa(hwnd, object, child)
         } else {
             return false;
@@ -1826,7 +1855,7 @@ impl Worker<'_> {
                 return;
             }
         };
-        let backend = if self.context.uia_registry.runtime_id_of(node_id).is_some() {
+        let backend = if self.context.store.runtime_id_of(node_id).is_some() {
             Backend::Uia
         } else {
             Backend::Msaa
@@ -1847,12 +1876,7 @@ impl Worker<'_> {
     /// that nobody reads until Core asks, and the caret moves with it.
     fn held_with_changes(&self, node_id: NodeId) -> bool {
         self.focused_terminal(node_id)
-            && self.context.watch.follow(|follow| {
-                follow
-                    .terminals
-                    .get(&node_id.number())
-                    .is_some_and(|terminal| terminal.reading == Reading::Held { changed: true })
-            })
+            && self.context.store.terminal_reading(node_id) == Some(Reading::Held { changed: true })
     }
 
     /// After a console update of the focused console terminal `node_id`
@@ -1978,11 +2002,8 @@ impl Worker<'_> {
     /// (`docs/design/ownership-one-judge.md`, "Readers that decide what to
     /// read").
     fn focused_terminal(&self, node_id: NodeId) -> bool {
-        self.context.uia_registry.runtime_id_of(node_id).is_some()
-            && self
-                .context
-                .watch
-                .follow(|follow| follow.terminals.contains_key(&node_id.number()))
+        self.context.store.runtime_id_of(node_id).is_some()
+            && self.context.store.has_terminal(node_id)
     }
 
     /// Takes a focused terminal's on-demand reading through `event`
@@ -2043,21 +2064,13 @@ impl Worker<'_> {
     /// A copy of terminal `node_id`'s entry, as committed, for a read to
     /// work on; a new terminal's when it has none.
     fn terminal_copy(&self, node_id: NodeId) -> crate::terminal::Terminal {
-        self.context.watch.follow(|follow| {
-            follow
-                .terminals
-                .get(&node_id.number())
-                .cloned()
-                .unwrap_or_default()
-        })
+        self.context.store.terminal(node_id).unwrap_or_default()
     }
 
     /// A copy of terminal `node_id`'s entry, as committed, when it has one,
     /// for a read of its history or a search, made with no lock held.
     fn terminal_seen(&self, node_id: NodeId) -> Option<crate::terminal::Terminal> {
-        self.context
-            .watch
-            .follow(|follow| follow.terminals.get(&node_id.number()).cloned())
+        self.context.store.terminal(node_id)
     }
 
     /// Reads the focused terminal `node_id` into `terminal`, a copy of its
@@ -2238,13 +2251,8 @@ impl Worker<'_> {
     /// as a console update both). An `observed_at_us` of 0 is covered by
     /// nothing.
     fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
-        let covered = observed_at_us != 0
-            && self.context.watch.follow(|follow| {
-                follow
-                    .terminals
-                    .get(&node_id.number())
-                    .is_some_and(|terminal| terminal.covers(observed_at_us))
-            });
+        let covered =
+            observed_at_us != 0 && self.context.store.terminal_covers(node_id, observed_at_us);
         if covered {
             return;
         }
@@ -2399,13 +2407,14 @@ impl Worker<'_> {
         // The listener's read keeps no ancestor's element: the slider is
         // found by its path, one connection call and one remote operation,
         // and kept under the node its runtime id names, the parent's.
-        let runtime_id = self.context.uia_registry.runtime_id_of(parent)?;
+        let runtime_id = self.context.store.runtime_id_of(parent)?;
         let found = self.element_by_focus_path(&runtime_id)?;
         let kept = self
             .context
-            .uia_registry
+            .store
+            .nodes()
             .id_for_element(&runtime_id, &found);
-        let slider = self.context.uia_registry.element_of(kept)?;
+        let slider = self.context.store.element_of(kept)?;
         let (mut target, _) = target_for(self.context, (node_id, role), chain, false);
         target.wanted = target
             .wanted
@@ -2414,10 +2423,9 @@ impl Worker<'_> {
         Some((node_id, target))
     }
 
-    /// Releases every node and text anchor Core does not hold, of `held`,
-    /// that was reported at or before the position Core acknowledged. One
-    /// reported later, or never reported, is kept, since Core may not have
-    /// seen it yet.
+    /// Releases every node and text anchor no live request can still name
+    /// (`super::store`, the release rule), for Core's held lists `held`,
+    /// which acknowledge position `acknowledged`.
     fn release(&self, (nodes, anchors): (&[u64], &[u64]), acknowledged: u64) {
         let held: HashSet<Carried> = nodes
             .iter()
@@ -2425,72 +2433,52 @@ impl Worker<'_> {
             .chain(anchors.iter().map(|&number| Carried::Anchor(number)))
             .collect();
         // The one change of follow state made outside `Watch::commit`
-        // (`super::commit`), with the same in-charge check: it must take the
-        // queue's lock and the registries' inside it, which no commit does.
-        // Only the worker in charge releases, and the nodes leave both
-        // registries, and their terminals the follow state, under the
-        // watch lock and the queue's, so a worker that replaces this one,
-        // should it be abandoned while the objects are dropped, can never
-        // report a node that is about to vanish, and no message queued
-        // meanwhile can record one.
-        let (objects, released, (terminals, ungrouped)) = {
+        // (`super::commit`), with the same in-charge check: the store's
+        // release takes the queue's lock and its own inside it, which no
+        // commit does. Only the worker in charge releases, and the nodes
+        // leave the store, and their reports and groups the follow state,
+        // under the watch lock, so a worker that replaces this one, should
+        // it be abandoned while the objects are dropped, can never report a
+        // node that is about to vanish, and no message queued meanwhile can
+        // record one.
+        let (released, ungrouped) = {
             let mut state = self.context.watch.lock();
             if state.generation != self.generation {
                 self.refused.set(true);
                 return;
             }
+            let live = state.live_tags();
             let (position, released) =
                 self.context
-                    .outbound
-                    .release(&held, acknowledged, |released| {
-                        let keep = |id: NodeId| !released.contains(&Carried::Node(id.number()));
-                        (
-                            self.context.uia_registry.retain(keep),
-                            self.context.msaa_registry.retain(keep),
-                        )
-                    });
-            let Some((released, objects)) = released else {
+                    .store
+                    .release(&self.context.outbound, &held, acknowledged, &live);
+            let Some(released) = released else {
                 drop(state);
                 tracing::debug!(?held, acknowledged, position, "nothing to release");
                 return;
             };
-            let (mut nodes, mut anchors) = (HashSet::new(), HashSet::new());
-            for carried in released {
-                match carried {
-                    Carried::Node(number) => nodes.insert(number),
-                    Carried::Anchor(number) => anchors.insert(number),
-                };
-            }
-            let terminals: Vec<crate::terminal::Terminal> = nodes
-                .iter()
-                .filter_map(|node| state.follow.terminals.remove(node))
-                .collect();
             // The reports whose focus node is released are no longer read
             // for, and their elements lose their focus-following groups,
-            // under the same locks as their nodes leave the store.
-            self.context.held().release(&nodes);
+            // under the same lock as their nodes leave the store.
+            self.context.held().release(&released.nodes);
             let mut ungrouped = Displaced::default();
             state
                 .follow
-                .release_groups(self.context, &nodes, &mut ungrouped);
+                .release_groups(self.context, &released.nodes, &mut ungrouped);
             drop(state);
             tracing::debug!(
                 ?held,
                 acknowledged,
                 position,
-                ?nodes,
-                ?anchors,
-                "releasing the nodes and anchors Core no longer holds"
+                nodes = ?released.nodes,
+                anchors = ?released.anchors,
+                "releasing the nodes and anchors no live request can name"
             );
-            (objects, (nodes, anchors), (terminals, ungrouped))
+            (released, ungrouped)
         };
-        let (nodes, anchors) = released;
-        text_reads::forget_anchors(self.context, &anchors);
-        text_reads::forget(self.context, nodes);
-        // Outside the lock: releasing an object can call into the
+        // Outside the locks: releasing an object can call into the
         // application.
-        drop(objects);
-        drop(terminals);
+        drop(released.objects);
         drop(ungrouped);
     }
 
@@ -2844,8 +2832,10 @@ impl Worker<'_> {
                 self.context.arbitrator().forget(hwnd);
                 self.context.intake.gap_window_destroyed(hwnd);
                 self.context.forget_window(hwnd);
-                // A reused window handle must never inherit these nodes.
-                self.context.msaa_registry.forget_window(hwnd);
+                // A reused window handle must never inherit these nodes;
+                // their objects are released once the store's lock is let
+                // go.
+                drop(self.context.store.forget_window(hwnd));
             }
             return;
         }
@@ -2886,7 +2876,7 @@ impl Worker<'_> {
         else {
             return;
         };
-        let registry = &self.context.msaa_registry;
+        let registry = &self.context.store.nodes();
         if kind == WinEventKind::Selection {
             self.msaa_selection(object, hwnd, (trace, observed_at_us));
             return;
@@ -2965,7 +2955,7 @@ impl Worker<'_> {
         if self.context.intake.system_caret_unused() {
             return;
         }
-        if let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) {
+        if let Some(node_id) = self.context.store.nodes().existing(runtime_id) {
             self.caret_event(node_id, trace, observed_at_us);
         }
     }
@@ -2986,7 +2976,7 @@ impl Worker<'_> {
         hwnd: isize,
         (trace, observed_at_us): (TraceId, u64),
     ) {
-        let registry = &self.context.msaa_registry;
+        let registry = &self.context.store.nodes();
         // A tree view item selected on its way to the focus, from one of
         // its children, is one of the focus's logical ancestors only: NVDA,
         // whose ancestors are reached through `accParent`, sees it as
@@ -3048,10 +3038,7 @@ impl Worker<'_> {
         match kind {
             WinEventKind::Caret | WinEventKind::TextSelectionChange => {
                 if of_focus {
-                    let node_id =
-                        self.context
-                            .msaa_registry
-                            .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                    let node_id = self.context.store.nodes().client(hwnd);
                     if !self.check_open_watch(node_id, true) {
                         self.caret_of(node_id, trace, observed_at_us);
                     }
@@ -3071,10 +3058,7 @@ impl Worker<'_> {
                     )
                     .is_some() =>
             {
-                let node_id =
-                    self.context
-                        .msaa_registry
-                        .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                let node_id = self.context.store.nodes().client(hwnd);
                 text_reads::note_value_change(self.context, node_id);
                 self.check_open_watch(node_id, false);
                 self.emit(
@@ -3122,7 +3106,7 @@ impl Worker<'_> {
         focus: Option<(NodeId, Role)>,
         (hwnd, trace, observed_at_us): (isize, TraceId, u64),
     ) {
-        let registry = &self.context.msaa_registry;
+        let registry = &self.context.store.nodes();
         let progress_bar = match focus {
             Some((_, role)) => role == Role::ProgressBar,
             None => object.role() == Role::ProgressBar,
@@ -3225,7 +3209,7 @@ impl Worker<'_> {
         if candidates.is_empty() {
             return None;
         }
-        let node = object.which_of(&candidates, &self.context.msaa_registry)?;
+        let node = object.which_of(&candidates, &self.context.store.nodes())?;
         // A carried node no report's line has is read for its role.
         let role = self.known_role(node).unwrap_or_else(|| object.role());
         Some((node, role))
@@ -3238,7 +3222,7 @@ impl Worker<'_> {
     /// simple child of its window's object is a logical one.
     fn is_logical_ancestor(&self, node: NodeId) -> bool {
         self.context
-            .msaa_registry
+            .store
             .key_of(node)
             .is_some_and(|(_, _, child)| child != CHILDID_SELF)
     }
@@ -3263,7 +3247,7 @@ impl Worker<'_> {
     fn is_foreground_window(&self, node: NodeId, foreground: Option<isize>) -> bool {
         foreground.is_some_and(|foreground| {
             self.context
-                .msaa_registry
+                .store
                 .key_of(node)
                 .is_some_and(|(hwnd, id_object, child)| {
                     hwnd == foreground
@@ -3359,10 +3343,7 @@ impl Worker<'_> {
         // no comparison, and read for that node, which Core targets.
         match event.kind {
             UiaKind::TextSelection => {
-                if let Some(node_id) = self
-                    .context
-                    .uia_registry
-                    .existing_id(&event.parts.runtime_id)
+                if let Some(node_id) = self.context.store.nodes().existing(&event.parts.runtime_id)
                 {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
                     if self.is_focus(node_id) {
@@ -3424,7 +3405,7 @@ impl Worker<'_> {
         hwnd: Option<isize>,
         (trace, observed_at_us): (TraceId, u64),
     ) {
-        let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) else {
+        let Some(node_id) = self.context.store.nodes().existing(runtime_id) else {
             return;
         };
         text_reads::text_event_from(self.context, node_id, element);
@@ -3453,7 +3434,7 @@ impl Worker<'_> {
         (runtime_id, range, hwnd): (&[i32], Option<super::intake::ActiveRange>, Option<isize>),
         (trace, observed_at_us): (TraceId, u64),
     ) {
-        let node_id = self.context.uia_registry.existing_id(runtime_id);
+        let node_id = self.context.store.nodes().existing(runtime_id);
         let (Some(node_id), Some(range)) = (node_id, range) else {
             return;
         };
@@ -3500,10 +3481,12 @@ impl Worker<'_> {
     ) -> Option<NormalizedEvent> {
         let focus_id = focus_id.to_vec();
         let current_instead = runtime_id != focus_id.as_slice();
-        let registry = &self.context.uia_registry;
-        let known = registry
-            .existing_id(&focus_id)
-            .and_then(|id| registry.element_of(id))
+        let known = self
+            .context
+            .store
+            .nodes()
+            .existing(&focus_id)
+            .and_then(|id| self.context.store.element_of(id))
             .and_then(|agile| agile.resolve().ok());
         let focused: Cached<Kept> = match known {
             Some(element) => element,
@@ -3557,7 +3540,7 @@ impl Worker<'_> {
                 "a selection in none of the elements the focus controls; the first one's current selection is reported"
             );
         }
-        let registry = &self.context.uia_registry;
+        let registry = &self.context.store.nodes();
         // The controller's runtime id is UIA's own, kept with the element,
         // whatever its cache holds.
         let controller = focused.runtime_id();
@@ -3588,8 +3571,9 @@ impl Worker<'_> {
             .watch
             .follow(|follow| follow.tracking.value_from_selection)?;
         let focus = self.context.held().is_a_focus(marked).then_some(marked)?;
-        let registry = &self.context.uia_registry;
-        let focused = registry
+        let focused = self
+            .context
+            .store
             .element_of(focus)
             .and_then(|agile| agile.resolve().ok())?;
         let uia = self.client.uia()?;
@@ -3628,7 +3612,7 @@ impl Worker<'_> {
             .collect();
         let mut focuses: Vec<Vec<i32>> = Vec::new();
         for node in nodes {
-            if let Some(runtime_id) = self.context.uia_registry.runtime_id_of(node)
+            if let Some(runtime_id) = self.context.store.runtime_id_of(node)
                 && !focuses.contains(&runtime_id)
             {
                 focuses.push(runtime_id);
@@ -3644,10 +3628,10 @@ impl Worker<'_> {
         parts: &UiaSnapshotFact,
         element: Option<&Cached<Kept>>,
     ) -> NodeSnapshot {
-        let registry = &context.uia_registry;
+        let registry = &context.store.nodes();
         let id = match element {
             Some(element) => registry.id_for_element(&parts.runtime_id, element),
-            None => registry.id_for(&parts.runtime_id),
+            None => verbatim_uia::Interning::id_for(registry, &parts.runtime_id),
         };
         NodeSnapshot {
             id,
@@ -3760,7 +3744,7 @@ impl Worker<'_> {
         if object.role() != Role::HelpBalloon {
             return;
         }
-        let node = object.read(&self.context.msaa_registry, Purpose::Announce);
+        let node = object.read(&self.context.store.nodes(), Purpose::Announce);
         self.emit(
             trace,
             observed_at_us,
@@ -3797,7 +3781,7 @@ impl Worker<'_> {
             hwnd,
             id_object,
             id_child,
-            &self.context.msaa_registry,
+            &self.context.store.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         ) else {
             return;
@@ -4019,7 +4003,7 @@ impl Worker<'_> {
         // NVDA's equality (`docs/design/focus-pipeline-rework.md`, "MSAA
         // object equality").
         let candidates = read::msaa_candidates(self.context);
-        let node = candidate.read(&self.context.msaa_registry, Some(&candidates));
+        let node = candidate.read(&self.context.store.nodes(), Some(&candidates));
         self.report_msaa_focus(
             node,
             ((hwnd, id_object, id_child), resolved_child > 0),
@@ -4046,7 +4030,7 @@ impl Worker<'_> {
         let previous = self.focus_chain();
         let object = self
             .context
-            .msaa_registry
+            .store
             .key_of(node.id)
             .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child));
         let redirected = object
@@ -4216,7 +4200,7 @@ impl Worker<'_> {
         // own rule then drops (section 16.3); otherwise this is the focus
         // coming back to the element after one in another application.
         let found = read.same_as_last == Some(EarlierElement::Focused)
-            && context.uia_registry.element_of(node.id).is_some();
+            && context.store.element_of(node.id).is_some();
         // A focus that may have text needs its own element before it is
         // reported, since its caret is read with it; any other's is found
         // after, off the way to speech.
@@ -4280,25 +4264,27 @@ impl Worker<'_> {
         // one identity"): on the listener's evidence that the element it
         // stood for lost the focus or is gone, the element kept for it is
         // evicted by the report's commit, if still kept then; for one gone,
-        // its text caches are dropped now, a cache's write, so the focus's
-        // caret read fetches the new element's pattern, and its terminal
-        // entry goes in the commit.
+        // its text is dropped from the store now, while this request is
+        // live, so the focus's caret read fetches the new element's
+        // pattern, and its terminal entry goes in the commit.
         self.earlier = read.same_as_last;
         if let Some(earlier @ (EarlierElement::NotFocused | EarlierElement::Gone)) =
             read.same_as_last
-            && let Some(node) = self.context.uia_registry.existing_id(runtime_id)
+            && let Some(node) = self.context.store.nodes().existing(runtime_id)
         {
             let gone = earlier == EarlierElement::Gone;
             tracing::debug!(
                 gone,
                 "UIA focus: its runtime id named an element that lost the focus or is gone; the node's element is evicted"
             );
-            if gone {
-                text_reads::forget(self.context, [node.number()]);
+            if gone && let Some(live) = self.context.watch.hold_if_live() {
+                let removed = self.context.store.forget_text(node);
+                drop(live);
+                drop(removed);
             }
             self.stale = Some(Stale {
                 node,
-                element: self.context.uia_registry.element_of(node),
+                element: self.context.store.element_of(node),
                 gone,
             });
         }
@@ -4333,7 +4319,8 @@ impl Worker<'_> {
         };
         Some(
             self.context
-                .uia_registry
+                .store
+                .nodes()
                 .id_for_element(runtime_id, &element),
         )
     }
@@ -4463,7 +4450,7 @@ impl Worker<'_> {
             hwnd,
             id_object,
             id_child,
-            &self.context.msaa_registry,
+            &self.context.store.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         ) else {
             return;
@@ -5013,11 +5000,11 @@ fn target_for(
     } else {
         verbatim_uia::Group::Extended
     };
-    let element = context.uia_registry.element_of(node_id);
+    let element = context.store.element_of(node_id);
     let parent = sensitive_slider_of(node_id, chain);
     let slider = parent.and_then(|parent| {
         context
-            .uia_registry
+            .store
             .element_of(parent)
             .map(|element| (parent, element))
     });
@@ -5281,49 +5268,6 @@ mod tests {
         };
         let replaced = answer_to_judge(Some(&before), other);
         assert_eq!((replaced.event, replaced.simple_child), (None, false));
-    }
-
-    /// The idle barrier's answer never waits on a lock a text read holds
-    /// across its calls into the application, the anchors': a worker
-    /// abandoned in such a read keeps the lock, and the worker that
-    /// replaced it, waiting on that lock with no deadline, would never be
-    /// abandoned in turn. The answer takes the watch lock alone, which no
-    /// read holds across a call. The test holds the anchors' lock as that
-    /// read does.
-    #[test]
-    fn the_idle_answer_does_not_wait_on_a_text_reads_lock() {
-        use std::io::BufReader;
-        use std::sync::mpsc;
-
-        use verbatim_process::overlapped::{End, Flow, pipe};
-        use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
-
-        use crate::protocol::read_message;
-        use verbatim_model::protocol::CoreToOutpost;
-
-        let (ours, theirs) =
-            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
-        let outpost = super::super::Outpost::new(theirs, std::process::id());
-        let (messages_tx, messages) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(BlockingReader::new(ours).expect("a reader"));
-            while let Ok(Some(message)) = read_message::<_, OutpostToCore>(&mut reader) {
-                if messages_tx.send(message).is_err() {
-                    return;
-                }
-            }
-        });
-        let wait = Duration::from_secs(10);
-        assert!(matches!(
-            messages.recv_timeout(wait),
-            Ok(OutpostToCore::Ready { .. })
-        ));
-        let read_in_progress = outpost.context.uia_anchors();
-        outpost.handle_command(&CoreToOutpost::IdleQuery { round: 4 });
-        let answer = messages.recv_timeout(wait);
-        drop(read_in_progress);
-        assert_eq!(answer.ok(), Some(OutpostToCore::IdleAnswer { round: 4 }));
-        outpost.shutdown();
     }
 
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -5840,13 +5784,7 @@ mod tests {
         let context = &quiet_context();
         let terminal = NodeId::new(3);
         context.watch.start(HANDLING_DEADLINE, None, 0);
-        let mut copy = context.watch.follow(|follow| {
-            follow
-                .terminals
-                .get(&terminal.number())
-                .cloned()
-                .unwrap_or_default()
-        });
+        let mut copy = context.store.terminal(terminal).unwrap_or_default();
         copy.reading = Reading::Held { changed: true };
         let _ = context.watch.lock().abandon();
         let (committed, _) = context.watch.commit(
@@ -5858,45 +5796,7 @@ mod tests {
             },
         );
         assert_eq!(committed, Committed::Refused);
-        assert!(
-            context
-                .watch
-                .follow(|follow| !follow.terminals.contains_key(&terminal.number()))
-        );
-    }
-
-    /// A terminal entry a commit replaces, which may hold the last
-    /// reference to a text range of a hung terminal, is handed back by the
-    /// apply code, so the commit drops it once the watch lock is let go.
-    #[test]
-    fn a_terminal_entry_a_commit_replaces_is_handed_back_to_drop_after_the_lock() {
-        let context = &quiet_context();
-        let terminal = NodeId::new(3);
-        let mut follow = FollowState::default();
-        let mut old = crate::terminal::Terminal::default();
-        old.reading = Reading::Held { changed: true };
-        follow.terminals.insert(terminal.number(), old);
-        let (_, displaced) = follow.apply(
-            context,
-            0,
-            Effects {
-                terminal: Some((terminal, crate::terminal::Terminal::default())),
-                ..Effects::default()
-            },
-        );
-        let readings: Vec<Reading> = displaced
-            .terminals
-            .iter()
-            .map(|entry| entry.reading)
-            .collect();
-        assert_eq!(readings, [Reading::Held { changed: true }]);
-        assert_eq!(
-            follow
-                .terminals
-                .get(&terminal.number())
-                .map(|entry| entry.reading),
-            Some(Reading::default())
-        );
+        assert!(!context.store.has_terminal(terminal));
     }
 
     /// The subscription is moved to a focus's element, found after its
@@ -5929,24 +5829,20 @@ mod tests {
     }
 
     /// A walk that meets the chain of the focus before splices the entries
-    /// above where they meet, each recorded as carried by the message the
-    /// chain goes in, as a node looked up is; a chain whose outer entry the
-    /// store has released offers nothing below it to splice from, so the
-    /// walk reads on.
+    /// above where they meet; a chain whose outer entry the store has
+    /// released offers nothing below it to splice from, so the walk reads
+    /// on.
     #[test]
-    fn a_spliced_entry_is_recorded_as_carried_and_none_is_spliced_from_a_released_one() {
+    fn none_is_spliced_from_a_released_entry() {
         let context = quiet_context();
-        let registry = &context.msaa_registry;
-        let window = registry.id_for((7, OBJID_WINDOW.0, CHILDID_SELF));
-        let pane = registry.id_for((8, OBJID_WINDOW.0, CHILDID_SELF));
+        let window = context.store.nodes().window(7);
+        let pane = context.store.nodes().window(8);
         let entry = |id: NodeId| NodeSnapshot {
             id,
             ..node(0, Role::Pane)
         };
         let previous = vec![entry(window), entry(pane)];
-        let _ = take_touched(&context);
         let spliced = read::splice(
-            &context,
             &read::held_prefix(&context, previous.clone()),
             vec![entry(pane), node(99, Role::Button)],
             pane,
@@ -5955,8 +5851,11 @@ mod tests {
             spliced.iter().map(|node| node.id).collect::<Vec<_>>(),
             vec![window, pane, NodeId::new(99)]
         );
-        assert_eq!(take_touched(&context), vec![Carried::Node(window.number())]);
-        drop(registry.retain(|id| id != window));
+        // Neither was carried, and no request that named them is live.
+        let (_, released) = context
+            .store
+            .release(&context.outbound, &HashSet::new(), 0, &[]);
+        assert!(released.is_some());
         assert_eq!(
             read::held_prefix(&context, previous),
             Vec::<NodeSnapshot>::new()
@@ -6010,7 +5909,7 @@ mod tests {
         let (console, other) = (window_tests::create_window(), window_tests::create_window());
         context.watch.start(HANDLING_DEADLINE, None, 0);
         let terminal = NodeSnapshot {
-            id: context.uia_registry.id_for(&[42, 7, 1]),
+            id: verbatim_uia::Interning::id_for(&context.store.nodes(), &[42, 7, 1]),
             backend: Backend::Uia,
             ..node(0, Role::Terminal)
         };
@@ -6018,7 +5917,7 @@ mod tests {
             .watch
             .commit(context, 0, uia_focus_effects(context, &terminal, console));
         let button = NodeSnapshot {
-            id: context.uia_registry.id_for(&[42, 8, 1]),
+            id: verbatim_uia::Interning::id_for(&context.store.nodes(), &[42, 8, 1]),
             backend: Backend::Uia,
             ..node(0, Role::Button)
         };

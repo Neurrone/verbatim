@@ -12,6 +12,7 @@ use verbatim_ia2::equality::Candidates;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, StateSet,
 };
+use verbatim_uia::Interning as _;
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
     Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, NodeGates, Request,
@@ -163,20 +164,16 @@ pub(super) type Enrichment = (Vec<NodeSnapshot>, Option<NodeSnapshot>);
 /// outward with the part of `previous` above `met`: NVDA reuses the
 /// previous focus's ancestors from where the new focus's ancestry meets
 /// them, rather than reading them again. Each entry spliced is recorded as
-/// carried by the message the chain goes in, as a node looked up is
-/// (`docs/design/ownership-one-judge.md`, "Every carried node recorded as
-/// carried"); `previous` holds only entries the store still holds
+/// carried by the message the chain goes in, which names it, as a node
+/// looked up is (`super::store::Recorded`); `previous` holds only entries
+/// the store still holds, tagged with the walk's request
 /// ([`held_prefix`]).
 pub(super) fn splice(
-    context: &Context,
     previous: &[NodeSnapshot],
     chain: Vec<NodeSnapshot>,
     met: NodeId,
 ) -> Vec<NodeSnapshot> {
-    let (chain, spliced) = splice_onto(previous, chain, met);
-    for node in spliced {
-        context.touch(node.id);
-    }
+    let (chain, _) = splice_onto(previous, chain, met);
     chain
 }
 
@@ -198,13 +195,13 @@ fn splice_onto(
 /// no longer holds, so a walk that meets the chain below a released entry
 /// reads on rather than splicing a node no message may name any more. The
 /// entries below that one are dropped even where the store still holds
-/// them, so the walk reads them again rather than splicing.
+/// them, so the walk reads them again rather than splicing. The entries
+/// kept are the walk's copied line, tagged with its request as they are
+/// judged held, so no release frees one while the walk may name it
+/// ([`super::store::Store::held_prefix`]).
 pub(super) fn held_prefix(context: &Context, mut previous: Vec<NodeSnapshot>) -> Vec<NodeSnapshot> {
-    let held = previous
-        .iter()
-        .position(|node| !context.holds(node.id))
-        .unwrap_or(previous.len());
-    previous.truncate(held);
+    let ids: Vec<NodeId> = previous.iter().map(|node| node.id).collect();
+    previous.truncate(context.store.held_prefix(&ids));
     previous
 }
 
@@ -349,7 +346,7 @@ fn window_snapshot(
             hwnd,
             OBJID_CLIENT.0,
             CHILDID_SELF,
-            &context.msaa_registry,
+            &context.store.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         )?;
         return Some((Backend::Msaa, node));
@@ -358,7 +355,7 @@ fn window_snapshot(
     if window_uses_uia(context, hwnd) {
         let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
         let element = uia.window_element(hwnd, &nodes).ok()?;
-        let node = element.snapshot(&context.uia_registry);
+        let node = element.snapshot(&context.store.nodes());
         Some((Backend::Uia, node))
     } else {
         // The client area, as NVDA reads a foreground window: a focus event
@@ -368,7 +365,7 @@ fn window_snapshot(
             hwnd,
             OBJID_CLIENT.0,
             CHILDID_SELF,
-            &context.msaa_registry,
+            &context.store.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         )?;
         Some((Backend::Msaa, node))
@@ -380,9 +377,7 @@ fn window_snapshot(
 /// foreground report reads when the window can be read.
 fn local_window_snapshot(context: &Context, hwnd: isize) -> NodeSnapshot {
     NodeSnapshot {
-        id: context
-            .msaa_registry
-            .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF)),
+        id: context.store.nodes().client(hwnd),
         backend: Backend::Msaa,
         role: Role::Window,
         name: window_text(hwnd),
@@ -431,7 +426,7 @@ pub(super) fn uia_enrichment(
         Some(&out_of_time),
     );
     let selected = if wants_selected_child(role) || element.read().value_from_selection() {
-        match uia.selected_node(element.live(), nodes, &context.uia_registry) {
+        match uia.selected_node(element.live(), nodes, &context.store.nodes()) {
             Ok(selected) => selected,
             // The application did not answer in time, or the list is
             // gone: there is no selected child to report, and the log
@@ -474,7 +469,7 @@ fn uia_ancestors(
     let Ok((chain, crossed, walked)) = uia.ancestors(
         (element, element_window, nearest),
         request,
-        &context.uia_registry,
+        &context.store.nodes(),
         (MAX_ANCESTOR_HOPS, parent_automation_id),
         &verbatim_uia::AncestorStops {
             read_by_other_api: &read_by_msaa,
@@ -571,7 +566,7 @@ fn complete(
 ) -> Vec<NodeSnapshot> {
     match above {
         Above::Nothing => chain,
-        Above::Met(met) => splice(context, previous, chain, met),
+        Above::Met(met) => splice(previous, chain, met),
         Above::From(hwnd) => window_onward(context, uia, hwnd, (previous, candidates), out_of_time)
             .into_iter()
             .chain(chain)
@@ -630,9 +625,7 @@ fn window_from_local_state(context: &Context, hwnd: isize, client: bool) -> Node
         states = states.with(State::Disabled);
     }
     NodeSnapshot {
-        id: context
-            .msaa_registry
-            .id_for((hwnd, OBJID_WINDOW.0, CHILDID_SELF)),
+        id: context.store.nodes().window(hwnd),
         backend: Backend::Msaa,
         role: if client { Role::Pane } else { Role::Window },
         name: window_text(hwnd),
@@ -786,7 +779,7 @@ fn window_object_onward(
         && window_uses_uia(context, hwnd)
     {
         let element = uia.window_element(hwnd, request).ok()?;
-        let top = element.snapshot(&context.uia_registry);
+        let top = element.snapshot(&context.store.nodes());
         let top_id = top.id;
         // The window's own element, the UIA object NVDA switches to there
         // (`correctAPIForRelation`, `NVDAObjects/window/__init__.py` 319),
@@ -794,7 +787,7 @@ fn window_object_onward(
         // every UIA ancestor is ([`Ancestor::is_focus_context`]).
         let below = if element.read().is_focus_context(&top) {
             if known(top_id) {
-                return Some(splice(context, previous, vec![top], top_id));
+                return Some(splice(previous, vec![top], top_id));
             }
             vec![top]
         } else {
@@ -814,12 +807,12 @@ fn window_object_onward(
         hwnd,
         OBJID_CLIENT.0,
         CHILDID_SELF,
-        &context.msaa_registry,
+        &context.store.nodes(),
         verbatim_ia2::acquire::Purpose::Context,
     )?;
     if known(client.id) {
         let client_id = client.id;
-        return Some(splice(context, previous, vec![client], client_id));
+        return Some(splice(previous, vec![client], client_id));
     }
     let above = msaa_ancestors(
         context,
@@ -878,7 +871,7 @@ pub(super) fn uia_chain_from_read(
         .collect();
     let (chain, crossed, walked) = Uia::ancestor_chain_from_parts(
         &parents,
-        &context.uia_registry,
+        &context.store.nodes(),
         &verbatim_uia::AncestorStops {
             read_by_other_api: &read_by_msaa,
             known: &known,
@@ -921,7 +914,7 @@ fn known_uia_nodes(context: &Context, previous: &[NodeSnapshot]) -> (Vec<NodeId>
     previous
         .iter()
         .filter_map(|node| {
-            let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
+            let runtime_id = context.store.runtime_id_of(node.id)?;
             Some((node.id, runtime_id))
         })
         .unzip()
@@ -995,7 +988,7 @@ fn uia_remote_enrichment(
         };
         let (mut shaped, _, _) = Uia::ancestors_from(
             std::slice::from_ref(ancestor),
-            &context.uia_registry,
+            &context.store.nodes(),
             &verbatim_uia::AncestorStops {
                 read_by_other_api: &|_| false,
                 known: &|_| false,
@@ -1081,7 +1074,7 @@ fn uia_remote_enrichment(
             }
         }
     }
-    let registry = &context.uia_registry;
+    let registry = &context.store.nodes();
     let selected = ancestry
         .selected_child
         .as_ref()
@@ -1240,7 +1233,7 @@ fn msaa_ancestors(
         candidates,
     };
     let (chain, walked) =
-        match verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
+        match verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.store.nodes(), &limits)
         {
             Ok(walk) => walk,
             // The node can no longer be reached: its chain is its windows,
@@ -1248,10 +1241,7 @@ fn msaa_ancestors(
             Err(error) => {
                 tracing::debug!(?error, "the MSAA ancestors could not be read");
                 let own = node.details.window.map_or(0, super::window::hwnd_of);
-                let nearest = context
-                    .msaa_registry
-                    .key_of(node.id)
-                    .map_or(0, |(hwnd, _, _)| hwnd);
+                let nearest = context.store.key_of(node.id).map_or(0, |(hwnd, _, _)| hwnd);
                 return plain_windows_above(context, own, nearest);
             }
         };
@@ -1334,7 +1324,7 @@ pub(super) fn msaa_enrichment(
         Some(&out_of_time),
     );
     let selected = if wants_selected_child(node.role) {
-        verbatim_ia2::acquire::selected_child(node.id, &context.msaa_registry)
+        verbatim_ia2::acquire::selected_child(node.id, &context.store.nodes())
     } else {
         None
     };
@@ -1344,17 +1334,23 @@ pub(super) fn msaa_enrichment(
 /// The kept MSAA nodes a focus walk compares what it reads with, by NVDA's
 /// equality (`verbatim_ia2::equality`): the line of every report whose
 /// focus node this outpost has not released, one of which is Core's, the
-/// newest first, each innermost first.
+/// newest first, each innermost first. The lines are the walk's copies,
+/// their nodes tagged with its request, so no release frees one while the
+/// walk may name it ([`super::store::Store::tag_copied`]).
 pub(super) fn msaa_candidates(context: &Context) -> Candidates {
-    let held = context.held();
-    let line = |focus: &super::held::Focus| {
-        std::iter::once(&focus.node)
-            .chain(focus.ancestors.iter().rev())
-            .filter(|node| node.backend == verbatim_model::Backend::Msaa)
-            .map(|node| node.id)
-            .collect::<Vec<NodeId>>()
+    let lines: Vec<Vec<NodeId>> = {
+        let held = context.held();
+        let line = |focus: &super::held::Focus| {
+            std::iter::once(&focus.node)
+                .chain(focus.ancestors.iter().rev())
+                .filter(|node| node.backend == verbatim_model::Backend::Msaa)
+                .map(|node| node.id)
+                .collect::<Vec<NodeId>>()
+        };
+        held.focuses().rev().map(line).collect()
     };
-    Candidates::new(held.focuses().rev().map(line).collect())
+    context.store.tag_copied(lines.iter().flatten().copied());
+    Candidates::new(lines)
 }
 
 /// How long gathering a dialog's own text through UI Automation may take,
@@ -1475,17 +1471,17 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
     use crate::dialog_text::{UiaDialog, dialog_text};
     match node.backend {
         Backend::Msaa => {
-            verbatim_ia2::dialog::DialogObject::of_node(node.id, &context.msaa_registry)
+            verbatim_ia2::dialog::DialogObject::of_node(node.id, &context.store.nodes())
                 .and_then(|dialog| dialog_text(&dialog))
         }
         Backend::Uia => {
             // A dialog the focus listener read in the focus's chain, whose
             // element this outpost does not hold, is found by its path.
-            let element = context.uia_registry.element_of(node.id);
+            let element = context.store.element_of(node.id);
             let route = if element.is_some() {
                 None
             } else {
-                let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
+                let runtime_id = context.store.runtime_id_of(node.id)?;
                 Some(context.focus_route(&runtime_id)?)
             };
             let remote = route
@@ -1593,7 +1589,7 @@ pub(super) fn focused_control_in(
         let candidates = msaa_candidates(context);
         let node = verbatim_ia2::acquire::focused_snapshot(
             hwnd,
-            &context.msaa_registry,
+            &context.store.nodes(),
             (&|window| serves(context, window), Some(&candidates)),
         )
         .ok_or(FocusReadMiss::Failed(None))?;
@@ -1692,7 +1688,7 @@ fn uia_focused_control(
         }
         let mut node = with_legacy_checked_state(
             element.live().element(),
-            element.snapshot(&context.uia_registry),
+            element.snapshot(&context.store.nodes()),
         );
         // The element's own UIA class, from its cache, for Core's rules for
         // an application's elements (decision D6): no call.
@@ -1947,7 +1943,7 @@ fn resolve_uia_element(
     nodes: &Request<Node>,
     node_id: NodeId,
 ) -> Result<Cached<Node>, ReadError> {
-    if let Some(agile) = context.uia_registry.element_of(node_id) {
+    if let Some(agile) = context.store.element_of(node_id) {
         if let Ok(element) = agile.resolve() {
             match element.live().refresh(nodes) {
                 Ok(fresh) => return Ok(fresh),
@@ -1957,10 +1953,10 @@ fn resolve_uia_element(
                 Err(_) => {}
             }
         }
-        context.uia_registry.evict_element(node_id);
+        context.store.evict_element(node_id);
     }
     let runtime_id = context
-        .uia_registry
+        .store
         .runtime_id_of(node_id)
         .ok_or(ReadError::Gone)?;
     // An element of the chain the focus listener read for the focus is
@@ -1978,7 +1974,8 @@ fn resolve_uia_element(
         .map_err(|reason| ReadError::Failed(format!("walking the focus's route: {reason}")))?
         .ok_or(ReadError::Gone)?;
     let _ = context
-        .uia_registry
+        .store
+        .nodes()
         .id_for_element(&runtime_id, &element.narrow());
     Ok(element)
 }
@@ -2001,7 +1998,7 @@ pub(super) fn ancestors(
     client: &mut Client,
     node_id: NodeId,
 ) -> Result<Vec<NodeSnapshot>, ReadError> {
-    if context.uia_registry.runtime_id_of(node_id).is_some() {
+    if context.store.runtime_id_of(node_id).is_some() {
         let (uia, _, element) = uia_node(context, client, node_id)?;
         let request = context.ancestor_request(uia).map_err(|error| {
             ReadError::Failed(format!("could not build a cache request: {error}"))
@@ -2017,7 +2014,7 @@ pub(super) fn ancestors(
             None,
         ));
     }
-    verbatim_ia2::acquire::ancestor_chain(node_id, &context.msaa_registry, MAX_ANCESTOR_HOPS)
+    verbatim_ia2::acquire::ancestor_chain(node_id, &context.store.nodes(), MAX_ANCESTOR_HOPS)
         .map_err(ReadError::from)
 }
 
@@ -2029,7 +2026,7 @@ pub(super) fn navigate(
     node_id: NodeId,
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
-    let (neighbor, from_window) = if context.uia_registry.runtime_id_of(node_id).is_some() {
+    let (neighbor, from_window) = if context.store.runtime_id_of(node_id).is_some() {
         let (neighbor, from_window) =
             if let Some(step) = uia_remote_step(context, client, node_id, kind)? {
                 step
@@ -2037,7 +2034,7 @@ pub(super) fn navigate(
                 let (uia, nodes, element) = uia_node(context, client, node_id)?;
                 let from_window = verbatim_uia::nearest_window_handle(element.live().element());
                 let neighbor = uia
-                    .neighbor(element.live(), &nodes, &context.uia_registry, kind)
+                    .neighbor(element.live(), &nodes, &context.store.nodes(), kind)
                     .map_err(|error| {
                         if verbatim_uia::element_is_gone(&error) {
                             ReadError::Gone
@@ -2051,7 +2048,7 @@ pub(super) fn navigate(
         // as a focused one does.
         let neighbor = neighbor.map(|neighbor| {
             match context
-                .uia_registry
+                .store
                 .element_of(neighbor.id)
                 .and_then(|agile| agile.resolve().ok())
             {
@@ -2061,8 +2058,8 @@ pub(super) fn navigate(
         });
         (neighbor, from_window)
     } else {
-        let from_window = context.msaa_registry.key_of(node_id).map(|key| key.0);
-        let neighbor = verbatim_ia2::acquire::navigate(node_id, &context.msaa_registry, kind)?;
+        let from_window = context.store.key_of(node_id).map(|key| key.0);
+        let neighbor = verbatim_ia2::acquire::navigate(node_id, &context.store.nodes(), kind)?;
         (neighbor, from_window)
     };
     Ok(neighbor.map(|neighbor| corrected_backend(context, client, from_window, neighbor, kind)))
@@ -2097,7 +2094,7 @@ fn uia_remote_step(
         _ => return Ok(None),
     };
     let Some(element) = context
-        .uia_registry
+        .store
         .element_of(node_id)
         .and_then(|agile| agile.resolve().ok())
     else {
@@ -2123,7 +2120,7 @@ fn uia_remote_step(
             }) =>
         {
             // Found by the focus's route, or gone, the classic way.
-            context.uia_registry.evict_element(node_id);
+            context.store.evict_element(node_id);
             return Ok(None);
         }
         Err(error) => return Err(ReadError::Failed(format!("UIA navigation failed: {error}"))),
@@ -2136,7 +2133,7 @@ fn uia_remote_step(
     }
     let neighbor = step
         .neighbor
-        .map(|neighbor| neighbor.snapshot(&context.uia_registry));
+        .map(|neighbor| neighbor.snapshot(&context.store.nodes()));
     Ok(Some((neighbor, step.window)))
 }
 
@@ -2157,9 +2154,9 @@ fn corrected_backend(
     let Some(from_window) = from_window.filter(|&hwnd| hwnd != 0) else {
         return neighbor;
     };
-    if context.uia_registry.runtime_id_of(neighbor.id).is_some() {
+    if context.store.runtime_id_of(neighbor.id).is_some() {
         let window = context
-            .uia_registry
+            .store
             .element_of(neighbor.id)
             .and_then(|agile| agile.resolve().ok())
             .map_or(0, |element| element.read().hwnd);
@@ -2175,12 +2172,12 @@ fn corrected_backend(
             window,
             object.0,
             CHILDID_SELF,
-            &context.msaa_registry,
+            &context.store.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         )
         .unwrap_or(neighbor);
     }
-    let Some((window, _, _)) = context.msaa_registry.key_of(neighbor.id) else {
+    let Some((window, _, _)) = context.store.key_of(neighbor.id) else {
         return neighbor;
     };
     // Another process's window is kept as read: the outpost makes no
@@ -2193,7 +2190,7 @@ fn corrected_backend(
         .uia_with(context, Context::node_request)
         .ok()
         .and_then(|(uia, nodes)| uia.window_element(window, &nodes).ok())
-        .map_or(neighbor, |element| element.snapshot(&context.uia_registry))
+        .map_or(neighbor, |element| element.snapshot(&context.store.nodes()))
 }
 
 /// Activates a node.
@@ -2233,13 +2230,13 @@ fn activate_one(
     client: &mut Client,
     node_id: NodeId,
 ) -> Result<Option<ActionName>, ReadError> {
-    if context.uia_registry.runtime_id_of(node_id).is_some() {
+    if context.store.runtime_id_of(node_id).is_some() {
         let (uia, _, element) = uia_node(context, client, node_id)?;
         return uia
             .activate(element.live().element())
             .map_err(|error| ReadError::Failed(format!("UIA activation failed: {error}")));
     }
-    verbatim_ia2::acquire::activate(node_id, &context.msaa_registry).map_err(ReadError::from)
+    verbatim_ia2::acquire::activate(node_id, &context.store.nodes()).map_err(ReadError::from)
 }
 
 /// The application's tree from its top-level window, each element's
@@ -2278,7 +2275,7 @@ pub(super) fn dump_tree(
         let query = verbatim_uia_rops::TreeQuery {
             root: &element,
             fill: &fill,
-            registry: &context.uia_registry,
+            registry: &context.store.nodes(),
             max_depth: MAX_DUMP_DEPTH,
             max_nodes: MAX_DUMP_NODES,
         };
@@ -2299,7 +2296,7 @@ pub(super) fn dump_tree(
     } else {
         let (root, truncated) = verbatim_ia2::acquire::walk_tree(
             hwnd,
-            &context.msaa_registry,
+            &context.store.nodes(),
             (MAX_DUMP_DEPTH, MAX_DUMP_NODES),
             locations,
         )?;

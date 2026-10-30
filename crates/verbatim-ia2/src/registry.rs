@@ -13,7 +13,10 @@
 //! comparison order, needs COM calls, so [`acquire`](crate::acquire) makes it;
 //! the registry only stores and looks up, and never makes a COM call under
 //! its lock. Nodes stay until the outpost releases them ([`retain`]) or their
-//! window is destroyed ([`forget_window`]).
+//! window is destroyed ([`forget_window`]). A walk issues and looks up nodes
+//! through [`Interning`], which the outpost's object store implements to
+//! tag each with the request that named it; the registry implements it
+//! too, untagged, for a reader with no store.
 //!
 //! An address is only an identity when the object was acquired at it, from
 //! an event or a window, or when the object is one of a window's own
@@ -41,7 +44,7 @@ pub type MsaaKey = (isize, i32, i32);
 /// The accessible object a node was read from: the object and the child id
 /// on it, with the address of the object's canonical `IUnknown`, which
 /// identifies the object for as long as it is kept.
-pub(crate) struct Held {
+pub struct Held {
     pub(crate) object: AgileReference<IAccessible>,
     pub(crate) child: i32,
     pub(crate) identity: usize,
@@ -66,7 +69,7 @@ struct Node {
 /// node was read when it was issued, but its name, refreshed when a new
 /// sighting is found to be it (`crate::acquire`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Facts {
+pub struct Facts {
     /// The event window, the event object id when known, and the event
     /// child id, fixed when the object was made: an event's address for an
     /// object acquired at it, else its window, no object id, and its child
@@ -87,7 +90,7 @@ pub(crate) struct Facts {
 
 /// A kept node as a new sighting is compared with it
 /// ([`NodeIdRegistry::facts_of`]).
-pub(crate) struct Kept {
+pub struct Kept {
     pub(crate) key: MsaaKey,
     pub(crate) object: Option<KeptObject>,
     pub(crate) role: Option<Role>,
@@ -103,10 +106,10 @@ pub struct Released {
 }
 
 /// A kept object and the child id on it.
-pub(crate) type KeptObject = (AgileReference<IAccessible>, i32);
+pub type KeptObject = (AgileReference<IAccessible>, i32);
 
 /// What a lookup for a new sighting found.
-pub(crate) enum Found {
+pub enum Found {
     /// A kept node was the same COM object with the same child id, if its
     /// kept object still has that identity.
     Object(NodeId, Option<KeptObject>),
@@ -131,8 +134,80 @@ struct Inner {
     nodes: HashMap<NodeId, Node>,
     by_key: HashMap<MsaaKey, NodeId>,
     by_object: HashMap<(usize, i32), NodeId>,
-    /// Nodes issued or looked up since the outpost last took them.
-    touched: Vec<NodeId>,
+}
+
+/// How a walk issues and looks up the nodes of the objects it reads: the
+/// outpost's object store, which tags every node issued or looked up with
+/// the request that named it, or a [`NodeIdRegistry`] itself, untagged.
+/// Each method is the registry's of the same name.
+pub trait Interning {
+    /// [`NodeIdRegistry::fetches`].
+    fn fetches(&self) -> Fetches;
+    /// [`NodeIdRegistry::id_for`]: issues or looks up.
+    fn id_for(&self, key: MsaaKey) -> NodeId;
+    /// [`NodeIdRegistry::find`]: a node found is looked up.
+    fn find(&self, key: MsaaKey, identity: Option<usize>, child: i32, at_address: bool) -> Found;
+    /// Looks up `id`, a node [`find`](Self::find) found and the caller
+    /// confirmed; nothing for the registry itself.
+    fn touch(&self, id: NodeId);
+    /// [`NodeIdRegistry::insert`]: issues.
+    fn insert(
+        &self,
+        key: MsaaKey,
+        held: Option<Held>,
+        role_facts: (Role, Facts),
+        at_address: bool,
+    ) -> NodeId;
+    /// [`NodeIdRegistry::facts_of`].
+    fn facts_of(&self, id: NodeId) -> Option<Kept>;
+    /// [`NodeIdRegistry::reissue`]: looks up.
+    fn reissue(&self, id: NodeId, name: Option<String>);
+    /// [`NodeIdRegistry::key_of`].
+    fn key_of(&self, node: NodeId) -> Option<MsaaKey>;
+    /// [`NodeIdRegistry::locate`].
+    fn locate(&self, node: NodeId) -> Option<(MsaaKey, Option<KeptObject>, bool)>;
+}
+
+impl Interning for NodeIdRegistry {
+    fn fetches(&self) -> Fetches {
+        NodeIdRegistry::fetches(self)
+    }
+
+    fn id_for(&self, key: MsaaKey) -> NodeId {
+        NodeIdRegistry::id_for(self, key)
+    }
+
+    fn find(&self, key: MsaaKey, identity: Option<usize>, child: i32, at_address: bool) -> Found {
+        NodeIdRegistry::find(self, key, identity, child, at_address)
+    }
+
+    fn touch(&self, _id: NodeId) {}
+
+    fn insert(
+        &self,
+        key: MsaaKey,
+        held: Option<Held>,
+        role_facts: (Role, Facts),
+        at_address: bool,
+    ) -> NodeId {
+        NodeIdRegistry::insert(self, key, held, role_facts, at_address)
+    }
+
+    fn facts_of(&self, id: NodeId) -> Option<Kept> {
+        NodeIdRegistry::facts_of(self, id)
+    }
+
+    fn reissue(&self, id: NodeId, name: Option<String>) {
+        NodeIdRegistry::reissue(self, id, name);
+    }
+
+    fn key_of(&self, node: NodeId) -> Option<MsaaKey> {
+        NodeIdRegistry::key_of(self, node)
+    }
+
+    fn locate(&self, node: NodeId) -> Option<(MsaaKey, Option<KeptObject>, bool)> {
+        NodeIdRegistry::locate(self, node)
+    }
 }
 
 impl NodeIdRegistry {
@@ -171,7 +246,6 @@ impl NodeIdRegistry {
     pub fn id_for(&self, key: MsaaKey) -> NodeId {
         let mut inner = self.lock();
         if let Some(&id) = inner.by_key.get(&key) {
-            inner.touched.push(id);
             return id;
         }
         self.insert_locked(&mut inner, key, None, (None, None), true)
@@ -180,9 +254,9 @@ impl NodeIdRegistry {
     /// Looks up a new sighting of `key`: first a kept node that was the same
     /// COM object (`identity`) with the same child id in the same window,
     /// then, if the object was acquired at `key`, a kept node acquired at the
-    /// same address. Nothing is recorded as touched: the caller confirms the
-    /// match first.
-    pub(crate) fn find(
+    /// same address.
+    #[must_use]
+    pub fn find(
         &self,
         key: MsaaKey,
         identity: Option<usize>,
@@ -215,15 +289,17 @@ impl NodeIdRegistry {
         Found::Key(id, held, node.role)
     }
 
-    /// Records that `id` was reported again.
-    pub(crate) fn touch(&self, id: NodeId) {
-        self.lock().touched.push(id);
+    /// Whether `node` is kept.
+    #[must_use]
+    pub fn holds(&self, node: NodeId) -> bool {
+        self.lock().nodes.contains_key(&node)
     }
 
     /// Issues a new node for `key`, keeping `held` as its object. If the
     /// object was acquired at `key`, the address names the new node from now
     /// on.
-    pub(crate) fn insert(
+    #[must_use]
+    pub fn insert(
         &self,
         key: MsaaKey,
         held: Option<Held>,
@@ -237,7 +313,8 @@ impl NodeIdRegistry {
     /// The kept node `id` as a new sighting is compared with it: its
     /// address, kept object, role and facts; `None` when it is not kept or
     /// has no facts.
-    pub(crate) fn facts_of(&self, id: NodeId) -> Option<Kept> {
+    #[must_use]
+    pub fn facts_of(&self, id: NodeId) -> Option<Kept> {
         let inner = self.lock();
         let node = inner.nodes.get(&id)?;
         Some(Kept {
@@ -253,18 +330,16 @@ impl NodeIdRegistry {
 
     /// A new sighting was found to be the kept node `id`: it keeps its
     /// object, address and event parameters, as NVDA keeps its old objects
-    /// through the meeting point, and takes the sighting's name. Recorded as
-    /// touched.
-    pub(crate) fn reissue(&self, id: NodeId, name: Option<String>) {
-        let mut inner = self.lock();
-        if let Some(facts) = inner
+    /// through the meeting point, and takes the sighting's name.
+    pub fn reissue(&self, id: NodeId, name: Option<String>) {
+        if let Some(facts) = self
+            .lock()
             .nodes
             .get_mut(&id)
             .and_then(|node| node.facts.as_mut())
         {
             facts.name = name;
         }
-        inner.touched.push(id);
     }
 
     fn insert_locked(
@@ -292,7 +367,6 @@ impl NodeIdRegistry {
                 facts,
             },
         );
-        inner.touched.push(id);
         id
     }
 
@@ -304,7 +378,8 @@ impl NodeIdRegistry {
 
     /// The address and kept object of `node`, and whether the object was
     /// acquired at that address, or `None` if the node is not kept.
-    pub(crate) fn locate(&self, node: NodeId) -> Option<(MsaaKey, Option<KeptObject>, bool)> {
+    #[must_use]
+    pub fn locate(&self, node: NodeId) -> Option<(MsaaKey, Option<KeptObject>, bool)> {
         let inner = self.lock();
         let node = inner.nodes.get(&node)?;
         Some((
@@ -320,26 +395,6 @@ impl NodeIdRegistry {
     #[must_use]
     pub fn ids(&self) -> Vec<NodeId> {
         self.lock().nodes.keys().copied().collect()
-    }
-
-    /// Records `node` as touched, when it is kept, for a message that names
-    /// a node it did not look up, such as an entry spliced from a chain
-    /// read before; answers whether it is kept.
-    #[must_use]
-    pub fn touch_kept(&self, node: NodeId) -> bool {
-        let mut inner = self.lock();
-        let kept = inner.nodes.contains_key(&node);
-        if kept {
-            inner.touched.push(node);
-        }
-        kept
-    }
-
-    /// Takes the nodes issued or looked up since the last call, so the
-    /// outpost can record which message reported them.
-    #[must_use]
-    pub fn take_touched(&self) -> Vec<NodeId> {
-        std::mem::take(&mut self.lock().touched)
     }
 
     /// Keeps only the nodes for which `keep` returns `true`. The others are
@@ -359,19 +414,18 @@ impl NodeIdRegistry {
     }
 
     /// Releases every node in window `hwnd`, which has been destroyed, so a
-    /// reused window handle never inherits them.
-    pub fn forget_window(&self, hwnd: isize) {
-        let released = {
-            let mut inner = self.lock();
-            let gone: Vec<NodeId> = inner
-                .nodes
-                .iter()
-                .filter(|(_, node)| node.key.0 == hwnd)
-                .map(|(&id, _)| id)
-                .collect();
-            remove(&mut inner, &gone)
-        };
-        drop(released);
+    /// reused window handle never inherits them: their ids, and the nodes
+    /// with their objects, for the caller to drop once no lock is held.
+    pub fn forget_window(&self, hwnd: isize) -> (Vec<NodeId>, Released) {
+        let mut inner = self.lock();
+        let gone: Vec<NodeId> = inner
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.key.0 == hwnd)
+            .map(|(&id, _)| id)
+            .collect();
+        let nodes = remove(&mut inner, &gone);
+        (gone, Released { _nodes: nodes })
     }
 }
 
@@ -474,17 +528,10 @@ mod tests {
         let registry = registry();
         let inside = registry.id_for((5, 0, 1));
         let outside = registry.id_for((6, 0, 1));
-        registry.forget_window(5);
+        let (forgotten, released) = registry.forget_window(5);
+        drop(released);
+        assert_eq!(forgotten, vec![inside]);
         assert_eq!(registry.key_of(inside), None);
         assert_eq!(registry.key_of(outside), Some((6, 0, 1)));
-    }
-
-    #[test]
-    fn lookups_and_issues_are_recorded_as_touched() {
-        let registry = registry();
-        let id = registry.id_for((1, 0, 0));
-        let _ = registry.id_for((1, 0, 0));
-        assert_eq!(registry.take_touched(), vec![id, id]);
-        assert_eq!(registry.take_touched(), [] as [verbatim_model::NodeId; 0]);
     }
 }

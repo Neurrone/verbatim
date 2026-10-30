@@ -44,8 +44,8 @@ pub mod uia;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex, PoisonError};
 
 use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
@@ -581,6 +581,7 @@ pub enum Watched {
 }
 
 /// An anchor's position and the text of the chunk it started.
+#[derive(Clone)]
 struct Anchor<P> {
     pos: P,
     text: Arc<str>,
@@ -588,6 +589,7 @@ struct Anchor<P> {
 
 /// The anchors minted for one node, and the positions the outpost reported
 /// in its text.
+#[derive(Clone)]
 pub struct NodeAnchors<P> {
     anchors: BTreeMap<u64, Anchor<P>>,
     reported: HashMap<(u64, u32), P>,
@@ -608,6 +610,7 @@ pub struct NodeAnchors<P> {
 
 /// A caret the outpost reported, as a caret key's watch takes its baseline
 /// from it ([`baseline`]).
+#[derive(Clone)]
 struct CaretSeen<P> {
     /// When it was read, in milliseconds since the Unix epoch.
     read_at_ms: u64,
@@ -649,68 +652,136 @@ impl<P> Default for NodeAnchors<P> {
     }
 }
 
-/// The anchors minted or reported since the outpost last sent a message,
-/// shared by an outpost's anchor stores: the next message is recorded as
-/// carrying them, so an anchor is forgotten only once Core has seen it and
-/// does not hold it (`docs/design/ownership-one-judge.md`, "Text anchors
-/// released by message position"). Its lock is taken only to add or take
-/// numbers, never across a call into the application.
-pub type TouchedAnchors = Arc<Mutex<Vec<u64>>>;
-
-/// Every node's anchors in one backend, the anchors touched since the last
-/// message, and the counter anchors are numbered from, which an outpost's
-/// backends share so no two anchors in an outpost have the same number.
-/// An anchor is kept until the outpost forgets it
-/// ([`forget_anchors`](Self::forget_anchors)) or its node.
+/// Every node's anchors in one backend, and the counter anchors are
+/// numbered from, which an outpost's backends share so no two anchors in an
+/// outpost have the same number. An anchor is kept until the outpost forgets
+/// it ([`forget_anchors`](Self::forget_anchors)) or its node. The outpost's
+/// object store keeps them; a text call works on a copy of one node's
+/// ([`copy`](Self::copy)), which the store puts back once the call has
+/// returned ([`put`](Self::put)), so no lock is held across the call.
 pub struct Anchors<P> {
     counter: Arc<AtomicU64>,
-    touched: TouchedAnchors,
+    /// The anchors minted or reported through [`node`](Self::node), which
+    /// only a direct reader uses: a copy keeps its own.
+    touched: Vec<u64>,
     nodes: HashMap<u64, NodeAnchors<P>>,
 }
 
-impl<P: Clone> Anchors<P> {
-    /// An empty store numbering anchors from `counter`, with a list of
-    /// touched anchors of its own.
-    #[must_use]
-    pub fn new(counter: Arc<AtomicU64>) -> Self {
-        Self::sharing(counter, TouchedAnchors::default())
+/// A copy of one node's anchors, which a text call works on with no lock
+/// held, and the anchors it mints or reports, for the store to tag when it
+/// puts the copy back ([`Anchors::put`]).
+pub struct NodeTextCopy<P> {
+    counter: Arc<AtomicU64>,
+    anchors: NodeAnchors<P>,
+    /// The anchors the copy held when it was made: one of them the store
+    /// forgets meanwhile is not put back.
+    copied: HashSet<u64>,
+    touched: Vec<u64>,
+}
+
+impl<P: Clone> NodeTextCopy<P> {
+    /// The copy, as a text call reads and changes it.
+    pub fn text(&mut self) -> NodeText<'_, P> {
+        NodeText {
+            counter: &self.counter,
+            touched: &mut self.touched,
+            anchors: &mut self.anchors,
+        }
     }
 
-    /// An empty store numbering anchors from `counter` and adding each
-    /// anchor it mints or reports to `touched`.
+    /// The anchors minted or reported through the copy.
     #[must_use]
-    pub fn sharing(counter: Arc<AtomicU64>, touched: TouchedAnchors) -> Self {
+    pub fn touched(&self) -> &[u64] {
+        &self.touched
+    }
+}
+
+/// What the store let go of one node's anchors, for its caller to drop once
+/// no lock is held: a position can be a provider's range, whose release can
+/// call into its process.
+#[must_use = "drop once no lock is held"]
+pub struct Forgotten<P> {
+    nodes: Vec<NodeAnchors<P>>,
+    positions: Vec<P>,
+}
+
+impl<P> Default for Forgotten<P> {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            positions: Vec::new(),
+        }
+    }
+}
+
+impl<P> Forgotten<P> {
+    /// Takes in `other`'s.
+    pub fn append(&mut self, mut other: Forgotten<P>) {
+        self.nodes.append(&mut other.nodes);
+        self.positions.append(&mut other.positions);
+    }
+}
+
+impl<P: Clone> Anchors<P> {
+    /// An empty store numbering anchors from `counter`.
+    #[must_use]
+    pub fn new(counter: Arc<AtomicU64>) -> Self {
         Self {
             counter,
-            touched,
+            touched: Vec::new(),
             nodes: HashMap::new(),
         }
     }
 
     /// Forgets the anchors `forgotten` names, of every node: Core has seen
     /// the last message that carried each, and does not hold it.
-    pub fn forget_anchors(&mut self, forgotten: &HashSet<u64>) {
+    pub fn forget_anchors(&mut self, forgotten: &HashSet<u64>) -> Forgotten<P> {
+        let mut gone = Forgotten::default();
         for anchors in self.nodes.values_mut() {
-            anchors
+            let numbers: Vec<u64> = anchors
                 .anchors
-                .retain(|number, _| !forgotten.contains(number));
-            anchors
+                .keys()
+                .copied()
+                .filter(|number| forgotten.contains(number))
+                .collect();
+            for number in numbers {
+                gone.positions
+                    .extend(anchors.anchors.remove(&number).map(|anchor| anchor.pos));
+            }
+            let reported: Vec<(u64, u32)> = anchors
                 .reported
-                .retain(|(anchor, _), _| !forgotten.contains(anchor));
+                .keys()
+                .copied()
+                .filter(|(anchor, _)| forgotten.contains(anchor))
+                .collect();
+            for key in reported {
+                gone.positions.extend(anchors.reported.remove(&key));
+            }
         }
+        gone
     }
 
     /// Forgets a node's anchors, when the node is released.
-    pub fn forget_node(&mut self, node: u64) {
-        self.nodes.remove(&node);
+    pub fn forget_node(&mut self, node: u64) -> Forgotten<P> {
+        Forgotten {
+            nodes: self.nodes.remove(&node).into_iter().collect(),
+            positions: Vec::new(),
+        }
     }
 
     /// Forgets the selection node `node`'s next caret report would be
     /// compared with ([`NodeText::forget_selection`]).
-    pub fn forget_selection(&mut self, node: u64) {
-        if let Some(anchors) = self.nodes.get_mut(&node) {
-            anchors.selection = None;
+    pub fn forget_selection(&mut self, node: u64) -> Forgotten<P> {
+        let mut gone = Forgotten::default();
+        if let Some(selection) = self
+            .nodes
+            .get_mut(&node)
+            .and_then(|anchors| anchors.selection.take())
+        {
+            let (start, end) = selection.ends;
+            gone.positions.extend([start, end]);
         }
+        gone
     }
 
     /// Notes that node `node`'s text changed, so the next comparison of
@@ -725,20 +796,100 @@ impl<P: Clone> Anchors<P> {
         self.nodes.entry(node).or_default().content_changed = true;
     }
 
-    /// The anchors of node `node`, with what minting needs.
+    /// Whether node `node` has anchors or a selection kept.
+    #[must_use]
+    pub fn has(&self, node: u64) -> bool {
+        self.nodes.contains_key(&node)
+    }
+
+    /// The source position of `position` in node `node`'s text when the
+    /// outpost reported it ([`NodeText::reported_point`]), a clone.
+    #[must_use]
+    pub fn reported_point(&self, node: u64, position: TextPosition) -> Option<P> {
+        self.nodes
+            .get(&node)?
+            .reported
+            .get(&(position.anchor.0, position.offset))
+            .cloned()
+    }
+
+    /// Every anchor of node `node`.
+    pub fn anchors_of(&self, node: u64) -> impl Iterator<Item = u64> + '_ {
+        self.nodes
+            .get(&node)
+            .into_iter()
+            .flat_map(|anchors| anchors.anchors.keys().copied())
+    }
+
+    /// The anchors of node `node`, borrowed, with what minting needs, for
+    /// a reader that holds the store for the whole read: a test, or a read
+    /// with no call.
     pub fn node(&mut self, node: u64) -> NodeText<'_, P> {
         NodeText {
             counter: &self.counter,
-            touched: &self.touched,
+            touched: &mut self.touched,
             anchors: self.nodes.entry(node).or_default(),
         }
     }
+
+    /// A copy of node `node`'s anchors, for a text call made with no lock
+    /// held. Each position is cloned, a reference count.
+    #[must_use]
+    pub fn copy(&self, node: u64) -> NodeTextCopy<P> {
+        let anchors = self.nodes.get(&node).cloned().unwrap_or_default();
+        NodeTextCopy {
+            counter: Arc::clone(&self.counter),
+            copied: anchors.anchors.keys().copied().collect(),
+            anchors,
+            touched: Vec::new(),
+        }
+    }
+
+    /// Puts `copy`, which a text call changed, in place as node `node`'s
+    /// anchors, but for an anchor the copy held when it was made that the
+    /// store has forgotten since, which stays forgotten. Returns what it
+    /// replaced, for the caller to drop once no lock is held.
+    pub fn put(&mut self, node: u64, copy: NodeTextCopy<P>) -> Forgotten<P> {
+        let NodeTextCopy {
+            mut anchors,
+            copied,
+            ..
+        } = copy;
+        let current = self.nodes.get(&node);
+        let kept = |number: &u64| {
+            !copied.contains(number)
+                || current.is_some_and(|current| current.anchors.contains_key(number))
+        };
+        let mut gone = Forgotten::default();
+        let lost: Vec<u64> = anchors
+            .anchors
+            .keys()
+            .copied()
+            .filter(|n| !kept(n))
+            .collect();
+        for number in &lost {
+            gone.positions
+                .extend(anchors.anchors.remove(number).map(|anchor| anchor.pos));
+        }
+        let lost_reported: Vec<(u64, u32)> = anchors
+            .reported
+            .keys()
+            .copied()
+            .filter(|(anchor, _)| !kept(anchor))
+            .collect();
+        for key in lost_reported {
+            gone.positions.extend(anchors.reported.remove(&key));
+        }
+        gone.nodes.extend(self.nodes.insert(node, anchors));
+        gone
+    }
 }
 
-/// One node's anchors, borrowed from an [`Anchors`] store.
+/// One node's anchors, borrowed from an [`Anchors`] store or a copy of
+/// them ([`NodeTextCopy`]).
 pub struct NodeText<'a, P> {
     counter: &'a AtomicU64,
-    touched: &'a Mutex<Vec<u64>>,
+    touched: &'a mut Vec<u64>,
     anchors: &'a mut NodeAnchors<P>,
 }
 
@@ -807,11 +958,8 @@ impl<P: Clone> NodeText<'_, P> {
     }
 
     /// Records anchor `number` as touched.
-    fn touch(&self, number: u64) {
-        self.touched
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(number);
+    fn touch(&mut self, number: u64) {
+        self.touched.push(number);
     }
 
     /// The source position of `position` when the outpost reported it, as

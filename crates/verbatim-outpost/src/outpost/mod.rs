@@ -22,16 +22,18 @@
 //!    first; sending never waits, and messages waiting behind a write in
 //!    flight are merged by object and kind.
 //!
-//! Workers run in COM's multithreaded apartment; the registries keep agile
-//! references, so a replacement worker can use what an abandoned one minted.
+//! Workers run in COM's multithreaded apartment; the object store
+//! ([`store`]) keeps agile references, so a replacement worker can use what
+//! an abandoned one minted.
 //!
-//! Held objects (`docs/crates/verbatim-outpost.md`): the registries keep the
+//! Held objects (`docs/crates/verbatim-outpost.md`): the store keeps the
 //! live UIA element or MSAA object behind every node the outpost reports.
 //! Each message that carries node ids has a position, counted the same way
 //! by Core; when Core reports the nodes it still holds and the position of
 //! the last message it has handled, the worker releases every other node
-//! reported at or before that position. A node reported later, or issued and
-//! not yet reported, is kept: Core may not have seen it yet.
+//! no live request can still name, reported at or before that position or
+//! never reported. A node reported later, or named by a request still
+//! running, is kept.
 
 pub(crate) mod acceptance;
 pub(crate) mod alarm;
@@ -48,6 +50,7 @@ mod narrowing;
 mod outbound;
 mod read;
 mod shell_items;
+mod store;
 pub(crate) mod text_reads;
 pub(crate) mod window;
 mod worker;
@@ -66,7 +69,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::AgileReference;
 
-use verbatim_ia2::{APP_SUBSCRIPTIONS, NodeIdRegistry as MsaaRegistry, WinEvent, WinEventKind};
+use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
@@ -74,16 +77,14 @@ use verbatim_process::transport::{
     BlockingReader, ChildIo, EVENT_PIPE_BUFFER, Sender, Served, Serving,
 };
 use verbatim_uia::{
-    Ancestor, Cached, FOCUS_PROPERTIES, Node, NodeIdRegistry as UiaRegistry, Part, PropertyEvent,
-    Registration, Request, Scope, Subscription, TextEvent, Uia,
+    Ancestor, Cached, FOCUS_PROPERTIES, Node, Part, PropertyEvent, Registration, Request, Scope,
+    Subscription, TextEvent, Uia,
 };
 
 use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::protocol::{decode_message, now_us, read_message};
 use crate::supervisor::Target;
-use crate::text::uia::UiaPos;
-use crate::text::{Anchors, TouchedAnchors};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, FactKey, OutpostToCore, Query, QueryOutcome,
     UiaSnapshotFact, Urgent, WinEventStamp,
@@ -188,8 +189,9 @@ pub(crate) struct Context {
     /// ([`Outpost::set_gap_timer`]).
     gap_timer: Mutex<Arc<dyn GapTimer>>,
     watch: Watch,
-    uia_registry: UiaRegistry,
-    msaa_registry: MsaaRegistry,
+    /// Every application object the outpost keeps, and the identity it
+    /// gives each ([`store`]).
+    store: store::Store,
     arbitrator: Mutex<Arbitrator>,
     /// The clock the outpost's own hook and subscriptions stamp their
     /// events' observations with, and its arbitrator its verdicts' keeps
@@ -225,22 +227,6 @@ pub(crate) struct Context {
     /// answered, kept while deferred work is pending
     /// (`worker::answer_idle`).
     idle_query: Mutex<Option<u64>>,
-    /// The text anchors minted or reported since the last message, which
-    /// the next message is recorded as carrying, under a lock of their own
-    /// that the worker never holds across a call into the application, as
-    /// it holds the anchor stores'.
-    touched_anchors: TouchedAnchors,
-    /// The text anchors minted in UIA text and in edit controls; both number
-    /// theirs from one counter, and keep each until Core has seen the last
-    /// message that carried it and does not hold it.
-    uia_anchors: Mutex<Anchors<UiaPos>>,
-    edit_anchors: Mutex<Anchors<u32>>,
-    /// Each UIA node's text patterns, once fetched.
-    patterns: Mutex<HashMap<u64, text_reads::Patterns>>,
-    /// What each UIA node's text is known to support of the text
-    /// attributes, learned from its answers and kept, like its patterns,
-    /// until the node is released.
-    text_support: Mutex<HashMap<u64, crate::text::uia::TextSupport>>,
     /// The details the active theme wants read for each node
     /// ([`CoreToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
@@ -517,16 +503,6 @@ impl Context {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The anchors minted or reported since the last take.
-    fn take_touched_anchors(&self) -> Vec<u64> {
-        std::mem::take(
-            &mut *self
-                .touched_anchors
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        )
-    }
-
     /// Whether window `hwnd`'s top-level window belongs to a process
     /// Verbatim ignores. Local calls, made only while one is ignored.
     fn in_ignored_window(&self, hwnd: isize) -> bool {
@@ -538,15 +514,13 @@ impl Context {
 
     /// Whether the store holds `node`: either registry keeps it.
     fn holds(&self, node: NodeId) -> bool {
-        self.uia_registry.runtime_id_of(node).is_some() || self.msaa_registry.key_of(node).is_some()
+        self.store.holds(node)
     }
 
-    /// Records `node` as carried by the next message sent, when the store
-    /// holds it ([`verbatim_uia::NodeIdRegistry::touch_kept`]).
-    fn touch(&self, node: NodeId) {
-        if !self.uia_registry.touch_kept(node) {
-            let _ = self.msaa_registry.touch_kept(node);
-        }
+    /// Sends `message` to Core without waiting, the nodes and anchors it
+    /// names recorded as carried by it ([`store::Recorded`]).
+    fn send(&self, message: OutpostToCore) {
+        self.outbound.publish(self.store.record(message));
     }
 
     /// The number of the next focus group the worker tries, from 1, which
@@ -559,28 +533,6 @@ impl Context {
 
     fn classic_windows(&self) -> MutexGuard<'_, HashMap<isize, u32>> {
         self.classic_windows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn uia_anchors(&self) -> MutexGuard<'_, Anchors<UiaPos>> {
-        self.uia_anchors
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn edit_anchors(&self) -> MutexGuard<'_, Anchors<u32>> {
-        self.edit_anchors
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn patterns(&self) -> MutexGuard<'_, HashMap<u64, text_reads::Patterns>> {
-        self.patterns.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn text_support(&self) -> MutexGuard<'_, HashMap<u64, crate::text::uia::TextSupport>> {
-        self.text_support
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -658,27 +610,16 @@ impl Context {
     }
 
     /// Releases every object the outpost holds, for its shutdown, once no
-    /// worker runs: every node leaves both registries, and its text
+    /// worker runs: every node leaves the store, and its text
     /// patterns, what its text is known to support, its anchors, and its
     /// terminal memory go with it. Returns how many nodes there were.
     fn release_everything(&self) -> usize {
-        let nodes: Vec<u64> = self
-            .uia_registry
-            .ids()
-            .into_iter()
-            .chain(self.msaa_registry.ids())
-            .map(NodeId::number)
-            .collect();
-        let objects = (
-            self.uia_registry.retain(|_| false),
-            self.msaa_registry.retain(|_| false),
-        );
-        text_reads::forget(self, nodes.iter().copied());
-        self.patterns().clear();
-        self.text_support().clear();
+        let (nodes, objects) = self.store.release_everything();
         self.watch.reset_follow();
+        // Outside the store's lock: releasing an object can call into the
+        // application.
         drop(objects);
-        nodes.len()
+        nodes
     }
 
     fn push(&self, item: Item, trace: TraceId, observed_at_us: u64, timing: EventTiming) {
@@ -1072,9 +1013,6 @@ impl Outpost {
         options: OutpostOptions,
         (focused_element, warm): (FocusedElementReader, bool),
     ) -> Self {
-        let id_counter = Arc::new(AtomicU64::new(1));
-        let anchor_counter = Arc::new(AtomicU64::new(0));
-        let touched_anchors = TouchedAnchors::default();
         let intake = Arc::new(Intake::default());
         let gap_timer = gap_timer::for_intake(&intake);
         let context = Arc::new(Context {
@@ -1084,8 +1022,7 @@ impl Outpost {
             intake,
             gap_timer: Mutex::new(gap_timer),
             watch: Watch::default(),
-            uia_registry: UiaRegistry::new(Arc::clone(&id_counter)),
-            msaa_registry: MsaaRegistry::new(id_counter),
+            store: store::Store::new(),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
             held: Mutex::new(held::Held::default()),
@@ -1096,17 +1033,6 @@ impl Outpost {
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             idle_query: Mutex::new(None),
-            touched_anchors: Arc::clone(&touched_anchors),
-            uia_anchors: Mutex::new(Anchors::sharing(
-                Arc::clone(&anchor_counter),
-                Arc::clone(&touched_anchors),
-            )),
-            edit_anchors: Mutex::new(Anchors::sharing(
-                Arc::clone(&anchor_counter),
-                touched_anchors,
-            )),
-            patterns: Mutex::new(HashMap::new()),
-            text_support: Mutex::new(HashMap::new()),
             fetches: Mutex::new(Fetches::default()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
@@ -1519,7 +1445,7 @@ impl Outpost {
                 if context.intake.cancel(*request_id) {
                     // Queuing never waits, so the answer keeps its place
                     // among the others.
-                    context.outbound.send(OutpostToCore::Reply {
+                    context.send(OutpostToCore::Reply {
                         trace_id: TraceId::mint(),
                         request_id: *request_id,
                         outcome: QueryOutcome::NotStarted,
@@ -1538,7 +1464,7 @@ impl Outpost {
                     .fetches
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner) = *fetches;
-                context.msaa_registry.set_fetches(*fetches);
+                context.store.set_fetches(*fetches);
             }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the
@@ -1797,7 +1723,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
 }
 
 fn fault(context: &Context, detail: String) {
-    context.outbound.send(OutpostToCore::Fault { detail });
+    context.send(OutpostToCore::Fault { detail });
 }
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its

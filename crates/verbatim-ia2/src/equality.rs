@@ -34,7 +34,7 @@ use windows::core::AgileReference;
 use verbatim_model::{NodeId, Rect, Role};
 
 use crate::accessible::Accessible;
-use crate::registry::{Facts, MsaaKey, NodeIdRegistry};
+use crate::registry::{Facts, Interning, MsaaKey};
 
 /// The kept nodes a focus walk compares each new MSAA sighting with, and
 /// what the walk has learned of them: lines of node ids, each innermost
@@ -114,7 +114,7 @@ pub(crate) fn event_of(key: MsaaKey, at_address: bool, child: i32) -> (isize, Op
 /// compared again in this walk. `name` normalises a kept object's live
 /// name, of its role and at its address, as a sighting's is.
 pub(crate) fn equal_candidate(
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     candidates: &Candidates,
     sighting: &Sighting<'_>,
     name: impl Fn(&Accessible, MsaaKey, Role) -> Option<String>,
@@ -223,7 +223,7 @@ mod tests {
     use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 
     use super::*;
-    use crate::registry::Held;
+    use crate::registry::{Held, NodeIdRegistry};
 
     /// The desktop window's client object, served in this process, which
     /// every test sights and keeps: its location reads the same each time.
@@ -260,7 +260,7 @@ mod tests {
     /// The node `sighting`, with `facts`, at child id `child` in window
     /// `window`, is given among `candidates`.
     fn compared(
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
         candidates: &Candidates,
         (window, child): (isize, i32),
         facts: &Facts,

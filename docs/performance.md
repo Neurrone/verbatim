@@ -675,6 +675,31 @@ wake that publishes, a walk's next step waits that long for the lock;
 values a commit displaces cost one small vector each only when there
 are any.
 
+### The outpost's object store
+
+Counted from the code (`docs/design/ownership-outpost-reducer.md`, "The
+store"), not measured. No wake-up and no call into an application is
+added: every walk makes the calls it made before.
+
+- Each node a walk issues or looks up takes the store's lock with the
+  registry's inside it, where it took the registry's alone, and adds its
+  request's tag to a short list. A UIA element's agile reference is made
+  before either lock.
+- A walk tags the lines it copies in one hold of the store's lock: the
+  previous focus's chain, up to about ten entries, and for an MSAA focus
+  the reports' MSAA lines.
+- Sending a message lists the nodes and anchors it names, one pass over
+  the message, where the registries' touched lists were taken under their
+  locks.
+- A text call copies its node's anchors under the store's lock, one
+  `AddRef` per UIA position kept and the maps' allocations, and puts the
+  copy back under the watch lock and the store's, its displaced positions
+  released after both; a node with a long say-all's anchors pays most.
+  The text locks are no longer held across the call.
+- A release reads every kept node's and anchor's tags, where it read only
+  the carried ones, and also frees nodes and anchors no message carried
+  once their request ends, which before were kept for the outpost's life.
+
 ### A focus change, MSAA, cold
 
 - Minimum and today: 28 MSAA calls and 1 window message, the steady

@@ -23,7 +23,10 @@
 //!
 //! Nodes stay until the outpost releases them ([`NodeIdRegistry::retain`]),
 //! which it does for every node Core no longer holds
-//! (`docs/crates/verbatim-outpost.md`, held objects). Unlike the MSAA registry, nodes are not dropped when
+//! (`docs/crates/verbatim-outpost.md`, held objects). A walk issues and
+//! looks up nodes through [`Interning`], which the outpost's object store
+//! implements to tag each with the request that named it; the registry
+//! implements it too, untagged, for a reader with no store. Unlike the MSAA registry, nodes are not dropped when
 //! their window is destroyed: a UIA runtime id has no documented structure
 //! naming its window. So a node Core still holds after its window closed
 //! (the navigator left there) is the node for any new element given the
@@ -78,8 +81,29 @@ struct Inner {
     forward: HashMap<Vec<i32>, NodeId>,
     reverse: HashMap<NodeId, Vec<i32>>,
     elements: HashMap<NodeId, Agile<Kept>>,
-    /// Nodes issued or looked up since the outpost last took them.
-    touched: Vec<NodeId>,
+}
+
+/// How a walk issues and looks up the nodes of the elements it reads: the
+/// outpost's object store, which tags every node issued or looked up with
+/// the request that named it, or a [`NodeIdRegistry`] itself, untagged.
+pub trait Interning {
+    /// The node for `runtime_id`, issued on first sight
+    /// ([`NodeIdRegistry::id_for`]).
+    fn id_for(&self, runtime_id: &[i32]) -> NodeId;
+
+    /// The node for `runtime_id`, issued on first sight, keeping `element`
+    /// as its live element ([`NodeIdRegistry::id_for_element`]).
+    fn id_for_element(&self, runtime_id: &[i32], element: &Cached<Kept>) -> NodeId;
+}
+
+impl Interning for NodeIdRegistry {
+    fn id_for(&self, runtime_id: &[i32]) -> NodeId {
+        NodeIdRegistry::id_for(self, runtime_id)
+    }
+
+    fn id_for_element(&self, runtime_id: &[i32], element: &Cached<Kept>) -> NodeId {
+        NodeIdRegistry::id_for_element(self, runtime_id, element)
+    }
 }
 
 impl NodeIdRegistry {
@@ -107,63 +131,70 @@ impl NodeIdRegistry {
     /// live element behind the returned node (module doc), refreshing any
     /// previously cached one — the newest sighting is the most likely to
     /// still be alive. A caller keeping an element of another shape narrows
-    /// it first ([`Cached::narrow`]). The element it replaces is released
-    /// after the lock, since releasing an element can call into its process.
+    /// it first ([`Cached::narrow`]). The element's agile reference is made
+    /// before the lock, and the element it replaces is released after it,
+    /// since either can call into its process.
     #[must_use]
     pub fn id_for_element(&self, runtime_id: &[i32], element: &Cached<Kept>) -> NodeId {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let id = Self::id_for_locked(&self.counter, &mut inner, runtime_id);
-        let mut replaced = None;
-        if !runtime_id.is_empty()
-            && let Ok(agile) = element.agile()
-        {
-            replaced = inner.elements.insert(id, agile);
-        }
-        drop(inner);
+        let (id, replaced) = self.keep(runtime_id, element.agile().ok());
         drop(replaced);
         id
+    }
+
+    /// [`id_for`](Self::id_for), keeping `element`, when there is one, as
+    /// the live element behind the returned node, as
+    /// [`id_for_element`](Self::id_for_element) does, from an agile
+    /// reference already made; the element it replaces is returned, for
+    /// the caller to drop once no lock is held.
+    #[must_use]
+    pub fn keep(
+        &self,
+        runtime_id: &[i32],
+        element: Option<Agile<Kept>>,
+    ) -> (NodeId, Option<Agile<Kept>>) {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let id = Self::id_for_locked(&self.counter, &mut inner, runtime_id);
+        let replaced = match element {
+            Some(agile) if !runtime_id.is_empty() => inner.elements.insert(id, agile),
+            _ => None,
+        };
+        (id, replaced)
     }
 
     fn id_for_locked(counter: &AtomicU64, inner: &mut Inner, runtime_id: &[i32]) -> NodeId {
         if !runtime_id.is_empty()
             && let Some(&id) = inner.forward.get(runtime_id)
         {
-            inner.touched.push(id);
             return id;
         }
         let id = NodeId::new(counter.fetch_add(1, Ordering::Relaxed));
         if !runtime_id.is_empty() {
             inner.forward.insert(runtime_id.to_vec(), id);
             inner.reverse.insert(id, runtime_id.to_vec());
-            inner.touched.push(id);
         }
         id
     }
 
     /// The kept node for `runtime_id`, if there is one, without issuing a
-    /// node. It is recorded as touched, as every lookup is, since the
-    /// message the caller builds may name it: the outpost records it as
-    /// carried by that message, so an acknowledgement of an older message
-    /// cannot free it while this one waits.
+    /// node.
     #[must_use]
     pub fn existing_id(&self, runtime_id: &[i32]) -> Option<NodeId> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let id = inner.forward.get(runtime_id).copied()?;
-        inner.touched.push(id);
-        Some(id)
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .forward
+            .get(runtime_id)
+            .copied()
     }
 
-    /// Records `node` as touched, when it is kept, for a message that names
-    /// a node it did not look up, such as an entry spliced from a chain
-    /// read before; answers whether it is kept.
+    /// Whether `node` is kept.
     #[must_use]
-    pub fn touch_kept(&self, node: NodeId) -> bool {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let kept = inner.reverse.contains_key(&node);
-        if kept {
-            inner.touched.push(node);
-        }
-        kept
+    pub fn holds(&self, node: NodeId) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reverse
+            .contains_key(&node)
     }
 
     /// Every kept node.
@@ -176,19 +207,6 @@ impl NodeIdRegistry {
             .keys()
             .copied()
             .collect()
-    }
-
-    /// Takes the nodes issued or looked up since the last call, so the
-    /// outpost can record which message reported them.
-    #[must_use]
-    pub fn take_touched(&self) -> Vec<NodeId> {
-        std::mem::take(
-            &mut self
-                .inner
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .touched,
-        )
     }
 
     /// Keeps only the nodes for which `keep` returns `true`. The others are
@@ -242,15 +260,18 @@ impl NodeIdRegistry {
             .cloned()
     }
 
-    /// Drops the cached live element behind `node` — called when a resolved
-    /// element turns out dead, so the next lookup goes straight to the
-    /// search fallback instead of retrying a corpse. The element is released
-    /// after the lock, since releasing it can call into its process.
-    pub fn evict_element(&self, node: NodeId) {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let evicted = inner.elements.remove(&node);
-        drop(inner);
-        drop(evicted);
+    /// Takes the cached live element behind `node` out of the cache —
+    /// called when a resolved element turns out dead, so the next lookup
+    /// goes straight to the search fallback instead of retrying a corpse.
+    /// Returns it, for the caller to drop once no lock is held: releasing
+    /// an element can call into its process.
+    #[must_use]
+    pub fn evict_element(&self, node: NodeId) -> Option<Agile<Kept>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .elements
+            .remove(&node)
     }
 
     /// Takes the cached live element behind `node` out of the cache if it
@@ -299,7 +320,6 @@ mod tests {
         let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
         let kept = registry.id_for(&[1]);
         let released = registry.id_for(&[2]);
-        assert_eq!(registry.take_touched(), vec![kept, released]);
         drop(registry.retain(|id| id == kept));
         assert_eq!(registry.ids(), vec![kept]);
         assert_eq!(registry.runtime_id_of(released), None);
@@ -314,22 +334,5 @@ mod tests {
         let a = uia.id_for(&[1]);
         let b = other.id_for(&[1]);
         assert_ne!(a, b, "distinct registries sharing a counter never collide");
-    }
-
-    /// A node looked up without being issued is recorded as touched, so the
-    /// message that names it is recorded as carrying it; so is a kept node
-    /// a message names without a lookup, and a released one is not.
-    #[test]
-    fn a_lookup_and_a_kept_node_named_are_recorded_as_touched() {
-        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-        let kept = registry.id_for(&[1]);
-        let released = registry.id_for(&[2]);
-        let _ = registry.take_touched();
-        assert_eq!(registry.existing_id(&[1]), Some(kept));
-        assert_eq!(registry.take_touched(), vec![kept]);
-        drop(registry.retain(|id| id == kept));
-        assert!(registry.touch_kept(kept));
-        assert!(!registry.touch_kept(released));
-        assert_eq!(registry.take_touched(), vec![kept]);
     }
 }

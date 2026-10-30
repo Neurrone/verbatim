@@ -269,8 +269,10 @@ that carries them on the pipes, `Message`, is
 - `OutpostToCore::carries_nodes` lists every variant: an event and a
   completed reply carry node ids, and the outpost and verbatim.exe count
   the positions `NodesHeld` acknowledges with this one function.
-  `assign_outpost` stamps the arriving generation on every node id,
-  `written` and `core_read` the write and read stamps. `Urgent` is what
+  `assign_outpost` stamps the arriving generation on every node id, and
+  `named` lists the node ids and text anchors a message names (`Named`),
+  which an outpost records as carried by it; `written` and `core_read` the
+  write and read stamps. `Urgent` is what
   an outpost sends ahead of its queue (`Pong`, `Ready`, `TargetExited`,
   `SpareReady`), none of which carries a node.
 - `Query` is `FocusNow`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,

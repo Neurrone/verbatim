@@ -45,7 +45,7 @@ use crate::class::normalized_class_of;
 use crate::com::{CHILDID_SELF, non_empty, visible_text};
 use crate::equality::{self, Candidates, Sighting};
 use crate::map::{adjust_role_and_states, role_from_msaa, states_from_msaa};
-use crate::registry::{Facts, Found, Held, MsaaKey, NodeIdRegistry};
+use crate::registry::{Facts, Found, Held, Interning, MsaaKey};
 use crate::window;
 
 /// Why a read of a node this outpost issued failed.
@@ -79,7 +79,7 @@ pub(crate) fn disconnected(error: &windows::core::Error) -> bool {
 /// neighbor addressed by child id on the same object inherits.
 pub(crate) fn locate(
     node: NodeId,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> Result<(Accessible, MsaaKey, bool), AcquireError> {
     let (key, held, at_address) = registry.locate(node).ok_or(AcquireError::Gone)?;
     if !window::exists(key.0) {
@@ -178,7 +178,7 @@ pub fn snapshot_from_event(
     hwnd: isize,
     id_object: i32,
     id_child: i32,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     purpose: Purpose,
 ) -> Option<NodeSnapshot> {
     let acc = Accessible::from_event(hwnd, id_object, id_child)?;
@@ -220,7 +220,7 @@ impl EventObject {
     /// the node kept for the same COM object with the same child id in the
     /// same window. `None` when it is none of them.
     #[must_use]
-    pub fn which_of(&self, nodes: &[NodeId], registry: &NodeIdRegistry) -> Option<NodeId> {
+    pub fn which_of(&self, nodes: &[NodeId], registry: &dyn Interning) -> Option<NodeId> {
         let found = if let Some(&node) = nodes
             .iter()
             .find(|&&node| registry.key_of(node) == Some(self.key))
@@ -254,7 +254,7 @@ impl EventObject {
     /// last read with, which decides how it is named, as the class NVDA
     /// chose for its object when it made it does.
     #[must_use]
-    pub fn name(&self, role: Role, registry: &NodeIdRegistry) -> Option<String> {
+    pub fn name(&self, role: Role, registry: &dyn Interning) -> Option<String> {
         let fetches = registry.fetches();
         let columns = is_list_view_item(&self.acc, self.key, role)
             .then(|| {
@@ -283,7 +283,7 @@ impl EventObject {
     /// descriptions or the object is a list view item, and bidirectional
     /// formatting characters stripped.
     #[must_use]
-    pub fn description(&self, role: Role, registry: &NodeIdRegistry) -> Option<String> {
+    pub fn description(&self, role: Role, registry: &dyn Interning) -> Option<String> {
         if !registry.fetches().description || is_list_view_item(&self.acc, self.key, role) {
             return None;
         }
@@ -330,7 +330,7 @@ impl EventObject {
     pub fn progress(
         &mut self,
         known: Option<(NodeId, Role)>,
-        registry: &NodeIdRegistry,
+        registry: &dyn Interning,
     ) -> Option<ProgressReading> {
         let role = known.map_or_else(|| self.role(), |(_, role)| role);
         let state = self.acc.state();
@@ -369,7 +369,7 @@ impl EventObject {
 
     /// Reads the object for `purpose`, as [`snapshot_from_event`] does.
     #[must_use]
-    pub fn read(self, registry: &NodeIdRegistry, purpose: Purpose) -> NodeSnapshot {
+    pub fn read(self, registry: &dyn Interning, purpose: Purpose) -> NodeSnapshot {
         read_snapshot_with(
             &self.acc,
             self.key,
@@ -398,7 +398,7 @@ pub fn snapshot_from_focus_event(
     hwnd: isize,
     id_object: i32,
     id_child: i32,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> Option<NodeSnapshot> {
     Some(focus_candidate(hwnd, id_object, id_child)?.read(registry, None))
 }
@@ -586,7 +586,7 @@ impl FocusCandidate {
     /// with `candidates` by NVDA's equality when no lookup places it
     /// ([`Candidates`]).
     #[must_use]
-    pub fn read(self, registry: &NodeIdRegistry, candidates: Option<&Candidates>) -> NodeSnapshot {
+    pub fn read(self, registry: &dyn Interning, candidates: Option<&Candidates>) -> NodeSnapshot {
         read_snapshot_with(
             &self.acc,
             self.key,
@@ -777,7 +777,7 @@ fn focus_event_names_list((hwnd, id_object, id_child): MsaaKey, role: Option<i32
 /// fails after that only ends the chain early.
 pub fn ancestor_chain(
     node: NodeId,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     max_hops: u32,
 ) -> Result<Vec<NodeSnapshot>, AcquireError> {
     let limits = AncestorLimits {
@@ -863,7 +863,7 @@ pub enum Walked {
 )]
 pub fn ancestor_chain_until(
     node: NodeId,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     limits: &AncestorLimits<'_>,
 ) -> Result<(Vec<NodeSnapshot>, Walked), AcquireError> {
     let max_hops = limits.max_hops;
@@ -1247,7 +1247,7 @@ enum NavigateDirection {
 )]
 pub fn navigate(
     node: NodeId,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, AcquireError> {
     let direction = match kind {
@@ -1439,7 +1439,7 @@ pub fn navigate(
 /// action).
 pub fn activate(
     node: NodeId,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> Result<Option<verbatim_model::ActionName>, AcquireError> {
     let (acc, _, _) = locate(node, registry)?;
     let name = visible_text(acc.default_action());
@@ -1462,7 +1462,7 @@ pub fn activate(
 /// addressing a full object (`CHILDID_SELF`); a child-id key reports `None`
 /// since a simple child cannot contain anything. Blocking; worker only.
 #[must_use]
-pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
+pub fn selected_child(node: NodeId, registry: &dyn Interning) -> Option<NodeSnapshot> {
     let (acc, (hwnd, id_object, _), at) = locate(node, registry).ok()?;
     if acc.child() != CHILDID_SELF {
         return None;
@@ -1500,7 +1500,7 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
 #[must_use]
 pub fn focused_snapshot(
     hwnd: isize,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     (serves, candidates): (&dyn Fn(isize) -> bool, Option<&Candidates>),
 ) -> Option<NodeSnapshot> {
     let client = Accessible::client_of_window(hwnd)?;
@@ -1574,7 +1574,7 @@ pub fn focused_snapshot(
 /// as having none.
 pub fn walk_tree(
     hwnd: isize,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     (max_depth, max_nodes): (u32, usize),
     locations: bool,
 ) -> Result<(TreeNode, bool), AcquireError> {
@@ -1600,7 +1600,7 @@ pub fn walk_tree(
 /// The per-walk parameters threaded through every level of
 /// [`walk_recursive`]: node-identity plumbing plus the walk's caps.
 struct WalkLimits<'a> {
-    registry: &'a NodeIdRegistry,
+    registry: &'a dyn Interning,
     max_depth: u32,
     max_nodes: usize,
     /// Whether each object's location and off-screen state are read.
@@ -1799,7 +1799,7 @@ fn is_usable_window(hwnd: isize) -> bool {
 /// The window-object snapshot for `hwnd` (`OBJID_WINDOW`, `CHILDID_SELF`): the
 /// window face `read_snapshot` keys under `OBJID_WINDOW`. `None` if the
 /// window cannot be acquired.
-fn window_object_snapshot(hwnd: isize, registry: &NodeIdRegistry) -> Option<NodeSnapshot> {
+fn window_object_snapshot(hwnd: isize, registry: &dyn Interning) -> Option<NodeSnapshot> {
     let acc = Accessible::from_event(hwnd, OBJID_WINDOW.0, CHILDID_SELF)?;
     // The key names the same window object `read_snapshot` would re-key
     // under OBJID_WINDOW.
@@ -1821,7 +1821,7 @@ fn window_object_snapshot(hwnd: isize, registry: &NodeIdRegistry) -> Option<Node
 fn window_navigate(
     hwnd: isize,
     direction: NavigateDirection,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> Option<NodeSnapshot> {
     match direction {
         NavigateDirection::Parent => {
@@ -1855,7 +1855,7 @@ fn window_navigate(
 fn window_sibling(
     hwnd: isize,
     direction: GET_WINDOW_CMD,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> Option<NodeSnapshot> {
     let mut current = hwnd;
     loop {
@@ -1890,7 +1890,7 @@ fn read_snapshot(
     acc: &Accessible,
     key: MsaaKey,
     at_address: bool,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> NodeSnapshot {
     read_snapshot_with(
         acc,
@@ -1909,7 +1909,7 @@ fn read_snapshot_with(
     acc: &Accessible,
     key: MsaaKey,
     reading: Reading,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> NodeSnapshot {
     let at_address = reading.at_address;
     // Each read tolerates an unsupported property by failing, mapped to a
@@ -2269,7 +2269,7 @@ fn position_of(
     reason = "the sighting's location, read or not, and once read may be none"
 )]
 fn node_for(
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
     (key, at_address): (MsaaKey, bool),
     acc: &Accessible,
     (role, facts): (Role, Facts),
@@ -2368,7 +2368,7 @@ fn live_name(
     acc: &Accessible,
     key: MsaaKey,
     role: Role,
-    registry: &NodeIdRegistry,
+    registry: &dyn Interning,
 ) -> Option<String> {
     let name = labelled_name(acc, role, visible_text(acc.name()));
     let mut name = if is_list_view_item(acc, key, role) {

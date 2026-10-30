@@ -289,6 +289,78 @@ fn only_an_event_and_a_completed_reply_carry_nodes() {
     }
 }
 
+/// A message names the nodes stamping stamps and the anchors of its text:
+/// a focus's line, its caret's line and selection, and a read's chunk.
+#[test]
+fn a_message_names_its_nodes_and_its_texts_anchors() {
+    use crate::{CaretReport, FocusText, Selection, TextAnchor, TextChunk, TextPosition, TextUnit};
+    let snapshot = |number| NodeSnapshot {
+        id: NodeId::new(number),
+        backend: Backend::Uia,
+        role: Role::Button,
+        name: None,
+        value: None,
+        states: StateSet::new(),
+        details: NodeDetails::default(),
+    };
+    let chunk = |anchor| TextChunk {
+        unit: TextUnit::Line,
+        text: String::new(),
+        start: TextAnchor(anchor),
+        offset: 0,
+        languages: Vec::new(),
+        first: false,
+        last: false,
+        truncated: false,
+        formats: Vec::new(),
+    };
+    let focus = OutpostToCore::Event {
+        trace_id: TraceId::mint(),
+        timing: EventTiming::default(),
+        observed_at_us: 0,
+        backend: Backend::Uia,
+        window: None,
+        application: None,
+        event: NormalizedEvent::FocusChanged {
+            node: snapshot(1),
+            foreground: false,
+            ancestors: vec![snapshot(2)],
+            selected_child: Some(snapshot(3)),
+            text: Some(Box::new(FocusText::Caret {
+                caret: CaretReport {
+                    line: chunk(10),
+                    selection: Some(Selection {
+                        start: TextPosition::at(TextAnchor(11)),
+                        end: TextPosition::at(TextAnchor(12)),
+                    }),
+                    selection_line: Some(Box::new(chunk(13))),
+                },
+                selected_text: None,
+            })),
+            earlier: None,
+            group: None,
+        },
+    };
+    let read = reply(QueryOutcome::Done(QueryResult::Text(TextReply::Read {
+        moved: 0,
+        chunk: chunk(14),
+    })));
+    assert_eq!(
+        focus.named(),
+        Named {
+            nodes: vec![NodeId::new(1), NodeId::new(2), NodeId::new(3)],
+            anchors: [10, 11, 12, 13].map(TextAnchor).to_vec(),
+        }
+    );
+    assert_eq!(
+        read.named(),
+        Named {
+            nodes: Vec::new(),
+            anchors: vec![TextAnchor(14)],
+        }
+    );
+}
+
 #[test]
 fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
     let snapshot = |number| NodeSnapshot {

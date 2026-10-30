@@ -28,7 +28,7 @@ use crate::map::{
     CachedUiaParts, RawUiaStates, keyboard_shortcut, role_of, states_from_uia, strip_bidi_controls,
     value_from,
 };
-use crate::registry::NodeIdRegistry;
+use crate::registry::Interning;
 
 uia_shape! {
     /// What an element's role is mapped from.
@@ -692,7 +692,7 @@ impl Node {
 
 /// `node`, read from `element`, as a snapshot, its id minted by `registry`,
 /// which keeps the element so later reads resolve it without a search.
-fn snapshot_of(node: &Node, element: &Cached<Kept>, registry: &NodeIdRegistry) -> NodeSnapshot {
+fn snapshot_of(node: &Node, element: &Cached<Kept>, registry: &dyn Interning) -> NodeSnapshot {
     let parts = node.parts(element.runtime_id());
     NodeSnapshot {
         id: registry.id_for_element(&parts.runtime_id, element),
@@ -709,7 +709,7 @@ impl Cached<Node> {
     /// The node as a snapshot, its id minted by `registry`, which keeps the
     /// element. Local.
     #[must_use]
-    pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
+    pub fn snapshot(&self, registry: &dyn Interning) -> NodeSnapshot {
         snapshot_of(&self.read(), &self.narrow(), registry)
     }
 }
@@ -782,7 +782,7 @@ impl Cached<Ancestor> {
     /// The ancestor as a snapshot, its id minted by `registry`, which keeps
     /// the element, carrying its class name ([`Ancestor::parts`]). Local.
     #[must_use]
-    pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
+    pub fn snapshot(&self, registry: &dyn Interning) -> NodeSnapshot {
         let mut snapshot = snapshot_of(&self.read().node, &self.narrow(), registry);
         snapshot
             .details

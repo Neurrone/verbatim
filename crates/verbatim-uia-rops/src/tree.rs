@@ -21,7 +21,7 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::HRESULT;
 
 use verbatim_model::{NodeSnapshot, TreeNode};
-use verbatim_uia::{Cached, Direction, Fill, Live, Node, NodeIdRegistry, Uia};
+use verbatim_uia::{Cached, Direction, Fill, Interning, Live, Node, Uia};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::error::Error;
@@ -45,7 +45,7 @@ pub struct TreeQuery<'a> {
     /// How every other element's cache is filled: as a [`Node`].
     pub fill: &'a Fill<Node>,
     /// The registry that keeps each element and mints its node id.
-    pub registry: &'a NodeIdRegistry,
+    pub registry: &'a dyn Interning,
     /// The deepest level whose elements are listed, the root at 0; an
     /// element there with children marks the dump incomplete.
     pub max_depth: u32,

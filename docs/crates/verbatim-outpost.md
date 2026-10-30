@@ -806,26 +806,34 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
 - The commit point (`outpost/commit.rs`; `docs/design/focus-pipeline-rework.md`,
   "The outpost's commit point"). The follow state, the followed focus
   (`Tracking`), the subscription's target, a caret key's watch, the
-  terminals, the caret-read stamp, the focus path and the owed work, lives
-  in the watch's state and changes only in `Watch::commit`, which checks
-  under the watch lock that the committing generation is in charge, then
-  records an `Effects` value's report, sends its messages and applies the
-  rest. The locks a commit takes nest inside the watch lock: the judgement
-  list, the intake, the outbound queue, the UI Automation registry, the
-  MSAA registry; none is held across a call. What a commit displaces that
-  may hold an application's object (`commit::Displaced`: a terminal entry
-  replaced, an element the subscription is not moved to) is dropped once
-  the lock is let go; what a watchdog's publication displaces waits in the
-  follow state for the worker's next commit. The watchdog builds a
-  publication under the lock, from the walk's progress as it stands, with
-  local calls only. The release of nodes Core no longer holds
-  (`Worker::release`) is the one change of follow state outside a commit:
-  it makes the same in-charge check under the watch lock and takes the
-  outbound queue's lock with the registries' inside it. Owed work (a terminal's first read, a
+  caret-read stamp, the focus path and the owed work, lives in the watch's
+  state and changes only in `Watch::commit`, which checks under the watch
+  lock that the committing generation is in charge, then records an
+  `Effects` value's report, sends its messages and applies the rest,
+  terminal entries among them, which the object store keeps. The locks a
+  commit takes nest inside the watch lock: the judgement list, the intake,
+  the outbound queue, the object store; none is held across a call. What a
+  commit displaces that may hold an application's object
+  (`commit::Displaced`: what the store let go of, an element the
+  subscription is not moved to) is dropped once the lock is let go; what a
+  watchdog's publication displaces waits in the follow state for the
+  worker's next commit. The watchdog builds a publication under the lock,
+  from the walk's progress as it stands, with local calls only, minting
+  plain windows under the walk's request, which the publication claims.
+  The release of nodes no live request can still name (`Worker::release`)
+  is the one change of follow state outside a commit: it makes the same
+  in-charge check under the watch lock and calls `Store::release`, which
+  takes the outbound queue's lock with the store's inside it. Owed work (a terminal's first read, a
   `SensitiveSlider`'s lookup for a thumb published at its bound) is
   attempted once per worker under a deadline of its own with no moved-on
   window (`Watch::take_owed`). A terminal read works on a copy of its
-  entry, put in place only by its result's commit. An entry's result ends
+  entry, put in place only by its result's commit. Each entry, and each
+  replacement worker's owed work, is a request with a mint tag of its own
+  (`store::Tag`, the generation and a request number), which the worker
+  enters as its thread's program (`Store::enter`) before starting the
+  entry's deadline; the watch's state keeps it as the live request until
+  the entry ends, its worker is abandoned, or its walk's publication
+  claims it (`WatchState::live_tags`). An entry's result ends
   its query but not its deadline. The walks stop at their next step once
   their worker is abandoned (`Watch::advance`).
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
@@ -863,10 +871,12 @@ and the inherited pipe handles.
   `caret_report`, `caret_report_since` (with `LastSelection` and
   `ReportedCaret`), and `caret_report_checking` read the caret for
   `CaretMoved`. `Anchors` keeps a backend's anchors by node until
-  `forget_anchors` or the node's release, adding each it mints or reports
-  to the shared `TouchedAnchors` (`Anchors::sharing`) for the next message
-  to carry, with `note_content_changed` and `forget_selection`;
-  `NodeText` is one node's
+  `forget_anchors` or the node's release, with `note_content_changed` and
+  `forget_selection`, each returning what it let go of as `Forgotten`, to
+  drop once no lock is held; `copy(node)` gives a `NodeTextCopy` a text
+  call works on with no lock held, recording the anchors it mints or
+  reports, and `put(node, copy)` puts it back but for an anchor forgotten
+  meanwhile; `NodeText` is one node's, borrowed from either
   (`position_at`, `forget_selection`). `check_caret` checks a caret key's
   watch with one read and answers `Watched::Answered` or
   `Watched::Watching`; `CaretSignal` is what the check knows besides the
@@ -1182,9 +1192,9 @@ unredirected, never unspawned.
   gone, the report carries that evidence (`FocusChanged::earlier`) and its
   commit evicts the element kept for the node, if still kept
   (`commit::Stale`, `NodeIdRegistry::evict_element_if`), not moving the
-  subscription to it; for one gone, the node's text caches are dropped
-  before the caret read, a cache's write (`text_reads::forget`), and its
-  terminal entry goes in the commit. The subscription's target is
+  subscription to it; for one gone, the node's text is dropped from the
+  store before the caret read, while the entry's request is live
+  (`Store::forget_text`), and its terminal entry goes in the commit. The subscription's target is
   compared by node, group and element, so a node whose element was
   replaced is followed again. Its
   ancestors are the listener's chain, filtered, spliced at the previous
@@ -1316,25 +1326,48 @@ foreground application for its focus unless a newer focus was applied.
 - Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
   the gap record's answer kept for it, its classic mark, and its MSAA
   nodes.
-- Held objects: both registries keep every node reported with its live
-  element or object. Each message that carries node ids
-  (`OutpostToCore::carries_nodes`) takes the next position as it is
-  written, and what it carries is recorded at it (`outbound::Carried`): the
-  nodes issued or looked up since the last publish, `existing_id` lookups
-  and spliced entries included, and the text anchors minted or reported
-  since. A walk splices only from entries the store still holds
-  (`read::held_prefix`). The app writes `NodesHeld` (the reducer's nodes
-  and text anchors in that outpost and the last position handled) when the
-  node set changed or after a focus report
-  (`Supervisor::send_nodes_held`); any other change waits in the writer's
-  slot (`Supervisor::leave_nodes_held`) for the next command, a request or
-  a ping within three seconds. The worker in charge then releases every
-  unheld node and anchor reported at or before that position, under the
-  watch lock and the sender's lock, with the reports whose focus node it
-  is and the focus-following groups of their elements, dropping the
-  objects after, so a replacement worker never reports a vanishing node. A
-  released node answers `Gone`, a forgotten anchor `AnchorLost`. Only the
-  newest list is kept.
+- Held objects: the object store (`outpost::store`;
+  `docs/design/ownership-outpost-reducer.md`, "The store") owns both
+  registries, each node's text patterns and anchors, the terminals' kept
+  ranges, and every node's and anchor's mint tag, the requests that issued
+  or looked it up. Its API returns owned clones and owned removed objects
+  (`store::Removed`), never a guard, and takes no closure. Walks issue and
+  look up nodes through `Store::nodes()`, which implements the interning
+  traits of `verbatim-uia` and `verbatim-ia2` and tags each node with the
+  calling thread's program in the same hold of the store's lock; a plain
+  window and a foreground's client object read from local data are minted
+  by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
+  The lines a walk copies are tagged too: the previous focus's chain it may
+  splice from (`read::held_prefix`, `Store::held_prefix`), which keeps only
+  the entries above the outermost one no longer held, and the reports'
+  MSAA lines it compares with (`read::msaa_candidates`,
+  `Store::tag_copied`). Every ordinary message is sent as a
+  `store::Recorded`, which only the store makes, listing the nodes and
+  anchors it names (`OutpostToCore::named`); each message that carries
+  node ids (`OutpostToCore::carries_nodes`) takes the next position as it
+  is written, and what it names is recorded at it (`outbound::Carried`).
+  The app writes `NodesHeld` (the reducer's nodes and text anchors in
+  that outpost and the last position handled) when the node set changed
+  or after a focus report (`Supervisor::send_nodes_held`); any other
+  change waits in the writer's slot (`Supervisor::leave_nodes_held`) for
+  the next command, a request or a ping within three seconds. The worker
+  in charge then calls `Store::release` with the live requests' tags: under
+  the sender's lock and then the store's, it frees a node or anchor only
+  when none of its tags is live and either no message carried it or one
+  was written at or before that position, none waits that carries it, and
+  Core does not hold it; with it go the node's text, terminal entry,
+  reports and focus-following groups, under the watch lock, the objects
+  dropped after, so a replacement worker never reports a vanishing node. A
+  never-carried node of an ended request or an abandoned generation goes
+  at the next release. A released node answers `Gone`, a forgotten anchor
+  `AnchorLost`. Only the newest list is kept.
+- Text on copies: a text call takes a copy of its node's anchors from the
+  store (`Store::uia_text`, `Store::edit_text`), works on it with no lock
+  held, and puts it back (`text_reads::put_uia`, `put_edit`) only while
+  its request is live, judged and written under the watch lock, the
+  anchors it minted or reported tagged; a copy of an abandoned or claimed
+  request is dropped. Patterns and what a text supports are the store's
+  caches, written directly; a released node's are not kept.
 
 ### What to read
 
@@ -1653,8 +1686,8 @@ The outpost's side (`Outpost::shutdown`), in order:
 4. The watchdog ends, then the worker finishes its entry and every
    abandoned worker and bounded-client thread returns; no call is cut off,
    since UIA's timeouts end it.
-5. Every node leaves both registries, with its text patterns, anchors, and
-   a terminal's kept start.
+5. Every node leaves the store, with its text patterns, anchors, and
+   a terminal's kept start (`Store::release_everything`).
 6. What waits is written, every write in flight completes
    (`ChildIo::finish`), and the pipe closes, since an exit would cancel a
    write (`docs/design/communication.md`, section 4.6).

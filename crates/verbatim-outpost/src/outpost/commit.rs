@@ -11,21 +11,20 @@
 //! here, in [`FollowState`], inside the watch's state, so a commit takes one
 //! lock; the facts other threads read stay in their own structures, whose
 //! locks a commit takes nested inside the watch lock, in this order: the
-//! judgement list, the intake, the outbound queue, the UI Automation
-//! registry, the MSAA registry (the release of nodes takes both registries
-//! inside the outbound queue's lock). Nothing holding any of them takes the
-//! watch lock or calls into the application, and no lock a commit takes is
-//! held across a call. The text caches come before the watch lock: they may
-//! be held when it is taken, and a commit never takes them.
+//! judgement list, the intake, the outbound queue, the object store (the
+//! release of nodes takes the store's lock inside the outbound queue's).
+//! Nothing holding any of them takes the watch lock or calls into the
+//! application, and no lock a commit takes is held across a call. A text
+//! call's copy is put back in the store under the watch lock, in the same
+//! order.
 //!
 //! One change of follow state is made outside a commit, with the same
-//! in-charge check under the watch lock: the release of the nodes Core no
-//! longer holds (`Worker::release`), which must take the outbound queue's
-//! lock and the registries' inside it, and removes the released nodes'
-//! terminals.
+//! in-charge check under the watch lock: the release of the nodes no live
+//! request can still name (`Worker::release`), which takes the outbound
+//! queue's lock and the store's inside it.
 //!
-//! What a commit displaces that may hold an application's object, a
-//! terminal entry replaced or an element the subscription is not moved to,
+//! What a commit displaces that may hold an application's object, what the
+//! store let go of or an element the subscription is not moved to,
 //! is returned as [`Displaced`] and dropped once the watch lock is let go,
 //! since a `Release` can call into the application; what a watchdog's
 //! publication displaces is left in the follow state for the worker in
@@ -37,8 +36,6 @@
 //! would take the watch lock again.
 
 #![forbid(unsafe_code)]
-
-use std::collections::HashMap;
 
 use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TextReply, TraceId};
 use verbatim_uia::{Agile, Group, Kept};
@@ -166,11 +163,6 @@ pub(super) struct FollowState {
     pub(super) caret_watch: Option<OpenWatch>,
     /// The last committed read of a caret.
     pub(super) caret_read: CaretRead,
-    /// What the outpost keeps of each focused terminal between its reads,
-    /// by node, kept while the node is (`docs/design/terminal-model.md`,
-    /// "Where it runs"). A read works on a copy, which only the commit of
-    /// its result puts in place.
-    pub(super) terminals: HashMap<u64, crate::terminal::Terminal>,
     /// The raw-view chain the focus listener read for the UIA focus this
     /// outpost last reported, by which it finds its own copies of that
     /// focus's elements ([`super::focus_path`]).
@@ -188,8 +180,8 @@ pub(super) struct FollowState {
 #[derive(Default)]
 #[must_use = "dropped only once the watch lock is let go"]
 pub(super) struct Displaced {
-    /// Terminal entries replaced or removed.
-    pub(super) terminals: Vec<crate::terminal::Terminal>,
+    /// What the store let go of: terminal entries replaced or removed.
+    pub(super) store: Vec<super::store::Removed>,
     /// Elements the subscription was not moved to.
     pub(super) elements: Vec<Agile<Kept>>,
 }
@@ -197,7 +189,7 @@ pub(super) struct Displaced {
 impl Displaced {
     /// Takes in `other`'s values.
     pub(super) fn append(&mut self, mut other: Displaced) {
-        self.terminals.append(&mut other.terminals);
+        self.store.append(&mut other.store);
         self.elements.append(&mut other.elements);
     }
 
@@ -370,13 +362,10 @@ pub(super) enum Committed {
     Refused,
 }
 
-/// Sends `message` under the watch lock, recording every node issued or
-/// looked up since the last send as reported at the position it takes
-/// (`worker::take_touched`).
+/// Sends `message` under the watch lock, recording the nodes and anchors
+/// it names as carried by it ([`super::store::Recorded`]).
 pub(super) fn send(context: &Context, message: OutpostToCore) {
-    context
-        .outbound
-        .publish(message, super::worker::take_touched(context));
+    context.send(message);
 }
 
 /// The `WatchEnded` answer to `open`, which Core says nothing for.
@@ -571,9 +560,9 @@ impl FollowState {
         // A terminal gaining the focus has its caret reported afresh: the
         // caret read with its report is the one sent.
         if terminal {
-            self.terminals.entry(node.number()).or_default().sent_caret = sent_caret;
-        } else if let Some(entry) = self.terminals.get_mut(&node.number()) {
-            entry.sent_caret = None;
+            context.store.set_sent_caret(node, sent_caret, true);
+        } else {
+            context.store.set_sent_caret(node, None, false);
         }
         self.retarget(context, target, displaced);
         self.owed = owed.map(|work| Owed {
@@ -622,7 +611,6 @@ impl FollowState {
     /// `follow`, the focus's, does not move the subscription to it; for one
     /// gone, the node's terminal entry goes too.
     fn evict(
-        &mut self,
         context: &Context,
         stale: Stale,
         follow: Option<&mut Follow>,
@@ -633,8 +621,7 @@ impl FollowState {
             element,
             gone,
         } = stale;
-        let evicted =
-            element.and_then(|element| context.uia_registry.evict_element_if(node, &element));
+        let evicted = element.and_then(|element| context.store.evict_element_if(node, &element));
         // The subscription is not moved to the element evicted: the
         // focus's own is found after its report.
         if let (Some(evicted), Some(follow)) = (&evicted, follow)
@@ -657,9 +644,7 @@ impl FollowState {
         }
         displaced.elements.extend(evicted);
         if gone {
-            displaced
-                .terminals
-                .extend(self.terminals.remove(&node.number()));
+            displaced.store.push(context.store.remove_terminal(node));
         }
     }
 
@@ -697,7 +682,7 @@ impl FollowState {
             self.tracking.dialog = memo;
         }
         if let Some(stale) = stale {
-            self.evict(context, stale, follow.as_mut(), &mut displaced);
+            Self::evict(context, stale, follow.as_mut(), &mut displaced);
         }
         if let Some(follow) = follow {
             self.follow(context, follow, &mut displaced);
@@ -722,11 +707,11 @@ impl FollowState {
         }
         if let Some((node, entry)) = terminal {
             displaced
-                .terminals
-                .extend(self.terminals.insert(node.number(), entry));
+                .store
+                .push(context.store.put_terminal(node, entry));
         }
         if let Some((node, caret)) = sent_caret {
-            self.terminals.entry(node.number()).or_default().sent_caret = Some(caret);
+            context.store.set_sent_caret(node, Some(caret), true);
         }
         if let Some(node) = owed_done
             && self

@@ -96,7 +96,7 @@ pub use provider::{
     console_host_of, is_top_level_window, outermost_nearest_window, parent_across_process_boundary,
     parent_window, plain_windows_start, provider_process, raw_view_parent_window, served_by,
 };
-pub use registry::{NodeIdRegistry, Released};
+pub use registry::{Interning, NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
     Direction, ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,

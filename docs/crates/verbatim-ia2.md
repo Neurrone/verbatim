@@ -462,9 +462,14 @@ by Core on entering the window: one acquisition; `progress`, an
   only stores and looks up, and never makes a COM call under its lock;
   `acquire` makes the comparisons. `retain` releases the nodes the outpost
   no longer needs, returning their objects as `Released` (dropped after the lock is released, since
-  releasing one can call into its process), `forget_window` drops a
-  destroyed window's nodes so a reused handle never inherits them, and
-  `take_touched` reports the nodes issued or looked up since the last
-  call, so the outpost can record which message reported them, and
-  `touch_kept(node)` records a kept node a message names without a
-  lookup.
+  releasing one can call into its process), and `forget_window` drops a
+  destroyed window's nodes so a reused handle never inherits them,
+  returning their ids and `Released` likewise. The walks in `acquire`,
+  `equality` and `dialog` take an `Interning` (`&dyn Interning`) rather
+  than the registry: the registry's own operations (`id_for`, `find`,
+  `insert`, `reissue`, `facts_of`, `key_of`, `locate`, `fetches`, and
+  `touch` for a found node the caller confirmed), which the outpost's
+  object store implements to tag each node issued or looked up with the
+  request that named it, and the registry implements untagged, its
+  `touch` doing nothing. `Facts`, `Found`, `Held`, `Kept` and `KeptObject`
+  are public for it, their fields the crate's own.
