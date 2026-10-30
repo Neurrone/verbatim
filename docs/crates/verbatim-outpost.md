@@ -589,12 +589,17 @@ outpost frame.
 ### The arbitrator
 
 `Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`),
-each outpost's one verdict per window. `verdict(hwnd, &WindowClasses)`
-answers from the good class list, the Windows 11 shell rule, the bad class
-list, a `SetBackendOverride`, or a kept probe, and `None` when only the
-probe can decide; the worker then probes the window with the raw probe
-(`verbatim_uia::raw_probe`) through `arbitration::uses_uia_keeping`, and
-its answer is recorded (`record_probe`). No connection follows a probe
+each outpost's one verdict per window. It holds the configuration: the
+class lists, the `SetBackendOverride` and the clocks. The verdicts probes
+found are the reducer's state, `Verdicts` (`outpost/reducer/verdicts.rs`),
+which callers give it. `verdict(&verdicts, hwnd, &WindowClasses)` answers
+from the good class list, the Windows 11 shell rule, the bad class list,
+the override, or a kept probe, and `None` when only the probe can decide;
+a program then probes the window with the raw probe
+(`verbatim_uia::raw_probe`) through `arbitration::uses_uia`, and records
+its answer through its `arbitration::Judgement`, the request's context
+(`Arbitrator::record_probe` makes the same record for a test that probes
+by hand). No connection follows a probe
 (`docs/design/listener-without-connections.md`, decision 2). The listener
 makes no verdict; it skips a read only by `arbitration::class_verdict`,
 the class lists alone, from the same tables and code.
@@ -603,28 +608,38 @@ the class lists alone, from the same tables and code.
   NVDA does (`normalize_class_name`), and the root ancestor's class.
 - `post_probe_check` names NVDA's check before using a provider: a list
   view's Windows Forms origin, or a console's formatted text, read from
-  the window. A provider that fails is recorded with `record_excluded`,
-  MSAA for the window's lifetime.
-- A "yes" is kept for the window's lifetime and dropped by `forget` on
-  destruction (decision D15). A "no" is kept for events observed until
+  the window. A provider that fails is recorded as excluded
+  (`Probed::Excluded`), MSAA for the window's lifetime.
+- A "yes" is kept for the window's lifetime and dropped on destruction
+  (`VerdictChange::Forget`, which the program handling the window's
+  destroy event commits; decision D15). A "no" is kept for events observed until
   `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's cache period) after the
   probe's end, since a busy application answers late. A timed-out probe is
   an unknown verdict (`arbitration::Verdict::Unknown`), which the worker
-  reads through MSAA and keeps as "no" the same way (`record_timed_out`); a
+  reads through MSAA and keeps as "no" the same way (`Probed::TimedOut`); a
   verdict kept for the window's lifetime meanwhile stays.
 - A kept verdict is compared with the observation of the event it judges,
   never with when the worker handles it: each worker entry is judged at
-  its event's observation, or at its start for an entry with no event
-  (`Arbitrator::begin_entry`, `end_entry`), and a verdict judges the
+  its event's observation, or, for a program with no event, now at each
+  judgement (`Judgement::judged_at`), and a verdict judges the
   events observed from its probe's beginning, stamped with the observation
   of the judgement that probed, until its keep ends. A verdict judges no
   event observed before its probe began; each window keeps its previous
-  verdict for those (`kept_at`), one being enough behind the intake's
-  marker barrier.
-- Only the worker in charge records a verdict (`Arbitrator::set_in_charge`,
-  set by the reducer's shell as it abandons a worker): a
-  probe returning on an abandoned worker records nothing, but a timed-out
-  probe is kept as unknown whichever worker made it.
+  verdict for those (`Verdicts::kept_at`), one being enough behind the
+  intake's marker barrier.
+- A program reads its own copy of the verdicts (`Facts::verdicts`, an
+  `Arc` the reducer replaces on change, so a copy costs a reference count).
+  Each probe is committed as it returns, alone in its commit, and applied
+  to the program's copy, which it judges by for the rest of its walk. The
+  shell passes a commit's verdicts to the reducer even when it applies
+  nothing else of it, and the reducer records a probe only from the worker
+  generation in charge, but a timed-out probe and a destroyed window's
+  forgetting from any generation, so a window is not probed again more
+  often than NVDA probes it. A probe committed before its worker is
+  abandoned stays recorded. When the record changes the reducer publishes
+  the new snapshot to the mailbox's push-time copy (`Effect::Verdicts`),
+  and after it, for a probe that found a provider, nudges the event thread
+  to decide its hook again (`Effect::Narrow`).
 - `lasting_verdict` answers only a verdict that lasts the window's
   lifetime.
 - `Clock`, `Arbitrator::set_clock`, and `Arbitrator::now` time the classic
@@ -687,14 +702,16 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   are pushed, judged on copies of the reducer's marks that only the shell
   writes, from the reducer's effects (`Marks::drops_on_arrival`): a held
   console's updates and the system caret's events while the focus has
-  caret events of its own. A UIA callback keeps the cached parts and
+  caret events of its own. The event thread's drop of an MSAA event of a
+  window known to use UIA reads the mailbox's copy of the reducer's
+  verdicts (`Mailbox::verdicts`). A UIA callback keeps the cached parts and
   window handle, and parks its element, and an active text position's
   range, in the store (`store::Parked`), the entry carrying the key.
 - The reducer (`outpost::reducer`), a pure state machine on a thread of
   its own, run by its shell (`outpost::shell`): it holds the intake's
   order (`reducer::intake`), the gap record, the reports Core may hold
   (`reducer::held`), the follow state (`reducer::follow`), the hand-over's
-  hold, the worker generation in charge with its deadline, the moved-on
+  hold, the arbitrator's verdicts (`reducer::verdicts`), the worker generation in charge with its deadline, the moved-on
   grace and the walk's bound, and the queries not yet answered. Inputs
   come in mailbox order; effects go out: dispatch a program, send a
   message, release, move the subscription, abandon a worker, set a timer.
@@ -713,11 +730,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   program at a time from its inbox, an entry's handling, the owed work, a
   settle, a release's drop, or the console poll, with copies of what it
   reads
-  (`reducer::Facts`: the reports, the follow state, the marks), and posts
+  (`reducer::Facts`: the reports, the follow state, the marks, the
+  verdicts), and posts
   each commit (`commit::Effects`) to the mailbox, applying its pure part
   to its own copies (`reducer::apply`), so what it reads after is what the
   reducer will hold. The shell applies a commit only while its request is
-  live, its generation in charge and its walk not published: first the
+  live, its generation in charge and its walk not published, but for its
+  verdicts ("The arbitrator"): first the
   writes only it makes, to the store and its table of the elements the
   subscription follows (`commit::Writes`), then the reducer's change. A
   program receives too the caret events and edit controls' value changes
@@ -1189,8 +1208,11 @@ unredirected, never unspawned.
 - Every event is arbitrated per window, so one backend reports it. The event
   thread drops an MSAA event for a known UIA window before queuing it, from
   its record of windows (`arbitration::EventWindows` in a
-  `verbatim_ia2::WindowCache`), asking the arbitrator only until
-  `lasting_verdict`; an entry goes on destruction or when the handle is
+  `verbatim_ia2::WindowCache`), asking the arbitrator with the mailbox's
+  push-time copy of the verdicts only until `lasting_verdict`; a verdict a
+  program probed reaches it one transition of the reducer later, which
+  lets at most a few more MSAA events through for the program to drop. An
+  entry goes on destruction or when the handle is
   found owned by another thread, and all go after an override change. A UIA
   element that is not a window gets its window from `nearest_window_handle`
   on the worker.
@@ -1201,8 +1223,8 @@ unredirected, never unspawned.
   events are unhooked (`narrowing::NARROWED`), hooked again once the focus,
   a menu opening, or the foreground is in an MSAA or undecided window.
   Those windows come from the hook's own events, or, until it delivers one,
-  from nudges for routed facts (`event_thread::Nudger`); the worker nudges
-  when it keeps a UIA verdict.
+  from nudges for routed facts (`event_thread::Nudger`); the shell nudges
+  when the reducer records a UIA verdict (`Effect::Narrow`).
 - Trace ids are minted when an event arrives. `WindowFacts` (`window_facts`,
   local calls) give the top-level window and root owner, topmost style,
   `Windows.UI.Core` activity, NVDA's foreground test, and for a focus the

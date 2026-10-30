@@ -1101,3 +1101,123 @@ fn a_foreground_fact_after_the_grace_judges_the_moved_on_rule_again() {
     );
     assert!(abandons(&effects));
 }
+
+/// The probe of window 0x20, owned by thread 5, judging from 1 ms, that
+/// found `probed`.
+fn probe(probed: Probed) -> VerdictChange {
+    VerdictChange::Probed(Probe {
+        hwnd: 0x20,
+        owner: 5,
+        from_us: 1_000,
+        probed,
+    })
+}
+
+/// The commit of `change` alone.
+fn verdict_commit(change: VerdictChange) -> Change {
+    Change {
+        verdicts: vec![change],
+        ..Change::default()
+    }
+}
+
+/// The push-time copies of the verdicts `effects` replace, in order.
+fn verdict_copies(effects: &[Effect]) -> Vec<&Arc<Verdicts>> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Verdicts(verdicts) => Some(verdicts),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Window 0x20's verdict in `verdicts` for an event observed at `at_us`.
+fn verdict_of(verdicts: &Verdicts, at_us: u64) -> Option<Probed> {
+    verdicts.kept_at(0x20, 5, at_us)
+}
+
+#[test]
+fn a_probe_is_recorded_when_committed_and_reaches_the_event_thread_then_the_next_program() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let request = program(&effects).request;
+    let effects = replay.commit(request, verdict_commit(probe(Probed::Uia)), 2);
+    assert_eq!(
+        verdict_of(&replay.reducer.facts().verdicts, 1_000),
+        Some(Probed::Uia)
+    );
+    // The push-time copy is the reducer's own snapshot, then the event
+    // thread is nudged to decide its hook on it.
+    let copies = verdict_copies(&effects);
+    assert_eq!(copies.len(), 1);
+    assert!(Arc::ptr_eq(copies[0], &replay.reducer.facts().verdicts));
+    let order: Vec<&str> = effects
+        .iter()
+        .map(|effect| match effect {
+            Effect::Verdicts(_) => "copy",
+            Effect::Narrow => "narrow",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(order, ["copy", "narrow"]);
+    // The next program is given the same snapshot.
+    replay.finish(request, false, 3);
+    let effects = replay.push(name_change(1), Source::Hook, 4);
+    let next = program(&effects);
+    assert!(Arc::ptr_eq(
+        &next.facts.verdicts,
+        &replay.reducer.facts().verdicts
+    ));
+    assert_eq!(verdict_of(&next.facts.verdicts, 1_000), Some(Probed::Uia));
+}
+
+#[test]
+fn a_dead_generations_probe_is_not_recorded() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let dead = program(&effects).request;
+    assert!(abandons(&replay.tick(1 + 10_000)));
+    let effects = replay.commit(dead, verdict_commit(probe(Probed::Uia)), 10_002);
+    assert_eq!(verdict_of(&replay.reducer.facts().verdicts, 1_000), None);
+    assert!(effects.is_empty());
+}
+
+#[test]
+fn a_dead_generations_timed_out_probe_is_recorded() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let dead = program(&effects).request;
+    assert!(abandons(&replay.tick(1 + 10_000)));
+    let effects = replay.commit(
+        dead,
+        verdict_commit(probe(Probed::TimedOut(10_502_000))),
+        10_002,
+    );
+    assert_eq!(
+        verdict_of(&replay.reducer.facts().verdicts, 1_000),
+        Some(Probed::TimedOut(10_502_000))
+    );
+    assert_eq!(verdict_copies(&effects).len(), 1);
+}
+
+#[test]
+fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let request = program(&effects).request;
+    // The probe returns at 3 s, timed out, and is committed at once; the
+    // program then hangs in its next call until its deadline.
+    replay.commit(
+        request,
+        verdict_commit(probe(Probed::TimedOut(3_501_000))),
+        3_001,
+    );
+    let effects = replay.tick(1 + 10_000);
+    assert!(abandons(&effects));
+    assert_eq!(
+        verdict_of(&replay.reducer.facts().verdicts, 1_000),
+        Some(Probed::TimedOut(3_501_000))
+    );
+    assert_eq!(verdict_copies(&effects).len(), 0);
+}

@@ -7,8 +7,8 @@
 //!
 //! It holds the intake's order ([`intake`]), the gap record and its timer,
 //! the reports Core may hold ([`held`]), the follow state ([`follow`]),
-//! the hand-over's hold ([`hold`]), the worker generation in charge with
-//! its deadline, the moved-on grace and the walk's bound, the program in
+//! the hand-over's hold ([`hold`]), the arbitrator's verdicts
+//! ([`verdicts`]), the worker generation in charge with its deadline, the moved-on grace and the walk's bound, the program in
 //! flight and the console poll in flight beside it, the queries not yet
 //! answered, and the idle barrier's round.
 //! Programs, run by a worker on copies ([`Facts`]), make every call into
@@ -30,8 +30,10 @@ mod hold;
 mod intake;
 #[cfg(test)]
 mod tests;
+mod verdicts;
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 
 use verbatim_model::protocol::{
@@ -50,6 +52,7 @@ pub(in crate::outpost) use self::follow::{
 pub(in crate::outpost) use self::gap_record::{CopyDropped, GapRead};
 pub(in crate::outpost) use self::held::{Evidence, Focus, Held};
 pub(in crate::outpost) use self::intake::{Handling, Marks, Object, Planned, TimerAction};
+pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -190,9 +193,8 @@ pub(in crate::outpost) enum Effect {
     Unfollow(Vec<u64>),
     /// Drop the objects parked under these keys, on a worker.
     Unpark(Vec<u64>),
-    /// Mark the generation dead in its slot, start `replacement`, and have
-    /// it record verdicts from now on; `count` abandoned workers have not
-    /// returned.
+    /// Mark the generation dead in its slot and start `replacement`;
+    /// `count` abandoned workers have not returned.
     Abandon {
         dead: u64,
         replacement: u64,
@@ -203,6 +205,11 @@ pub(in crate::outpost) enum Effect {
     Returned { count: usize },
     /// The push-time copies of the intake's marks.
     Marks(Marks),
+    /// The push-time copy of the arbitrator's verdicts, replaced.
+    Verdicts(Arc<Verdicts>),
+    /// A verdict of UIA for a window's lifetime was recorded: the event
+    /// thread may narrow its hook (`outpost::narrowing`).
+    Narrow,
     /// Set the gap record's timer for this observation time, or cancel it.
     GapTimer(Option<u64>),
     /// A caret key's watch ended without evidence, for the log: why, and
@@ -450,6 +457,7 @@ impl Reducer {
                 }
             }
             Input::Commit { request, change } => {
+                self.record_verdicts(request, &change.verdicts, &mut effects);
                 if self.accepts(request) {
                     self.commit(request, &change, now, &mut effects);
                 }
@@ -706,6 +714,45 @@ impl Reducer {
         self.subscription_effects(applied, now, effects);
         if marks {
             self.sync_marks(effects);
+        }
+    }
+
+    /// Records the verdicts a commit of `request` carries: each from the
+    /// generation in charge, and a probe that timed out or a window's
+    /// forgetting from any generation, so a window whose probe timed out
+    /// is not probed again within the negative verdict's lifetime even
+    /// when the worker that probed it was abandoned. The push-time copy is
+    /// replaced when the record changed, and the event thread nudged when
+    /// a window was found to use UIA.
+    fn record_verdicts(
+        &mut self,
+        request: Request,
+        changes: &[VerdictChange],
+        effects: &mut Vec<Effect>,
+    ) {
+        let in_charge = request.generation == self.generation;
+        let mut replaced = false;
+        let mut narrow = false;
+        for change in changes {
+            if !in_charge && !change.kept_from_any_generation() {
+                continue;
+            }
+            if Arc::make_mut(&mut self.facts.verdicts).apply(change) {
+                replaced = true;
+                narrow |= matches!(
+                    change,
+                    VerdictChange::Probed(Probe {
+                        probed: Probed::Uia,
+                        ..
+                    })
+                );
+            }
+        }
+        if replaced {
+            effects.push(Effect::Verdicts(Arc::clone(&self.facts.verdicts)));
+        }
+        if narrow {
+            effects.push(Effect::Narrow);
         }
     }
 

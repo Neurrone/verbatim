@@ -266,17 +266,13 @@ impl Client {
     }
 }
 
-/// Decides a window's backend with the outpost's arbitrator
-/// ([`crate::arbitration::uses_uia`]). Returns `true` for UIA.
-pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
-    let (uia, kept) = crate::arbitration::uses_uia_keeping(&context.arbitrator, hwnd, || {
+/// Decides a window's backend with the outpost's arbitrator and the
+/// request's copy of the verdicts ([`crate::arbitration::uses_uia`]).
+/// Returns `true` for UIA.
+pub(super) fn window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool {
+    crate::arbitration::uses_uia(&context.arbitrator, context, hwnd, || {
         verbatim_uia::console_reports_formatting(hwnd)
-    });
-    if kept {
-        // The event thread may narrow its hook now that it knows.
-        context.nudge_event_thread(super::narrowing::Nudge::Decide);
-    }
-    uia
+    })
 }
 
 /// Whether the outpost's application serves window `hwnd`, by the
@@ -291,7 +287,7 @@ pub(super) fn serves(context: &Context, hwnd: isize) -> bool {
 /// `false`, without a probe, for any other process's window, which the
 /// outpost reads through MSAA whether it has a provider or not
 /// (`docs/design/listener-without-connections.md`, sections 4.3 and 4.4).
-fn own_window_uses_uia(context: &Context, hwnd: isize) -> bool {
+fn own_window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool {
     serves(context, hwnd) && window_uses_uia(context, hwnd)
 }
 
@@ -302,7 +298,7 @@ fn own_window_uses_uia(context: &Context, hwnd: isize) -> bool {
 /// worker neither reads nor reports. Any process can raise a `WinEvent`
 /// naming another's window, and the probe, and a console window's check,
 /// would call into that process. Local calls before the verdict.
-pub(super) fn own_window_verdict(context: &Context, hwnd: isize) -> Option<bool> {
+pub(super) fn own_window_verdict(context: &RequestContext<'_>, hwnd: isize) -> Option<bool> {
     if !serves(context, hwnd) {
         tracing::debug!(
             hwnd,
@@ -509,7 +505,7 @@ fn uia_ancestors(
 /// stays a UIA ancestor, as the listener's walk keeps it; another
 /// process's window, and one read through MSAA, still end the walk there.
 /// Local calls, and the verdict's probe for a window of this application.
-fn uia_walk_leaves(context: &Context, nearest: isize, hwnd: isize) -> bool {
+fn uia_walk_leaves(context: &RequestContext<'_>, nearest: isize, hwnd: isize) -> bool {
     let plain = if hwnd == nearest {
         !serves(context, hwnd)
     } else {
@@ -654,7 +650,7 @@ fn window_from_local_state(
 /// state, one call, or its MSAA client, which the test reads. A plain
 /// window is never focused.
 pub(super) fn parent_window_for_focused_state(
-    context: &Context,
+    context: &RequestContext<'_>,
     client: &mut Client,
     hwnd: isize,
 ) -> verbatim_ia2::acquire::ParentWindow {
@@ -1683,7 +1679,7 @@ fn uia_focused_control(
             if now != Some(hwnd)
                 && !now.is_some_and(|now| {
                     serves(context, now)
-                        && crate::arbitration::known_to_use_uia(&context.arbitrator, now)
+                        && crate::arbitration::known_to_use_uia(&context.arbitrator, context, now)
                 })
             {
                 tracing::debug!(
@@ -1762,7 +1758,7 @@ fn uia_focused_control(
 /// audit's difference 5). `Refused` also when the outpost judges the focus
 /// window MSAA.
 pub(super) fn focused_element_in(
-    context: &Context,
+    context: &RequestContext<'_>,
     client: &mut Client,
     trigger: FocusRead,
 ) -> Result<Cached<Node>, FocusReadMiss> {

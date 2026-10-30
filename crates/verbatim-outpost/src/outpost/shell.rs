@@ -35,7 +35,7 @@ use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
     Change, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program, Reducer,
-    Request, Source, Subscription, Work,
+    Request, Source, Subscription, Verdicts, Work,
 };
 use super::store::{Removed, Tag};
 use super::worker::{self, Charge, Job};
@@ -102,7 +102,7 @@ pub(super) enum Posted {
 
 /// The mailbox: an append-only queue under one lock, which every producer
 /// appends to and only the shell drains, with the push-time copies of the
-/// reducer's marks that the producers' drops are judged by.
+/// reducer's marks and verdicts that the producers' drops are judged by.
 #[derive(Default)]
 pub(super) struct Mailbox {
     state: Mutex<MailboxState>,
@@ -117,6 +117,9 @@ struct MailboxState {
     posted: VecDeque<Posted>,
     /// The reducer's marks, as its last change of them left them.
     marks: Marks,
+    /// The reducer's verdicts, as its last change of them left them: the
+    /// event thread's drop of an MSAA event of a window known to use UIA.
+    verdicts: Arc<Verdicts>,
     /// Whether the shell waits, so that an append sets the alarm's event;
     /// taken by the first to set it.
     asleep: bool,
@@ -197,6 +200,16 @@ impl Mailbox {
     /// The reducer's marks, for the drops judged at push.
     fn set_marks(&self, marks: Marks) {
         self.lock().marks = marks;
+    }
+
+    /// The reducer's verdicts, for the drops judged at push.
+    fn set_verdicts(&self, verdicts: Arc<Verdicts>) {
+        self.lock().verdicts = verdicts;
+    }
+
+    /// The push-time copy of the reducer's verdicts: a reference count.
+    pub(super) fn verdicts(&self) -> Arc<Verdicts> {
+        Arc::clone(&self.lock().verdicts)
     }
 
     /// Everything posted, waiting for something to be posted or for `at`,
@@ -578,22 +591,37 @@ impl Shell {
             Posted::WithoutListener => Input::WithoutListener,
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
-            Posted::Commit { request, effects } => {
-                if !self.reducer.accepts(request) {
+            Posted::Commit {
+                request,
+                mut effects,
+            } => {
+                if self.reducer.accepts(request) {
+                    let change = write(
+                        &self.context,
+                        *effects,
+                        &mut self.elements,
+                        &mut self.garbage,
+                    );
+                    Input::Commit {
+                        request,
+                        change: Box::new(change),
+                    }
+                } else {
                     // A dead generation's or a claimed request's: nothing of
-                    // it is applied, and its objects go to a worker.
+                    // it is applied but the verdicts the reducer records
+                    // from any request, and its objects go to a worker.
+                    let verdicts = std::mem::take(&mut effects.verdicts);
                     self.discard(*effects);
-                    return;
-                }
-                let change = write(
-                    &self.context,
-                    *effects,
-                    &mut self.elements,
-                    &mut self.garbage,
-                );
-                Input::Commit {
-                    request,
-                    change: Box::new(change),
+                    if verdicts.is_empty() {
+                        return;
+                    }
+                    Input::Commit {
+                        request,
+                        change: Box::new(Change {
+                            verdicts,
+                            ..Change::default()
+                        }),
+                    }
                 }
             }
             Posted::Armed { request, bound_at } => Input::Armed {
@@ -694,8 +722,6 @@ impl Shell {
                         generation.charge.abandon();
                     }
                     self.context.abandoned.store(count, Ordering::Relaxed);
-                    // From now on only the new worker records a verdict.
-                    self.context.arbitrator().set_in_charge(replacement);
                     self.spawn_worker(replacement, false);
                 }
                 Effect::Returned { count } => {
@@ -703,6 +729,11 @@ impl Shell {
                     self.context.abandoned.store(count, Ordering::Relaxed);
                 }
                 Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
+                Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
+                // After the copy above, so the event thread decides on it.
+                Effect::Narrow => self
+                    .context
+                    .nudge_event_thread(super::narrowing::Nudge::Decide),
                 Effect::WatchEnded { trace, why, waited } => {
                     tracing::debug!(
                         %trace,

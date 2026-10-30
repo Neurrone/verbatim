@@ -21,7 +21,8 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::OutpostToCore;
 
 use super::reducer::{
-    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, WatchChange,
+    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, VerdictChange,
+    WatchChange,
 };
 
 /// Where the focus-following subscription is to be moved for a focus,
@@ -181,6 +182,8 @@ pub(super) struct Effects {
     /// A held terminal's caret event, noted to be read once nothing else is
     /// waiting.
     pub(super) noted_caret: Option<(NodeId, TraceId, u64)>,
+    /// The verdicts probed, and the windows found destroyed.
+    pub(super) verdicts: Vec<VerdictChange>,
 }
 
 impl Effects {
@@ -209,6 +212,7 @@ impl Effects {
             states: self.states,
             gap: self.gap.clone(),
             noted_caret: self.noted_caret,
+            verdicts: self.verdicts.clone(),
         }
     }
 
@@ -237,6 +241,7 @@ impl Effects {
             states: self.states,
             gap: self.gap,
             noted_caret: self.noted_caret,
+            verdicts: self.verdicts,
         };
         let writes = Writes {
             follow: self.follow.map(|follow| {

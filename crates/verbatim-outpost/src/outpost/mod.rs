@@ -95,9 +95,11 @@ use verbatim_model::protocol::{
 
 use commit::{Committed, Effects};
 use outbound::Outbound;
+pub use reducer::Verdicts;
 use reducer::{
     Entry, Facts, FollowState, Item, Object, OpenWatch, Source, UiaEvent, UiaKind, WaitingCaret,
 };
+pub(crate) use reducer::{Probe, Probed, VerdictChange};
 pub use shell::GapTimer;
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
@@ -349,6 +351,11 @@ struct RequestContext<'a> {
     /// the caret events and value changes waiting when it was dispatched,
     /// and its worker's charge.
     program: Option<Program<'a>>,
+    /// The observation its verdicts are judged at: its entry's event's, or,
+    /// when `None`, now on the arbitrator's observation clock at each
+    /// judgement (`docs/design/focus-pipeline-rework.md`, "Who owns each
+    /// duplicated fact", the verdicts).
+    judged_at: Option<u64>,
 }
 
 /// What a program's context holds of it ([`RequestContext::program`]).
@@ -373,6 +380,7 @@ impl<'a> RequestContext<'a> {
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
             program: None,
+            judged_at: None,
         }
     }
 
@@ -395,7 +403,14 @@ impl<'a> RequestContext<'a> {
                 kept: None,
                 _context: std::marker::PhantomData,
             }),
+            judged_at: None,
         }
+    }
+
+    /// Judges every verdict the program asks for at the observation
+    /// `at_us`.
+    fn judge_at(&mut self, at_us: u64) {
+        self.judged_at = Some(at_us);
     }
 
     /// Keeps the pure part of every commit the program makes from now on,
@@ -557,6 +572,47 @@ impl<'a> RequestContext<'a> {
             effects: Box::new(effects),
         });
         (Committed::Applied, applied.taken)
+    }
+}
+
+impl crate::arbitration::Judgement for RequestContext<'_> {
+    fn judged_at(&self, arbitrator: &Arbitrator) -> u64 {
+        self.judged_at.unwrap_or_else(|| arbitrator.observed_now())
+    }
+
+    fn verdicts(&self) -> Arc<Verdicts> {
+        Arc::clone(&self.facts().verdicts)
+    }
+
+    /// Keeps `change` in the program's copies and posts it at once, alone
+    /// in its commit, even from an abandoned worker: the reducer judges by
+    /// its generation whether to record it, and a probe that timed out is
+    /// recorded from any. A context that runs no program keeps it in its
+    /// copies only.
+    fn record(&self, change: VerdictChange) {
+        let local = reducer::Change {
+            verdicts: vec![change],
+            ..reducer::Change::default()
+        };
+        let Some(program) = &self.program else {
+            reducer::apply_local(&mut self.facts.borrow_mut(), 0, &local);
+            return;
+        };
+        reducer::apply_local(
+            &mut self.facts.borrow_mut(),
+            program.request.generation,
+            &local,
+        );
+        if let Some(kept) = &program.kept {
+            kept.borrow_mut().push(local);
+        }
+        self.mailbox.post(Posted::Commit {
+            request: program.request,
+            effects: Box::new(Effects {
+                verdicts: vec![change],
+                ..Effects::default()
+            }),
+        });
     }
 }
 
@@ -835,6 +891,7 @@ impl Context {
             ) && windows.known_to_use_uia(
                 (
                     &self.arbitrator,
+                    || self.mailbox.verdicts(),
                     self.override_changes.load(Ordering::Acquire),
                 ),
                 (hwnd, window::window_thread(hwnd)),

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
 use verbatim_model::{CallCounts, NormalizedEvent};
-use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
+use verbatim_outpost::arbitration::{Arbitrator, Verdicts, WindowClasses};
 use verbatim_uia::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe};
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
@@ -24,9 +24,10 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let hwnd = common::find_window(&title).0 as isize;
 
     let classes = WindowClasses::of(hwnd);
-    let mut arbitrator = Arbitrator::new(&[]);
+    let arbitrator = Arbitrator::new(&[]);
+    let mut verdicts = Verdicts::default();
     assert_eq!(
-        arbitrator.verdict(hwnd, &classes),
+        arbitrator.verdict(&verdicts, hwnd, &classes),
         None,
         "only the probe decides"
     );
@@ -35,9 +36,9 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
         RawProbe::Provider,
         "the raw probe finds a uia-backend mockapp window's provider"
     );
-    arbitrator.record_probe(hwnd, true);
+    arbitrator.record_probe(&mut verdicts, hwnd, true);
     assert_eq!(
-        arbitrator.verdict(hwnd, &classes),
+        arbitrator.verdict(&verdicts, hwnd, &classes),
         Some(true),
         "the real arbitrator must resolve a uia-backend window to UIA"
     );
@@ -174,9 +175,10 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
     let hwnd = common::find_window(&title).0 as isize;
 
     let classes = WindowClasses::of(hwnd);
-    let mut arbitrator = Arbitrator::new(&[]);
+    let arbitrator = Arbitrator::new(&[]);
+    let mut verdicts = Verdicts::default();
     assert_eq!(
-        arbitrator.verdict(hwnd, &classes),
+        arbitrator.verdict(&verdicts, hwnd, &classes),
         None,
         "only the probe decides"
     );
@@ -186,9 +188,9 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
         RawProbe::Answered(0),
         "a msaa-backend mockapp window answers the raw probe with the default window procedure's answer"
     );
-    arbitrator.record_probe(hwnd, false);
+    arbitrator.record_probe(&mut verdicts, hwnd, false);
     assert_eq!(
-        arbitrator.verdict(hwnd, &classes),
+        arbitrator.verdict(&verdicts, hwnd, &classes),
         Some(false),
         "the real arbitrator must resolve a msaa-backend window to MSAA"
     );

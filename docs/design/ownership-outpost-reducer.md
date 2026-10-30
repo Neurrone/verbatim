@@ -80,7 +80,7 @@ One worker generation is in charge; it takes one program at a time from its inbo
 - A focus (`msaa_focus`, `uia_focus`, `foreground`, `menu_opened`): acquisition, the focused-state test, the walk, its caret read, and finding its own copy. One program, since every decision inside depends only on its copies and its calls. A run tried newest first is one program per try; the reducer dispatches the next try on a result that reported nothing.
 - The gap's read, a focus-now answer, a query, a terminal read, a text operation, a caret key's first check, a probe, the owed work, the console caret poll, and a release, which drops removed objects.
 
-Each makes exactly the calls today's code makes, so every `call_counts` test passes unchanged. The program records verdicts it probes in its result and uses them itself for the rest of its walk; the reducer records them only from the generation in charge, as `set_in_charge` does today (`worker.rs` line 791).
+Each makes exactly the calls today's code makes, so every `call_counts` test passes unchanged. The program commits each verdict it probes as the probe returns and uses it itself for the rest of its walk; the reducer records it only from the generation in charge, but a probe that timed out and a destroyed window's forgetting from any generation, as the arbitrator recorded them before this build ("Verdicts").
 
 The walk's progress stays a slot (`FocusProgress`, `bound.rs` line 57) written by the worker between calls under a lock held for one copy. Its focus's object (`BoundFocus::object`, line 47) is parked in the store when the walk is armed, and the slot keeps its key, so the copy the reducer takes holds no application object. At the bound the shell copies it into the timer's input; the reducer makes the chain from it (`chain_at_bound`, completing with plain windows through `LocalWindows`), publishes, and marks the request claimed. A result of a claimed request or a dead generation changes nothing but its mints, which the store frees by their tag.
 
@@ -92,7 +92,7 @@ The edit control's caret read becomes two parts. The program reads the caret and
 
 ### Verdicts (the reducer build)
 
-The arbitrator's record moves into the reducer; the override and the clock stay configuration until M5. The reducer hands every program, and the event thread through the push-time copies, an immutable snapshot. The event thread's `EventWindows` keeps asking until `lasting_verdict` as today; a verdict a program probed reaches it one transition later, which only lets one more MSAA event through to be dropped by the reducer. The event thread's narrowing nudge, sent by the worker today when a UIA verdict is kept (`read.rs` line 279), is a reducer effect.
+The arbitrator's record moves into the reducer; the class lists, the override and the clocks stay configuration until M5. The reducer hands every program, and the event thread through the push-time copies, an immutable snapshot, an `Arc` it replaces on change. A program commits each probe as soon as it returns, alone in its commit, and applies it to its own copy, so a timed-out probe stays recorded when its worker is abandoned later. The reducer records a probe only from the generation in charge, but a timed-out probe and a destroyed window's forgetting from any generation, so a window is not probed again more often than NVDA probes it, which is what the arbitrator did before; the shell therefore passes a commit's verdicts on even when it applies nothing else of the commit. Expiry is still judged at observation times in microseconds, each program judging at its entry's observation. The event thread's `EventWindows` keeps asking until `lasting_verdict` as before; a verdict a program probed reaches it one transition later, which only lets a few more MSAA events through to be dropped by the program. The event thread's narrowing nudge, which the worker sent when it kept a UIA verdict, is a reducer effect the shell applies after replacing the push-time copy. The mechanism is in [the crate guide](../crates/verbatim-outpost.md), "The arbitrator".
 
 ### The hand-over's hold (the reducer build)
 
@@ -238,7 +238,6 @@ Not built in this build, and open:
 
 - The value change check's cut into two programs. A caret read's comparison asks, after the `WinEvent` thread's sync, the program's copy of the waiting value changes and the mailbox's record of those it took or holds since the program was dispatched, which is exact and adds no hop.
 - The division of `NodeText` and `KeptSelection` between reducer and store: the text records stay in the store, written while a program's request is live.
-- The verdicts as reducer state: the arbitrator keeps its lock, read by programs mid-walk and by the event thread.
 - The removal of the five mockapp tests the brief names, which wait for their replay tests' review.
 
 ## Open questions for Dickson

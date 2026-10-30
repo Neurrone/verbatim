@@ -153,7 +153,11 @@ impl EventThreadState {
         let overrides = context.override_changes.load(Ordering::Acquire);
         let mut known = |hwnd: isize| {
             self.windows.known_to_use_uia(
-                (&context.arbitrator, overrides),
+                (
+                    &context.arbitrator,
+                    || context.mailbox.verdicts(),
+                    overrides,
+                ),
                 (hwnd, window::window_thread(hwnd)),
                 WindowClasses::of,
             )

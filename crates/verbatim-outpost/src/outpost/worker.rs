@@ -79,7 +79,7 @@ use super::read::{self, Client, ReadError};
 use super::reducer::{
     self, CARET_WATCH_BOUND, Change, Entry, Evidence, FocusPath, GapNote, GapRead, Handling, Item,
     Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent, UiaKind,
-    WatchChange, WinKind, Work, wake_for,
+    VerdictChange, WatchChange, WinKind, Work, wake_for,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads::{self};
@@ -89,6 +89,7 @@ use super::window::{
     window_is_hidden_frame,
 };
 use super::{Context, RequestContext};
+use crate::arbitration::Judgement as _;
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::Watched;
@@ -316,14 +317,7 @@ fn run(
             continue;
         }
         carry(&mut job.program.facts, generation, &carried);
-        carried = run_job(
-            context,
-            &mut client,
-            generation,
-            job,
-            charge,
-            (jobs, &mut held),
-        );
+        carried = run_job(context, &mut client, job, charge, (jobs, &mut held));
     }
     if charge.is_dead() {
         context.mailbox.post(Posted::Returned);
@@ -373,7 +367,6 @@ fn look(inbox: &Inbox<Job>, held: &mut VecDeque<Job>) -> bool {
 fn run_job(
     context: &Arc<Context>,
     client: &mut Client,
-    generation: u64,
     job: Job,
     charge: &Arc<Charge>,
     (inbox, held): (&Inbox<Job>, &mut VecDeque<Job>),
@@ -416,8 +409,7 @@ fn run_job(
             // observation, or, for an entry with no event, at its start
             // (`docs/design/focus-pipeline-rework.md`, "Who owns each
             // duplicated fact", the verdicts).
-            let judged_at = judged_at(context, &entry);
-            context.arbitrator().begin_entry(judged_at, generation);
+            request_context.judge_at(judged_at(context, &entry));
             let mut worker = Worker::new(&request_context, client, batch, timing);
             worker.group = group;
             if handling == Handling::Menu {
@@ -426,7 +418,6 @@ fn run_job(
                 worker.handle(entry);
             }
             reported = worker.reported;
-            context.arbitrator().end_entry();
         }
         Work::Owed(owed) => {
             let mut worker = Worker::new(&request_context, client, 0, EventTiming::default());
@@ -2230,7 +2221,7 @@ impl Worker<'_> {
         }
         if kind == WinEventKind::Destroy {
             if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
-                self.context.arbitrator().forget(hwnd);
+                self.context.record(VerdictChange::Forget(hwnd));
                 self.commit(Effects {
                     gap: vec![GapNote::WindowDestroyed(hwnd)],
                     ..Effects::default()

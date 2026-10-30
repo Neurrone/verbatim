@@ -7,6 +7,7 @@
 //! what it reads after a commit is what the reducer will hold.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
@@ -16,6 +17,7 @@ use verbatim_model::{
 
 use super::held::{self, Held};
 use super::intake::{Marks, Object};
+use super::verdicts::{VerdictChange, Verdicts};
 
 /// The longest a caret key's watch stays open without evidence. It only
 /// frees the watch: ending it this way says nothing, as ending it any other
@@ -441,6 +443,10 @@ pub(in crate::outpost) struct Change {
     /// A held terminal's caret event, noted to be read once nothing else
     /// is waiting.
     pub(in crate::outpost) noted_caret: Option<(NodeId, TraceId, u64)>,
+    /// The verdicts the program probed, and the windows it found
+    /// destroyed, in order: recorded by the reducer whether or not it
+    /// applies the rest of the commit ([`VerdictChange::kept_from_any_generation`]).
+    pub(in crate::outpost) verdicts: Vec<VerdictChange>,
 }
 
 /// What the outpost follows: changed only by a commit the reducer applies,
@@ -484,6 +490,9 @@ pub(in crate::outpost) struct Facts {
     pub(in crate::outpost) follow: FollowState,
     /// What the intake reads of the focus.
     pub(in crate::outpost) marks: Marks,
+    /// The arbitrator's kept verdicts, a snapshot the reducer replaces on
+    /// change ([`super::verdicts`]).
+    pub(in crate::outpost) verdicts: Arc<Verdicts>,
 }
 
 /// Where the subscription is to follow, by token: the newest focus's
@@ -794,7 +803,7 @@ fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mu
 
 /// Applies `change`, a program's commit of `generation`, to a program's
 /// copies `facts`, as the program's own commit does: its report recorded,
-/// then [`apply`].
+/// its verdicts kept, then [`apply`].
 pub(in crate::outpost) fn apply_local(
     facts: &mut Facts,
     generation: u64,
@@ -802,6 +811,12 @@ pub(in crate::outpost) fn apply_local(
 ) -> Applied {
     if let Some(report) = &change.report {
         record(&mut facts.held, report);
+    }
+    if !change.verdicts.is_empty() {
+        let verdicts = Arc::make_mut(&mut facts.verdicts);
+        for verdict in &change.verdicts {
+            verdicts.apply(verdict);
+        }
     }
     apply(facts, generation, change)
 }
