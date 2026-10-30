@@ -435,7 +435,8 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     let effects = verbatim_core::reduce(
         &mut state,
         &Input::Command {
-            key: verbatim_model::KeySeq::NONE_YET,
+            pressed_at_ms: 0,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             command: verbatim_model::ReviewCommand::ReviewNextCharacter,
             repeat: 0,

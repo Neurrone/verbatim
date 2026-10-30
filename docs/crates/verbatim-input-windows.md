@@ -90,7 +90,13 @@ NVDA ignores the keys it injects itself.
 hook thread, from any thread: `Gesture(GestureId)`, the control plane's
 `SendGesture`, and `Barrier(token)`, an `AwaitIdle` waiter's. The item is
 boxed and posted with `PostThreadMessageW` as a private `WM_APP`
-message whose `LPARAM` is the box; when the post fails (the thread has
+message whose `LPARAM` is the box and whose `WPARAM` is the hook's
+injection token, a random 64-bit value drawn once in `InputHook::start`
+and kept in the `Injector` and the hook's state. Any process at
+Verbatim's integrity can post a `WM_APP` to the thread, or to a COM
+window on it, so the hook takes a box only from a thread message (no
+window) carrying the token (`hook::injected_in`) and ignores every other,
+its `LPARAM` unread; when the post fails (the thread has
 gone, or its queue of 10,000 messages is full), the box is taken back and
 the item returned as the error, so an injection reported failed never
 runs later. An `Injector` holds a handle to the hook thread, duplicated
@@ -107,7 +113,9 @@ that loop's waits, so keys and injected inputs are handled one at a
 time, in the one order the thread takes them. The thread runs no other
 loop while the hook is installed; once the loop ends and the hook is
 removed, the injected messages left are taken with `PeekMessageW` and
-dropped.
+dropped. One posted after that drain and before the thread exits is
+never taken: its box leaks at exit, and the idle waiter that posted it
+times out.
 
 ## Implementation notes
 
@@ -139,7 +147,8 @@ handled mark reported in order; a key press, an injected gesture and a
 second press numbered 1, 2 and 3, each cancel naming its own number
 before its report; an injected barrier reported behind the keys before
 it; and an injection posted to thread id 0, which no thread has, coming
-back as the error. The `hook_echo` example installs the real hook with
+back as the error; and a `WM_APP` without the token, or to a window,
+ignored. The `hook_echo` example installs the real hook with
 two bound gestures and prints what each key reports, on its own thread;
 it needs an interactive desktop and is never run in CI.
 

@@ -48,14 +48,27 @@ impl KeyOrigins {
 /// made before inputs carried numbers has none.
 fn user_key(input: &Input) -> Option<(TraceId, KeySeq)> {
     let (trace_id, key) = match input {
-        Input::CaretKey { trace_id, seq, .. } | Input::HeldKey { trace_id, seq, .. } => {
-            (*trace_id, *seq)
+        Input::CaretKey {
+            trace_id, key_seq, ..
         }
-        Input::CharacterTyped { trace_id, key, .. }
-        | Input::ClearingKey { trace_id, key, .. }
-        | Input::Command { trace_id, key, .. }
-        | Input::Script { trace_id, key, .. }
-        | Input::ToggleKeyPressed { trace_id, key, .. } => (*trace_id, *key),
+        | Input::HeldKey {
+            trace_id, key_seq, ..
+        }
+        | Input::CharacterTyped {
+            trace_id, key_seq, ..
+        }
+        | Input::ClearingKey {
+            trace_id, key_seq, ..
+        }
+        | Input::Command {
+            trace_id, key_seq, ..
+        }
+        | Input::Script {
+            trace_id, key_seq, ..
+        }
+        | Input::ToggleKeyPressed {
+            trace_id, key_seq, ..
+        } => (*trace_id, *key_seq),
         _ => return None,
     };
     (key != KeySeq::NONE_YET).then_some((trace_id, key))

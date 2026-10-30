@@ -93,7 +93,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         .terminals
         .push(TerminalModel::new(node, Settings::default()));
     let caret = |motion, at_ms| Input::CaretKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion,
@@ -102,7 +102,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         pressed_at_ms: at_ms,
     };
     let typed = |text: &str, at_ms| Input::CharacterTyped {
-        key: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         text: text.to_owned(),
         at_ms,
@@ -117,7 +117,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         typed("\u{1}", 7),
         // Escape: the hook's clearing key, then the key passed.
         Input::ClearingKey {
-            key: verbatim_model::KeySeq::NONE_YET,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             at_ms: 8,
         },

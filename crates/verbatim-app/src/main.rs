@@ -42,9 +42,7 @@ use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout, SharedGestureMap};
-use verbatim_input_windows::{
-    ForegroundView, Injected, Injector, InputHook, KeyHolding, KeyReport,
-};
+use verbatim_input_windows::{ForegroundView, Injected, Injector, InputHook, KeyHolding};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
     ReaderSettings, TextRequest, TraceId, WindowHandle,
@@ -2235,12 +2233,7 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
 /// this thread, which reads no keyboard messages, as the hook thread reads
 /// Num Lock's before each key.
 fn read_toggle_key(toggle: LockKey) -> Input {
-    let vk = match toggle {
-        LockKey::CapsLock => verbatim_input::ToggleKey::CapsLock,
-        LockKey::NumLock => verbatim_input::ToggleKey::NumLock,
-        LockKey::ScrollLock => verbatim_input::ToggleKey::ScrollLock,
-    }
-    .vk();
+    let vk = verbatim_input::ToggleKey::of_lock_key(toggle).vk();
     // SAFETY: GetKeyState takes a virtual-key code and reads key state.
     let on =
         unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(vk)) } & 1 != 0;

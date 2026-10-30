@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, FocusText, FocusValidity,
-    Message, NodeId, NodeSnapshot, Phrase, Role, SegmentContent, Selection, SelectionChange,
+    Input, Message, NodeId, NodeSnapshot, Phrase, Role, SegmentContent, Selection, SelectionChange,
     SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint,
     TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho, Utterance,
     UtteranceSegment,
@@ -260,9 +260,9 @@ pub(crate) fn held_key(
 /// [`KEY_AHEAD_BOUND_MS`] after that key was passed on: the shell is asked
 /// to end the wait then ([`Effect::BoundHeldKeyWait`]), and a key pressed
 /// later than that is read at once. A review command or script waiting
-/// behind a held key waits for the same watch and the same bound; it was
-/// pressed before that key was passed on, so it always waits for the
-/// bound, and it is run as the input it came as
+/// behind a held key, or pressed while the watch of the held key last
+/// passed on is open, waits for the same watch and the same bound, from
+/// its own press, and is run as the input it came as
 /// ([`crate::reduce::command_input`]). `behind` says the keys wait behind a key just passed on:
 /// that key's watch is then marked as having a later key
 /// ([`later_key`]), as the later key's press would have marked it had the
@@ -279,7 +279,19 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
         // press time, or a command, pressed before that key was passed on.
         let front_waits = match front {
             WaitingKey::Held(held) => Some((held.trace_id, held.pressed_at_ms)),
-            WaitingKey::Command(input) => input.trace_id().map(|trace_id| (trace_id, 0)),
+            WaitingKey::Command(input) => match &**input {
+                Input::Command {
+                    trace_id,
+                    pressed_at_ms,
+                    ..
+                }
+                | Input::Script {
+                    trace_id,
+                    pressed_at_ms,
+                    ..
+                } => Some((*trace_id, *pressed_at_ms)),
+                _ => None,
+            },
             WaitingKey::Later(_) => None,
         };
         if behind {
@@ -377,6 +389,23 @@ fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
     });
     effects.push(Effect::PassHeldKey(held.trace_id));
     effects
+}
+
+/// Queues a review command or script pressed while a held key waits, or
+/// while the watch of the held key last passed on is open, behind it
+/// ([`next_held`]): with only the open watch ahead of it, its wait is
+/// bounded now, or it runs at once when pressed past the bound.
+pub(crate) fn queue_command(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    let busy = state.held_keys.busy();
+    state
+        .held_keys
+        .waiting
+        .push_back(WaitingKey::Command(Box::new(input.clone())));
+    if busy {
+        Vec::new()
+    } else {
+        next_held(state, true)
+    }
 }
 
 /// The watch of the held key last passed on was answered: the keys

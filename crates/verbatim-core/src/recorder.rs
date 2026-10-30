@@ -362,7 +362,7 @@ mod tests {
     /// A typed-text input carrying `text`.
     fn typed(text: String) -> Input {
         Input::CharacterTyped {
-            key: verbatim_model::KeySeq::NONE_YET,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             text,
             at_ms: 0,

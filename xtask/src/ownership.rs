@@ -71,7 +71,7 @@ const CHECKED: [Checked; 4] = [
 ];
 
 /// What the hook thread's modules may `use`.
-const HOOK_ALLOWED: [&str; 13] = [
+const HOOK_ALLOWED: [&str; 14] = [
     "std::cell",
     "std::collections",
     "std::sync::Arc",
@@ -79,6 +79,8 @@ const HOOK_ALLOWED: [&str; 13] = [
     "std::time::Instant",
     "windows::Win32",
     "verbatim_input",
+    // The hook's reports, a plain enum, for the app's callbacks.
+    "verbatim_input_windows::KeyReport",
     "verbatim_model",
     "verbatim_process::clock",
     "verbatim_process::port_queue::Poster",

@@ -104,15 +104,14 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             result,
         } => reduce_navigate_completed(state, *trace_id, *query_id, *kind, result),
         Input::OutpostEnded { outpost } => outpost_ended(state, *outpost),
-        // A command or script pressed while a held key waits runs after
-        // it, as NVDA runs scripts one at a time in the order queued
+        // A command or script pressed while a held key waits, or while
+        // the watch of the held key last passed on is open, runs after it,
+        // as NVDA runs scripts one at a time in the order queued
         // (`docs/design/ownership-input.md`, "Commands behind held keys").
-        Input::Command { .. } | Input::Script { .. } if state.held_keys.busy() => {
-            state
-                .held_keys
-                .waiting
-                .push_back(crate::state::WaitingKey::Command(Box::new(input.clone())));
-            Vec::new()
+        Input::Command { .. } | Input::Script { .. }
+            if state.held_keys.busy() || state.held_keys.awaiting_watch.is_some() =>
+        {
+            editing::queue_command(state, input)
         }
         Input::Command { .. } | Input::Script { .. } => command_input(state, input),
         Input::ActivationCompleted {
@@ -250,33 +249,33 @@ pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
     match input {
         Input::CaretKey {
             trace_id,
-            seq,
+            key_seq,
             key,
             pressed_at_ms,
         } if pressed_at_ms != 0 => Input::CaretKey {
             trace_id,
-            seq,
+            key_seq,
             key,
             pressed_at_ms: pressed_at_ms.max(at_ms),
         },
         Input::CharacterTyped {
             trace_id,
-            key,
+            key_seq,
             text,
             at_ms: typed_at_ms,
         } if typed_at_ms != 0 => Input::CharacterTyped {
             trace_id,
-            key,
+            key_seq,
             text,
             at_ms: typed_at_ms.max(at_ms),
         },
         Input::ClearingKey {
             trace_id,
-            key,
+            key_seq,
             at_ms: cleared_at_ms,
         } if cleared_at_ms != 0 => Input::ClearingKey {
             trace_id,
-            key,
+            key_seq,
             at_ms: cleared_at_ms.max(at_ms),
         },
         input => input,

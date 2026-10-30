@@ -5,7 +5,7 @@
 //! state is announced ("caps lock on"), as NVDA announces it
 //! (`docs/parity/review.md`, "Toggle key announcements").
 
-use verbatim_model::GestureId;
+use verbatim_model::{GestureId, LockKey};
 
 /// A key that toggles a lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +55,26 @@ impl ToggleKey {
             Self::ScrollLock => "kb:scrolllock",
         };
         GestureId::parse(name).expect("a toggle key's gesture is well-formed")
+    }
+
+    /// The lock it toggles, in the model's words, which Core announces.
+    #[must_use]
+    pub fn lock_key(self) -> LockKey {
+        match self {
+            Self::CapsLock => LockKey::CapsLock,
+            Self::NumLock => LockKey::NumLock,
+            Self::ScrollLock => LockKey::ScrollLock,
+        }
+    }
+
+    /// The toggle key of the lock `key`.
+    #[must_use]
+    pub fn of_lock_key(key: LockKey) -> Self {
+        match key {
+            LockKey::CapsLock => Self::CapsLock,
+            LockKey::NumLock => Self::NumLock,
+            LockKey::ScrollLock => Self::ScrollLock,
+        }
     }
 
     /// The toggle key a gesture reports, if it reports one.

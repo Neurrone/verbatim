@@ -226,7 +226,7 @@ pub enum KeyReport {
         /// The gesture.
         gesture: EmittedGesture,
         /// The key's number.
-        key: KeySeq,
+        key_seq: KeySeq,
         /// Microseconds since the Unix epoch when the hook procedure ran,
         /// the clock outposts stamp what they observe with (`observed_at_us`
         /// and the latency log). The
@@ -246,7 +246,7 @@ pub enum KeyReport {
         /// The gesture.
         gesture: EmittedGesture,
         /// The key's number.
-        key: KeySeq,
+        key_seq: KeySeq,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
         /// The key to send again.
@@ -271,7 +271,7 @@ pub enum KeyReport {
         /// Minted when the key was observed.
         trace_id: TraceId,
         /// The key's number.
-        key: KeySeq,
+        key_seq: KeySeq,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
     },
@@ -282,7 +282,7 @@ pub enum KeyReport {
         /// Minted when the key was observed.
         trace_id: TraceId,
         /// The key's number.
-        key: KeySeq,
+        key_seq: KeySeq,
         /// The text typed.
         text: String,
         /// When the key was pressed, in microseconds on the run's shared
@@ -296,7 +296,7 @@ pub enum KeyReport {
         /// The gesture.
         gesture: EmittedGesture,
         /// The key's number, or the injected gesture's.
-        key: KeySeq,
+        key_seq: KeySeq,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
     },
@@ -311,8 +311,21 @@ pub enum KeyReport {
 }
 
 /// The private message an injected input travels in to the hook thread,
-/// its `LPARAM` the boxed [`Injected`].
+/// its `LPARAM` the boxed [`Injected`] and its `WPARAM` the hook's
+/// injection token: any other process at Verbatim's integrity can post a
+/// `WM_APP` to the thread, or to a COM window on it, so the hook takes a
+/// box only from a thread message carrying the token, drawn at random once
+/// per hook ([`InputHook::start`]).
 const WM_INJECTED: u32 = WM_APP;
+
+/// A fresh random injection token, from the process's random hash keys,
+/// which the system seeds.
+fn injection_token() -> usize {
+    use std::hash::BuildHasher;
+    let token = std::collections::hash_map::RandomState::new().hash_one(0_u8);
+    // `usize` is 64 bits on every target Verbatim builds for.
+    usize::try_from(token).unwrap_or(usize::MAX)
+}
 
 /// An input injected for the user, handled by the hook thread in its turn
 /// among the keys ([`Injector::inject`]).
@@ -337,6 +350,8 @@ pub struct Injector(Arc<InjectTarget>);
 #[derive(Debug)]
 struct InjectTarget {
     thread_id: u32,
+    /// Sent as the message's `WPARAM` ([`WM_INJECTED`]).
+    token: usize,
     /// Keeps the thread object, and so its id, while this lives; closed
     /// when the last [`Injector`] goes.
     _thread: Option<OwnedHandle>,
@@ -360,7 +375,7 @@ impl Injector {
             PostThreadMessageW(
                 self.0.thread_id,
                 WM_INJECTED,
-                WPARAM(0),
+                WPARAM(self.0.token),
                 LPARAM(item as isize),
             )
         };
@@ -376,6 +391,7 @@ impl Injector {
     fn to_thread(thread_id: u32) -> Self {
         Self(Arc::new(InjectTarget {
             thread_id,
+            token: 0,
             _thread: None,
         }))
     }
@@ -418,6 +434,7 @@ impl InputHook {
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
         let (ready_tx, ready_rx) = mpsc::channel::<io::Result<u32>>();
+        let token = injection_token();
 
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
@@ -426,6 +443,7 @@ impl InputHook {
                     config,
                     map,
                     (speech, reports, holding, foreground),
+                    token,
                     &ready_tx,
                 );
             })?;
@@ -436,6 +454,7 @@ impl InputHook {
                 let injector = match thread {
                     Ok(thread) => Injector(Arc::new(InjectTarget {
                         thread_id,
+                        token,
                         _thread: Some(thread),
                     })),
                     Err(error) => {
@@ -479,6 +498,7 @@ impl Injector {
     fn detached() -> Self {
         Self(Arc::new(InjectTarget {
             thread_id: 0,
+            token: 0,
             _thread: None,
         }))
     }
@@ -509,6 +529,7 @@ fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     effects: Effects,
+    token: usize,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     prioritize_role("keyboard hook", HOOK_PRIORITY);
@@ -556,6 +577,7 @@ fn hook_thread(
             DecisionMachine::new(config, map),
             effects,
             typing,
+            token,
         ));
     });
 

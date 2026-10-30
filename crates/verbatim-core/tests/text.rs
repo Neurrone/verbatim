@@ -144,7 +144,7 @@ const KEY_PRESSED_AT: u64 = 1_700_000_000_000;
 
 fn key(motion: CaretMotion, select: bool) -> Input {
     Input::CaretKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey { motion, select },
         pressed_at_ms: KEY_PRESSED_AT,
@@ -153,7 +153,8 @@ fn key(motion: CaretMotion, select: bool) -> Input {
 
 fn command(command: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
-        key: verbatim_model::KeySeq::NONE_YET,
+        pressed_at_ms: 0,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command,
         repeat,
@@ -394,7 +395,7 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     let query = request_of(&reduce(
         &mut state,
         &Input::CaretKey {
-            seq: verbatim_model::KeySeq::NONE_YET,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             key: CaretKey {
                 motion: CaretMotion::Backspace,
@@ -719,7 +720,7 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
 /// A caret key pressed at `pressed_at_ms`.
 fn key_at(motion: CaretMotion, pressed_at_ms: u64) -> Input {
     Input::CaretKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion,
@@ -1471,7 +1472,7 @@ fn caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text() {
 
 fn typed(text: &str) -> Input {
     Input::CharacterTyped {
-        key: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         text: text.to_owned(),
         at_ms: 0,
@@ -4558,7 +4559,7 @@ fn reporting_the_focus_with_none_says_no_focus() {
 /// A caret key the keyboard hook held back, pressed at `pressed_at_ms`.
 fn held_at(trace_id: TraceId, motion: CaretMotion, pressed_at_ms: u64) -> Input {
     Input::HeldKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id,
         key: CaretKey {
             motion,
@@ -4705,7 +4706,7 @@ fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
     let effects = reduce(&mut state, &held_at(backspace, CaretMotion::Backspace, 400));
     let reading = request(&effects).query_id;
     let typed_c = Input::CharacterTyped {
-        key: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: letter,
         text: "c".to_owned(),
         at_ms: 0,
@@ -4862,9 +4863,15 @@ fn a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound() {
 
 /// A review command pressed as key `seq`.
 fn command_as(trace_id: TraceId, seq: u64, command: ReviewCommand) -> Input {
+    command_at(trace_id, seq, command, 0)
+}
+
+/// A review command pressed as key `seq` at `pressed_at_ms`.
+fn command_at(trace_id: TraceId, seq: u64, command: ReviewCommand, pressed_at_ms: u64) -> Input {
     Input::Command {
+        pressed_at_ms,
         trace_id,
-        key: verbatim_model::KeySeq::new(seq),
+        key_seq: verbatim_model::KeySeq::new(seq),
         command,
         repeat: 0,
     }
@@ -4879,8 +4886,8 @@ fn command_behind_a_held_key() -> (SrState, TraceId, QueryId) {
     let mut state = editing("line one\n", 0);
     let (down, current) = (TraceId::mint(), TraceId::mint());
     let mut held = held_at(down, CaretMotion::NextLine, 400);
-    if let Input::HeldKey { seq, .. } = &mut held {
-        *seq = verbatim_model::KeySeq::new(1);
+    if let Input::HeldKey { key_seq, .. } = &mut held {
+        *key_seq = verbatim_model::KeySeq::new(1);
     }
     let effects = reduce(&mut state, &held);
     let reading = request(&effects).query_id;
@@ -4984,12 +4991,12 @@ fn speech_is_stamped_with_the_number_of_the_key_on_whose_behalf_it_is_spoken() {
     let mut state = editing("ab", 2);
     let (backspace, letter) = (TraceId::mint(), TraceId::mint());
     let mut held = held_at(backspace, CaretMotion::Backspace, 400);
-    if let Input::HeldKey { seq, .. } = &mut held {
-        *seq = verbatim_model::KeySeq::new(1);
+    if let Input::HeldKey { key_seq, .. } = &mut held {
+        *key_seq = verbatim_model::KeySeq::new(1);
     }
     let reading = request(&reduce(&mut state, &held)).query_id;
     let typed_c = Input::CharacterTyped {
-        key: verbatim_model::KeySeq::new(2),
+        key_seq: verbatim_model::KeySeq::new(2),
         trace_id: letter,
         text: "c".to_owned(),
         at_ms: 0,
@@ -5018,7 +5025,7 @@ fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
     let _ = reduce(
         &mut state,
         &Input::CharacterTyped {
-            key: verbatim_model::KeySeq::new(1),
+            key_seq: verbatim_model::KeySeq::new(1),
             trace_id: first,
             text: "c".to_owned(),
             at_ms: 0,
@@ -5037,7 +5044,7 @@ fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
         let _ = reduce(
             &mut state,
             &Input::CharacterTyped {
-                key: verbatim_model::KeySeq::new(number),
+                key_seq: verbatim_model::KeySeq::new(number),
                 trace_id: TraceId::mint(),
                 text: "c".to_owned(),
                 at_ms: 0,
@@ -5050,8 +5057,9 @@ fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
 #[test]
 fn the_time_menu_and_shell_list_scripts_ask_the_shell_and_wait_behind_a_held_key() {
     let script = |script, repeat| Input::Script {
+        pressed_at_ms: 0,
         trace_id: TraceId::mint(),
-        key: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         repeat,
         script,
     };
@@ -5091,8 +5099,9 @@ fn the_time_menu_and_shell_list_scripts_ask_the_shell_and_wait_behind_a_held_key
         let reading = request(&effects).query_id;
         let trace_id = TraceId::mint();
         let input = Input::Script {
+            pressed_at_ms: 0,
             trace_id,
-            key: verbatim_model::KeySeq::NONE_YET,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             repeat: 0,
             script,
         };
@@ -5108,4 +5117,98 @@ fn the_time_menu_and_shell_list_scripts_ask_the_shell_and_wait_behind_a_held_key
         );
         assert_eq!(effects, [Effect::ForKey(trace_id, Box::new(effect))]);
     }
+}
+
+#[test]
+fn a_command_pressed_while_a_passed_keys_watch_is_open_waits_for_it_within_the_bound() {
+    // Down Arrow, held, read and passed on at 411; its watch is open.
+    let mut state = editing(
+        "line one
+",
+        0,
+    );
+    let down = TraceId::mint();
+    let effects = reduce(&mut state, &held_at(down, CaretMotion::NextLine, 400));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            read_before(
+                line(
+                    "line one
+",
+                    100,
+                    0,
+                ),
+                410,
+            ),
+        ),
+    );
+    assert_eq!(effects.last(), Some(&Effect::PassHeldKey(down)));
+    let watch = request_of(&effects);
+    // The current-line command pressed at 420 waits for the watch, no
+    // later than 100 ms after the pass.
+    let current = TraceId::mint();
+    assert_eq!(
+        reduce(
+            &mut state,
+            &command_at(current, 2, ReviewCommand::ReviewCurrentLine, 420)
+        ),
+        [Effect::BoundHeldKeyWait {
+            key: current,
+            within_ms: 91
+        }]
+    );
+    assert!(state.holds_inputs_back());
+    // The watch's answer, the caret on "line two", says nothing, and the
+    // command then reads the line the key moved to.
+    let effects = reduce(
+        &mut state,
+        &completed(
+            watch,
+            caret_reply_at(
+                line(
+                    "line two
+",
+                    101,
+                    0,
+                ),
+                430,
+            ),
+        ),
+    );
+    answer_the_commands_read(&mut state, &effects, current);
+
+    // A command pressed past the bound runs at once.
+    let mut state = editing(
+        "line one
+",
+        0,
+    );
+    let effects = reduce(&mut state, &held_at(down, CaretMotion::NextLine, 400));
+    let _ = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            read_before(
+                line(
+                    "line one
+",
+                    100,
+                    0,
+                ),
+                410,
+            ),
+        ),
+    );
+    let late = TraceId::mint();
+    let effects = reduce(
+        &mut state,
+        &command_at(late, 2, ReviewCommand::ReviewCurrentLine, 520),
+    );
+    let [Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the command's read at once: {effects:?}");
+    };
+    assert_eq!(*key, late);
+    assert!(matches!(&**read, Effect::Text(_)));
 }

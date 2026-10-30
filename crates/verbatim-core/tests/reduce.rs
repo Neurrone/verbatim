@@ -2268,7 +2268,8 @@ use verbatim_model::{FocusNow, FocusValidity, ObjectKey, ReviewCommand};
 
 fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
-        key: verbatim_model::KeySeq::NONE_YET,
+        pressed_at_ms: 0,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id,
         command: cmd,
         repeat,

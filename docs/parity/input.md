@@ -38,11 +38,17 @@ passed on and its watch answered, or 100 ms after the pass, whichever is
 first; the caret key says nothing, and a reading command reads the line
 the key moved to (`docs/design/ownership-input.md`, "Commands behind held
 keys"; Core's `a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch`).
-Different, by decision (Dickson, 2026-10-30): the wait for the watch is
-Verbatim's own, so the command reads the moved line. NVDA's words for
-Down Arrow on "line one" followed at once by the current-line command
-are not yet captured: the capture, and the expectation taken from it,
-go here, before any scenario expectation for this case is fixed.
+A command pressed while the watch of a caret key already passed on is
+still open waits for it in the same way. Different, by decision
+(Dickson, 2026-10-30): the wait for the watch is Verbatim's own, so the
+command reads the moved line. NVDA, captured on 2026-10-30 (build
+alpha-58022,732d1ce2, the pinned source's), in Windows 11 Notepad with
+the lines "line one" and "line two" and the caret on line one, Down
+Arrow then numpad 8 back to back: in each of 5 runs, speech is
+cancelled and "line one" spoken 12 to 16 ms later; Down Arrow's own
+caret speech is cancelled, and "line two" is never spoken. With 300 ms
+between the two keys, in each of 2 runs, Down Arrow says "line two" and
+numpad 8 says "line two". Verbatim says "line two" in both cases.
 
 ### Gesture map / rebindable input, input help mode
 

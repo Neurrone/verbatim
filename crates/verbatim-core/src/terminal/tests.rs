@@ -170,7 +170,7 @@ fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
 
 fn typed(text: &str) -> Input {
     Input::CharacterTyped {
-        key: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         text: text.to_owned(),
         at_ms: 1_000,
@@ -963,7 +963,8 @@ fn report_new_output_toggles_with_verbatim_5() {
     let mut state = terminal();
     let mut playback = Playback::default();
     let toggle = Input::Command {
-        key: verbatim_model::KeySeq::NONE_YET,
+        pressed_at_ms: 0,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command: ReviewCommand::ToggleReportNewOutput,
         repeat: 0,
@@ -1178,7 +1179,8 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         reduce(
             state,
             &Input::Command {
-                key: verbatim_model::KeySeq::NONE_YET,
+                pressed_at_ms: 0,
+                key_seq: verbatim_model::KeySeq::NONE_YET,
                 trace_id: TraceId::mint(),
                 command: ReviewCommand::ReviewCurrentLine,
                 repeat: 0,

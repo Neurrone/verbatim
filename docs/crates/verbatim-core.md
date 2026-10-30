@@ -459,24 +459,24 @@ keeps the caret current and says its selection's change. Each waiting
 key's effects carry its own trace (`Effect::ForKey`).
 
 A review command or a script (`Input::Command`, `Input::Script`) pressed
-while a held key waits waits behind it too (`WaitingKey::Command`), as
-NVDA runs scripts one at a time in the order queued: until the key ahead
-has had its caret read and been passed on, and until that key's watch is
-answered or 100 ms after the pass, whichever is first. It has no press
-time of its own, since it was pressed before that key was passed on, so
-it always waits for the bound; `HeldKeyWaitEnded` with its trace ends the
-wait. The key ahead, its watch marked `later_key`, says nothing, and the
-command reads the line the key moved to. NVDA reads the line before the
-key in that case; the build keeps Verbatim's reading pending a capture
+while a held key waits, or while the watch of the held key last passed
+on is open, waits behind it too (`editing::queue_command`,
+`WaitingKey::Command`), as NVDA runs scripts one at a time in the order
+queued: until the key ahead has had its caret read and been passed on,
+and until that key's watch is answered or 100 ms after the pass,
+whichever is first, the bound counted from the command's own press
+(`pressed_at_ms`); `HeldKeyWaitEnded` with its trace ends the wait. The
+key ahead, its watch marked `later_key`, says nothing, and the command
+reads the line the key moved to, where NVDA reads the line before it
 (`docs/design/ownership-input.md`, "Decisions").
 
 ## Key numbers
 
 (`docs/design/ownership-input.md`, "Key numbers in Core, not in a side
 table".) Every user input carries the number the keyboard hook's thread
-gave it (`verbatim_model::KeySeq`): `CaretKey` and `HeldKey` as `seq`,
-`CharacterTyped`, `ClearingKey`, `Command`, `Script` and
-`ToggleKeyPressed` as `key`. `reduce` records the input's trace and
+gave it (`verbatim_model::KeySeq`), as `key_seq` on all seven:
+`CaretKey`, `HeldKey`, `CharacterTyped`, `ClearingKey`, `Command`,
+`Script` and `ToggleKeyPressed`. `reduce` records the input's trace and
 number in `SrState::key_origins` (`keys.rs`, the newest 1,024 pairs)
 before dispatching it, and as its last step stamps every `Effect::Speak`,
 inside `Effect::ForKey` included, with the number of the trace of the

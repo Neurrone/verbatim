@@ -56,6 +56,8 @@ pub(crate) struct HookState {
     last_key: KeySeq,
     /// Core's view of the foreground window ([`ForegroundView`]).
     foreground: Arc<ForegroundView>,
+    /// The token an injected input's message carries ([`WM_INJECTED`]).
+    token: usize,
     /// Reads the window in front: `GetForegroundWindow`, a local read, or
     /// a fixed window in tests.
     front: fn() -> HWND,
@@ -77,6 +79,7 @@ impl HookState {
         machine: DecisionMachine,
         (speech, reports, holding, foreground): Effects,
         typing: typed::Typing,
+        token: usize,
     ) -> Self {
         Self {
             machine,
@@ -89,6 +92,7 @@ impl HookState {
             sequence: 0,
             last_key: KeySeq::NONE_YET,
             foreground,
+            token,
             front: || {
                 // SAFETY: a local read with no preconditions.
                 unsafe { GetForegroundWindow() }
@@ -159,6 +163,7 @@ fn unix_us() -> u64 {
 /// one at a time, in the one order the thread takes them. The thread runs
 /// no other loop while the hook is installed.
 pub(crate) fn pump_messages() {
+    let token = thread_token();
     let mut msg = MSG::default();
     loop {
         // SAFETY: `msg` is a valid, owned message buffer; a null window handle
@@ -169,11 +174,11 @@ pub(crate) fn pump_messages() {
         if result.0 <= 0 {
             break;
         }
-        if msg.message == WM_INJECTED {
-            // SAFETY: a `WM_INJECTED` message's `LPARAM` is a box
-            // `Injector::inject` gave up, taken off the queue this once.
-            let injected = *unsafe { Box::from_raw(msg.lParam.0 as *mut Injected) };
+        if let Some(injected) = injected_in(&msg, token) {
             HOOK_STATE.with(|state| {
+                // Never already borrowed: this runs from the loop itself,
+                // between the hook procedure's calls, which borrow the
+                // state only for their own length.
                 if let Ok(mut state) = state.try_borrow_mut()
                     && let Some(state) = state.as_mut()
                 {
@@ -184,16 +189,37 @@ pub(crate) fn pump_messages() {
     }
 }
 
+/// The input `msg` carries, when it is one an [`crate::Injector`] posted:
+/// a thread message (no window) of [`WM_INJECTED`] carrying `token`. Any
+/// other message, another process's `WM_APP` or one to a COM window on
+/// this thread, is left alone, its `LPARAM` never read.
+fn injected_in(msg: &MSG, token: usize) -> Option<Injected> {
+    if msg.message != WM_INJECTED || !msg.hwnd.is_invalid() || msg.wParam.0 != token {
+        return None;
+    }
+    // SAFETY: a thread message of `WM_INJECTED` carrying the token was
+    // posted by `Injector::inject`, whose `LPARAM` is a box it gave up,
+    // taken off the queue this once.
+    Some(*unsafe { Box::from_raw(msg.lParam.0 as *mut Injected) })
+}
+
+/// The token this thread's injected inputs carry, kept in its state.
+fn thread_token() -> usize {
+    HOOK_STATE.with(|state| state.borrow().as_ref().map_or(0, |state| state.token))
+}
+
 /// Takes the injected inputs still queued once the hook is removed and
-/// drops them: nothing is left to act on them.
+/// drops them: nothing is left to act on them. One posted after this
+/// drain, before the thread has exited, is never taken, and its box leaks
+/// at exit; the idle waiter that posted it times out.
 pub(crate) fn drop_injected() {
+    let token = thread_token();
     let mut msg = MSG::default();
     // SAFETY: `msg` is a valid, owned message buffer; only this thread's
-    // `WM_INJECTED` messages are removed.
+    // `WM_APP` messages are removed, and only the injector's boxes taken.
     while unsafe { PeekMessageW(&raw mut msg, None, WM_INJECTED, WM_INJECTED, PM_REMOVE) }.as_bool()
     {
-        // SAFETY: as in `pump_messages`.
-        drop(unsafe { Box::from_raw(msg.lParam.0 as *mut Injected) });
+        drop(injected_in(&msg, token));
     }
 }
 
@@ -204,8 +230,8 @@ pub(crate) fn drop_injected() {
 pub(crate) fn inject(state: &mut HookState, injected: Injected) {
     match injected {
         Injected::Gesture(gesture) => {
-            let key = state.next_key();
-            (state.speech)(KeySpeechEffect::Cancel, key);
+            let key_seq = state.next_key();
+            (state.speech)(KeySpeechEffect::Cancel, key_seq);
             (state.reports)(KeyReport::Gesture {
                 gesture: EmittedGesture {
                     trace_id: TraceId::mint(),
@@ -214,7 +240,7 @@ pub(crate) fn inject(state: &mut HookState, injected: Injected) {
                     // multi-press counting applies to real key streams.
                     repeat: 0,
                 },
-                key,
+                key_seq,
                 pressed_at_us: unix_us(),
             });
         }
@@ -367,7 +393,7 @@ fn report_passed(
     state: &mut HookState,
     event: KeyEvent,
     scan_code: u32,
-    key: KeySeq,
+    key_seq: KeySeq,
     was_observed: bool,
 ) {
     let pressed_at_us = unix_us();
@@ -380,13 +406,13 @@ fn report_passed(
     {
         Some(text) => (state.reports)(KeyReport::Typed {
             trace_id,
-            key,
+            key_seq,
             text,
             pressed_at_us,
         }),
         None if !was_observed && may_edit(event.vk) => (state.reports)(KeyReport::Passed {
             trace_id,
-            key,
+            key_seq,
             pressed_at_us,
         }),
         None => {}
@@ -427,7 +453,7 @@ pub(crate) fn decide(
         extended: event.extended,
         sequence,
     };
-    let key = if event.pressed {
+    let key_seq = if event.pressed {
         state.next_key()
     } else {
         state.last_key
@@ -435,12 +461,12 @@ pub(crate) fn decide(
     if let Some(effect) = decision.speech
         && !own
     {
-        (state.speech)(effect, key);
+        (state.speech)(effect, key_seq);
     }
     if let Some(emitted) = decision.emitted {
         (state.reports)(KeyReport::Gesture {
             gesture: emitted,
-            key,
+            key_seq,
             pressed_at_us: unix_us(),
         });
     }
@@ -452,14 +478,14 @@ pub(crate) fn decide(
         (state.reports)(if let Hold::Held(sequence) = hold {
             KeyReport::Held {
                 gesture: observed,
-                key,
+                key_seq,
                 pressed_at_us,
                 stroke: stroke(sequence),
             }
         } else {
             KeyReport::Observed {
                 gesture: observed,
-                key,
+                key_seq,
                 pressed_at_us,
             }
         });
@@ -470,7 +496,7 @@ pub(crate) fn decide(
         && !decision.shared_modifier
         && !own
     {
-        report_passed(state, event, scan_code, key, was_observed);
+        report_passed(state, event, scan_code, key_seq, was_observed);
     }
     // After what the key did, so that whoever passes it on has been told
     // of it first.
@@ -496,7 +522,7 @@ pub(crate) fn decide(
                 gesture: toggle.gesture(),
                 repeat: 0,
             },
-            key,
+            key_seq,
             pressed_at_us: unix_us(),
         });
     }
@@ -531,7 +557,7 @@ mod tests {
         const CAPS: u16 = 0x14;
         const V: u16 = 0x56;
         const STROKES: u64 = 1_000;
-        let key = |vk, pressed| KeyEvent {
+        let key_seq = |vk, pressed| KeyEvent {
             vk,
             scan_code: 0,
             extended: false,
@@ -550,16 +576,20 @@ mod tests {
                 Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
+            0,
         );
         assert_eq!(
-            decide(&mut state, key(CAPS, true), 0, 0),
+            decide(&mut state, key_seq(CAPS, true), 0, 0),
             KeyDecision::Swallow
         );
         for number in 1..=STROKES {
             let last = usize::try_from(verbatim_input::harness::encode(number, true)).unwrap();
-            assert_eq!(decide(&mut state, key(V, true), 0, 0), KeyDecision::Swallow);
             assert_eq!(
-                decide(&mut state, key(V, false), 0, last),
+                decide(&mut state, key_seq(V, true), 0, 0),
+                KeyDecision::Swallow
+            );
+            assert_eq!(
+                decide(&mut state, key_seq(V, false), 0, last),
                 KeyDecision::Swallow
             );
         }
@@ -593,6 +623,7 @@ mod tests {
                 foreground,
             ),
             typed::Typing::default(),
+            0,
         );
         state.front = window_in_front;
         (state, holding)
@@ -989,13 +1020,13 @@ mod tests {
         HookState::new(
             DecisionMachine::new(DecisionConfig::default(), GestureMap::new([]).into_shared()),
             (
-                Box::new(move |effect, key| {
-                    speech.lock().unwrap().push(format!("{effect:?} {key}"));
+                Box::new(move |effect, key_seq| {
+                    speech.lock().unwrap().push(format!("{effect:?} {key_seq}"));
                 }),
                 Box::new(move |report| {
-                    let key = match &report {
-                        KeyReport::Typed { key, .. } | KeyReport::Gesture { key, .. } => {
-                            key.to_string()
+                    let key_seq = match &report {
+                        KeyReport::Typed { key_seq, .. } | KeyReport::Gesture { key_seq, .. } => {
+                            key_seq.to_string()
                         }
                         _ => String::new(),
                     };
@@ -1003,12 +1034,13 @@ mod tests {
                     reports
                         .lock()
                         .unwrap()
-                        .push(format!("{} {key}", described[0]));
+                        .push(format!("{} {key_seq}", described[0]));
                 }),
                 Arc::new(KeyHolding::new([])),
                 Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
+            0,
         )
     }
 
@@ -1062,6 +1094,34 @@ mod tests {
             *log.lock().unwrap(),
             ["Cancel 1", "typed x 1", "barrier 4 "]
         );
+    }
+
+    /// A message the hook did not post itself is never taken for an
+    /// injected input: a `WM_APP` with another `WPARAM`, or to a window,
+    /// is ignored with its `LPARAM` unread, whatever it holds.
+    #[test]
+    fn a_message_without_the_token_is_not_taken_for_an_injection() {
+        let token = 0x5eed_u16 as usize;
+        let foreign = MSG {
+            message: WM_INJECTED,
+            wParam: WPARAM(0),
+            lParam: LPARAM(0x1234),
+            ..MSG::default()
+        };
+        assert_eq!(injected_in(&foreign, token), None);
+        let to_a_window = MSG {
+            hwnd: HWND(7 as *mut core::ffi::c_void),
+            wParam: WPARAM(token),
+            ..foreign
+        };
+        assert_eq!(injected_in(&to_a_window, token), None);
+        let item = Box::into_raw(Box::new(Injected::Barrier(3)));
+        let posted = MSG {
+            wParam: WPARAM(token),
+            lParam: LPARAM(item as isize),
+            ..foreign
+        };
+        assert_eq!(injected_in(&posted, token), Some(Injected::Barrier(3)));
     }
 
     /// An injection posted to thread id 0, which no thread has, fails and

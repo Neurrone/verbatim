@@ -1204,7 +1204,8 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
         &mut source,
         &mut anchors,
         &Input::Command {
-            key: verbatim_model::KeySeq::NONE_YET,
+            pressed_at_ms: 0,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             command: ReviewCommand::SayAllFromCaret,
             repeat: 0,

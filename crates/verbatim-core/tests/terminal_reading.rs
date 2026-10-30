@@ -42,7 +42,8 @@ fn command(command: ReviewCommand) -> Input {
 
 fn pressed(command: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
-        key: verbatim_model::KeySeq::NONE_YET,
+        pressed_at_ms: 0,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command,
         repeat,
@@ -313,7 +314,7 @@ fn typed(text: &str, at_ms: u64) -> (TraceId, Input) {
     (
         trace_id,
         Input::CharacterTyped {
-            key: verbatim_model::KeySeq::NONE_YET,
+            key_seq: verbatim_model::KeySeq::NONE_YET,
             trace_id,
             text: text.to_owned(),
             at_ms,
@@ -351,7 +352,7 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
     let mut session = showing(20, 3, 10, "$ ");
     let up = TraceId::mint();
     session.input(&Input::HeldKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: up,
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
@@ -379,7 +380,7 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
         ..ReaderSettings::default()
     }));
     session.input(&Input::HeldKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
@@ -450,7 +451,7 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
     let mut session = showing(20, 5, 10, "line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H");
     let up = TraceId::mint();
     session.input(&Input::CaretKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: up,
         key: CaretKey {
             motion: CaretMotion::NextLine,
@@ -462,7 +463,7 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
     assert_eq!(session.heard(), [said(Some(up), "line two")]);
     assert_eq!(session.timers, [Some(2000)]);
     session.input(&Input::ClearingKey {
-        key: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         at_ms: 1900,
     });
@@ -735,7 +736,7 @@ fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
     let mut session = showing(30, 8, 100, "$ ");
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     session.input(&Input::CaretKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
@@ -1180,7 +1181,7 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
 fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
     let mut session = showing(20, 4, 10, "$ ls");
     session.input(&Input::HeldKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
@@ -1236,7 +1237,7 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     // with it, reached the program then too.
     let mut session = showing(20, 4, 10, "$ ");
     session.input(&Input::HeldKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
@@ -1299,7 +1300,7 @@ fn a_caret_move_with_no_key_says_nothing_and_the_next_key_is_judged_from_it() {
     // to the "n".
     let right = TraceId::mint();
     session.input(&Input::CaretKey {
-        seq: verbatim_model::KeySeq::NONE_YET,
+        key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: right,
         key: CaretKey {
             motion: CaretMotion::NextCharacter,

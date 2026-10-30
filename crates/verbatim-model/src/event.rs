@@ -633,9 +633,14 @@ pub enum Input {
         trace_id: TraceId,
         /// The gesture's key number, which its speech carries.
         #[serde(default = "KeySeq::none_yet")]
-        key: KeySeq,
+        key_seq: KeySeq,
         /// Which command.
         command: ReviewCommand,
+        /// Milliseconds on the run's shared clock when the hook saw the
+        /// gesture, which bounds its wait behind a held key's watch; 0 when
+        /// unknown.
+        #[serde(default)]
+        pressed_at_ms: u64,
         /// How many times the gesture was pressed in quick succession, zero
         /// for the first press: report-current-object reports on 0, spells
         /// on 1, copies on 2 (NVDA's multi-press semantics); the
@@ -652,13 +657,16 @@ pub enum Input {
         trace_id: TraceId,
         /// The gesture's key number, which its speech carries.
         #[serde(default = "KeySeq::none_yet")]
-        key: KeySeq,
+        key_seq: KeySeq,
         /// How many times the gesture was pressed in quick succession, zero
         /// for the first press: the time on 0 and the date after; the
         /// system tray on 0 and the taskbar after.
         repeat: u8,
         /// Which script.
         script: Script,
+        /// As [`Input::Command`]'s.
+        #[serde(default)]
+        pressed_at_ms: u64,
     },
     /// A lock key reached the operating system: its new state is announced
     /// 30 ms after `pressed_at_ms`, once Windows has changed it
@@ -669,7 +677,7 @@ pub enum Input {
         /// The key's number. The announcement does not carry it, so a key
         /// pressed within the 30 ms does not silence it.
         #[serde(default = "KeySeq::none_yet")]
-        key: KeySeq,
+        key_seq: KeySeq,
         /// Which key.
         toggle: LockKey,
         /// Milliseconds on the run's shared clock when the hook saw it.
@@ -710,7 +718,7 @@ pub enum Input {
         trace_id: TraceId,
         /// The key's number, which its speech carries.
         #[serde(default = "KeySeq::none_yet")]
-        seq: KeySeq,
+        key_seq: KeySeq,
         /// Which key.
         key: CaretKey,
         /// Milliseconds since the Unix epoch when the hook saw the key,
@@ -732,7 +740,7 @@ pub enum Input {
         trace_id: TraceId,
         /// The key's number, which its speech carries.
         #[serde(default = "KeySeq::none_yet")]
-        seq: KeySeq,
+        key_seq: KeySeq,
         /// Which key.
         key: CaretKey,
         /// As [`Input::CaretKey`]'s: when the hook saw the key, on the
@@ -759,7 +767,7 @@ pub enum Input {
         trace_id: TraceId,
         /// The number of the key that typed it, which its speech carries.
         #[serde(default = "KeySeq::none_yet")]
-        key: KeySeq,
+        key_seq: KeySeq,
         /// The text typed, a tab as a tab character and Enter as a carriage
         /// return.
         text: String,
@@ -779,7 +787,7 @@ pub enum Input {
         trace_id: TraceId,
         /// The key's number, which its speech carries.
         #[serde(default = "KeySeq::none_yet")]
-        key: KeySeq,
+        key_seq: KeySeq,
         /// As [`Input::CharacterTyped`]'s: when the hook saw the key; 0
         /// when unknown.
         #[serde(default)]

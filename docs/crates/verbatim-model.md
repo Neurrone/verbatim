@@ -116,6 +116,7 @@ recorder unchanged. What the reducer does with each type is in
   speech (`docs/design/ownership-input.md`). Only the keyboard hook's
   thread mints one (`KeySeq::after`), a review rule since the type is in
   this platform-neutral crate; tests construct them with `KeySeq::new`.
+  Every user input carries it as `key_seq`.
   `KeySeq::NONE_YET` (zero) is the hook's start and what every key field
   of an input from an old flight dump reads as (`KeySeq::none_yet`, the
   fields' serde default).
@@ -127,8 +128,8 @@ recorder unchanged. What the reducer does with each type is in
     microseconds, one clock read for every event kind), fetch completions (with
     their `QueryKind`), `OutpostEnded` (a generation ended, so its node
     ids are dead), timer ticks, `Command` (a `ReviewCommand`, its key
-    number and a press-repeat count), `Script` (the menu, the time, or the
-    shell's lists, as a `Script`, with its key number and repeat count),
+    number, a press-repeat count and when the hook saw it), `Script` (the
+    menu, the time, or the shell's lists, as a `Script`, with the same),
     `ToggleKeyPressed` (a lock key reached the operating system, with its
     key number and press time), and what the shell's threads learn, since only
     the reducer speaks: `Started`, `Exiting { replaced }`, `ErrorLogged`,
@@ -417,7 +418,7 @@ exists), or `Unanswered` (no answer in time, or the read failed).
 
 ### Inputs from the shell
 
-- `Input::CaretKey { trace_id, seq, key, pressed_at_ms }`: a caret key the
+- `Input::CaretKey { trace_id, key_seq, key, pressed_at_ms }`: a caret key the
   hook passed to the application, with its key number and when it saw
   it, in Unix milliseconds (0 when unknown). A `CaretKey` is a `CaretMotion` (character, word,
   line, paragraph, sentence, or page; the line's start or end; top or
@@ -428,10 +429,10 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   these.
 - `Input::HeldKey`, with the same fields: a caret key the hook held back.
   `Input::HeldKeyWaitEnded { trace_id }` ends a held key's wait.
-- `Input::CharacterTyped { trace_id, key, text, at_ms }`: text typed into the
+- `Input::CharacterTyped { trace_id, key_seq, text, at_ms }`: text typed into the
   focused application, one character or an input method's committed
   composition, a tab as a tab and Enter as a carriage return.
-- `Input::ClearingKey { trace_id, key, at_ms }`: Escape, Control+C, Control+D,
+- `Input::ClearingKey { trace_id, key_seq, at_ms }`: Escape, Control+C, Control+D,
   or Control+Break passed to the focused application.
 - `Input::MarkReached { mark }`, `Input::UtteranceCancelled { marks,
   at_ms }`, `Input::UtteranceFailed { marks }`: what the speech pipeline

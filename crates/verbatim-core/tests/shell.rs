@@ -424,7 +424,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
         &mut state,
         &Input::ToggleKeyPressed {
             trace_id: TraceId::mint(),
-            key: KeySeq::new(1),
+            key_seq: KeySeq::new(1),
             toggle: LockKey::ScrollLock,
             pressed_at_ms: 1_000,
         },
@@ -443,7 +443,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
         &mut state,
         &Input::CharacterTyped {
             trace_id: letter,
-            key: KeySeq::new(2),
+            key_seq: KeySeq::new(2),
             text: "a".to_owned(),
             at_ms: 1_010,
         },

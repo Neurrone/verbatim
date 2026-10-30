@@ -43,9 +43,11 @@ fn main() {
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
         match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(verbatim_input_windows::KeyReport::Gesture { gesture, key, .. }) => {
+            Ok(verbatim_input_windows::KeyReport::Gesture {
+                gesture, key_seq, ..
+            }) => {
                 println!(
-                    "gesture: {} (trace {}, key {key})",
+                    "gesture: {} (trace {}, key {key_seq})",
                     gesture.gesture, gesture.trace_id
                 );
             }
