@@ -54,6 +54,8 @@ Enforcement: each user-input variant of `Input` has a `KeySeq` field and `Effect
 
 ## The messages build
 
+Designed against the code in [the messages build's design](ownership-messages.md), which replaces its draft.
+
 ### Brief
 
 Scope:

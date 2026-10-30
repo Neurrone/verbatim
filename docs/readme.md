@@ -71,6 +71,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [ownership-input.md](design/ownership-input.md) — the input
     build's design: one key-number minter and one ordered route for
     user input.
+  - [ownership-messages.md](design/ownership-messages.md) — the
+    messages build's design: the wire types in the model, their kinds,
+    the merges, responders and the supervisor's typestates.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
