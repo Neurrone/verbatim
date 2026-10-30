@@ -1280,7 +1280,8 @@ impl Outpost {
     /// 3. The focus-following UIA subscription is closed: the process's
     ///    registering thread removes each of its groups
     ///    (`RemoveEventHandlerGroup`), each removal waiting for callbacks
-    ///    in progress; `RemoveAllEventHandlers` comes at step 7.
+    ///    in progress; `RemoveAllEventHandlers` comes only at the process's
+    ///    exit ([`run_pipe`]).
     /// 4. The worker finishes the entry in hand, and every abandoned worker
     ///    returns from its call, however long the application takes to
     ///    answer or UIA takes to end the call (its connection and
@@ -1292,8 +1293,10 @@ impl Outpost {
     ///    terminals.
     /// 6. What waits to be written to Core is written, every write in
     ///    flight completes, and the pipe is closed.
-    /// 7. The calling thread leaves COM, and the process's hold on the
-    ///    multithreaded apartment is given back.
+    /// 7. The calling thread leaves COM. The process's hold on the
+    ///    multithreaded apartment is not given back here but at the
+    ///    process's exit ([`run_pipe`]), since giving it back ends the
+    ///    registering thread every outpost in the process shares.
     ///
     /// The calling thread must be in COM's multithreaded apartment, or able
     /// to join it, since it releases UIA objects. What happens to the
@@ -1339,7 +1342,6 @@ impl Outpost {
         if joined.is_ok() {
             verbatim_uia::leave_mta();
         }
-        verbatim_uia::release_mta_usage();
         tracing::info!(
             target_pid = context.target_pid(),
             handlers_removed_ms = handlers_removed.as_millis(),
@@ -1882,6 +1884,10 @@ pub fn run_pipe(
         (Err(error), None) => Err(error),
     };
     outpost.shut_down(Some(&mut io));
+    // The process has finished with UIA: only its exit gives back the
+    // process-wide hold, which ends the registering thread every
+    // registration in the process shares.
+    verbatim_uia::release_mta_usage();
     ended
 }
 
@@ -1945,5 +1951,42 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     });
     loop {
         thread::park();
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use std::io::BufReader;
+
+    use verbatim_model::protocol::OutpostToCore;
+    use verbatim_process::overlapped::{End, Flow, pipe};
+    use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
+
+    use super::Outpost;
+    use crate::protocol::read_message;
+
+    /// An outpost of this process watching this process, its messages read
+    /// and dropped on a thread of their own, so its writes complete.
+    fn outpost() -> Outpost {
+        let (ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(BlockingReader::new(ours).expect("a reader"));
+            while let Ok(Some(_)) = read_message::<_, OutpostToCore>(&mut reader) {}
+        });
+        Outpost::new(theirs, std::process::id())
+    }
+
+    /// One outpost's shutdown leaves the process's UIA registering thread,
+    /// which every outpost in the process registers on, to the process's
+    /// exit: ending it would silence another outpost's subscription.
+    #[test]
+    fn an_outposts_shutdown_leaves_the_registering_thread_running() {
+        let staying = outpost();
+        let leaving = outpost();
+        assert!(staying.context.focus_events.get().is_some());
+        leaving.shutdown();
+        assert!(verbatim_uia::registering_thread_runs());
+        staying.shutdown();
     }
 }

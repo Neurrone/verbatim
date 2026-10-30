@@ -1658,10 +1658,12 @@ The outpost's side (`Outpost::shutdown`), in order:
 6. What waits is written, every write in flight completes
    (`ChildIo::finish`), and the pipe closes, since an exit would cancel a
    write (`docs/design/communication.md`, section 4.6).
-7. The thread leaves COM's apartment and the process's hold is given back
+7. The thread leaves COM's apartment. `run_pipe`, the process's exit
+   path, then gives back the process's hold
    (`verbatim_uia::release_mta_usage`), ending the registering thread with
    its `RemoveAllEventHandlers` (`docs/crates/verbatim-uia.md`,
-   `Registration`).
+   `Registration`); `Outpost::shutdown` does not, because the thread is
+   the process's, shared by every outpost in it, as in a test process.
 
 The outpost logs each step's time (`the outpost shut down`). The listener
 removes its hooks and handlers, writes what waits, and leaves COM. Both

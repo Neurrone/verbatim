@@ -49,9 +49,10 @@ listener make. Its remote operations are in `verbatim-uia-rops`
   request built on one thread while the setup runs on another fails with
   `E_FAIL` (mockapp's
   `tests/uia_bugs/a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread.rs`).
-  `release_mta_usage()` gives that hold back, which an outpost and the
-  focus listener do at the end of their shutdown; it also ends the
-  registering thread (below).
+  `release_mta_usage()` gives that hold back, which the outpost's and the
+  focus listener's process-exit paths do after their shutdown, never a
+  shutdown itself, since it ends the registering thread (below) that
+  every registration in the process shares.
 - `init_mta()` joins the multithreaded apartment, failing on a thread
   already in a single-threaded one; `leave_mta()` leaves it again, once,
   for a thread done with UIA for good. `release_thread_state()` drops the
@@ -435,7 +436,10 @@ The design is `docs/design/focus-pipeline.md`, section 17.
   not answer at the connection timeout, and what is asked after it waits
   for it. `release_mta_usage` ends the thread, calling
   `RemoveAllEventHandlers`, and every registration still open then hears
-  nothing more; a later registration starts the thread again.
+  nothing more; a later registration starts the thread again. A
+  registration's first command is sent while the thread's slot is locked,
+  so an end never falls between the thread's start and that command.
+  `registering_thread_runs()` answers whether the thread runs.
 
 The outpost's and the focus listener's registrations, their parts and
 shapes, are described in `docs/crates/verbatim-outpost.md`.

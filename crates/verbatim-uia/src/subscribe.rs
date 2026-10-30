@@ -405,39 +405,55 @@ struct Registrar {
     join: JoinHandle<()>,
 }
 
-/// The way to the process's registering thread, which is started on first
-/// use: it joins COM's multithreaded apartment and creates its client
-/// before this returns, local calls only.
-fn registrar() -> windows::core::Result<mpsc::Sender<Command>> {
+/// Sends `command` to the process's registering thread, which is started
+/// on first use: it joins COM's multithreaded apartment and creates its
+/// client before the command is sent, local calls only. The command is sent
+/// while the thread's slot is locked, so an end asked for meanwhile
+/// ([`end_registering_thread`]) comes after it, never between the start
+/// and the command. Returns the way to the thread, for later commands.
+fn send_to_registrar(command: Command) -> windows::core::Result<mpsc::Sender<Command>> {
     let mut registrar = REGISTRAR.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(running) = registrar.as_ref()
-        && !running.join.is_finished()
-    {
-        return Ok(running.commands.clone());
-    }
-    let (commands, received) = mpsc::channel::<Command>();
-    let (ready_tx, ready) = mpsc::channel::<windows::core::Result<()>>();
-    let join = thread::Builder::new()
-        .name("verbatim-uia-registrations".to_owned())
-        .spawn(move || serve(&ready_tx, &received))
-        .map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
-    match ready.recv() {
-        Ok(Ok(())) => {
-            *registrar = Some(Registrar {
-                commands: commands.clone(),
-                join,
-            });
-            Ok(commands)
+    let commands = match registrar.as_ref() {
+        Some(running) if !running.join.is_finished() => running.commands.clone(),
+        _ => {
+            let (commands, received) = mpsc::channel::<Command>();
+            let (ready_tx, ready) = mpsc::channel::<windows::core::Result<()>>();
+            let join = thread::Builder::new()
+                .name("verbatim-uia-registrations".to_owned())
+                .spawn(move || serve(&ready_tx, &received))
+                .map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
+            match ready.recv() {
+                Ok(Ok(())) => {
+                    *registrar = Some(Registrar {
+                        commands: commands.clone(),
+                        join,
+                    });
+                    commands
+                }
+                Ok(Err(error)) => {
+                    let _ = join.join();
+                    return Err(error);
+                }
+                Err(_) => {
+                    let _ = join.join();
+                    return Err(ended());
+                }
+            }
         }
-        Ok(Err(error)) => {
-            let _ = join.join();
-            Err(error)
-        }
-        Err(_) => {
-            let _ = join.join();
-            Err(ended())
-        }
-    }
+    };
+    commands.send(command).map_err(|_| ended())?;
+    Ok(commands)
+}
+
+/// Whether the process's registering thread runs: started by a
+/// registration and not ended since ([`end_registering_thread`]).
+#[must_use]
+pub fn registering_thread_runs() -> bool {
+    REGISTRAR
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|running| !running.join.is_finished())
 }
 
 /// Ends the process's registering thread, if it runs, and returns once it
@@ -507,18 +523,15 @@ impl Registration {
         let to = describe(&target.scope);
         let failed_reads = Arc::new(AtomicU32::new(0));
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let commands = registrar()?;
         let (ready_tx, ready) = mpsc::channel();
         let started = Instant::now();
-        commands
-            .send(Command::Start {
-                id,
-                parts,
-                target,
-                failed_reads: Arc::clone(&failed_reads),
-                ready: ready_tx,
-            })
-            .map_err(|_| ended())?;
+        let commands = send_to_registrar(Command::Start {
+            id,
+            parts,
+            target,
+            failed_reads: Arc::clone(&failed_reads),
+            ready: ready_tx,
+        })?;
         let result = ready.recv().unwrap_or_else(|_| Err(ended()));
         let elapsed = started.elapsed();
         let elapsed_ms = elapsed.as_millis();

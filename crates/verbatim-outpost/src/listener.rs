@@ -1136,7 +1136,6 @@ impl Listener {
         let failed_reads = registration_failed_reads.saturating_add(readers.failed_reads());
         outgoing.close();
         io.finish(&outgoing.sender);
-        verbatim_uia::release_mta_usage();
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             reading_threads,
@@ -1762,6 +1761,9 @@ pub fn run_listener(
         Err(error) => Err(error),
     };
     listener.shutdown(&mut io);
+    // The process has finished with UIA: only its exit gives back the
+    // process-wide hold ([`verbatim_uia::release_mta_usage`]).
+    verbatim_uia::release_mta_usage();
     ended
 }
 
