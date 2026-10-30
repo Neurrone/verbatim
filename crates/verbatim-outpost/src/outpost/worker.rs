@@ -1542,7 +1542,9 @@ impl Worker<'_> {
     /// whether a listener UIA focus had reached the outpost before the
     /// record's stamp, to the microsecond (`uia_focus_before`), and whether
     /// the record's window was gone as the read began (`sender_gone`),
-    /// which together tell late delivery from a burst of gone senders.
+    /// which together tell late delivery from a burst of gone senders; a
+    /// read that found no focus also logs how long it took (`elapsed_us`)
+    /// and, when a failed call gave one, its error's `HRESULT` (`error`).
     fn gap_read(&mut self, read: GapRead, trace: TraceId) {
         let context = self.context;
         let GapRead { window, stamp_us } = read;
@@ -1564,23 +1566,34 @@ impl Worker<'_> {
             object: object_of(context, node),
             msaa_event: None,
         });
+        let started = Instant::now();
         let found = read::gap_focus_read(
             context,
             self.client,
             (context.observed_now(), Some(&watched)),
         );
+        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         if let Some(published) = self.walk_returned() {
             self.adopt_published(published);
             return;
         }
         let Ok((hwnd, control)) = found else {
+            let miss = found.err();
+            let error = match miss {
+                Some(read::FocusReadMiss::Failed(Some(code))) => {
+                    Some(format!("{:#010x}", code.0.cast_unsigned()))
+                }
+                _ => None,
+            };
             tracing::info!(
                 %trace,
                 window,
                 waited_ms,
                 uia_focus_before,
                 sender_gone,
-                miss = ?found.err(),
+                ?miss,
+                error,
+                elapsed_us,
                 "no UIA focus answered a WinEvent focus in a UIA window; the gap's read found none"
             );
             return;

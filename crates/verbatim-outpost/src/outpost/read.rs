@@ -1469,7 +1469,7 @@ pub(super) fn focused_control_in(
             verbatim_ia2::acquire::focused_snapshot(hwnd, &context.msaa_registry, &|window| {
                 serves(context, window)
             })
-            .ok_or(FocusReadMiss::Failed)?;
+            .ok_or(FocusReadMiss::Failed(None))?;
         let (ancestors, selected_child) =
             msaa_enrichment(context, client, (&node, &[]), (ENRICHMENT_BUDGET, None));
         Ok((
@@ -1537,10 +1537,10 @@ fn uia_focused_control(
     {
         let (uia, nodes) = client
             .uia_with(context, Context::node_request)
-            .map_err(|_| FocusReadMiss::Failed)?;
+            .map_err(|_| FocusReadMiss::Failed(None))?;
         let ancestor_request = context
             .ancestor_request(uia)
-            .map_err(|_| FocusReadMiss::Failed)?;
+            .map_err(|error| FocusReadMiss::Failed(Some(error.code())))?;
         let element = checked_focused_element(context, (uia, &nodes), hwnd, trigger)?;
         if recheck {
             let now = context.focus_window();
@@ -1638,7 +1638,7 @@ pub(super) fn focused_element_in(
     }
     let (uia, nodes) = client
         .uia_with(context, Context::node_request)
-        .map_err(|_| FocusReadMiss::Failed)?;
+        .map_err(|_| FocusReadMiss::Failed(None))?;
     checked_focused_element(context, (uia, &nodes), hwnd, trigger)
 }
 
@@ -1683,10 +1683,12 @@ fn checked_focused_element(
     hwnd: isize,
     trigger: FocusRead,
 ) -> Result<Cached<Node>, FocusReadMiss> {
-    let focused_request = nodes.with_process().map_err(|_| FocusReadMiss::Failed)?;
+    let focused_request = nodes
+        .with_process()
+        .map_err(|error| FocusReadMiss::Failed(Some(error.code())))?;
     tracing::debug!(?trigger, hwnd, "the application's focused element is read");
-    let element =
-        (context.focused_element)(uia, &focused_request).map_err(|_| FocusReadMiss::Failed)?;
+    let element = (context.focused_element)(uia, &focused_request)
+        .map_err(|error| FocusReadMiss::Failed(Some(error.code())))?;
     let serving = context.target_pid();
     let found = element.cached_process();
     if found != Some(serving) {
@@ -1709,8 +1711,9 @@ pub(super) enum FocusReadMiss {
     /// application's, or is on Core's hidden frame, or cannot be read, or
     /// the focused element read belongs to another process.
     Refused,
-    /// The read itself failed.
-    Failed,
+    /// The read itself failed, with the error's `HRESULT` when the failed
+    /// call gave one.
+    Failed(Option<windows::core::HRESULT>),
 }
 
 /// What asked [`focused_control_in`] to read the application's focus,

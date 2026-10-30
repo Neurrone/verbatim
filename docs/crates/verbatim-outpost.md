@@ -165,8 +165,15 @@ receives the event's own element, judges and reads a UIA focus
   in the top-level window of the window its read found, the cached window
   or the nearest window (`Reading::outcome`'s `placed`, one local
   `GetAncestor`), or in none when it found neither. A focus whose nearest
-  window's lookup timed out (`focus_read::NEAREST_TIMED_OUT`) is dropped
-  with no other call.
+  window's lookup failed with `UIA_E_TIMEOUT` is dropped with no other
+  call, its reason chosen by `focus_read::nearest_timeout_reason`: after
+  `focus_read::NEAREST_FAILED_FAST_BOUND` (a second) or more,
+  as timed out (`focus_read::NEAREST_TIMED_OUT`), which answers the gap
+  record in any window; sooner, as failing fast
+  (`focus_read::NEAREST_FAILED_FAST`), which leaves the record open, so
+  the outpost's gap read at the bound reads the focus. An application
+  whose lookups keep failing fast has every focus spoken through the gap,
+  up to a second late, and the focuses between two gap reads not spoken.
 - Budget and bound. NVDA's checks have `READ_BUDGET` (2 seconds) from
   the read's start, asked before each call after the first (`Budget`).
   Past it the read makes no calls but still makes every check that needs

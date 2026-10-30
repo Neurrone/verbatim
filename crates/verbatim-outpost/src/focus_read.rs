@@ -714,12 +714,50 @@ pub enum FocusEvent {
 pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object for it";
 
 /// The reason a focus is dropped when the lookup of its sender's nearest
-/// window did not answer within UIA's transaction timeout
-/// (`verbatim_uia::nearest_window_lookup`): NVDA's lookup answers no window
-/// and NVDA drops the focus, and nothing more is read into an application
-/// that has just failed to answer (`docs/design/focus-pipeline-rework.md`,
-/// the audit's difference 14).
+/// window failed with `UIA_E_TIMEOUT` (`verbatim_uia::nearest_window_lookup`)
+/// after [`NEAREST_FAILED_FAST_BOUND`] or more: NVDA's lookup answers no
+/// window and NVDA drops the focus, and nothing more is read into an
+/// application that has just failed to answer, so its drop answers the gap
+/// record ([`GAVE_UP`]; `docs/design/focus-pipeline-rework.md`, the audit's
+/// difference 14).
 pub const NEAREST_TIMED_OUT: &str = "its nearest window's lookup timed out, so NVDA drops it";
+
+/// The reason a focus is dropped when the lookup of its sender's nearest
+/// window failed with `UIA_E_TIMEOUT` in under [`NEAREST_FAILED_FAST_BOUND`]:
+/// NVDA drops the focus as for [`NEAREST_TIMED_OUT`], but the application
+/// did not keep the lookup waiting, as Settings' lookup failed after 1.1 ms
+/// (`settings_combo_box_expanded`, 2026-10-30), so the drop leaves the gap
+/// record open and the outpost's read at the record's bound reads the
+/// focus ([`gap_answer`]; Dickson, 2026-10-30). A limit: in an application
+/// whose lookups keep failing fast, every focus is spoken through the gap,
+/// up to a second late, and the focuses between two gap reads are not
+/// spoken.
+pub const NEAREST_FAILED_FAST: &str =
+    "its nearest window's lookup failed with a timeout at once, so NVDA drops it";
+
+/// How long a nearest window's lookup that fails with `UIA_E_TIMEOUT` may
+/// take and still count as failing fast ([`NEAREST_FAILED_FAST`]) rather
+/// than as timed out ([`NEAREST_TIMED_OUT`]): a second. It is below UIA's
+/// 2-second connection timeout ([`verbatim_uia::CONNECTION_TIMEOUT`]), the
+/// shortest wait after which UIA ends a call to an application that does
+/// not answer, so a lookup that fails sooner was not kept waiting by its
+/// application. It equals the gap record's bound
+/// (`outpost::gap_record::BOUND_US`): a lookup that took that long has held
+/// its application's later events as long as the record waits for a UIA
+/// focus, and is taken as the application not answering in time.
+pub const NEAREST_FAILED_FAST_BOUND: Duration = Duration::from_secs(1);
+
+/// The reason a focus is dropped whose nearest window's lookup failed with
+/// `UIA_E_TIMEOUT` after `elapsed`: [`NEAREST_FAILED_FAST`] under
+/// [`NEAREST_FAILED_FAST_BOUND`], [`NEAREST_TIMED_OUT`] otherwise.
+#[must_use]
+pub fn nearest_timeout_reason(elapsed: Duration) -> &'static str {
+    if elapsed < NEAREST_FAILED_FAST_BOUND {
+        NEAREST_FAILED_FAST
+    } else {
+        NEAREST_TIMED_OUT
+    }
+}
 
 /// The reason a notification is dropped when its sender has no window
 /// above it.
@@ -781,8 +819,10 @@ const VERDICTS: [&str; 7] = [
 /// whose event said it lacked the keyboard focus when the read's time was
 /// up is among them, a judgement call of its own (Dickson, 2026-10-21):
 /// its time ran out as the others' did; so is a nearest window's lookup
-/// that timed out (`docs/design/focus-pipeline-rework.md`, the audit's
-/// difference 14).
+/// that timed out after [`NEAREST_FAILED_FAST_BOUND`] or more
+/// ([`NEAREST_TIMED_OUT`]; `docs/design/focus-pipeline-rework.md`, the
+/// audit's difference 14). One that failed fast ([`NEAREST_FAILED_FAST`])
+/// is not among them (Dickson, 2026-10-30).
 const GAVE_UP: [&str; 5] = [
     NOT_IN_TIME,
     WAITED_TOO_LONG,
@@ -852,8 +892,9 @@ fn skipped_by_class(classes: &WindowClasses, forced_uia: bool) -> bool {
 /// answers it. A read and a verdict of NVDA's checks ([`VERDICTS`]), the
 /// class-list skip among them, answer a copy in their top-level window, or
 /// in any window when the read found none. The
-/// listener giving up on the application ([`GAVE_UP`]) answers a copy in
-/// any window. A drop for no window above the sender ([`NO_WINDOW`])
+/// listener giving up on the application ([`GAVE_UP`]), a nearest
+/// window's lookup that timed out among them ([`NEAREST_TIMED_OUT`]),
+/// answers a copy in any window. A drop for no window above the sender ([`NO_WINDOW`])
 /// answers a copy in any window too, which its outpost is to read at once
 /// in its place: the focus came and its sender, gone, cannot be read, and
 /// the event for where the focus
@@ -861,7 +902,10 @@ fn skipped_by_class(classes: &WindowClasses, forced_uia: bool) -> bool {
 /// risk 13). Any other drop leaves the record open: one no longer focused
 /// ([`NOT_FOCUSED`]) or replaced by a newer event of its element comes in
 /// fast navigation, where it says nothing of the copy's focus (Dickson,
-/// 2026-10-21), and so do the rest, which could not establish the focus.
+/// 2026-10-21); so does a nearest window's lookup that failed fast
+/// ([`NEAREST_FAILED_FAST`]), which leaves the focus to the outpost's read
+/// at the record's bound (Dickson, 2026-10-30); and so do the rest, which
+/// could not establish the focus.
 #[must_use]
 pub fn gap_answer(kind: FocusEvent, judged: &Judged, placed: Option<isize>) -> GapAnswer {
     if kind != FocusEvent::Focus {
@@ -1817,6 +1861,11 @@ impl FocusReader {
             &windows,
             &RequestedEvents::default(),
         ) {
+            tracing::debug!(
+                window,
+                foreground = windows.foreground,
+                "UIA focus not related to the foreground window"
+            );
             return Err(NOT_RELATED);
         }
         // 5. The refusals of NVDA's object for the sender, before its
@@ -1926,7 +1975,9 @@ impl FocusReader {
                 window = ?nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            let nearest = nearest.map_err(|_| NEAREST_TIMED_OUT)?.ok_or(NO_WINDOW)?;
+            let nearest = nearest
+                .map_err(|_| nearest_timeout_reason(started.elapsed()))?
+                .ok_or(NO_WINDOW)?;
             self.window.learn(nearest);
             nearest
         } else {
@@ -3470,10 +3521,10 @@ mod tests {
     /// What each outcome of a focus event says of its application's gap
     /// record: a read or a verdict of NVDA's checks, the class-list skip
     /// among them, answers a copy in the top-level window its read found;
-    /// the listener giving up on the application, a timed-out
-    /// nearest-window lookup among them, answers a copy in any window, and
-    /// a drop for no window answers it to be read at once; and every other
-    /// drop of a focus leaves the record open, as does any outcome of a
+    /// the listener giving up on the application answers a copy in any
+    /// window, and a drop for no window answers it to be read at once; and
+    /// every other drop of a focus leaves the record open, a nearest
+    /// window's lookup that failed fast among them, as does any outcome of a
     /// selection, a notification, or a menu opening. Every reason the
     /// listener drops a focus for is listed.
     #[test]
@@ -3500,7 +3551,6 @@ mod tests {
             GapAnswer::ReadsNow
         );
         for anywhere in [
-            "its nearest window's lookup timed out, so NVDA drops it",
             "its read did not return in time",
             "it waited too long behind its application's abandoned reads",
             "its read ran out of time before its window was looked up",
@@ -3509,6 +3559,7 @@ mod tests {
             assert_eq!(dropped(anywhere), GapAnswer::Answers(None), "{anywhere}");
         }
         for open in [
+            "its nearest window's lookup failed with a timeout at once, so NVDA drops it",
             "its element no longer has the keyboard focus",
             "the user moved on from a slow window",
             "a newer focus event of its element replaced it",
@@ -3530,6 +3581,46 @@ mod tests {
                 GapAnswer::LeavesOpen
             );
         }
+    }
+
+    /// A focus whose nearest window's lookup failed with `UIA_E_TIMEOUT`
+    /// in under a second, as Settings' did after 1.1 ms, is dropped for
+    /// failing fast, and its drop leaves the gap record open.
+    #[test]
+    fn a_nearest_window_lookup_that_times_out_fast_leaves_the_gap_record_open() {
+        let reason = nearest_timeout_reason(Duration::from_micros(999_999));
+        assert_eq!(
+            reason,
+            "its nearest window's lookup failed with a timeout at once, so NVDA drops it"
+        );
+        assert_eq!(
+            Judged::Dropped(reason).into_fact(9, FocusEvent::Focus, Some(70)),
+            DeliveredFact::UiaFocusDropped {
+                marker: 9,
+                focus: true,
+                answer: GapAnswer::LeavesOpen,
+            }
+        );
+    }
+
+    /// A focus whose nearest window's lookup failed with `UIA_E_TIMEOUT`
+    /// after a second or more is dropped for timing out, and its drop
+    /// answers the gap record in any window.
+    #[test]
+    fn a_nearest_window_lookup_that_times_out_slowly_answers_the_gap_record() {
+        let reason = nearest_timeout_reason(Duration::from_secs(1));
+        assert_eq!(
+            reason,
+            "its nearest window's lookup timed out, so NVDA drops it"
+        );
+        assert_eq!(
+            Judged::Dropped(reason).into_fact(9, FocusEvent::Focus, Some(70)),
+            DeliveredFact::UiaFocusDropped {
+                marker: 9,
+                focus: true,
+                answer: GapAnswer::Answers(None),
+            }
+        );
     }
 
     /// A focus whose nearest window's class is on NVDA's MSAA class list,

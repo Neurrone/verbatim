@@ -23,7 +23,7 @@ use common::outpost::OutpostUnderTest;
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::focus_read::Judged;
+use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, WinEventStamp};
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
@@ -729,10 +729,12 @@ fn a_focus_walk_that_times_out_fails() {
 /// drops a focus with none (`UIAHandler/__init__.py` 1437 to 1444;
 /// `docs/design/focus-pipeline-rework.md`, the audit's difference 14). The
 /// lookup's first step to the parent waits past the timeout
-/// (`slow-parent`), and returns before mockapp's wait ends.
+/// (`slow-parent`), and returns before mockapp's wait ends. The timeout is
+/// above the second under which a lookup's timeout counts as failing fast
+/// (`focus_read::NEAREST_FAILED_FAST_BOUND`).
 fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
-    const TIMEOUT: Duration = Duration::from_millis(300);
-    const SLOW_PARENT: Duration = Duration::from_millis(900);
+    const TIMEOUT: Duration = Duration::from_millis(1_200);
+    const SLOW_PARENT: Duration = Duration::from_millis(1_800);
     let mut fixture = Fixture::start_alone("mockapp-rops-lookup-timed-out", "ancestry.json");
     let deep = fixture.focus_delivered("deep", "Deep button");
     let outpost = OutpostUnderTest::new(&fixture.app);
@@ -767,6 +769,67 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
         },
         "the lookup is the read's only call"
     );
+    drop(outpost);
+    fixture.app.quit();
+}
+
+/// A focus whose nearest window's lookup fails with UIA's timeout in under
+/// a second (`focus_read::NEAREST_FAILED_FAST_BOUND`) is dropped by the
+/// listener for failing fast, its lookup the read's only call, and its
+/// drop leaves open the outpost's gap record that its `WinEvent` copy
+/// opened, its timer still set for the read at the record's bound
+/// (Dickson, 2026-10-30). The transaction timeout, 300 ms, ends the
+/// lookup's slow step to the parent (`slow-parent`) well inside the
+/// second. The read at the bound is not made here: the outpost under test
+/// shares the listener's process, whose UI Automation then fails its calls
+/// to mockapp with `UIA_E_TIMEOUT` within a millisecond, where a real
+/// outpost is a process of its own.
+fn a_nearest_window_lookup_that_fails_fast_leaves_the_gap_record_open() {
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SLOW_PARENT: Duration = Duration::from_millis(900);
+    let mut fixture = Fixture::start_alone("mockapp-rops-lookup-failed-fast", "ancestry.json");
+    let deep = fixture.focus_delivered("deep", "Deep button");
+    let outpost = OutpostUnderTest::on_frozen_time(&fixture.app);
+    outpost.read_focus_as(deep.live().element());
+    outpost.deliver_win_event(
+        DeliveredFact::MsaaFocus {
+            hwnd: fixture.hwnd,
+            id_object: -4,
+            id_child: 0,
+        },
+        WinEventStamp { thread: 1, time: 1 },
+    );
+    outpost.settled();
+    assert!(outpost.gap_timer_set(), "the copy opened the record");
+
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
+    fixture
+        .app
+        .send(&format!("slow-parent deep {}", SLOW_PARENT.as_millis()));
+    let (judged, calls) = outpost.listener_read(&deep);
+    fixture.app.stamped_line("slow-parent started");
+    fixture.app.stamped_line("slow-parent ended");
+    fixture.app.send("slow-parent deep 0");
+    drop(restored);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener took a focus whose nearest window's lookup failed: {judged:?}");
+    };
+    assert_eq!(reason, verbatim_outpost::focus_read::NEAREST_FAILED_FAST);
+    assert_eq!(
+        calls,
+        CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 0,
+            connections: 0,
+        },
+        "the lookup is the read's only call"
+    );
+
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
+    outpost.settled();
+    assert!(outpost.gap_timer_set(), "the drop left the record open");
     drop(outpost);
     fixture.app.quit();
 }
@@ -1625,6 +1688,10 @@ fn main() {
         (
             "a_timed_out_nearest_window_lookup_reads_nothing_into_the_application",
             a_timed_out_nearest_window_lookup_reads_nothing_into_the_application,
+        ),
+        (
+            "a_nearest_window_lookup_that_fails_fast_leaves_the_gap_record_open",
+            a_nearest_window_lookup_that_fails_fast_leaves_the_gap_record_open,
         ),
         (
             "a_focus_whose_walk_times_out_is_reported_below_its_window",
