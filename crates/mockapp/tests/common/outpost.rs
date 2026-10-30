@@ -521,6 +521,21 @@ impl OutpostUnderTest {
         Self::with_options(app, OutpostOptions::default())
     }
 
+    /// [`Self::new`], with a focus listener forwarding to it, as every
+    /// outpost the supervisor starts has: its own hook's copies are held
+    /// until the test says the listener's forwarding has ended
+    /// ([`Self::forwarding_ended`]). Every other outpost but a spare is told
+    /// no listener forwards to it, so its hook's copies are handled as they
+    /// come.
+    pub fn with_listener(app: &super::MockApp) -> Self {
+        Self::build_ready(
+            app,
+            OutpostOptions::default(),
+            MESSAGES_PIPE_BUFFER,
+            ObservationTime::Real,
+        )
+    }
+
     /// An outpost watching `app` as `options` say, on the real observation
     /// clock, which has announced itself ready, and nothing else. It reads
     /// `app`'s window as the foreground window.
@@ -551,6 +566,20 @@ impl OutpostUnderTest {
     /// An outpost watching `app`, on the observation clock `time`, which
     /// has announced itself ready.
     fn ready(
+        app: &super::MockApp,
+        options: OutpostOptions,
+        buffer: u32,
+        time: ObservationTime,
+    ) -> Self {
+        let under_test = Self::build_ready(app, options, buffer, time);
+        under_test.outpost.without_listener();
+        under_test
+    }
+
+    /// An outpost watching `app`, on the observation clock `time`, which
+    /// has announced itself ready, its hook's copies held as a listener's
+    /// forwarding asks.
+    fn build_ready(
         app: &super::MockApp,
         options: OutpostOptions,
         buffer: u32,

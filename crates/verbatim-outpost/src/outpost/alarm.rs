@@ -2,15 +2,13 @@
 //! together by one thread. Setting and cancelling the timer are system
 //! calls that wake no thread.
 //!
-//! The watchdog's alarm is a timer the worker sets when it starts an entry
-//! and cancels when it publishes, and an event for the times the watchdog
-//! must look now (a foreground fact, the outpost's shutdown), so the
-//! watchdog wakes only when a deadline or a grace passes, or the event is
-//! set, not for every entry the worker takes (`docs/design/wake-ups.md`,
-//! item 3). The intake's alarm is the worker's wait for work: the event is
-//! set when something is pushed while the worker waits, and the timer is
-//! set to the wake the worker asked for, at a resolution finer than the
-//! system's 15.6 ms timer ([`super::intake`]).
+//! The mailbox's alarm is the reducer's wait ([`super::shell`]): the event
+//! is set when something is appended while the reducer's thread waits, and
+//! the timer is set to the reducer's next timer, a program's deadline, a
+//! walk's bound, a caret key's watch or the gap record's bound, at a
+//! resolution finer than the system's 15.6 ms timer, so the thread wakes
+//! only when a timer is due or something is appended
+//! (`docs/design/wake-ups.md`, item 3).
 
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::time::Instant;

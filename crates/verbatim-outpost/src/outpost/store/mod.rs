@@ -79,16 +79,6 @@ pub(super) struct Tag {
     pub(super) request: u64,
 }
 
-impl Tag {
-    /// The tag of a thread that runs no program: no request is it, so it is
-    /// never live, and what it names is kept only while a message carries
-    /// it.
-    pub(super) const NONE: Tag = Tag {
-        generation: u64::MAX,
-        request: 0,
-    };
-}
-
 /// Objects the store let go of, for the caller to drop once no lock is
 /// held: releasing an application's object can call into its process.
 #[must_use = "drop once no lock is held"]
@@ -103,6 +93,8 @@ pub(super) struct Removed {
     uia_text: Option<Forgotten<UiaPos>>,
     edit_text: Option<Forgotten<u32>>,
     terminals: Vec<Terminal>,
+    /// Objects entries came with, never taken.
+    parked: Vec<Parked>,
 }
 
 impl Removed {
@@ -165,6 +157,50 @@ struct State {
     /// by node (`docs/design/terminal-model.md`, "Where it runs"). A read
     /// works on a copy, which only the commit of its result puts in place.
     terminals: HashMap<u64, Terminal>,
+    /// The objects entries came with, parked until their program takes
+    /// them, by key ([`Parked`]).
+    parked: HashMap<u64, Parked>,
+    /// The last key given a parked object.
+    parked_taken: u64,
+}
+
+/// An application object a UIA event came with, parked in the store as the
+/// event is pushed, so the mailbox's entry and the reducer hold only its
+/// key (`docs/design/ownership-outpost-reducer.md`, "The mailbox"): taken
+/// by the program that handles the entry, or let go of into a worker's
+/// drop when the entry is removed unhandled.
+pub(super) enum Parked {
+    /// A property change's element.
+    Property(verbatim_uia::Agile<verbatim_uia::PropertyEvent>),
+    /// A caret, text, or active text position change's element.
+    Text(verbatim_uia::Agile<verbatim_uia::TextEvent>),
+    /// The range an active text position change carried.
+    Range(windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationTextRange>),
+}
+
+impl Parked {
+    /// The element, on this thread, read as the `Kept` shape both event
+    /// shapes cover, which is all any reader of it reads and what the node
+    /// registry keeps; `None` when it cannot be resolved or is a range.
+    pub(super) fn element(self) -> Option<Cached<Kept>> {
+        match self {
+            Self::Property(agile) => agile.resolve().ok().map(|event| event.narrow()),
+            Self::Text(agile) => agile.resolve().ok().map(|event| event.narrow()),
+            Self::Range(_) => None,
+        }
+    }
+
+    /// The range, when it is one.
+    pub(super) fn range(
+        self,
+    ) -> Option<
+        windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationTextRange>,
+    > {
+        match self {
+            Self::Range(range) => Some(range),
+            Self::Property(_) | Self::Text(_) => None,
+        }
+    }
 }
 
 /// Adds `tag` to `tags`, once.
@@ -211,7 +247,8 @@ impl State {
 pub(super) struct Store {
     uia: UiaRegistry,
     msaa: MsaaRegistry,
-    /// The number of the last request tagged.
+    /// The number of the last request a test tagged.
+    #[cfg(test)]
     requests: AtomicU64,
     state: Mutex<State>,
 }
@@ -231,6 +268,7 @@ impl Store {
         Self {
             uia: UiaRegistry::new(Arc::clone(&ids)),
             msaa: MsaaRegistry::new(ids),
+            #[cfg(test)]
             requests: AtomicU64::new(0),
             state: Mutex::new(State {
                 nodes: HashMap::new(),
@@ -240,6 +278,8 @@ impl Store {
                 patterns: HashMap::new(),
                 support: HashMap::new(),
                 terminals: HashMap::new(),
+                parked: HashMap::new(),
+                parked_taken: 0,
             }),
         }
     }
@@ -248,7 +288,23 @@ impl Store {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The tag of a new request of worker generation `generation`.
+    /// Parks `object`, returning the key it is parked under.
+    pub(super) fn park(&self, object: Parked) -> u64 {
+        let mut state = self.lock();
+        state.parked_taken += 1;
+        let key = state.parked_taken;
+        state.parked.insert(key, object);
+        key
+    }
+
+    /// Takes the object parked under `key`, if it is still parked.
+    pub(super) fn take_parked(&self, key: u64) -> Option<Parked> {
+        self.lock().parked.remove(&key)
+    }
+
+    /// The tag of a new request of worker generation `generation`, for a
+    /// test: the reducer numbers its requests itself.
+    #[cfg(test)]
     pub(super) fn next_tag(&self, generation: u64) -> Tag {
         Tag {
             generation,
@@ -464,6 +520,9 @@ impl Store {
             .extend(state.terminals.drain().map(|(_, terminal)| terminal));
         state.nodes.clear();
         state.anchors.clear();
+        removed
+            .parked
+            .extend(state.parked.drain().map(|(_, parked)| parked));
         (nodes.len(), removed)
     }
 
@@ -603,12 +662,6 @@ impl Store {
         removed
     }
 
-    /// The anchors kept for edit control `node`, for a test.
-    #[cfg(test)]
-    pub(super) fn edit_anchors(&self, node: NodeId) -> Vec<u64> {
-        self.lock().edit_text.anchors_of(node.number()).collect()
-    }
-
     /// Notes that edit control `node`'s text changed.
     pub(super) fn note_content_changed(&self, node: NodeId) {
         let mut state = self.lock();
@@ -715,16 +768,6 @@ impl Nodes<'_> {
             generation: self.generation,
             request: self.request.load(Ordering::Relaxed),
         }
-    }
-
-    /// Tags with `tag` from now on: a request of the same generation the
-    /// worker started, its owed work's.
-    pub(super) fn retag(&self, tag: Tag) {
-        debug_assert_eq!(
-            tag.generation, self.generation,
-            "a request of the same worker"
-        );
-        self.request.store(tag.request, Ordering::Relaxed);
     }
 
     /// The elements this handle's lookups replaced, for the caller to drop

@@ -5,14 +5,19 @@
 //! (`docs/design/focus-pipeline.md`, section 19), and never changes after.
 //! Its parts:
 //!
-//! 1. Intake ([`intake`]): the MSAA hook callbacks, the UIA subscription
-//!    callbacks, and the reader's routed facts and queries only add an entry
-//!    to the queue and return. They never call into the application and never
-//!    wait on the worker.
-//! 2. The queue: one per application, with NVDA's limiter rules.
-//! 3. The worker ([`worker`]): one thread that takes entries in order, the
-//!    only thread that calls into the application.
-//! 4. The watchdog: abandons and replaces a worker whose call hangs.
+//! 1. The mailbox ([`shell`]): the MSAA hook callbacks, the UIA
+//!    subscription callbacks, and the reader's routed facts and queries only
+//!    append an entry to it and return. They never call into the
+//!    application and never wait on anything but the mailbox's lock.
+//! 2. The reducer ([`reducer`]), on a thread of its own run by its shell
+//!    ([`shell`]): the pure state machine that holds every remembered fact
+//!    of the application, the intake's order with NVDA's limiter rules
+//!    among them, and keeps the outpost's timers: a worker's deadline, the
+//!    walk's bound, the caret key's watch and the gap record's bound.
+//! 3. The workers ([`worker`]): the threads that call into the application,
+//!    one generation in charge at a time, each running one program at a
+//!    time on copies, posting its commits to the mailbox. A worker whose
+//!    call hangs is abandoned and replaced by the reducer.
 //! 5. The I/O thread ([`Outpost::handle_command`], driven by [`run_pipe`]
 //!    on the transport's child side): reads Core's commands, answers pings
 //!    itself, so a busy or hung worker never makes the outpost look dead,
@@ -38,30 +43,27 @@
 pub(crate) mod acceptance;
 pub(crate) mod alarm;
 mod bound;
-mod caret_poll;
 mod commit;
 mod focus_path;
-mod gap_record;
-mod gap_timer;
-mod handover;
-mod held;
-mod intake;
 mod narrowing;
 mod outbound;
 mod read;
+mod reducer;
+mod shell;
 mod shell_items;
 mod store;
 pub(crate) mod text_reads;
 pub(crate) mod window;
 mod worker;
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::os::windows::io::OwnedHandle;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
@@ -86,15 +88,18 @@ use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::protocol::{decode_message, now_us, read_message};
 use crate::supervisor::Target;
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, EventTiming, FactKey, OutpostToCore, Query, QueryOutcome,
-    UiaSnapshotFact, Urgent, WinEventStamp,
+    CoreToOutpost, DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, UiaSnapshotFact,
+    Urgent, WinEventStamp,
 };
 
-use gap_record::{CopyDropped, GapRead};
-pub use gap_timer::GapTimer;
-use intake::{Entry, EventElement, Intake, Item, UiaEvent, UiaKind};
+use commit::{Committed, Effects};
 use outbound::Outbound;
-use worker::Watch;
+use reducer::{
+    Entry, Facts, FollowState, Item, Object, OpenWatch, Source, UiaEvent, UiaKind, WaitingCaret,
+};
+pub use shell::GapTimer;
+use shell::{Mailbox, Posted, Shell};
+use worker::Charge;
 
 pub(crate) use window::now_ms;
 
@@ -120,25 +125,6 @@ mod application_names_tests {
         child.wait().expect("the exit of cmd is seen");
         assert_eq!(names.name(pid), "");
         assert!(!names.0.contains_key(&pid), "the exited process is let go");
-    }
-}
-
-#[cfg(test)]
-mod caret_read_tests {
-    use super::commit::CaretRead;
-
-    #[test]
-    fn an_event_observed_while_a_read_was_in_flight_is_not_covered() {
-        let mut read = CaretRead::default();
-        // A read of node 1 begins at 100 and returns at 200; a caret event
-        // is observed at 150, while it was in flight.
-        read.note(1, 100);
-        assert!(!read.covers(1, 150));
-        // One observed before the read began is covered; another node's
-        // never is.
-        assert!(read.covers(1, 100));
-        assert!(read.covers(1, 90));
-        assert!(!read.covers(2, 90));
     }
 }
 
@@ -183,12 +169,20 @@ pub(crate) struct Context {
     /// read the first time a focus in its console window is reported.
     application_names: Mutex<ApplicationNames>,
     outbound: Outbound,
-    intake: Arc<Intake>,
-    /// What times the gap record's bound ([`gap_timer`]): the outpost's
-    /// threadpool timer, unless a test sets its own
-    /// ([`Outpost::set_gap_timer`]).
-    gap_timer: Mutex<Arc<dyn GapTimer>>,
-    watch: Watch,
+    /// What every producer appends to and the reducer's shell drains
+    /// ([`shell`]).
+    mailbox: Mailbox,
+    /// The outpost's start, from which the reducer's clock counts.
+    epoch: Instant,
+    /// What times the gap record's bound in place of the reducer's own
+    /// timer, when a test sets one ([`Outpost::set_gap_timer`]).
+    gap_timer: Mutex<Option<Arc<dyn GapTimer>>>,
+    /// Abandoned workers that have not yet returned, as the reducer last
+    /// counted them: an atomic, so the I/O thread answers a ping without
+    /// waiting on anything.
+    abandoned: AtomicUsize,
+    /// The reducer's thread, which returns every worker thread started.
+    shell: Mutex<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
     /// Every application object the outpost keeps, and the identity it
     /// gives each ([`store`]).
     store: store::Store,
@@ -198,12 +192,6 @@ pub(crate) struct Context {
     /// by: the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
     observation: OnceLock<crate::arbitration::ObservationClock>,
-    /// The reports whose focus node this outpost has not released, which
-    /// it reads changes for ([`held`]).
-    held: Mutex<held::Held>,
-    /// How many focus groups this outpost generation has tried: the number
-    /// of the last ([`Context::next_focus_group`]).
-    focus_groups: std::sync::atomic::AtomicU64,
     /// The processes Verbatim ignores, which the outpost inherits through
     /// [`IGNORE_PIDS_ENV`](crate::supervisor::IGNORE_PIDS_ENV): a focus in
     /// one's window is not reported.
@@ -223,10 +211,6 @@ pub(crate) struct Context {
     /// is kept with the thread that owned it, so a reused handle, whose
     /// destroy event was lost, is not read the classic way by mistake.
     classic_windows: Mutex<HashMap<isize, u32>>,
-    /// The idle barrier's round the worker has reached and not yet
-    /// answered, kept while deferred work is pending
-    /// (`worker::answer_idle`).
-    idle_query: Mutex<Option<u64>>,
     /// The details the active theme wants read for each node
     /// ([`CoreToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
@@ -253,10 +237,6 @@ pub(crate) struct Context {
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
-    /// The MSAA hand-over between the listener's copies of the
-    /// application's `WinEvent`s and the outpost's own hook's
-    /// ([`handover`]).
-    handover: Mutex<handover::Handover>,
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
@@ -353,37 +333,205 @@ impl Default for OutpostOptions {
 }
 
 /// The outpost's shared state as one request sees it: the store's handle
-/// for the request ([`store::Nodes`]), carrying its mint tag, that of the
-/// worker's entry or owed work, or of the request a watchdog's publication
-/// claims. The store tags every node the request issues or looks up with
-/// it, and keeps the request's text only while it is live.
+/// for the request ([`store::Nodes`]), carrying its mint tag, that of a
+/// program, or of the request a publication at a walk's bound claims; and,
+/// for a program, its copies of the facts it reads. The store tags every
+/// node the request issues or looks up with it, and a program's text is
+/// kept only while its request is live.
 struct RequestContext<'a> {
     context: &'a Context,
     nodes: store::Nodes<'a>,
+    /// The facts the request reads: a program's copies, which its commits
+    /// are applied to, or the reducer's own, copied for a publication.
+    facts: RefCell<Facts>,
+    /// The program's own, when the context is a program's: its request,
+    /// the caret events and value changes waiting when it was dispatched,
+    /// and its worker's charge.
+    program: Option<Program<'a>>,
+}
+
+/// What a program's context holds of it ([`RequestContext::program`]).
+struct Program<'a> {
+    request: reducer::Request,
+    waiting: Vec<WaitingCaret>,
+    charge: Arc<Charge>,
+    _context: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> RequestContext<'a> {
-    fn new(context: &'a Context, tag: store::Tag) -> Self {
+    /// The context of a thread that runs no program, tagging what it mints
+    /// with `tag` and reading `facts`: the reducer's publication at a
+    /// walk's bound.
+    fn new(context: &'a Context, tag: store::Tag, facts: Facts) -> Self {
         Self {
             context,
             nodes: context.store.nodes_for(tag),
+            facts: RefCell::new(facts),
+            program: None,
         }
     }
 
-    /// The request's mint tag.
+    /// The context of program `request`, given `facts`, `waiting` and its
+    /// worker's `charge`.
+    fn for_program(
+        context: &'a Context,
+        tag: store::Tag,
+        (request, facts, waiting): (reducer::Request, Facts, Vec<WaitingCaret>),
+        charge: Arc<Charge>,
+    ) -> Self {
+        Self {
+            context,
+            nodes: context.store.nodes_for(tag),
+            facts: RefCell::new(facts),
+            program: Some(Program {
+                request,
+                waiting,
+                charge,
+                _context: std::marker::PhantomData,
+            }),
+        }
+    }
+
+    /// The program this context runs.
+    ///
+    /// # Panics
+    ///
+    /// When the context runs no program: only a program's code asks.
+    fn program(&self) -> &Program<'a> {
+        self.program.as_ref().expect("a program's context")
+    }
+
     fn tag(&self) -> store::Tag {
         self.nodes.tag()
     }
 
-    /// The store's handle for this request.
+    /// The store's handle for this request, through which walks issue and
+    /// look up nodes.
     fn nodes(&self) -> &store::Nodes<'a> {
         &self.nodes
     }
 
-    /// The elements this request's lookups replaced, for the caller to drop
-    /// once no lock is held ([`store::Nodes::take_removed`]).
+    /// What the request's lookups replaced, to drop once no lock is held.
     fn take_removed(&self) -> store::Removed {
         self.nodes.take_removed()
+    }
+
+    /// The program's request.
+    fn request(&self) -> reducer::Request {
+        self.program().request
+    }
+
+    /// The program's worker's charge.
+    fn charge(&self) -> &Charge {
+        &self.program().charge
+    }
+
+    /// The caret events and value changes waiting when the program was
+    /// dispatched.
+    fn waiting(&self) -> &[WaitingCaret] {
+        self.program
+            .as_ref()
+            .map_or(&[], |program| program.waiting.as_slice())
+    }
+
+    /// The facts as the program's copies hold them, or the reducer's own,
+    /// copied, for a publication.
+    fn facts(&self) -> Ref<'_, Facts> {
+        self.facts.borrow()
+    }
+
+    /// Reads the follow state with `read`.
+    fn follow<T>(&self, read: impl FnOnce(&FollowState) -> T) -> T {
+        read(&self.facts().follow)
+    }
+
+    /// The reports whose focus node this outpost has not released.
+    fn held(&self) -> Ref<'_, reducer::Held> {
+        Ref::map(self.facts(), |facts| &facts.held)
+    }
+
+    /// The intake's marks.
+    fn marks(&self) -> Ref<'_, reducer::Marks> {
+        Ref::map(self.facts(), |facts| &facts.marks)
+    }
+
+    /// The object last reported as the focus.
+    fn focused(&self) -> Option<Object> {
+        self.marks().focused.clone()
+    }
+
+    /// Whether a focus event on `object` is the redirected-to child's own,
+    /// arriving after its control's: `object` is the focus, reached by a
+    /// redirect, and no other focus came between. The mark is left set; the
+    /// commit that drops the event clears it.
+    fn is_redirected_focus(&self, object: &Object) -> bool {
+        let marks = self.marks();
+        marks.focus_redirected && marks.focused.as_ref() == Some(object)
+    }
+
+    /// Whether a read of `node`'s caret committed since `observed_us`
+    /// covers an event observed then, which needs no report of its own.
+    fn caret_read_since(&self, node: NodeId, observed_us: u64) -> bool {
+        self.follow(|follow| follow.caret_read.covers(node.number(), observed_us))
+    }
+
+    /// The window of the last focus this outpost reported.
+    fn tracked_window(&self) -> Option<isize> {
+        self.follow(|follow| follow.tracking.window)
+    }
+
+    /// Now, on the reducer's clock.
+    fn now(&self) -> Duration {
+        self.context.epoch.elapsed()
+    }
+
+    /// The route to the element `runtime_id` names, when it is in the chain
+    /// the focus listener read for the UIA focus this outpost last reported,
+    /// and its window is one the outpost's application serves: the outpost
+    /// looks up no window of another process by its handle
+    /// (`docs/design/listener-without-connections.md`, section 4.3).
+    fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
+        let route = self.follow(|follow| {
+            follow
+                .focus_path
+                .as_ref()
+                .and_then(|path| path.route_to(runtime_id))
+        })?;
+        read::serves(self, route.window).then_some(route)
+    }
+
+    /// Makes `write` while the program's request is live, holding its
+    /// worker's charge across the judgement and the write
+    /// ([`Charge::while_live`]); `None`, with nothing written, otherwise.
+    fn while_live<T>(&self, write: impl FnOnce() -> T) -> Option<T> {
+        let program = self.program.as_ref()?;
+        program.charge.while_live(program.request, write)
+    }
+
+    /// Commits `effects`: unless the worker was abandoned, applies their
+    /// pure part to the program's copies, so what it reads after is what
+    /// the reducer will hold, and posts them for the reducer, which applies
+    /// them only while the request is live. Returns what was done, and the
+    /// caret key's watch a [`reducer::WatchChange::Take`] took out.
+    fn commit(&self, effects: Effects) -> (Committed, Option<OpenWatch>) {
+        let program = self.program();
+        if program.charge.is_dead() {
+            drop(effects);
+            return (Committed::Refused, None);
+        }
+        let local = effects.local();
+        let applied = {
+            let mut facts = self.facts.borrow_mut();
+            if let Some(report) = &local.report {
+                reducer::record(&mut facts.held, report);
+            }
+            reducer::apply(&mut facts, program.request.generation, &local)
+        };
+        self.mailbox.post(Posted::Commit {
+            request: program.request,
+            effects: Box::new(effects),
+        });
+        (Committed::Applied, applied.taken)
     }
 }
 
@@ -429,69 +577,12 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The gap record's timer, which the intake sets and cancels under its
-    /// lock as the record changes. The handle is dropped by the caller
-    /// after the intake's lock is released, so a timer replaced meanwhile
-    /// ([`Outpost::set_gap_timer`]) waits for its callback, which takes
-    /// that lock, with the lock free.
-    fn gap_timer(&self) -> Arc<dyn GapTimer> {
-        Arc::clone(
-            &self
-                .gap_timer
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        )
-    }
-
-    /// The worker dropped a copy in `window`, of top-level window
-    /// `top_level`, observed at `at_us`, because it judges the window UIA
-    /// ([`Intake::gap_copy_dropped`]).
-    fn gap_copy_dropped(&self, window: isize, top_level: isize, at_us: u64) -> CopyDropped {
-        let timer = self.gap_timer();
-        let (dropped, _) = self
-            .intake
-            .gap_copy_dropped(window, top_level, at_us, &*timer);
-        dropped
-    }
-
-    /// The worker accepted an event of `window`, of top-level window
-    /// `top_level`, observed at `at_us` ([`Intake::gap_accepted`]).
-    fn gap_accepted(&self, window: isize, top_level: isize, at_us: u64, restamps: bool) {
-        let timer = self.gap_timer();
-        self.intake
-            .gap_accepted(window, top_level, at_us, restamps, &*timer);
-    }
-
-    /// The bound's entry is handled now, on the observation clock
-    /// ([`Intake::gap_bound_reached`]): the record's read, if its bound has
-    /// passed; a record whose bound has not passed has its timer set again
-    /// for the rest.
-    fn gap_bound_reached(&self) -> Option<GapRead> {
-        let timer = self.gap_timer();
-        self.intake.gap_bound_reached(self.observed_now(), &*timer)
-    }
-
-    /// Pushes `entry` into the intake, which does what it asks of the gap
-    /// record's timer: and, when a UIA focus's outcome answered the gap
-    /// record as it resolved its marker while the idle barrier's query
-    /// waits on that record, a wake for the worker, which answers the query
-    /// after an entry ([`worker::answer_idle`]); a drop resolved without a
-    /// read leaves the worker nothing else to handle. Only the idle
-    /// barrier's rounds pay that wake.
-    fn push_entry(&self, entry: Entry) {
-        let timer = self.gap_timer();
-        let action = self.intake.push(entry, &*timer);
-        if action == intake::TimerAction::Cancel && self.idle_query().is_some() {
-            let _ = self.intake.push(
-                Entry {
-                    item: Item::Wake,
-                    trace: TraceId::mint(),
-                    observed_at_us: now_us(),
-                    timing: EventTiming::default(),
-                },
-                &*timer,
-            );
-        }
+    /// The gap record's timer a test set, if one did.
+    fn gap_timer(&self) -> Option<Arc<dyn GapTimer>> {
+        self.gap_timer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Now on the clock the outpost stamps its own events' observations
@@ -542,10 +633,6 @@ impl Context {
         reader()
     }
 
-    fn held(&self) -> MutexGuard<'_, held::Held> {
-        self.held.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Whether window `hwnd`'s top-level window belongs to a process
     /// Verbatim ignores. Local calls, made only while one is ignored.
     fn in_ignored_window(&self, hwnd: isize) -> bool {
@@ -564,14 +651,6 @@ impl Context {
     /// names recorded as carried by it ([`store::Recorded`]).
     fn send(&self, message: OutpostToCore) {
         self.outbound.publish(self.store.record(message));
-    }
-
-    /// The number of the next focus group the worker tries, from 1, which
-    /// every report of the group carries (`verbatim_model::FocusGroup`).
-    fn next_focus_group(&self) -> u64 {
-        self.focus_groups
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1
     }
 
     fn classic_windows(&self) -> MutexGuard<'_, HashMap<isize, u32>> {
@@ -595,39 +674,6 @@ impl Context {
     /// theme wants.
     fn ancestor_request(&self, uia: &Uia) -> windows::core::Result<Request<Ancestor>> {
         uia.request(crate::gates::ancestor_gates(&self.fetches()))
-    }
-
-    /// Queues the idle barrier's query for `round` for the worker, behind
-    /// everything that reached the intake before it.
-    fn queue_idle_query(&self, round: u64) {
-        self.push(
-            Item::IdleQuery {
-                round,
-                behind_noted: false,
-            },
-            TraceId::mint(),
-            now_us(),
-            EventTiming::default(),
-        );
-    }
-
-    /// The idle barrier's round the worker has reached and not answered.
-    fn idle_query(&self) -> MutexGuard<'_, Option<u64>> {
-        self.idle_query
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Whether a read of `node`'s caret committed since `observed_us`
-    /// covers an event observed then, which needs no report of its own.
-    fn caret_read_since(&self, node: NodeId, observed_us: u64) -> bool {
-        self.watch
-            .follow(|follow| follow.caret_read.covers(node.number(), observed_us))
-    }
-
-    /// The window of the last focus this outpost reported.
-    fn tracked_window(&self) -> Option<isize> {
-        self.watch.follow(|follow| follow.tracking.window)
     }
 
     /// Whether a UIA read for an element of `hwnd` should try a remote
@@ -658,26 +704,40 @@ impl Context {
     /// terminal memory go with it. Returns how many nodes there were.
     fn release_everything(&self) -> usize {
         let (nodes, objects) = self.store.release_everything();
-        self.watch.reset_follow();
         // Outside the store's lock: releasing an object can call into the
         // application.
         drop(objects);
         nodes
     }
 
-    fn push(&self, item: Item, trace: TraceId, observed_at_us: u64, timing: EventTiming) {
-        self.push_entry(Entry {
-            item,
-            trace,
-            observed_at_us,
-            timing,
-        });
+    /// Appends `item` to the mailbox, from `source`.
+    fn push(
+        &self,
+        item: Item,
+        (trace, observed_at_us, timing): (TraceId, u64, EventTiming),
+        source: Source,
+    ) {
+        let read_answer = read_answer(&item);
+        self.mailbox.push(
+            Entry {
+                item,
+                trace,
+                observed_at_us,
+                timing,
+            },
+            source,
+            read_answer,
+        );
     }
 
     /// Queues an event one of the outpost's own handlers took in, observed
     /// now, then tells the observer, if there is one, that it was heard.
-    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
-        self.push(item, TraceId::mint(), window::observed_us(&timing), timing);
+    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming, source: Source) {
+        self.push(
+            item,
+            (TraceId::mint(), window::observed_us(&timing), timing),
+            source,
+        );
         self.tell_heard(heard);
     }
 
@@ -707,9 +767,9 @@ impl Context {
 
     /// Takes in a `WinEvent` the outpost's own hook delivered. A focus,
     /// foreground change, menu opening, alert, or tooltip becomes the fact
-    /// the listener forwards for one, queued unless it is the twin of the
-    /// listener's copy, already queued ([`handover`]); one with no window
-    /// is dropped. Any other event is queued as it is, unless its window is already known to be read through UIA:
+    /// the listener forwards for one, held by the reducer while the
+    /// listener forwards ([`reducer`], the hand-over's hold); one with no
+    /// window is dropped. Any other event is queued as it is, unless its window is already known to be read through UIA:
     /// the worker would drop it at its window's UIA test, after acceptance
     /// and the window's state, which have no effect but a log line, so it
     /// is dropped here instead, and the worker is not woken for it. NVDA
@@ -760,14 +820,15 @@ impl Context {
             }
             self.take_in(
                 Item::Msaa {
-                    kind,
+                    kind: worker::win_kind(kind),
                     hwnd,
                     id_object,
                     id_child,
-                    thread,
+                    raiser: thread,
                 },
                 Heard::Msaa(kind),
                 timing,
+                Source::Hook,
             );
             return;
         }
@@ -776,25 +837,17 @@ impl Context {
             return;
         };
         let stamp = WinEventStamp { thread, time };
-        let foreground = matches!(fact, DeliveredFact::Foreground { .. });
-        let queued =
-            self.admit_and_push(handover::Source::Hook, fact.key(Some(stamp)), stamp, || {
-                Entry {
-                    item: Item::Fact(fact, Some(stamp)),
-                    trace: TraceId::mint(),
-                    observed_at_us: window::observed_us(&timing),
-                    timing,
-                }
-            });
-        if queued && foreground {
-            self.watch.foreground_changed();
-        }
-        self.tell_heard(Heard::Msaa(kind));
+        self.take_in(
+            Item::Fact(fact, Some(stamp)),
+            Heard::Msaa(kind),
+            timing,
+            Source::Hook,
+        );
     }
 
-    /// Queues a fact the supervisor routed from the listener, unless it is
-    /// the listener's copy of a `WinEvent` the outpost's own hook already
-    /// took in ([`handover`]). It is ordered by the listener's observation,
+    /// Queues a fact the supervisor routed from the listener, handled as it
+    /// comes while the reducer holds the hook's copies ([`reducer`], the
+    /// hand-over's hold). It is ordered by the listener's observation,
     /// `timing`'s `observed_at_us`.
     fn take_in_routed_fact(
         &self,
@@ -803,12 +856,8 @@ impl Context {
         trace: TraceId,
         timing: EventTiming,
     ) {
-        let entry = || Entry {
-            item: Item::Fact(fact.clone(), win_event),
-            trace,
-            observed_at_us: timing.observed_at_us,
-            timing,
-        };
+        let item = Item::Fact(fact.clone(), win_event);
+        let stamps = (trace, timing.observed_at_us, timing);
         // The first UIA focus's arrival, stamped with the relay's own
         // stamp: one load per fact, and one store, once.
         if self.first_uia_focus_us.load(Ordering::Relaxed) == 0
@@ -821,21 +870,12 @@ impl Context {
             self.first_uia_focus_us
                 .store(timing.relayed_at_us, Ordering::Relaxed);
         }
-        match win_event {
-            Some(stamp) if fact.is_win_event() => {
-                if !self.admit_and_push(
-                    handover::Source::Listener,
-                    fact.key(win_event),
-                    stamp,
-                    entry,
-                ) {
-                    return;
-                }
-            }
-            _ => {
-                self.push_entry(entry());
-            }
-        }
+        let source = if win_event.is_some() && fact.is_win_event() {
+            Source::Listener
+        } else {
+            Source::Other
+        };
+        self.push(item, stamps, source);
         // The event thread takes the application's focus and foreground
         // windows from these until its own hook delivers them.
         match fact {
@@ -847,63 +887,6 @@ impl Context {
             }
             _ => {}
         }
-        if matches!(fact, DeliveredFact::Foreground { .. }) {
-            self.watch.foreground_changed();
-        }
-    }
-
-    /// Judges a copy, from `source`, of the `WinEvent` that `key` and
-    /// `stamp` name, and queues `entry` with how the copy arrived
-    /// ([`handover::Arrival`]) unless it is dropped as the twin of a copy
-    /// already handled ([`handover`]); answers whether it was queued. The
-    /// copy is queued while the hand-over's lock is still held, so the
-    /// intake receives the copies of the hook's thread and the reader's in
-    /// the order the hand-over judged them, which the intake's ordering of
-    /// one tick's events relies on (`intake::in_raised_order`). That adds
-    /// no call and no wake-up: the push was made anyway, and only the lock
-    /// is held across it.
-    fn admit_and_push(
-        &self,
-        source: handover::Source,
-        key: Option<FactKey>,
-        stamp: WinEventStamp,
-        entry: impl FnOnce() -> Entry,
-    ) -> bool {
-        let Some(key) = key else {
-            let arrival = match source {
-                handover::Source::Hook => handover::Arrival::Hook,
-                handover::Source::Listener => handover::Arrival::Listener,
-            };
-            self.intake.push_copy(entry(), arrival);
-            return true;
-        };
-        let mut handover = self.handover();
-        let Some(arrival) = handover.admit(source, key, stamp, std::time::Instant::now) else {
-            return false;
-        };
-        self.intake.push_copy(entry(), arrival);
-        drop(handover);
-        true
-    }
-
-    /// The MSAA hand-over's state ([`handover`]).
-    fn handover(&self) -> MutexGuard<'_, handover::Handover> {
-        self.handover.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The route to the element `runtime_id` names, when it is in the chain
-    /// the focus listener read for the UIA focus this outpost last reported,
-    /// and its window is one the outpost's application serves: the outpost
-    /// looks up no window of another process by its handle
-    /// (`docs/design/listener-without-connections.md`, section 4.3).
-    fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
-        let route = self.watch.follow(|follow| {
-            follow
-                .focus_path
-                .as_ref()
-                .and_then(|path| path.route_to(runtime_id))
-        })?;
-        read::serves(self, route.window).then_some(route)
     }
 
     /// The route to the element `runtime_id` names in `path`, the focus
@@ -957,7 +940,7 @@ impl Outpost {
 
     /// Creates an outpost watching `target_pid` for its whole life, writing
     /// its messages to Core to `pipe`, an overlapped pipe end: starts the
-    /// worker and the watchdog, installs the MSAA hooks and the
+    /// reducer's thread and the first worker, installs the MSAA hooks and the
     /// focus-following UIA subscription, and announces readiness. The
     /// thread that sends a message writes it; a thread of the sender's own
     /// finishes the writes that pend, as the I/O thread does in
@@ -1056,26 +1039,23 @@ impl Outpost {
         options: OutpostOptions,
         (focused_element, warm): (FocusedElementReader, bool),
     ) -> Self {
-        let intake = Arc::new(Intake::default());
-        let gap_timer = gap_timer::for_intake(&intake);
         let context = Arc::new(Context {
             target_pid: AtomicU32::new(0),
             application_names: Mutex::default(),
             outbound,
-            intake,
-            gap_timer: Mutex::new(gap_timer),
-            watch: Watch::default(),
+            mailbox: Mailbox::default(),
+            epoch: Instant::now(),
+            gap_timer: Mutex::new(None),
+            abandoned: AtomicUsize::new(0),
+            shell: Mutex::new(None),
             store: store::Store::new(),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
-            held: Mutex::new(held::Held::default()),
-            focus_groups: std::sync::atomic::AtomicU64::new(0),
             ignored: crate::supervisor::IgnoredProcesses::from_env(),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
-            idle_query: Mutex::new(None),
             fetches: Mutex::new(Fetches::default()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
@@ -1083,8 +1063,6 @@ impl Outpost {
             window_readability: Mutex::new(Arc::new(window::event_window_unreadable)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
-            // Read again as the hook is installed ([`Outpost::assign`]).
-            handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
             failed_reads: AtomicU32::new(0),
             override_changes: AtomicU64::new(0),
             first_uia_focus_us: AtomicU64::new(0),
@@ -1094,7 +1072,8 @@ impl Outpost {
             let _ = context.focus_events.set(registration);
         }
 
-        worker::start(&context, warm);
+        let shell = Shell::start(&context, warm);
+        *context.shell.lock().unwrap_or_else(PoisonError::into_inner) = Some(shell);
 
         // The MSAA hooks, process-scoped (decision D13), installed once the
         // outpost has its application: focus, foreground, menu opening,
@@ -1189,9 +1168,9 @@ impl Outpost {
             fault(context, detail.clone());
             return Err(detail);
         }
-        // Read before the hook is installed: no event raised before this
-        // reaches it.
-        *context.handover() = handover::Handover::new(verbatim_ia2::event_clock());
+        // Before the hook is installed, so the reducer holds every copy the
+        // hook takes until the listener's forwarding ends.
+        context.mailbox.post(Posted::Hooked);
         if let Err(error) = self.event_thread.hook(target_pid) {
             let detail = format!("the WinEvent hook could not be installed: {error}");
             tracing::error!(
@@ -1225,13 +1204,9 @@ impl Outpost {
     /// evidence. Returns early if the worker is abandoned meanwhile.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
-        self.context.push(
-            Item::Settle(done_tx),
-            TraceId::mint(),
-            now_us(),
-            EventTiming::default(),
-        );
-        // An error means the worker dropped the request, abandoned.
+        self.context.mailbox.post(Posted::Settle(done_tx));
+        // An error means the request was dropped: its worker abandoned, or
+        // the outpost shut down.
         let _ = done_rx.recv();
         // The hook changes the worker's handling asked for are made too.
         if let Some(nudger) = self.context.event_thread.get() {
@@ -1286,13 +1261,15 @@ impl Outpost {
             event_thread,
             finisher,
         } = self;
-        drop(context.intake.close());
+        // The reducer takes nothing new, and stops once the program in
+        // flight, if any, has ended.
+        context.mailbox.post(Posted::Close);
         drop(event_thread);
         if let Some(registration) = context.focus_events.get() {
             registration.close();
         }
         let handlers_removed = started.elapsed();
-        let workers = worker::stop(&context);
+        let workers = stop(&context);
         let bounded = context.bounded.close();
         let calls_finished = started.elapsed();
         let objects = context.release_everything();
@@ -1352,7 +1329,8 @@ impl Outpost {
             .context
             .gap_timer
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = timer;
+            .unwrap_or_else(PoisonError::into_inner) = Some(timer);
+        self.context.mailbox.post(Posted::GapTimerGiven);
     }
 
     /// What reaches the gap record's bound, as the outpost's timer reaches
@@ -1360,10 +1338,10 @@ impl Outpost {
     /// marker queued before it. It does nothing once the outpost is gone.
     #[must_use]
     pub fn gap_bound_reacher(&self) -> Arc<dyn Fn() + Send + Sync> {
-        let intake = Arc::downgrade(&self.context.intake);
+        let context = Arc::downgrade(&self.context);
         Arc::new(move || {
-            if let Some(intake) = intake.upgrade() {
-                intake.push_gap_bound();
+            if let Some(context) = context.upgrade() {
+                context.mailbox.post(Posted::GapBound);
             }
         })
     }
@@ -1422,6 +1400,15 @@ impl Outpost {
             .unwrap_or_else(PoisonError::into_inner) = reader;
     }
 
+    /// Tells the outpost that no focus listener forwards its application's
+    /// `WinEvent`s to it: its own hook's copies are handled as they come,
+    /// never held for the hand-over (`docs/design/ownership-outpost-reducer.md`,
+    /// "The hand-over's hold"), as for an outpost run alone
+    /// ([`run_attach`]) or one a test hands facts to itself.
+    pub fn without_listener(&self) {
+        self.context.mailbox.post(Posted::WithoutListener);
+    }
+
     /// Tells `observer` of every event the outpost's own UIA handlers and
     /// `WinEvent` hooks take in from the application, once it is queued for
     /// the worker. Events reach a client asynchronously, after the
@@ -1458,9 +1445,7 @@ impl Outpost {
                 },
             ),
             CoreToOutpost::ForwardingEnded { through } => {
-                context
-                    .handover()
-                    .forwarding_ended(*through, std::time::Instant::now());
+                context.mailbox.post(Posted::ForwardingEnded(*through));
             }
             CoreToOutpost::Query {
                 trace_id,
@@ -1472,34 +1457,37 @@ impl Outpost {
                     request_id: *request_id,
                     query: unstamped(query),
                 },
-                *trace_id,
-                now_us(),
-                // Only Core's relay stamps come with a request.
-                EventTiming {
-                    relayed_at_us: now_us(),
-                    core_received_at_us: timing.core_received_at_us,
-                    core_relay_us: timing.core_relay_us,
-                    core_sent_at_us: timing.core_sent_at_us,
-                    ..EventTiming::default()
-                },
+                (
+                    *trace_id,
+                    now_us(),
+                    // Only Core's relay stamps come with a request.
+                    EventTiming {
+                        relayed_at_us: now_us(),
+                        core_received_at_us: timing.core_received_at_us,
+                        core_relay_us: timing.core_relay_us,
+                        core_sent_at_us: timing.core_sent_at_us,
+                        ..EventTiming::default()
+                    },
+                ),
+                Source::Other,
             ),
-            CoreToOutpost::IdleQuery { round } => context.queue_idle_query(*round),
+            CoreToOutpost::IdleQuery { round } => context.push(
+                Item::IdleQuery {
+                    round: *round,
+                    behind_noted: false,
+                },
+                (TraceId::mint(), now_us(), EventTiming::default()),
+                Source::Other,
+            ),
+            // The reducer withdraws the query if it has not dispatched it,
+            // and answers it "not started" through its token.
             CoreToOutpost::Cancel { request_id } => {
-                if context.intake.cancel(*request_id) {
-                    // Queuing never waits, so the answer keeps its place
-                    // among the others.
-                    context.send(OutpostToCore::Reply {
-                        trace_id: TraceId::mint(),
-                        request_id: *request_id,
-                        outcome: QueryOutcome::NotStarted,
-                        timing: EventTiming::default(),
-                    });
-                }
+                context.mailbox.post(Posted::Cancel(*request_id));
             }
             CoreToOutpost::Ping { seq, .. } => {
                 context.outbound.urgent(Urgent::Pong {
                     seq: *seq,
-                    parked_count: context.watch.abandoned(),
+                    parked_count: context.abandoned.load(Ordering::Relaxed),
                 });
             }
             CoreToOutpost::Fetches(fetches) => {
@@ -1524,9 +1512,8 @@ impl Outpost {
                         anchors: anchors.clone(),
                         acknowledged: *acknowledged,
                     },
-                    TraceId::mint(),
-                    now_us(),
-                    EventTiming::default(),
+                    (TraceId::mint(), now_us(), EventTiming::default()),
+                    Source::Other,
                 );
             }
         }
@@ -1622,7 +1609,11 @@ fn unstamped(query: &Query) -> Query {
 /// What a UIA callback captures of a property change on the focus: the
 /// element's parts and window handle, read from its cache, and the element
 /// for anything the worker must ask it. No call reaches the application.
-fn capture_property(event: &Cached<PropertyEvent>, property_id: i32) -> UiaEvent {
+fn capture_property(
+    context: &Context,
+    event: &Cached<PropertyEvent>,
+    property_id: i32,
+) -> UiaEvent {
     let fields = event.read();
     let parts = fields.parts(event.runtime_id());
     UiaEvent {
@@ -1637,7 +1628,10 @@ fn capture_property(event: &Cached<PropertyEvent>, property_id: i32) -> UiaEvent
         },
         hwnd: fields.role.hwnd,
         focus_window: 0,
-        element: event.agile().ok().map(EventElement::Property),
+        element: event
+            .agile()
+            .ok()
+            .map(|agile| context.store.park(store::Parked::Property(agile))),
     }
 }
 
@@ -1645,7 +1639,7 @@ fn capture_property(event: &Cached<PropertyEvent>, property_id: i32) -> UiaEvent
 /// change: the element's runtime id, which is all its handling reads of
 /// it, and its window handle, read from its cache, and the element. No
 /// call reaches the application.
-fn capture_text(event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
+fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
     UiaEvent {
         kind,
         parts: UiaSnapshotFact {
@@ -1658,7 +1652,10 @@ fn capture_text(event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
         },
         hwnd: event.read().hwnd,
         focus_window: 0,
-        element: event.agile().ok().map(EventElement::Text),
+        element: event
+            .agile()
+            .ok()
+            .map(|agile| context.store.park(store::Parked::Text(agile))),
     }
 }
 
@@ -1687,12 +1684,13 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let property_callback: verbatim_uia::PropertyCallback<Cached<PropertyEvent>> =
         Arc::new(move |event: &Cached<PropertyEvent>, property_id: i32| {
             property_context.take_in(
-                Item::Uia(capture_property(event, property_id)),
+                Item::Uia(capture_property(&property_context, event, property_id)),
                 Heard::UiaProperty(property_id),
                 EventTiming {
                     observed_at_us: property_context.observed_now(),
                     ..EventTiming::default()
                 },
+                Source::Other,
             );
         });
     let properties = Subscription::Properties {
@@ -1712,12 +1710,13 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                 (UiaKind::TextChanged, Heard::UiaTextChanged)
             };
             text_context.take_in(
-                Item::Uia(capture_text(event, kind)),
+                Item::Uia(capture_text(&text_context, event, kind)),
                 heard,
                 EventTiming {
                     observed_at_us: text_context.observed_now(),
                     ..EventTiming::default()
                 },
+                Source::Other,
             );
         });
     let caret = Subscription::Events {
@@ -1734,14 +1733,19 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
             move |event: &Cached<TextEvent>, range: Option<&IUIAutomationTextRange>| {
                 let range = range
                     .and_then(|range| AgileReference::new(range).ok())
-                    .map(intake::ActiveRange);
+                    .map(|range| position_context.store.park(store::Parked::Range(range)));
                 position_context.take_in(
-                    Item::Uia(capture_text(event, UiaKind::ActiveTextPosition(range))),
+                    Item::Uia(capture_text(
+                        &position_context,
+                        event,
+                        UiaKind::ActiveTextPosition(range),
+                    )),
                     Heard::UiaActiveTextPosition,
                     EventTiming {
                         observed_at_us: position_context.observed_now(),
                         ..EventTiming::default()
                     },
+                    Source::Other,
                 );
             },
         ),
@@ -1763,6 +1767,53 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
             None
         }
     }
+}
+
+/// What a focus's read in `item` answers of the gap record: a copy in the
+/// top-level window of its own window, else of its nearest window, or in
+/// any window when it has neither; `None` for anything else, a menu
+/// opening's read among them. One local call, `GetAncestor`, made as the
+/// read is pushed, so the reducer makes none.
+fn read_answer(item: &Item) -> Option<GapAnswer> {
+    let Item::Fact(
+        DeliveredFact::UiaFocusRead {
+            read, focus: true, ..
+        },
+        _,
+    ) = item
+    else {
+        return None;
+    };
+    let window = if read.hwnd != 0 {
+        read.hwnd
+    } else {
+        read.window.unwrap_or(0)
+    };
+    let top = (window != 0).then(|| window::top_level_of(window));
+    Some(GapAnswer::Answers(top.filter(|&top| top != 0)))
+}
+
+/// Stops the reducer and the workers for the outpost's shutdown, once the
+/// mailbox is closed: the reducer's thread ends once the program in flight
+/// has ended, with no worker abandoned meanwhile, and every worker thread
+/// is waited for, the one in charge and each abandoned one returning from
+/// its call, however long UIA takes to end a call the application does not
+/// answer. Returns how many worker threads were waited for.
+fn stop(context: &Context) -> usize {
+    let shell = context
+        .shell
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    let Some(shell) = shell else {
+        return 0;
+    };
+    let workers = shell.join().unwrap_or_default();
+    let count = workers.len();
+    for worker in workers {
+        let _ = worker.join();
+    }
+    count
 }
 
 fn fault(context: &Context, detail: String) {
@@ -1911,7 +1962,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     let outpost = Outpost::with_options(written, target_pid, options);
     // No listener forwards anything here: the outpost's own hook takes in
     // every `WinEvent`.
-    outpost.context.handover().without_listener();
+    outpost.context.mailbox.post(Posted::WithoutListener);
     outpost.handle_command(&CoreToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: 0,

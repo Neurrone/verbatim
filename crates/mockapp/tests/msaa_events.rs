@@ -799,25 +799,27 @@ fn raise_focus_on(app: &mut common::MockApp, id: &str) -> (DeliveredFact, WinEve
     (fact, stamp)
 }
 
-/// An MSAA focus raised once an outpost's own hook is in reaches it by
-/// that hook and is reported; the focus listener's copy of the same event,
-/// forwarded before the listener heard the hook was in, is the twin of the
-/// hook's copy and is dropped (`docs/design/focus-pipeline.md`, section
-/// 12.4, "The MSAA hand-over, exactly").
+/// An MSAA focus raised once an outpost's own hook is in, while the focus
+/// listener still forwards, is held from the hook until the listener's
+/// forwarding ends; the listener's copy is reported as it comes, and the
+/// hook's copy, raised at or before the tick the forwarding ended at, is
+/// dropped then: the focus is reported once
+/// (`docs/design/ownership-outpost-reducer.md`, "The hand-over's hold").
 fn a_focus_the_outposts_own_hook_took_in_is_reported_once() {
     use verbatim_outpost::Heard;
     common::init_com();
     let title = common::unique_title("mockapp-msaa-hook-focus");
     let mut app = common::spawn("small.json", "msaa", &title);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::with_listener(&app);
 
     let (fact, stamp) = raise_focus(&mut app);
     outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
+    outpost.deliver_win_event(fact, stamp);
     let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
         panic!("the outpost reported something other than the focus");
     };
     assert_eq!(node.name.as_deref(), Some("Original Name"));
-    outpost.deliver_win_event(fact, stamp);
+    outpost.forwarding_ended(stamp.time);
     outpost.settled();
     app.quit();
 }
@@ -843,10 +845,12 @@ fn a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener() {
 
 /// A spare given to mockapp (`docs/design/focus-pipeline.md`, section 19)
 /// reports the focus raised before it was given from the listener's copy,
-/// which the supervisor held for it; during the hand-over's overlap it
-/// reports a focus its own hook took in once, the listener's twin dropped;
-/// and once the listener's forwarding has ended, a focus from its own hook,
-/// once.
+/// which the supervisor held for it; while the listener still forwards, a
+/// focus its own hook took in is held, reported from the listener's copy,
+/// and dropped from the hook's when the forwarding ends; and once the
+/// listener's forwarding has ended, a focus from its own hook is reported,
+/// once (`docs/design/ownership-outpost-reducer.md`, "The hand-over's
+/// hold").
 fn a_spare_given_to_an_application_reports_each_focus_once() {
     use verbatim_outpost::Heard;
     common::init_com();
@@ -865,14 +869,14 @@ fn a_spare_given_to_an_application_reports_each_focus_once() {
 
     let (twin, twin_stamp) = raise_focus_on(&mut app, "slider1");
     outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
+    outpost.deliver_win_event(twin, twin_stamp);
     let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
-        panic!("the outpost reported something other than its own hook's focus");
+        panic!("the outpost reported something other than the listener's focus");
     };
     assert_eq!(node.name.as_deref(), Some("Level"));
-    outpost.deliver_win_event(twin, twin_stamp);
+    outpost.forwarding_ended(twin_stamp.time);
     outpost.settled();
 
-    outpost.forwarding_ended(twin_stamp.time);
     raise_focus(&mut app);
     outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
     let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
@@ -1360,12 +1364,11 @@ fn a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond() {
     let mut app = common::spawn("small.json", "msaa", &title);
     let outpost = OutpostUnderTest::new(&app);
 
-    let (fact, stamp) = raise_focus(&mut app);
+    raise_focus(&mut app);
     outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
     let (observed, first_observed) = focus_stamp(&outpost);
     assert_ne!(first_observed, 0, "the hook observed the focus");
     assert_eq!(observed, first_observed);
-    outpost.deliver_win_event(fact, stamp);
     outpost.settled();
     app.quit();
 }

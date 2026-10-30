@@ -4,6 +4,12 @@
 //! - The pure rule (`docs/design/ownership-one-judge.md`, "The listener"):
 //!   a module whose transitions are replayed in tests may name nothing that
 //!   blocks, shares, spawns, reads a clock or calls out of the process.
+//!   The outpost's reducer is held to it as a directory, every file in it
+//!   (`docs/design/ownership-outpost-reducer.md`, "The ownership check"),
+//!   with an allow-list of its own: the module's own items, the model,
+//!   Core's focus rules, `std`'s collections, `cmp`, `mem`, `Arc` and
+//!   `Duration`; its `#[cfg(test)]` modules, inline or in files of their
+//!   own, are skipped.
 //! - The hook rule (`docs/design/ownership-input.md`, "The ownership check
 //!   on the hook"): the modules whose code runs on the keyboard hook's
 //!   thread may name nothing that takes a lock, waits, logs, does I/O or
@@ -34,9 +40,10 @@ use std::path::Path;
 
 use crate::waits::{strip_comments, strip_strings};
 
-/// A module the check reads, the paths it may `use`, what it may not name,
-/// whether its `#[cfg(test)]` module is read, and the one function read,
-/// when only that function's body is checked.
+/// A module the check reads, a file or, ending in `/`, every file of a
+/// directory, the paths it may `use`, what it may not name, whether its
+/// `#[cfg(test)]` module is read, and the one function read, when only that
+/// function's body is checked.
 struct Checked {
     path: &'static str,
     allowed: &'static [&'static str],
@@ -45,11 +52,11 @@ struct Checked {
     within: Option<&'static str>,
 }
 
-/// The modules checked: the listener's read scheduler, by the pure rule,
-/// the hook thread's modules, by the hook rule, the hook thread's body
-/// in `lib.rs`, by the hook thread's start-up rule, and the audio thread's
-/// pass, by the audio rule.
-const CHECKED: [Checked; 6] = [
+/// The modules checked: the listener's read scheduler and the outpost's
+/// reducer, by the pure rule, the hook thread's modules, by the hook rule,
+/// the hook thread's body in `lib.rs`, by the hook thread's start-up rule,
+/// and the audio thread's pass, by the audio rule.
+const CHECKED: [Checked; 7] = [
     Checked {
         path: "crates/verbatim-outpost/src/read_schedule.rs",
         allowed: &[
@@ -64,6 +71,13 @@ const CHECKED: [Checked; 6] = [
         ],
         forbidden: &FORBIDDEN,
         skip_tests: false,
+        within: None,
+    },
+    Checked {
+        path: "crates/verbatim-outpost/src/outpost/reducer/",
+        allowed: &REDUCER_ALLOWED,
+        forbidden: &REDUCER_FORBIDDEN,
+        skip_tests: true,
         within: None,
     },
     Checked {
@@ -101,6 +115,52 @@ const CHECKED: [Checked; 6] = [
         skip_tests: false,
         within: None,
     },
+];
+
+/// What the outpost's reducer may `use`: the module's own items, by
+/// `self`, `super` from a file inside it (never `super::super`, which is
+/// forbidden) or the module's full path; the model; Core's focus rules; and
+/// the parts of `std` the design names.
+const REDUCER_ALLOWED: [&str; 10] = [
+    "self",
+    "super",
+    "crate::outpost::reducer",
+    "verbatim_model",
+    "verbatim_core::focus_rules",
+    "std::collections",
+    "std::cmp",
+    "std::mem",
+    "std::sync::Arc",
+    "std::time::Duration",
+];
+
+/// What the outpost's reducer may not name: the pure rule's list, but
+/// `Arc`, which it may share immutable snapshots by, and `thread`, a field
+/// of the model's `WinEventStamp`, for which the thread module's paths and
+/// its spawn and sleep stand; with the clock read as `Instant` at all, a
+/// lock by its method, a log, and a way out of the module.
+const REDUCER_FORBIDDEN: [&str; 21] = [
+    "thread::",
+    "spawn",
+    "sleep",
+    "Mutex",
+    "RwLock",
+    "Condvar",
+    "lock",
+    "Atomic",
+    "mpsc",
+    "Instant",
+    "SystemTime",
+    "std::fs",
+    "std::io",
+    "std::env",
+    "std::process",
+    "std::net",
+    "windows::",
+    "unsafe",
+    "Responder",
+    "tracing",
+    "super::super",
 ];
 
 /// What the audio thread's pass may `use`.
@@ -274,11 +334,10 @@ const FORBIDDEN: [&str; 17] = [
 pub fn check(root: &Path) -> Result<(), String> {
     let mut report = String::new();
     for checked in &CHECKED {
-        let file = root.join(checked.path);
-        let source =
-            fs::read_to_string(&file).map_err(|error| format!("{}: {error}", file.display()))?;
-        for finding in findings(&source, checked) {
-            let _ = writeln!(report, "  {}:{finding}", checked.path);
+        for (path, source) in sources(root, checked.path)? {
+            for finding in findings(&source, checked) {
+                let _ = writeln!(report, "  {path}:{finding}");
+            }
         }
     }
     if report.is_empty() {
@@ -288,6 +347,57 @@ pub fn check(root: &Path) -> Result<(), String> {
             "a checked module names something outside its rule (the pure rule, docs/design/ownership-one-judge.md; the hook rule, docs/design/ownership-input.md):\n{report}"
         ))
     }
+}
+
+/// The sources `path` names under `root`, each with its path: the file, or,
+/// for a path ending in `/`, every `.rs` file of the directory but those a
+/// `#[cfg(test)] mod name;` of one of them declares, which are test modules
+/// in files of their own.
+fn sources(root: &Path, path: &str) -> Result<Vec<(String, String)>, String> {
+    let read = |file: &Path| {
+        fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))
+    };
+    if !path.ends_with('/') {
+        return Ok(vec![(path.to_owned(), read(&root.join(path))?)]);
+    }
+    let directory = root.join(path);
+    let mut files: Vec<(String, String)> = Vec::new();
+    let entries =
+        fs::read_dir(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("{}: {error}", directory.display()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if Path::new(&name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+        {
+            files.push((name.clone(), read(&entry.path())?));
+        }
+    }
+    let tests: Vec<String> = files
+        .iter()
+        .flat_map(|(_, source)| test_module_files(source))
+        .collect();
+    files.retain(|(name, _)| !tests.contains(name));
+    files.sort();
+    Ok(files
+        .into_iter()
+        .map(|(name, source)| (format!("{path}{name}"), source))
+        .collect())
+}
+
+/// The files of the test modules `source` declares as `#[cfg(test)] mod
+/// name;`, each `name.rs`.
+fn test_module_files(source: &str) -> Vec<String> {
+    let lines: Vec<&str> = source.lines().map(str::trim).collect();
+    lines
+        .windows(2)
+        .filter(|pair| pair[0] == "#[cfg(test)]")
+        .filter_map(|pair| {
+            let name = pair[1].strip_prefix("mod ")?.strip_suffix(';')?;
+            Some(format!("{name}.rs"))
+        })
+        .collect()
 }
 
 /// The findings in `source`, checked as `checked` says, each its line
@@ -630,6 +740,42 @@ fn after() { GetMessageW(); }
             findings(source, &AUDIO),
             ["1: names `Mutex`", "2: names `vec!`", "3: names `format!`"]
         );
+    }
+
+    /// The outpost's reducer, by its own allow-list.
+    const REDUCER: Checked = Checked {
+        path: "reducer/",
+        allowed: &REDUCER_ALLOWED,
+        forbidden: &REDUCER_FORBIDDEN,
+        skip_tests: true,
+        within: None,
+    };
+
+    #[test]
+    fn a_lock_a_clock_and_a_way_out_of_the_reducer_are_found() {
+        let source = "use std::sync::Mutex;\nuse super::super::shell::Shell;\nfn step(at: Instant) {\n    let held = state.lock();\n}\n";
+        assert_eq!(
+            findings(source, &REDUCER),
+            [
+                "1: names `Mutex`",
+                "2: names `super::super`",
+                "3: names `Instant`",
+                "4: names `lock`",
+                "1: uses `std::sync::Mutex`",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_reducers_own_items_and_the_model_are_allowed() {
+        let source = "use std::sync::Arc;\nuse std::time::Duration;\nuse super::entry::Entry;\nuse verbatim_model::protocol::WinEventStamp;\nfn raiser(stamp: WinEventStamp) -> u32 {\n    stamp.thread\n}\n";
+        assert_eq!(findings(source, &REDUCER), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_test_module_in_a_file_of_its_own_is_named_by_its_declaration() {
+        let source = "mod entry;\n#[cfg(test)]\nmod tests;\n";
+        assert_eq!(test_module_files(source), ["tests.rs"]);
     }
 
     #[test]

@@ -20,7 +20,6 @@ use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 
 use crate::arbitration::{Clock, time_limit};
-use verbatim_model::protocol::UiaFocusRead;
 
 use super::window::window_exists;
 
@@ -29,76 +28,7 @@ use super::window::window_exists;
 /// calls, each of which UIA ends after its call timeout.
 const PATH_BUDGET: Duration = Duration::from_secs(1);
 
-/// The raw-view chain of the UIA focus the outpost last reported from the
-/// listener's read: the focus, then its ancestors, nearest first, each with
-/// its runtime id and its own window handle (0 for none).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct FocusPath {
-    chain: Vec<(Vec<i32>, isize)>,
-    /// Whether the listener's walk up from the focus did not reach the
-    /// top: its read failed, or the walk was cut or ended at a failed step.
-    cut: bool,
-}
-
-/// Where an element of a [`FocusPath`] is found from: the window whose
-/// element the walk starts at, and the runtime ids below it, outermost
-/// first, the last the element's own.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Route {
-    /// The window whose element the walk starts at.
-    pub(crate) window: isize,
-    /// The runtime ids below it, outermost first.
-    pub(crate) path: Vec<Vec<i32>>,
-    /// The runtime id of the element wanted.
-    pub(crate) runtime_id: Vec<i32>,
-}
-
-impl FocusPath {
-    /// The chain of the focus `read` names.
-    pub(super) fn of(read: &UiaFocusRead) -> Self {
-        let chain = std::iter::once((read.snapshot.runtime_id.clone(), read.hwnd))
-            .chain(
-                read.ancestors
-                    .iter()
-                    .map(|ancestor| (ancestor.snapshot.runtime_id.clone(), ancestor.hwnd)),
-            )
-            .collect();
-        let cut = read.ancestors_end != verbatim_model::protocol::AncestorsEnd::Top;
-        Self { chain, cut }
-    }
-
-    /// Whether the chain begins with the focus `runtime_id` names, holds no
-    /// window of its own anywhere, and the listener's walk up from it did
-    /// not reach the top: the walk was cut below the focus's nearest
-    /// window, so no route leads to its element ([`Self::route_to`]).
-    pub(super) fn is_cut_at(&self, runtime_id: &[i32]) -> bool {
-        self.cut
-            && self.chain.first().is_some_and(|(id, _)| id == runtime_id)
-            && self.chain.iter().all(|&(_, hwnd)| hwnd == 0)
-    }
-
-    /// The route to the element of the chain whose runtime id is
-    /// `runtime_id`: from the nearest element at or above it that has a
-    /// window of its own. `None` when no element of the chain has that
-    /// runtime id, or none at or above it has a window.
-    pub(super) fn route_to(&self, runtime_id: &[i32]) -> Option<Route> {
-        let index = self.chain.iter().position(|(id, _)| id == runtime_id)?;
-        let above = self.chain[index..]
-            .iter()
-            .position(|&(_, hwnd)| hwnd != 0)?;
-        let root = index + above;
-        let path = self.chain[index..root]
-            .iter()
-            .rev()
-            .map(|(id, _)| id.clone())
-            .collect();
-        Some(Route {
-            window: self.chain[root].1,
-            path,
-            runtime_id: runtime_id.to_vec(),
-        })
-    }
-}
+pub(super) use super::reducer::{FocusPath, Route};
 
 /// The element `route` leads to, filled by `nodes`: the route's
 /// window's element, read with one connection call, then the walk down the
@@ -179,7 +109,7 @@ mod tests {
     use verbatim_model::{NodeDetails, Role, StateSet};
 
     use super::*;
-    use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
+    use verbatim_model::protocol::{UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
 
     fn snapshot(id: i32) -> UiaSnapshotFact {
         UiaSnapshotFact {

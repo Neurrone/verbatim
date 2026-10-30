@@ -18,16 +18,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::{Duration, Instant};
-
 use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, IUIAutomationTextPattern2};
 use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    Backend, CallCounts, CaretReply, CaretReport, CaretWatch, NodeId, Role, SelectionChange,
-    TextOp, TextReply, TraceId,
+    Backend, CaretReply, CaretReport, CaretWatch, NodeId, Role, SelectionChange, TextOp, TextReply,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
@@ -37,7 +34,6 @@ use crate::arbitration::{normalize_class_name, window_class_name};
 use crate::text::edit::EditText;
 use crate::text::uia::{UiaPos, UiaText};
 use crate::text::{self, CaretSignal, LastSelection, NodeTextCopy, TextError, Watched};
-use verbatim_model::protocol::EventTiming;
 
 use super::{Context, RequestContext};
 
@@ -48,42 +44,12 @@ pub(super) type Patterns = Option<(
     Option<AgileReference<IUIAutomationTextPattern2>>,
 )>;
 
-/// The longest a caret key's watch stays open without evidence. It only
-/// frees the watch: ending it this way says nothing, as ending it any other
-/// way does. A key whose application raises its evidence later than this
-/// is not spoken. Ten seconds, the time the worker allows an application
-/// that is busy, or starting up, to answer one event's reads.
-pub(super) const CARET_WATCH_BOUND: Duration = Duration::from_secs(10);
-
-/// A caret key's watch for evidence, open between the worker's entries
-/// (`docs/crates/verbatim-outpost.md`, a caret key's watch under "Text").
-/// There is at most one: the next key's replaces it.
-pub(super) struct OpenWatch {
-    /// The request it answers.
-    pub(super) request_id: u64,
-    pub(super) trace: TraceId,
-    /// The node whose caret the key moves.
-    pub(super) node_id: NodeId,
-    pub(super) watch: CaretWatch,
-    /// When it was opened, for [`CARET_WATCH_BOUND`].
-    pub(super) opened: Instant,
-    /// The request's timing, which its answer carries.
-    pub(super) timing: EventTiming,
-    /// The calls its checks have made so far, none of which found evidence.
-    pub(super) calls: CallCounts,
-    /// Its re-reads of the console host's caret, while they last
-    /// ([`super::caret_poll`]).
-    pub(super) poll: Option<super::caret_poll::Poll>,
-}
-
 /// A check of a caret key's watch, as the worker makes it.
 struct Signal<'a> {
-    context: &'a Context,
+    context: &'a RequestContext<'a>,
     node_id: NodeId,
     /// Whether a caret event prompted the check.
     caret_event: bool,
-    /// When the key was pressed, as the watch says (0 when unknown).
-    pressed_at_ms: u64,
     /// Whether a caret event of the node observed since the key was
     /// pressed waited to be handled when the caret was read: the read
     /// covers it, so the event, once handled, checks nothing
@@ -106,7 +72,7 @@ impl CaretSignal for Signal<'_> {
 
     fn reading(&mut self) {
         if !self.caret_event {
-            self.covered = caret_event_waiting(self.context, self.node_id, self.pressed_at_ms);
+            self.covered = caret_event_waiting(self.context, self.node_id);
         }
         self.read_at = Some(self.context.observed_now());
     }
@@ -125,16 +91,14 @@ impl CaretSignal for Signal<'_> {
     }
 }
 
-/// Whether a caret event of `node_id` observed at or after `since_ms`, a
-/// caret key's press in milliseconds, which the event's observation is
-/// compared with in whole milliseconds, waits in the intake: UIA's caret
-/// event from the node's element, the console's caret event of its window
-/// for the console host's text area, or, for an edit control's client
-/// area, the caret's location change or the text selection change of its
-/// window.
-fn caret_event_waiting(context: &Context, node_id: NodeId, since_ms: u64) -> bool {
-    use super::intake::{Item, UiaKind};
-    use verbatim_ia2::WinEventKind;
+/// Whether a caret event of `node_id` observed at or after the key the
+/// watch checked was pressed waits in the intake, as the program's copy
+/// says ([`super::reducer::Program::waiting`]): UIA's caret event from the
+/// node's element, the console's caret event of its window for the console
+/// host's text area, or, for an edit control's client area, the caret's
+/// location change or the text selection change of its window.
+fn caret_event_waiting(context: &RequestContext<'_>, node_id: NodeId) -> bool {
+    use super::reducer::WaitingCaret;
     let runtime_id = context.store.runtime_id_of(node_id);
     let (console, edit) = match &runtime_id {
         Some(_) => (
@@ -152,25 +116,11 @@ fn caret_event_waiting(context: &Context, node_id: NodeId, since_ms: u64) -> boo
                 .map(|(hwnd, ..)| hwnd),
         ),
     };
-    context.intake.any_waiting(|entry| {
-        entry.observed_at_us / 1_000 >= since_ms
-            && match &entry.item {
-                Item::Uia(event) => {
-                    matches!(event.kind, UiaKind::TextSelection)
-                        && runtime_id.as_ref() == Some(&event.parts.runtime_id)
-                }
-                Item::Msaa {
-                    kind: WinEventKind::ConsoleCaret,
-                    hwnd,
-                    ..
-                } => console == Some(*hwnd),
-                Item::Msaa {
-                    kind: WinEventKind::Caret | WinEventKind::TextSelectionChange,
-                    hwnd,
-                    ..
-                } => edit == Some(*hwnd),
-                _ => false,
-            }
+    context.waiting().iter().any(|waiting| match waiting {
+        WaitingCaret::Uia(id) => runtime_id.as_ref() == Some(id),
+        WaitingCaret::Console(hwnd) => console == Some(*hwnd),
+        WaitingCaret::Edit(hwnd) => edit == Some(*hwnd),
+        WaitingCaret::ValueChange(_) => false,
     })
 }
 
@@ -324,18 +274,15 @@ fn keep_support(context: &RequestContext<'_>, node_id: NodeId, source: &UiaText)
 }
 
 /// Makes `write` to the store when the request `context` runs is still
-/// live, holding the watch lock across the judgement and the write, so no
-/// abandonment or claim falls between them (`super::store`); `None`, with
-/// nothing written, otherwise. What the write returns is the caller's to
-/// drop, once both locks are let go.
+/// live, holding the worker's charge across the judgement and the write, so
+/// no abandonment or claim falls between them (`super::worker::Charge`);
+/// `None`, with nothing written, otherwise. What the write returns is the
+/// caller's to drop, once both locks are let go.
 pub(super) fn while_live<T>(
     context: &RequestContext<'_>,
     write: impl FnOnce(&super::store::Store) -> T,
 ) -> Option<T> {
-    let live = context.watch.hold_if_live(context.tag())?;
-    let written = write(&context.store);
-    drop(live);
-    Some(written)
+    context.while_live(|| write(&context.store))
 }
 
 /// Puts `copy`, node `node_id`'s UIA text anchors as a text call left them,
@@ -368,7 +315,7 @@ pub(super) fn put_edit(context: &RequestContext<'_>, node_id: NodeId, copy: Node
 /// Logs a caret read that fell back from its remote operation to the
 /// classic reads, and stops trying remote operations in the window when the
 /// import failed, as the focus walk and the terminal read do.
-fn note_fallback(context: &Context, source: &mut UiaText) {
+fn note_fallback(context: &RequestContext<'_>, source: &mut UiaText) {
     let Some(error) = source.take_fallback() else {
         return;
     };
@@ -381,12 +328,12 @@ fn note_fallback(context: &Context, source: &mut UiaText) {
 
 /// Whether `node_id` is the focus and in a console window, the console
 /// host's text area.
-pub(super) fn console_focus(context: &Context, node_id: NodeId) -> bool {
+pub(super) fn console_focus(context: &RequestContext<'_>, node_id: NodeId) -> bool {
     let focus_is_node = context
         .store
         .runtime_id_of(node_id)
         .is_some_and(|runtime_id| {
-            context.intake.focused() == Some(super::intake::Object::Uia(runtime_id))
+            context.focused() == Some(super::reducer::Object::Uia(runtime_id))
         });
     focus_is_node
         && context
@@ -541,7 +488,6 @@ pub(super) fn check_watch(
         context,
         node_id,
         caret_event,
-        pressed_at_ms: watch.pressed_at_ms,
         covered: false,
         read_at: None,
     };
@@ -761,26 +707,15 @@ pub(super) fn note_value_change(context: &RequestContext<'_>, node_id: NodeId) {
 }
 
 /// Whether a value change of `node_id`, an edit control's client area,
-/// raised before now waits in the intake: the check waits for the
+/// raised before now waits to be handled: the check waits for the
 /// `WinEvent` thread to take every event raised before it first
 /// (`Nudger::sync`), up to two wakes of that thread and no call to the
 /// application, since the control may have raised it while it answered a
 /// read the caller just made. A UIA text's change is never checked for.
-fn value_change_raised(context: &Context, node_id: NodeId) -> bool {
-    if context.store.runtime_id_of(node_id).is_some() {
-        return false;
-    }
-    if let Some(nudger) = context.event_thread.get() {
-        nudger.sync();
-    }
-    value_change_waiting(context, node_id)
-}
-
-/// Whether a value change of `node_id`, an edit control's client area,
-/// waits in the intake.
-fn value_change_waiting(context: &Context, node_id: NodeId) -> bool {
-    use super::intake::Item;
-    use verbatim_ia2::WinEventKind;
+/// What waits is the program's copy of the intake's value changes, and
+/// what the mailbox took or holds since the program was dispatched
+/// (`super::shell::Mailbox::value_change_since_dispatch`).
+fn value_change_raised(context: &RequestContext<'_>, node_id: NodeId) -> bool {
     if context.store.runtime_id_of(node_id).is_some() {
         return false;
     }
@@ -792,16 +727,13 @@ fn value_change_waiting(context: &Context, node_id: NodeId) -> bool {
     else {
         return false;
     };
-    context.intake.any_waiting(|entry| match &entry.item {
-        Item::Msaa {
-            kind: WinEventKind::ValueChange,
-            hwnd,
-            id_object,
-            id_child,
-            ..
-        } => edit == *hwnd && *id_object == OBJID_CLIENT.0 && *id_child == CHILDID_SELF,
-        _ => false,
-    })
+    if let Some(nudger) = context.event_thread.get() {
+        nudger.sync();
+    }
+    context
+        .waiting()
+        .contains(&super::reducer::WaitingCaret::ValueChange(edit))
+        || context.mailbox.value_change_since_dispatch(edit)
 }
 
 /// A terminal's caret as a read found it ([`terminal_read`]).

@@ -60,8 +60,8 @@ pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
 pub(super) const ENRICHMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// What a focus's walk has read so far, told as it reads it, so the
-/// worker can share it with the watchdog, which publishes the focus from
-/// it should a call of the walk still be under way at the walk's bound
+/// worker can keep it in its charge, from which the reducer publishes the
+/// focus should a call of the walk still be under way at the walk's bound
 /// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
 /// fallback"; [`super::bound`]).
 pub(super) enum WalkStep<'a> {
@@ -88,12 +88,11 @@ pub(super) enum WalkStep<'a> {
 
 /// What a focus's walk tells what it reads ([`WalkStep`]), which answers
 /// whether the walk goes on: an abandoned worker's walk stops at its next
-/// step (`docs/design/focus-pipeline-rework.md`, "The outpost's commit
-/// point"), as one out of time does.
+/// step, as one out of time does.
 pub(super) type WalkTold<'a> = &'a dyn Fn(WalkStep<'_>) -> bool;
 
-/// Where a focus's walk tells what it reads; `None` for a walk no watchdog
-/// publishes.
+/// Where a focus's walk tells what it reads; `None` for a walk the reducer
+/// never publishes.
 pub(super) type WalkProgress<'a> = Option<WalkTold<'a>>;
 
 /// How much of a focus walk's bound is left, the walk's focus in window
@@ -104,7 +103,7 @@ pub(super) type WalkProgress<'a> = Option<WalkTold<'a>>;
 /// [`ENRICHMENT_BUDGET`] otherwise, less the time since the observation.
 /// Local calls.
 pub(super) fn walk_left(
-    context: &Context,
+    context: &RequestContext<'_>,
     window: isize,
     observed_at_us: u64,
 ) -> std::time::Duration {
@@ -1350,7 +1349,7 @@ pub(super) fn msaa_enrichment(
 pub(super) fn msaa_candidates(context: &RequestContext<'_>) -> Candidates {
     let lines: Vec<Vec<NodeId>> = {
         let held = context.held();
-        let line = |focus: &super::held::Focus| {
+        let line = |focus: &super::reducer::Focus| {
             std::iter::once(&focus.node)
                 .chain(focus.ancestors.iter().rev())
                 .filter(|node| node.backend == verbatim_model::Backend::Msaa)
@@ -1377,7 +1376,7 @@ const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 /// or at where the line meets one of theirs
 /// (`verbatim_core::focus_rules::already_entered`).
 fn entered_before<'a>(
-    focuses: impl IntoIterator<Item = &'a super::held::Focus>,
+    focuses: impl IntoIterator<Item = &'a super::reducer::Focus>,
     nodes: &[&mut NodeSnapshot],
 ) -> usize {
     let line: Vec<HeldNode> = nodes.iter().map(|node| HeldNode::of(node)).collect();
@@ -2322,10 +2321,10 @@ pub(super) fn dump_tree(
 mod tests {
     use verbatim_core::focus_rules::HeldNode;
     use verbatim_model::{
-        Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet, TraceId, WindowHandle,
+        Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet, WindowHandle,
     };
 
-    use super::super::held::{Evidence, Focus, Held};
+    use super::super::reducer::{Evidence, Focus, Held};
     use super::super::window::window_owner;
     use super::{
         CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice_onto,
@@ -2442,7 +2441,6 @@ mod tests {
         let mut held = Held::default();
         held.reported(
             Focus {
-                trace: TraceId::mint(),
                 node: held_node(2, Role::Button, Some("OK"), None),
                 ancestors: vec![held_node(1, Role::Dialog, Some("Remove"), Some(20))],
                 top_level: 7,

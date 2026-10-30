@@ -7,13 +7,12 @@
 //! UI Automation sometimes delivers an application's focus events late or
 //! never while the `WinEvent` focus still comes, or after their senders are
 //! gone. The record is kept beside the verdict that dropped the copy, in the
-//! intake's shared state under its lock ([`super::intake::Intake`]), so
-//! nothing judges the copy's window again, and every stamp it compares is
-//! on the run's one clock. It is a plain record with no call and no timer
-//! of its own: the intake applies each UIA focus's outcome to it as the
-//! outcome resolves its marker, the worker its own judgements of copies and
-//! foreground changes, and the outpost's timer its bound
-//! ([`super::gap_timer`]).
+//! outpost's reducer ([`super`]), so nothing judges the copy's window again,
+//! and every stamp it compares is on the run's one clock. It is a plain
+//! record with no call and no timer of its own: the reducer applies each
+//! UIA focus's outcome to it as the outcome resolves its marker, a
+//! program's judgements of copies and foreground changes as the program's
+//! commit, and its bound as one of the reducer's timers.
 //!
 //! The answers and the look-back: a UIA focus can reach the listener up to
 //! 25.5 ms before its `WinEvent` (5 of 1,680 measured), so an answer

@@ -15,40 +15,38 @@
 use std::collections::HashSet;
 
 use verbatim_core::focus_rules::HeldNode;
-use verbatim_model::{EarlierElement, NodeId, Role, StateSet, TraceId};
+use verbatim_model::{EarlierElement, NodeId, Role, StateSet};
 
 /// One focus or foreground report of this outpost's, with what the outpost
 /// recorded of it as it reported it.
 #[derive(Clone, Debug)]
-pub(super) struct Focus {
-    /// The trace of the event it came from.
-    pub(super) trace: TraceId,
+pub(in crate::outpost) struct Focus {
     /// The focus.
-    pub(super) node: HeldNode,
+    pub(in crate::outpost) node: HeldNode,
     /// Its ancestors, outermost first.
-    pub(super) ancestors: Vec<HeldNode>,
+    pub(in crate::outpost) ancestors: Vec<HeldNode>,
     /// Its top-level window, 0 when not known.
-    pub(super) top_level: isize,
+    pub(in crate::outpost) top_level: isize,
     /// The top-level window that was the foreground window when the focus
     /// entered it, which NVDA holds the foreground object for
     /// (`Worker::is_foreground_window`); `None` when it was not.
-    pub(super) entered_in_front: Option<isize>,
+    pub(in crate::outpost) entered_in_front: Option<isize>,
     /// The MSAA event address it came from: an MSAA focus's, or a
     /// foreground change's.
-    pub(super) event: Option<(isize, i32, i32)>,
+    pub(in crate::outpost) event: Option<(isize, i32, i32)>,
     /// Whether it is an MSAA focus acquired as a simple child, whose child
     /// id can be reused, so a focus event at its address is never a repeat
     /// of it.
-    pub(super) simple_child: bool,
+    pub(in crate::outpost) simple_child: bool,
     /// The own text of each dialog of its line, as the report carried it:
     /// a later report whose line meets this one at or below a dialog
     /// carries the same text, with no call (`read::describe_dialogs`).
-    pub(super) dialog_texts: Vec<(NodeId, Option<String>)>,
+    pub(in crate::outpost) dialog_texts: Vec<(NodeId, Option<String>)>,
 }
 
 impl Focus {
     /// Its nodes' ids, the ancestors outermost first, then the focus.
-    pub(super) fn chain_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+    pub(in crate::outpost) fn chain_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.ancestors
             .iter()
             .chain(std::iter::once(&self.node))
@@ -56,7 +54,7 @@ impl Focus {
     }
 
     /// The node `id` of its chain, when it is one.
-    pub(super) fn node(&self, id: NodeId) -> Option<&HeldNode> {
+    pub(in crate::outpost) fn node(&self, id: NodeId) -> Option<&HeldNode> {
         std::iter::once(&self.node)
             .chain(&self.ancestors)
             .find(|node| node.id == id)
@@ -72,7 +70,7 @@ impl Focus {
 /// report: the reader's read of the element it held under a UIA node, or
 /// the MSAA event address and whether it was acquired as a simple child.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Evidence {
+pub(in crate::outpost) enum Evidence {
     /// A UIA focus, with what its reader read of the element it held
     /// before under its node.
     Uia(Option<EarlierElement>),
@@ -82,8 +80,8 @@ pub(super) enum Evidence {
 
 /// The reports whose focus node this outpost has not released, oldest
 /// first, and the states the outpost last read of a focus.
-#[derive(Default)]
-pub(super) struct Held {
+#[derive(Clone, Debug, Default)]
+pub(in crate::outpost) struct Held {
     /// The reports, oldest first: one per focus node and line, a newer
     /// report of the same node and line taking the older's place.
     reports: Vec<Focus>,
@@ -97,7 +95,7 @@ impl Held {
     /// the newest report's node whose evidence says the same element still
     /// has the focus is a repeat, which leaves the states last read as they
     /// were.
-    pub(super) fn reported(&mut self, focus: Focus, evidence: Evidence) {
+    pub(in crate::outpost) fn reported(&mut self, focus: Focus, evidence: Evidence) {
         if !self.repeats_newest(&focus, evidence) {
             self.states_read = Some((focus.node.id, focus.node.states));
         }
@@ -109,7 +107,7 @@ impl Held {
     /// own evidence: the same node, and for UIA its reader read the element
     /// it held still focused or held none, for MSAA the same event address
     /// not acquired as a simple child.
-    pub(super) fn repeats_newest(&self, focus: &Focus, evidence: Evidence) -> bool {
+    pub(in crate::outpost) fn repeats_newest(&self, focus: &Focus, evidence: Evidence) -> bool {
         let Some(newest) = self.reports.last() else {
             return false;
         };
@@ -127,18 +125,9 @@ impl Held {
     /// The store released `released`, by node number: every report whose
     /// focus node is one of them is forgotten, and so are the states last
     /// read of a released focus.
-    pub(super) fn release(&mut self, released: &HashSet<u64>) {
-        self.reports.retain(|report| {
-            let kept = !released.contains(&report.node.id.number());
-            if !kept {
-                tracing::debug!(
-                    trace = %report.trace,
-                    node = ?report.node.id,
-                    "a report's focus node is released; its changes are no longer read"
-                );
-            }
-            kept
-        });
+    pub(in crate::outpost) fn release(&mut self, released: &HashSet<u64>) {
+        self.reports
+            .retain(|report| !released.contains(&report.node.id.number()));
         if self
             .states_read
             .is_some_and(|(node, _)| released.contains(&node.number()))
@@ -148,18 +137,18 @@ impl Held {
     }
 
     /// The reports, oldest first.
-    pub(super) fn focuses(&self) -> impl DoubleEndedIterator<Item = &Focus> {
+    pub(in crate::outpost) fn focuses(&self) -> impl DoubleEndedIterator<Item = &Focus> {
         self.reports.iter()
     }
 
     /// The newest report: what the outpost reads of a focus's element for
     /// an event, such as the list it controls, it reads of this one.
-    pub(super) fn expected(&self) -> Option<&Focus> {
+    pub(in crate::outpost) fn expected(&self) -> Option<&Focus> {
         self.reports.last()
     }
 
     /// The newest report whose top-level window is `top_level`, not 0.
-    pub(super) fn newest_in(&self, top_level: isize) -> Option<&Focus> {
+    pub(in crate::outpost) fn newest_in(&self, top_level: isize) -> Option<&Focus> {
         (top_level != 0)
             .then(|| {
                 self.reports
@@ -171,13 +160,13 @@ impl Held {
     }
 
     /// Whether `node` is the focus of any report.
-    pub(super) fn is_a_focus(&self, node: NodeId) -> bool {
+    pub(in crate::outpost) fn is_a_focus(&self, node: NodeId) -> bool {
         self.focuses().any(|focus| focus.node.id == node)
     }
 
     /// The role `node` was read with, of any report's line, the newest
     /// first.
-    pub(super) fn role_of(&self, node: NodeId) -> Option<Role> {
+    pub(in crate::outpost) fn role_of(&self, node: NodeId) -> Option<Role> {
         self.reports
             .iter()
             .rev()
@@ -191,7 +180,7 @@ impl Held {
         clippy::option_option,
         reason = "no report carried the dialog, or the text one carried, which may be none"
     )]
-    pub(super) fn dialog_text(&self, node: NodeId) -> Option<Option<String>> {
+    pub(in crate::outpost) fn dialog_text(&self, node: NodeId) -> Option<Option<String>> {
         self.reports.iter().rev().find_map(|focus| {
             focus
                 .dialog_texts
@@ -204,7 +193,11 @@ impl Held {
     /// Whether `node` was expanded when its states were last read, and
     /// records `states` as its states now: a report's focus's; `None` for
     /// any other node.
-    pub(super) fn replace_states(&mut self, node: NodeId, states: StateSet) -> Option<bool> {
+    pub(in crate::outpost) fn replace_states(
+        &mut self,
+        node: NodeId,
+        states: StateSet,
+    ) -> Option<bool> {
         let before = self.expanded_before(node)?;
         self.states_read = Some((node, states));
         Some(before)
@@ -214,7 +207,7 @@ impl Held {
     /// [`replace_states`](Self::replace_states) answers it, without
     /// recording anything: read before a state change's call, whose commit
     /// records the states then.
-    pub(super) fn expanded_before(&self, node: NodeId) -> Option<bool> {
+    pub(in crate::outpost) fn expanded_before(&self, node: NodeId) -> Option<bool> {
         if !self.is_a_focus(node) {
             return None;
         }
@@ -255,7 +248,6 @@ mod tests {
 
     fn reported(id: u64) -> Focus {
         Focus {
-            trace: TraceId::mint(),
             node: node(id, Role::Button),
             ancestors: vec![node(100, Role::Dialog)],
             top_level: 7,
