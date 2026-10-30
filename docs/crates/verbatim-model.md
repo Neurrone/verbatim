@@ -88,8 +88,12 @@ recorder unchanged. What the reducer does with each type is in
     window that just became the system's foreground window; the ancestor
     chain, outermost first, complete to the desktop, which is not in it,
     windows a walk did not reach being plain windows read from Windows'
-    own state; a selection container's selected child; and, for a focus
-    that may have text, `text` (see "The text protocol"). The enrichment
+    own state; a selection container's selected child; for a focus
+    that may have text, `text` (see "The text protocol"); and, for a UI
+    Automation focus whose node its reader held an element for, `earlier`,
+    an `EarlierElement` (focused, not focused or gone): what was read of
+    that element with this focus, by which Core tells a repeat from a new
+    element under a reused runtime id. The enrichment
     is deadline-guarded and completes a cut chain by plain windows, so it
     never blocks or loses a focus.
   - `PropertyChanged` with a `PropertyChange`: name, value, description,

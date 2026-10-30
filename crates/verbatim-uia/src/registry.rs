@@ -40,9 +40,11 @@
 //! when a focus event names the runtime id of the focus before it, the
 //! focus listener reads whether that earlier element still has the
 //! keyboard focus, in the same round trip as the new focus: when it does
-//! not, or cannot be read at all, the element behind the id is not the one
-//! the node stood for, and the outpost has [`NodeIdRegistry::reissue`] give
-//! the id a new node (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+//! not, or it is gone, the element behind the id is not the one the node
+//! stood for. The node keeps its id, the report carries that evidence to
+//! Core, and the outpost evicts the element kept for it
+//! ([`NodeIdRegistry::evict_element_if`];
+//! `docs/design/focus-pipeline-rework.md`, "One object, one identity").
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -237,21 +239,22 @@ impl NodeIdRegistry {
         drop(evicted);
     }
 
-    /// Forgets the node `runtime_id` names, so the next
-    /// [`id_for`](Self::id_for) or [`id_for_element`](Self::id_for_element)
-    /// mints a new one: for a runtime id an application has given to a new
-    /// element after the one it named died (module doc). The old node is
-    /// forgotten whole, so a query for it answers that it is gone rather
-    /// than reaching the new element. Its element is returned, for the
-    /// caller to drop once no lock is held.
-    pub fn reissue(&self, runtime_id: &[i32]) -> Released {
+    /// Takes the cached live element behind `node` out of the cache if it
+    /// is still `element`, compared by agile reference, so an eviction
+    /// made late never removes an element kept since. Returns it, for the
+    /// caller to drop once no lock is held: releasing an element can call
+    /// into its process.
+    #[must_use]
+    pub fn evict_element_if(&self, node: NodeId, element: &Agile<Kept>) -> Option<Agile<Kept>> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let element = inner.forward.remove(runtime_id).and_then(|old| {
-            inner.reverse.remove(&old);
-            inner.elements.remove(&old)
-        });
-        Released {
-            _elements: element.into_iter().collect(),
+        if inner
+            .elements
+            .get(&node)
+            .is_some_and(|kept| kept.same_as(element))
+        {
+            inner.elements.remove(&node)
+        } else {
+            None
         }
     }
 }
@@ -287,28 +290,6 @@ mod tests {
         assert_eq!(registry.ids(), vec![kept]);
         assert_eq!(registry.runtime_id_of(released), None);
         assert_ne!(registry.id_for(&[2]), released);
-    }
-
-    #[test]
-    fn a_reissued_runtime_id_names_a_new_node_and_the_old_one_is_forgotten() {
-        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-        let dead = registry.id_for(&[42, 7]);
-        let other = registry.id_for(&[42, 8]);
-        drop(registry.reissue(&[42, 7]));
-        assert_eq!(registry.existing_id(&[42, 7]), None);
-        assert_eq!(registry.runtime_id_of(dead), None, "the old node is gone");
-        let new = registry.id_for(&[42, 7]);
-        assert_ne!(new, dead);
-        assert_eq!(registry.runtime_id_of(new), Some(vec![42, 7]));
-        assert_eq!(registry.id_for(&[42, 7]), new, "the new node is kept");
-        assert_eq!(
-            registry.id_for(&[42, 8]),
-            other,
-            "other nodes are untouched"
-        );
-        let mut ids = registry.ids();
-        ids.sort_by_key(|id| id.number());
-        assert_eq!(ids, vec![other, new]);
     }
 
     #[test]

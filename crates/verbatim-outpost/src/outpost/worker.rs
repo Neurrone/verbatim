@@ -37,8 +37,9 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretReport, CaretWatch, FocusText, NodeId, NodeSnapshot, NormalizedEvent,
-    PropertyChange, Role, State, StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts,
+    Backend, CallCounts, CaretReport, CaretWatch, EarlierElement, FocusText, NodeId, NodeSnapshot,
+    NormalizedEvent, PropertyChange, Role, State, StateSet, TextOp, TextPoint, TextReply, TraceId,
+    WindowFacts,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Kept, SelectedItem, SuggestionsRefresh, nearest_window_handle,
@@ -60,8 +61,8 @@ use super::alarm::Alarm;
 use super::bound::{self, BoundFocus, FocusProgress};
 use super::caret_poll::{self, Poll};
 use super::commit::{
-    self, Committed, Displaced, Effects, Follow, FollowState, Owed, OwedWork, Report, Target,
-    WatchChange,
+    self, Committed, Displaced, Effects, Follow, FollowState, Owed, OwedWork, Report, Stale,
+    Target, WatchChange,
 };
 use super::focus_path::{self, FocusPath};
 use super::gap_record::{CopyDropped, GapRead};
@@ -214,11 +215,13 @@ impl Watch {
         let mut state = self.lock();
         let terminals = std::mem::take(&mut state.follow.terminals);
         let leftover = std::mem::take(&mut state.follow.leftover);
+        let followed = state.follow.followed_element.take();
         state.follow.caret_watch = None;
         drop(state);
         // Outside the lock: they may hold an application's objects.
         drop(terminals);
         drop(leftover);
+        drop(followed);
     }
 
     /// How many abandoned workers have not yet returned.
@@ -1260,6 +1263,13 @@ struct Worker<'a> {
     /// The focus path of the UIA focus about to be reported, which its
     /// entry finds its element by before it is committed.
     focus_path: Option<FocusPath>,
+    /// What the listener read of the element it held before under the UIA
+    /// focus about to be reported, which its report carries.
+    earlier: Option<EarlierElement>,
+    /// The element kept for the UIA focus about to be reported that the
+    /// listener's evidence says is not its element, evicted by the
+    /// report's commit ([`Stale`]).
+    stale: Option<Stale>,
 }
 
 impl<'a> Worker<'a> {
@@ -1284,6 +1294,8 @@ impl<'a> Worker<'a> {
             redirected: false,
             value_from_selection: None,
             focus_path: None,
+            earlier: None,
+            stale: None,
         }
     }
 }
@@ -2552,6 +2564,7 @@ impl Worker<'_> {
             ancestors,
             selected_child,
             text: text.map(Box::new),
+            earlier: self.earlier.take(),
         };
         let message = self.event_message(trace, observed_at_us, backend, window, event);
         let mut effects = Effects {
@@ -2561,6 +2574,7 @@ impl Worker<'_> {
             caret_read: read_at.map(|at| (node_id, at)),
             value_from_selection: self.value_from_selection.take(),
             focus_path: self.focus_path.take(),
+            stale: self.stale.take(),
             ..Effects::default()
         };
         // A foreground report is a window, not the control focus is in: it
@@ -4109,12 +4123,7 @@ impl Worker<'_> {
             return;
         };
         let runtime_id = &read.snapshot.runtime_id;
-        if read.same_as_last == Some(false) {
-            tracing::debug!(
-                "UIA focus: its runtime id named an element that lost the focus or is gone; a new node is issued"
-            );
-            drop(context.uia_registry.reissue(runtime_id));
-        }
+        self.note_earlier(read);
         let reading = Instant::now();
         let previous = self.focus_chain();
         let node = Self::uia_node(context, &read.snapshot, None);
@@ -4142,8 +4151,8 @@ impl Worker<'_> {
         // before it waited for Core's judgement as it was read, which Core's
         // own rule then drops (section 16.3); otherwise this is the focus
         // coming back to the element after one in another application.
-        let found =
-            read.same_as_last == Some(true) && context.uia_registry.element_of(node.id).is_some();
+        let found = read.same_as_last == Some(EarlierElement::Focused)
+            && context.uia_registry.element_of(node.id).is_some();
         // A focus that may have text needs its own element before it is
         // reported, since its caret is read with it; any other's is found
         // after, off the way to speech.
@@ -4194,6 +4203,40 @@ impl Worker<'_> {
                     ..Effects::default()
                 });
             }
+        }
+    }
+
+    /// Notes what the listener read of the element it held before under
+    /// the UIA focus `read` names, which its report carries
+    /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+    fn note_earlier(&mut self, read: &UiaFocusRead) {
+        let runtime_id = &read.snapshot.runtime_id;
+        // A runtime id keeps its node when its application gives it to a
+        // new element (`docs/design/focus-pipeline-rework.md`, "One object,
+        // one identity"): on the listener's evidence that the element it
+        // stood for lost the focus or is gone, the element kept for it is
+        // evicted by the report's commit, if still kept then; for one gone,
+        // its text caches are dropped now, a cache's write, so the focus's
+        // caret read fetches the new element's pattern, and its terminal
+        // entry goes in the commit.
+        self.earlier = read.same_as_last;
+        if let Some(earlier @ (EarlierElement::NotFocused | EarlierElement::Gone)) =
+            read.same_as_last
+            && let Some(node) = self.context.uia_registry.existing_id(runtime_id)
+        {
+            let gone = earlier == EarlierElement::Gone;
+            tracing::debug!(
+                gone,
+                "UIA focus: its runtime id named an element that lost the focus or is gone; the node's element is evicted"
+            );
+            if gone {
+                text_reads::forget(self.context, [node.number()]);
+            }
+            self.stale = Some(Stale {
+                node,
+                element: self.context.uia_registry.element_of(node),
+                gone,
+            });
         }
     }
 
@@ -4624,9 +4667,8 @@ impl Worker<'_> {
     /// against before it, which NVDA's second foreground test compares
     /// with ([`answer_to_judge`]): so what the follow-up sends, such as a
     /// terminal's first read, reaches Core after the focus it follows. A
-    /// control whose element this outpost has under another node, as File
-    /// Explorer's reused runtime ids give (`docs/uia-bugs.md`), is followed
-    /// under the answer's node. Either way the answer becomes the last
+    /// control already followed under the same node is followed again, not
+    /// adopted. Either way the answer becomes the last
     /// focus queued, as NVDA's fake focus does.
     fn follow_answer(
         &mut self,
@@ -4959,6 +5001,7 @@ fn publication(context: &Context, walk: &FocusProgress) -> Effects {
             ancestors,
             selected_child: None,
             text: None,
+            earlier: None,
         },
     );
     let (follow, _) = follow_of(
@@ -5081,6 +5124,7 @@ mod tests {
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
+            earlier: None,
         };
         let explorer = || "explorer".to_owned();
         let held = || true;

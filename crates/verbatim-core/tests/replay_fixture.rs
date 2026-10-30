@@ -51,6 +51,7 @@ fn scripted_inputs() -> Vec<Input> {
                 ancestors: Vec::new(),
                 selected_child: None,
                 text: None,
+                earlier: None,
             },
         },
         Input::Event {

@@ -477,6 +477,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
                 ancestors,
                 selected_child,
                 text,
+                earlier: None,
             },
         }
     };
@@ -916,6 +917,7 @@ mod tests {
                     ancestors,
                     selected_child,
                     text: Some(Box::new(FocusText::NoText)),
+                    earlier: None,
                 },
             }]
         );
@@ -963,6 +965,7 @@ mod tests {
                     ancestors: Vec::new(),
                     selected_child: None,
                     text: None,
+                    earlier: None,
                 },
             }]
         );
@@ -998,6 +1001,7 @@ mod tests {
                     ancestors: Vec::new(),
                     selected_child: None,
                     text: None,
+                    earlier: None,
                 },
             }]
         );
@@ -1045,6 +1049,7 @@ mod tests {
                     ancestors: Vec::new(),
                     selected_child: None,
                     text: None,
+                    earlier: None,
                 },
             }]
         );

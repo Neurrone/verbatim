@@ -1168,6 +1168,7 @@ fn focused_notes() -> SrState {
                 ancestors: Vec::new(),
                 selected_child: None,
                 text: None,
+                earlier: None,
             },
         },
     );

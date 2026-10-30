@@ -14,10 +14,10 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    ActionName, Earcon, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot, NormalizedEvent,
-    Notification, NotificationProcessing, OutpostId, Phrase, Pid, ProgressReading, PropertyChange,
-    Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
-    StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
+    ActionName, Earcon, EarlierElement, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot,
+    NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase, Pid, ProgressReading,
+    PropertyChange, Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority,
+    State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle};
 
@@ -388,26 +388,48 @@ fn is_stale_focus(
 /// another application in between is a different focus, so the one after
 /// it is announced.
 ///
-/// The evidence of "same element, still focused" is the node id, which
-/// names one element in one outpost incarnation. An outpost reports a UIA
-/// focus under the node its runtime id already has only when it read,
-/// live, that the element that node stands for still has the keyboard
-/// focus, and otherwise issues a new node; it reports an MSAA focus only
-/// once the object or an ancestor has the focused state, read live, and
-/// drops an event naming the address of its last focus itself. A focus
-/// the outpost could not find its element for keeps its runtime id's node
-/// with no such read, so for it the node id alone is the evidence. When
-/// the outpost marks a focus as its last focus still focused, read from
-/// the event's own element (section 4.2's outpost half), that mark
-/// replaces the node id here.
-fn is_duplicate_focus(state: &SrState, node: &NodeSnapshot) -> bool {
+/// The evidence of "same element" is the node id, which names one object
+/// in one outpost incarnation; a UI Automation runtime id keeps its node
+/// even when its application gave it to a new element after the one it
+/// named died (`docs/design/focus-pipeline-rework.md`, "One object, one
+/// identity"). So "still focused" is `earlier`, what the reader read live
+/// with the focus of the element it held under that node: a duplicate only
+/// when that element still has the keyboard focus. With no such read, the
+/// reader holding no element for the node or its read cut before it, the
+/// node still alive in Core is the evidence. An outpost reports an MSAA
+/// focus only once the object or an ancestor has the focused state, read
+/// live, and drops an event naming the address of its last focus itself.
+fn is_duplicate_focus(
+    state: &SrState,
+    node: &NodeSnapshot,
+    earlier: Option<EarlierElement>,
+) -> bool {
     state.focus.as_ref().is_some_and(|focus| {
         repeats_focus(RepeatEvidence {
             settled: true,
             same_element: focus.snapshot.id == node.id,
-            still_focused: focus.alive,
+            still_focused: earlier
+                .map_or(focus.alive, |earlier| earlier == EarlierElement::Focused),
         })
     })
+}
+
+/// Forgets what Core keeps of the text of `node`, whose element is gone
+/// though its node lives on in a new element: its caret, a caret key
+/// waiting on it, and its terminal's model, so the new element's text is
+/// taken afresh.
+fn forget_text_of(state: &mut SrState, node: NodeId) {
+    if state.caret.as_ref().is_some_and(|caret| caret.node == node) {
+        state.forget_caret();
+    }
+    if state
+        .pending_caret
+        .as_ref()
+        .is_some_and(|pending| pending.node == node)
+    {
+        state.pending_caret = None;
+    }
+    state.terminals.retain(|model| model.node != node);
 }
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
@@ -607,15 +629,19 @@ fn focus_dropped_first(
         foreground,
         ancestors,
         text,
+        earlier,
         ..
     } = event
     else {
         return false;
     };
+    if *earlier == Some(EarlierElement::Gone) {
+        forget_text_of(state, node.id);
+    }
     if !foreground && crate::applications::refuses_focus(window, node) {
         return true;
     }
-    if is_duplicate_focus(state, node) {
+    if is_duplicate_focus(state, node, *earlier) {
         keep_newer_reading(state, node, focus_ancestors(window, node, ancestors));
         sync_navigator_with_focus(state);
         editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
@@ -713,6 +739,7 @@ fn reduce_event(
             ancestors,
             selected_child,
             text,
+            earlier,
         } => {
             let ancestors = focus_ancestors(window, node, ancestors);
             reduce_focus_changed(
@@ -727,6 +754,7 @@ fn reduce_event(
                     ancestors,
                     selected_child: selected_child.as_ref(),
                     text: text.as_deref(),
+                    earlier: *earlier,
                 },
             )
         }
@@ -848,6 +876,21 @@ struct FocusReport<'a> {
     selected_child: Option<&'a NodeSnapshot>,
     /// What the outpost's caret read found, for a focus that may have text.
     text: Option<&'a FocusText>,
+    /// What its reader read of the element it held before under its node.
+    earlier: Option<EarlierElement>,
+}
+
+impl FocusReport<'_> {
+    /// Whether it is a new element under the node of the previous focus,
+    /// `previous`: its reader read that the element it held before under
+    /// that node lost the focus or is gone.
+    fn replaces(&self, previous: &NodeSnapshot) -> bool {
+        self.node.id == previous.id
+            && matches!(
+                self.earlier,
+                Some(EarlierElement::NotFocused | EarlierElement::Gone)
+            )
+    }
 }
 
 impl FocusReport<'_> {
@@ -2488,10 +2531,20 @@ fn focus_line<'a>(
             .iter()
             .chain(std::iter::once(&previous.snapshot))
     };
-    let Some((at_old, at_new)) = meeting(
-        (&previous.ancestors, &previous.snapshot),
-        (report.ancestors, report.node),
-    ) else {
+    // A new element under the previous focus's node is not that focus: the
+    // lines meet above it, if anywhere.
+    let met = if report.replaces(&previous.snapshot) {
+        previous
+            .ancestors
+            .split_last()
+            .and_then(|(last, above)| meeting((above, last), (report.ancestors, report.node)))
+    } else {
+        meeting(
+            (&previous.ancestors, &previous.snapshot),
+            (report.ancestors, report.node),
+        )
+    };
+    let Some((at_old, at_new)) = met else {
         let old_top = line_top(&previous.snapshot, previous.window.as_ref());
         let new_top = line_top(report.node, window);
         let cut = old_top.is_none() || old_top != new_top;

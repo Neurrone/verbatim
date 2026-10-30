@@ -54,6 +54,7 @@ pub fn focus() -> Input {
         ancestors: Vec::new(),
         selected_child: None,
         text: None,
+        earlier: None,
     })
 }
 

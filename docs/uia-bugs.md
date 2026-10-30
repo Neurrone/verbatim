@@ -522,7 +522,7 @@ NVDA treats a focus event as a duplicate only while the last focus still has the
 
 #### Reproduction test
 
-No test reproduces File Explorer's fault. mockapp's `take-runtime-id` command imitates it, and `a_reused_runtime_id_names_a_new_node_remote` and `a_reused_runtime_id_names_a_new_node_classic` in `crates/mockapp/tests/focus_reports.rs` test Verbatim's handling of it.
+No test reproduces File Explorer's fault. mockapp's `take-runtime-id` command imitates it, and `a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote` and `a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic` in `crates/mockapp/tests/focus_reports.rs` test Verbatim's handling of it.
 
 #### Evidence
 

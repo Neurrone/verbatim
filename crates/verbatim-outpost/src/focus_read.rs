@@ -578,7 +578,7 @@ pub(crate) struct ReadProgress {
     parent_automation_id: Option<String>,
     /// Whether the element the event's runtime id named before still has
     /// the keyboard focus, once read.
-    same_as_last: Option<bool>,
+    same_as_last: Option<verbatim_model::EarlierElement>,
     /// The read as it stands once its walk has ended, while a last call is
     /// under way (a menu item's legacy MSAA state).
     finished: Option<UiaFocusRead>,

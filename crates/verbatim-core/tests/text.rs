@@ -52,6 +52,7 @@ fn focus(state: &mut SrState, snapshot: NodeSnapshot) {
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
+            earlier: None,
         }),
     );
 }
@@ -3108,6 +3109,7 @@ fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
             ancestors: Vec::new(),
             selected_child: None,
             text: Some(Box::new(caret_at_anchor(200))),
+            earlier: None,
         }),
     );
     assert_eq!(
@@ -3137,6 +3139,7 @@ fn focus_with_value(
             ancestors: Vec::new(),
             selected_child: None,
             text: Some(Box::new(text)),
+            earlier: None,
         }),
     );
     effects
@@ -3236,6 +3239,7 @@ fn a_focused_field_with_text_selected_says_the_selection() {
                 "delta epsilon\r",
                 Some("delta epsilon"),
             ))),
+            earlier: None,
         }),
     );
     assert!(

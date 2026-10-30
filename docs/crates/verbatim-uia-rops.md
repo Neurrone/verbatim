@@ -217,8 +217,11 @@ the element does not have the focus, and otherwise an `Ancestry`:
   it, as NVDA's walk reads no selection.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one (NVDA's `getNearestWindowHandle`).
-- `previous_focused`: whether `previous` has the keyboard focus, `None`
-  when the query named none.
+- `previous_focused`: what was read of `previous`, a
+  `verbatim_model::EarlierElement`: focused, not focused, or gone when its
+  read failed other than by time (the remote program's run failing on its
+  import, or the classic read failing), `None` when the query named
+  none.
 - `element`: with `refresh`, the focused element's fresh cache.
 - `legacy_state`: for a menu item, its legacy MSAA state bits, read by
   the remote program, `Some(None)` when unsupported; always `None` from

@@ -128,7 +128,8 @@ receives the event's own element, judges and reads a UIA focus
 - The read (`verbatim_uia_rops::focus_ancestry_classic`) makes every call
   on an element the listener holds, with no remote operation and no
   connection: whether the element with the same runtime id as the previous
-  focus still has the keyboard focus (`UiaFocusRead::same_as_last`); value,
+  focus still has the keyboard focus, has lost it, or is gone
+  (`UiaFocusRead::same_as_last`, a `verbatim_model::EarlierElement`); value,
   states, and details afresh; a list's or tab control's selected child, or
   for a combo box without `Value` or a looping selector the first selected
   item as its value (`UiaFocusRead::value_from_selection`), left out when
@@ -1142,8 +1143,16 @@ unredirected, never unspawned.
 - A UIA focus is reported from the listener's read (`Worker::uia_focus`):
   tested against the foreground with its nearest window (or 0, which passes,
   as NVDA's `shouldAcceptEvent`; `docs/design/focus-pipeline.md`, section
-  16.2), its backend decided, its runtime id given a new node when the
-  listener read that the earlier element under it lost focus or is gone. Its
+  16.2), its backend decided. Its runtime id keeps its node; when the
+  listener read that the earlier element under it lost the focus or is
+  gone, the report carries that evidence (`FocusChanged::earlier`) and its
+  commit evicts the element kept for the node, if still kept
+  (`commit::Stale`, `NodeIdRegistry::evict_element_if`), not moving the
+  subscription to it; for one gone, the node's text caches are dropped
+  before the caret read, a cache's write (`text_reads::forget`), and its
+  terminal entry goes in the commit. The subscription's target is
+  compared by node, group and element, so a node whose element was
+  replaced is followed again. Its
   ancestors are the listener's chain, filtered, spliced at the previous
   chain, and completed above as the listener's walk ended
   (`read::uia_chain_from_read`). Every UIA
@@ -1475,8 +1484,7 @@ Caret and text events:
   an unjudged focus (`outpost::held`), as NVDA's fake focus is, and then
   becomes the followed focus (`adopt_focus`, as `emit_focus` does): another
   node's watch ends, the intake is told (`note_focused`), and the tracking
-  takes it, unless it is already followed under the same node (File
-  Explorer's reused runtime ids get a new one, `docs/uia-bugs.md`). It is
+  takes it, unless it is already followed under the same node. It is
   followed (`follow_text`) but not counted as reported
   (`Tracking::reported`).
 

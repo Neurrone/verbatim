@@ -221,6 +221,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
                 ancestors: Vec::new(),
                 selected_child: None,
                 text: None,
+                earlier: None,
             },
         },
     );

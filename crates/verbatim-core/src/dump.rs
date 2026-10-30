@@ -291,6 +291,7 @@ mod tests {
                             details: NodeDetails::default(),
                         },
                         text: None,
+                        earlier: None,
                     },
                 },
                 effect_count: 1,

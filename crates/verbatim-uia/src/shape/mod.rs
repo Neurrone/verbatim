@@ -501,6 +501,13 @@ impl<S: Shape> Agile<S> {
     pub fn reference(&self) -> AgileReference<IUIAutomationElement> {
         self.element.clone()
     }
+
+    /// Whether `other` is this same agile reference, as a clone of it is:
+    /// an element kept again gets another. Local.
+    #[must_use]
+    pub fn same_as(&self, other: &Self) -> bool {
+        self.element == other.element
+    }
 }
 
 impl<S: Shape> Clone for Agile<S> {

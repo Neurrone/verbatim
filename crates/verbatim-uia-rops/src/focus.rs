@@ -17,6 +17,8 @@ use verbatim_uia::{
     Shape, Uia,
 };
 
+use verbatim_model::EarlierElement;
+
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
@@ -114,7 +116,7 @@ pub struct FocusQuery<'a> {
 pub enum Progress<'a> {
     /// Whether [`FocusQuery::previous`] has the keyboard focus, read live
     /// ([`Ancestry::previous_focused`]).
-    PreviousFocused(bool),
+    PreviousFocused(EarlierElement),
     /// The element with its cache filled afresh ([`Ancestry::element`]).
     Element(&'a Cached<Ancestor>),
     /// The first selected child ([`Ancestry::selected_child`]).
@@ -187,9 +189,11 @@ pub struct Ancestry {
     /// top has one, or the classic walk ran out of time first.
     pub window: Option<isize>,
     /// Whether [`FocusQuery::previous`] has the keyboard focus, read live:
-    /// `false` when it does not, or when the read failed (the element is
-    /// gone); `None` when the query gave no previous element.
-    pub previous_focused: Option<bool>,
+    /// focused, not focused, or gone when its read failed other than by
+    /// time (in a remote program, when the element's import failed the
+    /// run; one whose read answers no boolean there counts as not
+    /// focused); `None` when the query gave no previous element.
+    pub previous_focused: Option<EarlierElement>,
     /// With [`FocusQuery::refresh`], the element itself with its cache
     /// filled afresh; `None` without it.
     pub element: Option<Cached<Ancestor>>,
@@ -294,7 +298,7 @@ pub fn focus_ancestry(
         if let Ok(answer) = focus_ancestry_remote(uia, &without) {
             let answer = match answer {
                 FocusAncestry::Focused(ancestry) => FocusAncestry::Focused(Ancestry {
-                    previous_focused: Some(false),
+                    previous_focused: Some(EarlierElement::Gone),
                     ..ancestry
                 }),
                 FocusAncestry::NotFocused => FocusAncestry::NotFocused,
@@ -758,7 +762,11 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         selected_child: claimed(outcome.get(selected)?, outcome.get(selected_absent)?),
         window: (window != 0).then_some(window as isize),
         previous_focused: match query.previous {
-            Some(_) => Some(outcome.get(previous_focused)?),
+            Some(_) => Some(if outcome.get(previous_focused)? {
+                EarlierElement::Focused
+            } else {
+                EarlierElement::NotFocused
+            }),
             None => None,
         },
         element: if query.refresh {
@@ -943,9 +951,10 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         previous.has_keyboard_focus()
     }) {
         None => None,
-        Some(Ok(focused)) => Some(focused),
+        Some(Ok(true)) => Some(EarlierElement::Focused),
+        Some(Ok(false)) => Some(EarlierElement::NotFocused),
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
-        Some(Err(_)) => Some(false),
+        Some(Err(_)) => Some(EarlierElement::Gone),
     };
     let progress = |read: Progress<'_>| {
         if let Some(progress) = query.progress {

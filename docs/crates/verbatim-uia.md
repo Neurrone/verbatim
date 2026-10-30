@@ -664,6 +664,7 @@ still holds after its window closed is the node for any new element
 given the same runtime id; NVDA has the same exposure. `take_touched`
 reports the nodes issued or looked up since the last call. A runtime id is
 unique only among live elements (File Explorer gives a dead element's id
-to a new one), so `reissue` forgets the node a runtime id names, and the
-outpost calls it before reporting a focus whose runtime id names a node
-whose element no longer has the keyboard focus or cannot be read.
+to a new one); the node keeps its id, and `evict_element_if` takes the
+kept element out, only if it is still the one kept, compared by agile
+reference (`Agile::same_as`), when the focus listener read that the
+element the id stood for lost the focus or is gone.

@@ -147,8 +147,13 @@ pub(super) struct FollowState {
     /// The focus's node and group the focus-following subscription was
     /// last moved to, with the focus's parent followed for its value
     /// changes, if one is: `None` for nothing. A move to the same node,
-    /// group and parent is not asked of the subscription at all.
+    /// group and parent, on the same element, is not asked of the
+    /// subscription at all.
     pub(super) followed: Option<(NodeId, Group, Option<NodeId>)>,
+    /// The element the subscription was last moved to, compared by its
+    /// agile reference, so a node whose element was replaced is followed
+    /// again.
+    pub(super) followed_element: Option<Agile<Kept>>,
     /// The caret key's watch for evidence the worker keeps open between its
     /// entries, if one is open.
     pub(super) caret_watch: Option<OpenWatch>,
@@ -194,6 +199,20 @@ impl Displaced {
         self.elements.extend(target.element);
         self.elements.extend(target.slider);
     }
+}
+
+/// The element kept for a UIA focus's node that the focus listener's
+/// evidence says is no longer the node's element: the runtime id names a
+/// new element, the one it named having lost the focus or gone
+/// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+pub(super) struct Stale {
+    /// The node.
+    pub(super) node: NodeId,
+    /// The element kept for it before the focus was read, evicted only if
+    /// it is still the one kept, compared by agile reference.
+    pub(super) element: Option<Agile<Kept>>,
+    /// Whether the earlier element is gone: its terminal entry goes too.
+    pub(super) gone: bool,
 }
 
 /// Where the focus-following subscription is to be moved for a focus,
@@ -329,6 +348,8 @@ pub(super) struct Effects {
     pub(super) clear_redirect: bool,
     /// A held node's states, as an MSAA state change read them.
     pub(super) states: Option<(NodeId, StateSet)>,
+    /// A UIA focus's stale element, evicted before the focus is followed.
+    pub(super) stale: Option<Stale>,
 }
 
 /// What [`Watch::commit`](super::worker::Watch) did.
@@ -395,7 +416,12 @@ impl FollowState {
     /// already there. The subscription keeps references of its own, so
     /// `target`'s elements are displaced either way.
     fn retarget(&mut self, context: &Context, target: Target, displaced: &mut Displaced) {
-        if self.followed == target.wanted {
+        let same_element = match (&self.followed_element, &target.element) {
+            (Some(followed), Some(element)) => followed.same_as(element),
+            (None, None) => true,
+            _ => false,
+        };
+        if self.followed == target.wanted && same_element {
             tracing::debug!(
                 wanted = ?target.wanted,
                 "the focus-following subscription already follows this focus; it is not moved"
@@ -409,6 +435,10 @@ impl FollowState {
             "the focus-following subscription is moved"
         );
         self.followed = target.wanted;
+        displaced.elements.extend(std::mem::replace(
+            &mut self.followed_element,
+            target.element.clone(),
+        ));
         if let Some(subscription) = context.focus_events.get() {
             match (target.wanted, &target.element) {
                 (Some((_, group, _)), Some(element)) => subscription.retarget_with(
@@ -503,6 +533,52 @@ impl FollowState {
         tracking.batch = Some(batch);
     }
 
+    /// Evicts `stale`, a UIA focus's element the focus listener's evidence
+    /// says is no longer its node's, if it is still the one kept, so
+    /// `follow`, the focus's, does not move the subscription to it; for one
+    /// gone, the node's terminal entry goes too.
+    fn evict(
+        &mut self,
+        context: &Context,
+        stale: Stale,
+        follow: Option<&mut Follow>,
+        displaced: &mut Displaced,
+    ) {
+        let Stale {
+            node,
+            element,
+            gone,
+        } = stale;
+        let evicted =
+            element.and_then(|element| context.uia_registry.evict_element_if(node, &element));
+        // The subscription is not moved to the element evicted: the
+        // focus's own is found after its report.
+        if let (Some(evicted), Some(follow)) = (&evicted, follow)
+            && follow.node == node
+            && follow
+                .target
+                .element
+                .as_ref()
+                .is_some_and(|element| element.same_as(evicted))
+        {
+            let target = std::mem::replace(
+                &mut follow.target,
+                Target {
+                    wanted: None,
+                    element: None,
+                    slider: None,
+                },
+            );
+            displaced.target(target);
+        }
+        displaced.elements.extend(evicted);
+        if gone {
+            displaced
+                .terminals
+                .extend(self.terminals.remove(&node.number()));
+        }
+    }
+
     /// Applies `effects` but for their messages and report, which
     /// [`Watch::commit`](super::worker::Watch) sends and records first.
     /// Returns the watch taken out by [`WatchChange::Take`], and what was
@@ -529,11 +605,15 @@ impl FollowState {
             absorb,
             clear_redirect,
             states,
+            stale,
             ..
         } = effects;
-        let mut displaced = Displaced::default();
+        let (mut follow, mut displaced) = (follow, Displaced::default());
         if let Some(memo) = dialog {
             self.tracking.dialog = memo;
+        }
+        if let Some(stale) = stale {
+            self.evict(context, stale, follow.as_mut(), &mut displaced);
         }
         if let Some(follow) = follow {
             self.follow(context, follow, &mut displaced);

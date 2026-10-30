@@ -42,6 +42,7 @@ fn focus_event(reported: &Reported) -> NormalizedEvent {
         ancestors: reported.ancestors.clone(),
         selected_child: reported.selected_child.clone(),
         text: None,
+        earlier: None,
     }
 }
 

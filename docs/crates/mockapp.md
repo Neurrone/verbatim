@@ -536,8 +536,8 @@ Each file's module comment says exactly what it asserts; in outline:
 - `focus_reports.rs`, over `reuse.json` (two lists named alike, as a File
   Explorer folder and its subfolder): with remote operations and without,
   a focus on an item whose runtime id `take-runtime-id` gave it from a
-  dead item is reported under a new node, a repeated focus keeps that
-  node, and each costs exactly the calls pinned there; a focus captured
+  dead item is reported under that item's node with the evidence that
+  the element it named is gone, a repeated focus keeps that node, and each costs exactly the calls pinned there; a focus captured
   before its item was selected is reported with the item selected; a
   foreground event for a UIA-read window is dropped and the focus that
   follows reported alone; and over `described_group.json` an unnamed

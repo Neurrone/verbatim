@@ -300,6 +300,9 @@ pub struct Reported {
     pub selected_child: Option<NodeSnapshot>,
     /// What the outpost's caret read found, for a focus that may have text.
     pub text: Option<FocusText>,
+    /// What the listener read of the element it held before under a UIA
+    /// focus's runtime id.
+    pub earlier: Option<verbatim_model::EarlierElement>,
     /// The top-level window of the event's window.
     pub window: Option<WindowHandle>,
     /// The event's window facts, as Core takes them.
@@ -895,7 +898,7 @@ impl OutpostUnderTest {
     /// listener's reader are told, as verbatim.exe tells them.
     fn core_judges(&self, message: &OutpostToSupervisor) {
         let held = HeldNode::of;
-        let (trace, observed, node, foreground, ancestors, top_level) = match message {
+        let (trace, observed, node, foreground, ancestors, top_level, earlier) = match message {
             OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_us,
@@ -905,6 +908,7 @@ impl OutpostUnderTest {
                         node,
                         foreground,
                         ancestors,
+                        earlier,
                         ..
                     },
                 ..
@@ -915,6 +919,7 @@ impl OutpostUnderTest {
                 *foreground,
                 ancestors,
                 window.as_ref().map(|window| window.top_level),
+                *earlier,
             ),
             OutpostToSupervisor::Reply {
                 trace_id,
@@ -935,6 +940,7 @@ impl OutpostUnderTest {
                         .as_ref()
                         .or(now.window.as_ref().map(|(_, facts)| facts))
                         .map(|window| window.top_level),
+                    None,
                 )
             }
             _ => return,
@@ -947,10 +953,17 @@ impl OutpostUnderTest {
         if !ignored {
             let ancestors = ancestors.iter().map(held).collect();
             // A repeat of the focus it holds keeps the trace it was taken
-            // from, as Core keeps its newer reading under the old one.
+            // from, as Core keeps its newer reading under the old one: the
+            // same node, its earlier element still focused when the reader
+            // read it, else still alive.
             let (trace_id, observed_at_us) = core
                 .as_ref()
-                .filter(|focus| focus.alive && focus.focus.id == node.id)
+                .filter(|focus| {
+                    focus.focus.id == node.id
+                        && earlier.map_or(focus.alive, |earlier| {
+                            earlier == verbatim_model::EarlierElement::Focused
+                        })
+                })
                 .map_or((trace, observed), |focus| {
                     (focus.trace_id, focus.observed_at_us)
                 });
@@ -1282,6 +1295,7 @@ impl OutpostUnderTest {
                         ancestors,
                         selected_child,
                         text,
+                        earlier,
                     },
                 window,
                 timing,
@@ -1291,6 +1305,7 @@ impl OutpostUnderTest {
                 ancestors,
                 selected_child,
                 text: text.map(|text| *text),
+                earlier,
                 window: window.as_ref().map(|window| window.top_level),
                 facts: window,
                 calls: timing.calls,

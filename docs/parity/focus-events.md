@@ -69,10 +69,11 @@ listener").
   can take the runtime id of the subfolder's item, destroyed with its
   list. Before a UIA focus whose runtime id already names a node is
   reported, the listener reads live whether the element the id stood for
-  still has the keyboard focus, as NVDA checks it; when it does not, or
-  cannot be read, the outpost gives the runtime id a new node, so Core
-  announces the focus. Mockapp's `focus_reports` tests and Core's
-  `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`.
+  still has the keyboard focus, as NVDA checks it: the node keeps its id,
+  and the report carries what was read, so Core takes it as a duplicate
+  only when that element still has the focus, and announces it when it
+  lost the focus or is gone. Mockapp's `focus_reports` tests and Core's
+  `a_reused_runtime_id_whose_element_is_gone_is_announced_and_its_selection_follows`.
 
 ### A repeat while a focus waits for Core's judgement
 

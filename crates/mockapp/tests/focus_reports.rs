@@ -36,9 +36,9 @@ use std::time::Duration;
 use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    Backend, CallCounts, Effect, Fetches, FocusText, Input, NodeDetails, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent, State,
-    StateSet, TextFormat, TraceId, WindowHandle,
+    Backend, CallCounts, EarlierElement, Effect, Fetches, FocusText, Input, NodeDetails,
+    NodeSnapshot, NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent,
+    State, StateSet, TextFormat, TraceId, WindowHandle,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
 use verbatim_outpost::protocol::{
@@ -114,7 +114,8 @@ impl Client {
 /// focus listener's reader, which read the dead item as the focus before,
 /// reads with the new focus whether that earlier element still has the
 /// keyboard focus: it is gone, so the outpost reports the new focus under
-/// a new node. UI Automation counts the new element as the dead one, whose
+/// the runtime id's node, with that evidence, which tells Core it is a new
+/// element. UI Automation counts the new element as the dead one, whose
 /// runtime id it has, but the dead one's keyboard focus cannot be read, so
 /// the focus is no repeat (section 16.3); a focus event repeated on the new
 /// element, which still has the focus, is. Both ways the reader reads a
@@ -159,9 +160,15 @@ fn reused_runtime_id(remote: bool) {
         "{path}: mockapp gave Inner the dead item's runtime id"
     );
     let reported = outpost.uia_focus(&inner);
-    assert_eq!(reported.node.name.as_deref(), Some("Inner"), "{path}");
-    let new_node = reported.node.id;
-    assert_ne!(new_node, dead_node, "{path}: a new node for a new element");
+    assert_eq!(
+        (
+            reported.node.name.as_deref(),
+            reported.node.id,
+            reported.earlier
+        ),
+        (Some("Inner"), dead_node, Some(EarlierElement::Gone)),
+        "{path}: the runtime id keeps its node, the element it named gone"
+    );
     assert_eq!(
         reported.calls.uia, gone_cost,
         "{path}: the calls the focus made"
@@ -180,11 +187,11 @@ fn reused_runtime_id(remote: bool) {
     app.quit();
 }
 
-fn a_reused_runtime_id_names_a_new_node_remote() {
+fn a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote() {
     reused_runtime_id(true);
 }
 
-fn a_reused_runtime_id_names_a_new_node_classic() {
+fn a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic() {
     reused_runtime_id(false);
 }
 
@@ -484,6 +491,7 @@ fn focus_without_a_path(
                     ancestors,
                     selected_child: None,
                     text: None,
+                    earlier: None,
                 },
             ..
         } if ancestors.is_empty() => node,
@@ -4502,12 +4510,12 @@ fn main() {
             a_focus_s_help_text_and_suggestions_are_followed,
         ),
         (
-            "a_reused_runtime_id_names_a_new_node_remote",
-            a_reused_runtime_id_names_a_new_node_remote,
+            "a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote",
+            a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote,
         ),
         (
-            "a_reused_runtime_id_names_a_new_node_classic",
-            a_reused_runtime_id_names_a_new_node_classic,
+            "a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic",
+            a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic,
         ),
         (
             "a_focus_reports_the_states_read_when_it_is_handled",

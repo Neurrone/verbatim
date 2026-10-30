@@ -224,15 +224,16 @@ pub struct UiaFocusRead {
     pub window: Option<isize>,
     /// Whether the event's runtime id still names the element it named
     /// before: `None` when it is not that of the last focus the listener's
-    /// thread read for the application; else whether that earlier element
-    /// still had the keyboard focus, read live with this focus.
-    /// `Some(false)`, the earlier element without the focus or gone, means
-    /// the application gave the id to a new element after the one it named
-    /// died, and the outpost gives the id a new node; `Some(true)` lets the
-    /// outpost keep the element it found for the node, as it does for a repeat
-    /// read while the focus before it waited for Core's judgement
-    /// (`focus_read::HeldElements`).
-    pub same_as_last: Option<bool>,
+    /// thread read for the application, or the read was cut before that
+    /// element's; else what was read live of that earlier element with this
+    /// focus. Not focused or gone means the application gave the id to a
+    /// new element after the one it named died: the node keeps its id, and
+    /// the outpost evicts the element it kept for it, dropping its text
+    /// caches and terminal entry too when it is gone; focused lets the
+    /// outpost keep the element it found for the node, as it does for a
+    /// repeat read while the focus before it waited for Core's judgement
+    /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+    pub same_as_last: Option<verbatim_model::EarlierElement>,
     /// The bound of the read's walk, in microseconds from the event's
     /// observation (`docs/design/focus-pipeline-rework.md`, the Terms):
     /// `MOVED_ON_GRACE` when the focus's top-level window is not that of
@@ -1619,6 +1620,7 @@ mod tests {
                     details: NodeDetails::default(),
                 },
                 text: None,
+                earlier: None,
             },
         };
         let ready = OutpostToSupervisor::Ready {
@@ -1667,6 +1669,7 @@ mod tests {
                 ancestors: vec![snapshot(2)],
                 selected_child: Some(snapshot(3)),
                 text: None,
+                earlier: None,
             },
         };
         let mut chain = OutpostToSupervisor::Reply {
@@ -1783,7 +1786,7 @@ mod tests {
             selected_child: None,
             value_from_selection: false,
             window: Some(0x40),
-            same_as_last: Some(false),
+            same_as_last: Some(verbatim_model::EarlierElement::Gone),
             bound_us: 500_000,
         };
         let fact = ListenerFact {

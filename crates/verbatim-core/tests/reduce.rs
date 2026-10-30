@@ -4,7 +4,7 @@
 
 use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::{
-    Backend, Earcon, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot,
+    Backend, Earcon, EarlierElement, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind, Role,
     SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
     WindowFacts, WindowHandle,
@@ -59,6 +59,7 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
+            earlier: None,
         },
     }
 }
@@ -115,6 +116,30 @@ fn focus_in(
             ancestors,
             selected_child: None,
             text: None,
+            earlier: None,
+        },
+    )
+}
+
+/// [`focus_in`] for a UIA focus whose reader read `earlier` of the element
+/// it held before under the focus's runtime id.
+fn focus_in_after(
+    source: Pid,
+    facts: WindowFacts,
+    snapshot: NodeSnapshot,
+    ancestors: Vec<NodeSnapshot>,
+    earlier: EarlierElement,
+) -> Input {
+    event_in(
+        source,
+        Some(facts),
+        NormalizedEvent::FocusChanged {
+            node: snapshot,
+            foreground: false,
+            ancestors,
+            selected_child: None,
+            text: None,
+            earlier: Some(earlier),
         },
     )
 }
@@ -134,6 +159,7 @@ fn foreground_in(source: Pid, facts: WindowFacts, mut snapshot: NodeSnapshot) ->
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
+            earlier: None,
         },
     )
 }
@@ -692,6 +718,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
                 ancestors: vec![header],
                 selected_child: None,
                 text: None,
+                earlier: None,
             },
         ),
     );
@@ -1302,6 +1329,7 @@ fn sample_script() -> Vec<Input> {
                 ancestors: Vec::new(),
                 selected_child: None,
                 text: None,
+                earlier: None,
             },
         },
         Input::Event {
@@ -1419,6 +1447,7 @@ fn focus_event_with_ancestors(
             ancestors,
             selected_child: None,
             text: None,
+            earlier: None,
         },
     }
 }
@@ -1936,6 +1965,7 @@ fn focus_event_with_selection(
             ancestors: Vec::new(),
             selected_child,
             text: None,
+            earlier: None,
         },
     }
 }
@@ -2983,6 +3013,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
             ancestors: vec![],
             selected_child: None,
             text: None,
+            earlier: None,
         },
     };
     let (state, _) = reduce_from(&SrState::new(), &foreground(900), OutpostId(2));
@@ -4935,6 +4966,7 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
             ancestors: vec![pane],
             selected_child: Some(item),
             text: None,
+            earlier: None,
         },
     );
     let (state, _) = reduce(&SrState::new(), &input);
@@ -6383,6 +6415,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
             ancestors,
             selected_child: None,
             text: None,
+            earlier: None,
         },
     };
     let menu_item_of_focus = |effects: &[Effect]| match effects.first() {
@@ -6474,14 +6507,15 @@ fn explorer_item(
 /// File Explorer, going back from a subfolder (found 2026-10-07), in the
 /// order its events arrived: the focus moves to the parent folder's item
 /// "Inner" in a new list, its states read before Explorer selected it, then
-/// Explorer selects it, then reports the same focus again. The outpost gives
-/// Inner a new node, since the element Explorer gave Inner's runtime id to
-/// before, delta.txt, is gone (`docs/parity/focus-events.md`, "Duplicate focus
-/// suppression"), so Inner is announced after its list, a new element, as
+/// Explorer selects it, then reports the same focus again. Inner keeps the
+/// node of delta.txt, whose runtime id Explorer gave it, and its report says
+/// delta.txt, the element the reader read before under it, is gone
+/// (`docs/design/focus-pipeline-rework.md`, "One object, one identity"), so
+/// it is no duplicate: Inner is announced after its list, a new element, as
 /// NVDA says it; the selection that follows says only "selected"; the
-/// repeated focus is silent.
+/// repeated focus, whose report says Inner still has the focus, is silent.
 #[test]
-fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
+fn a_reused_runtime_id_whose_element_is_gone_is_announced_and_its_selection_follows() {
     let app = Pid(1);
     let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
     // The folder window both lists are in, unnamed here.
@@ -6522,15 +6556,21 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
         "the first focus Core takes cuts nothing off"
     );
 
-    let inner = explorer_item(30, "Inner", &unselected, 1, 4);
+    let inner = explorer_item(28, "Inner", &unselected, 1, 4);
     let (state, effects) = reduce(
         &state,
-        &focus_in(app, window(7000), inner, vec![frame.clone(), list(29)]),
+        &focus_in_after(
+            app,
+            window(7000),
+            inner,
+            vec![frame.clone(), list(29)],
+            EarlierElement::Gone,
+        ),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 30, &[23, 29], None),
+            focus_now(OutpostId(1), 28, &[23, 29], None),
             vec![
                 vec![UtteranceSegment::label("Items View"), role(Role::List)],
                 vec![
@@ -6546,7 +6586,7 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
         "a new list with the same name and role is entered anew"
     );
 
-    let inner_selected = explorer_item(30, "Inner", &selected, 1, 4);
+    let inner_selected = explorer_item(28, "Inner", &selected, 1, 4);
     let (state_after, effects) = reduce(
         &state,
         &event_in(
@@ -6566,11 +6606,12 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
 
     let (_, effects) = reduce(
         &state_after,
-        &focus_in(
+        &focus_in_after(
             app,
             window(7000),
             inner_selected,
             vec![frame.clone(), list(29)],
+            EarlierElement::Focused,
         ),
     );
     assert_eq!(heard(&effects), vec![], "the repeated focus is silent");

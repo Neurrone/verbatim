@@ -165,6 +165,21 @@ pub enum PropertyChange {
     Suggestions(bool),
 }
 
+/// What a reader read live, with a focus, of the element it held before
+/// under the focus's identity, a UI Automation runtime id an application
+/// may give to a new element once the one it named dies
+/// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EarlierElement {
+    /// It still has the keyboard focus: the focus is that element.
+    Focused,
+    /// It no longer has the keyboard focus: the focus is another element.
+    NotFocused,
+    /// Its keyboard focus could not be read, other than by time: it is
+    /// gone, and the focus is another element.
+    Gone,
+}
+
 /// An accessibility event, normalized by an outpost from either backend.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -222,6 +237,11 @@ pub enum NormalizedEvent {
         /// Boxed, as the rest of the message is large already.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<Box<FocusText>>,
+        /// For a UI Automation focus whose node the reader held an element
+        /// for, what it read of that element with this focus; `None` when
+        /// it held none, or its read was cut before that element's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        earlier: Option<EarlierElement>,
     },
     /// A property of a node changed.
     PropertyChanged {
