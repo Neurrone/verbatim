@@ -1071,7 +1071,7 @@ fn a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus() {
     uia_app.send("set-focus btn1");
     let reported = uia_outpost.uia_focus(&client.focused());
     assert_eq!(reported.node.role, Role::Button);
-    msaa_outpost.core_focus_elsewhere();
+    msaa_outpost.release_all();
     let reported = msaa_outpost.focus(button);
     assert_eq!(
         (reported.node.role, reported.node.name.as_deref()),

@@ -37,9 +37,9 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretReport, CaretWatch, EarlierElement, FocusText, NodeId, NodeSnapshot,
-    NormalizedEvent, PropertyChange, Role, State, StateSet, TextOp, TextPoint, TextReply, TraceId,
-    WindowFacts,
+    Backend, CallCounts, CaretReport, CaretWatch, EarlierElement, FocusGroup, FocusText, NodeId,
+    NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet, TextOp, TextPoint,
+    TextReply, TraceId, WindowFacts,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Kept, SelectedItem, SuggestionsRefresh, nearest_window_handle,
@@ -72,9 +72,8 @@ use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
     MOVED_ON_GRACE, alt_is_held, console_client, event_window_unreadable, focus_window_of,
-    foreground_window_handle, front_is_another_thread_of_its_application, is_descendant_window,
-    now_ms, top_level_of, window_belongs_to_hidden_frame, window_exists, window_facts,
-    window_is_hidden_frame,
+    foreground_window_handle, front_is_another_thread_of_its_application, now_ms, top_level_of,
+    window_belongs_to_hidden_frame, window_exists, window_facts, window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
@@ -383,11 +382,13 @@ impl Watch {
         mut effects: Effects,
     ) -> (Option<OpenWatch>, Displaced) {
         match effects.report.take() {
-            Some(Report::Reported(focus)) => context.held().reported(focus),
+            Some(Report::Reported(focus, evidence)) => context.held().reported(focus, evidence),
             Some(Report::Answered(focus)) => {
                 let mut held = context.held();
                 let focus = answer_to_judge(held.expected(), focus);
-                held.reported(focus);
+                // An answer of the newest report's node is the same
+                // element read again.
+                held.reported(focus, held::Evidence::Uia(None));
             }
             None => {}
         }
@@ -487,12 +488,11 @@ struct AnsweredFocus {
     window: Option<isize>,
 }
 
-/// A focus-now answer's control, `answered`, as events are judged against
-/// it until Core has judged it, given `before`, the focus they were judged
-/// against before: an answer for the same node keeps the MSAA event address
-/// and the simple-child mark its report recorded, which NVDA's second
-/// foreground test and its duplicate test compare with, as NVDA's fake
-/// focus leaves its last queued focus's event as it was.
+/// A focus-now answer's control, `answered`, as the outpost records it
+/// among its reports, given `before`, the newest report: an answer for the
+/// same node keeps the MSAA event address and the simple-child mark its
+/// report recorded, as NVDA's fake focus leaves its last queued focus's
+/// event as it was.
 fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> held::Focus {
     match before.filter(|before| before.node.id == answered.node.id) {
         Some(before) => held::Focus {
@@ -523,52 +523,6 @@ fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
 /// 104 to 106); the fact forwarded carries the window alone.
 fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
     (hwnd, OBJID_CLIENT.0, CHILDID_SELF)
-}
-
-/// Why NVDA's `processForegroundWinEvent` drops a foreground change of
-/// window `hwnd` that is in front, given `focus`, a focus it is judged
-/// against, by its top-level window and the MSAA event address it came
-/// from (`IAccessibleHandler/__init__.py` 842 to 867): the focus's window is
-/// `hwnd` or a child window of it (`is_descendant`, NVDA's
-/// `winUser.isDescendantWindow`), or the focus came from an MSAA event with
-/// the foreground event's own window, object id and child id. The second
-/// test can be met only where the first is not, by a focus whose window is
-/// not its event's; an outpost records an MSAA focus's event window as its
-/// window, so the first decides here.
-fn foreground_repeats_focus(
-    focus: &held::Focus,
-    hwnd: isize,
-    is_descendant: impl Fn(isize, isize) -> bool,
-) -> Option<&'static str> {
-    if focus.top_level != 0 && is_descendant(hwnd, focus.top_level) {
-        Some("the focus is already in the window")
-    } else if focus.event == Some(foreground_event(hwnd)) {
-        Some("it repeats the focus's own event")
-    } else {
-        None
-    }
-}
-
-/// Why a foreground change of window `hwnd`, which is in front, repeats the
-/// focus Core holds, by NVDA's two foreground tests
-/// ([`foreground_repeats_focus`]), judged against the focus Core holds
-/// (decision D14, "Where the rules run"): when Core holds a focus of this
-/// outpost's, and it and every focus this outpost reported that Core has
-/// not judged yet repeat it, so Core's focus will repeat it whatever Core
-/// judges. `None` when Core holds another application's focus, or none:
-/// the reducer ignores a foreground change of the window its focus is
-/// already in, whoever reported it.
-fn foreground_repeats(
-    held: &held::Held,
-    hwnd: isize,
-    is_descendant: impl Fn(isize, isize) -> bool,
-) -> Option<&'static str> {
-    held.core()?;
-    let mut reason = None;
-    for focus in held.focuses() {
-        reason = Some(foreground_repeats_focus(focus, hwnd, &is_descendant)?);
-    }
-    reason
 }
 
 /// The numbers of the nodes issued or looked up since the last take.
@@ -863,16 +817,31 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         return;
     }
     while let Some((planned, batch)) = context.intake.next() {
-        let mut run = |entry: Entry, menu: bool| {
-            run_entry(context, &mut client, generation, batch, entry, menu)
+        let mut run = |entry: Entry, menu: bool, group: Option<FocusGroup>| {
+            run_entry(
+                context,
+                &mut client,
+                generation,
+                batch,
+                entry,
+                (menu, group),
+            )
         };
-        // A focus group's entry counts as reported when the worker reported
-        // a focus or foreground change for it, or found it the focus
-        // already, which the entry's worker-local flag says.
+        // A focus group's entries carry its number, counted by this
+        // outpost generation, and their rank, newest first, so Core takes
+        // no older entry once it took a newer one. An entry ends the group
+        // when the worker reported a focus for it, or a foreground change
+        // of a window that holds no unreleased node of a report's line,
+        // which the entry's worker-local flag says.
+        let number = planned.is_focus_group().then(|| context.next_focus_group());
         let outcome = planned.handle(|entry, handling| match handling {
-            Handling::Run => run(entry, false).map(|_| false),
-            Handling::Menu => run(entry, true).map(|_| false),
-            Handling::Tried => run(entry, false),
+            Handling::Run => run(entry, false, None).map(|_| false),
+            Handling::Menu => run(entry, true, None).map(|_| false),
+            Handling::Tried(rank) => run(
+                entry,
+                false,
+                number.map(|number| FocusGroup { number, rank }),
+            ),
         });
         if outcome.is_err() {
             return;
@@ -906,16 +875,17 @@ pub(super) fn answer_idle(context: &Context) {
     }
 }
 
-/// Handles one entry of `batch` under its deadline. `Err` when this worker
-/// was abandoned meanwhile and must exit; otherwise whether the entry
-/// reported a focus or foreground change, or found it the focus already.
+/// Handles one entry of `batch` under its deadline, as a menu opening with
+/// `menu`, and with `group`, its place in a focus group. `Err` when this
+/// worker was abandoned meanwhile and must exit; otherwise whether the
+/// entry ended its focus group ([`Worker::reported`]).
 fn run_entry(
     context: &Context,
     client: &mut Client,
     generation: u64,
     batch: u64,
     entry: Entry,
-    menu: bool,
+    (menu, group): (bool, Option<FocusGroup>),
 ) -> Result<bool, ()> {
     let timing = EventTiming {
         dequeued_at_us: now_us(),
@@ -939,6 +909,7 @@ fn run_entry(
     let mut reported = false;
     let handled = catch_unwind(AssertUnwindSafe(|| {
         let mut worker = Worker::new(context, client, generation, batch, timing);
+        worker.group = group;
         if menu {
             worker.menu_opened(&entry);
         } else {
@@ -1238,9 +1209,14 @@ struct Worker<'a> {
     /// whether its object was acquired as a simple child, which the focus
     /// is recorded with for Core's judgement ([`Worker::focus_to_judge`]).
     msaa_event: Option<((isize, i32, i32), bool)>,
-    /// Whether the entry reported a focus or foreground change, or found it
-    /// the focus already: a focus group's older entries are then not tried.
+    /// Whether the entry ended its focus group: it reported a focus, or a
+    /// foreground change of a window that holds no unreleased node of a
+    /// report's focus line. A focus group's older entries are then not
+    /// tried.
     reported: bool,
+    /// The entry's place in its focus group, which its report carries
+    /// (`verbatim_model::FocusGroup`); `None` for an entry of no group.
+    group: Option<FocusGroup>,
     /// Whether one of this worker's commits was refused: it was abandoned,
     /// and makes no further call.
     refused: std::cell::Cell<bool>,
@@ -1288,6 +1264,7 @@ impl<'a> Worker<'a> {
             timing,
             msaa_event: None,
             reported: false,
+            group: None,
             refused: std::cell::Cell::new(false),
             owed_attempt: None,
             pending_caret_read: None,
@@ -1649,6 +1626,7 @@ impl Worker<'_> {
             node: node.clone(),
             object: object_of(context, node),
             msaa_event: None,
+            group: None,
         });
         let started = Instant::now();
         let found = read::gap_focus_read(
@@ -2440,6 +2418,11 @@ impl Worker<'_> {
                 .flat_map(|(released, _)| released)
                 .filter_map(|node| state.follow.terminals.remove(node))
                 .collect();
+            // The reports whose focus node is released are no longer read
+            // for, under the same locks as their nodes leave the store.
+            if let Some((released, _)) = &released {
+                self.context.held().release(released);
+            }
             drop(state);
             tracing::debug!(
                 ?held,
@@ -2535,6 +2518,13 @@ impl Worker<'_> {
         );
         let role = node.role;
         let node_id = node.id;
+        let earlier = self.earlier.take();
+        // A foreground change is recorded by its window's event address.
+        let evidence = if backend == Backend::Uia && !foreground {
+            held::Evidence::Uia(earlier)
+        } else {
+            held::Evidence::Msaa
+        };
         let reported = self.focus_to_judge(trace, &node, &ancestors, window, foreground);
         let (text, read_at) = if foreground {
             (None, None)
@@ -2564,13 +2554,13 @@ impl Worker<'_> {
             ancestors,
             selected_child,
             text: text.map(Box::new),
-            earlier: self.earlier.take(),
-            group: None,
+            earlier,
+            group: self.group,
         };
         let message = self.event_message(trace, observed_at_us, backend, window, event);
         let mut effects = Effects {
             result: Some(message),
-            report: Some(Report::Reported(reported)),
+            report: Some(Report::Reported(reported, evidence)),
             dialog: Some(memo),
             caret_read: read_at.map(|at| (node_id, at)),
             value_from_selection: self.value_from_selection.take(),
@@ -2630,9 +2620,8 @@ impl Worker<'_> {
     }
 
     /// The focus `node`, with `ancestors`, reported in `window` from the
-    /// event traced `trace`, as the rules judge events against it until
-    /// Core has judged it ([`super::held`]): a foreground change carries
-    /// its event address, which NVDA's second foreground test compares.
+    /// event traced `trace`, as the outpost records it among its reports
+    /// ([`super::held`]): a foreground change carries its event address.
     /// NVDA makes its foreground object when the
     /// focus enters a top-level window, so the window keeps the verdict it
     /// had then while the focus moves within it
@@ -3749,19 +3738,19 @@ impl Worker<'_> {
     /// is read through UI Automation besides, so its title is the console
     /// window element's, the text area's parent.
     ///
-    /// A change in front is dropped too when the focus Core holds is this
-    /// outpost's and is in its window or a child window of it, or came from
-    /// the change's own event address, and so is every focus this outpost
-    /// reported that Core has not judged yet, as NVDA's two tests against
-    /// its last queued focus drop it ([`foreground_repeats`]); a focus Core
-    /// took from another outpost inside the window is left to the reducer,
-    /// which ignores a foreground change of the window the focus is already
-    /// in.
+    /// Every change in front is read and reported: whether the focus is
+    /// already in its window, NVDA's two tests against its last queued
+    /// focus, is Core's verdict, which refuses a foreground change of the
+    /// window its focus is in (`docs/design/ownership-one-judge.md`, "Focus
+    /// groups").
     ///
-    /// Within a focus group, a change reported ends the group's tries, and
-    /// one dropped lets the next older entry be tried
-    /// ([`super::intake::try_newest_first`]), as NVDA's `pumpAll` stops at
-    /// the first foreground or focus event processed.
+    /// Within a focus group, a change dropped lets the next older entry be
+    /// tried ([`super::intake::try_newest_first`]), as NVDA's `pumpAll`
+    /// stops at the first foreground or focus event processed; so does a
+    /// change reported whose window holds an unreleased node of a report's
+    /// line, which Core may refuse, and every report of the group carries
+    /// its rank, so Core takes the older entry only when it refused the
+    /// change. A change reported of any other window ends the group.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_us: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
@@ -3769,15 +3758,6 @@ impl Worker<'_> {
         }
         if !self.accepts(EventName::GainFocus, hwnd) || !self.in_front(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
-            return;
-        }
-        // NVDA's two tests against the last focus it queued, made against
-        // the focus Core holds, before it makes the event's object: local
-        // calls only, and the change is not counted as reported, so the
-        // group's next older entry is tried.
-        let repeats = foreground_repeats(&self.context.held(), hwnd, is_descendant_window);
-        if let Some(reason) = repeats {
-            tracing::debug!(hwnd, reason, "foreground dropped: the focus already");
             return;
         }
         // NVDA makes the foreground's object as it makes any MSAA event's
@@ -3806,6 +3786,16 @@ impl Worker<'_> {
     /// Reads the foreground window `hwnd`'s name and reports it, unless it
     /// is no longer the foreground window by then.
     fn report_foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_us: u64) {
+        // Whether the window holds an unreleased node of a report's line,
+        // judged before this change is recorded among the reports: then
+        // the group's next older entry is tried after it.
+        let top_level = top_level_of(hwnd);
+        let holds_a_line = top_level != 0
+            && self
+                .context
+                .held()
+                .focuses()
+                .any(|focus| focus.top_level == top_level);
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
         if !self.in_front(hwnd) {
             tracing::info!(
@@ -3827,6 +3817,9 @@ impl Worker<'_> {
             None,
             (Vec::new(), None),
         );
+        if self.reported && holds_a_line {
+            self.reported = false;
+        }
     }
 
     /// An MSAA focus fact.
@@ -3888,28 +3881,12 @@ impl Worker<'_> {
             tracing::debug!(hwnd, id_object, id_child, "MSAA focus dropped: unreadable");
             return;
         };
-        // The repeat rule (`focus_rules::repeats_focus`; NVDA's
-        // `isDuplicateIAccessibleEvent`), after acquiring the object and
-        // making the list redirect: a focus event naming the address of the
-        // focus Core holds, unless that focus was a simple child, by the
-        // child id its object was acquired with, whose id can be reused
-        // (`IAccessibleChildID > 0`). NVDA compares with the last focus it
-        // queued from any application (`lastQueuedFocusObject`); Verbatim
-        // compares with the focus Core holds, which Core tells this outpost
-        // (`SupervisorToOutpost::CoreFocus`), and drops nothing as a repeat
-        // while a focus this outpost reported waits for Core's judgement,
-        // unless every one of them is the same object.
+        // A repeat of the focus is read in full and judged in Core, whose
+        // duplicate rule compares it with the last focus it took, of any
+        // application, as NVDA's `isDuplicateIAccessibleEvent` compares
+        // with its last queued focus (`docs/design/ownership-one-judge.md`,
+        // "Repeats").
         let resolved_child = candidate.resolved_child();
-        if self.msaa_focus_repeats(candidate.key()) {
-            tracing::debug!(
-                hwnd,
-                id_object,
-                id_child,
-                "MSAA focus dropped: the focus already"
-            );
-            self.reported = true;
-            return;
-        }
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),
         // which weeds out stale and spurious focus events. It checks the
@@ -3975,7 +3952,7 @@ impl Worker<'_> {
         // call of it still be under way then; the chain goes on from the
         // focus's own window until it reads more.
         let left = read::walk_left(context, hwnd, observed_at_us);
-        let (timing, batch) = (self.timing, self.batch);
+        let (timing, batch, group) = (self.timing, self.batch, self.group);
         let watched = walk_watcher(context, self.generation, |node, window| BoundFocus {
             trace,
             observed_at_us,
@@ -3986,6 +3963,7 @@ impl Worker<'_> {
             node: node.clone(),
             object: object.clone(),
             msaa_event: Some(msaa_event),
+            group,
         });
         let from = match object {
             Some(Object::Msaa(window, _, _)) => window,
@@ -4053,26 +4031,6 @@ impl Worker<'_> {
                 trace,
             );
         }
-    }
-
-    /// Whether an MSAA focus event naming the object at `address` repeats
-    /// the focus Core holds (`focus_rules::repeats_focus`): Core holds a
-    /// focus of this outpost's, and it and every focus this outpost
-    /// reported that Core has not judged yet are that object, none of them
-    /// a simple child, so Core's focus will be it whatever Core judges.
-    fn msaa_focus_repeats(&self, address: (isize, i32, i32)) -> bool {
-        let held = self.context.held();
-        let registry = &self.context.msaa_registry;
-        let same_element = held.core().is_some()
-            && held
-                .focuses()
-                .all(|focus| registry.key_of(focus.node.id) == Some(address));
-        let still_focused = held.focuses().all(|focus| !focus.simple_child);
-        focus_rules::repeats_focus(focus_rules::RepeatEvidence {
-            settled: true,
-            same_element,
-            still_focused,
-        })
     }
 
     /// A UIA focus as the focus listener judged and read it from the
@@ -4745,16 +4703,16 @@ impl Worker<'_> {
     }
 }
 
-/// The focus `node`, with `ancestors` (`None` when unknown), reported in
-/// `window` from the event traced `trace`, as the rules judge events
-/// against it until Core has judged it ([`super::held`]): with unknown
-/// ancestors it keeps those of the focus before it, as Core keeps them; an
-/// MSAA focus carries `msaa_event`, its event's address and whether it is
-/// a simple child, and a foreground change its window's event address,
-/// which NVDA's second foreground test compares. NVDA makes its foreground
-/// object when the focus enters a top-level window, so the window keeps
-/// the verdict it had then while the focus moves within it
-/// ([`Worker::is_foreground_window`]). Local calls.
+/// The focus `node`, with `ancestors`, reported in `window` from the event
+/// traced `trace`, as the outpost records it among its reports
+/// ([`super::held`]): an MSAA focus carries `msaa_event`, its event's
+/// address and whether it is a simple child, and a foreground change its
+/// window's event address; each dialog of its line carries the text the
+/// report gave it. NVDA makes its foreground object when the focus enters
+/// a top-level window, so the window keeps the verdict it had then while
+/// the focus moves within it ([`Worker::is_foreground_window`]): a focus
+/// inherits it from the newest report in its top-level window, and a
+/// foreground change of the window sets it. Local calls.
 fn judged_focus(
     context: &Context,
     (trace, node, ancestors): (TraceId, &NodeSnapshot, &[NodeSnapshot]),
@@ -4764,10 +4722,11 @@ fn judged_focus(
     let top_level = window.map_or(0, top_level_of);
     // What the focus before it gives it, taken under the lock, which
     // is let go before the foreground window is read.
-    let inherited = {
+    let inherited = if foreground {
+        None
+    } else {
         let held = context.held();
-        held.expected()
-            .filter(|before| top_level != 0 && before.top_level == top_level)
+        held.newest_in(top_level)
             .map(|before| before.entered_in_front)
     };
     // A foreground change's window was just found in front.
@@ -4776,6 +4735,12 @@ fn judged_focus(
         None if foreground => Some(top_level).filter(|&top| top != 0),
         None => (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
     };
+    let dialog_texts = ancestors
+        .iter()
+        .chain(std::iter::once(node))
+        .filter(|node| crate::dialog_text::is_dialog(node.role))
+        .map(|node| (node.id, node.details.description.clone()))
+        .collect();
     let ancestors = ancestors.iter().map(HeldNode::of).collect();
     let (event, simple_child) = match msaa_event {
         Some((event, simple_child)) => (Some(event), simple_child),
@@ -4789,6 +4754,7 @@ fn judged_focus(
         entered_in_front,
         event,
         simple_child,
+        dialog_texts,
     }
 }
 
@@ -5003,9 +4969,14 @@ fn publication(context: &Context, walk: &FocusProgress) -> Effects {
             selected_child: None,
             text: None,
             earlier: None,
-            group: None,
+            group: focus.group,
         },
     );
+    let evidence = if focus.msaa_event.is_some() {
+        held::Evidence::Msaa
+    } else {
+        held::Evidence::Uia(None)
+    };
     let (follow, _) = follow_of(
         context,
         FocusMade {
@@ -5028,7 +4999,7 @@ fn publication(context: &Context, walk: &FocusProgress) -> Effects {
     );
     Effects {
         result: Some(message),
-        report: Some(Report::Reported(judged)),
+        report: Some(Report::Reported(judged, evidence)),
         follow: Some(follow),
         ..Effects::default()
     }
@@ -5091,8 +5062,6 @@ fn event_window_facts(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_core::focus_rules::HeldFocus;
-
     use super::*;
 
     /// A focus change's window facts keep the window's class, which Core's
@@ -5170,98 +5139,8 @@ mod tests {
             entered_in_front: None,
             event,
             simple_child: false,
+            dialog_texts: Vec::new(),
         }
-    }
-
-    /// Core holding `focus`, which this outpost reported.
-    fn core_holds(focus: held::Focus) -> held::Held {
-        let mut held = held::Held::default();
-        let trace = focus.trace;
-        let node = focus.node.clone();
-        let top_level = focus.top_level;
-        held.reported(focus);
-        held.core_focus(
-            Some(trace),
-            Some(HeldFocus {
-                trace_id: trace,
-                observed_at_us: 1,
-                focus: node,
-                ancestors: Vec::new(),
-                top_level: Some(verbatim_model::WindowHandle(u64::from_ne_bytes(
-                    top_level.to_ne_bytes(),
-                ))),
-                alive: true,
-            }),
-        );
-        held
-    }
-
-    /// NVDA's first foreground test, against the focus Core holds: a change
-    /// of its own window, or of a window it is a child window of, is
-    /// dropped; one of another window is not, and nor is any once Core
-    /// holds another application's focus, or none.
-    #[test]
-    fn a_foreground_change_of_the_focus_s_window_or_its_parent_is_dropped() {
-        // Window 7 is a child window of 5; 6 is not related to either.
-        let is_descendant =
-            |parent: isize, child: isize| parent == child || (parent, child) == (5, 7);
-        let held = core_holds(focus_in(TraceId::mint(), 7, None));
-        assert_eq!(
-            foreground_repeats(&held, 7, is_descendant),
-            Some("the focus is already in the window")
-        );
-        assert_eq!(
-            foreground_repeats(&held, 5, is_descendant),
-            Some("the focus is already in the window")
-        );
-        assert_eq!(foreground_repeats(&held, 6, is_descendant), None);
-        let mut elsewhere = core_holds(focus_in(TraceId::mint(), 7, None));
-        elsewhere.core_focus(None, None);
-        assert_eq!(foreground_repeats(&elsewhere, 7, is_descendant), None);
-        assert_eq!(
-            foreground_repeats(&held::Held::default(), 7, is_descendant),
-            None
-        );
-    }
-
-    /// NVDA's second foreground test: a change whose event address, the
-    /// window with `OBJID_CLIENT` and `CHILDID_SELF`, is the focus's own
-    /// event's is dropped, though the focus's window is not the change's;
-    /// another address is not.
-    #[test]
-    fn a_foreground_change_with_the_focus_s_own_event_address_is_dropped() {
-        let unrelated = |parent: isize, child: isize| parent == child;
-        let held = core_holds(focus_in(
-            TraceId::mint(),
-            8,
-            Some((5, OBJID_CLIENT.0, CHILDID_SELF)),
-        ));
-        assert_eq!(
-            foreground_repeats(&held, 5, unrelated),
-            Some("it repeats the focus's own event")
-        );
-        let held = core_holds(focus_in(
-            TraceId::mint(),
-            8,
-            Some((5, OBJID_WINDOW.0, CHILDID_SELF)),
-        ));
-        assert_eq!(foreground_repeats(&held, 5, unrelated), None);
-    }
-
-    /// While a focus this outpost reported waits for Core's judgement, a
-    /// foreground change is dropped only when it repeats that focus too:
-    /// Core's focus will be one of them whatever Core judges.
-    #[test]
-    fn a_foreground_change_is_dropped_only_when_it_repeats_every_focus_judged_against() {
-        let is_descendant = |parent: isize, child: isize| parent == child;
-        let mut held = core_holds(focus_in(TraceId::mint(), 7, None));
-        held.reported(focus_in(TraceId::mint(), 7, None));
-        assert_eq!(
-            foreground_repeats(&held, 7, is_descendant),
-            Some("the focus is already in the window")
-        );
-        held.reported(focus_in(TraceId::mint(), 9, None));
-        assert_eq!(foreground_repeats(&held, 7, is_descendant), None);
     }
 
     /// A focus-now answer for the focus already judged against keeps the
@@ -5568,6 +5447,7 @@ mod tests {
             node: node(1, Role::Button),
             object: None,
             msaa_event: None,
+            group: None,
         }
     }
 
@@ -5634,12 +5514,10 @@ mod tests {
         follow.owed = owed;
         Effects {
             result: Some(OutpostToSupervisor::IdleAnswer { round: 1 }),
-            report: Some(Report::Reported(judged_focus(
-                context,
-                (TraceId::mint(), node, &[]),
-                (None, false),
-                None,
-            ))),
+            report: Some(Report::Reported(
+                judged_focus(context, (TraceId::mint(), node, &[]), (None, false), None),
+                held::Evidence::Msaa,
+            )),
             follow: Some(follow),
             ..Effects::default()
         }

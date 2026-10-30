@@ -43,14 +43,35 @@ impl Live {
     /// every node it reported until a list acknowledges the message, so
     /// the list goes again even when the state holds the same nodes. When
     /// nothing changed, nothing is left, and the outpost hears nothing.
-    pub(crate) fn held_changed(&mut self, nodes: &BTreeSet<u64>, anchors: &BTreeSet<u64>) -> bool {
+    pub(crate) fn held_changed(
+        &mut self,
+        nodes: &BTreeSet<u64>,
+        anchors: &BTreeSet<u64>,
+    ) -> HeldChange {
         let (left, left_anchors, acknowledged) = &self.held_left;
-        if left == nodes && left_anchors == anchors && *acknowledged == self.position {
-            return false;
-        }
+        let change = if left != nodes {
+            HeldChange::Nodes
+        } else if left_anchors != anchors || *acknowledged != self.position {
+            HeldChange::Other
+        } else {
+            return HeldChange::None;
+        };
         self.held_left = (nodes.clone(), anchors.clone(), self.position);
-        true
+        change
     }
+}
+
+/// What changed of what the state holds in an outpost since it was last
+/// left for it ([`Live::held_changed`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeldChange {
+    /// Nothing.
+    None,
+    /// The set of nodes.
+    Nodes,
+    /// The text anchors or the position of the last message handled, and
+    /// not the nodes.
+    Other,
 }
 
 /// The live outpost generations, by outpost id.
@@ -270,7 +291,8 @@ mod tests {
 
     /// The held nodes are left for an outpost only when they, its anchors,
     /// or the position of its last message handled changed since they were
-    /// last left: nothing is sent when nothing changed.
+    /// last left, a change of the nodes told from one of the rest, which
+    /// the app writes at once: nothing is sent when nothing changed.
     #[test]
     fn held_nodes_are_left_only_when_they_or_the_position_changed() {
         let mut live = LiveOutposts::default();
@@ -294,7 +316,15 @@ mod tests {
         step(&mut live, None, &[6], &[8]);
         assert_eq!(
             changes,
-            [false, true, false, true, false, true, true],
+            [
+                HeldChange::None,
+                HeldChange::Nodes,
+                HeldChange::None,
+                HeldChange::Other,
+                HeldChange::None,
+                HeldChange::Other,
+                HeldChange::Nodes
+            ],
             "nothing yet; a message; the same again; an anchor; the same              again; a message holding the same; another node"
         );
     }

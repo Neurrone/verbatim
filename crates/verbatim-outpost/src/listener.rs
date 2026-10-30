@@ -1171,10 +1171,6 @@ impl Listener {
                     .forced_uia(*pid)
                     .store(forced, Ordering::Relaxed);
             }
-            SupervisorToOutpost::CoreFocus { judged, focus, .. } => self.held_elements.core_focus(
-                *judged,
-                focus.as_ref().map(|focus| (focus.trace_id, focus.alive)),
-            ),
             SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
             _ => {}
         }

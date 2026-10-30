@@ -652,10 +652,6 @@ pub struct SrState {
     /// before the record existed.
     #[serde(flatten)]
     pub(crate) foreground: Foreground,
-    /// How many focuses the reducer has taken as the focus, the silent
-    /// re-read of a replacement outpost's report included.
-    #[serde(default)]
-    pub(crate) focuses_queued: u64,
     /// The newest focus group whose report Core took: the generation of
     /// the report's node, the group's number and the report's rank. An
     /// older report of the same group is not taken
@@ -775,14 +771,6 @@ impl SrState {
         Self::default()
     }
 
-    /// How many focuses the reducer has taken as the focus so far; it grows
-    /// by one with each, so a host that compares it before and after an
-    /// input knows whether that input's focus was queued.
-    #[must_use]
-    pub fn focuses_queued(&self) -> u64 {
-        self.focuses_queued
-    }
-
     /// Whether a caret key pressed now is held back until the focus's
     /// caret has been read (`docs/design/key-holding.md`): the focus has
     /// text, or may have, as for the caret keys whose evidence is watched.
@@ -833,36 +821,6 @@ impl SrState {
             .as_ref()
             .filter(|focus| focus.alive)
             .map(|focus| (focus.source, &focus.snapshot))
-    }
-
-    /// The outpost whose node the focus Core holds is, and whether that
-    /// focus is alive: what the host compares across an input to tell
-    /// whether its focus changed, without copying the focus
-    /// ([`held_focus`](Self::held_focus)).
-    #[must_use]
-    pub fn held_focus_owner(&self) -> Option<(OutpostId, bool)> {
-        self.focus
-            .as_ref()
-            .filter(|focus| focus.trace_id.is_some())
-            .map(|focus| (focus.snapshot.id.outpost(), focus.alive))
-    }
-
-    /// The focus Core holds, as the focus listener and the outposts judge
-    /// events against it before they read them (decision D14, "Where the
-    /// rules run"), alive or not; `None` before any focus, or for a focus
-    /// taken from a recording made before its trace was kept.
-    #[must_use]
-    pub fn held_focus(&self) -> Option<crate::focus_rules::HeldFocus> {
-        let focus = self.focus.as_ref()?;
-        let held = crate::focus_rules::HeldNode::of;
-        Some(crate::focus_rules::HeldFocus {
-            trace_id: focus.trace_id?,
-            observed_at_us: focus.observed_at_us,
-            focus: held(&focus.snapshot),
-            ancestors: focus.ancestors.iter().map(held).collect(),
-            top_level: focus.window.as_ref().map(|window| window.top_level),
-            alive: focus.alive,
-        })
     }
 
     /// The focused node as last announced, its ancestors outermost first,

@@ -1040,7 +1040,6 @@ fn reduce_focus_changed(
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
         state.focus = Some(new_focus);
-        state.focuses_queued += 1;
         record_taken(state, report);
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
@@ -1086,7 +1085,6 @@ fn reduce_focus_changed(
     // containers (`focus_speech`).
     end_text_activity(state, report.node.id, foreground_changed, &mut effects);
     state.focus = Some(new_focus);
-    state.focuses_queued += 1;
     record_taken(state, report);
     state.navigator = Some(navigator);
     // A nameless foreground window, and any focus in the shell's staging

@@ -19,7 +19,7 @@
 //! `docs/parity/focus-context.md`.
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, NodeId, Role, StateSet, TraceId, WindowFacts, WindowHandle};
+use verbatim_model::{Backend, NodeId, Role, StateSet, WindowFacts, WindowHandle};
 
 /// How a window stands to the system's foreground window, the facts the
 /// acceptance test ends with (`docs/parity/focus-events.md`, "Event
@@ -93,55 +93,6 @@ impl HeldNode {
             states: node.states,
             window: node.details.window,
         }
-    }
-}
-
-/// The focus Core holds, which Core sends the focus listener and the
-/// outposts concerned whenever it changes, for the judgments they make
-/// before an element is read (decision D14, "Where the rules run").
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeldFocus {
-    /// The trace of the event Core took the focus from: the focus
-    /// listener's own trace for a UIA focus it read.
-    pub trace_id: TraceId,
-    /// When that event was observed, in microseconds on the run's shared
-    /// clock (0 when not known).
-    pub observed_at_us: u64,
-    /// The focus.
-    pub focus: HeldNode,
-    /// Its ancestors, outermost first.
-    pub ancestors: Vec<HeldNode>,
-    /// Its top-level window, when known.
-    pub top_level: Option<WindowHandle>,
-    /// False once the outpost that issued its node ids has ended.
-    pub alive: bool,
-}
-
-impl HeldFocus {
-    /// This focus as the outpost `outpost` knows its own nodes: their ids
-    /// unstamped, as it issued them, and every node another outpost issued
-    /// left out; `None` when the focus itself is another outpost's.
-    #[must_use]
-    pub fn for_outpost(&self, outpost: verbatim_model::OutpostId) -> Option<Self> {
-        let own = |node: &HeldNode| {
-            (node.id.outpost() == outpost).then(|| HeldNode {
-                id: node.id.unstamped(),
-                ..node.clone()
-            })
-        };
-        Some(Self {
-            focus: own(&self.focus)?,
-            ancestors: self.ancestors.iter().filter_map(own).collect(),
-            ..self.clone()
-        })
-    }
-
-    /// The node `id`, the focus or an ancestor, when it is one.
-    #[must_use]
-    pub fn node(&self, id: NodeId) -> Option<&HeldNode> {
-        std::iter::once(&self.focus)
-            .chain(&self.ancestors)
-            .find(|node| node.id == id)
     }
 }
 
@@ -543,39 +494,5 @@ mod tests {
             0,
             "another window of the same role and name"
         );
-    }
-
-    #[test]
-    fn a_focus_for_an_outpost_keeps_its_own_nodes_unstamped() {
-        let ours = |id| NodeId::new(id).with_outpost(OutpostId(3));
-        let node = |id: NodeId| HeldNode {
-            id,
-            backend: Backend::Msaa,
-            role: Role::Pane,
-            name: None,
-            states: StateSet::default(),
-            window: None,
-        };
-        let focus = HeldFocus {
-            trace_id: TraceId::mint(),
-            observed_at_us: 1,
-            focus: node(ours(5)),
-            ancestors: vec![
-                node(NodeId::new(9).with_outpost(OutpostId(4))),
-                node(ours(4)),
-            ],
-            top_level: None,
-            alive: true,
-        };
-        let mine = focus.for_outpost(OutpostId(3)).expect("the focus is ours");
-        assert_eq!(mine.focus.id, NodeId::new(5));
-        assert_eq!(
-            mine.ancestors
-                .iter()
-                .map(|node| node.id)
-                .collect::<Vec<_>>(),
-            vec![NodeId::new(4)]
-        );
-        assert_eq!(focus.for_outpost(OutpostId(4)), None);
     }
 }

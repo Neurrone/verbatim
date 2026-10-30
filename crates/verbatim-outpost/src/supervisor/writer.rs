@@ -75,9 +75,7 @@ pub(super) enum Outgoing {
     /// listener.
     Fact(Option<FactKey>, SupervisorToOutpost, Received),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
-    /// `HookInstalled` or `HookRemoved` to the listener; and `CoreFocus`
-    /// to the listener and the outposts concerned, which their judgments
-    /// before a read depend on.
+    /// `HookInstalled` or `HookRemoved` to the listener.
     HandOver(SupervisorToOutpost),
     /// A part of a UIA focus's read routed to an outpost, which waits on
     /// its marker, so it gets through as a hand-over message does, with
@@ -382,6 +380,17 @@ impl WriterHandle {
     /// carries it.
     pub(super) fn leave_held(&self, held: SupervisorToOutpost) {
         self.sender.with_backlog(|queue| queue.leave(held));
+    }
+
+    /// Writes `held`, a [`SupervisorToOutpost::NodesHeld`], behind every
+    /// command waiting now, in place of a list left in the slot, which it
+    /// supersedes. When the queue is full it is left in the slot instead,
+    /// for the next command written to carry.
+    pub(super) fn send_held(&self, held: SupervisorToOutpost) {
+        self.sender.with_backlog(|queue| queue.held = None);
+        if let Err(QueueError::Full) = self.push(Outgoing::Other(held.clone(), Received::now())) {
+            self.leave_held(held);
+        }
     }
 
     /// Closes the writer: nothing more is accepted, and the pipe is closed

@@ -618,7 +618,7 @@ fn a_change_of_a_focus_core_no_longer_holds_is_not_read() {
     app.send("set-focus item2");
     let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
-    outpost.core_focus_elsewhere();
+    outpost.release_all();
     common::reset_hits(hwnd);
     app.send("set-description item2 Second choice");
     outpost.heard(&[Heard::Msaa(WinEventKind::DescriptionChange)]);
@@ -1049,7 +1049,7 @@ fn a_foreground_change_after_another_application_s_focus_is_reported() {
     let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     // Observed now, after the outpost's focus.
-    outpost.core_focus_elsewhere();
+    outpost.release_all();
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: hwnd.0 as isize,
     });

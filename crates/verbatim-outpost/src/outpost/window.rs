@@ -14,8 +14,7 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId,
-    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_DISABLED,
-    WS_SYSMENU,
+    InternalGetWindowText, IsHungAppWindow, IsWindow, IsWindowVisible, WS_DISABLED, WS_SYSMENU,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
@@ -113,14 +112,6 @@ pub(crate) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
 pub(crate) fn foreground_window_handle() -> isize {
     // SAFETY: GetForegroundWindow has no preconditions.
     unsafe { GetForegroundWindow() }.0 as isize
-}
-
-/// Whether `child` is `parent` or one of its child windows, by the parent
-/// chain alone (`IsChild`, which follows no owner), as NVDA's
-/// `winUser.isDescendantWindow` decides it. A local call.
-pub(crate) fn is_descendant_window(parent: isize, child: isize) -> bool {
-    // SAFETY: IsChild tolerates any pair of handles.
-    parent == child || unsafe { IsChild(hwnd(parent), hwnd(child)) }.as_bool()
 }
 
 /// `handle`'s top-level window (`GetAncestor` with `GA_ROOT`), or 0 for an

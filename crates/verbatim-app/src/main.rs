@@ -1114,6 +1114,10 @@ struct ReducerThread<'a> {
     shell_items_wanted: shell_requests::ShellItemsWanted,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
+    /// The outposts a focus report of which was handled since the views
+    /// were last sent, which are written the nodes Core holds in them
+    /// ([`send_views`](Self::send_views)).
+    focus_reported: BTreeSet<OutpostId>,
     /// The highest numbered harness key handled so far.
     handled_input: u64,
     /// Turns the outposts' frames, which the supervisor's relay posts
@@ -1388,11 +1392,12 @@ impl ReducerThread<'_> {
                     None => source,
                 };
                 if self.in_ignored_window(&event, window.as_ref()) {
-                    // Core has judged the focus, refused: the outpost and the
-                    // listener hear so, and judge nothing more against it.
-                    let owner = self.held_focus_owner();
-                    let queued = self.state.focuses_queued();
-                    self.tell_core_focus(Some((trace_id, outpost)), queued, owner);
+                    // Core has judged the focus, refused: the outpost hears
+                    // the nodes Core holds after it, as after any focus
+                    // report.
+                    if matches!(event, verbatim_model::NormalizedEvent::FocusChanged { .. }) {
+                        self.focus_reported.insert(outpost);
+                    }
                     return;
                 }
                 let first_observed_us = match timing.observed_at_us {
@@ -1671,19 +1676,16 @@ impl ReducerThread<'_> {
             | Input::PreviewSpeech { trace_id, .. } => *trace_id,
             _ => TraceId::mint(),
         };
-        let queued = self.state.focuses_queued();
-        let held_before = self.held_focus_owner();
-        // A focus event is judged, taken or refused, by the reducer.
-        let judged = match &input {
-            Input::Event {
-                trace_id,
-                event: verbatim_model::NormalizedEvent::FocusChanged { node, .. },
-                ..
-            } => Some((*trace_id, node.id.outpost())),
-            _ => None,
-        };
+        // A focus report, taken or refused, has its outpost told the nodes
+        // Core holds there once the message is handled ([`send_views`]).
+        if let Input::Event {
+            event: verbatim_model::NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } = &input
+        {
+            self.focus_reported.insert(node.id.outpost());
+        }
         let effects = reduce(&mut self.state, &input);
-        self.tell_core_focus(judged, queued, held_before);
         if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
         {
             self.context.readiness.notify();
@@ -1704,41 +1706,6 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// The outpost whose node the focus Core holds is, and whether that
-    /// focus is alive.
-    fn held_focus_owner(&self) -> Option<(OutpostId, bool)> {
-        self.state.held_focus_owner()
-    }
-
-    /// Tells the focus listener and the outposts concerned the focus Core
-    /// holds (decision D14, "Where the rules run";
-    /// `SupervisorToOutpost::CoreFocus`), after an input that judged the
-    /// focus event `judged`, its trace and outpost, or changed Core's
-    /// focus: one Core took (`queued`, the count of focuses taken before
-    /// the input, has moved), or one whose outpost ended (`before`, the
-    /// focus's outpost and liveness before the input, differs). The
-    /// outpost whose event was judged hears of it; when the focus changed,
-    /// so do the outposts whose focus it was and now is.
-    fn tell_core_focus(
-        &self,
-        judged: Option<(TraceId, OutpostId)>,
-        queued: u64,
-        before: Option<(OutpostId, bool)>,
-    ) {
-        let now = self.held_focus_owner();
-        let changed = self.state.focuses_queued() != queued || now != before;
-        let Some(outposts) =
-            notice_recipients(judged.map(|(_, outpost)| outpost), changed, (before, now))
-        else {
-            return;
-        };
-        self.context.supervisor.core_focus(
-            judged.map(|(trace, _)| trace),
-            self.state.held_focus(),
-            outposts,
-        );
-    }
-
     /// Sends the views derived from the reducer state, when they change: to
     /// the supervisor, the application holding attention and the outposts in
     /// which the state holds nodes; to each live outpost, the nodes held in
@@ -1753,11 +1720,16 @@ impl ReducerThread<'_> {
     /// before Core had taken it. The text anchors the state holds in each
     /// outpost go with its nodes.
     ///
-    /// The held nodes are not written as they change: they are left for
-    /// the outpost ([`live::Live::held_changed`] says when they changed,
-    /// the position of the last message handled included), and the next
-    /// command written to it, a request or the relay's ping within three
-    /// seconds, carries them (`docs/design/communication.md`, step 11).
+    /// The held nodes are written to an outpost when the set Core holds
+    /// there changed, or after a focus report of its was handled, so the
+    /// outpost releases what Core let go of within one pipe hop
+    /// (`docs/design/ownership-one-judge.md`, "Manageability"). Any other
+    /// change, of the held anchors or of the position of the last message
+    /// handled alone, is left for the outpost, and the next command written
+    /// to it, a request or the relay's ping within three seconds, carries
+    /// it (`docs/design/communication.md`, step 11): the caret's anchor
+    /// changes with every key, and a write for each would cost a pipe
+    /// write and the outpost's reader wake on the typing path.
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
@@ -1783,15 +1755,33 @@ impl ReducerThread<'_> {
                 .get(outpost)
                 .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
                 .unwrap_or_default();
-            if live.held_changed(&nodes, &outpost_anchors) {
-                self.context.supervisor.leave_nodes_held(
-                    *outpost,
-                    nodes.into_iter().collect(),
-                    outpost_anchors.into_iter().collect(),
-                    live.position,
-                );
+            let reported = self.focus_reported.contains(outpost);
+            match live.held_changed(&nodes, &outpost_anchors) {
+                live::HeldChange::None => {}
+                change => {
+                    let (nodes, anchors) = (
+                        nodes.into_iter().collect(),
+                        outpost_anchors.into_iter().collect(),
+                    );
+                    if change == live::HeldChange::Nodes || reported {
+                        self.context.supervisor.send_nodes_held(
+                            *outpost,
+                            nodes,
+                            anchors,
+                            live.position,
+                        );
+                    } else {
+                        self.context.supervisor.leave_nodes_held(
+                            *outpost,
+                            nodes,
+                            anchors,
+                            live.position,
+                        );
+                    }
+                }
             }
         }
+        self.focus_reported.clear();
     }
 
     /// Tells each live outpost the details the active theme wants read
@@ -2170,6 +2160,7 @@ fn reducer_loop(
         focus_now_wanted: HashMap::new(),
         shell_items_wanted: shell_requests::ShellItemsWanted::default(),
         views: (None, BTreeSet::new()),
+        focus_reported: BTreeSet::new(),
         handled_input: 0,
         frames: context.supervisor.frames(),
         barrier: idle::IdleBarrier::default(),
@@ -2644,68 +2635,8 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
         })
 }
 
-/// The outpost whose node the focus Core holds is, and whether it is alive.
-type FocusOwner = Option<(OutpostId, bool)>;
-
-/// The outposts told of the focus Core holds after an input
-/// (`SupervisorToOutpost::CoreFocus`), or `None` when none is to be told:
-/// the outpost whose focus event the input judged, `judged`, and, when
-/// Core's focus `changed`, the outposts whose focus it was and now is, by
-/// their owners `before` and `now`, each once. The listener is told
-/// whenever any outpost is.
-fn notice_recipients(
-    judged: Option<OutpostId>,
-    changed: bool,
-    (before, now): (FocusOwner, FocusOwner),
-) -> Option<Vec<OutpostId>> {
-    if judged.is_none() && !changed {
-        return None;
-    }
-    let concerned = if changed {
-        [
-            judged,
-            before.map(|(outpost, _)| outpost),
-            now.map(|(outpost, _)| outpost),
-        ]
-    } else {
-        [judged, None, None]
-    };
-    let mut outposts: Vec<OutpostId> = Vec::new();
-    for outpost in concerned.into_iter().flatten() {
-        if !outposts.contains(&outpost) {
-            outposts.push(outpost);
-        }
-    }
-    Some(outposts)
-}
-
 #[cfg(test)]
 mod tests {
-    /// The outposts told of Core's focus: the one whose focus event was
-    /// judged; when the focus moved, the ones it moved from and to, once
-    /// each; and none when nothing was judged and nothing moved.
-    #[test]
-    fn core_s_focus_is_told_to_the_judged_outpost_and_those_it_moved_between() {
-        use verbatim_model::OutpostId;
-        let (a, b) = (OutpostId(3), OutpostId(4));
-        assert_eq!(
-            super::notice_recipients(Some(a), false, (Some((b, true)), Some((b, true)))),
-            Some(vec![a]),
-            "a refused focus: the judged outpost alone"
-        );
-        assert_eq!(
-            super::notice_recipients(Some(a), true, (Some((b, true)), Some((a, true)))),
-            Some(vec![a, b]),
-            "a focus taken from another outpost's"
-        );
-        assert_eq!(
-            super::notice_recipients(None, true, (Some((a, true)), Some((a, false)))),
-            Some(vec![a]),
-            "the focus's outpost ended"
-        );
-        assert_eq!(super::notice_recipients(None, false, (None, None)), None);
-    }
-
     use super::*;
 
     /// The Verbatim+F11 press the router receives, with its repeat count.

@@ -1303,9 +1303,9 @@ pub(super) fn msaa_enrichment(
 }
 
 /// The kept MSAA nodes a focus walk compares what it reads with, by NVDA's
-/// equality (`verbatim_ia2::equality`): the focus line Core holds, as this
-/// outpost knows it, and the newest focus this outpost reported that Core
-/// has not judged, each innermost first.
+/// equality (`verbatim_ia2::equality`): the line of every report whose
+/// focus node this outpost has not released, one of which is Core's, the
+/// newest first, each innermost first.
 pub(super) fn msaa_candidates(context: &Context) -> Candidates {
     let held = context.held();
     let line = |focus: &super::held::Focus| {
@@ -1315,13 +1315,7 @@ pub(super) fn msaa_candidates(context: &Context) -> Candidates {
             .map(|node| node.id)
             .collect::<Vec<NodeId>>()
     };
-    Candidates::new(
-        held.core()
-            .into_iter()
-            .chain(held.newest_unjudged())
-            .map(line)
-            .collect(),
-    )
+    Candidates::new(held.focuses().rev().map(line).collect())
 }
 
 /// How long gathering a dialog's own text through UI Automation may take,
@@ -1332,8 +1326,8 @@ pub(super) fn msaa_candidates(context: &Context) -> Candidates {
 const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How many of `nodes`, a new focus line outermost first ending with its
-/// focus, the focus had already entered from any of the focuses events are
-/// judged against: those above or at where the line meets one of theirs
+/// focus, the focus had already entered from any report's line: those above
+/// or at where the line meets one of theirs
 /// (`verbatim_core::focus_rules::already_entered`).
 fn entered_before<'a>(
     focuses: impl IntoIterator<Item = &'a super::held::Focus>,
@@ -1356,14 +1350,15 @@ fn entered_before<'a>(
 pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 
 /// Gives every dialog among `nodes`, the chain of a focus, outermost first,
-/// that the focus Core holds is not already inside and that has
-/// no description of its own, its own text as its description
+/// that has no description of its own, its own text as its description
 /// (`docs/nvda/object-model.md`, "A dialog's own text"), while descriptions
-/// are read at all: a dialog the focus newly enters, by the rule the
-/// reducer speaks entered containers by
-/// (`verbatim_core::focus_rules::already_entered`; decision D14, "Where the
-/// rules run"). A dialog the focus stays inside is not read again: the
-/// chain the focus is reported with keeps the text it was given.
+/// are read at all. A dialog no report's line is already inside is read,
+/// by the rule the reducer speaks entered containers by
+/// (`verbatim_core::focus_rules::already_entered`); one a report's line is
+/// already inside, a superset of Core's line, is given the text that
+/// report carried for it, with no call, so Core, which speaks it only when
+/// its own line enters the dialog, always has it
+/// (`docs/design/ownership-one-judge.md`, "The reports, from the store").
 ///
 /// `memo` is taken: a dialog it names is given its text without reading it
 /// again. With `remember`, the last text read is kept in it for the next
@@ -1379,11 +1374,23 @@ pub(super) fn describe_dialogs<'a>(
         return;
     }
     let mut nodes: Vec<&mut NodeSnapshot> = nodes.into_iter().collect();
-    // The focuses the focus enters a dialog from: the focus Core holds,
-    // when it is this outpost's, and those this outpost reported that Core
-    // has not judged yet, one of which Core's focus may yet be. A dialog
-    // at or above where the new line meets any of them is not read again.
-    let entered = entered_before(context.held().focuses(), &nodes);
+    // The reports the focus enters a dialog from, one of whose lines is
+    // Core's. A dialog at or above where the new line meets any of them is
+    // not read again: it carries the text a report gave it.
+    let (entered, carried) = {
+        let held = context.held();
+        let entered = entered_before(held.focuses(), &nodes);
+        let carried: Vec<Option<Option<String>>> = nodes
+            .iter()
+            .take(entered)
+            .map(|node| {
+                is_dialog(node.role)
+                    .then(|| held.dialog_text(node.id))
+                    .flatten()
+            })
+            .collect();
+        (entered, carried)
+    };
     for (index, node) in nodes.iter_mut().enumerate() {
         if !is_dialog(node.role)
             || node
@@ -1391,8 +1398,13 @@ pub(super) fn describe_dialogs<'a>(
                 .description
                 .as_deref()
                 .is_some_and(|description| !description.trim().is_empty())
-            || index < entered
         {
+            continue;
+        }
+        if index < entered {
+            if let Some(Some(text)) = carried.get(index) {
+                node.details.description.clone_from(text);
+            }
             continue;
         }
         let text = match &remembered {
@@ -2262,12 +2274,12 @@ pub(super) fn dump_tree(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_core::focus_rules::{HeldFocus, HeldNode};
+    use verbatim_core::focus_rules::HeldNode;
     use verbatim_model::{
         Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet, TraceId, WindowHandle,
     };
 
-    use super::super::held::Held;
+    use super::super::held::{Evidence, Focus, Held};
     use super::super::window::window_owner;
     use super::{
         CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice,
@@ -2379,16 +2391,18 @@ mod tests {
             window: window.map(WindowHandle),
         };
         let mut held = Held::default();
-        held.core_focus(
-            None,
-            Some(HeldFocus {
-                trace_id: TraceId::mint(),
-                observed_at_us: 1,
-                focus: held_node(2, Role::Button, Some("OK"), None),
+        held.reported(
+            Focus {
+                trace: TraceId::mint(),
+                node: held_node(2, Role::Button, Some("OK"), None),
                 ancestors: vec![held_node(1, Role::Dialog, Some("Remove"), Some(20))],
-                top_level: Some(WindowHandle(7)),
-                alive: true,
-            }),
+                top_level: 7,
+                entered_in_front: None,
+                event: None,
+                simple_child: false,
+                dialog_texts: Vec::new(),
+            },
+            Evidence::Msaa,
         );
         let node = |id, role, window: Option<u64>| NodeSnapshot {
             id: NodeId::new(id),

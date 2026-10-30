@@ -12,20 +12,19 @@
 //! missing its pings, the application's later facts go to the next, whether
 //! or not it holds attention. Repeated failures for one application are
 //! never given up, and are spaced by the backoff, whose count a foreground
-//! change to the application starts again. The focus Core holds is told to
-//! the outposts concerned as well as to the listener, and to no other
-//! outpost, and never to a generation that has ended.
+//! change to the application starts again.
 //!
 //! This test binary runs itself four ways: as an application, a process with
 //! no windows that runs until its standard input closes; as a stand-in for
 //! the focus listener, which says it is ready, answers idle queries, and,
-//! the first time the supervisor tells it the focus Core holds, sends the
-//! facts the test names in [`FACTS`]; and as a stand-in for the outpost
+//! on the first idle query once the test names facts in [`FACTS`], sends
+//! them and leaves that query unanswered, so no outpost is asked; and as a
+//! stand-in for the outpost
 //! binary, started for an application or as a spare (`--spare`). The
 //! stand-in outpost says it is ready or a spare, answers pings, says `Ready`
 //! for `Assign`, reports with a fault the test reads that it was started
-//! for its application ([`DIRECT`]), each fact delivered to it, each focus
-//! of Core's it is told of, and each idle query, answers each idle query, and fails as [`MUTE_SPARE`] and
+//! for its application ([`DIRECT`]), each fact delivered to it, and each
+//! idle query, answers each idle query, and fails as [`MUTE_SPARE`] and
 //! [`Failing`] say. Nothing makes a UI Automation or `WinEvent` call, so
 //! the test touches nothing on the desktop. Its own `main` recognizes each
 //! command line.
@@ -345,19 +344,16 @@ fn stand_in(args: &[String]) -> ! {
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            Ok(Some(SupervisorToOutpost::CoreFocus { .. })) if listener && !facts_sent => {
+            // The test's first idle round, once facts are scripted, has the
+            // listener send them, and is left unanswered, so no outpost is
+            // asked.
+            Ok(Some(SupervisorToOutpost::IdleQuery { .. }))
+                if listener && !facts_sent && !scripted_facts().is_empty() =>
+            {
                 facts_sent = true;
                 for fact in scripted_facts() {
                     send(&fact);
                 }
-            }
-            Ok(Some(SupervisorToOutpost::CoreFocus { focus, .. })) if !listener => {
-                send(&OutpostToSupervisor::Fault {
-                    detail: format!(
-                        "Core's focus {}",
-                        if focus.is_some() { "here" } else { "elsewhere" }
-                    ),
-                });
             }
             Ok(Some(SupervisorToOutpost::Assign { target_pid })) => {
                 mute = assign(&send, outpost_pid, target_pid);
@@ -793,7 +789,7 @@ fn a_fact_that_may_not_start_an_outpost_or_an_ignored_processs_takes_no_spare() 
     let run = Run::start(&[ignored_pid]);
     run.keep_spares();
 
-    run.supervisor.core_focus(None, None, Vec::new());
+    run.supervisor.query_idle(1);
     // Neither the ignored process's focus nor the other's drop took the
     // oldest spare.
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
@@ -877,7 +873,7 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
     let run = Run::start(&[]);
     run.keep_spares();
 
-    run.supervisor.core_focus(None, None, Vec::new());
+    run.supervisor.query_idle(1);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_spare(5, 2);
     failing.fail(1);
@@ -969,7 +965,7 @@ fn an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once() {
     );
     run.expect_ready(OutpostId(4), first_pid);
     run.expect_spare(6, 2);
-    run.supervisor.core_focus(None, None, Vec::new());
+    run.supervisor.query_idle(1);
     run.expect_report(OutpostId(4), "fact 7");
 
     run.finish(ShutdownSummary {
@@ -1072,117 +1068,6 @@ fn served<const N: usize>(run: &Run, applications: [Pid; N]) -> [(OutpostId, Pid
     })
 }
 
-/// The next `count` reports of stand-in outposts, each outpost's in the
-/// order it sent them.
-fn reports(run: &Run, count: usize) -> Vec<(OutpostId, Vec<String>)> {
-    let mut reports: Vec<(OutpostId, Vec<String>)> = Vec::new();
-    for _ in 0..count {
-        match run.next() {
-            OutpostMessage::Event {
-                outpost, message, ..
-            } => match *message {
-                OutpostToSupervisor::Fault { detail } => {
-                    match reports.iter_mut().find(|(from, _)| *from == outpost) {
-                        Some((_, details)) => details.push(detail),
-                        None => reports.push((outpost, vec![detail])),
-                    }
-                }
-                other => panic!("{outpost} said {other:?}, not a report"),
-            },
-            other => panic!("the supervisor said {other:?}, not an outpost's report"),
-        }
-    }
-    reports.sort_by_key(|(outpost, _)| *outpost);
-    reports
-}
-
-/// The focus Core holds, after Core's focus moved from an outpost's to
-/// another's, is told to the listener and to the outpost whose focus it
-/// held, which hears that its focus is elsewhere, and to no other outpost
-/// (decision D14, "Where the rules run"). The listener, told,
-/// sends a fact to each application's outpost, which reaches each behind
-/// anything told to it before.
-fn core_s_focus_is_told_to_the_outposts_concerned_and_no_other() {
-    let (first, first_pid) = application_and_pid();
-    let (second, second_pid) = application_and_pid();
-    set_env(FACTS, format!("focus:{first_pid}:9,focus:{second_pid}:10"));
-    let run = Run::start(&[]);
-    run.keep_spares();
-    run.supervisor.ensure_spawned(first_pid);
-    assert_eq!(run.expect_started(first_pid), OutpostId(3));
-    run.expect_ready(OutpostId(3), first_pid);
-    run.expect_spare(5, 2);
-    run.supervisor.ensure_spawned(second_pid);
-    assert_eq!(run.expect_started(second_pid), OutpostId(4));
-    run.expect_ready(OutpostId(4), second_pid);
-    run.expect_spare(6, 2);
-
-    run.supervisor.core_focus(
-        None,
-        Some(common::held_focus(OutpostId(4), 42)),
-        vec![OutpostId(3)],
-    );
-    assert_eq!(
-        reports(&run, 3),
-        [
-            (
-                OutpostId(3),
-                vec!["Core's focus elsewhere".to_owned(), "fact 9".to_owned()]
-            ),
-            (OutpostId(4), vec!["fact 10".to_owned()]),
-        ]
-    );
-
-    run.finish(ShutdownSummary {
-        clean: 6,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    clear_env(FACTS);
-    for application in [first, second] {
-        end(application);
-    }
-}
-
-/// Core's focus, for an outpost that has since ended, is told to the
-/// listener alone: the generation that replaced it for its application
-/// reported no focus, and hears nothing of it.
-fn core_s_focus_is_not_told_to_an_outpost_that_ended() {
-    let (first, first_pid) = application_and_pid();
-    set_env(FACTS, format!("focus:{first_pid}:9"));
-    let run = Run::start(&[]);
-    run.keep_spares();
-    run.supervisor.ensure_spawned(first_pid);
-    assert_eq!(run.expect_started(first_pid), OutpostId(3));
-    let crashing = run.expect_ready(OutpostId(3), first_pid);
-    run.expect_spare(5, 2);
-    kill(crashing);
-    run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
-    assert_eq!(run.expect_started(first_pid), OutpostId(4));
-    run.expect_ready(OutpostId(4), first_pid);
-    run.expect_spare(6, 2);
-
-    run.supervisor.core_focus(
-        None,
-        Some(common::held_focus(OutpostId(9), 42)),
-        vec![OutpostId(3)],
-    );
-    assert_eq!(
-        reports(&run, 1),
-        [(OutpostId(4), vec!["fact 9".to_owned()])]
-    );
-
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 1,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    clear_env(FACTS);
-    end(first);
-}
-
 /// Repeated failures of one application's outposts, which does not hold
 /// attention, are each replaced and never given up, and are spaced by the
 /// backoff: the first is replaced at once; the second waits a second, and
@@ -1220,7 +1105,7 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
     // change, held meanwhile, reaches the next outpost.
     kill(process);
     run.expect_ended(outpost, first_pid, EndReason::Exited);
-    run.supervisor.core_focus(None, None, Vec::new());
+    run.supervisor.query_idle(1);
     [(outpost, process)] = served(&run, [first_pid]);
     run.expect_report(outpost, "fact 7");
 
@@ -1338,7 +1223,7 @@ fn main() {
     }
     // libtest's own options, such as a name filter, are accepted and
     // ignored: the binary runs all of its tests.
-    let tests: [(&str, fn()); 14] = [
+    let tests: [(&str, fn()); 12] = [
         (
             "a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once",
             a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once,
@@ -1386,14 +1271,6 @@ fn main() {
         (
             "a_given_spare_that_misses_its_pings_is_ended_as_killed",
             a_given_spare_that_misses_its_pings_is_ended_as_killed,
-        ),
-        (
-            "core_s_focus_is_told_to_the_outposts_concerned_and_no_other",
-            core_s_focus_is_told_to_the_outposts_concerned_and_no_other,
-        ),
-        (
-            "core_s_focus_is_not_told_to_an_outpost_that_ended",
-            core_s_focus_is_not_told_to_an_outpost_that_ended,
         ),
     ];
     let filter = args.iter().skip(1).find(|arg| !arg.starts_with('-'));

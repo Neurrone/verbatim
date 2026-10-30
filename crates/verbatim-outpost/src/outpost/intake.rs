@@ -457,8 +457,9 @@ pub(super) enum Handling {
     Run,
     /// As a menu opening, after the batch's focus events.
     Menu,
-    /// As one entry of a focus group, which is reported or not.
-    Tried,
+    /// As one entry of a focus group, which is reported or not, of this
+    /// rank in it, 0 for the newest.
+    Tried(u32),
 }
 
 impl Planned {
@@ -474,9 +475,14 @@ impl Planned {
             Planned::Run(entry) => handle(entry, Handling::Run).map(|_| ()),
             Planned::Menu(entry) => handle(entry, Handling::Menu).map(|_| ()),
             Planned::Focus(entries) => {
-                try_newest_first(entries, |entry| handle(entry, Handling::Tried))
+                try_newest_first(entries, |rank, entry| handle(entry, Handling::Tried(rank)))
             }
         }
+    }
+
+    /// Whether the item is a focus group.
+    pub(super) fn is_focus_group(&self) -> bool {
+        matches!(self, Planned::Focus(_))
     }
 
     /// The entries, in the order the worker may handle them.
@@ -1883,17 +1889,16 @@ fn in_raised_order(kept: &[Waiting], run: &mut [usize]) {
 }
 
 /// Handles a focus group's entries ([`Planned::Focus`]), newest first,
-/// each with `handle`, until one is reported: `handle` answers whether its
-/// entry was, a foreground change counting as reported when the worker
-/// reported its window, and `Err` stops at once. As NVDA's `pumpAll` tries
-/// a run of focus and foreground events, stopping at the first one
-/// processed.
+/// each with `handle`, given its rank, until one ends the group: `handle`
+/// answers whether its entry did, and `Err` stops at once. As NVDA's
+/// `pumpAll` tries a run of focus and foreground events, stopping at the
+/// first one processed.
 pub(super) fn try_newest_first<E>(
     entries: Vec<Entry>,
-    mut handle: impl FnMut(Entry) -> Result<bool, E>,
+    mut handle: impl FnMut(u32, Entry) -> Result<bool, E>,
 ) -> Result<(), E> {
-    for entry in entries {
-        if handle(entry)? {
+    for (rank, entry) in (0..).zip(entries) {
+        if handle(rank, entry)? {
             break;
         }
     }

@@ -4341,31 +4341,6 @@ fn two_windows_with_one_role_and_name_are_two_containers() {
     );
 }
 
-/// The focus Core holds, as it tells the outposts, carries the handle of
-/// each node that is a window, so that an outpost judges a dialog newly
-/// entered as Core does (`docs/parity/focus-context.md`, "Focus-ancestry
-/// context").
-#[test]
-fn the_focus_core_holds_carries_its_windows_handles() {
-    let dialog = window_node(1, Backend::Msaa, Role::Dialog, "Remove", 20);
-    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
-    let (state, _) = reduce(
-        &SrState::new(),
-        &focus_in(Pid(1), foreground_window(7), button, vec![dialog]),
-    );
-    let held = state.held_focus().expect("Core holds the focus");
-    assert_eq!(
-        (
-            held.ancestors
-                .iter()
-                .map(|node| node.window)
-                .collect::<Vec<_>>(),
-            held.focus.window
-        ),
-        (vec![Some(WindowHandle(20))], None)
-    );
-}
-
 #[test]
 fn a_name_change_on_a_focus_ancestor_is_silent() {
     let source = Pid(1);

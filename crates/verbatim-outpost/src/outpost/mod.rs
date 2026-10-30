@@ -195,10 +195,12 @@ pub(crate) struct Context {
     /// by: the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
     observation: OnceLock<crate::arbitration::ObservationClock>,
-    /// The focus Core holds, and the focuses this outpost reported that
-    /// Core has not judged, which events are judged against before they are
-    /// read (decision D14, "Where the rules run"; [`held`]).
+    /// The reports whose focus node this outpost has not released, which
+    /// it reads changes for ([`held`]).
     held: Mutex<held::Held>,
+    /// How many focus groups this outpost generation has tried: the number
+    /// of the last ([`Context::next_focus_group`]).
+    focus_groups: std::sync::atomic::AtomicU64,
     /// The client on a thread of its own for the worker's operations with a
     /// deadline of their own: a dialog's text.
     bounded: verbatim_uia::BoundedClient,
@@ -506,6 +508,14 @@ impl Context {
 
     fn held(&self) -> MutexGuard<'_, held::Held> {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The number of the next focus group the worker tries, from 1, which
+    /// every report of the group carries (`verbatim_model::FocusGroup`).
+    fn next_focus_group(&self) -> u64 {
+        self.focus_groups
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
     }
 
     fn classic_windows(&self) -> MutexGuard<'_, HashMap<isize, u32>> {
@@ -1042,6 +1052,7 @@ impl Outpost {
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
             held: Mutex::new(held::Held::default()),
+            focus_groups: std::sync::atomic::AtomicU64::new(0),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
@@ -1496,13 +1507,6 @@ impl Outpost {
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. } => {}
-            // The focus Core holds, after it judged a focus event of this
-            // outpost's or its focus moved to or from this application:
-            // taken in at once, without the worker, which reads it as it
-            // judges its next event.
-            SupervisorToOutpost::CoreFocus { judged, focus, .. } => {
-                context.held().core_focus(*judged, focus.clone());
-            }
             SupervisorToOutpost::NodesHeld {
                 nodes,
                 anchors,

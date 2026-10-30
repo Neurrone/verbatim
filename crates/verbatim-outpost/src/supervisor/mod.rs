@@ -71,7 +71,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
-use verbatim_model::{OutpostId, Pid, TraceId};
+use verbatim_model::{OutpostId, Pid};
 use verbatim_process::port_queue::Progress;
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
@@ -558,6 +558,37 @@ impl Supervisor {
         }
     }
 
+    /// Writes for one outpost generation the list of its nodes and text
+    /// anchors Core still holds, with the position of the last of its
+    /// messages the app has handled, behind every command waiting for it
+    /// now, in place of a list left and not yet sent
+    /// ([`leave_nodes_held`](Self::leave_nodes_held)): the app writes it
+    /// after it handled a focus report, or a message that changed the nodes
+    /// Core holds there, so the outpost releases what Core let go of within
+    /// one pipe hop (`docs/design/ownership-one-judge.md`, "Manageability").
+    /// Nothing happens if the generation has ended.
+    pub fn send_nodes_held(
+        &self,
+        outpost: OutpostId,
+        nodes: Vec<u64>,
+        anchors: Vec<u64>,
+        acknowledged: u64,
+    ) {
+        let writer = self
+            .writers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&outpost)
+            .cloned();
+        if let Some(writer) = writer {
+            writer.send_held(SupervisorToOutpost::NodesHeld {
+                nodes,
+                anchors,
+                acknowledged,
+            });
+        }
+    }
+
     /// Shuts down every outpost and the focus listener for Verbatim's exit,
     /// and returns once every one has ended: each is sent the shutdown
     /// message and given its time limit to exit, and killed through its job
@@ -595,23 +626,5 @@ impl Supervisor {
     /// is waited for first, so the round covers the facts held for it.
     pub fn query_idle(&self, round: u64) {
         let _ = self.owner.send(owner::OwnerEvent::IdleRound(round));
-    }
-
-    /// Tells the focus listener and `outposts` the focus Core holds,
-    /// `focus`, once Core has judged the focus event traced `judged` or
-    /// its focus has changed ([`SupervisorToOutpost::CoreFocus`]): the
-    /// listener without its ancestors, and each outpost only when the focus
-    /// is its own.
-    pub fn core_focus(
-        &self,
-        judged: Option<TraceId>,
-        focus: Option<crate::protocol::HeldFocus>,
-        outposts: Vec<OutpostId>,
-    ) {
-        let _ = self.owner.send(owner::OwnerEvent::CoreFocus {
-            judged,
-            focus,
-            outposts,
-        });
     }
 }

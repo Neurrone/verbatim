@@ -20,9 +20,9 @@
 //! its pipe to Core on round 1's query, which ends it as Core sees it,
 //! and exits when Core then shuts it down, so it is counted as shut down
 //! cleanly however soon Core looks; on any later round's, it first sends a focus
-//! fact for the application the test named by the focus Core holds, whose
-//! observation time is that application's pid, if it named one, then the
-//! answer.
+//! fact for the application the test named in the round's number, whose
+//! low 32 bits are that application's pid ([`naming`]), if it named one,
+//! then the answer.
 
 use std::io::{BufReader, Read as _};
 use std::process::{Child, Command, Stdio};
@@ -99,7 +99,6 @@ fn stand_in(args: &[String]) -> ! {
     }
     let mut commands = BufReader::new(commands);
     let mut facts = 0;
-    let mut fact_for = None;
     loop {
         let command = match read_message::<_, SupervisorToOutpost>(&mut commands) {
             Ok(Some(command)) => command,
@@ -115,16 +114,13 @@ fn stand_in(args: &[String]) -> ! {
             SupervisorToOutpost::Shutdown => std::process::exit(0),
             SupervisorToOutpost::Cancel { request_id: 0 } if !listener => send(&ready),
             SupervisorToOutpost::DeliverFact { .. } => facts += 1,
-            SupervisorToOutpost::CoreFocus {
-                focus: Some(focus), ..
-            } => {
-                fact_for = Some(Pid(u32::try_from(focus.observed_at_us).expect("a pid")));
-            }
             SupervisorToOutpost::IdleQuery { round: 1 } if listener => {
                 drop(messages.borrow_mut().take());
             }
             SupervisorToOutpost::IdleQuery { round } => {
-                if let Some(pid) = fact_for.take() {
+                let named = u32::try_from(round & u64::from(u32::MAX)).expect("a pid");
+                if listener && round > u64::from(u32::MAX) {
+                    let pid = Pid(named);
                     send(&OutpostToSupervisor::FocusFact {
                         trace_id: TraceId::mint(),
                         timing: EventTiming::default(),
@@ -150,6 +146,13 @@ fn stand_in(args: &[String]) -> ! {
             _ => {}
         }
     }
+}
+
+/// The number of the idle round `round` that names the application `pid`,
+/// for which the stand-in listener sends a focus fact before its answer:
+/// `round` in the high 32 bits, the pid in the low.
+fn naming(round: u64, pid: Pid) -> u64 {
+    round << 32 | u64::from(pid.0)
 }
 
 /// The next message from the supervisor, which must come within [`WAIT`].
@@ -277,46 +280,26 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     supervisor.ensure_spawned(first_pid);
     let first = started(&events, first_pid);
     make_ready(&supervisor, &events, first, first_pid);
-    supervisor.core_focus(
-        None,
-        Some(common::held_focus(OutpostId(9), u64::from(first_pid.0))),
-        Vec::new(),
-    );
-    supervisor.query_idle(2);
-    queried(&events, 2, &[first]);
-    from_outpost(&events, first, &facts_before(1, 2));
-    from_outpost(
-        &events,
-        first,
-        &OutpostToSupervisor::IdleAnswer { round: 2 },
-    );
+    let round = naming(2, first_pid);
+    supervisor.query_idle(round);
+    queried(&events, round, &[first]);
+    from_outpost(&events, first, &facts_before(1, round));
+    from_outpost(&events, first, &OutpostToSupervisor::IdleAnswer { round });
 
     // Round 3: the listener's fact is for an application with no outpost,
     // which starts one, holding the fact for it. The round asks both
     // outposts once the launch has reported; the new one is asked once it
     // is ready, behind the fact.
     let (second_app, second_pid) = application();
-    supervisor.core_focus(
-        None,
-        Some(common::held_focus(OutpostId(9), u64::from(second_pid.0))),
-        Vec::new(),
-    );
-    supervisor.query_idle(3);
+    let round = naming(3, second_pid);
+    supervisor.query_idle(round);
     let second = started(&events, second_pid);
-    queried(&events, 3, &[first, second]);
-    from_outpost(&events, first, &facts_before(0, 3));
-    from_outpost(
-        &events,
-        first,
-        &OutpostToSupervisor::IdleAnswer { round: 3 },
-    );
+    queried(&events, round, &[first, second]);
+    from_outpost(&events, first, &facts_before(0, round));
+    from_outpost(&events, first, &OutpostToSupervisor::IdleAnswer { round });
     make_ready(&supervisor, &events, second, second_pid);
-    from_outpost(&events, second, &facts_before(1, 3));
-    from_outpost(
-        &events,
-        second,
-        &OutpostToSupervisor::IdleAnswer { round: 3 },
-    );
+    from_outpost(&events, second, &facts_before(1, round));
+    from_outpost(&events, second, &OutpostToSupervisor::IdleAnswer { round });
 
     assert_eq!(
         supervisor.shutdown(),

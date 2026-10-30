@@ -289,10 +289,12 @@ pub(super) enum WatchChange {
     Wake(Option<std::time::Instant>),
 }
 
-/// The report to record for Core's judgement ([`Effects::report`]).
+/// The report to record among those the outpost reads changes for
+/// ([`Effects::report`]).
 pub(super) enum Report {
-    /// A focus or foreground change reported.
-    Reported(held::Focus),
+    /// A focus or foreground change reported, with its own evidence of
+    /// whether it repeats the newest report.
+    Reported(held::Focus, held::Evidence),
     /// A focus-now answer's control, which keeps the event of the same
     /// focus judged against before it (`worker::answer_to_judge`).
     Answered(held::Focus),

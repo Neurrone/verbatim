@@ -1,33 +1,27 @@
-//! The focus Core holds, as an outpost judges its application's events
-//! against it before it reads them (decision D14, "Where the rules run").
+//! The outpost's reports whose focus node it has not released: what it
+//! reads changes for (`docs/design/ownership-one-judge.md`, "The reports,
+//! from the store").
 //!
-//! Core sends an outpost the focus it holds whenever it judges one of the
-//! outpost's focus events, taken or refused, and whenever its focus moves
-//! to or from the outpost's application (`SupervisorToOutpost::CoreFocus`),
-//! with the node ids as the outpost issued them. The rules themselves are
-//! `verbatim_core::focus_rules`'.
-//!
-//! Between a focus report and Core's judgement of it, Core's focus can yet
-//! become the focus reported, so the outpost keeps the focuses it reported
-//! that Core has not judged ([`Held::unjudged`]) beside the focus Core
-//! holds, and judges an event against them all: a change is read when it
-//! can be spoken for any of them, since the reducer decides after the read
-//! with the focus it holds then; a focus or foreground change is dropped
-//! as a repeat only when it repeats every one of them, since Core's focus
-//! will be one of them whatever Core judges. Once Core has judged them,
-//! the focus it holds is the only one.
+//! An outpost reads changes for every node it has not released, and Core's
+//! targeting decides what is spoken. Core's focus line is always a set of
+//! nodes the outpost carried and Core still holds, so it is always among
+//! these reports' lines; while a `NodesHeld` is in flight the outpost has
+//! released only what Core released at an acknowledged position, so the
+//! set can be larger than Core's, never smaller: a lag costs reads, never a
+//! word. A report is added at the worker's commit and removed by the
+//! worker's release, under the same locks, when the store releases its
+//! focus node. The outpost judges nothing against Core's focus.
 
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
-use verbatim_core::focus_rules::{HeldFocus, HeldNode};
-use verbatim_model::{NodeId, Role, StateSet, TraceId};
+use verbatim_core::focus_rules::HeldNode;
+use verbatim_model::{EarlierElement, NodeId, Role, StateSet, TraceId};
 
-/// One focus as the outpost judges against it: the focus Core holds, or
-/// one it reported that Core has not judged yet, with what the outpost
+/// One focus or foreground report of this outpost's, with what the outpost
 /// recorded of it as it reported it.
 #[derive(Clone, Debug)]
 pub(super) struct Focus {
-    /// The trace of the event it came from, by which Core names it.
+    /// The trace of the event it came from.
     pub(super) trace: TraceId,
     /// The focus.
     pub(super) node: HeldNode,
@@ -40,12 +34,16 @@ pub(super) struct Focus {
     /// (`Worker::is_foreground_window`); `None` when it was not.
     pub(super) entered_in_front: Option<isize>,
     /// The MSAA event address it came from: an MSAA focus's, or a
-    /// foreground change's, which NVDA's second foreground test compares.
+    /// foreground change's.
     pub(super) event: Option<(isize, i32, i32)>,
     /// Whether it is an MSAA focus acquired as a simple child, whose child
     /// id can be reused, so a focus event at its address is never a repeat
     /// of it.
     pub(super) simple_child: bool,
+    /// The own text of each dialog of its line, as the report carried it:
+    /// a later report whose line meets this one at or below a dialog
+    /// carries the same text, with no call (`read::describe_dialogs`).
+    pub(super) dialog_texts: Vec<(NodeId, Option<String>)>,
 }
 
 impl Focus {
@@ -63,124 +61,149 @@ impl Focus {
             .chain(&self.ancestors)
             .find(|node| node.id == id)
     }
+
+    /// Whether `other` has the same focus and the same line.
+    fn same_line(&self, other: &Focus) -> bool {
+        self.node.id == other.node.id && self.chain_ids().eq(other.chain_ids())
+    }
 }
 
-/// The focus Core holds and the focuses reported since that Core has not
-/// judged, as the outpost knows them.
+/// What a new report's own evidence says of whether it repeats the newest
+/// report: the reader's read of the element it held under a UIA node, or
+/// the MSAA event address and whether it was acquired as a simple child.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Evidence {
+    /// A UIA focus, with what its reader read of the element it held
+    /// before under its node.
+    Uia(Option<EarlierElement>),
+    /// An MSAA focus or a foreground change, by its event address.
+    Msaa,
+}
+
+/// The reports whose focus node this outpost has not released, oldest
+/// first, and the states the outpost last read of a focus.
 #[derive(Default)]
 pub(super) struct Held {
-    /// The focus Core holds, when it is this outpost's.
-    core: Option<Focus>,
-    /// The focuses this outpost reported that Core has not judged, oldest
-    /// first.
-    unjudged: VecDeque<Focus>,
+    /// The reports, oldest first: one per focus node and line, a newer
+    /// report of the same node and line taking the older's place.
+    reports: Vec<Focus>,
     /// A focus's states as this outpost last read them, so a state change
     /// tells whether it newly expanded the focus.
     states_read: Option<(NodeId, StateSet)>,
 }
 
 impl Held {
-    /// The focus `focus` has been reported: Core has not judged it yet.
-    pub(super) fn reported(&mut self, focus: Focus) {
-        self.states_read = Some((focus.node.id, focus.node.states));
-        self.unjudged.push_back(focus);
-    }
-
-    /// Core judged this outpost's focus event traced `judged`, if any, and
-    /// every one reported before it, and holds `focus`, this outpost's, or
-    /// none of this outpost's (`SupervisorToOutpost::CoreFocus`).
-    pub(super) fn core_focus(&mut self, judged: Option<TraceId>, focus: Option<HeldFocus>) {
-        let mut judged_focuses = Vec::new();
-        if let Some(judged) = judged
-            && let Some(at) = self.unjudged.iter().position(|focus| focus.trace == judged)
-        {
-            judged_focuses.extend(self.unjudged.drain(..=at));
+    /// The focus `focus` has been reported, with `evidence`: a report of
+    /// the newest report's node whose evidence says the same element still
+    /// has the focus is a repeat, which leaves the states last read as they
+    /// were.
+    pub(super) fn reported(&mut self, focus: Focus, evidence: Evidence) {
+        if !self.repeats_newest(&focus, evidence) {
+            self.states_read = Some((focus.node.id, focus.node.states));
         }
-        let Some(held) = focus else {
-            self.core = None;
-            return;
+        self.reports.retain(|report| !report.same_line(&focus));
+        self.reports.push(focus);
+    }
+
+    /// Whether `focus`, with `evidence`, repeats the newest report by its
+    /// own evidence: the same node, and for UIA its reader read the element
+    /// it held still focused or held none, for MSAA the same event address
+    /// not acquired as a simple child.
+    pub(super) fn repeats_newest(&self, focus: &Focus, evidence: Evidence) -> bool {
+        let Some(newest) = self.reports.last() else {
+            return false;
         };
-        // What this outpost recorded of the focus as it reported it.
-        let recorded = judged_focuses
-            .into_iter()
-            .rev()
-            .chain(self.core.take())
-            .find(|focus| focus.trace == held.trace_id);
-        let top_level = held
-            .top_level
-            .map_or(0, |top| isize::from_ne_bytes(top.0.to_ne_bytes()));
-        self.core = Some(Focus {
-            trace: held.trace_id,
-            node: held.focus,
-            ancestors: held.ancestors,
-            top_level,
-            entered_in_front: recorded.as_ref().and_then(|focus| focus.entered_in_front),
-            event: recorded.as_ref().and_then(|focus| focus.event),
-            simple_child: recorded.is_some_and(|focus| focus.simple_child),
+        newest.node.id == focus.node.id
+            && match evidence {
+                Evidence::Uia(earlier) => {
+                    matches!(earlier, None | Some(EarlierElement::Focused))
+                }
+                Evidence::Msaa => {
+                    focus.event.is_some() && newest.event == focus.event && !focus.simple_child
+                }
+            }
+    }
+
+    /// The store released `released`, by node number: every report whose
+    /// focus node is one of them is forgotten, and so are the states last
+    /// read of a released focus.
+    pub(super) fn release(&mut self, released: &HashSet<u64>) {
+        self.reports.retain(|report| {
+            let kept = !released.contains(&report.node.id.number());
+            if !kept {
+                tracing::debug!(
+                    trace = %report.trace,
+                    node = ?report.node.id,
+                    "a report's focus node is released; its changes are no longer read"
+                );
+            }
+            kept
         });
+        if self
+            .states_read
+            .is_some_and(|(node, _)| released.contains(&node.number()))
+        {
+            self.states_read = None;
+        }
     }
 
-    /// The focus Core holds, when it is this outpost's.
-    pub(super) fn core(&self) -> Option<&Focus> {
-        self.core.as_ref()
+    /// The reports, oldest first.
+    pub(super) fn focuses(&self) -> impl DoubleEndedIterator<Item = &Focus> {
+        self.reports.iter()
     }
 
-    /// The newest focus this outpost reported that Core has not judged.
-    pub(super) fn newest_unjudged(&self) -> Option<&Focus> {
-        self.unjudged.back()
-    }
-
-    /// Whether Core has judged every focus this outpost reported.
-    #[cfg(test)]
-    pub(super) fn settled(&self) -> bool {
-        self.unjudged.is_empty()
-    }
-
-    /// The focuses an event is judged against: the focus Core holds, when
-    /// it is this outpost's, and those Core has not judged yet.
-    pub(super) fn focuses(&self) -> impl Iterator<Item = &Focus> {
-        self.core.iter().chain(&self.unjudged)
-    }
-
-    /// The focus Core will hold once it has judged what this outpost
-    /// reported, as far as the outpost can tell: the newest it reported
-    /// that Core has not judged, else the focus Core holds. What the
-    /// outpost reads of a focus's element for an event, such as the list it
-    /// controls, it reads of this one.
+    /// The newest report: what the outpost reads of a focus's element for
+    /// an event, such as the list it controls, it reads of this one.
     pub(super) fn expected(&self) -> Option<&Focus> {
-        self.unjudged.back().or(self.core.as_ref())
+        self.reports.last()
     }
 
-    /// Whether `node` is the focus of any of the focuses events are judged
-    /// against ([`focuses`](Self::focuses)).
+    /// The newest report whose top-level window is `top_level`, not 0.
+    pub(super) fn newest_in(&self, top_level: isize) -> Option<&Focus> {
+        (top_level != 0)
+            .then(|| {
+                self.reports
+                    .iter()
+                    .rev()
+                    .find(|report| report.top_level == top_level)
+            })
+            .flatten()
+    }
+
+    /// Whether `node` is the focus of any report.
     pub(super) fn is_a_focus(&self, node: NodeId) -> bool {
         self.focuses().any(|focus| focus.node.id == node)
     }
 
-    /// The role `node` was read with, of any of the focuses events are
-    /// judged against, the newest first.
+    /// The role `node` was read with, of any report's line, the newest
+    /// first.
     pub(super) fn role_of(&self, node: NodeId) -> Option<Role> {
-        self.unjudged
+        self.reports
             .iter()
             .rev()
-            .chain(self.core.iter())
             .find_map(|focus| focus.node(node))
             .map(|node| node.role)
     }
 
+    /// The text a report's line carried for dialog `node`, the newest
+    /// report first, when one did.
+    pub(super) fn dialog_text(&self, node: NodeId) -> Option<Option<String>> {
+        self.reports.iter().rev().find_map(|focus| {
+            focus
+                .dialog_texts
+                .iter()
+                .find(|(dialog, _)| *dialog == node)
+                .map(|(_, text)| text.clone())
+        })
+    }
+
     /// Whether `node` was expanded when its states were last read, and
-    /// records `states` as its states now: a focus's, when it is one of the
-    /// focuses events are judged against; `None` for any other node.
+    /// records `states` as its states now: a report's focus's; `None` for
+    /// any other node.
     pub(super) fn replace_states(&mut self, node: NodeId, states: StateSet) -> Option<bool> {
-        if !self.is_a_focus(node) {
-            return None;
-        }
-        let before = match self.states_read {
-            Some((read, before)) if read == node => before,
-            _ => self.role_states(node)?,
-        };
+        let before = self.expanded_before(node)?;
         self.states_read = Some((node, states));
-        Some(before.contains(verbatim_model::State::Expanded))
+        Some(before)
     }
 
     /// Whether `node` was expanded when its states were last read, as
@@ -198,13 +221,12 @@ impl Held {
         Some(before.contains(verbatim_model::State::Expanded))
     }
 
-    /// The states `node`, a focus, was reported or taken with, the newest
+    /// The states `node`, a report's focus, was reported with, the newest
     /// first.
     fn role_states(&self, node: NodeId) -> Option<StateSet> {
-        self.unjudged
+        self.reports
             .iter()
             .rev()
-            .chain(self.core.iter())
             .find(|focus| focus.node.id == node)
             .map(|focus| focus.node.states)
     }
@@ -212,7 +234,7 @@ impl Held {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{Backend, State, WindowHandle};
+    use verbatim_model::{Backend, State};
 
     use super::*;
 
@@ -227,71 +249,86 @@ mod tests {
         }
     }
 
-    fn reported(trace: TraceId, id: u64) -> Focus {
+    fn reported(id: u64) -> Focus {
         Focus {
-            trace,
+            trace: TraceId::mint(),
             node: node(id, Role::Button),
             ancestors: vec![node(100, Role::Dialog)],
             top_level: 7,
             entered_in_front: Some(7),
-            event: Some((7, -4, 0)),
+            event: Some((7, -4, i32::try_from(id).unwrap_or(0))),
             simple_child: false,
+            dialog_texts: Vec::new(),
         }
     }
 
-    fn held_focus(trace: TraceId, id: u64) -> HeldFocus {
-        HeldFocus {
-            trace_id: trace,
-            observed_at_us: 1,
-            focus: node(id, Role::Button),
-            ancestors: vec![node(100, Role::Dialog)],
-            top_level: Some(WindowHandle(7)),
-            alive: true,
-        }
+    fn released(numbers: &[u64]) -> HashSet<u64> {
+        numbers.iter().copied().collect()
     }
 
+    /// A report stays until the store releases its focus node, whatever
+    /// reports come after it, and is then forgotten.
     #[test]
-    fn a_focus_reported_is_judged_against_until_core_judges_it() {
+    fn a_report_stays_until_its_focus_node_is_released() {
         let mut held = Held::default();
-        let (first, second) = (TraceId::mint(), TraceId::mint());
-        held.reported(reported(first, 1));
-        held.reported(reported(second, 2));
-        assert!(!held.settled());
-        assert_eq!(held.expected().map(|focus| focus.trace), Some(second));
-        held.core_focus(Some(first), Some(held_focus(first, 1)));
-        assert!(!held.settled(), "the second still waits");
-        assert!(held.is_a_focus(1.into_node()) && held.is_a_focus(2.into_node()));
-        held.core_focus(Some(second), Some(held_focus(first, 1)));
-        assert!(held.settled());
-        assert!(
-            !held.is_a_focus(2.into_node()),
-            "Core refused the second: its focus is the first"
+        held.reported(reported(1), Evidence::Msaa);
+        held.reported(reported(2), Evidence::Msaa);
+        assert_eq!(
+            held.focuses()
+                .map(|focus| focus.node.id)
+                .collect::<Vec<_>>(),
+            vec![NodeId::new(1), NodeId::new(2)]
+        );
+        held.release(&released(&[100]));
+        assert_eq!(
+            held.focuses().count(),
+            2,
+            "an ancestor's release keeps both"
+        );
+        held.release(&released(&[1]));
+        assert_eq!(
+            held.focuses()
+                .map(|focus| focus.node.id)
+                .collect::<Vec<_>>(),
+            vec![NodeId::new(2)]
         );
         assert_eq!(
-            held.core()
-                .map(|focus| (focus.entered_in_front, focus.event)),
-            Some((Some(7), Some((7, -4, 0)))),
-            "what the outpost recorded of the focus Core took"
+            held.expected().map(|focus| focus.node.id),
+            Some(NodeId::new(2))
         );
     }
 
+    /// A state change tells whether it newly expanded a report's focus.
     #[test]
     fn a_state_change_tells_whether_it_newly_expanded_a_focus() {
         let mut held = Held::default();
-        held.reported(reported(TraceId::mint(), 1));
+        held.reported(reported(1), Evidence::Msaa);
         let expanded = StateSet::default().with(State::Expanded);
-        assert_eq!(held.replace_states(1.into_node(), expanded), Some(false));
-        assert_eq!(held.replace_states(1.into_node(), expanded), Some(true));
-        assert_eq!(held.replace_states(3.into_node(), expanded), None);
+        assert_eq!(held.replace_states(NodeId::new(1), expanded), Some(false));
+        assert_eq!(held.replace_states(NodeId::new(1), expanded), Some(true));
+        assert_eq!(held.replace_states(NodeId::new(3), expanded), None);
     }
 
-    trait IntoNode {
-        fn into_node(self) -> NodeId;
-    }
-
-    impl IntoNode for u64 {
-        fn into_node(self) -> NodeId {
-            NodeId::new(self)
-        }
+    /// A repeat of the newest report by its own evidence leaves the states
+    /// last read as they were; a report of the same node whose reader read
+    /// another element under it does not.
+    #[test]
+    fn a_repeat_by_its_own_evidence_leaves_the_states_read() {
+        let mut held = Held::default();
+        held.reported(reported(1), Evidence::Uia(None));
+        let expanded = StateSet::default().with(State::Expanded);
+        assert_eq!(held.replace_states(NodeId::new(1), expanded), Some(false));
+        held.reported(reported(1), Evidence::Uia(Some(EarlierElement::Focused)));
+        assert_eq!(
+            held.expanded_before(NodeId::new(1)),
+            Some(true),
+            "the repeat kept the expanded state read since"
+        );
+        held.reported(reported(1), Evidence::Uia(Some(EarlierElement::NotFocused)));
+        assert_eq!(
+            held.expanded_before(NodeId::new(1)),
+            Some(false),
+            "a new element under the node"
+        );
     }
 }

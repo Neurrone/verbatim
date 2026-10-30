@@ -74,15 +74,15 @@
 //! ([`OutpostUnderTest::idle_round`]) reaches the outpost's idle answer,
 //! which waits while its record is open.
 //!
-//! The test stands in for Core's judgement of focuses too (decision D14,
-//! "Where the rules run"): as each focus the outpost reports, or each
-//! focus-now answer with a control, is read from its pipe, Core takes it,
-//! but for a foreground change of the window its focus is already in, which
-//! Core ignores, and tells the outpost and the listener's reader the focus
-//! it holds (`SupervisorToOutpost::CoreFocus`), as verbatim.exe does once
-//! the reducer has judged it. A test whose focus Core takes from another
-//! application says so ([`OutpostUnderTest::core_focus_elsewhere`],
-//! [`OutpostUnderTest::listener_core_focus_elsewhere`]).
+//! The test stands in for Core's holding of the outpost's nodes too: as
+//! each focus the outpost reports, or each focus-now answer with a control,
+//! is read from its pipe, Core takes it, but for a foreground change of the
+//! window its focus is already in, which Core refuses, and holds its focus
+//! line, counting the position of every message that carries nodes. The
+//! outpost reads changes for every node it has not released, so nothing is
+//! released until a test delivers Core's list of the nodes it holds, as
+//! verbatim.exe writes it after a focus report
+//! ([`OutpostUnderTest::release`], [`OutpostUnderTest::release_all`]).
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
@@ -96,8 +96,8 @@ use verbatim_model::{
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, HeldElements, Judged};
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, FocusNow, FocusedControl, HeldFocus, HeldNode, OutpostToSupervisor,
-    Query, QueryOutcome, QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
+    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
+    QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{GapTimer, Heard, Outpost, OutpostOptions};
 use verbatim_process::overlapped::{End, Flow, pipe};
@@ -448,6 +448,15 @@ fn observe_on_the_tests_time(
     (clock, gap_timer)
 }
 
+/// The focus line the stand-in for Core holds in the outpost: the trace of
+/// the report it took it from, its nodes, outermost first, ending with the
+/// focus, and its top-level window.
+struct CoreHolds {
+    trace: TraceId,
+    line: Vec<NodeId>,
+    top_level: Option<WindowHandle>,
+}
+
 /// A real outpost in this process, watching mockapp, with its pipe to Core.
 pub struct OutpostUnderTest {
     pub outpost: Outpost,
@@ -479,8 +488,11 @@ pub struct OutpostUnderTest {
     /// The elements of the focuses the listener's reader accepted, by how
     /// Core judged them.
     held_elements: HeldElements,
-    /// The focus the stand-in for Core holds ([`Self::core_judges`]).
-    core: RefCell<Option<HeldFocus>>,
+    /// The focus line the stand-in for Core holds ([`Self::core_judges`]).
+    core: RefCell<Option<CoreHolds>>,
+    /// The position of the last message read that carries nodes, as Core
+    /// counts them, which Core's list of held nodes acknowledges.
+    position: Cell<u64>,
     /// The trace of the UIA focus event the listener's reader last read,
     /// which its read is delivered under, as the listener sends it.
     last_read: Cell<Option<TraceId>>,
@@ -695,6 +707,7 @@ impl OutpostUnderTest {
             held_elements,
             failed_reads_taken: Cell::new(0),
             core: RefCell::new(None),
+            position: Cell::new(0),
             last_read: Cell::new(None),
             observation,
             gap_timer,
@@ -884,42 +897,36 @@ impl OutpostUnderTest {
             .messages
             .recv_timeout(super::WAIT_TIMEOUT)
             .expect("the outpost says something before the wait times out");
+        if message.carries_nodes() {
+            self.position.set(self.position.get() + 1);
+        }
         self.core_judges(&message);
         message
     }
 
-    /// Stands in for Core judging `message` (decision D14, "Where the rules
-    /// run"): a focus the outpost reported, or a focus-now answer's
-    /// control, becomes the focus Core holds, but for a foreground change
-    /// of the window its focus is already in, which Core ignores, its
-    /// ancestors those it was reported with, where Core keeps the previous
-    /// chain down to where they meet; and a repeat of the focus Core holds
-    /// the trace that focus came from, as Core keeps it. The outpost and the
-    /// listener's reader are told, as verbatim.exe tells them.
+    /// Stands in for Core judging `message`: a focus the outpost reported,
+    /// or a focus-now answer's control, becomes the focus Core holds, with
+    /// the line it was reported with, but for a foreground change of the
+    /// window its focus is already in, which Core refuses.
     fn core_judges(&self, message: &OutpostToSupervisor) {
-        let held = HeldNode::of;
-        let (trace, observed, node, foreground, ancestors, top_level, earlier) = match message {
+        let (trace, node, foreground, ancestors, top_level) = match message {
             OutpostToSupervisor::Event {
                 trace_id,
-                observed_at_us,
                 window,
                 event:
                     NormalizedEvent::FocusChanged {
                         node,
                         foreground,
                         ancestors,
-                        earlier,
                         ..
                     },
                 ..
             } => (
                 *trace_id,
-                *observed_at_us,
                 node,
                 *foreground,
                 ancestors,
                 window.as_ref().map(|window| window.top_level),
-                *earlier,
             ),
             OutpostToSupervisor::Reply {
                 trace_id,
@@ -931,7 +938,6 @@ impl OutpostUnderTest {
                 };
                 (
                     *trace_id,
-                    now.observed_at_us,
                     &control.node,
                     false,
                     &control.ancestors,
@@ -940,61 +946,59 @@ impl OutpostUnderTest {
                         .as_ref()
                         .or(now.window.as_ref().map(|(_, facts)| facts))
                         .map(|window| window.top_level),
-                    None,
                 )
             }
             _ => return,
         };
         let mut core = self.core.borrow_mut();
-        let ignored = foreground
+        let refused = foreground
             && core
                 .as_ref()
                 .is_some_and(|focus| focus.top_level.is_some() && focus.top_level == top_level);
-        if !ignored {
-            let ancestors = ancestors.iter().map(held).collect();
-            // A repeat of the focus it holds keeps the trace it was taken
-            // from, as Core keeps its newer reading under the old one: the
-            // same node, its earlier element still focused when the reader
-            // read it, else still alive.
-            let (trace_id, observed_at_us) = core
-                .as_ref()
-                .filter(|focus| {
-                    focus.focus.id == node.id
-                        && earlier.map_or(focus.alive, |earlier| {
-                            earlier == verbatim_model::EarlierElement::Focused
-                        })
-                })
-                .map_or((trace, observed), |focus| {
-                    (focus.trace_id, focus.observed_at_us)
-                });
-            *core = Some(HeldFocus {
-                trace_id,
-                observed_at_us,
-                focus: held(node),
-                ancestors,
+        if !refused {
+            *core = Some(CoreHolds {
+                trace,
+                line: ancestors
+                    .iter()
+                    .map(|ancestor| ancestor.id)
+                    .chain(std::iter::once(node.id))
+                    .collect(),
                 top_level,
-                alive: true,
             });
         }
-        let focus = core.clone();
-        drop(core);
-        self.tell_core_focus(Some(trace), focus);
     }
 
-    /// Tells the outpost and the listener's reader that Core judged the
-    /// focus event traced `judged` and holds `focus`, as verbatim.exe tells
-    /// them (`SupervisorToOutpost::CoreFocus`).
-    fn tell_core_focus(&self, judged: Option<TraceId>, focus: Option<HeldFocus>) {
-        self.held_elements.core_focus(
-            judged,
-            focus.as_ref().map(|focus| (focus.trace_id, focus.alive)),
-        );
+    /// Delivers Core's list of the nodes it holds in the outpost, `held`,
+    /// acknowledging every message read so far, as verbatim.exe writes it
+    /// after a focus report: the outpost releases every node it carried at
+    /// or before that position that is not among them, and so stops reading
+    /// changes for it.
+    pub fn release(&self, held: &[NodeId]) {
         self.outpost
-            .handle_command(&SupervisorToOutpost::CoreFocus {
-                judged,
-                focus,
-                sent_at_us: 0,
+            .handle_command(&SupervisorToOutpost::NodesHeld {
+                nodes: held.iter().map(|id| id.number()).collect(),
+                anchors: Vec::new(),
+                acknowledged: self.position.get(),
             });
+    }
+
+    /// [`release`](Self::release) with the focus line Core holds: what
+    /// Core writes after it judged the outpost's focus reports read so far.
+    pub fn release_to_core_line(&self) {
+        let line = self
+            .core
+            .borrow()
+            .as_ref()
+            .map(|core| core.line.clone())
+            .unwrap_or_default();
+        self.release(&line);
+    }
+
+    /// [`release`](Self::release) of every node: Core's focus moved to
+    /// another application, and it holds none of the outpost's.
+    pub fn release_all(&self) {
+        *self.core.borrow_mut() = None;
+        self.release(&[]);
     }
 
     /// Waits for the outpost to take in mockapp's next events, which must
@@ -1180,11 +1184,9 @@ impl OutpostUnderTest {
     /// shell window that only stages a switch.
     pub fn listener_core_refuses_last_read(&self) {
         let judged = self.last_read.take().expect("a focus the listener read");
-        let held = self.core.borrow().clone();
-        self.held_elements.core_focus(
-            Some(judged),
-            held.as_ref().map(|focus| (focus.trace_id, focus.alive)),
-        );
+        let held = self.core.borrow().as_ref().map(|core| core.trace);
+        self.held_elements
+            .core_focus(Some(judged), held.map(|trace| (trace, true)));
     }
 
     /// Tells the listener's reader that Core holds a focus no read of the
@@ -1193,19 +1195,6 @@ impl OutpostUnderTest {
     pub fn listener_core_focus_elsewhere(&self) {
         self.held_elements
             .core_focus(None, Some((TraceId::mint(), true)));
-    }
-
-    /// Tells the outpost that Core took another application's focus, as
-    /// the supervisor tells the outpost whose focus Core held before
-    /// (`SupervisorToOutpost::CoreFocus`).
-    pub fn core_focus_elsewhere(&self) {
-        *self.core.borrow_mut() = None;
-        self.outpost
-            .handle_command(&SupervisorToOutpost::CoreFocus {
-                judged: None,
-                focus: None,
-                sent_at_us: 0,
-            });
     }
 
     /// The fact the focus listener sends for a UIA focus event on `element`

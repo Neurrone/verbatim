@@ -116,7 +116,7 @@ use verbatim_model::{
     TextReply, TraceId, TreeNode, WindowFacts,
 };
 
-pub use verbatim_core::focus_rules::{HeldFocus, HeldNode};
+pub use verbatim_core::focus_rules::HeldNode;
 
 /// The identity-free contents of a UIA focus element, as the focus listener
 /// captures them (decision D13): the runtime id plus role, name, value,
@@ -732,32 +732,6 @@ pub enum SupervisorToOutpost {
         #[serde(default)]
         sent_at_us: u64,
     },
-    /// The focus Core holds (decision D14, "Where the rules run"), for the
-    /// judgments the focus listener and the outposts make before they read
-    /// an element: sent to the listener, to the outpost whose focus event
-    /// Core has just judged, and to the outposts whose focus Core's focus
-    /// was or now is, whenever Core judges a focus event, taken or
-    /// refused, or its focus changes. A judge holds back the drops that
-    /// depend on Core's focus while a focus it sent has not been judged.
-    CoreFocus {
-        /// The focus event Core has just judged, by its trace, when this
-        /// notice follows one; every focus event the receiver sent before it
-        /// has been judged too.
-        #[serde(default)]
-        judged: Option<TraceId>,
-        /// The focus Core holds, to the listener without its ancestors,
-        /// which it does not judge by, and to an outpost only when it is
-        /// that outpost's, with them, its node ids as the outpost
-        /// issued them (`HeldFocus::for_outpost`); `None` when Core holds
-        /// none, or another outpost's.
-        #[serde(default)]
-        focus: Option<HeldFocus>,
-        /// When verbatim.exe began writing this command to the listener's
-        /// pipe, in microseconds since the Unix epoch; 0 from an older peer
-        /// ([`SupervisorToOutpost::stamp_sent`]).
-        #[serde(default)]
-        sent_at_us: u64,
-    },
     /// To an outpost: the listener forwards none of the application's
     /// `WinEvent` facts raised after `through`, and every one it forwarded
     /// before is ahead of this message, so the listener's copies and the
@@ -861,15 +835,14 @@ pub enum SupervisorToOutpost {
 }
 
 impl SupervisorToOutpost {
-    /// Stamps a command to the focus listener (a ping, a hand-over notice,
-    /// or the focus Core holds) with `now`, read just before the command's write
-    /// begins. Reads no clock for any other command.
+    /// Stamps a command to the focus listener (a ping or a hand-over
+    /// notice) with `now`, read just before the command's write begins.
+    /// Reads no clock for any other command.
     pub fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
         match self {
             SupervisorToOutpost::Ping { sent_at_us, .. }
             | SupervisorToOutpost::HookInstalled { sent_at_us, .. }
-            | SupervisorToOutpost::HookRemoved { sent_at_us, .. }
-            | SupervisorToOutpost::CoreFocus { sent_at_us, .. } => *sent_at_us = now(),
+            | SupervisorToOutpost::HookRemoved { sent_at_us, .. } => *sent_at_us = now(),
             _ => {}
         }
     }
@@ -881,8 +854,7 @@ impl SupervisorToOutpost {
         match self {
             SupervisorToOutpost::Ping { sent_at_us, .. }
             | SupervisorToOutpost::HookInstalled { sent_at_us, .. }
-            | SupervisorToOutpost::HookRemoved { sent_at_us, .. }
-            | SupervisorToOutpost::CoreFocus { sent_at_us, .. } => *sent_at_us,
+            | SupervisorToOutpost::HookRemoved { sent_at_us, .. } => *sent_at_us,
             _ => 0,
         }
     }

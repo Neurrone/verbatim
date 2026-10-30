@@ -48,6 +48,8 @@ pub(super) struct BoundFocus {
     /// For an MSAA focus, its event's address and whether it was acquired
     /// as a simple child ([`super::held::Focus`]).
     pub(super) msaa_event: Option<((isize, i32, i32), bool)>,
+    /// Its entry's place in a focus group, which its report carries.
+    pub(super) group: Option<verbatim_model::FocusGroup>,
 }
 
 /// A focus walk's progress (the module's documentation).
