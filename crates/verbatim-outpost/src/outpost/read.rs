@@ -161,12 +161,48 @@ pub(super) type Enrichment = (Vec<NodeSnapshot>, Option<NodeSnapshot>);
 /// `chain`, outermost first, whose outermost entry is `met`, extended
 /// outward with the part of `previous` above `met`: NVDA reuses the
 /// previous focus's ancestors from where the new focus's ancestry meets
-/// them, rather than reading them again.
-fn splice(previous: &[NodeSnapshot], chain: Vec<NodeSnapshot>, met: NodeId) -> Vec<NodeSnapshot> {
+/// them, rather than reading them again. Each entry spliced is recorded as
+/// carried by the message the chain goes in, as a node looked up is
+/// (`docs/design/ownership-one-judge.md`, "Every carried node recorded as
+/// carried"); `previous` holds only entries the store still holds
+/// ([`held_prefix`]).
+pub(super) fn splice(
+    context: &Context,
+    previous: &[NodeSnapshot],
+    chain: Vec<NodeSnapshot>,
+    met: NodeId,
+) -> Vec<NodeSnapshot> {
+    let (chain, spliced) = splice_onto(previous, chain, met);
+    for node in spliced {
+        context.touch(node.id);
+    }
+    chain
+}
+
+/// [`splice`]'s chain, and the entries of `previous` it spliced on.
+fn splice_onto(
+    previous: &[NodeSnapshot],
+    chain: Vec<NodeSnapshot>,
+    met: NodeId,
+) -> (Vec<NodeSnapshot>, &[NodeSnapshot]) {
     let Some(index) = previous.iter().position(|node| node.id == met) else {
-        return chain;
+        return (chain, &[]);
     };
-    previous[..index].iter().cloned().chain(chain).collect()
+    let above = &previous[..index];
+    (above.iter().cloned().chain(chain).collect(), above)
+}
+
+/// The part of `previous`, a focus chain outermost first, that a walk may
+/// stop at and splice from: its entries above the outermost one the store
+/// no longer holds, so a walk that meets the chain below a released entry
+/// reads on rather than splicing a node no message may name any more.
+pub(super) fn held_prefix(context: &Context, mut previous: Vec<NodeSnapshot>) -> Vec<NodeSnapshot> {
+    let held = previous
+        .iter()
+        .position(|node| !context.holds(node.id))
+        .unwrap_or(previous.len());
+    previous.truncate(held);
+    previous
 }
 
 /// Why a read failed.
@@ -532,7 +568,7 @@ fn complete(
 ) -> Vec<NodeSnapshot> {
     match above {
         Above::Nothing => chain,
-        Above::Met(met) => splice(previous, chain, met),
+        Above::Met(met) => splice(context, previous, chain, met),
         Above::From(hwnd) => window_onward(context, uia, hwnd, (previous, candidates), out_of_time)
             .into_iter()
             .chain(chain)
@@ -755,7 +791,7 @@ fn window_object_onward(
         // every UIA ancestor is ([`Ancestor::is_focus_context`]).
         let below = if element.read().is_focus_context(&top) {
             if known(top_id) {
-                return Some(splice(previous, vec![top], top_id));
+                return Some(splice(context, previous, vec![top], top_id));
             }
             vec![top]
         } else {
@@ -780,7 +816,7 @@ fn window_object_onward(
     )?;
     if known(client.id) {
         let client_id = client.id;
-        return Some(splice(previous, vec![client], client_id));
+        return Some(splice(context, previous, vec![client], client_id));
     }
     let above = msaa_ancestors(
         context,
@@ -2282,7 +2318,7 @@ mod tests {
     use super::super::held::{Evidence, Focus, Held};
     use super::super::window::window_owner;
     use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice,
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice_onto,
         window_read_without_its_handle,
     };
 
@@ -2306,8 +2342,9 @@ mod tests {
     fn a_walk_meeting_the_previous_chain_reuses_what_lies_above() {
         let previous = vec![node(1), node(2), node(3)];
         // The new walk read 4 and then met 2, its outermost entry.
-        let spliced = splice(&previous, vec![node(2), node(4)], NodeId::new(2));
+        let (spliced, above) = splice_onto(&previous, vec![node(2), node(4)], NodeId::new(2));
         assert_eq!(ids(&spliced), ids(&[node(1), node(2), node(4)]));
+        assert_eq!(ids(above), ids(&[node(1)]));
     }
 
     #[test]
@@ -2324,8 +2361,10 @@ mod tests {
 
     #[test]
     fn a_walk_meeting_nothing_known_is_kept_whole() {
-        let spliced = splice(&[node(1)], vec![node(5), node(6)], NodeId::new(9));
+        let previous = [node(1)];
+        let (spliced, above) = splice_onto(&previous, vec![node(5), node(6)], NodeId::new(9));
         assert_eq!(ids(&spliced), ids(&[node(5), node(6)]));
+        assert!(above.is_empty());
     }
 
     fn text_area(role: Role) -> NodeSnapshot {

@@ -2694,9 +2694,11 @@ impl Worker<'_> {
 
     /// The last focus this outpost reported, with its ancestors.
     fn focus_chain(&self) -> Vec<NodeSnapshot> {
-        self.context
+        let chain = self
+            .context
             .watch
-            .follow(|follow| follow.tracking.chain.clone())
+            .follow(|follow| follow.tracking.chain.clone());
+        read::held_prefix(self.context, chain)
     }
 
     /// Whether an event named `event` from `hwnd` is accepted by NVDA's
@@ -5814,5 +5816,37 @@ mod tests {
             },
         );
         assert_eq!(context.watch.follow(|follow| follow.followed), before);
+    }
+
+    /// A walk that meets the chain of the focus before splices the entries
+    /// above where they meet, each recorded as carried by the message the
+    /// chain goes in, as a node looked up is; a chain whose outer entry the
+    /// store has released offers nothing below it to splice from, so the
+    /// walk reads on.
+    #[test]
+    fn a_spliced_entry_is_recorded_as_carried_and_none_is_spliced_from_a_released_one() {
+        let context = quiet_context();
+        let registry = &context.msaa_registry;
+        let window = registry.id_for((7, OBJID_WINDOW.0, CHILDID_SELF));
+        let pane = registry.id_for((8, OBJID_WINDOW.0, CHILDID_SELF));
+        let entry = |id: NodeId| NodeSnapshot {
+            id,
+            ..node(0, Role::Pane)
+        };
+        let previous = vec![entry(window), entry(pane)];
+        let _ = take_touched(&context);
+        let spliced = read::splice(
+            &context,
+            &read::held_prefix(&context, previous.clone()),
+            vec![entry(pane), node(99, Role::Button)],
+            pane,
+        );
+        assert_eq!(
+            spliced.iter().map(|node| node.id).collect::<Vec<_>>(),
+            vec![window, pane, NodeId::new(99)]
+        );
+        assert_eq!(take_touched(&context), vec![window.number()]);
+        drop(registry.retain(|id| id != window));
+        assert!(read::held_prefix(&context, previous).is_empty());
     }
 }

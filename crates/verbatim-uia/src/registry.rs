@@ -141,15 +141,28 @@ impl NodeIdRegistry {
     }
 
     /// The kept node for `runtime_id`, if there is one, without issuing a
-    /// node or recording it as reported.
+    /// node. It is recorded as touched, as every lookup is, since the
+    /// message the caller builds may name it: the outpost records it as
+    /// carried by that message, so an acknowledgement of an older message
+    /// cannot free it while this one waits.
     #[must_use]
     pub fn existing_id(&self, runtime_id: &[i32]) -> Option<NodeId> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .forward
-            .get(runtime_id)
-            .copied()
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let id = inner.forward.get(runtime_id).copied()?;
+        inner.touched.push(id);
+        Some(id)
+    }
+
+    /// Records `node` as touched, when it is kept, for a message that names
+    /// a node it did not look up, such as an entry spliced from a chain
+    /// read before; answers whether it is kept.
+    pub fn touch_kept(&self, node: NodeId) -> bool {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let kept = inner.reverse.contains_key(&node);
+        if kept {
+            inner.touched.push(node);
+        }
+        kept
     }
 
     /// Every kept node.
@@ -300,5 +313,22 @@ mod tests {
         let a = uia.id_for(&[1]);
         let b = other.id_for(&[1]);
         assert_ne!(a, b, "distinct registries sharing a counter never collide");
+    }
+
+    /// A node looked up without being issued is recorded as touched, so the
+    /// message that names it is recorded as carrying it; so is a kept node
+    /// a message names without a lookup, and a released one is not.
+    #[test]
+    fn a_lookup_and_a_kept_node_named_are_recorded_as_touched() {
+        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+        let kept = registry.id_for(&[1]);
+        let released = registry.id_for(&[2]);
+        let _ = registry.take_touched();
+        assert_eq!(registry.existing_id(&[1]), Some(kept));
+        assert_eq!(registry.take_touched(), vec![kept]);
+        drop(registry.retain(|id| id == kept));
+        assert!(registry.touch_kept(kept));
+        assert!(!registry.touch_kept(released));
+        assert_eq!(registry.take_touched(), vec![kept]);
     }
 }

@@ -510,6 +510,19 @@ impl Context {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Whether the store holds `node`: either registry keeps it.
+    fn holds(&self, node: NodeId) -> bool {
+        self.uia_registry.runtime_id_of(node).is_some() || self.msaa_registry.key_of(node).is_some()
+    }
+
+    /// Records `node` as carried by the next message sent, when the store
+    /// holds it ([`verbatim_uia::NodeIdRegistry::touch_kept`]).
+    fn touch(&self, node: NodeId) {
+        if !self.uia_registry.touch_kept(node) {
+            self.msaa_registry.touch_kept(node);
+        }
+    }
+
     /// The number of the next focus group the worker tries, from 1, which
     /// every report of the group carries (`verbatim_model::FocusGroup`).
     fn next_focus_group(&self) -> u64 {
