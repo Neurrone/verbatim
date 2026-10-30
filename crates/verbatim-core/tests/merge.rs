@@ -135,7 +135,7 @@ fn caret(offset: u32, changes: &[(bool, &str)]) -> NormalizedEvent {
 fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     verbatim_core::reduce(state, input)
         .into_iter()
-        .filter(|effect| matches!(effect, Effect::Speak(_) | Effect::PlayEarcon(_)))
+        .filter(|effect| matches!(effect, Effect::Speak(..) | Effect::PlayEarcon(_)))
         .collect()
 }
 
@@ -310,9 +310,12 @@ fn heard(effects: &[Effect]) -> Vec<String> {
     effects
         .iter()
         .map(|effect| match effect {
-            Effect::Speak(Utterance {
-                priority, segments, ..
-            }) => format!("{priority:?}: {segments:?}"),
+            Effect::Speak(
+                Utterance {
+                    priority, segments, ..
+                },
+                _,
+            ) => format!("{priority:?}: {segments:?}"),
             other => format!("{other:?}"),
         })
         .collect()
