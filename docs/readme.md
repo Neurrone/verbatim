@@ -65,6 +65,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
     the rules every component follows, and the order of the refactor.
   - [ownership-builds.md](design/ownership-builds.md) — the starting
     drafts of the refactor's builds, with the reviews' known traps.
+  - [ownership-one-judge.md](design/ownership-one-judge.md) — the
+    one judge build's design: repeats judged in Core, the one foreground
+    record, the followed focus and the listener's scheduler.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
