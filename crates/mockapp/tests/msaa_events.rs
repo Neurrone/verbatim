@@ -26,8 +26,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use verbatim_core::SrState;
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent,
-    State, TraceId, WindowFacts,
+    Backend, CallCounts, Earcon, Effect, FocusGroup, Input, NormalizedEvent, OutpostId, Pid,
+    SegmentContent, State, TraceId, WindowFacts,
 };
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, WinEventStamp};
 
@@ -44,6 +44,15 @@ const FIRST_FOREGROUND_REPORT_CALLS: CallCounts = CallCounts {
     uia: 0,
     msaa: 8,
     window_messages: 1,
+    connections: 0,
+};
+
+/// What reporting mockapp's window as the foreground a second time costs,
+/// measured: its client area read again, eleven MSAA calls.
+const REPEATED_FOREGROUND_REPORT_CALLS: CallCounts = CallCounts {
+    uia: 0,
+    msaa: 11,
+    window_messages: 0,
     connections: 0,
 };
 
@@ -602,11 +611,11 @@ fn a_selection_is_read_in_full_only_inside_a_focused_list() {
     app.quit();
 }
 
-/// A change is judged against the focus Core holds (decision D14, "Where
-/// the rules run"): once Core holds another application's focus, a
+/// A change is read for the nodes the outpost has not released: once Core
+/// holds another application's focus and releases the outpost's line, a
 /// description change on the list item this outpost reported last is not
-/// read, as Core would not speak it, and costs its acquisition alone; once
-/// Core holds the item again, its description change is reported.
+/// read, and costs its acquisition alone; once the item is reported again,
+/// under a new node, its description change is reported.
 fn a_change_of_a_focus_core_no_longer_holds_is_not_read() {
     use verbatim_outpost::Heard;
     common::init_com();
@@ -630,12 +639,12 @@ fn a_change_of_a_focus_core_no_longer_holds_is_not_read() {
     );
 
     let again = outpost.msaa_focus(hwnd, ITEM_TWO);
-    assert_eq!(again.node.id, reported.node.id);
+    assert_ne!(again.node.id, reported.node.id, "the released node is gone");
     app.send("set-description item2 Third choice");
     assert_eq!(
         next_event(&outpost),
         NormalizedEvent::PropertyChanged {
-            node_id: reported.node.id,
+            node_id: again.node.id,
             change: verbatim_model::PropertyChange::Description(Some("Third choice".to_owned())),
             child_count: None,
         }
@@ -981,22 +990,33 @@ fn a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried() {
     app.quit();
 }
 
-/// NVDA's first foreground test: with the focus already in mockapp's
-/// window, a focus on another item and a foreground change of that window
-/// in one batch, the change newest, have the change dropped, since the
-/// last focus queued is in its window, and the focus beside it tried and
-/// reported, as NVDA's `processForegroundWinEvent` returns false and its
-/// `pumpAll` tries the older focus event.
-fn a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it() {
+/// The group a focus report carries, with the report.
+fn group_of(event: &NormalizedEvent) -> Option<FocusGroup> {
+    match event {
+        NormalizedEvent::FocusChanged { group, .. } => *group,
+        other => panic!("{other:?} is not a focus report"),
+    }
+}
+
+/// With the focus already in mockapp's window, a focus on another item and
+/// a foreground change of that window in one batch, the change newest:
+/// whether the change is processed is Core's verdict, so both are
+/// reported, ranked in their group, and Core refuses the change, its focus
+/// being in the window, and takes the older entry, "Three", as NVDA's
+/// `processForegroundWinEvent` returns false and its `pumpAll` tries the
+/// older focus event.
+fn a_foreground_change_of_the_focus_s_window_and_the_focus_beside_it_are_reported_ranked() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-foreground-focus-window");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
 
     app.send("set-focus item2");
     let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    let _ = spoken_in(&mut state, focus_event(&reported), reported.facts.clone());
     app.send("set-focus item3");
     focus_then_foreground(
         &outpost,
@@ -1004,34 +1024,136 @@ fn a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it(
         ITEM_THREE,
         common::another_applications_window(),
     );
-    let reported = outpost.reported_focus();
-    assert_eq!(reported.chain(), [Some("Options"), Some("Three")]);
-    assert_eq!(reported.calls, FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS);
+    let (change, change_facts, change_calls) = next_event_with_calls(&outpost);
+    let (beside, beside_facts, beside_calls) = next_event_with_calls(&outpost);
+    outpost.settled();
+    let (change_group, beside_group) = (group_of(&change), group_of(&beside));
+    assert_eq!(
+        (
+            change_group.map(|group| group.rank),
+            beside_group.map(|group| group.rank),
+            change_group.map(|group| group.number) == beside_group.map(|group| group.number),
+        ),
+        (Some(0), Some(1), true),
+        "one group, the change newest"
+    );
+    assert_eq!(
+        (change_calls, beside_calls),
+        (
+            FOREGROUND_REPORT_CALLS,
+            FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS
+        )
+    );
+    assert_eq!(
+        spoken_in(&mut state, change, change_facts),
+        [] as [Vec<SegmentContent>; 0],
+        "the focus is already in the window"
+    );
+    assert_eq!(
+        spoken_in(&mut state, beside, in_front(beside_facts)),
+        [vec![
+            SegmentContent::Label("Three".to_owned()),
+            SegmentContent::NegatedState(State::Selected),
+        ]]
+    );
     app.quit();
 }
 
-/// NVDA's first foreground test, by a foreground report: a second
-/// foreground change of a window the outpost has just reported as the
-/// foreground is dropped, since that window is now the last focus queued,
-/// and nothing is said.
-fn a_second_foreground_change_of_a_reported_window_is_dropped() {
+/// A second foreground change of a window the outpost has just reported as
+/// the foreground is reported too, and Core, whose focus is that window,
+/// says nothing of it.
+fn a_second_foreground_change_of_a_reported_window_is_reported_and_silent() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-second-foreground");
     let app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
 
     let change = DeliveredFact::Foreground {
         hwnd: hwnd.0 as isize,
     };
     outpost.deliver(change.clone());
-    let (name, calls) = foreground_report(&outpost);
-    assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
-    assert_eq!(calls, FIRST_FOREGROUND_REPORT_CALLS);
+    let (first, first_facts, first_calls) = next_event_with_calls(&outpost);
+    assert_eq!(first_calls, FIRST_FOREGROUND_REPORT_CALLS);
+    assert_eq!(
+        spoken_in(&mut state, first, first_facts),
+        [vec![
+            SegmentContent::Label("Mockapp Counts Fixture".to_owned()),
+            SegmentContent::Role(verbatim_model::Role::Window),
+        ]]
+    );
     outpost.settled();
     outpost.deliver(change);
+    let (second, second_facts, second_calls) = next_event_with_calls(&outpost);
+    assert_eq!(second_calls, REPEATED_FOREGROUND_REPORT_CALLS);
+    assert_eq!(
+        spoken_in(&mut state, second, second_facts),
+        [] as [Vec<SegmentContent>; 0]
+    );
     outpost.settled();
     app.quit();
+}
+
+/// With Core's focus a list item, its window's foreground change is
+/// reported and Core refuses it, keeping its focus: the item, which the
+/// outpost has not released, still has its state change read, and Core
+/// says "checked".
+fn a_change_of_the_focus_after_its_window_s_refused_foreground_report_is_spoken() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-change-after-refused");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    app.send("set-focus item2");
+    let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
+    let _ = spoken_in(&mut state, focus_event(&reported), reported.facts.clone());
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    let (change, facts) = next_event_in(&outpost);
+    assert_eq!(
+        spoken_in(&mut state, change, facts),
+        [] as [Vec<SegmentContent>; 0],
+        "the focus is already in the window"
+    );
+    app.send("set-states item2 focusable focused checked");
+    let (event, facts) = next_event_in(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken_in(&mut state, event, facts),
+        [vec![SegmentContent::State(State::Checked)]]
+    );
+    app.quit();
+}
+
+/// `facts` as they read with mockapp's window in front, which the
+/// outpost's own foreground reader says it is, though the system's
+/// foreground window is another: Core takes a focus in a window unrelated
+/// to the foreground only before any foreground report.
+fn in_front(facts: Option<WindowFacts>) -> Option<WindowFacts> {
+    facts.map(|facts| WindowFacts {
+        in_foreground: true,
+        ..facts
+    })
+}
+
+/// The outpost's next message, which must be an event, as its event, its
+/// window facts and the calls it made.
+fn next_event_with_calls(
+    outpost: &OutpostUnderTest,
+) -> (NormalizedEvent, Option<WindowFacts>, CallCounts) {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event,
+            window,
+            timing,
+            ..
+        } => (event, window, timing.calls),
+        other => panic!("the outpost said {other:?}, not an event"),
+    }
 }
 
 /// A focus Core took from another application replaces the focus the
@@ -1146,12 +1268,16 @@ fn main() {
             a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried,
         ),
         (
-            "a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it",
-            a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it,
+            "a_foreground_change_of_the_focus_s_window_and_the_focus_beside_it_are_reported_ranked",
+            a_foreground_change_of_the_focus_s_window_and_the_focus_beside_it_are_reported_ranked,
         ),
         (
-            "a_second_foreground_change_of_a_reported_window_is_dropped",
-            a_second_foreground_change_of_a_reported_window_is_dropped,
+            "a_second_foreground_change_of_a_reported_window_is_reported_and_silent",
+            a_second_foreground_change_of_a_reported_window_is_reported_and_silent,
+        ),
+        (
+            "a_change_of_the_focus_after_its_window_s_refused_foreground_report_is_spoken",
+            a_change_of_the_focus_after_its_window_s_refused_foreground_report_is_spoken,
         ),
         (
             "a_foreground_change_after_another_application_s_focus_is_reported",

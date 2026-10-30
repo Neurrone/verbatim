@@ -72,8 +72,8 @@ use super::outbound::Carried;
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
-    MOVED_ON_GRACE, alt_is_held, console_client, event_window_unreadable, focus_window_of,
-    foreground_window_handle, front_is_another_thread_of_its_application, now_ms, top_level_of,
+    MOVED_ON_GRACE, alt_is_held, console_client, event_window_unreadable, foreground_window_handle,
+    front_is_another_thread_of_its_application, now_ms, top_level_of,
     window_belongs_to_hidden_frame, window_exists, window_facts, window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
@@ -4415,7 +4415,11 @@ impl Worker<'_> {
         } else {
             remote_window
         };
-        let reported = reported.or_else(|| focus_window_of(context.target_pid()));
+        let reported = reported.or_else(|| {
+            context
+                .focus_window()
+                .filter(|&window| super::window::served_by(window, context.target_pid()))
+        });
         if reported.is_none_or(window_belongs_to_hidden_frame) {
             return Err(Dropped);
         }

@@ -460,13 +460,6 @@ pub(crate) fn window_owner(handle: isize) -> (u32, u32) {
     (thread, pid)
 }
 
-/// The focus window of `target_pid`, or `None` if the keyboard focus is not
-/// in a window of that application ([`served_by`]).
-pub(crate) fn focus_window_of(target_pid: u32) -> Option<isize> {
-    let window = focus_window()?;
-    served_by(window, target_pid).then_some(window)
-}
-
 /// The top-level windows of `target_pid` ([`served_by`]).
 pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     struct Search {

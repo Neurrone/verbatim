@@ -286,13 +286,12 @@ fn a_controls_own_focus_reports_its_focused_child() {
     app.quit();
 }
 
-/// An MSAA focus event at the address of the focus last reported is a
-/// duplicate, dropped, when that focus was a full object, and reported
-/// again when it was a simple child, whose child id can be reused, as
-/// NVDA's `isDuplicateIAccessibleEvent` judges by the last focus's own
-/// child id. Both events are raised before the outpost is made, so its own
-/// hook has neither.
-fn a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object() {
+/// An MSAA focus event at the address of the focus last reported is read
+/// in full and reported again, a full object under the same node and a
+/// simple child too, since whether it repeats the focus is Core's verdict
+/// (`docs/design/ownership-one-judge.md`, "Repeats"). Both events are
+/// raised before the outpost is made, so its own hook has neither.
+fn a_repeated_msaa_focus_is_read_in_full() {
     let title = common::unique_title("mockapp-msaa-duplicate");
     let mut app = common::spawn("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
@@ -306,7 +305,12 @@ fn a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object() {
     let outpost = OutpostUnderTest::new(&app);
     let reported = outpost.focus(button.clone());
     assert_eq!(reported.node.role, Role::Button);
-    outpost.deliver(button);
+    let again = outpost.focus(button);
+    assert_eq!(
+        (again.node.id, again.node.role),
+        (reported.node.id, Role::Button),
+        "the same object, under the same node"
+    );
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -467,7 +471,8 @@ fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_mov
 /// the listener sends one it could not read beyond the event: no ancestor
 /// read, its walk cut with no window known, so the outpost has no path to
 /// its own copy of the element. Returns the focus it reports from the
-/// read, with no chain, which must be the only thing it says.
+/// read, which must be the only thing it says: in the application's focus
+/// window, as every focus report carries window facts.
 fn focus_without_a_path(
     outpost: &OutpostUnderTest,
     element: &Cached<ListenerEvent>,
@@ -490,15 +495,15 @@ fn focus_without_a_path(
                 NormalizedEvent::FocusChanged {
                     node,
                     foreground: false,
-                    ancestors,
                     selected_child: None,
                     text: None,
                     earlier: None,
-                    group: None,
+                    ..
                 },
+            window: Some(_),
             ..
-        } if ancestors.is_empty() => node,
-        other => panic!("the outpost said {other:?}, not a focus with no chain"),
+        } => node,
+        other => panic!("the outpost said {other:?}, not a focus in a window"),
     };
     outpost.settled();
     node
@@ -957,50 +962,6 @@ fn a_route_walk_that_finds_its_element_gone_answers_gone() {
     app.quit();
 }
 
-/// NVDA's MSAA duplicate test compares with the last focus queued from any
-/// application (`lastQueuedFocusObject`): an MSAA focus repeated at the
-/// address of the outpost's last focus is dropped, and once another
-/// application's UIA focus has been queued in between, with no foreground
-/// change this outpost reports, which Core tells the outpost whose focus
-/// it supersedes, it is reported again.
-fn a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus() {
-    let title = common::unique_title("mockapp-msaa-after-uia");
-    let mut msaa_app = common::spawn("small.json", "msaa", &title);
-    let msaa_hwnd = common::find_window(&title);
-    common::apply(&mut msaa_app, msaa_hwnd, "set-focus btn1");
-    let msaa_outpost = OutpostUnderTest::new(&msaa_app);
-    let title = common::unique_title("mockapp-uia-before-msaa");
-    let mut uia_app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let uia_outpost = OutpostUnderTest::new(&uia_app);
-    // The button is node 1, after the root, so its object id is 2.
-    let button = DeliveredFact::MsaaFocus {
-        hwnd: msaa_hwnd.0 as isize,
-        id_object: 2,
-        id_child: 0,
-    };
-
-    let reported = msaa_outpost.focus(button.clone());
-    assert_eq!(reported.node.role, Role::Button);
-    msaa_outpost.deliver(button.clone());
-    msaa_outpost.settled();
-
-    uia_app.send("set-focus btn1");
-    let reported = uia_outpost.uia_focus(&client.focused());
-    assert_eq!(reported.node.role, Role::Button);
-    msaa_outpost.release_all();
-    let reported = msaa_outpost.focus(button);
-    assert_eq!(
-        (reported.node.role, reported.node.name.as_deref()),
-        (Role::Button, Some("Original Name"))
-    );
-
-    drop(uia_outpost);
-    drop(msaa_outpost);
-    uia_app.quit();
-    msaa_app.quit();
-}
-
 /// Focuses `id` in mockapp's caret watch fixture and returns the focus the
 /// outpost reports, which must be the next thing it says, with its caret
 /// for a document and with no text read for anything else, and nothing
@@ -1064,6 +1025,46 @@ fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
         } => assert_eq!(node_id, notes.id),
         other => panic!("the outpost said {other:?}, not the document's text change"),
     }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The focus-following subscription keeps its group on the element of
+/// every UIA report whose node the outpost has not released: after the
+/// focus moves from the document to a button, a text change the document
+/// raises is heard and reported for the document's node, attributed by its
+/// runtime id; once Core's list releases the document, its text change is
+/// no longer heard.
+fn a_change_of_an_unreleased_older_focus_is_heard_for_its_node() {
+    let title = common::unique_title("mockapp-older-focus");
+    let mut app = common::spawn("caret_watch.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    let notes = focus_in_caret_fixture(&mut app, &client, &outpost, "doc");
+    let ok = focus_in_caret_fixture(&mut app, &client, &outpost, "ok");
+    assert_eq!(ok.name.as_deref(), Some("OK"));
+
+    app.send("text-changed doc");
+    outpost.heard(&[
+        Heard::UiaTextChanged,
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::TextChanged { node_id },
+            ..
+        } => assert_eq!(node_id, notes.id),
+        other => panic!("the outpost said {other:?}, not the document's text change"),
+    }
+    outpost.settled();
+
+    outpost.release_to_core_line();
+    outpost.settled();
+    app.send("text-changed doc");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ValueChange)]);
     outpost.settled();
 
     drop(outpost);
@@ -4331,10 +4332,6 @@ fn main() {
             an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
         ),
         (
-            "a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus",
-            a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus,
-        ),
-        (
             "a_windowless_selection_is_given_its_nearest_window",
             a_windowless_selection_is_given_its_nearest_window,
         ),
@@ -4379,8 +4376,8 @@ fn main() {
             a_menu_items_legacy_state_is_read_with_its_focus,
         ),
         (
-            "a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object",
-            a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object,
+            "a_repeated_msaa_focus_is_read_in_full",
+            a_repeated_msaa_focus_is_read_in_full,
         ),
         (
             "a_focus_s_help_text_and_suggestions_are_followed",
@@ -4449,6 +4446,10 @@ fn main() {
         (
             "a_text_change_after_the_focus_returns_to_a_document_is_heard",
             a_text_change_after_the_focus_returns_to_a_document_is_heard,
+        ),
+        (
+            "a_change_of_an_unreleased_older_focus_is_heard_for_its_node",
+            a_change_of_an_unreleased_older_focus_is_heard_for_its_node,
         ),
         (
             "a_change_raised_after_a_focus_event_waits_for_the_focus_read",

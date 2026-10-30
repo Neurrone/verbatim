@@ -372,30 +372,34 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    // The same focus event again: NVDA drops a focus event naming the
-    // address of the focus it last queued before reading anything of it
-    // but the role its class choice needs, and the outpost says nothing.
-    // With nothing published, the calls are known only as mockapp's hits.
-    common::reset_hits(hwnd);
-    outpost.deliver(msaa_focus_fact(hwnd, ITEM_TWO));
-    outpost.settled();
+    // The same focus event again: read in full and reported, since whether
+    // it repeats the focus is Core's verdict
+    // (`docs/design/ownership-one-judge.md`, "Repeats").
+    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     ratchet.check(
         "MSAA focus repeated",
-        &Cost {
-            calls: CallCounts::default(),
-            hits: common::read_hits(hwnd),
-            failed_reads: outpost.take_failed_reads(),
-        },
-        CallCounts::default(),
+        &cost,
+        calls(0, 23, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
-            ("accParent", 1),
+            ("accParent", 9),
             ("get_accChild", 1),
-            ("get_accRole", 1),
+            ("get_accName", 2),
+            ("get_accValue", 2),
+            ("get_accDescription", 2),
+            ("get_accRole", 3),
+            ("get_accState", 2),
+            ("get_accKeyboardShortcut", 2),
             ("accFocus", 1),
+            ("accLocation", 3),
         ],
     );
+    // Core writes the nodes it holds after the report: the outpost releases
+    // the buttons it reported before, so their changes are no longer read.
+    outpost.release_to_core_line();
+    outpost.settled();
 
     // A focus event on an object that neither has the focused state nor
     // is inside one that has: NVDA reads the states, the object's and then
@@ -4708,6 +4712,11 @@ fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]
         0,
         focus.1,
     );
+    // Core writes the nodes it holds after the report: the outpost releases
+    // the combo box it reported before, whose relation a selection would
+    // otherwise be read against too.
+    outpost.release_to_core_line();
+    outpost.settled();
     // "Ten" is the fixture's third node below the window, after "Hour"
     // and "Nine".
     let mut ten = verbatim_uia::runtime_id(hour.live().element());

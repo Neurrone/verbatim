@@ -298,6 +298,28 @@ mod tests {
         );
     }
 
+    /// A report keeps the text each dialog of its line was given, which a
+    /// later report entering from its line carries with no call, until its
+    /// focus node is released.
+    #[test]
+    fn a_reports_dialog_text_is_kept_until_its_focus_is_released() {
+        let mut held = Held::default();
+        held.reported(
+            Focus {
+                dialog_texts: vec![(NodeId::new(100), Some("Delete it?".to_owned()))],
+                ..reported(1)
+            },
+            Evidence::Msaa,
+        );
+        assert_eq!(
+            held.dialog_text(NodeId::new(100)),
+            Some(Some("Delete it?".to_owned()))
+        );
+        assert_eq!(held.dialog_text(NodeId::new(101)), None);
+        held.release(&released(&[1]));
+        assert_eq!(held.dialog_text(NodeId::new(100)), None);
+    }
+
     /// A state change tells whether it newly expanded a report's focus.
     #[test]
     fn a_state_change_tells_whether_it_newly_expanded_a_focus() {
