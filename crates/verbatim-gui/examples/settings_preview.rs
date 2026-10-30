@@ -190,9 +190,7 @@ impl ThemeHost for MockThemeHost {
 struct NoShellItems;
 
 impl verbatim_gui::ShellItemsHost for NoShellItems {
-    fn request(&self, _kind: verbatim_gui::ShellItemKind, _ask: verbatim_gui::ShellAsk) -> bool {
-        false
-    }
+    fn request(&self, _kind: verbatim_gui::ShellItemKind, _ask: verbatim_gui::ShellAsk) {}
 }
 
 struct MockTerminalHost {

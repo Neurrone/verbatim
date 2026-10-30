@@ -1940,12 +1940,25 @@ pub(crate) trait Reading: Send + Sync + 'static {
     }
     /// Releases a thread's reader as the thread ends, on that thread.
     fn finish(&self, reader: Option<Self::Reader>);
+    /// What answers an event's marker, made with the event
+    /// ([`Readers::push`]) and kept by the readers' shell beside the
+    /// schedule, never in it, until the event's outcome consumes it; one
+    /// dropped unanswered answers the marker itself, so no path that loses
+    /// an event leaves its outpost waiting on the marker.
+    type Owed: Send + 'static;
     /// Sends what became of an event of `pid`'s, placed, for its
     /// application's gap record, in the top-level window `placed` when its
-    /// read found one ([`gap_answer`]). Called under the readers' lock, so
-    /// what one application's events became is sent in the order they
-    /// arrived.
-    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged, placed: Option<isize>);
+    /// read found one ([`gap_answer`]), through `owed`, the event's own
+    /// answer. Called under the readers' lock, so what one application's
+    /// events became is sent in the order they arrived.
+    fn outcome(
+        &self,
+        pid: Pid,
+        meta: Meta,
+        owed: Self::Owed,
+        judged: Judged,
+        placed: Option<isize>,
+    );
     /// `window`'s top-level window, 0 for none: a local call
     /// ([`top_level_of`], the default), made outside the readers' lock.
     fn top_level(&self, window: isize) -> isize {
@@ -1956,9 +1969,11 @@ pub(crate) trait Reading: Send + Sync + 'static {
 /// What the readers' shell keeps under its lock beside the schedule: the
 /// threads, the condition variable each application's thread waits on,
 /// the reads under way as the watchdog watches them, the idle waiters'
-/// closures, and when the watchdog's alarm is set to go off.
-struct ReadersState<J> {
+/// closures, when the watchdog's alarm is set to go off, and the answer
+/// owed for each event the schedule holds, by marker.
+struct ReadersState<J, O> {
     schedule: Schedule<J>,
+    owed: HashMap<u64, O>,
     threads: Vec<JoinHandle<()>>,
     wakes: HashMap<Pid, Arc<Condvar>>,
     watched: HashMap<Pid, WatchedRead>,
@@ -1974,7 +1989,7 @@ struct Shared<R: Reading> {
     reading: R,
     /// The time the schedule's microseconds count from.
     origin: Instant,
-    state: Mutex<ReadersState<R::Job>>,
+    state: Mutex<ReadersState<R::Job, R::Owed>>,
     /// The watchdog's alarm: its timer set, under the readers' lock, to the
     /// soonest time a read may need judging, which wakes no thread, and
     /// cancelled once no read is under way; its event set when the
@@ -1986,7 +2001,7 @@ struct Shared<R: Reading> {
 }
 
 impl<R: Reading> Shared<R> {
-    fn lock(&self) -> MutexGuard<'_, ReadersState<R::Job>> {
+    fn lock(&self) -> MutexGuard<'_, ReadersState<R::Job, R::Owed>> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -2017,7 +2032,7 @@ struct ThreadSide<'a, R: Reading> {
 /// and the event it is to read next is returned.
 fn step<R: Reading>(
     shared: &Arc<Shared<R>>,
-    state: &mut ReadersState<R::Job>,
+    state: &mut ReadersState<R::Job, R::Owed>,
     input: ScheduleInput<R::Job>,
     mut thread: Option<ThreadSide<'_, R>>,
 ) -> Option<(Meta, R::Job, WatchedRead, QueuePlace)> {
@@ -2030,7 +2045,14 @@ fn step<R: Reading>(
                 meta,
                 judged,
                 placed,
-            } => shared.reading.outcome(pid, meta, judged, placed),
+            } => {
+                if let Some(owed) = state.owed.remove(&meta.marker) {
+                    shared.reading.outcome(pid, meta, owed, judged, placed);
+                } else {
+                    tracing::error!(%pid, marker = meta.marker, "an outcome for a marker nothing is owed for");
+                    debug_assert!(false, "an outcome for marker {}, owed nothing", meta.marker);
+                }
+            }
             ScheduleEffect::Spawn {
                 pid,
                 generation,
@@ -2099,12 +2121,23 @@ fn step<R: Reading>(
             }
         }
     }
+    // Every transition that ends an event answered its marker: what is
+    // owed is exactly what the schedule still holds.
+    if cfg!(debug_assertions) {
+        let mut owed: Vec<u64> = state.owed.keys().copied().collect();
+        owed.sort_unstable();
+        debug_assert_eq!(owed, state.schedule.markers(), "the owed markers");
+    }
     next
 }
 
 /// Applies a change of the watchdog's alarm. Called under the readers'
 /// lock.
-fn alarm<R: Reading>(shared: &Shared<R>, state: &mut ReadersState<R::Job>, change: AlarmChange) {
+fn alarm<R: Reading>(
+    shared: &Shared<R>,
+    state: &mut ReadersState<R::Job, R::Owed>,
+    change: AlarmChange,
+) {
     match change {
         AlarmChange::By(at) => alarm_by(shared, state, shared.instant(at)),
         AlarmChange::Set(due) => {
@@ -2147,6 +2180,7 @@ impl<R: Reading> Readers<R> {
             origin: Instant::now(),
             state: Mutex::new(ReadersState {
                 schedule: Schedule::new(deadline, grace),
+                owed: HashMap::new(),
                 threads: Vec::new(),
                 wakes: HashMap::new(),
                 watched: HashMap::new(),
@@ -2174,8 +2208,9 @@ impl<R: Reading> Readers<R> {
     /// calls: the event then waits for the first of them to return, or for
     /// the watchdog to drop it at the application's bound, and once that
     /// bound has passed it is dropped at once, behind every event still
-    /// waiting ([`READ_DEADLINE`]). Never waits on a read.
-    pub(crate) fn push(&self, pid: Pid, meta: Meta, job: R::Job) {
+    /// waiting ([`READ_DEADLINE`]). `owed` answers its marker: kept until
+    /// its outcome. Never waits on a read.
+    pub(crate) fn push(&self, pid: Pid, meta: Meta, job: R::Job, owed: R::Owed) {
         let shared = &self.shared;
         let kind = shared.reading.kind(&job);
         let key = shared
@@ -2185,6 +2220,7 @@ impl<R: Reading> Readers<R> {
             .map(|(_, key)| key.to_vec());
         let window = shared.reading.window(&job);
         let mut state = shared.lock();
+        state.owed.insert(meta.marker, owed);
         step(
             shared,
             &mut state,
@@ -2327,7 +2363,7 @@ impl<R: Reading> Readers<R> {
 /// with no thread to be had, its waiting events are dropped.
 fn spawn<R: Reading>(
     shared: &Arc<Shared<R>>,
-    state: &mut ReadersState<R::Job>,
+    state: &mut ReadersState<R::Job, R::Owed>,
     pid: Pid,
     generation: u64,
 ) {
@@ -2484,7 +2520,11 @@ fn on_arm<R: Reading>(shared: &Arc<Shared<R>>) -> OnArm {
 
 /// Has the watchdog's alarm go off by `at`, setting its timer only when it
 /// is not already set to go off sooner. Called under the readers' lock.
-fn alarm_by<R: Reading>(shared: &Shared<R>, state: &mut ReadersState<R::Job>, at: Instant) {
+fn alarm_by<R: Reading>(
+    shared: &Shared<R>,
+    state: &mut ReadersState<R::Job, R::Owed>,
+    at: Instant,
+) {
     if state.alarm_due.is_none_or(|due| at < due) {
         shared.alarm.set(at);
         state.alarm_due = Some(at);
@@ -2637,7 +2677,10 @@ impl Reading for ThreadReading {
         }
     }
 
-    fn outcome(&self, _: Pid, meta: Meta, judged: Judged, _: Option<isize>) {
+    /// Nothing is owed: every outcome is sent to the test's receiver.
+    type Owed = ();
+
+    fn outcome(&self, _: Pid, meta: Meta, (): (), judged: Judged, _: Option<isize>) {
         // The test may have finished with the outcomes.
         let _ = self
             .outcomes
@@ -2695,7 +2738,7 @@ impl ReadingThreads {
             },
         };
         self.readers
-            .push(pid, meta, (sender.agile()?, sender.read().role.hwnd));
+            .push(pid, meta, (sender.agile()?, sender.read().role.hwnd), ());
         Ok(marker)
     }
 }
@@ -2715,6 +2758,7 @@ mod tests {
     use std::thread::ThreadId;
 
     use super::*;
+    use verbatim_model::protocol::Responder;
 
     /// The window every stand-in event's sender is, unless a test says
     /// its senders are not windows.
@@ -2865,7 +2909,17 @@ mod tests {
             }
         }
 
-        fn outcome(&self, pid: Pid, meta: Meta, judged: Judged, placed: Option<isize>) {
+        /// The answer to the event's marker, sent as a fact to the test.
+        type Owed = Responder<DeliveredFact>;
+
+        fn outcome(
+            &self,
+            pid: Pid,
+            meta: Meta,
+            owed: Responder<DeliveredFact>,
+            judged: Judged,
+            placed: Option<isize>,
+        ) {
             let reason = match judged {
                 Judged::Dropped(reason) => reason,
                 Judged::Read(_) => "it was read",
@@ -2873,11 +2927,7 @@ mod tests {
                     panic!("the stand-in neither drops nor reads: {other:?}")
                 }
             };
-            let _ = self
-                .facts
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .send(judged.into_fact(meta.marker, meta.kind, placed));
+            owed.answer(judged.into_fact(meta.marker, meta.kind, placed));
             let _ = self
                 .outcomes
                 .lock()
@@ -2907,6 +2957,29 @@ mod tests {
                 .reads
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = reads;
+        }
+
+        /// Queues `job`, of `pid`'s event `meta`, its marker answered as
+        /// the listener answers one: by its outcome, or, dropped unanswered,
+        /// as a drop that leaves its application's gap record open.
+        fn push(&self, pid: Pid, meta: Meta, job: <Script as Reading>::Job) {
+            let facts = self
+                .readers
+                .shared
+                .reading
+                .facts
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            let marker = meta.marker;
+            let owed = Responder::new(move |fact: Option<DeliveredFact>| {
+                let _ = facts.send(fact.unwrap_or(DeliveredFact::UiaFocusDropped {
+                    marker,
+                    focus: true,
+                    answer: GapAnswer::LeavesOpen,
+                }));
+            });
+            self.readers.push(pid, meta, job, owed);
         }
 
         /// Says, from now on, whether the user has moved on.
@@ -3129,7 +3202,7 @@ mod tests {
         for ((hwnd, nearest), placed) in cases {
             let fixture = fixture_of(WAIT, MOVED_ON_GRACE, (hwnd, nearest));
             fixture.set_reads(Some(HUNG));
-            fixture.readers.push(Pid(1), meta(1), (1, None, Vec::new()));
+            fixture.push(Pid(1), meta(1), (1, None, Vec::new()));
             assert_eq!(
                 fixture.facts.recv_timeout(WAIT),
                 Ok(DeliveredFact::UiaFocusDropped {
@@ -3146,9 +3219,7 @@ mod tests {
     fn an_applications_events_are_read_in_the_order_they_arrived_on_one_thread() {
         let fixture = fixture(Duration::from_secs(60));
         for marker in 1..=3 {
-            fixture
-                .readers
-                .push(Pid(5), meta(marker), (marker, None, Vec::new()));
+            fixture.push(Pid(5), meta(marker), (marker, None, Vec::new()));
         }
         let outcomes: Vec<(Pid, u64, &str)> = (0..3)
             .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
@@ -3182,9 +3253,7 @@ mod tests {
             .notifications
             .store(true, Ordering::SeqCst);
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             (
@@ -3205,21 +3274,13 @@ mod tests {
     fn a_newer_event_of_an_element_replaces_its_waiting_one() {
         let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), vec![42, 1]));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), vec![42, 1]));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         // Event 1 is being read, so it stays; 2 waits and is replaced by 4,
         // another element's 3 stays.
-        fixture
-            .readers
-            .push(Pid(5), meta(2), (2, None, vec![42, 2]));
-        fixture
-            .readers
-            .push(Pid(5), meta(3), (3, None, vec![42, 3]));
-        fixture
-            .readers
-            .push(Pid(5), meta(4), (4, None, vec![42, 2]));
+        fixture.push(Pid(5), meta(2), (2, None, vec![42, 2]));
+        fixture.push(Pid(5), meta(3), (3, None, vec![42, 3]));
+        fixture.push(Pid(5), meta(4), (4, None, vec![42, 2]));
         open.send(()).expect("the gate opens");
         let outcomes: Vec<(Pid, u64, &str)> = (0..4)
             .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
@@ -3234,6 +3295,92 @@ mod tests {
             ]
         );
         assert_eq!(fixture.readers.stop(), 1);
+    }
+
+    /// The marker each fact the readers sent answers, and whether the fact
+    /// is a read.
+    fn answered(facts: impl Iterator<Item = DeliveredFact>) -> Vec<(u64, bool)> {
+        facts
+            .map(|fact| match fact {
+                DeliveredFact::UiaFocusRead { marker, .. } => (marker, true),
+                DeliveredFact::UiaFocusDropped {
+                    marker,
+                    focus: true,
+                    answer: GapAnswer::LeavesOpen,
+                } => (marker, false),
+                other => panic!("not a focus's read or drop: {other:?}"),
+            })
+            .collect()
+    }
+
+    /// An event the schedule drops for a newer one of its element answers
+    /// its marker once, with its drop, and every other marker is answered
+    /// once by its read.
+    #[test]
+    fn a_replaced_events_marker_is_answered_once() {
+        let fixture = fixture(Duration::from_secs(60));
+        let (open, gate) = mpsc::channel();
+        fixture.push(Pid(5), meta(1), (1, Some(gate), vec![42, 1]));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        fixture.push(Pid(5), meta(2), (2, None, vec![42, 2]));
+        fixture.push(Pid(5), meta(3), (3, None, vec![42, 2]));
+        open.send(()).expect("the gate opens");
+        let facts = (0..3).map(|_| fixture.facts.recv_timeout(WAIT).expect("a fact"));
+        assert_eq!(answered(facts), [(2, false), (1, false), (3, false)]);
+        assert_eq!(fixture.readers.stop(), 1);
+        assert_eq!(answered(fixture.facts.try_iter()), []);
+    }
+
+    /// The readers stopped and dropped with an event waiting behind a read
+    /// answer the read's marker by its outcome once it returns, and the
+    /// waiting event's, which the schedule leaves without one, with the
+    /// drop its owed answer sends as it is dropped: each once.
+    #[test]
+    fn the_readers_stopped_with_an_event_waiting_answer_its_marker() {
+        let Fixture {
+            readers,
+            read_on,
+            facts,
+            outcomes,
+            ..
+        } = fixture(Duration::from_secs(60));
+        let (open, gate) = mpsc::channel();
+        let owed = |marker: u64| {
+            let facts = readers
+                .shared
+                .reading
+                .facts
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            Responder::new(move |fact: Option<DeliveredFact>| {
+                let _ = facts.send(fact.unwrap_or(DeliveredFact::UiaFocusDropped {
+                    marker,
+                    focus: true,
+                    answer: GapAnswer::LeavesOpen,
+                }));
+            })
+        };
+        readers.push(Pid(5), meta(1), (1, Some(gate), Vec::new()), owed(1));
+        assert_eq!(read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        readers.push(Pid(5), meta(2), (2, None, Vec::new()), owed(2));
+        thread::scope(|scope| {
+            let stopping = scope.spawn(|| readers.stop());
+            // The read returns only once the readers are stopping.
+            let waited = Instant::now();
+            while !readers.shared.lock().schedule.stopping() {
+                assert!(waited.elapsed() < WAIT, "the readers never stopped");
+                thread::yield_now();
+            }
+            open.send(()).expect("the gate opens");
+            assert_eq!(stopping.join().expect("stopped"), 1);
+        });
+        drop(readers);
+        // The waiting event has no outcome of the schedule's: its owed
+        // answer, dropped with the readers, answers its marker.
+        let reasons: Vec<(Pid, u64, &str)> = outcomes.try_iter().collect();
+        assert_eq!(reasons, [(Pid(5), 1, "read")]);
+        assert_eq!(answered(facts.try_iter()), [(1, false), (2, false)]);
     }
 
     /// The idle barrier's wait on the reading threads: run at once when no
@@ -3262,11 +3409,9 @@ mod tests {
             "nothing is read, so the waiter runs at once"
         );
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
         fixture.readers.when_idle(idle(2));
         assert_eq!(
             fixture.outcomes.try_recv(),
@@ -3304,14 +3449,12 @@ mod tests {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         fixture.readers.when_idle(Box::new(move || {
             let _ = outcomes.send((Pid(0), 1, "idle"));
         }));
-        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
         open.send(()).expect("the held read waits");
         let outcomes: Vec<(Pid, u64, &str)> = (0..3)
             .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
@@ -3331,11 +3474,9 @@ mod tests {
     fn an_application_whose_read_is_held_does_not_hold_another() {
         let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        fixture.readers.push(Pid(6), meta(2), (2, None, Vec::new()));
+        fixture.push(Pid(6), meta(2), (2, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(6), 2, "read"),
@@ -3353,11 +3494,9 @@ mod tests {
     fn a_read_past_its_deadline_is_dropped_and_a_new_thread_reads_on() {
         let fixture = fixture(Duration::from_millis(50));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
-        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "its read did not return in time")
@@ -3385,9 +3524,7 @@ mod tests {
     fn a_held_read_is_abandoned_once_the_user_moves_on_past_its_grace() {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         assert_eq!(
             fixture
@@ -3397,7 +3534,7 @@ mod tests {
             WINDOW,
             "the read's start judges the window in front against the read's window"
         );
-        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
         fixture.readers.foreground_changed(WINDOW);
         assert_eq!(
             fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
@@ -3431,9 +3568,7 @@ mod tests {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             fixture
@@ -3466,9 +3601,7 @@ mod tests {
     fn a_held_read_past_its_grace_is_left_alone_while_the_user_has_not_moved_on() {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, read_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         assert_eq!(
             fixture
@@ -3516,9 +3649,7 @@ mod tests {
         );
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         fixture.readers.foreground_changed(WINDOW);
         assert_eq!(
@@ -3545,9 +3676,7 @@ mod tests {
         );
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
@@ -3567,9 +3696,7 @@ mod tests {
     fn a_read_begun_with_the_front_on_another_thread_is_judged_at_its_grace_end() {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
         let (open_first, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             fixture
@@ -3581,9 +3708,7 @@ mod tests {
         fixture.set_moved_on(true);
         fixture.readers.foreground_changed(WINDOW);
         let (open_second, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "the user moved on from a slow window")
@@ -3614,29 +3739,21 @@ mod tests {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
         fixture.set_moved_on(true);
         let (open_first, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "the user moved on from a slow window")
         );
         let (open_second, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 2, "the user moved on from a slow window")
         );
-        fixture
-            .readers
-            .push(Pid(5), meta(3), (3, None, vec![42, 3]));
-        fixture
-            .readers
-            .push(Pid(5), meta(4), (4, None, vec![42, 4]));
+        fixture.push(Pid(5), meta(3), (3, None, vec![42, 3]));
+        fixture.push(Pid(5), meta(4), (4, None, vec![42, 4]));
         assert_eq!(
             fixture.outcomes.try_recv(),
             Err(mpsc::TryRecvError::Empty),
@@ -3685,29 +3802,25 @@ mod tests {
     fn events_waiting_at_the_abandoned_limit_are_dropped_at_the_applications_bound() {
         let fixture = fixture(Duration::from_millis(50));
         let (open_first, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "its read did not return in time")
         );
         let (open_second, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 2, "its read did not return in time")
         );
-        fixture.readers.push(Pid(5), meta(3), (3, None, Vec::new()));
-        fixture.readers.push(Pid(5), meta(4), (4, None, Vec::new()));
+        fixture.push(Pid(5), meta(3), (3, None, Vec::new()));
+        fixture.push(Pid(5), meta(4), (4, None, Vec::new()));
         let waited = "it waited too long behind its application's abandoned reads";
         let outcomes: Vec<(Pid, u64, &str)> = (0..2)
             .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
             .collect();
         assert_eq!(outcomes, [(Pid(5), 3, waited), (Pid(5), 4, waited)]);
-        fixture.readers.push(Pid(5), meta(5), (5, None, Vec::new()));
+        fixture.push(Pid(5), meta(5), (5, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.try_recv(),
             Ok((Pid(5), 5, waited)),
@@ -3733,9 +3846,7 @@ mod tests {
     fn a_read_with_no_foreground_event_since_its_event_is_not_judged_at_its_grace_end() {
         let fixture = fixture_with_grace(Duration::from_millis(300), Duration::from_millis(50));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             fixture
@@ -3758,9 +3869,7 @@ mod tests {
     fn a_thread_ends_when_its_applications_outpost_ends() {
         let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
-        fixture
-            .readers
-            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         // The outpost ends while the thread reads: the read is finished
         // and sent, then the thread ends.
@@ -3775,7 +3884,7 @@ mod tests {
             first
         );
         // The application runs on: its next event starts a new thread.
-        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 2, "read")

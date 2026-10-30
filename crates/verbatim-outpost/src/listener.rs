@@ -161,7 +161,7 @@ use crate::protocol::{decode_message, now_us, put_message};
 use crate::read_schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
 use crate::supervisor::IgnoredProcesses;
 use verbatim_model::protocol::{
-    CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore,
+    CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore, Responder,
     UiaSnapshotFact, WinEventStamp, hop_us,
 };
 
@@ -781,9 +781,9 @@ struct Listener {
 
 /// The reading threads' work in the listener: each UIA focus event judged
 /// and read from its own element ([`FocusReader`]), and what became of it
-/// sent to its application's outpost behind its marker.
+/// sent to its application's outpost behind its marker, through the
+/// answer owed for it ([`MarkerOwed`]).
 struct UiaFocusReading {
-    outgoing: Arc<Outgoing>,
     /// Whether a backend override forcing UIA holds, per application, each
     /// shared with that application's readers
     /// ([`CoreToListener::SetBackendOverride`]).
@@ -892,12 +892,48 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn outcome(&self, pid: Pid, meta: Meta, judged: Judged, placed: Option<isize>) {
+    type Owed = MarkerOwed;
+
+    fn outcome(
+        &self,
+        pid: Pid,
+        meta: Meta,
+        owed: MarkerOwed,
+        judged: Judged,
+        placed: Option<isize>,
+    ) {
         if let Some(reason) = judged.dropped_reason() {
             tracing::debug!(%pid, marker = meta.marker, reason, ?placed, "UIA focus dropped");
         }
-        self.outgoing
-            .focus_read(pid, judged.into_fact(meta.marker, meta.kind, placed), meta);
+        owed.0
+            .answer(judged.into_fact(meta.marker, meta.kind, placed));
+    }
+}
+
+/// The answer the listener owes an application's outpost for the UIA
+/// focus event whose marker it sent: made as the event is queued for its
+/// reading thread ([`queue_for_reading`]), kept by the readers' shell, and
+/// consumed by the event's outcome, which sends the read or the drop.
+/// Dropped unanswered, as when the readers are dropped with the event
+/// still waiting, it sends the marker's drop, one that leaves the
+/// application's gap record open, as the drop of an element that could not
+/// be kept for its read does, so the outpost never waits on the marker.
+pub(crate) struct MarkerOwed(Responder<DeliveredFact>);
+
+impl MarkerOwed {
+    /// The answer owed for `pid`'s event `meta`, sent through `outgoing`.
+    fn new(outgoing: &Arc<Outgoing>, pid: Pid, meta: Meta) -> Self {
+        let outgoing = Arc::clone(outgoing);
+        Self(Responder::new(move |fact: Option<DeliveredFact>| {
+            let fact = fact.unwrap_or_else(|| {
+                Judged::Dropped("the listener ended before it was read").into_fact(
+                    meta.marker,
+                    meta.kind,
+                    None,
+                )
+            });
+            outgoing.focus_read(pid, fact, meta);
+        }))
     }
 }
 
@@ -972,7 +1008,6 @@ impl Listener {
         }
         let readers = Arc::new(Readers::new(
             UiaFocusReading {
-                outgoing: Arc::clone(&outgoing),
                 forced_uia: Mutex::default(),
             },
             READ_DEADLINE,
@@ -1331,7 +1366,7 @@ fn menu_subscription(
 /// for a selection or a notification, is what was captured from it. Makes
 /// no cross-process call.
 fn queue_for_reading(
-    outgoing: &Outgoing,
+    outgoing: &Arc<Outgoing>,
     readers: &Readers<UiaFocusReading>,
     sender: &Cached<ListenerEvent>,
     fields: &ListenerEvent,
@@ -1355,7 +1390,12 @@ fn queue_for_reading(
         meta,
     );
     match sender.agile() {
-        Ok(agile) => readers.push(pid, meta, (agile, fields.role.hwnd, runtime_id, kind, fact)),
+        Ok(agile) => readers.push(
+            pid,
+            meta,
+            (agile, fields.role.hwnd, runtime_id, kind, fact),
+            MarkerOwed::new(outgoing, pid, meta),
+        ),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
             // Its drop leaves its application's gap record open

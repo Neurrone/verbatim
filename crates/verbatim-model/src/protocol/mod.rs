@@ -11,8 +11,10 @@
 use std::time::Duration;
 
 mod merge;
+mod responder;
 
 pub use merge::{Barrier, EventKey, Merge, merge_into};
+pub use responder::Responder;
 
 use serde::{Deserialize, Serialize};
 

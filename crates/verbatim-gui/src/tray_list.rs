@@ -145,12 +145,12 @@ fn click_when_found(
     missed: OnMissed,
 ) {
     let asked = chosen.clone();
-    let started = host.request(
+    host.request(
         kind,
         ShellAsk::Position(
             asked,
-            Box::new(
-                move |found| match target(&chosen, name_unique, found.as_ref()) {
+            verbatim_model::protocol::Responder::new(move |found| {
+                match target(&chosen, name_unique, found.as_ref()) {
                     Ok(rect) => click(action, rect),
                     Err(why) => {
                         tracing::info!(
@@ -160,14 +160,10 @@ fn click_when_found(
                         );
                         missed(chosen.name, why);
                     }
-                },
-            ),
+                }
+            }),
         ),
     );
-    if !started {
-        // Logged by the host; nothing is clicked.
-        tracing::warn!("the shell item's position could not be asked for; not clicked");
-    }
 }
 
 /// Whether exactly one item of `items` has the name `name`.

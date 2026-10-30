@@ -828,15 +828,16 @@ struct AppShellItemsHost {
 }
 
 impl verbatim_gui::ShellItemsHost for AppShellItemsHost {
-    fn request(&self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) -> bool {
-        let sent = self
+    fn request(&self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
+        // A request the reducer thread no longer takes is dropped with the
+        // command, and its responder answers "nothing".
+        if self
             .commands
             .send(ShellCommand::ShellItems(kind, ask))
-            .is_ok();
-        if !sent {
+            .is_err()
+        {
             tracing::debug!("the reducer thread is gone; the shell's items are not read");
         }
-        sent
     }
 }
 
@@ -1903,8 +1904,9 @@ impl ReducerThread<'_> {
     /// has come by that long after the query was sent.
     fn shell_items(&mut self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
         let Some(pid) = taskbar_process() else {
+            // Dropped, the request is answered "nothing".
             tracing::warn!(?kind, "the taskbar window was not found");
-            ask.answer_nothing();
+            drop(ask);
             return;
         };
         let deadline = Instant::now() + shell_requests::SHELL_ITEMS_DEADLINE;

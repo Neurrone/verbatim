@@ -83,7 +83,7 @@ impl ShellItemsWanted {
                 %pid,
                 "the taskbar's process has no outpost; the shell's items are not read"
             );
-            waiting.ask.answer_nothing();
+            drop(waiting.ask);
         }
     }
 
@@ -103,7 +103,7 @@ impl ShellItemsWanted {
                 pid = %waiting.pid,
                 "the taskbar's outpost was not ready by the request's deadline; the shell's items are not read"
             );
-            waiting.ask.answer_nothing();
+            drop(waiting.ask);
         }
     }
 
@@ -127,7 +127,7 @@ mod tests {
     fn recorder() -> (Outcomes, ShellAsk) {
         let outcomes = Outcomes::default();
         let kept = Arc::clone(&outcomes);
-        let ask = ShellAsk::Items(Box::new(move |items| {
+        let ask = ShellAsk::Items(verbatim_model::protocol::Responder::new(move |items| {
             kept.lock().expect("outcomes").push(items);
         }));
         (outcomes, ask)

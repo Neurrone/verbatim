@@ -112,8 +112,11 @@ const HOOK_FORBIDDEN: [&str; 16] = [
 ];
 
 /// What a pure module may not name: identifiers, matched whole, and paths,
-/// matched as written.
-const FORBIDDEN: [&str; 15] = [
+/// matched as written. A responder answers its asker when it is dropped,
+/// so one held in a pure module would answer as a replay drops its state
+/// (`docs/design/ownership-messages.md`, "Responders and the endings of a
+/// query").
+const FORBIDDEN: [&str; 17] = [
     "thread",
     "Mutex",
     "Condvar",
@@ -129,6 +132,8 @@ const FORBIDDEN: [&str; 15] = [
     "std::net",
     "windows::",
     "unsafe",
+    "Responder",
+    "MarkerOwed",
 ];
 
 /// Runs the check from the workspace root `root`, returning the findings

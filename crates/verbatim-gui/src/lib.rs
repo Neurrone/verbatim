@@ -44,8 +44,7 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
 pub use shell_items::{
-    DeliverShellItemPosition, DeliverShellItems, ShellAsk, ShellCandidate, ShellCandidates,
-    ShellItem, ShellItemKind, ShellItemsHost,
+    ShellAsk, ShellCandidate, ShellCandidates, ShellItem, ShellItemKind, ShellItemsHost,
 };
 pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
@@ -390,18 +389,12 @@ impl GuiCore {
             OpenShellList::FocusExisting => self.focus_foreground(ffi::DialogKind::ShellList),
             OpenShellList::Enumerate => {
                 let handle = self.handle.clone();
-                let started = self.shell_host.request(
+                self.shell_host.request(
                     kind,
-                    ShellAsk::Items(Box::new(move |items| {
+                    ShellAsk::Items(verbatim_model::protocol::Responder::new(move |items| {
                         handle.post(GuiMessage::ShellItems(kind, items));
                     })),
                 );
-                if !started {
-                    // No outcome will ever arrive: end the enumeration now,
-                    // as one that found nothing, so later requests are not
-                    // ignored as if it were still in flight.
-                    self.lifecycle.borrow_mut().shell_items_arrived(false);
-                }
             }
         }
     }

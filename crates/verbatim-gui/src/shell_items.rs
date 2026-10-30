@@ -16,47 +16,29 @@
 //! item's place or name.
 
 use verbatim_model::Rect;
+use verbatim_model::protocol::Responder;
 pub use verbatim_model::{ShellCandidate, ShellCandidates, ShellItem, ShellItemKind};
 
-/// Where an enumeration's outcome goes: `Some(items)` on success, possibly
-/// empty, or `None` when it failed or passed its deadline (already logged).
-/// Called once, on a thread that is not the GUI's.
-pub type DeliverShellItems = Box<dyn FnOnce(Option<Vec<ShellItem>>) + Send>;
-
-/// Where a position's outcome goes: `Some(candidates)`, the buttons that
-/// may be the chosen item now, or `None` when the request failed or passed
-/// its deadline (already logged). Called once, on a thread that is not the
-/// GUI's.
-pub type DeliverShellItemPosition = Box<dyn FnOnce(Option<ShellCandidates>) + Send>;
-
-/// What the GUI asks its [`ShellItemsHost`] about one shell surface.
+/// What the GUI asks its [`ShellItemsHost`] about one shell surface. Each
+/// holds the [`Responder`] its outcome goes through, once, on a thread that
+/// is not the GUI's: `Some` on success, or `None` when the request failed,
+/// passed its deadline (already logged), or was dropped anywhere on its
+/// way, which answers it "nothing".
 pub enum ShellAsk {
-    /// The surface's items, for the list.
-    Items(DeliverShellItems),
+    /// The surface's items, for the list, possibly none.
+    Items(Responder<Vec<ShellItem>>),
     /// Where an item chosen from an earlier list of the surface is now, for
     /// a click on it: the outpost answers the buttons with its runtime id or
     /// its name, and [`refind`] picks the item from them.
-    Position(ShellItem, DeliverShellItemPosition),
-}
-
-impl ShellAsk {
-    /// Hands the asker the outcome of a request that got no answer.
-    pub fn answer_nothing(self) {
-        match self {
-            Self::Items(deliver) => deliver(None),
-            Self::Position(_, deliver) => deliver(None),
-        }
-    }
+    Position(ShellItem, Responder<ShellCandidates>),
 }
 
 /// What reads the shell's items for the GUI: the app, which asks the
 /// outpost of the process that owns the taskbar.
 pub trait ShellItemsHost: Send + Sync {
-    /// Asks `ask` of `kind`'s surface and returns at once. Its delivery
-    /// callback is called exactly once with the outcome when this returns
-    /// true; false means the request could not be made (logged), and the
-    /// callback is never called.
-    fn request(&self, kind: ShellItemKind, ask: ShellAsk) -> bool;
+    /// Asks `ask` of `kind`'s surface and returns at once. Its responder
+    /// answers exactly once, whatever becomes of the request.
+    fn request(&self, kind: ShellItemKind, ask: ShellAsk);
 }
 
 /// The button among `found` that is `chosen`, an item the user picked from
@@ -238,14 +220,13 @@ mod tests {
     }
 
     #[test]
-    fn answering_nothing_hands_a_position_ask_none() {
+    fn a_position_ask_dropped_unanswered_hands_its_asker_none() {
         let outcomes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let kept = std::sync::Arc::clone(&outcomes);
-        ShellAsk::Position(
+        drop(ShellAsk::Position(
             item("Clock", &[1]),
-            Box::new(move |position| kept.lock().expect("outcomes").push(position)),
-        )
-        .answer_nothing();
+            Responder::new(move |position| kept.lock().expect("outcomes").push(position)),
+        ));
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
     }
 

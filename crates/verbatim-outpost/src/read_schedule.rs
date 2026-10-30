@@ -328,6 +328,26 @@ impl<J> Schedule<J> {
         self.stopping
     }
 
+    /// The markers of the events it holds whose outcome is still to be
+    /// sent, in order: those waiting, and those being read and not
+    /// published at their bound.
+    pub(crate) fn markers(&self) -> Vec<u64> {
+        let mut markers: Vec<u64> = self
+            .apps
+            .values()
+            .flat_map(|app| {
+                app.queue.iter().map(|queued| queued.meta.marker).chain(
+                    app.running
+                        .iter()
+                        .filter(|running| !running.published)
+                        .map(|running| running.meta.marker),
+                )
+            })
+            .collect();
+        markers.sort_unstable();
+        markers
+    }
+
     /// Whether the thread `generation` is in charge of `pid`'s events: one
     /// that is waits for its next event, one that is not ends.
     pub(crate) fn in_charge(&self, pid: Pid, generation: u64) -> bool {

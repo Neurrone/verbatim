@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
-use verbatim_model::protocol::{FocusNow, QueryOutcome, QueryResult};
+use verbatim_model::protocol::{FocusNow, QueryOutcome, QueryResult, Responder};
 use verbatim_model::{
     FetchResult, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, QueryKind,
     TextReply, TraceId, TreeNode, WindowFacts,
@@ -84,14 +84,14 @@ pub(crate) enum Asker {
     /// failure.
     ShellItems {
         /// Where the outcome goes.
-        deliver: verbatim_gui::DeliverShellItems,
+        deliver: Responder<Vec<verbatim_gui::ShellItem>>,
     },
     /// The list dialog's request for where the item clicked is now, whose
     /// outcome goes to `deliver`: the buttons that may be it, or `None` for
     /// any failure.
     ShellItemPosition {
         /// Where the outcome goes.
-        deliver: verbatim_gui::DeliverShellItemPosition,
+        deliver: Responder<verbatim_model::ShellCandidates>,
     },
     /// The reducer's text request (`Effect::Text`): its outcome re-enters
     /// the reducer as `Input::TextCompleted` under the reducer's own query
@@ -303,17 +303,18 @@ fn describe(outcome: &QueryOutcome) -> String {
 /// `deliver`: the buttons that may be the item, or `None` for any failure.
 /// Nothing re-enters the reducer.
 fn deliver_shell_item_position(
-    deliver: verbatim_gui::DeliverShellItemPosition,
+    deliver: Responder<verbatim_model::ShellCandidates>,
     outcome: QueryOutcome,
 ) -> Vec<Input> {
     match outcome {
-        QueryOutcome::Done(QueryResult::ShellItemPosition(found)) => deliver(Some(found)),
+        QueryOutcome::Done(QueryResult::ShellItemPosition(found)) => deliver.answer(found),
         other => {
             tracing::warn!(
                 reason = describe(&other),
                 "the shell item's position was not read"
             );
-            deliver(None);
+            // Dropped unanswered: the dialog is handed nothing.
+            drop(deliver);
         }
     }
     Vec::new()
@@ -322,17 +323,18 @@ fn deliver_shell_item_position(
 /// Hands a shell items query's outcome to the list dialog's `deliver`:
 /// the items, or `None` for any failure. Nothing re-enters the reducer.
 fn deliver_shell_items(
-    deliver: verbatim_gui::DeliverShellItems,
+    deliver: Responder<Vec<verbatim_gui::ShellItem>>,
     outcome: QueryOutcome,
 ) -> Vec<Input> {
     match outcome {
-        QueryOutcome::Done(QueryResult::ShellItems(items)) => deliver(Some(items)),
+        QueryOutcome::Done(QueryResult::ShellItems(items)) => deliver.answer(items),
         other => {
             tracing::warn!(
                 reason = describe(&other),
                 "the shell's items were not listed"
             );
-            deliver(None);
+            // Dropped unanswered: the dialog is handed nothing.
+            drop(deliver);
         }
     }
     Vec::new()
@@ -735,7 +737,7 @@ mod tests {
     ) -> Asker {
         let kept = std::sync::Arc::clone(outcomes);
         Asker::ShellItems {
-            deliver: Box::new(move |items| kept.lock().expect("outcomes").push(items)),
+            deliver: Responder::new(move |items| kept.lock().expect("outcomes").push(items)),
         }
     }
 
@@ -787,7 +789,9 @@ mod tests {
         let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
             let kept = std::sync::Arc::clone(outcomes);
             Asker::ShellItemPosition {
-                deliver: Box::new(move |position| kept.lock().expect("outcomes").push(position)),
+                deliver: Responder::new(move |position| {
+                    kept.lock().expect("outcomes").push(position);
+                }),
             }
         };
         let found = verbatim_model::ShellCandidates {
