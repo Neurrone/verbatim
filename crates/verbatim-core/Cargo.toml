@@ -14,6 +14,7 @@ verbatim-text = { workspace = true, features = ["serde"] }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+serde_json.workspace = true
 verbatim-term-sim.workspace = true
 
 [lints]
