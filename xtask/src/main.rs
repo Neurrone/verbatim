@@ -2,8 +2,9 @@
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
 //! the two cannot drift: the platform-neutral dependency check, the scans
-//! that test code waits for evidence (`xtask/src/waits.rs`) and that UIA
-//! caches are read through shapes alone (`xtask/src/shapes.rs`), rustfmt,
+//! that test code waits for evidence (`xtask/src/waits.rs`), that UIA
+//! caches are read through shapes alone (`xtask/src/shapes.rs`), and that
+//! the pure owners name nothing impure (`xtask/src/ownership.rs`), rustfmt,
 //! clippy (warnings denied), and unit tests, all for the host's own
 //! architecture.
 //!
@@ -61,6 +62,7 @@ mod conformance;
 mod demo;
 mod docs;
 mod nvda;
+mod ownership;
 mod park;
 mod perf;
 mod record;
@@ -241,6 +243,12 @@ fn ci() -> ExitCode {
     println!("xtask ci: UIA cached reads through shapes");
     if let Err(error) = shapes::check(root) {
         eprintln!("xtask ci: step failed: UIA cached reads through shapes\n{error}");
+        return ExitCode::FAILURE;
+    }
+
+    println!("xtask ci: pure owners' names");
+    if let Err(error) = ownership::check(root) {
+        eprintln!("xtask ci: step failed: pure owners' names\n{error}");
         return ExitCode::FAILURE;
     }
 
