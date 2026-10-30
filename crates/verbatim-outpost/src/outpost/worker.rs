@@ -57,7 +57,6 @@ use verbatim_model::protocol::{
     QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE,
 };
 
-use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
 use super::bound::{self, BoundFocus, FocusProgress};
@@ -79,6 +78,7 @@ use super::window::{
     front_is_another_thread_of_its_application, now_ms, top_level_of,
     window_belongs_to_hidden_frame, window_exists, window_facts, window_is_hidden_frame,
 };
+use super::{Context, RequestContext};
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::Watched;
@@ -222,17 +222,14 @@ impl Watch {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The watch lock, held, when the program the calling thread runs is
-    /// still live ([`WatchState::live_tags`]): what it read may then be put
-    /// in the store while the lock is held, so no abandonment or claim
-    /// falls between the judgement and the write; `None` otherwise, when
-    /// what it read is not kept.
-    pub(super) fn hold_if_live(&self) -> Option<std::sync::MutexGuard<'_, WatchState>> {
+    /// The watch lock, held, when request `tag` is still live
+    /// ([`WatchState::live_tags`]): what it read may then be put in the
+    /// store while the lock is held, so no abandonment or claim falls
+    /// between the judgement and the write; `None` otherwise, when what it
+    /// read is not kept.
+    pub(super) fn hold_if_live(&self, tag: Tag) -> Option<std::sync::MutexGuard<'_, WatchState>> {
         let state = self.lock();
-        state
-            .live_tags()
-            .contains(&super::store::current())
-            .then_some(state)
+        state.live_tags().contains(&tag).then_some(state)
     }
 
     /// Reads the follow state with `read`, under the watch lock: never
@@ -274,14 +271,16 @@ impl Watch {
     /// Starts the worker's deadline for one entry concerning `window` (0 for
     /// none), and sets the alarm for its first check, which wakes no
     /// thread: the watchdog wakes only if the entry is still running then.
-    fn start(&self, deadline: Duration, running: Option<(u64, TraceId)>, window: isize) {
+    /// `tag` is the entry's request.
+    fn start(&self, tag: Tag, deadline: Duration, running: Option<(u64, TraceId)>, window: isize) {
         let mut state = self.lock();
-        Self::start_locked(&mut state, &self.alarm, deadline, running, window);
+        Self::start_locked(&mut state, &self.alarm, tag, deadline, running, window);
     }
 
     fn start_locked(
         state: &mut WatchState,
         alarm: &Alarm,
+        tag: Tag,
         deadline: Duration,
         running: Option<(u64, TraceId)>,
         window: isize,
@@ -291,9 +290,7 @@ impl Watch {
         state.started = Some((now, window));
         state.running = running;
         state.end_walk();
-        // The program the worker runs for the entry, which it entered
-        // before starting it.
-        state.request = Some(super::store::current());
+        state.request = Some(tag);
         state.claimed = false;
         alarm.set(next_check(now, now + deadline, now, window));
     }
@@ -304,7 +301,8 @@ impl Watch {
     /// so only the deadline abandons it, never the moved-on rule
     /// (`docs/design/focus-pipeline-rework.md`, "The outpost's commit
     /// point").
-    fn take_owed(&self, generation: u64) -> Option<Owed> {
+    /// `tag` is the attempt's request, a new one of `generation`.
+    fn take_owed(&self, generation: u64, tag: Tag) -> Option<Owed> {
         let mut state = self.lock();
         if state.generation != generation {
             return None;
@@ -316,7 +314,7 @@ impl Watch {
             .filter(|owed| owed.attempting.is_none())?;
         owed.attempting = Some(generation);
         let owed = owed.clone();
-        Self::start_locked(&mut state, &self.alarm, HANDLING_DEADLINE, None, 0);
+        Self::start_locked(&mut state, &self.alarm, tag, HANDLING_DEADLINE, None, 0);
         Some(owed)
     }
 
@@ -478,13 +476,11 @@ impl Watch {
             .take_if(|walk| walk.generation == generation && walk.armed == armed)?;
         // The plain windows the publication completes the chain with are
         // the walk's request's, which the publication claims.
-        let program = context
-            .store
-            .enter(state.request.unwrap_or(super::store::Tag::NONE));
-        let effects = publication(context, &walk);
-        drop(program);
+        let request = RequestContext::new(context, state.request.unwrap_or(Tag::NONE));
+        let effects = publication(&request, &walk);
         state.claimed = true;
-        let (_, displaced) = Self::commit_locked(state, context, effects);
+        let (_, mut displaced) = Self::commit_locked(state, context, effects);
+        displaced.store.push(request.take_removed());
         state.bound_published = Some(walk.armed);
         if let Some(wake) = state.next_wake(Instant::now()) {
             alarm.set(wake);
@@ -927,10 +923,11 @@ fn run_entry(
     let (deadline, running) = budget(&entry);
     // The entry is one request of this generation, whose tag the store
     // gives what it issues or looks up.
-    let program = context.store.enter(context.store.next_tag(generation));
+    let tag = context.store.next_tag(generation);
+    let request = RequestContext::new(context, tag);
     context
         .watch
-        .start(deadline, running, window_of(&entry.item));
+        .start(tag, deadline, running, window_of(&entry.item));
     // Formatted only for the debug log, which is all that reads it: an
     // entry handled at info level costs no string.
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&entry.item));
@@ -944,7 +941,7 @@ fn run_entry(
     context.arbitrator().begin_entry(judged_at, generation);
     let mut reported = false;
     let handled = catch_unwind(AssertUnwindSafe(|| {
-        let mut worker = Worker::new(context, client, generation, batch, timing);
+        let mut worker = Worker::new(&request, client, generation, batch, timing);
         worker.group = group;
         if menu {
             worker.menu_opened(&entry);
@@ -997,7 +994,8 @@ fn run_entry(
             }
         }
     }
-    drop(program);
+    // Elements the entry's lookups replaced, dropped holding no lock.
+    drop(request);
     Ok(reported)
 }
 
@@ -1006,9 +1004,11 @@ fn run_entry(
 /// was not attempting it ([`Worker::attempt_owed`]). `Err` when this
 /// worker was abandoned meanwhile and must exit.
 fn owed_first(context: &Context, client: &mut Client, generation: u64) -> Result<(), ()> {
-    let _program = context.store.enter(context.store.next_tag(generation));
+    // The attempt takes a request of its own ([`Watch::take_owed`]), which
+    // the handle is retagged with.
+    let request = RequestContext::new(context, context.store.next_tag(generation));
     let handled = catch_unwind(AssertUnwindSafe(|| {
-        Worker::new(context, client, generation, 0, EventTiming::default()).attempt_owed();
+        Worker::new(&request, client, generation, 0, EventTiming::default()).attempt_owed();
     }));
     // What the attempt sends carries its own calls.
     let _ = take_calls();
@@ -1235,7 +1235,7 @@ struct Dropped;
 
 /// One entry's handling, by the worker in charge.
 struct Worker<'a> {
-    context: &'a Context,
+    context: &'a RequestContext<'a>,
     client: &'a mut Client,
     generation: u64,
     /// The batch the entry belongs to.
@@ -1288,7 +1288,7 @@ struct Worker<'a> {
 
 impl<'a> Worker<'a> {
     fn new(
-        context: &'a Context,
+        context: &'a RequestContext<'a>,
         client: &'a mut Client,
         generation: u64,
         batch: u64,
@@ -2332,9 +2332,12 @@ impl Worker<'_> {
         if self.refused() {
             return;
         }
-        let Some(owed) = self.context.watch.take_owed(self.generation) else {
+        // The attempt is a request of its own, which ends the entry's.
+        let tag = self.context.store.next_tag(self.generation);
+        let Some(owed) = self.context.watch.take_owed(self.generation, tag) else {
             return;
         };
+        self.context.nodes().retag(tag);
         let node_id = owed.node;
         match owed.work {
             OwedWork::FirstRead(caret) => {
@@ -2409,11 +2412,7 @@ impl Worker<'_> {
         // and kept under the node its runtime id names, the parent's.
         let runtime_id = self.context.store.runtime_id_of(parent)?;
         let found = self.element_by_focus_path(&runtime_id)?;
-        let kept = self
-            .context
-            .store
-            .nodes()
-            .id_for_element(&runtime_id, &found);
+        let kept = self.context.nodes().id_for_element(&runtime_id, &found);
         let slider = self.context.store.element_of(kept)?;
         let (mut target, _) = target_for(self.context, (node_id, role), chain, false);
         target.wanted = target
@@ -2876,7 +2875,7 @@ impl Worker<'_> {
         else {
             return;
         };
-        let registry = &self.context.store.nodes();
+        let registry = self.context.nodes();
         if kind == WinEventKind::Selection {
             self.msaa_selection(object, hwnd, (trace, observed_at_us));
             return;
@@ -2955,7 +2954,7 @@ impl Worker<'_> {
         if self.context.intake.system_caret_unused() {
             return;
         }
-        if let Some(node_id) = self.context.store.nodes().existing(runtime_id) {
+        if let Some(node_id) = self.context.nodes().existing(runtime_id) {
             self.caret_event(node_id, trace, observed_at_us);
         }
     }
@@ -2976,7 +2975,7 @@ impl Worker<'_> {
         hwnd: isize,
         (trace, observed_at_us): (TraceId, u64),
     ) {
-        let registry = &self.context.store.nodes();
+        let registry = self.context.nodes();
         // A tree view item selected on its way to the focus, from one of
         // its children, is one of the focus's logical ancestors only: NVDA,
         // whose ancestors are reached through `accParent`, sees it as
@@ -3038,7 +3037,7 @@ impl Worker<'_> {
         match kind {
             WinEventKind::Caret | WinEventKind::TextSelectionChange => {
                 if of_focus {
-                    let node_id = self.context.store.nodes().client(hwnd);
+                    let node_id = self.context.nodes().client(hwnd);
                     if !self.check_open_watch(node_id, true) {
                         self.caret_of(node_id, trace, observed_at_us);
                     }
@@ -3058,7 +3057,7 @@ impl Worker<'_> {
                     )
                     .is_some() =>
             {
-                let node_id = self.context.store.nodes().client(hwnd);
+                let node_id = self.context.nodes().client(hwnd);
                 text_reads::note_value_change(self.context, node_id);
                 self.check_open_watch(node_id, false);
                 self.emit(
@@ -3106,7 +3105,7 @@ impl Worker<'_> {
         focus: Option<(NodeId, Role)>,
         (hwnd, trace, observed_at_us): (isize, TraceId, u64),
     ) {
-        let registry = &self.context.store.nodes();
+        let registry = self.context.nodes();
         let progress_bar = match focus {
             Some((_, role)) => role == Role::ProgressBar,
             None => object.role() == Role::ProgressBar,
@@ -3209,7 +3208,7 @@ impl Worker<'_> {
         if candidates.is_empty() {
             return None;
         }
-        let node = object.which_of(&candidates, &self.context.store.nodes())?;
+        let node = object.which_of(&candidates, self.context.nodes())?;
         // A carried node no report's line has is read for its role.
         let role = self.known_role(node).unwrap_or_else(|| object.role());
         Some((node, role))
@@ -3343,8 +3342,7 @@ impl Worker<'_> {
         // no comparison, and read for that node, which Core targets.
         match event.kind {
             UiaKind::TextSelection => {
-                if let Some(node_id) = self.context.store.nodes().existing(&event.parts.runtime_id)
-                {
+                if let Some(node_id) = self.context.nodes().existing(&event.parts.runtime_id) {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
                     if self.is_focus(node_id) {
                         // The focus reports its caret moves itself: the
@@ -3405,7 +3403,7 @@ impl Worker<'_> {
         hwnd: Option<isize>,
         (trace, observed_at_us): (TraceId, u64),
     ) {
-        let Some(node_id) = self.context.store.nodes().existing(runtime_id) else {
+        let Some(node_id) = self.context.nodes().existing(runtime_id) else {
             return;
         };
         text_reads::text_event_from(self.context, node_id, element);
@@ -3434,7 +3432,7 @@ impl Worker<'_> {
         (runtime_id, range, hwnd): (&[i32], Option<super::intake::ActiveRange>, Option<isize>),
         (trace, observed_at_us): (TraceId, u64),
     ) {
-        let node_id = self.context.store.nodes().existing(runtime_id);
+        let node_id = self.context.nodes().existing(runtime_id);
         let (Some(node_id), Some(range)) = (node_id, range) else {
             return;
         };
@@ -3483,7 +3481,6 @@ impl Worker<'_> {
         let current_instead = runtime_id != focus_id.as_slice();
         let known = self
             .context
-            .store
             .nodes()
             .existing(&focus_id)
             .and_then(|id| self.context.store.element_of(id))
@@ -3540,7 +3537,7 @@ impl Worker<'_> {
                 "a selection in none of the elements the focus controls; the first one's current selection is reported"
             );
         }
-        let registry = &self.context.store.nodes();
+        let registry = self.context.nodes();
         // The controller's runtime id is UIA's own, kept with the element,
         // whatever its cache holds.
         let controller = focused.runtime_id();
@@ -3624,11 +3621,11 @@ impl Worker<'_> {
     /// A snapshot from a UIA element's cached parts, its id minted by the
     /// registry, which keeps the element when there is one.
     fn uia_node(
-        context: &Context,
+        context: &RequestContext<'_>,
         parts: &UiaSnapshotFact,
         element: Option<&Cached<Kept>>,
     ) -> NodeSnapshot {
-        let registry = &context.store.nodes();
+        let registry = context.nodes();
         let id = match element {
             Some(element) => registry.id_for_element(&parts.runtime_id, element),
             None => verbatim_uia::Interning::id_for(registry, &parts.runtime_id),
@@ -3744,7 +3741,7 @@ impl Worker<'_> {
         if object.role() != Role::HelpBalloon {
             return;
         }
-        let node = object.read(&self.context.store.nodes(), Purpose::Announce);
+        let node = object.read(self.context.nodes(), Purpose::Announce);
         self.emit(
             trace,
             observed_at_us,
@@ -3781,7 +3778,7 @@ impl Worker<'_> {
             hwnd,
             id_object,
             id_child,
-            &self.context.store.nodes(),
+            self.context.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         ) else {
             return;
@@ -4003,7 +4000,7 @@ impl Worker<'_> {
         // NVDA's equality (`docs/design/focus-pipeline-rework.md`, "MSAA
         // object equality").
         let candidates = read::msaa_candidates(self.context);
-        let node = candidate.read(&self.context.store.nodes(), Some(&candidates));
+        let node = candidate.read(self.context.nodes(), Some(&candidates));
         self.report_msaa_focus(
             node,
             ((hwnd, id_object, id_child), resolved_child > 0),
@@ -4270,14 +4267,14 @@ impl Worker<'_> {
         self.earlier = read.same_as_last;
         if let Some(earlier @ (EarlierElement::NotFocused | EarlierElement::Gone)) =
             read.same_as_last
-            && let Some(node) = self.context.store.nodes().existing(runtime_id)
+            && let Some(node) = self.context.nodes().existing(runtime_id)
         {
             let gone = earlier == EarlierElement::Gone;
             tracing::debug!(
                 gone,
                 "UIA focus: its runtime id named an element that lost the focus or is gone; the node's element is evicted"
             );
-            if gone && let Some(live) = self.context.watch.hold_if_live() {
+            if gone && let Some(live) = self.context.watch.hold_if_live(self.context.tag()) {
                 let removed = self.context.store.forget_text(node);
                 drop(live);
                 drop(removed);
@@ -4317,12 +4314,7 @@ impl Worker<'_> {
             tracing::debug!("the focus's element was not found; nothing is followed");
             return None;
         };
-        Some(
-            self.context
-                .store
-                .nodes()
-                .id_for_element(runtime_id, &element),
-        )
+        Some(self.context.nodes().id_for_element(runtime_id, &element))
     }
 
     /// The element `runtime_id` names, an element of the chain the
@@ -4450,7 +4442,7 @@ impl Worker<'_> {
             hwnd,
             id_object,
             id_child,
-            &self.context.store.nodes(),
+            self.context.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
         ) else {
             return;
@@ -4810,7 +4802,7 @@ impl Worker<'_> {
 /// inherits it from the newest report in its top-level window, and a
 /// foreground change of the window sets it. Local calls.
 fn judged_focus(
-    context: &Context,
+    context: &RequestContext<'_>,
     (trace, node, ancestors): (TraceId, &NodeSnapshot, &[NodeSnapshot]),
     (window, foreground): (Option<isize>, bool),
     msaa_event: Option<((isize, i32, i32), bool)>,
@@ -5043,7 +5035,7 @@ fn sensitive_slider_of(node_id: NodeId, chain: &[NodeSnapshot]) -> Option<NodeId
 /// ([`Worker::walk_returned`]), so the report does not depend on which
 /// comes first; its commit ([`Watch::commit_publication`]) claims the walk.
 /// Local calls only.
-fn publication(context: &Context, walk: &FocusProgress) -> Effects {
+fn publication(context: &RequestContext<'_>, walk: &FocusProgress) -> Effects {
     let focus = &walk.focus;
     let ancestors = bound::chain_at_bound(context, walk);
     let judged = judged_focus(
@@ -5163,6 +5155,12 @@ fn event_window_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The request the tests' entries run.
+    const TEST_TAG: Tag = Tag {
+        generation: 0,
+        request: 1,
+    };
 
     /// A focus change's window facts keep the window's class, which Core's
     /// staging rule matches, and take the application's name, which its
@@ -5382,7 +5380,7 @@ mod tests {
     fn a_returning_abandoned_worker_never_publishes_and_lowers_the_count() {
         let watch = Watch::default();
         let trace = TraceId::mint();
-        watch.start(STEP_DEADLINE, Some((7, trace)), 0);
+        watch.start(TEST_TAG, STEP_DEADLINE, Some((7, trace)), 0);
         let running = watch.lock().abandon();
         watch.abandoned.fetch_add(1, Ordering::Relaxed);
         assert_eq!(running, Some((7, trace)), "the stuck query is answered");
@@ -5397,7 +5395,9 @@ mod tests {
         let context = &quiet_context();
         let trace = TraceId::mint();
         let mut replies = Vec::new();
-        context.watch.start(STEP_DEADLINE, Some((7, trace)), 0);
+        context
+            .watch
+            .start(TEST_TAG, STEP_DEADLINE, Some((7, trace)), 0);
 
         // The watchdog abandons the worker and answers its query.
         if let Some((request_id, _)) = context.watch.lock().abandon() {
@@ -5417,7 +5417,9 @@ mod tests {
         let context = &quiet_context();
         let trace = TraceId::mint();
         let mut replies = Vec::new();
-        context.watch.start(STEP_DEADLINE, Some((7, trace)), 0);
+        context
+            .watch
+            .start(TEST_TAG, STEP_DEADLINE, Some((7, trace)), 0);
 
         let (committed, _) = context.watch.commit(context, 0, reply_effects(7, trace));
         if committed == Committed::Applied {
@@ -5571,7 +5573,12 @@ mod tests {
         Effects {
             result: Some(OutpostToCore::IdleAnswer { round: 1 }),
             report: Some(Report::Reported(
-                judged_focus(context, (TraceId::mint(), node, &[]), (None, false), None),
+                judged_focus(
+                    &RequestContext::new(context, TEST_TAG),
+                    (TraceId::mint(), node, &[]),
+                    (None, false),
+                    None,
+                ),
                 held::Evidence::Msaa,
             )),
             follow: Some(follow),
@@ -5592,7 +5599,9 @@ mod tests {
     /// concerning `window`, `left` from its bound, returning when the entry
     /// started and the walk's bound.
     fn armed(context: &Context, window: isize, left: Duration) -> (Instant, Instant) {
-        context.watch.start(HANDLING_DEADLINE, None, window);
+        context
+            .watch
+            .start(TEST_TAG, HANDLING_DEADLINE, None, window);
         context
             .watch
             .arm(FocusProgress::new(0, bound_focus(), 0, left))
@@ -5611,7 +5620,7 @@ mod tests {
     fn a_walk_returned_past_its_bound_is_left_for_its_worker_to_publish() {
         let watch = Watch::default();
         let arm = || {
-            watch.start(HANDLING_DEADLINE, None, 0);
+            watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
             watch.arm(FocusProgress::new(
                 0,
                 bound_focus(),
@@ -5702,7 +5711,7 @@ mod tests {
     #[test]
     fn an_abandoned_workers_commit_changes_nothing() {
         let context = &quiet_context();
-        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
         let _ = context.watch.lock().abandon();
         let effects = focus_effects(
             context,
@@ -5724,7 +5733,9 @@ mod tests {
     fn owed_work_is_attempted_once_and_only_its_deadline_abandons_it() {
         let context = &quiet_context();
         let terminal = node(3, Role::Terminal);
-        context.watch.start(HANDLING_DEADLINE, None, 0x1234);
+        context
+            .watch
+            .start(TEST_TAG, HANDLING_DEADLINE, None, 0x1234);
         let effects = focus_effects(context, &terminal, Some(OwedWork::FirstRead(None)));
         assert_eq!(
             context.watch.commit(context, 0, effects).0,
@@ -5733,12 +5744,35 @@ mod tests {
         let _ = context.watch.lock().abandon();
         // The replacement is in an entry concerning a window when it takes
         // the owed work up.
-        context.watch.start(HANDLING_DEADLINE, None, 0x1234);
+        context
+            .watch
+            .start(TEST_TAG, HANDLING_DEADLINE, None, 0x1234);
         assert!(
-            context.watch.take_owed(1).is_some(),
+            context
+                .watch
+                .take_owed(
+                    1,
+                    Tag {
+                        generation: 1,
+                        request: 2
+                    }
+                )
+                .is_some(),
             "the replacement takes it"
         );
-        assert!(context.watch.take_owed(1).is_none(), "once");
+        assert!(
+            context
+                .watch
+                .take_owed(
+                    1,
+                    Tag {
+                        generation: 1,
+                        request: 2
+                    }
+                )
+                .is_none(),
+            "once"
+        );
         let (deadline, started) = {
             let state = context.watch.lock();
             (
@@ -5757,14 +5791,25 @@ mod tests {
         );
         let _ = context.watch.lock().abandon();
         assert!(context.watch.follow(|follow| follow.owed.is_none()));
-        assert!(context.watch.take_owed(2).is_none());
+        assert!(
+            context
+                .watch
+                .take_owed(
+                    2,
+                    Tag {
+                        generation: 2,
+                        request: 3
+                    }
+                )
+                .is_none()
+        );
     }
 
     /// A newer focus's commit replaces the work the focus before it owed.
     #[test]
     fn a_newer_focus_replaces_the_owed_work_of_the_one_before() {
         let context = &quiet_context();
-        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
         let first = focus_effects(
             context,
             &node(3, Role::Terminal),
@@ -5783,7 +5828,7 @@ mod tests {
     fn a_terminal_read_by_an_abandoned_worker_leaves_its_entry_as_it_was() {
         let context = &quiet_context();
         let terminal = NodeId::new(3);
-        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
         let mut copy = context.store.terminal(terminal).unwrap_or_default();
         copy.reading = Reading::Held { changed: true };
         let _ = context.watch.lock().abandon();
@@ -5804,7 +5849,7 @@ mod tests {
     #[test]
     fn a_slider_is_added_only_while_its_focus_is_followed() {
         let context = &quiet_context();
-        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
         let followed_now = focus_effects(context, &node(4, Role::Button), None);
         let _ = context.watch.commit(context, 0, followed_now);
         let before = context.watch.follow(|follow| follow.followed);
@@ -5828,6 +5873,36 @@ mod tests {
         assert_eq!(context.watch.follow(|follow| follow.followed), before);
     }
 
+    /// A text call's copy is put back only while its request is live: not
+    /// once the walk's publication claimed the request, nor once its worker
+    /// was abandoned.
+    #[test]
+    fn a_text_copy_is_put_back_only_while_its_request_is_live() {
+        let context = &quiet_context();
+        let put = |request: &RequestContext<'_>, node: NodeId, at: u32| {
+            let mut copy = context.store.edit_text(node, &[]);
+            let anchor = copy.text().position_at(at).anchor.0;
+            text_reads::put_edit(request, node, copy);
+            anchor
+        };
+        context.watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
+        let request = RequestContext::new(context, TEST_TAG);
+        let node = request.nodes().window(7);
+        let live = put(&request, node, 1);
+        context.watch.lock().claimed = true;
+        let _ = put(&request, node, 2);
+        assert_eq!(context.store.edit_anchors(node), vec![live], "claimed");
+        let next = Tag {
+            generation: 0,
+            request: 2,
+        };
+        context.watch.start(next, HANDLING_DEADLINE, None, 0);
+        let request = RequestContext::new(context, next);
+        let _ = context.watch.lock().abandon();
+        let _ = put(&request, node, 3);
+        assert_eq!(context.store.edit_anchors(node), vec![live], "abandoned");
+    }
+
     /// A walk that meets the chain of the focus before splices the entries
     /// above where they meet; a chain whose outer entry the store has
     /// released offers nothing below it to splice from, so the walk reads
@@ -5835,15 +5910,16 @@ mod tests {
     #[test]
     fn none_is_spliced_from_a_released_entry() {
         let context = quiet_context();
-        let window = context.store.nodes().window(7);
-        let pane = context.store.nodes().window(8);
+        let request = RequestContext::new(&context, TEST_TAG);
+        let window = request.nodes().window(7);
+        let pane = request.nodes().window(8);
         let entry = |id: NodeId| NodeSnapshot {
             id,
             ..node(0, Role::Pane)
         };
         let previous = vec![entry(window), entry(pane)];
         let spliced = read::splice(
-            &read::held_prefix(&context, previous.clone()),
+            &read::held_prefix(&request, previous.clone()),
             vec![entry(pane), node(99, Role::Button)],
             pane,
         );
@@ -5855,9 +5931,12 @@ mod tests {
         let (_, released) = context
             .store
             .release(&context.outbound, &HashSet::new(), 0, &[]);
-        assert!(released.is_some());
         assert_eq!(
-            read::held_prefix(&context, previous),
+            released.map(|released| released.nodes),
+            Some(HashSet::from([window.number(), pane.number()]))
+        );
+        assert_eq!(
+            read::held_prefix(&request, previous),
             Vec::<NodeSnapshot>::new()
         );
     }
@@ -5883,7 +5962,7 @@ mod tests {
             result: Some(OutpostToCore::IdleAnswer { round: 1 }),
             report: Some(Report::Reported(
                 judged_focus(
-                    context,
+                    &RequestContext::new(context, TEST_TAG),
                     (TraceId::mint(), node, &[]),
                     (Some(hwnd), false),
                     None,
@@ -5906,10 +5985,11 @@ mod tests {
     fn an_older_unreleased_terminal_has_its_output_read() {
         use super::super::window::tests as window_tests;
         let context = &quiet_context();
+        let request = &RequestContext::new(context, TEST_TAG);
         let (console, other) = (window_tests::create_window(), window_tests::create_window());
-        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.start(TEST_TAG, HANDLING_DEADLINE, None, 0);
         let terminal = NodeSnapshot {
-            id: verbatim_uia::Interning::id_for(&context.store.nodes(), &[42, 7, 1]),
+            id: verbatim_uia::Interning::id_for(request.nodes(), &[42, 7, 1]),
             backend: Backend::Uia,
             ..node(0, Role::Terminal)
         };
@@ -5917,7 +5997,7 @@ mod tests {
             .watch
             .commit(context, 0, uia_focus_effects(context, &terminal, console));
         let button = NodeSnapshot {
-            id: verbatim_uia::Interning::id_for(&context.store.nodes(), &[42, 8, 1]),
+            id: verbatim_uia::Interning::id_for(request.nodes(), &[42, 8, 1]),
             backend: Backend::Uia,
             ..node(0, Role::Button)
         };
@@ -5925,7 +6005,7 @@ mod tests {
             .watch
             .commit(context, 0, uia_focus_effects(context, &button, other));
         let mut client = Client::default();
-        let worker = Worker::new(context, &mut client, 0, 0, EventTiming::default());
+        let worker = Worker::new(request, &mut client, 0, 0, EventTiming::default());
         assert_eq!(
             (
                 worker.focused_terminal(terminal.id),

@@ -20,9 +20,11 @@
 //!   removed object, so nothing is dropped under its lock or the outbound
 //!   backlog's ([`Removed`]).
 //! - A walk issues and looks up nodes through [`Nodes`], which implements
-//!   the interning traits of `verbatim-uia` and `verbatim-ia2`: every node
-//!   issued or looked up through it is tagged with the program the calling
-//!   thread runs ([`Store::enter`]), in the same hold of the store's lock.
+//!   the interning traits of `verbatim-uia` and `verbatim-ia2`: a handle
+//!   carries its request's tag ([`Store::nodes_for`]), and every node
+//!   issued or looked up through it is tagged with it, in the same hold of
+//!   the store's lock. An element a lookup replaces is kept in the handle
+//!   for its holder to drop ([`Nodes::take_removed`]).
 //!   The nodes of the lines a walk copies, the focus chain it may stop at
 //!   and the reports' lines it compares with, are tagged as it copies them
 //!   ([`Store::held_prefix`], [`Store::tag_copied`]).
@@ -39,14 +41,15 @@
 //!   the store's, the one nesting in the outpost, so no message can be
 //!   queued between the decision and the removal.
 //! - A text call works on a copy of its node's anchors ([`Store::uia_text`],
-//!   [`Store::edit_text`]) with no lock held, and its result is put back
+//!   [`Store::edit_text`]): the anchors its operation names, with the
+//!   node's kept selection and carets, with no lock held, and its result is
+//!   put back
 //!   ([`Store::put_uia_text`], [`Store::put_edit_text`]), its anchors
 //!   tagged; a copy of a request no longer live is not put back, which the
 //!   caller decides under the watch lock.
 
 #![forbid(unsafe_code)]
 
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -86,30 +89,6 @@ impl Tag {
     };
 }
 
-thread_local! {
-    /// The program the calling thread runs ([`Store::enter`]).
-    static PROGRAM: Cell<Tag> = const { Cell::new(Tag::NONE) };
-}
-
-/// The tag of the program the calling thread runs, [`Tag::NONE`] when it
-/// runs none.
-pub(super) fn current() -> Tag {
-    PROGRAM.with(Cell::get)
-}
-
-/// The program the calling thread runs, until this is dropped, when the
-/// thread runs the one it ran before ([`Store::enter`]).
-#[must_use = "the thread runs the program only while this lives"]
-pub(super) struct Program {
-    before: Tag,
-}
-
-impl Drop for Program {
-    fn drop(&mut self) {
-        PROGRAM.with(|program| program.set(self.before));
-    }
-}
-
 /// Objects the store let go of, for the caller to drop once no lock is
 /// held: releasing an application's object can call into its process.
 #[must_use = "drop once no lock is held"]
@@ -117,6 +96,9 @@ impl Drop for Program {
 pub(super) struct Removed {
     uia: Vec<verbatim_uia::Released>,
     msaa: Vec<verbatim_ia2::Released>,
+    /// Elements a lookup replaced as a node's ([`Nodes::keep`]).
+    #[expect(dead_code, reason = "kept only to be dropped by the holder")]
+    elements: Vec<Agile<Kept>>,
     patterns: Vec<Patterns>,
     uia_text: Option<Forgotten<UiaPos>>,
     edit_text: Option<Forgotten<u32>>,
@@ -274,24 +256,14 @@ impl Store {
         }
     }
 
-    /// Runs `tag`'s program on the calling thread until the returned value
-    /// is dropped: every node issued or looked up through
-    /// [`nodes`](Self::nodes) on this thread meanwhile is tagged with it.
-    #[expect(
-        clippy::unused_self,
-        reason = "a program is entered through the store whose nodes it tags"
-    )]
-    pub(super) fn enter(&self, tag: Tag) -> Program {
-        let before = PROGRAM.with(|program| program.replace(tag));
-        Program { before }
-    }
-
-    /// The store's handle for the program the calling thread runs, through
-    /// which a walk issues and looks up nodes, each tagged with it.
-    pub(super) fn nodes(&self) -> Nodes<'_> {
+    /// The store's handle for the request `tag`, through which a walk
+    /// issues and looks up nodes, each tagged with it.
+    pub(super) fn nodes_for(&self, tag: Tag) -> Nodes<'_> {
         Nodes {
             store: self,
-            tag: current(),
+            generation: tag.generation,
+            request: AtomicU64::new(tag.request),
+            replaced: Mutex::new(Vec::new()),
         }
     }
 
@@ -341,10 +313,9 @@ impl Store {
 
     /// How many of `chain`, outermost first, a walk may stop at: those
     /// above the outermost one the store no longer holds. Each of them is
-    /// tagged with the program the calling thread runs, in the same hold,
-    /// so no release frees it while the program may name it.
-    pub(super) fn held_prefix(&self, chain: &[NodeId]) -> usize {
-        let tag = current();
+    /// tagged with request `tag`, in the same hold, so no release frees it
+    /// while the request may name it.
+    pub(super) fn held_prefix(&self, tag: Tag, chain: &[NodeId]) -> usize {
         let mut state = self.lock();
         let held = chain
             .iter()
@@ -356,10 +327,9 @@ impl Store {
         held
     }
 
-    /// Tags each of `nodes` the store holds with the program the calling
-    /// thread runs: the lines it copied, which it may name.
-    pub(super) fn tag_copied(&self, nodes: impl IntoIterator<Item = NodeId>) {
-        let tag = current();
+    /// Tags each of `nodes` the store holds with request `tag`: the lines
+    /// it copied, which it may name.
+    pub(super) fn tag_copied(&self, tag: Tag, nodes: impl IntoIterator<Item = NodeId>) {
         let mut state = self.lock();
         for node in nodes {
             if self.holds(node) {
@@ -568,46 +538,52 @@ impl Store {
         }
     }
 
-    /// A copy of `node`'s UIA text anchors, for a text call made with no
-    /// lock held.
-    pub(super) fn uia_text(&self, node: NodeId) -> NodeTextCopy<UiaPos> {
-        self.lock().uia_text.copy(node.number())
+    /// A copy of `node`'s UIA text anchors for a text call made with no
+    /// lock held: the anchors `named` (the operation's positions'), with
+    /// the node's kept selection and carets.
+    pub(super) fn uia_text(&self, node: NodeId, named: &[u64]) -> NodeTextCopy<UiaPos> {
+        self.lock().uia_text.copy(node.number(), named)
     }
 
-    /// A copy of `node`'s edit control anchors.
-    pub(super) fn edit_text(&self, node: NodeId) -> NodeTextCopy<u32> {
-        self.lock().edit_text.copy(node.number())
+    /// A copy of `node`'s edit control anchors, as
+    /// [`uia_text`](Self::uia_text) makes one.
+    pub(super) fn edit_text(&self, node: NodeId, named: &[u64]) -> NodeTextCopy<u32> {
+        self.lock().edit_text.copy(node.number(), named)
     }
 
     /// Puts `copy` back as `node`'s UIA text anchors, while the store holds
-    /// the node, its anchors tagged with the program the calling thread
-    /// runs. The caller has judged that program live.
-    pub(super) fn put_uia_text(&self, node: NodeId, copy: NodeTextCopy<UiaPos>) -> Removed {
-        let tag = current();
+    /// the node, its anchors tagged with request `tag`, which the caller has
+    /// judged live. Returns what it replaced, or the copy itself for a node
+    /// released.
+    pub(super) fn put_uia_text(
+        &self,
+        tag: Tag,
+        node: NodeId,
+        copy: NodeTextCopy<UiaPos>,
+    ) -> Removed {
         let mut removed = Removed::default();
         let mut state = self.lock();
         if self.holds(node) {
             state.tag_anchors(copy.touched(), tag);
             let replaced = state.uia_text.put(node.number(), copy);
             removed.uia_text(replaced);
-            drop(state);
         } else {
-            drop(state);
-            drop(copy);
+            removed.uia_text(copy.into_forgotten());
         }
         removed
     }
 
     /// Puts `copy` back as `node`'s edit control anchors, as
     /// [`put_uia_text`](Self::put_uia_text) does.
-    pub(super) fn put_edit_text(&self, node: NodeId, copy: NodeTextCopy<u32>) -> Removed {
-        let tag = current();
+    pub(super) fn put_edit_text(&self, tag: Tag, node: NodeId, copy: NodeTextCopy<u32>) -> Removed {
         let mut removed = Removed::default();
         let mut state = self.lock();
         if self.holds(node) {
             state.tag_anchors(copy.touched(), tag);
             let replaced = state.edit_text.put(node.number(), copy);
             removed.edit_text(replaced);
+        } else {
+            removed.edit_text(copy.into_forgotten());
         }
         removed
     }
@@ -625,6 +601,12 @@ impl Store {
             removed.edit_text(forgotten);
         }
         removed
+    }
+
+    /// The anchors kept for edit control `node`, for a test.
+    #[cfg(test)]
+    pub(super) fn edit_anchors(&self, node: NodeId) -> Vec<u64> {
+        self.lock().edit_text.anchors_of(node.number()).collect()
     }
 
     /// Notes that edit control `node`'s text changed.
@@ -711,20 +693,56 @@ impl Store {
     }
 }
 
-/// The store's handle for one program: every node issued or looked up
-/// through it is tagged with the program's tag, in the same hold of the
-/// store's lock as the registry's change.
+/// The store's handle for one request: every node issued or looked up
+/// through it is tagged with the request's tag, in the same hold of the
+/// store's lock as the registry's change. The elements its lookups replaced
+/// are kept in it, dropped with it or taken by its holder
+/// ([`take_removed`](Self::take_removed)): a handle used under a lock, the
+/// watchdog's, has them taken before the lock is let go.
 pub(super) struct Nodes<'a> {
     store: &'a Store,
-    tag: Tag,
+    /// The request's tag, its generation and its number, which
+    /// [`retag`](Self::retag) changes when the worker starts owed work.
+    generation: u64,
+    request: AtomicU64,
+    replaced: Mutex<Vec<Agile<Kept>>>,
 }
 
 impl Nodes<'_> {
+    /// The tag of the request this handle tags with.
+    pub(super) fn tag(&self) -> Tag {
+        Tag {
+            generation: self.generation,
+            request: self.request.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Tags with `tag` from now on: a request of the same generation the
+    /// worker started, its owed work's.
+    pub(super) fn retag(&self, tag: Tag) {
+        debug_assert_eq!(
+            tag.generation, self.generation,
+            "a request of the same worker"
+        );
+        self.request.store(tag.request, Ordering::Relaxed);
+    }
+
+    /// The elements this handle's lookups replaced, for the caller to drop
+    /// once no lock is held.
+    pub(super) fn take_removed(&self) -> Removed {
+        Removed {
+            elements: std::mem::take(
+                &mut *self.replaced.lock().unwrap_or_else(PoisonError::into_inner),
+            ),
+            ..Removed::default()
+        }
+    }
+
     /// The kept UIA node for `runtime_id`, if there is one, looked up.
     pub(super) fn existing(&self, runtime_id: &[i32]) -> Option<NodeId> {
         let mut state = self.store.lock();
         let node = self.store.uia.existing_id(runtime_id)?;
-        state.tag_node(node, self.tag);
+        state.tag_node(node, self.tag());
         Some(node)
     }
 
@@ -747,20 +765,24 @@ impl Nodes<'_> {
     fn msaa_key(&self, key: MsaaKey) -> NodeId {
         let mut state = self.store.lock();
         let node = self.store.msaa.id_for(key);
-        state.tag_node(node, self.tag);
+        state.tag_node(node, self.tag());
         node
     }
 
     /// The UIA node for `runtime_id`, issued or looked up, keeping
-    /// `element` as its live element: an agile reference made already.
+    /// `element` as its live element: an agile reference made already. The
+    /// element it replaces is kept in the handle.
     pub(super) fn keep(&self, runtime_id: &[i32], element: Option<Agile<Kept>>) -> NodeId {
         let (node, replaced) = {
             let mut state = self.store.lock();
             let (node, replaced) = self.store.uia.keep(runtime_id, element);
-            state.tag_node(node, self.tag);
+            state.tag_node(node, self.tag());
             (node, replaced)
         };
-        drop(replaced);
+        self.replaced
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(replaced);
         node
     }
 }
@@ -790,7 +812,7 @@ impl verbatim_ia2::Interning for Nodes<'_> {
         let mut state = self.store.lock();
         let found = self.store.msaa.find(key, identity, child, at_address);
         if let Found::Object(node, _) | Found::Key(node, _, _) = &found {
-            state.tag_node(*node, self.tag);
+            state.tag_node(*node, self.tag());
         }
         found
     }
@@ -798,7 +820,7 @@ impl verbatim_ia2::Interning for Nodes<'_> {
     fn touch(&self, id: NodeId) {
         let mut state = self.store.lock();
         if self.store.msaa.holds(id) {
-            state.tag_node(id, self.tag);
+            state.tag_node(id, self.tag());
         }
     }
 
@@ -811,7 +833,7 @@ impl verbatim_ia2::Interning for Nodes<'_> {
     ) -> NodeId {
         let mut state = self.store.lock();
         let node = self.store.msaa.insert(key, held, role_facts, at_address);
-        state.tag_node(node, self.tag);
+        state.tag_node(node, self.tag());
         node
     }
 
@@ -823,7 +845,7 @@ impl verbatim_ia2::Interning for Nodes<'_> {
         let mut state = self.store.lock();
         if self.store.msaa.holds(id) {
             self.store.msaa.reissue(id, name);
-            state.tag_node(id, self.tag);
+            state.tag_node(id, self.tag());
         }
     }
 

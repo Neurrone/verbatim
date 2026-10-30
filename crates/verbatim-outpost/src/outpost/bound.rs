@@ -21,7 +21,7 @@ use verbatim_model::{Backend, NodeSnapshot, TraceId};
 
 use verbatim_model::protocol::EventTiming;
 
-use super::Context;
+use super::RequestContext;
 use super::intake::Object;
 use super::read::{WalkStep, plain_windows_from};
 
@@ -114,7 +114,10 @@ impl FocusProgress {
 /// ancestors read, completed above by plain windows from the window the
 /// walk had reached, included, named by their text. The one function the
 /// watchdog makes a focus's chain from. Local calls only.
-pub(super) fn chain_at_bound(context: &Context, progress: &FocusProgress) -> Vec<NodeSnapshot> {
+pub(super) fn chain_at_bound(
+    context: &RequestContext<'_>,
+    progress: &FocusProgress,
+) -> Vec<NodeSnapshot> {
     if let Some(chain) = &progress.ended {
         return chain.clone();
     }

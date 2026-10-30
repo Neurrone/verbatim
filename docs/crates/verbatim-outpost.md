@@ -828,12 +828,15 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   attempted once per worker under a deadline of its own with no moved-on
   window (`Watch::take_owed`). A terminal read works on a copy of its
   entry, put in place only by its result's commit. Each entry, and each
-  replacement worker's owed work, is a request with a mint tag of its own
+  attempt at owed work, is a request with a mint tag of its own
   (`store::Tag`, the generation and a request number), which the worker
-  enters as its thread's program (`Store::enter`) before starting the
-  entry's deadline; the watch's state keeps it as the live request until
-  the entry ends, its worker is abandoned, or its walk's publication
-  claims it (`WatchState::live_tags`). An entry's result ends
+  carries in its `RequestContext`, the shared context with the store's
+  handle for the request, and passes when it starts the entry's or the
+  attempt's deadline (`Watch::start`, `Watch::take_owed`, which retags the
+  handle); the watch's state keeps it as the live request until the entry
+  ends, its worker is abandoned, or its walk's publication claims it
+  (`WatchState::live_tags`). The watchdog's publication runs under the
+  claimed request's tag. An entry's result ends
   its query but not its deadline. The walks stop at their next step once
   their worker is abandoned (`Watch::advance`).
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
@@ -873,10 +876,14 @@ and the inherited pipe handles.
   `CaretMoved`. `Anchors` keeps a backend's anchors by node until
   `forget_anchors` or the node's release, with `note_content_changed` and
   `forget_selection`, each returning what it let go of as `Forgotten`, to
-  drop once no lock is held; `copy(node)` gives a `NodeTextCopy` a text
-  call works on with no lock held, recording the anchors it mints or
-  reports, and `put(node, copy)` puts it back but for an anchor forgotten
-  meanwhile; `NodeText` is one node's, borrowed from either
+  drop once no lock is held; `copy(node, named)` gives a `NodeTextCopy`
+  a text call works on with no lock held, holding the anchors `named`
+  (`named_anchors(op)`, those of the positions the operation names) and
+  the carets', with the kept selection and carets, and recording the
+  anchors it mints or reports; `put(node, copy)` adds its anchors back but
+  for one forgotten meanwhile, leaving those it did not copy, and
+  replaces the selection and carets; `into_forgotten` gives a copy not
+  put back as what to drop; `NodeText` is one node's, borrowed from either
   (`position_at`, `forget_selection`). `check_caret` checks a caret key's
   watch with one read and answers `Watched::Answered` or
   `Watched::Watching`; `CaretSignal` is what the check knows besides the
@@ -1332,9 +1339,12 @@ foreground application for its focus unless a newer focus was applied.
   ranges, and every node's and anchor's mint tag, the requests that issued
   or looked it up. Its API returns owned clones and owned removed objects
   (`store::Removed`), never a guard, and takes no closure. Walks issue and
-  look up nodes through `Store::nodes()`, which implements the interning
-  traits of `verbatim-uia` and `verbatim-ia2` and tags each node with the
-  calling thread's program in the same hold of the store's lock; a plain
+  look up nodes through the request's `store::Nodes` handle
+  (`Store::nodes_for(tag)`, `RequestContext::nodes`), which implements the
+  interning traits of `verbatim-uia` and `verbatim-ia2` and tags each node
+  with the request's tag in the same hold of the store's lock, keeping an
+  element a lookup replaced for its holder to drop (`take_removed`, which
+  the watchdog's publication puts in what its commit displaces); a plain
   window and a foreground's client object read from local data are minted
   by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
   The lines a walk copies are tagged too: the previous focus's chain it may
@@ -1364,10 +1374,13 @@ foreground application for its focus unless a newer focus was applied.
 - Text on copies: a text call takes a copy of its node's anchors from the
   store (`Store::uia_text`, `Store::edit_text`), works on it with no lock
   held, and puts it back (`text_reads::put_uia`, `put_edit`) only while
-  its request is live, judged and written under the watch lock, the
-  anchors it minted or reported tagged; a copy of an abandoned or claimed
-  request is dropped. Patterns and what a text supports are the store's
-  caches, written directly; a released node's are not kept.
+  its request is live, judged and written under the watch lock
+  (`text_reads::while_live`), the anchors it minted or reported tagged; a
+  copy of an abandoned or claimed request, or of a node released, is
+  dropped once the locks are let go. The other text writes, the patterns
+  and what a text supports, a forgotten answer of no pattern, a forgotten
+  selection and a noted value change, are made the same way, and a
+  released node's are not kept.
 
 ### What to read
 

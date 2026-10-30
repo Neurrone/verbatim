@@ -59,10 +59,9 @@ fn sent(store: &Store, outbound: &Outbound, message: OutpostToCore) {
 }
 
 /// The node of runtime id `runtime_id`, issued or looked up under the
-/// program `tag`.
+/// request `tag`.
 fn node_under(store: &Store, tag: Tag, runtime_id: &[i32]) -> NodeId {
-    let _program = store.enter(tag);
-    store.nodes().id_for(runtime_id)
+    store.nodes_for(tag).id_for(runtime_id)
 }
 
 /// Releases for a held list that holds nothing and acknowledges
@@ -93,9 +92,9 @@ fn a_walk_in_flight_keeps_its_tagged_nodes_carried_before_or_not() {
     assert_eq!(release(&store, &outbound, 1, &[]), vec![carried, issued]);
 }
 
-/// A node of a line a running program copied is kept across a release
-/// that omits it, though Core saw its last carrier; once the program's
-/// request has ended, it goes.
+/// A node of a line a running request copied is kept across a release
+/// that omits it, though Core saw its last carrier; once the request has
+/// ended, it goes.
 #[test]
 fn a_node_of_a_running_programs_copied_line_is_kept() {
     let (outbound, _pipe) = outbound();
@@ -103,10 +102,7 @@ fn a_node_of_a_running_programs_copied_line_is_kept() {
     let ancestor = node_under(&store, store.next_tag(0), &[1]);
     sent(&store, &outbound, focus(&[ancestor]));
     let walk = store.next_tag(0);
-    {
-        let _program = store.enter(walk);
-        assert_eq!(store.held_prefix(&[ancestor]), 1);
-    }
+    assert_eq!(store.held_prefix(walk, &[ancestor]), 1);
     assert_eq!(release(&store, &outbound, 1, &[walk]), Vec::<NodeId>::new());
     assert_eq!(release(&store, &outbound, 1, &[]), vec![ancestor]);
 }
@@ -153,9 +149,10 @@ fn a_spliced_or_looked_up_node_is_recorded_as_carried() {
     assert_eq!(release(&store, &outbound, 1, &[]), vec![spliced]);
 }
 
-/// A text call's copy of a node's anchors is put back without an anchor
-/// the store forgot meanwhile, keeping one the call minted; and is not put
-/// back at all for a node the store released meanwhile.
+/// A text call's copy of a node's anchors holds the anchors its operation
+/// names, and is put back without one of them the store forgot meanwhile,
+/// keeping one the call minted and leaving an anchor it did not copy as it
+/// was; it is not put back at all for a node the store released meanwhile.
 #[test]
 fn a_text_copy_put_back_keeps_only_what_the_store_still_holds() {
     let (outbound, _pipe) = outbound();
@@ -163,11 +160,11 @@ fn a_text_copy_put_back_keeps_only_what_the_store_still_holds() {
     let reading = store.next_tag(0);
     let node = node_under(&store, reading, &[1]);
     let gone = node_under(&store, store.next_tag(0), &[2]);
-    let _program = store.enter(reading);
-    let mut first = store.edit_text(node);
+    let mut first = store.edit_text(node, &[]);
     let forgotten = first.text().position_at(4).anchor.0;
-    drop(store.put_edit_text(node, first));
-    let mut copy = store.edit_text(node);
+    let untouched = first.text().position_at(6).anchor.0;
+    drop(store.put_edit_text(reading, node, first));
+    let mut copy = store.edit_text(node, &[forgotten]);
     let minted = copy.text().position_at(9).anchor.0;
     drop(
         store
@@ -175,12 +172,12 @@ fn a_text_copy_put_back_keeps_only_what_the_store_still_holds() {
             .edit_text
             .forget_anchors(&HashSet::from([forgotten])),
     );
-    drop(store.put_edit_text(node, copy));
+    drop(store.put_edit_text(reading, node, copy));
     let anchors: Vec<u64> = store.lock().edit_text.anchors_of(node.number()).collect();
-    assert_eq!(anchors, vec![minted]);
-    let mut late = store.edit_text(gone);
+    assert_eq!(anchors, vec![untouched, minted]);
+    let mut late = store.edit_text(gone, &[]);
     let _ = late.text().position_at(1);
     assert_eq!(release(&store, &outbound, 0, &[reading]), vec![gone]);
-    drop(store.put_edit_text(gone, late));
+    drop(store.put_edit_text(reading, gone, late));
     assert!(!store.lock().edit_text.has(gone.number()));
 }

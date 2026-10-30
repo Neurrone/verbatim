@@ -352,6 +352,49 @@ impl Default for OutpostOptions {
     }
 }
 
+/// The outpost's shared state as one request sees it: the store's handle
+/// for the request ([`store::Nodes`]), carrying its mint tag, that of the
+/// worker's entry or owed work, or of the request a watchdog's publication
+/// claims. The store tags every node the request issues or looks up with
+/// it, and keeps the request's text only while it is live.
+struct RequestContext<'a> {
+    context: &'a Context,
+    nodes: store::Nodes<'a>,
+}
+
+impl<'a> RequestContext<'a> {
+    fn new(context: &'a Context, tag: store::Tag) -> Self {
+        Self {
+            context,
+            nodes: context.store.nodes_for(tag),
+        }
+    }
+
+    /// The request's mint tag.
+    fn tag(&self) -> store::Tag {
+        self.nodes.tag()
+    }
+
+    /// The store's handle for this request.
+    fn nodes(&self) -> &store::Nodes<'a> {
+        &self.nodes
+    }
+
+    /// The elements this request's lookups replaced, for the caller to drop
+    /// once no lock is held ([`store::Nodes::take_removed`]).
+    fn take_removed(&self) -> store::Removed {
+        self.nodes.take_removed()
+    }
+}
+
+impl std::ops::Deref for RequestContext<'_> {
+    type Target = Context;
+
+    fn deref(&self) -> &Context {
+        self.context
+    }
+}
+
 impl Context {
     /// The application this outpost watches; 0 before it has one.
     fn target_pid(&self) -> u32 {

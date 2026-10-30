@@ -218,6 +218,11 @@ The full suite once, then the `windows_terminal_` and `conhost_` scenarios, `tex
 
 The builder updates `docs/crates/verbatim-outpost.md`, `docs/crates/verbatim-uia.md` and `docs/crates/verbatim-ia2.md`, and `docs/performance.md` with the hop's cost.
 
+## Departures in the store build, pending Dickson's acceptance
+
+- The parked event objects are not built in the store build: their lifecycle, parked after the push-time drops and dropped by a release program, needs the reducer build's mailbox, so they come with it.
+- There is no separate map from window handle to node: plain windows and a foreground's client object mint by handle through their MSAA keys (`Nodes::window`, `Nodes::client`), which the MSAA registry's key map already resolves, so ids do not change.
+
 ## Open questions for Dickson
 
 - Split into the store build and the reducer build, in that order? Recommended: yes; the seam is the store's API, and each half is reviewable whole.

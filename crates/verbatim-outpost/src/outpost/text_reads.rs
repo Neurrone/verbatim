@@ -39,7 +39,7 @@ use crate::text::uia::{UiaPos, UiaText};
 use crate::text::{self, CaretSignal, LastSelection, NodeTextCopy, TextError, Watched};
 use verbatim_model::protocol::EventTiming;
 
-use super::Context;
+use super::{Context, RequestContext};
 
 /// A node's text patterns, kept so each request does not fetch them again;
 /// `None` for a node whose element has no text pattern.
@@ -183,7 +183,7 @@ enum Source {
 /// The text behind `node_id`, or the reply that ends the request: `NoText`
 /// for a node with no text interface, `Gone` for one this outpost no longer
 /// knows.
-fn source(context: &Context, node_id: NodeId) -> Result<Source, TextReply> {
+fn source(context: &RequestContext<'_>, node_id: NodeId) -> Result<Source, TextReply> {
     if context.store.runtime_id_of(node_id).is_some() {
         return uia_source(context, node_id).map(Source::Uia);
     }
@@ -206,7 +206,7 @@ fn edit_version(hwnd: isize, object: i32, child: i32) -> Option<u8> {
 }
 
 /// A UIA node's text, its patterns fetched once and kept.
-fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> {
+fn uia_source(context: &RequestContext<'_>, node_id: NodeId) -> Result<UiaText, TextReply> {
     let element = context
         .store
         .element_of(node_id)
@@ -239,8 +239,11 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
                     return Err(TextReply::Unanswered);
                 }
             };
-            // What it replaced is dropped here, outside the store's lock.
-            drop(context.store.keep_patterns(node_id, fetched.clone()));
+            // What it replaced is dropped here, outside the store's lock
+            // and the watch lock.
+            drop(while_live(context, |store| {
+                store.keep_patterns(node_id, fetched.clone())
+            }));
             fetched
         }
     };
@@ -271,8 +274,8 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
 /// fetched (it then answers no pattern) has its text read once it says it
 /// has text. A pattern found is kept. Returns whether an answer of no
 /// pattern was forgotten.
-pub(super) fn forget_no_text(context: &Context, node_id: NodeId) -> bool {
-    context.store.forget_no_text(node_id)
+pub(super) fn forget_no_text(context: &RequestContext<'_>, node_id: NodeId) -> bool {
+    while_live(context, |store| store.forget_no_text(node_id)).unwrap_or(false)
 }
 
 /// As a caret or text event of `node_id` arrives from `element`, its
@@ -282,7 +285,11 @@ pub(super) fn forget_no_text(context: &Context, node_id: NodeId) -> bool {
 /// stand-in for a window whose provider did not answer in time, which has
 /// the window's runtime id and no text pattern: a short read of a starting
 /// Windows 11 Notepad's focused element has answered with it.
-pub(super) fn text_event_from(context: &Context, node_id: NodeId, element: Option<&Cached<Kept>>) {
+pub(super) fn text_event_from(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    element: Option<&Cached<Kept>>,
+) {
     if !forget_no_text(context, node_id) {
         return;
     }
@@ -305,39 +312,57 @@ pub(super) fn text_event_from(context: &Context, node_id: NodeId, element: Optio
             "a caret or text event's element replaced the element of a node that had answered no text pattern"
         );
         // The same node: the registry knows it by this runtime id.
-        let _ = context.store.nodes().id_for_element(&runtime_id, element);
+        let _ = context.nodes().id_for_element(&runtime_id, element);
     }
 }
 
 /// Keeps what `source`, `node_id`'s text, is now known to support, for the
 /// node's next read.
-fn keep_support(context: &Context, node_id: NodeId, source: &UiaText) {
-    context.store.keep_support(node_id, source.known_support());
+fn keep_support(context: &RequestContext<'_>, node_id: NodeId, source: &UiaText) {
+    let support = source.known_support();
+    while_live(context, |store| store.keep_support(node_id, support));
+}
+
+/// Makes `write` to the store when the request `context` runs is still
+/// live, holding the watch lock across the judgement and the write, so no
+/// abandonment or claim falls between them (`super::store`); `None`, with
+/// nothing written, otherwise. What the write returns is the caller's to
+/// drop, once both locks are let go.
+pub(super) fn while_live<T>(
+    context: &RequestContext<'_>,
+    write: impl FnOnce(&super::store::Store) -> T,
+) -> Option<T> {
+    let live = context.watch.hold_if_live(context.tag())?;
+    let written = write(&context.store);
+    drop(live);
+    Some(written)
 }
 
 /// Puts `copy`, node `node_id`'s UIA text anchors as a text call left them,
-/// back in the store, when the program the worker runs is still live: the
-/// watch lock is held across the judgement and the write, and what the
-/// write replaces is dropped once both locks are let go. The copy of a
-/// program abandoned or claimed meanwhile is dropped, its anchors with it
-/// (`super::store`).
-fn put_uia(context: &Context, node_id: NodeId, copy: NodeTextCopy<UiaPos>) {
-    let Some(live) = context.watch.hold_if_live() else {
-        return;
-    };
-    let removed = context.store.put_uia_text(node_id, copy);
-    drop(live);
+/// back in the store, when the request is still live ([`while_live`]);
+/// what the write replaces, or a copy not put back, is dropped once both
+/// locks are let go.
+fn put_uia(context: &RequestContext<'_>, node_id: NodeId, copy: NodeTextCopy<UiaPos>) {
+    let tag = context.tag();
+    let mut copy = Some(copy);
+    let removed = while_live(context, |store| {
+        copy.take()
+            .map(|copy| store.put_uia_text(tag, node_id, copy))
+    });
     drop(removed);
+    drop(copy);
 }
 
 /// [`put_uia`] for an edit control's anchors.
-fn put_edit(context: &Context, node_id: NodeId, copy: NodeTextCopy<u32>) {
-    let Some(live) = context.watch.hold_if_live() else {
-        return;
-    };
-    let removed = context.store.put_edit_text(node_id, copy);
-    drop(live);
+pub(super) fn put_edit(context: &RequestContext<'_>, node_id: NodeId, copy: NodeTextCopy<u32>) {
+    let tag = context.tag();
+    let mut copy = Some(copy);
+    let removed = while_live(context, |store| {
+        copy.take()
+            .map(|copy| store.put_edit_text(tag, node_id, copy))
+    });
     drop(removed);
+    drop(copy);
 }
 
 /// Logs a caret read that fell back from its remote operation to the
@@ -387,7 +412,7 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
 
 /// Answers one of Core's text requests other than a caret key's watch,
 /// which [`check_watch`] checks.
-pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextReply {
+pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp) -> TextReply {
     if *op == TextOp::ReadCaret {
         return caret_before_key(context, node_id);
     }
@@ -395,9 +420,10 @@ pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextRep
         Ok(source) => source,
         Err(reply) => return reply,
     };
+    let named = text::named_anchors(op);
     match source {
         Source::Uia(mut source) => {
-            let mut copy = context.store.uia_text(node_id);
+            let mut copy = context.store.uia_text(node_id, &named);
             let reply = text::perform(&mut source, &mut copy.text(), op);
             put_uia(context, node_id, copy);
             note_fallback(context, &mut source);
@@ -405,7 +431,7 @@ pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextRep
             reply
         }
         Source::Edit(mut source) => {
-            let mut copy = context.store.edit_text(node_id);
+            let mut copy = context.store.edit_text(node_id, &named);
             let reply = text::perform(&mut source, &mut copy.text(), op);
             put_edit(context, node_id, copy);
             reply
@@ -424,7 +450,7 @@ pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextRep
 /// selection it would have without the read. It is not noted as a read of
 /// the caret that answers a caret event observed before it: that event's
 /// report still compares the selection.
-fn caret_before_key(context: &Context, node_id: NodeId) -> TextReply {
+fn caret_before_key(context: &RequestContext<'_>, node_id: NodeId) -> TextReply {
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(reply) => return reply,
@@ -437,7 +463,7 @@ fn caret_before_key(context: &Context, node_id: NodeId) -> TextReply {
     };
     match source {
         Source::Uia(mut source) => {
-            let mut copy = context.store.uia_text(node_id);
+            let mut copy = context.store.uia_text(node_id, &[]);
             let read = text::caret_report_since(
                 &mut source,
                 &mut copy.text(),
@@ -450,7 +476,7 @@ fn caret_before_key(context: &Context, node_id: NodeId) -> TextReply {
             before_reply(read, read_at_ms.get())
         }
         Source::Edit(mut source) => {
-            let mut copy = context.store.edit_text(node_id);
+            let mut copy = context.store.edit_text(node_id, &[]);
             let read = text::caret_report_since(
                 &mut source,
                 &mut copy.text(),
@@ -493,7 +519,7 @@ fn before_reply<P>(read: Result<text::ReportedCaret<P>, TextError>, read_at_ms: 
 /// the check. Also when the caret read began, if it was read, for the
 /// commit of what the check sends.
 pub(super) fn check_watch(
-    context: &Context,
+    context: &RequestContext<'_>,
     node_id: NodeId,
     watch: &CaretWatch,
     caret_event: bool,
@@ -519,9 +545,10 @@ pub(super) fn check_watch(
         covered: false,
         read_at: None,
     };
+    let named: Vec<u64> = watch.since.iter().map(|since| since.anchor.0).collect();
     let watched = match source {
         Source::Uia(mut source) => {
-            let mut copy = context.store.uia_text(node_id);
+            let mut copy = context.store.uia_text(node_id, &named);
             let watched = text::check_caret(&mut source, &mut copy.text(), watch, &mut signal);
             put_uia(context, node_id, copy);
             note_fallback(context, &mut source);
@@ -529,7 +556,7 @@ pub(super) fn check_watch(
             watched
         }
         Source::Edit(mut source) => {
-            let mut copy = context.store.edit_text(node_id);
+            let mut copy = context.store.edit_text(node_id, &named);
             let watched = text::check_caret(&mut source, &mut copy.text(), watch, &mut signal);
             put_edit(context, node_id, copy);
             watched
@@ -595,7 +622,11 @@ pub(super) enum CaretFor {
 /// place, the read says, with the same line. Also when the read began, on
 /// the observation clock, when it was made: it covers the caret events
 /// observed before then only once its commit notes it.
-pub(super) fn report_caret(context: &Context, node_id: NodeId, purpose: CaretFor) -> CaretReading {
+pub(super) fn report_caret(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    purpose: CaretFor,
+) -> CaretReading {
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(reply) => {
@@ -631,7 +662,7 @@ pub(super) fn report_caret(context: &Context, node_id: NodeId, purpose: CaretFor
     let read_at = Some(context.observed_now());
     let report = match source {
         Source::Uia(mut source) => {
-            let mut copy = context.store.uia_text(node_id);
+            let mut copy = context.store.uia_text(node_id, &[]);
             let report = text::caret_report_since(
                 &mut source,
                 &mut copy.text(),
@@ -652,7 +683,7 @@ pub(super) fn report_caret(context: &Context, node_id: NodeId, purpose: CaretFor
             report
         }
         Source::Edit(mut source) => {
-            let mut copy = context.store.edit_text(node_id);
+            let mut copy = context.store.edit_text(node_id, &[]);
             // An edit control's value change waiting behind this caret
             // event: the text changed since the selection was last
             // reported, so the change is spoken in general terms, as after
@@ -711,13 +742,12 @@ fn selection_report<P>(read: text::ReportedCaret<P>) -> (CaretReport, SelectionR
 /// Forgets the selection `node_id`, read through `backend`, would have its
 /// next caret report compared with ([`text::NodeText::forget_selection`]),
 /// at a new focus: the report carries no change.
-pub(super) fn forget_selection(context: &Context, node_id: NodeId, backend: Backend) {
-    // The selection's ends are dropped here, outside the store's lock.
-    drop(
-        context
-            .store
-            .forget_selection(node_id, backend == Backend::Uia),
-    );
+pub(super) fn forget_selection(context: &RequestContext<'_>, node_id: NodeId, backend: Backend) {
+    // The selection's ends are dropped here, outside the store's lock and
+    // the watch lock.
+    drop(while_live(context, |store| {
+        store.forget_selection(node_id, backend == Backend::Uia)
+    }));
 }
 
 /// Notes that the text of edit control `node_id` changed, its value change
@@ -726,8 +756,8 @@ pub(super) fn forget_selection(context: &Context, node_id: NodeId, backend: Back
 /// `IAccessible.event_valueChange` for an object that detects its own
 /// selection changes (`nvda/source/NVDAObjects/IAccessible/__init__.py`
 /// 2019 to 2023).
-pub(super) fn note_value_change(context: &Context, node_id: NodeId) {
-    context.store.note_content_changed(node_id);
+pub(super) fn note_value_change(context: &RequestContext<'_>, node_id: NodeId) {
+    while_live(context, |store| store.note_content_changed(node_id));
 }
 
 /// Whether a value change of `node_id`, an edit control's client area,
@@ -810,7 +840,7 @@ fn sent_caret_point(
 /// no text pattern, is gone, or could not be read; otherwise also when the
 /// caret was read, for the commit to note.
 pub(super) fn terminal_read(
-    context: &Context,
+    context: &RequestContext<'_>,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
     terminal: &mut crate::terminal::Terminal,
@@ -867,7 +897,7 @@ pub(super) fn terminal_read(
             let caret = answer.caret.take().and_then(|answer| {
                 let read_at_ms = super::now_ms();
                 let read = source.caret_read_from(answer).ok()?;
-                let mut copy = context.store.uia_text(node_id);
+                let mut copy = context.store.uia_text(node_id, &[]);
                 let report =
                     crate::text::caret_report_from(&mut source, &mut copy.text(), read, read_at_ms);
                 put_uia(context, node_id, copy);
@@ -890,7 +920,7 @@ pub(super) fn terminal_read(
 /// ([`verbatim_model::TextOp::TerminalHistory`]): from `above` rows above
 /// that start to the document's end, or the whole document when `whole`.
 pub(super) fn terminal_history(
-    context: &Context,
+    context: &RequestContext<'_>,
     uia: &verbatim_uia::Uia,
     (node_id, terminal): (NodeId, Option<crate::terminal::Terminal>),
     (above, whole): (u32, bool),
@@ -925,7 +955,7 @@ pub(super) fn terminal_history(
 /// Searches the focused terminal `node_id` for a command mark's line, for
 /// Core's command ([`verbatim_model::TextOp::TerminalFind`]).
 pub(super) fn terminal_find(
-    context: &Context,
+    context: &RequestContext<'_>,
     uia: &verbatim_uia::Uia,
     (node_id, terminal): (NodeId, Option<crate::terminal::Terminal>),
     (needle, from, rows): (&str, i32, u32),
@@ -961,13 +991,13 @@ pub(super) fn terminal_find(
 /// position change carried, starts: a new anchor there, read from nothing,
 /// so it costs no call.
 pub(super) fn active_position(
-    context: &Context,
+    context: &RequestContext<'_>,
     node_id: NodeId,
     range: &AgileReference<windows::Win32::UI::Accessibility::IUIAutomationTextRange>,
 ) -> Option<verbatim_model::TextPosition> {
     let range = range.resolve().ok()?;
     let pos = crate::text::uia::UiaPos::start_of(&range).ok()?;
-    let mut copy = context.store.uia_text(node_id);
+    let mut copy = context.store.uia_text(node_id, &[]);
     let position = copy.text().position_at(pos);
     put_uia(context, node_id, copy);
     Some(position)
