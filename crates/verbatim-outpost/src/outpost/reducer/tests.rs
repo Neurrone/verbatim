@@ -626,6 +626,7 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
     let effects = replay.input(
         Input::Released {
             nodes: HashSet::new(),
+            anchors: HashSet::new(),
             objects: true,
         },
         10_002,
@@ -1220,4 +1221,55 @@ fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
         Some(Probed::TimedOut(3_501_000))
     );
     assert_eq!(verdict_copies(&effects).len(), 0);
+}
+
+/// An edit control's text facts with one anchor, `anchor`, at offset
+/// `offset`, as a text call leaves them.
+fn edit_part(anchor: u64, offset: u32) -> NodeAnchors<u32> {
+    let mut part = NodeAnchors::default();
+    part.anchors.insert(
+        anchor,
+        Anchor {
+            pos: offset,
+            text: Arc::from("line"),
+        },
+    );
+    part
+}
+
+/// A commit of `part` as node `node`'s edit control text facts.
+fn edit_commit(node: u64, part: NodeAnchors<u32>) -> Change {
+    Change {
+        text: vec![TextChange::Edit {
+            node,
+            part,
+            copied: std::collections::BTreeSet::new(),
+        }],
+        ..Change::default()
+    }
+}
+
+/// A program's change of text facts reaches the copies of the program
+/// dispatched after it once its commit is applied, while a commit the
+/// reducer refuses, a dead generation's, changes nothing of them.
+#[test]
+fn a_programs_text_change_reaches_the_next_programs_copy() {
+    let mut replay = Replay::new();
+    let effects = replay.push(focus_now(1), Source::Other, 1);
+    let first = program(&effects).request;
+    replay.push(focus_now(2), Source::Other, 2);
+    let dead = Request {
+        generation: 7,
+        number: 99,
+    };
+    assert!(
+        replay
+            .commit(dead, edit_commit(2, edit_part(5, 9)), 3)
+            .is_empty()
+    );
+    replay.commit(first, edit_commit(1, edit_part(3, 4)), 4);
+    let effects = replay.finish(first, false, 5);
+    let text = &program(&effects).facts.text;
+    assert_eq!(text.edit(1), Some(&edit_part(3, 4)));
+    assert_eq!(text.edit(2), None);
 }

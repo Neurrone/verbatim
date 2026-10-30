@@ -17,6 +17,7 @@ use verbatim_model::{
 
 use super::held::{self, Held};
 use super::intake::{Marks, Object};
+use super::text::{RangeKey, TextChange, TextFacts};
 use super::verdicts::{VerdictChange, Verdicts};
 
 /// The longest a caret key's watch stays open without evidence. It only
@@ -447,6 +448,11 @@ pub(in crate::outpost) struct Change {
     /// destroyed, in order: recorded by the reducer whether or not it
     /// applies the rest of the commit ([`VerdictChange::kept_from_any_generation`]).
     pub(in crate::outpost) verdicts: Vec<VerdictChange>,
+    /// The program's changes of text facts, in order, applied before the
+    /// rest: a program applies each to its own copies as its text call
+    /// makes it, so its own commit carries them only for the reducer, and
+    /// for the copies of a program the console poll ran before.
+    pub(in crate::outpost) text: Vec<TextChange>,
 }
 
 /// What the outpost follows: changed only by a commit the reducer applies,
@@ -493,6 +499,8 @@ pub(in crate::outpost) struct Facts {
     /// The arbitrator's kept verdicts, a snapshot the reducer replaces on
     /// change ([`super::verdicts`]).
     pub(in crate::outpost) verdicts: Arc<Verdicts>,
+    /// Each node's text facts, shared until a change ([`super::text`]).
+    pub(in crate::outpost) text: Arc<TextFacts>,
 }
 
 /// Where the subscription is to follow, by token: the newest focus's
@@ -525,6 +533,9 @@ pub(in crate::outpost) struct Applied {
         reason = "a wake to set, to clear, or to leave as it was"
     )]
     pub(in crate::outpost) wake: Option<Option<Duration>>,
+    /// The UIA ranges no text fact names any more, by node and key, for
+    /// the store to let go of.
+    pub(in crate::outpost) ranges: Vec<(u64, RangeKey)>,
 }
 
 impl FollowState {
@@ -669,6 +680,12 @@ impl FollowState {
 /// of them.
 pub(in crate::outpost) fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     let mut applied = Applied::default();
+    if !change.text.is_empty() {
+        let text = Arc::make_mut(&mut facts.text);
+        for text_change in &change.text {
+            applied.ranges.extend(text.apply(text_change));
+        }
+    }
     let follow_state = &mut facts.follow;
     if let Some(memo) = &change.dialog {
         follow_state.tracking.dialog.clone_from(memo);

@@ -43,7 +43,7 @@ pub mod edit;
 pub mod uia;
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
@@ -53,6 +53,8 @@ use verbatim_model::{
     TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
     TextReadAhead, TextReply, TextThrough, TextUnit,
 };
+
+use crate::outpost::{Anchor, CaretSeen, KeptSelection, NodeAnchors};
 
 /// How many of its newest caret reports for a node the outpost remembers,
 /// with when it read them, for a caret key's watch to find the one read
@@ -580,109 +582,57 @@ pub enum Watched {
     Watching,
 }
 
-/// An anchor's position and the text of the chunk it started.
+/// A position as a text call works with it: the source's position, and the
+/// key the outpost's store keeps its range under when it was kept before
+/// the call, so the call's result names it again by that key and only a
+/// position the call made is given a new one ([`NodeTextCopy::finish`]).
 #[derive(Clone)]
-struct Anchor<P> {
-    pos: P,
-    text: Arc<str>,
+pub(crate) struct Slot<P> {
+    pub(crate) at: P,
+    pub(crate) key: Option<u64>,
 }
 
-/// The anchors minted for one node, and the positions the outpost reported
-/// in its text.
-#[derive(Clone)]
-pub struct NodeAnchors<P> {
-    anchors: BTreeMap<u64, Anchor<P>>,
-    /// Ordered by anchor, so a copy takes one anchor's with a range.
-    reported: BTreeMap<(u64, u32), P>,
-    /// The carets the outpost last reported for the node, oldest first.
-    carets: VecDeque<CaretSeen<P>>,
-    /// How many caret reports the outpost has made for the node, which
-    /// numbers each ([`CaretSeen::report`], [`KeptSelection::report`]).
-    reports: u64,
-    /// The selection in the outpost's last caret report for the node, which
-    /// the next report's selection changes are worked out from
-    /// ([`caret_report_since`]); `None` when there is none to compare with.
-    selection: Option<KeptSelection<P>>,
-    /// The node's text changed since the next comparison's selection was
-    /// reported ([`Anchors::note_content_changed`]), so that comparison is
-    /// made in general terms.
-    content_changed: bool,
-}
-
-/// A caret the outpost reported, as a caret key's watch takes its baseline
-/// from it ([`baseline`]).
-#[derive(Clone)]
-struct CaretSeen<P> {
-    /// When it was read, in milliseconds since the Unix epoch.
-    read_at_ms: u64,
-    /// The caret, as reported.
-    caret: TextPosition,
-    /// The selection's ends, when something was selected.
-    selection: Option<(P, P)>,
-    /// The report's number ([`NodeAnchors::reports`]).
-    report: u64,
-}
-
-/// The selection of a caret report, as the next report compares with it.
-#[derive(Clone)]
-struct KeptSelection<P> {
-    /// Its ends, both the caret when nothing was selected.
-    ends: (P, P),
-    /// Nothing was selected.
-    collapsed: bool,
-    /// Its text as it was reported, up to the source's cap for compared
-    /// text, when something was selected and the source read it
-    /// ([`CaretRead::kept_text`]), for [`content_changed`] to compare with
-    /// what its ends hold now.
-    text: Option<Arc<[u16]>>,
-    /// The number of the report it is from ([`NodeAnchors::reports`]); 0
-    /// for one Core sent.
-    report: u64,
-}
-
-impl<P> Default for NodeAnchors<P> {
-    fn default() -> Self {
-        Self {
-            anchors: BTreeMap::new(),
-            reported: BTreeMap::new(),
-            carets: VecDeque::new(),
-            reports: 0,
-            selection: None,
-            content_changed: false,
-        }
+impl<P> Slot<P> {
+    /// A position the call made, kept under no key yet.
+    fn new(at: P) -> Self {
+        Self { at, key: None }
     }
 }
 
 /// Every node's anchors in one backend, and the counter anchors are
-/// numbered from, which an outpost's backends share so no two anchors in an
-/// outpost have the same number. An anchor is kept until the outpost forgets
-/// it ([`forget_anchors`](Self::forget_anchors)) or its node. The outpost's
-/// object store keeps them; a text call works on a copy of one node's
-/// ([`copy`](Self::copy)), which the store puts back once the call has
-/// returned ([`put`](Self::put)), so no lock is held across the call.
+/// numbered from, for a reader that holds them for the whole read: a test,
+/// or a tool that drives the text protocol. An anchor is kept until the
+/// reader forgets it ([`forget_anchors`](Self::forget_anchors)). The
+/// outpost keeps its anchors as facts of its reducer, and a text call works
+/// on a copy of one node's (`NodeTextCopy`).
 pub struct Anchors<P> {
     counter: Arc<AtomicU64>,
-    /// The anchors minted or reported through [`node`](Self::node), which
-    /// only a direct reader uses: a copy keeps its own.
+    /// The anchors minted or reported through [`node`](Self::node).
     touched: Vec<u64>,
-    nodes: HashMap<u64, NodeAnchors<P>>,
+    nodes: HashMap<u64, NodeAnchors<Slot<P>>>,
 }
 
-/// A copy of one node's anchors, which a text call works on with no lock
-/// held, and the anchors it mints or reports, for the store to tag when it
-/// puts the copy back ([`Anchors::put`]).
-pub struct NodeTextCopy<P> {
+/// A copy of one node's text facts, its positions resolved, which a text
+/// call works on with no lock held, and the anchors it mints or reports,
+/// for the store to tag once the call's commit is applied.
+pub(crate) struct NodeTextCopy<P> {
     counter: Arc<AtomicU64>,
-    anchors: NodeAnchors<P>,
-    /// The anchors the copy held when it was made: one of them the store
-    /// forgets meanwhile is not put back.
-    copied: HashSet<u64>,
+    anchors: NodeAnchors<Slot<P>>,
     touched: Vec<u64>,
 }
 
 impl<P: Clone> NodeTextCopy<P> {
+    /// A copy of `anchors`, numbering the anchors it mints from `counter`.
+    pub(crate) fn new(counter: Arc<AtomicU64>, anchors: NodeAnchors<Slot<P>>) -> Self {
+        Self {
+            counter,
+            anchors,
+            touched: Vec::new(),
+        }
+    }
+
     /// The copy, as a text call reads and changes it.
-    pub fn text(&mut self) -> NodeText<'_, P> {
+    pub(crate) fn text(&mut self) -> NodeText<'_, P> {
         NodeText {
             counter: &self.counter,
             touched: &mut self.touched,
@@ -690,45 +640,16 @@ impl<P: Clone> NodeTextCopy<P> {
         }
     }
 
-    /// The anchors minted or reported through the copy.
-    #[must_use]
-    pub fn touched(&self) -> &[u64] {
-        &self.touched
-    }
-
-    /// The copy, not put back, as what its holder drops once no lock is
-    /// held.
-    pub fn into_forgotten(self) -> Forgotten<P> {
-        Forgotten {
-            nodes: vec![self.anchors],
-            positions: Vec::new(),
-        }
-    }
-}
-
-/// What the store let go of one node's anchors, for its caller to drop once
-/// no lock is held: a position can be a provider's range, whose release can
-/// call into its process.
-#[must_use = "drop once no lock is held"]
-pub struct Forgotten<P> {
-    nodes: Vec<NodeAnchors<P>>,
-    positions: Vec<P>,
-}
-
-impl<P> Default for Forgotten<P> {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::new(),
-            positions: Vec::new(),
-        }
-    }
-}
-
-impl<P> Forgotten<P> {
-    /// Takes in `other`'s.
-    pub fn append(&mut self, mut other: Forgotten<P>) {
-        self.nodes.append(&mut other.nodes);
-        self.positions.append(&mut other.positions);
+    /// The copy as the call left it, each position given by `keep`, and
+    /// the anchors it minted or reported.
+    pub(crate) fn finish<K>(
+        self,
+        mut keep: impl FnMut(Slot<P>) -> K,
+    ) -> (NodeAnchors<K>, Vec<u64>) {
+        (
+            self.anchors.filter_map(|slot| Some(keep(slot))),
+            self.touched,
+        )
     }
 }
 
@@ -744,9 +665,10 @@ impl<P: Clone> Anchors<P> {
     }
 
     /// Forgets the anchors `forgotten` names, of every node: Core has seen
-    /// the last message that carried each, and does not hold it.
-    pub fn forget_anchors(&mut self, forgotten: &HashSet<u64>) -> Forgotten<P> {
-        let mut gone = Forgotten::default();
+    /// the last message that carried each, and does not hold it. Returns
+    /// the positions forgotten.
+    pub fn forget_anchors(&mut self, forgotten: &HashSet<u64>) -> Vec<P> {
+        let mut gone = Vec::new();
         for anchors in self.nodes.values_mut() {
             let numbers: Vec<u64> = anchors
                 .anchors
@@ -755,8 +677,7 @@ impl<P: Clone> Anchors<P> {
                 .filter(|number| forgotten.contains(number))
                 .collect();
             for number in numbers {
-                gone.positions
-                    .extend(anchors.anchors.remove(&number).map(|anchor| anchor.pos));
+                gone.extend(anchors.anchors.remove(&number).map(|anchor| anchor.pos.at));
             }
             let reported: Vec<(u64, u32)> = anchors
                 .reported
@@ -765,31 +686,8 @@ impl<P: Clone> Anchors<P> {
                 .filter(|(anchor, _)| forgotten.contains(anchor))
                 .collect();
             for key in reported {
-                gone.positions.extend(anchors.reported.remove(&key));
+                gone.extend(anchors.reported.remove(&key).map(|slot| slot.at));
             }
-        }
-        gone
-    }
-
-    /// Forgets a node's anchors, when the node is released.
-    pub fn forget_node(&mut self, node: u64) -> Forgotten<P> {
-        Forgotten {
-            nodes: self.nodes.remove(&node).into_iter().collect(),
-            positions: Vec::new(),
-        }
-    }
-
-    /// Forgets the selection node `node`'s next caret report would be
-    /// compared with ([`NodeText::forget_selection`]).
-    pub fn forget_selection(&mut self, node: u64) -> Forgotten<P> {
-        let mut gone = Forgotten::default();
-        if let Some(selection) = self
-            .nodes
-            .get_mut(&node)
-            .and_then(|anchors| anchors.selection.take())
-        {
-            let (start, end) = selection.ends;
-            gone.positions.extend([start, end]);
         }
         gone
     }
@@ -806,34 +704,8 @@ impl<P: Clone> Anchors<P> {
         self.nodes.entry(node).or_default().content_changed = true;
     }
 
-    /// Whether node `node` has anchors or a selection kept.
-    #[must_use]
-    pub fn has(&self, node: u64) -> bool {
-        self.nodes.contains_key(&node)
-    }
-
-    /// The source position of `position` in node `node`'s text when the
-    /// outpost reported it ([`NodeText::reported_point`]), a clone.
-    #[must_use]
-    pub fn reported_point(&self, node: u64, position: TextPosition) -> Option<P> {
-        self.nodes
-            .get(&node)?
-            .reported
-            .get(&(position.anchor.0, position.offset))
-            .cloned()
-    }
-
-    /// Every anchor of node `node`.
-    pub fn anchors_of(&self, node: u64) -> impl Iterator<Item = u64> + '_ {
-        self.nodes
-            .get(&node)
-            .into_iter()
-            .flat_map(|anchors| anchors.anchors.keys().copied())
-    }
-
     /// The anchors of node `node`, borrowed, with what minting needs, for
-    /// a reader that holds the store for the whole read: a test, or a read
-    /// with no call.
+    /// a reader that holds them for the whole read.
     pub fn node(&mut self, node: u64) -> NodeText<'_, P> {
         NodeText {
             counter: &self.counter,
@@ -841,92 +713,10 @@ impl<P: Clone> Anchors<P> {
             anchors: self.nodes.entry(node).or_default(),
         }
     }
-
-    /// A copy of node `node`'s anchors for a text call made with no lock
-    /// held: those `named`, the anchors of the positions its operation
-    /// names ([`named_anchors`]), and those of the carets kept, with the
-    /// kept selection and carets, so a copy costs the same however many
-    /// anchors the node has. Each position is cloned, a reference count.
-    #[must_use]
-    pub fn copy(&self, node: u64, named: &[u64]) -> NodeTextCopy<P> {
-        let mut anchors = NodeAnchors::default();
-        let mut copied = HashSet::new();
-        if let Some(kept) = self.nodes.get(&node) {
-            let carets = kept.carets.iter().map(|seen| seen.caret.anchor.0);
-            for number in named.iter().copied().chain(carets) {
-                if !copied.insert(number) {
-                    continue;
-                }
-                if let Some(anchor) = kept.anchors.get(&number) {
-                    anchors.anchors.insert(number, anchor.clone());
-                }
-                for (key, pos) in kept.reported.range((number, 0)..=(number, u32::MAX)) {
-                    anchors.reported.insert(*key, pos.clone());
-                }
-            }
-            anchors.carets.clone_from(&kept.carets);
-            anchors.reports = kept.reports;
-            anchors.selection.clone_from(&kept.selection);
-            anchors.content_changed = kept.content_changed;
-        }
-        NodeTextCopy {
-            counter: Arc::clone(&self.counter),
-            anchors,
-            copied,
-            touched: Vec::new(),
-        }
-    }
-
-    /// Puts `copy`, which a text call changed, back as node `node`'s
-    /// anchors: its anchors and reported positions are added, but for an
-    /// anchor the copy held when it was made that the store has forgotten
-    /// since, which stays forgotten, and its kept selection and carets
-    /// replace the node's. Anchors it did not copy are left as they are.
-    /// Returns what it replaced, for the caller to drop once no lock is
-    /// held.
-    pub fn put(&mut self, node: u64, copy: NodeTextCopy<P>) -> Forgotten<P> {
-        let NodeTextCopy {
-            anchors: changed,
-            copied,
-            ..
-        } = copy;
-        let NodeAnchors {
-            anchors,
-            reported,
-            carets,
-            reports,
-            selection,
-            content_changed,
-        } = changed;
-        let mut gone = Forgotten::default();
-        let current = self.nodes.entry(node).or_default();
-        for (number, anchor) in anchors {
-            if copied.contains(&number) && !current.anchors.contains_key(&number) {
-                gone.positions.push(anchor.pos);
-            } else if let Some(old) = current.anchors.insert(number, anchor) {
-                gone.positions.push(old.pos);
-            }
-        }
-        for (key, pos) in reported {
-            if copied.contains(&key.0) && !current.anchors.contains_key(&key.0) {
-                gone.positions.push(pos);
-            } else if let Some(old) = current.reported.insert(key, pos) {
-                gone.positions.push(old);
-            }
-        }
-        gone.nodes.push(NodeAnchors {
-            carets: std::mem::replace(&mut current.carets, carets),
-            selection: std::mem::replace(&mut current.selection, selection),
-            ..NodeAnchors::default()
-        });
-        current.reports = reports;
-        current.content_changed = content_changed;
-        gone
-    }
 }
 
 /// The anchors of the positions `op` names, which a copy of its node's
-/// anchors must hold ([`Anchors::copy`]).
+/// anchors must hold.
 #[must_use]
 pub fn named_anchors(op: &TextOp) -> Vec<u64> {
     let point = |point: &TextPoint| match point {
@@ -950,11 +740,11 @@ pub fn named_anchors(op: &TextOp) -> Vec<u64> {
 }
 
 /// One node's anchors, borrowed from an [`Anchors`] store or a copy of
-/// them ([`NodeTextCopy`]).
+/// them (`NodeTextCopy`).
 pub struct NodeText<'a, P> {
     counter: &'a AtomicU64,
     touched: &'a mut Vec<u64>,
-    anchors: &'a mut NodeAnchors<P>,
+    anchors: &'a mut NodeAnchors<Slot<P>>,
 }
 
 impl<P: Clone> NodeText<'_, P> {
@@ -965,7 +755,7 @@ impl<P: Clone> NodeText<'_, P> {
         self.anchors.anchors.insert(
             number,
             Anchor {
-                pos,
+                pos: Slot::new(pos),
                 text: Arc::from(text),
             },
         );
@@ -988,13 +778,22 @@ impl<P: Clone> NodeText<'_, P> {
     /// report's is kept: the application's caret event for it then carries
     /// no change, and the next key compares with it. It is no report, so it
     /// carries no report's number.
-    fn keep_selection(&mut self, ends: (P, P), selected: bool, text: Option<Vec<u16>>) {
+    fn keep_selection(&mut self, (start, end): (P, P), selected: bool, text: Option<Vec<u16>>) {
         self.anchors.selection = Some(KeptSelection {
-            ends,
+            ends: (Slot::new(start), Slot::new(end)),
             collapsed: !selected,
             text: text.filter(|_| selected).map(Arc::from),
             report: 0,
         });
+    }
+
+    /// The selection kept for the node's next comparison, its ends as the
+    /// source's positions.
+    fn kept_selection(&self) -> Option<KeptSelection<P>> {
+        self.anchors
+            .selection
+            .as_ref()
+            .map(|selection| selection.map(|end| end.at.clone()))
     }
 
     /// Whether the node's text changed since the selection kept was
@@ -1018,7 +817,7 @@ impl<P: Clone> NodeText<'_, P> {
         self.touch(position.anchor.0);
         self.anchors
             .reported
-            .insert((position.anchor.0, position.offset), pos);
+            .insert((position.anchor.0, position.offset), Slot::new(pos));
     }
 
     /// Records anchor `number` as touched.
@@ -1034,7 +833,7 @@ impl<P: Clone> NodeText<'_, P> {
         self.anchors
             .reported
             .get(&(position.anchor.0, position.offset))
-            .cloned()
+            .map(|slot| slot.at.clone())
     }
 
     /// A position minted for `pos` alone, a new anchor there at offset 0,
@@ -1055,16 +854,16 @@ impl<P: Clone> NodeText<'_, P> {
     /// text after a kept one; `None` when its anchor was forgotten.
     fn point_from(&self, position: TextPosition) -> Option<PointFrom<P>> {
         let key = (position.anchor.0, position.offset);
-        if let Some(pos) = self.anchors.reported.get(&key) {
-            return Some(PointFrom::At(pos.clone()));
+        if let Some(slot) = self.anchors.reported.get(&key) {
+            return Some(PointFrom::At(slot.at.clone()));
         }
         let anchor = self.anchors.anchors.get(&position.anchor.0)?;
         if position.offset == 0 {
-            return Some(PointFrom::At(anchor.pos.clone()));
+            return Some(PointFrom::At(anchor.pos.at.clone()));
         }
         let offset = floor_boundary(&anchor.text, position.offset as usize);
         let prefix: Vec<u16> = anchor.text[..offset].encode_utf16().collect();
-        Some(PointFrom::After(anchor.pos.clone(), prefix))
+        Some(PointFrom::After(anchor.pos.at.clone(), prefix))
     }
 
     /// Resolves `position` to a source position; `None` when its anchor was
@@ -1075,21 +874,21 @@ impl<P: Clone> NodeText<'_, P> {
         position: TextPosition,
     ) -> TextResult<Option<P>> {
         let key = (position.anchor.0, position.offset);
-        if let Some(pos) = self.anchors.reported.get(&key) {
-            return Ok(Some(pos.clone()));
+        if let Some(slot) = self.anchors.reported.get(&key) {
+            return Ok(Some(slot.at.clone()));
         }
         let Some(anchor) = self.anchors.anchors.get(&position.anchor.0) else {
             return Ok(None);
         };
         if position.offset == 0 {
-            return Ok(Some(anchor.pos.clone()));
+            return Ok(Some(anchor.pos.at.clone()));
         }
         let text = Arc::clone(&anchor.text);
-        let from = anchor.pos.clone();
+        let from = anchor.pos.at.clone();
         let offset = floor_boundary(&text, position.offset as usize);
         let prefix: Vec<u16> = text[..offset].encode_utf16().collect();
         let pos = source.advance(&from, &prefix)?;
-        self.anchors.reported.insert(key, pos.clone());
+        self.anchors.reported.insert(key, Slot::new(pos.clone()));
         Ok(Some(pos))
     }
 }
@@ -1471,7 +1270,7 @@ pub fn caret_report_checking<S: TextSource>(
     }
     let keep = last != LastSelection::Ignore;
     let last = if last == LastSelection::Compare {
-        anchors.anchors.selection.clone()
+        anchors.kept_selection()
     } else {
         None
     };
@@ -1723,7 +1522,10 @@ fn report_for<S: TextSource>(
             anchor: line.start,
             offset: line.offset,
         },
-        selection: state.selection.clone(),
+        selection: state
+            .selection
+            .clone()
+            .map(|(start, end)| (Slot::new(start), Slot::new(end))),
         report,
     });
     let line_anchor = line.start;
@@ -1751,11 +1553,12 @@ fn report_for<S: TextSource>(
         end: anchors.position_of(end.clone()),
     });
     if keep {
+        let (start, end) = state
+            .selection
+            .clone()
+            .unwrap_or_else(|| (state.caret.clone(), state.caret.clone()));
         anchors.anchors.selection = Some(KeptSelection {
-            ends: state
-                .selection
-                .clone()
-                .unwrap_or_else(|| (state.caret.clone(), state.caret.clone())),
+            ends: (Slot::new(start), Slot::new(end)),
             collapsed: state.selection.is_none(),
             text: selection_text
                 .filter(|_| state.selection.is_some())
@@ -2190,7 +1993,13 @@ fn baseline<S: TextSource>(
         .iter()
         .rev()
         .find(|seen| seen.read_at_ms < watch.pressed_at_ms)
-        .map(|seen| (seen.caret, seen.selection.clone(), seen.report));
+        .map(|seen| {
+            let selection = seen
+                .selection
+                .as_ref()
+                .map(|(start, end)| (start.at.clone(), end.at.clone()));
+            (seen.caret, selection, seen.report)
+        });
     let baseline = reported
         .as_ref()
         .map(|(position, ..)| *position)
@@ -2205,7 +2014,7 @@ fn baseline<S: TextSource>(
         Some(position) => anchors.resolve(source, position)?,
         None => None,
     };
-    let compared = anchors.anchors.selection.clone();
+    let compared = anchors.kept_selection();
     // The characters either side of the caret where Core last knew it. A
     // provider's positions follow edits (a deleted character takes the
     // position Core knew with it), and the application may have handled the

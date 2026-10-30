@@ -37,7 +37,7 @@ use super::reducer::{
     Change, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program, Reducer,
     Request, Source, Subscription, Verdicts, Work,
 };
-use super::store::{Removed, Tag};
+use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
 use super::{Context, RequestContext};
 
@@ -364,7 +364,13 @@ impl Locals for ShellLocals<'_> {
             name = ?progress.focus.node.name,
             "a focus walk was under way at its bound or its worker's abandonment; the focus is published as read so far"
         );
-        Some(write(self.context, effects, self.elements, self.garbage))
+        Some(write(
+            &self.context.store,
+            tag,
+            effects,
+            self.elements,
+            self.garbage,
+        ))
     }
 }
 
@@ -376,14 +382,59 @@ pub(super) fn tag_of(request: Request) -> Tag {
     }
 }
 
-/// Makes the writes of `effects` only the shell applies, to the store and
-/// the elements followed, and returns the reducer's change, its targets'
-/// elements given their tokens. Called only for a commit the reducer
-/// accepts, in the order today's commit applied them: the stale element
-/// evicted before the focus is followed, then the follow's caret, then a
+/// The change the reducer is given for `effects`, a commit of `request`:
+/// for a commit it accepts, its writes made ([`write`]); for any other,
+/// only the verdicts the reducer records from any request, its writes not
+/// made and its objects let go of into `garbage`. `None` when the reducer
+/// is given nothing.
+fn admit(
+    store: &Store,
+    reducer: &Reducer,
+    (request, effects): (Request, Effects),
+    elements: &mut Elements,
+    garbage: &mut Garbage,
+) -> Option<Change> {
+    if reducer.accepts(request) {
+        return Some(write(store, tag_of(request), effects, elements, garbage));
+    }
+    let mut effects = effects;
+    let verdicts = std::mem::take(&mut effects.verdicts);
+    discard(effects, garbage);
+    (!verdicts.is_empty()).then(|| Change {
+        verdicts,
+        ..Change::default()
+    })
+}
+
+/// Lets go of what a refused commit holds into `garbage`.
+fn discard(effects: Effects, garbage: &mut Garbage) {
+    let (_, writes) = effects.split();
+    if let Some((_, _, _, target)) = writes.follow {
+        garbage.elements.extend(target.element);
+        garbage.elements.extend(target.slider);
+    }
+    if let Some(target) = writes.element {
+        garbage.elements.extend(target.element);
+        garbage.elements.extend(target.slider);
+    }
+    if let Some(stale) = writes.stale {
+        garbage.elements.extend(stale.element);
+    }
+    garbage.store.push(Removed::of_text(writes.text));
+    drop(writes.terminal);
+}
+
+/// Makes the writes of `effects`, a commit of request `tag`, that only the
+/// shell applies, to the store and the elements followed, and returns the
+/// reducer's change, its targets' elements given their tokens and its text
+/// facts' changes those the store made. Called only for a commit the
+/// reducer accepts, in the order the program made them: its text writes,
+/// made before the rest as its text calls came first; the stale element
+/// evicted before the focus is followed; then the follow's caret; then a
 /// terminal's entry and the caret sent.
 fn write(
-    context: &Context,
+    store: &Store,
+    tag: Tag,
     effects: Effects,
     elements: &mut Elements,
     garbage: &mut Garbage,
@@ -395,12 +446,18 @@ fn write(
         terminal,
         sent_caret,
         stale,
+        text,
     } = writes;
+    if !text.is_empty() {
+        let (changes, removed) = store.write_text(tag, text);
+        change.text = changes;
+        garbage.store.push(removed);
+    }
     let mut follow = follow;
     if let Some(stale) = stale {
         let evicted = stale
             .element
-            .and_then(|element| context.store.evict_element_if(stale.node, &element));
+            .and_then(|element| store.evict_element_if(stale.node, &element));
         // The subscription is not moved to the element evicted: the focus's
         // own is found after its report.
         if let (Some(evicted), Some((node, _, _, target))) = (&evicted, follow.as_mut())
@@ -419,18 +476,16 @@ fn write(
         }
         garbage.elements.extend(evicted);
         if stale.gone {
-            garbage
-                .store
-                .push(context.store.remove_terminal(stale.node));
+            garbage.store.push(store.remove_terminal(stale.node));
         }
     }
     if let Some((node, terminal, sent, target)) = follow {
         // A terminal gaining the focus has its caret reported afresh: the
         // caret read with its report is the one sent.
         if terminal {
-            context.store.set_sent_caret(node, sent, true);
+            store.set_sent_caret(node, sent, true);
         } else {
-            context.store.set_sent_caret(node, None, false);
+            store.set_sent_caret(node, None, false);
         }
         if let Some(pure) = change.follow.as_mut() {
             pure.target.element = target
@@ -446,10 +501,10 @@ fn write(
         pure.slider = target.slider.map(|slider| elements.token(slider, garbage));
     }
     if let Some((node, entry)) = terminal {
-        garbage.store.push(context.store.put_terminal(node, entry));
+        garbage.store.push(store.put_terminal(node, entry));
     }
     if let Some((node, caret)) = sent_caret {
-        context.store.set_sent_caret(node, Some(caret), true);
+        store.set_sent_caret(node, Some(caret), true);
     }
     change
 }
@@ -591,37 +646,22 @@ impl Shell {
             Posted::WithoutListener => Input::WithoutListener,
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
-            Posted::Commit {
-                request,
-                mut effects,
-            } => {
-                if self.reducer.accepts(request) {
-                    let change = write(
-                        &self.context,
-                        *effects,
-                        &mut self.elements,
-                        &mut self.garbage,
-                    );
-                    Input::Commit {
-                        request,
-                        change: Box::new(change),
-                    }
-                } else {
-                    // A dead generation's or a claimed request's: nothing of
-                    // it is applied but the verdicts the reducer records
-                    // from any request, and its objects go to a worker.
-                    let verdicts = std::mem::take(&mut effects.verdicts);
-                    self.discard(*effects);
-                    if verdicts.is_empty() {
-                        return;
-                    }
-                    Input::Commit {
-                        request,
-                        change: Box::new(Change {
-                            verdicts,
-                            ..Change::default()
-                        }),
-                    }
+            Posted::Commit { request, effects } => {
+                // A dead generation's or a claimed request's commit gives
+                // the reducer only the verdicts it records from any
+                // request, and its objects go to a worker.
+                let Some(change) = admit(
+                    &self.context.store,
+                    &self.reducer,
+                    (request, *effects),
+                    &mut self.elements,
+                    &mut self.garbage,
+                ) else {
+                    return;
+                };
+                Input::Commit {
+                    request,
+                    change: Box::new(change),
                 }
             }
             Posted::Armed { request, bound_at } => Input::Armed {
@@ -650,23 +690,6 @@ impl Shell {
         let now = self.now();
         let effects = self.with_locals(|reducer, locals| reducer.input(input, now, locals));
         self.apply(effects);
-    }
-
-    /// Lets go of what a refused commit holds.
-    fn discard(&mut self, effects: Effects) {
-        let (_, writes) = effects.split();
-        if let Some((_, _, _, target)) = writes.follow {
-            self.garbage.elements.extend(target.element);
-            self.garbage.elements.extend(target.slider);
-        }
-        if let Some(target) = writes.element {
-            self.garbage.elements.extend(target.element);
-            self.garbage.elements.extend(target.slider);
-        }
-        if let Some(stale) = writes.stale {
-            self.garbage.elements.extend(stale.element);
-        }
-        drop(writes.terminal);
     }
 
     /// Applies the reducer's effects, in order.
@@ -699,6 +722,11 @@ impl Shell {
                             self.garbage.elements.push(element);
                         }
                     }
+                }
+                Effect::ForgetRanges(ranges) => {
+                    self.garbage
+                        .store
+                        .push(self.context.store.forget_ranges(&ranges));
                 }
                 Effect::Unpark(keys) => {
                     for key in keys {
@@ -829,6 +857,7 @@ impl Shell {
             tracing::debug!(?held, acknowledged, position, "nothing to release");
             return Input::Released {
                 nodes: HashSet::new(),
+                anchors: HashSet::new(),
                 objects: false,
             };
         };
@@ -843,6 +872,7 @@ impl Shell {
         self.garbage.store.push(released.objects);
         Input::Released {
             nodes: released.nodes,
+            anchors: released.anchors,
             objects: !self.garbage.is_empty(),
         }
     }
@@ -918,4 +948,120 @@ fn token(context: &Arc<Context>, request_id: u64, trace: TraceId) -> Responder<O
         });
         context.send(message);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use verbatim_model::protocol::Query;
+
+    use super::super::reducer::{Anchor, NodeAnchors, TextChange};
+    use super::super::store::TextWrite;
+    use super::*;
+
+    /// No local read: a test's reducer is never asked one.
+    struct NoLocals;
+
+    impl Locals for NoLocals {
+        fn window_is_hung(&self, _: isize) -> bool {
+            false
+        }
+
+        fn moved_on(&self, _: isize) -> bool {
+            false
+        }
+
+        fn publication(&mut self, _: Request, _: &Facts) -> Option<Change> {
+            None
+        }
+    }
+
+    /// A commit whose text call minted anchor `anchor` in edit control
+    /// `node`'s text.
+    fn minted(node: u64, anchor: u64) -> (Effects, TextChange) {
+        let mut part = NodeAnchors::default();
+        part.anchors.insert(
+            anchor,
+            Anchor {
+                pos: 4,
+                text: Arc::from(""),
+            },
+        );
+        let change = TextChange::Edit {
+            node,
+            part,
+            copied: BTreeSet::new(),
+        };
+        let effects = Effects {
+            text: vec![TextWrite::Facts {
+                change: change.clone(),
+                ranges: Vec::new(),
+                touched: vec![anchor],
+            }],
+            ..Effects::default()
+        };
+        (effects, change)
+    }
+
+    /// A commit the reducer refuses makes none of its text writes: the
+    /// anchor its text call minted is not tagged in the store, and the
+    /// reducer is given nothing. The same commit of the program in flight
+    /// has its anchor tagged and its change given to the reducer.
+    #[test]
+    fn a_refused_commits_text_writes_are_not_made() {
+        let store = Store::new();
+        let mut reducer = Reducer::new();
+        let entry = Entry::own(
+            Item::Query {
+                request_id: 1,
+                query: Query::FocusNow,
+            },
+            TraceId::mint(),
+            1,
+        );
+        let effects = reducer.input(
+            Input::Entry {
+                entry,
+                source: Source::Other,
+                read_answer: None,
+            },
+            Now::default(),
+            &mut NoLocals,
+        );
+        let in_flight = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Dispatch(program) => Some(program.request),
+                _ => None,
+            })
+            .expect("the query's program dispatched");
+        let node = store.nodes_for(tag_of(in_flight)).window(5).number();
+        let dead = Request {
+            generation: 7,
+            number: 99,
+        };
+        let (mut elements, mut garbage) = (Elements::default(), Garbage::default());
+        let (refused, _) = minted(node, 7);
+        let admitted = admit(
+            &store,
+            &reducer,
+            (dead, refused),
+            &mut elements,
+            &mut garbage,
+        );
+        assert!(admitted.is_none());
+        assert!(!store.tags_anchor(7));
+        let (accepted, change) = minted(node, 8);
+        let admitted = admit(
+            &store,
+            &reducer,
+            (in_flight, accepted),
+            &mut elements,
+            &mut garbage,
+        )
+        .expect("the change of the program in flight");
+        assert_eq!(admitted.text, vec![change]);
+        assert!(store.tags_anchor(8));
+    }
 }

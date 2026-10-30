@@ -82,7 +82,7 @@ use super::reducer::{
     VerdictChange, WatchChange, WinKind, Work, wake_for,
 };
 use super::shell::{Garbage, Posted};
-use super::text_reads::{self};
+use super::text_reads::{self, ProgramText};
 use super::window::{
     alt_is_held, console_client, event_window_unreadable, foreground_window_handle, now_ms,
     top_level_of, window_belongs_to_hidden_frame, window_exists, window_facts,
@@ -228,26 +228,6 @@ impl Charge {
         }
     }
 
-    /// Makes `write` while `request` is live: the generation was not
-    /// abandoned, and the walk of `request`, if it armed one, was not
-    /// published. The charge's lock is held across the judgement and the
-    /// write, so no abandonment or publication falls between them; the
-    /// write takes the store's lock inside it, the one nesting with this
-    /// lock, and makes no call.
-    pub(super) fn while_live<T>(&self, request: Request, write: impl FnOnce() -> T) -> Option<T> {
-        let state = self.lock();
-        let claimed = state.walk.as_ref().is_some_and(|slot| {
-            slot.request == request
-                && matches!(slot.state, SlotState::Published | SlotState::PastBound)
-        });
-        if state.dead || claimed {
-            return None;
-        }
-        let written = write();
-        drop(state);
-        Some(written)
-    }
-
     /// The reducer publishes the walk armed for `request`, if it is still
     /// under way or returned past its bound: its progress as it stands, the
     /// walk marked published. Local, under the lock for one copy.
@@ -305,9 +285,10 @@ fn run(
         let _ = client.uia();
     }
     // The jobs the console poll took in, to run after it, and the pure part
-    // of its commits, for the next program's copies.
+    // of its commits with what it held of the store's text, for the next
+    // program's copies.
     let mut held = VecDeque::new();
-    let mut carried = Vec::new();
+    let mut carried = (Vec::new(), ProgramText::default());
     // Until the shell lets go of this generation's inbox, abandoned or at
     // the outpost's shutdown.
     while let Some(mut job) = held.pop_front().or_else(|| jobs.take()) {
@@ -316,8 +297,9 @@ fn run(
             // no further call.
             continue;
         }
-        carry(&mut job.program.facts, generation, &carried);
-        carried = run_job(context, &mut client, job, charge, (jobs, &mut held));
+        let (changes, text) = std::mem::take(&mut carried);
+        carry(&mut job.program.facts, generation, &changes);
+        carried = run_job(context, &mut client, (job, text), charge, (jobs, &mut held));
     }
     if charge.is_dead() {
         context.mailbox.post(Posted::Returned);
@@ -332,8 +314,9 @@ fn run(
 /// Applies `carried`, the pure part of the console poll's commits, in order,
 /// to `facts`, the copies of the program that runs after it: the reducer
 /// may have dispatched that program before it took them in. Each change of
-/// the poll's names its watch by request or sets a value, so one the copies
-/// already hold changes nothing.
+/// the poll's names its watch by request or sets a value, and its text
+/// facts' changes put back what its reads left, so one the copies already
+/// hold changes nothing.
 fn carry(facts: &mut reducer::Facts, generation: u64, carried: &[Change]) {
     for change in carried {
         let _ = reducer::apply_local(facts, generation, change);
@@ -362,15 +345,17 @@ fn look(inbox: &Inbox<Job>, held: &mut VecDeque<Job>) -> bool {
 }
 
 /// Runs one program, after dropping what the shell let go of, and posts its
-/// end. The console poll takes the jobs sent meanwhile into `held`; the pure
-/// part of its commits is returned, for the next program's copies.
+/// end, with `text`, what the console poll before it held of the store's
+/// text. The console poll takes the jobs sent meanwhile into `held`; the
+/// pure part of its commits, and what it held of the store's text, are
+/// returned, for the next program.
 fn run_job(
     context: &Arc<Context>,
     client: &mut Client,
-    job: Job,
+    (job, text): (Job, ProgramText),
     charge: &Arc<Charge>,
     (inbox, held): (&Inbox<Job>, &mut VecDeque<Job>),
-) -> Vec<Change> {
+) -> (Vec<Change>, ProgramText) {
     let Job {
         program,
         garbage,
@@ -388,9 +373,14 @@ fn run_job(
     let started = Instant::now();
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let tag = super::shell::tag_of(request);
-    let mut request_context =
-        RequestContext::for_program(context, tag, (request, facts, waiting), Arc::clone(charge));
-    if matches!(work, Work::Poll(_)) {
+    let mut request_context = RequestContext::for_program(
+        context,
+        tag,
+        (request, facts, waiting),
+        (text, Arc::clone(charge)),
+    );
+    let polls = matches!(work, Work::Poll(_));
+    if polls {
         request_context.keep_commits();
     }
     let mut reported = false;
@@ -438,6 +428,9 @@ fn run_job(
             worker.poll(watch, inbox, held);
         }
     }));
+    // Text writes no commit after them carried: a program's text calls
+    // write nothing but through a commit.
+    request_context.commit_text();
     // Calls made after the program's last publish, or by a program that
     // published nothing: they belong to no trace.
     let unpublished = take_calls();
@@ -456,14 +449,20 @@ fn run_job(
         "handled"
     );
     let carried = request_context.kept_commits();
-    // Elements the program's lookups replaced, dropped holding no lock.
+    let text = if polls {
+        request_context.take_program_text()
+    } else {
+        ProgramText::default()
+    };
+    // Elements the program's lookups replaced, and the text objects it
+    // held, dropped holding no lock.
     drop(request_context);
     context.mailbox.post(Posted::Finished {
         request,
         reported,
         panicked: handled.is_err(),
     });
-    carried
+    (carried, text)
 }
 
 /// The observation `entry`'s verdicts are judged at: its event's, for an
@@ -2222,15 +2221,17 @@ impl Worker<'_> {
         if kind == WinEventKind::Destroy {
             if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
                 self.context.record(VerdictChange::Forget(hwnd));
+                self.context.forget_window(hwnd);
+                // A reused window handle must never inherit these nodes;
+                // their objects are released once the store's lock is let
+                // go, and their text facts are forgotten with the commit.
+                let (removed, gone) = self.context.store.forget_window(hwnd);
+                drop(removed);
+                text_reads::forget_nodes(self.context, &gone);
                 self.commit(Effects {
                     gap: vec![GapNote::WindowDestroyed(hwnd)],
                     ..Effects::default()
                 });
-                self.context.forget_window(hwnd);
-                // A reused window handle must never inherit these nodes;
-                // their objects are released once the store's lock is let
-                // go.
-                drop(self.context.store.forget_window(hwnd));
             }
             return;
         }
@@ -3667,9 +3668,9 @@ impl Worker<'_> {
         // one identity"): on the listener's evidence that the element it
         // stood for lost the focus or is gone, the element kept for it is
         // evicted by the report's commit, if still kept then; for one gone,
-        // its text is dropped from the store now, while this request is
-        // live, so the focus's caret read fetches the new element's
-        // pattern, and its terminal entry goes in the commit.
+        // its text is forgotten now in the program's copies, and from the
+        // store with its next commit, so the focus's caret read fetches the
+        // new element's pattern, and its terminal entry goes in the commit.
         self.earlier = read.same_as_last;
         if let Some(earlier @ (EarlierElement::NotFocused | EarlierElement::Gone)) =
             read.same_as_last
@@ -3681,10 +3682,7 @@ impl Worker<'_> {
                 "UIA focus: its runtime id named an element that lost the focus or is gone; the node's element is evicted"
             );
             if gone {
-                let removed = self
-                    .context
-                    .while_live(|| self.context.store.forget_text(node));
-                drop(removed);
+                text_reads::forget_text(self.context, node);
             }
             self.stale = Some(Stale {
                 node,
@@ -4630,5 +4628,58 @@ mod tests {
         let mut held = VecDeque::new();
         assert!(look(&jobs, &mut held));
         assert!(held.is_empty());
+    }
+
+    /// An edit control's text facts for node 1 as a poll's read leaves
+    /// them: anchor `anchor` minted at offset `offset`.
+    fn read_left(anchor: u64, offset: u32) -> reducer::TextChange {
+        let mut part = reducer::NodeAnchors::default();
+        part.anchors.insert(
+            anchor,
+            reducer::Anchor {
+                pos: offset,
+                text: Arc::from("line"),
+            },
+        );
+        reducer::TextChange::Edit {
+            node: 1,
+            part,
+            copied: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// The console poll's text changes, which its reads carry to its next
+    /// commit rather than commit, go with the commit that yields, in the
+    /// order its reads made them, and are applied with its watch's change
+    /// to the copies of the program the worker runs after it.
+    #[test]
+    fn the_polls_text_changes_are_committed_with_its_yield() {
+        let mut text = ProgramText::default();
+        for (anchor, offset) in [(3, 4), (5, 6)] {
+            text.write(super::super::store::TextWrite::Facts {
+                change: read_left(anchor, offset),
+                ranges: Vec::new(),
+                touched: vec![anchor],
+            });
+        }
+        let yielded = text.seal(Effects {
+            watch: Some(WatchChange::Yielded {
+                request_id: 7,
+                poll: Poll::new(std::time::Duration::ZERO, 0, 0),
+                calls: verbatim_model::CallCounts::default(),
+            }),
+            ..Effects::default()
+        });
+        assert!(!text.has_pending());
+        let carried = yielded.carried();
+        assert_eq!(carried.text, vec![read_left(3, 4), read_left(5, 6)]);
+        assert!(matches!(
+            carried.watch,
+            Some(WatchChange::Yielded { request_id: 7, .. })
+        ));
+        let mut facts = reducer::Facts::default();
+        carry(&mut facts, 0, &[carried]);
+        let kept = facts.text.edit(1).expect("node 1's text facts");
+        assert_eq!(kept.anchors.keys().copied().collect::<Vec<_>>(), [3, 5]);
     }
 }

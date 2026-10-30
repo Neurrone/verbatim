@@ -96,10 +96,12 @@ use verbatim_model::protocol::{
 use commit::{Committed, Effects};
 use outbound::Outbound;
 pub use reducer::Verdicts;
+pub(crate) use reducer::{
+    Anchor, CaretSeen, KeptSelection, NodeAnchors, Probe, Probed, VerdictChange,
+};
 use reducer::{
     Entry, Facts, FollowState, Item, Object, OpenWatch, Source, UiaEvent, UiaKind, WaitingCaret,
 };
-pub(crate) use reducer::{Probe, Probed, VerdictChange};
 pub use shell::GapTimer;
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
@@ -339,14 +341,17 @@ impl Default for OutpostOptions {
 /// for the request ([`store::Nodes`]), carrying its mint tag, that of a
 /// program, or of the request a publication at a walk's bound claims; and,
 /// for a program, its copies of the facts it reads. The store tags every
-/// node the request issues or looks up with it, and a program's text is
-/// kept only while its request is live.
+/// node the request issues or looks up with it, and a program's text
+/// writes are made only with a commit the reducer accepts.
 struct RequestContext<'a> {
     context: &'a Context,
     nodes: store::Nodes<'a>,
     /// The facts the request reads: a program's copies, which its commits
     /// are applied to, or the reducer's own, copied for a publication.
     facts: RefCell<Facts>,
+    /// What the program holds of the store's text, and its text writes
+    /// not yet committed ([`text_reads::ProgramText`]).
+    program_text: RefCell<text_reads::ProgramText>,
     /// The program's own, when the context is a program's: its request,
     /// the caret events and value changes waiting when it was dispatched,
     /// and its worker's charge.
@@ -379,23 +384,26 @@ impl<'a> RequestContext<'a> {
             context,
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
+            program_text: RefCell::default(),
             program: None,
             judged_at: None,
         }
     }
 
-    /// The context of program `request`, given `facts`, `waiting` and its
+    /// The context of program `request`, given `facts`, `waiting`, what
+    /// the console poll before it held of the store's text, and its
     /// worker's `charge`.
     fn for_program(
         context: &'a Context,
         tag: store::Tag,
         (request, facts, waiting): (reducer::Request, Facts, Vec<WaitingCaret>),
-        charge: Arc<Charge>,
+        (text, charge): (text_reads::ProgramText, Arc<Charge>),
     ) -> Self {
         Self {
             context,
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
+            program_text: RefCell::new(text),
             program: Some(Program {
                 request,
                 waiting,
@@ -539,21 +547,40 @@ impl<'a> RequestContext<'a> {
         read::serves(self, route.window).then_some(route)
     }
 
-    /// Makes `write` while the program's request is live, holding its
-    /// worker's charge across the judgement and the write
-    /// ([`Charge::while_live`]); `None`, with nothing written, otherwise.
-    fn while_live<T>(&self, write: impl FnOnce() -> T) -> Option<T> {
-        let program = self.program.as_ref()?;
-        program.charge.while_live(program.request, write)
+    /// Applies `change`, a change of text facts one of the program's text
+    /// calls made, to the program's copies at once, so what it reads after
+    /// is what the reducer will hold once its commit is applied.
+    fn apply_text(&self, change: &reducer::TextChange) {
+        let mut facts = self.facts.borrow_mut();
+        let _ = Arc::make_mut(&mut facts.text).apply(change);
     }
 
-    /// Commits `effects`: unless the worker was abandoned, applies their
-    /// pure part to the program's copies, so what it reads after is what
-    /// the reducer will hold, and posts them for the reducer, which applies
-    /// them only while the request is live. Returns what was done, and the
-    /// caret key's watch a [`reducer::WatchChange::Take`] took out.
+    /// Commits the program's text writes not yet committed, if it has
+    /// any: at the program's end, for the writes no commit after them
+    /// carried.
+    fn commit_text(&self) {
+        if self.program.is_some() && self.program_text.borrow().has_pending() {
+            let _ = self.commit(Effects::default());
+        }
+    }
+
+    /// What the program holds of the store's text, for the program the
+    /// worker runs after the console poll: the poll's commits may not have
+    /// been taken in when it reads.
+    fn take_program_text(&self) -> text_reads::ProgramText {
+        self.program_text.take()
+    }
+
+    /// Commits `effects`, with the program's text writes since its last
+    /// commit: unless the worker was abandoned, applies their pure part to
+    /// the program's copies, so what it reads after is what the reducer
+    /// will hold (the text facts' changes were applied as they were made),
+    /// and posts them for the reducer, which applies them only while the
+    /// request is live. Returns what was done, and the caret key's watch a
+    /// [`reducer::WatchChange::Take`] took out.
     fn commit(&self, effects: Effects) -> (Committed, Option<OpenWatch>) {
         let program = self.program();
+        let effects = self.program_text.borrow_mut().seal(effects);
         if program.charge.is_dead() {
             drop(effects);
             return (Committed::Refused, None);
@@ -565,7 +592,7 @@ impl<'a> RequestContext<'a> {
             &local,
         );
         if let Some(kept) = &program.kept {
-            kept.borrow_mut().push(local);
+            kept.borrow_mut().push(effects.carried());
         }
         self.mailbox.post(Posted::Commit {
             request: program.request,

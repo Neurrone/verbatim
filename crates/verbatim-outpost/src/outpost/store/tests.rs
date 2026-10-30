@@ -1,6 +1,6 @@
 //! The release rule, on a store and an outbound queue writing to a pipe:
 //! a request's tags, the lines a program copies, a dead generation's
-//! nodes, and what a message names; and a text call's copy put back.
+//! nodes, and what a message names; and a commit's text writes.
 
 use std::fs::File;
 
@@ -149,35 +149,29 @@ fn a_spliced_or_looked_up_node_is_recorded_as_carried() {
     assert_eq!(release(&store, &outbound, 1, &[]), vec![spliced]);
 }
 
-/// A text call's copy of a node's anchors holds the anchors its operation
-/// names, and is put back without one of them the store forgot meanwhile,
-/// keeping one the call minted and leaving an anchor it did not copy as it
-/// was; it is not put back at all for a node the store released meanwhile.
+/// A commit's text write for a node the store released meanwhile is not
+/// made: its anchors are not tagged and the reducer is not given its
+/// change, while the write for a node still held is made.
 #[test]
-fn a_text_copy_put_back_keeps_only_what_the_store_still_holds() {
+fn a_text_write_for_a_released_node_is_not_made() {
     let (outbound, _pipe) = outbound();
     let store = Store::new();
     let reading = store.next_tag(0);
     let node = node_under(&store, reading, &[1]);
     let gone = node_under(&store, store.next_tag(0), &[2]);
-    let mut first = store.edit_text(node, &[]);
-    let forgotten = first.text().position_at(4).anchor.0;
-    let untouched = first.text().position_at(6).anchor.0;
-    drop(store.put_edit_text(reading, node, first));
-    let mut copy = store.edit_text(node, &[forgotten]);
-    let minted = copy.text().position_at(9).anchor.0;
-    drop(
-        store
-            .lock()
-            .edit_text
-            .forget_anchors(&HashSet::from([forgotten])),
-    );
-    drop(store.put_edit_text(reading, node, copy));
-    let anchors: Vec<u64> = store.lock().edit_text.anchors_of(node.number()).collect();
-    assert_eq!(anchors, vec![untouched, minted]);
-    let mut late = store.edit_text(gone, &[]);
-    let _ = late.text().position_at(1);
     assert_eq!(release(&store, &outbound, 0, &[reading]), vec![gone]);
-    drop(store.put_edit_text(reading, gone, late));
-    assert!(!store.lock().edit_text.has(gone.number()));
+    let change = |node: NodeId| TextChange::Edit {
+        node: node.number(),
+        part: crate::outpost::NodeAnchors::default(),
+        copied: std::collections::BTreeSet::new(),
+    };
+    let write = |node: NodeId, anchor: u64| TextWrite::Facts {
+        change: change(node),
+        ranges: Vec::new(),
+        touched: vec![anchor],
+    };
+    let (changes, _) = store.write_text(reading, vec![write(node, 5), write(gone, 6)]);
+    assert_eq!(changes, vec![change(node)]);
+    assert!(store.tags_anchor(5));
+    assert!(!store.tags_anchor(6));
 }

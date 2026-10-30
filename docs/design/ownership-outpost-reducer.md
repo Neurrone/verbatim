@@ -229,15 +229,15 @@ The mechanism as built is described in [the crate guide](../crates/verbatim-outp
 
 - A program posts each commit as it makes it, applying its pure part to its own copies with the reducer's own function, rather than one result at its end, so a focus's report is sent as soon as it is read, as before; the reducer applies each only while the program's request is live.
 - The owed work and the gap's read a dropped copy asks for are programs of their own, which the reducer dispatches before anything else, rather than calls at the end of the program that owed them: the reducer then decides between them and the next entry, and each costs two more wakes.
-- A worker generation's charge (`worker::Charge`) holds the walk's progress slot and whether the generation was abandoned, under one lock: a walk's step, a publication's copy and a program's text write to the store, made under it with the store's lock inside, judge liveness in the same hold, as the watch lock did.
+- A worker generation's charge (`worker::Charge`) holds the walk's progress slot and whether the generation was abandoned, under one lock: a walk's step and a publication's copy judge liveness in the same hold, as the watch lock did.
 - What the shell lets go of, an element no longer followed, a parked object never taken, what a publication's lookups replaced, is dropped by the worker before its next program, under that program's deadline; a `NodesHeld`'s release is a drop program of its own.
 - A caret key's check counts a waiting caret event from a copy of the waiting caret events made as its program is dispatched.
 - A focus walk's object (`BoundFocus::object`) is its event address or runtime id, no application object, so nothing is parked for it.
+- Text support per node is divided as the store build left it to be: the facts (the anchors with their chunks' text, the reported positions, the remembered carets and the count of reports, the kept selection with its text, and the content-changed note) are reducer state (`reducer::text`), each position an edit control's offset or the key of a UIA range the store keeps; the ranges, the patterns and what a text supports stay in the store. A text call works on its program's copy of the facts with clones of the ranges they name. Its changes are applied to the program's copies at once and ride the program's next commit rather than one at its end, so a caret event's report and its text change still reach the reducer in one commit; a program that ends with changes no commit carried commits them alone. The shell writes them only when the reducer accepts the commit, and the reducer has the store let go of each range no fact names any more, including a released anchor's, one transition after the release rather than in its hold. A destroyed window's nodes, which the store frees directly, have their facts forgotten with the program's next commit.
 
 Not built in this build, and open:
 
 - The value change check's cut into two programs. A caret read's comparison asks, after the `WinEvent` thread's sync, the program's copy of the waiting value changes and the mailbox's record of those it took or holds since the program was dispatched, which is exact and adds no hop.
-- The division of `NodeText` and `KeptSelection` between reducer and store: the text records stay in the store, written while a program's request is live.
 - The removal of the five mockapp tests the brief names, which wait for their replay tests' review.
 
 ## Open questions for Dickson

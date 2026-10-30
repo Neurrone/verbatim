@@ -711,8 +711,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   its own, run by its shell (`outpost::shell`): it holds the intake's
   order (`reducer::intake`), the gap record, the reports Core may hold
   (`reducer::held`), the follow state (`reducer::follow`), the hand-over's
-  hold, the arbitrator's verdicts (`reducer::verdicts`), the worker generation in charge with its deadline, the moved-on
-  grace and the walk's bound, and the queries not yet answered. Inputs
+  hold, the arbitrator's verdicts (`reducer::verdicts`), each node's text
+  facts (`reducer::text`), the worker generation in charge with its
+  deadline, the moved-on grace and the walk's bound, and the queries not
+  yet answered. Inputs
   come in mailbox order; effects go out: dispatch a program, send a
   message, release, move the subscription, abandon a worker, set a timer.
   It names no Windows type and holds no application object; its local
@@ -738,7 +740,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   live, its generation in charge and its walk not published, but for its
   verdicts ("The arbitrator"): first the
   writes only it makes, to the store and its table of the elements the
-  subscription follows (`commit::Writes`), then the reducer's change. A
+  subscription follows (`commit::Writes`), the program's text writes
+  among them, then the reducer's change. A
   program receives too the caret events and edit controls' value changes
   waiting when it was dispatched (`reducer::WaitingCaret`), which a caret
   key's check and a caret read's comparison ask after. The inbox
@@ -872,8 +875,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   gives), which its `RequestContext` carries with the store's handle; the
   program in flight's request is live until it ends, its worker is
   abandoned, or its walk's publication claims it. A program's text writes
-  to the store are made while its charge says it is live, under the
-  charge's lock (`RequestContext::while_live`). A terminal read works on a
+  go to the store only with a commit the reducer accepts, as every other
+  write of the shell's does ("Window destruction and held objects", text
+  on copies). A terminal read works on a
   copy of its entry, put in place only by its commit.
 - Queries: each query the outpost takes has a reply token
   (`verbatim_model::protocol::Responder`) in the shell, keyed by request
@@ -917,18 +921,17 @@ and the inherited pipe handles.
   line segmented by `verbatim-text`'s rules, as NVDA finds it).
   `caret_report`, `caret_report_since` (with `LastSelection` and
   `ReportedCaret`), and `caret_report_checking` read the caret for
-  `CaretMoved`. `Anchors` keeps a backend's anchors by node until
-  `forget_anchors` or the node's release, with `note_content_changed` and
-  `forget_selection`, each returning what it let go of as `Forgotten`, to
-  drop once no lock is held; `copy(node, named)` gives a `NodeTextCopy`
-  a text call works on with no lock held, holding the anchors `named`
-  (`named_anchors(op)`, those of the positions the operation names) and
-  the carets', with the kept selection and carets, and recording the
-  anchors it mints or reports; `put(node, copy)` adds its anchors back but
-  for one forgotten meanwhile, leaving those it did not copy, and
-  replaces the selection and carets; `into_forgotten` gives a copy not
-  put back as what to drop; `NodeText` is one node's, borrowed from either
-  (`position_at`, `forget_selection`). `check_caret` checks a caret key's
+  `CaretMoved`. `Anchors` keeps a backend's anchors by node for a reader
+  that holds them for the whole read, a test or mockapp, until
+  `forget_anchors`, with `note_content_changed`; `NodeText` is one node's,
+  borrowed from it or from the crate's `NodeTextCopy`, the copy a
+  program's text call works on (`position_at`, `forget_selection`,
+  `reported_point`). Both hold the reducer's `NodeAnchors` with each
+  position a `Slot`: the source's position and the key it was kept under,
+  so a call's result names a position it was given by the same key and
+  only one it made is given a new one (`NodeTextCopy::finish`);
+  `named_anchors(op)` lists the anchors of the positions an operation
+  names, which a copy must hold. `check_caret` checks a caret key's
   watch with one read and answers `Watched::Answered` or
   `Watched::Watching`; `CaretSignal` is what the check knows besides the
   text, with a clock for tests.
@@ -1414,23 +1417,34 @@ foreground application for its focus unless a newer focus was applied.
   when none of its tags is live and either no message carried it or one
   was written at or before that position, none waits that carries it, and
   Core does not hold it; with it go the node's text and terminal entry,
-  and the reducer is given the released nodes before it dispatches any
-  program, dropping their reports and focus-following groups, so no
-  program is given a vanishing node; the objects are dropped by a release
+  and the reducer is given the released nodes and anchors before it
+  dispatches any program, dropping their reports, focus-following groups
+  and text facts, so no program is given a vanishing node; it then has the
+  store let go of the freed anchors' UIA ranges (`Effect::ForgetRanges`).
+  The objects are dropped by a release
   program on a worker, under a deadline, never on the reducer's thread. A
   never-carried node of an ended request or an abandoned generation goes
   at the next release. A released node answers `Gone`, a forgotten anchor
   `AnchorLost`. Only the newest list is kept.
-- Text on copies: a text call takes a copy of its node's anchors from the
-  store (`Store::uia_text`, `Store::edit_text`), works on it with no lock
-  held, and puts it back (`text_reads::put_uia`, `put_edit`) only while
-  its request is live, judged and written under its worker's charge
-  (`text_reads::while_live`), the anchors it minted or reported tagged; a
-  copy of an abandoned or claimed request, or of a node released, is
-  dropped once the locks are let go. The other text writes, the patterns
-  and what a text supports, a forgotten answer of no pattern, a forgotten
-  selection and a noted value change, are made the same way, and a
-  released node's are not kept.
+- Text on copies: each node's text facts are the reducer's
+  (`reducer::text`, "Text and caret"), and a program reads them in its
+  copies. A text call copies the part its operation names
+  (`NodeAnchors::part`), clones the UIA ranges that part names from the
+  program's own or from the store in one hold (`Store::ranges`), and works
+  on the copy with no lock held (`text_reads::uia_call`, `edit_call`).
+  What it changed is applied to the program's copies at once and carried,
+  with the ranges it made under new keys and the anchors it minted or
+  reported, to the program's next commit (`text_reads::put_uia`,
+  `put_edit`, `ProgramText`); a program that ends with text writes no
+  commit carried commits them alone. The shell makes them only for a
+  commit the reducer accepts (`Store::write_text`): the ranges are kept,
+  the anchors tagged with the commit's request, and the facts' change
+  given to the reducer, but a change that adds to a node the store has
+  released is not made. A refused commit's writes are dropped by a worker.
+  The other text writes, the patterns and what a text supports, a
+  forgotten answer of no pattern, and a node's text forgotten for a new
+  element, ride the same commits. A destroyed window's nodes have their
+  text facts forgotten with the program's next commit.
 
 ### What to read
 
@@ -1530,7 +1544,8 @@ scripts wait for, without waiting:
   default, would miss most reads; so each re-read wakes only the worker.
   It commits once: the answer, the watch removed by its request, the caret
   read and the caret sent, then the terminal's read; or the watch ended at
-  its last read; or a yield. Before each read and at each wake it looks in
+  its last read; or a yield. Its reads' text changes are carried in the
+  program to that commit, never committed read by read. Before each read and at each wake it looks in
   its inbox, and a program waiting there other than a release's drop makes
   it yield, committing its next and last reads, its calls so far and its
   last caret read into the watch; the reducer dispatches it again once no
@@ -1540,7 +1555,8 @@ scripts wait for, without waiting:
   the inbox's doorbell, so the poll yields at once and the program, a
   console caret event's check included, reads at once; that program's
   deadline starts when the poll ends, and the worker applies the pure part
-  of the poll's commits to its copies, since the reducer may have
+  of the poll's commits, its text changes included, to its copies, and
+  gives it the UIA ranges the poll held, since the reducer may have
   dispatched it before taking them in. If the poll passes its deadline,
   its worker is abandoned, its watch ended and answered `Abandoned`, and
   the program waiting behind it is dispatched again to the replacement,
@@ -1587,8 +1603,20 @@ scripts wait for, without waiting:
 Selections no key made (`docs/parity/text.md`, "TextInfo-equivalent
 layer"):
 
-- Each node keeps the selection of its last caret report (`NodeAnchors`),
-  but a terminal's, which keeps none. A caret event's report of a focus
+- Each node keeps the selection of its last caret report, but a
+  terminal's, which keeps none. The reducer holds it among the node's text
+  facts (`reducer::NodeAnchors`, in `reducer::TextFacts`): its anchors and
+  the chunks' text, the positions reported, the last eight carets reported
+  and the count of reports, the kept selection with its text, and the note
+  that the text changed. A position is an edit control's offset, or the
+  key under which the store keeps a UIA range, so the facts hold no
+  application object and an edit control's offsets cross between programs
+  as they are. They change only by a program's commits
+  (`reducer::TextChange`: a text call's part put back, but for an anchor
+  it copied that a release freed meanwhile; a selection forgotten; a value
+  change noted; a node's text forgotten), and the reducer has the store
+  let go of each UIA range no fact names any more
+  (`Effect::ForgetRanges`). A caret event's report of a focus
   that is not a terminal (`text_reads::CaretFor::Event`) compares with it
   (`LastSelection::Compare`) and sends `selection_changes`; through UIA in
   the same round trip, comparing nothing when both are empty

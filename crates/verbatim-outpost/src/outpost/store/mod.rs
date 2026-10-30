@@ -3,8 +3,9 @@
 //! (`docs/design/ownership-outpost-reducer.md`, "The store").
 //!
 //! It owns, as private fields, the UIA and MSAA node registries, the text
-//! objects (each node's text patterns, and its anchors' and kept
-//! selection's provider ranges, with what its text is known to support),
+//! objects (each node's text patterns, and the UIA ranges of its text
+//! positions under the keys the reducer's text facts name them by, with
+//! what its text is known to support),
 //! the terminals' kept ranges, and the mint tag of every node and anchor:
 //! the worker generation and request it was issued or looked up under.
 //! No other module holds a registry. A plain window and a foreground's
@@ -40,13 +41,14 @@
 //!   messages and tags are read in one hold of the backlog's lock and then
 //!   the store's, the one nesting in the outpost, so no message can be
 //!   queued between the decision and the removal.
-//! - A text call works on a copy of its node's anchors ([`Store::uia_text`],
-//!   [`Store::edit_text`]): the anchors its operation names, with the
-//!   node's kept selection and carets, with no lock held, and its result is
-//!   put back
-//!   ([`Store::put_uia_text`], [`Store::put_edit_text`]), its anchors
-//!   tagged; a copy of a request no longer live is not put back, which the
-//!   caller decides under the watch lock.
+//! - A text call works on clones of the UIA ranges its copy of the node's
+//!   text facts names ([`Store::ranges`]), with no lock held. Its program
+//!   commits what it changed, and the shell makes the commit's text writes
+//!   only when the reducer accepts the commit ([`Store::write_text`]): the
+//!   ranges it made, under their new keys, its anchors tagged with its
+//!   request, and the node's patterns and what its text supports. A range
+//!   is let go of when no text fact names it any more
+//!   ([`Store::forget_ranges`]), or with its node.
 
 #![forbid(unsafe_code)]
 
@@ -60,15 +62,15 @@ use verbatim_ia2::{
     CHILDID_SELF, Facts, Found, Held, KeptObject, MsaaKey, NodeIdRegistry as MsaaRegistry,
 };
 use verbatim_model::protocol::OutpostToCore;
-use verbatim_model::{CaretReport, Fetches, NodeId, Role, TextPosition};
+use verbatim_model::{CaretReport, Fetches, NodeId, Role};
 use verbatim_uia::{Agile, Cached, Kept, NodeIdRegistry as UiaRegistry};
 
 use super::outbound::{Carried, Outbound};
+use super::reducer::{RangeKey, TextChange};
 use super::text_reads::Patterns;
 use crate::terminal::Terminal;
 use crate::terminal::reading::Reading;
 use crate::text::uia::{TextSupport, UiaPos};
-use crate::text::{Anchors, Forgotten, NodeTextCopy};
 
 /// The worker generation and request a node or anchor was issued or looked
 /// up under: its mint tag. Requests are numbered across generations, from
@@ -90,27 +92,52 @@ pub(super) struct Removed {
     #[expect(dead_code, reason = "kept only to be dropped by the holder")]
     elements: Vec<Agile<Kept>>,
     patterns: Vec<Patterns>,
-    uia_text: Option<Forgotten<UiaPos>>,
-    edit_text: Option<Forgotten<u32>>,
+    /// UIA ranges of text positions.
+    ranges: Vec<UiaPos>,
     terminals: Vec<Terminal>,
     /// Objects entries came with, never taken.
     parked: Vec<Parked>,
 }
 
 impl Removed {
-    fn uia_text(&mut self, forgotten: Forgotten<UiaPos>) {
-        match &mut self.uia_text {
-            Some(text) => text.append(forgotten),
-            None => self.uia_text = Some(forgotten),
+    /// The objects `writes` hold, for a commit the reducer refused.
+    pub(super) fn of_text(writes: Vec<TextWrite>) -> Self {
+        let mut removed = Self::default();
+        for write in writes {
+            match write {
+                TextWrite::Facts { ranges, .. } => {
+                    removed
+                        .ranges
+                        .extend(ranges.into_iter().map(|(_, range)| range));
+                }
+                TextWrite::Patterns(_, patterns) => removed.patterns.push(patterns),
+                TextWrite::NoTextForgotten(_) | TextWrite::Support(..) | TextWrite::Forget(_) => {}
+            }
         }
+        removed
     }
+}
 
-    fn edit_text(&mut self, forgotten: Forgotten<u32>) {
-        match &mut self.edit_text {
-            Some(text) => text.append(forgotten),
-            None => self.edit_text = Some(forgotten),
-        }
-    }
+/// A program's write to the store's text, made by the shell only when the
+/// reducer accepts the commit that carries it ([`Store::write_text`]).
+pub(super) enum TextWrite {
+    /// A change of a node's text facts, with the UIA ranges its text call
+    /// made, under the keys the change names them by, and the anchors it
+    /// minted or reported, to tag with the commit's request.
+    Facts {
+        change: TextChange,
+        ranges: Vec<(RangeKey, UiaPos)>,
+        touched: Vec<u64>,
+    },
+    /// A UIA node's text patterns, fetched.
+    Patterns(NodeId, Patterns),
+    /// A UIA node's answer of no text pattern, forgotten.
+    NoTextForgotten(NodeId),
+    /// What a UIA node's text is known to support.
+    Support(NodeId, TextSupport),
+    /// A node's patterns and what its text supports, forgotten with its
+    /// text facts.
+    Forget(NodeId),
 }
 
 /// What a release freed ([`Store::release`]): the nodes and anchors, by
@@ -144,10 +171,11 @@ struct State {
     nodes: HashMap<u64, Vec<Tag>>,
     /// The tags of each anchor, likewise.
     anchors: HashMap<u64, Vec<Tag>>,
-    /// The anchors minted in UIA text and in edit controls; both number
-    /// theirs from one counter.
-    uia_text: Anchors<UiaPos>,
-    edit_text: Anchors<u32>,
+    /// The node of each anchor tagged.
+    anchor_nodes: HashMap<u64, u64>,
+    /// The UIA ranges of each node's text positions, by node and by the
+    /// key its text facts name each by.
+    ranges: HashMap<u64, HashMap<RangeKey, UiaPos>>,
     /// Each UIA node's text patterns, once fetched.
     patterns: HashMap<u64, Patterns>,
     /// What each UIA node's text is known to support of the text
@@ -215,27 +243,29 @@ impl State {
         add(self.nodes.entry(node.number()).or_default(), tag);
     }
 
-    fn tag_anchors(&mut self, anchors: &[u64], tag: Tag) {
+    fn tag_anchors(&mut self, node: u64, anchors: &[u64], tag: Tag) {
         for &anchor in anchors {
             add(self.anchors.entry(anchor).or_default(), tag);
+            self.anchor_nodes.insert(anchor, node);
         }
     }
 
     /// Forgets everything kept for the nodes `gone`: their text, terminal
     /// and tags, and the tags of their anchors, into `removed`.
     fn forget_nodes(&mut self, gone: &HashSet<u64>, removed: &mut Removed) {
+        let anchors = &mut self.anchors;
+        self.anchor_nodes.retain(|anchor, node| {
+            let kept = !gone.contains(node);
+            if !kept {
+                anchors.remove(anchor);
+            }
+            kept
+        });
         for &node in gone {
             self.nodes.remove(&node);
-            let anchors: Vec<u64> = self
-                .uia_text
-                .anchors_of(node)
-                .chain(self.edit_text.anchors_of(node))
-                .collect();
-            for anchor in anchors {
-                self.anchors.remove(&anchor);
+            if let Some(ranges) = self.ranges.remove(&node) {
+                removed.ranges.extend(ranges.into_values());
             }
-            removed.uia_text(self.uia_text.forget_node(node));
-            removed.edit_text(self.edit_text.forget_node(node));
             removed.patterns.extend(self.patterns.remove(&node));
             self.support.remove(&node);
             removed.terminals.extend(self.terminals.remove(&node));
@@ -250,6 +280,10 @@ pub(super) struct Store {
     /// The number of the last request a test tagged.
     #[cfg(test)]
     requests: AtomicU64,
+    /// The counter anchors in both backends are numbered from.
+    anchor_numbers: Arc<AtomicU64>,
+    /// The last key given a UIA range.
+    range_keys: AtomicU64,
     state: Mutex<State>,
 }
 
@@ -260,8 +294,8 @@ impl Default for Store {
 }
 
 impl Store {
-    /// An empty store: both registries mint from one counter, and both
-    /// anchor stores number from another.
+    /// An empty store: both registries mint from one counter, and anchors
+    /// are numbered from another.
     pub(super) fn new() -> Self {
         let ids = Arc::new(AtomicU64::new(1));
         let anchors = Arc::new(AtomicU64::new(0));
@@ -270,11 +304,13 @@ impl Store {
             msaa: MsaaRegistry::new(ids),
             #[cfg(test)]
             requests: AtomicU64::new(0),
+            anchor_numbers: anchors,
+            range_keys: AtomicU64::new(0),
             state: Mutex::new(State {
                 nodes: HashMap::new(),
                 anchors: HashMap::new(),
-                uia_text: Anchors::new(Arc::clone(&anchors)),
-                edit_text: Anchors::new(anchors),
+                anchor_nodes: HashMap::new(),
+                ranges: HashMap::new(),
                 patterns: HashMap::new(),
                 support: HashMap::new(),
                 terminals: HashMap::new(),
@@ -457,13 +493,12 @@ impl Store {
                 .msaa
                 .push(self.msaa.retain(|id| !nodes.contains(&id.number())));
             state.forget_nodes(&nodes, &mut removed);
+            // A freed anchor's ranges stay until the reducer, given the
+            // anchors freed, says no fact names them ([`Store::forget_ranges`]).
             for anchor in &anchors {
                 state.anchors.remove(anchor);
+                state.anchor_nodes.remove(anchor);
             }
-            let forgotten = state.uia_text.forget_anchors(&anchors);
-            removed.uia_text(forgotten);
-            let forgotten = state.edit_text.forget_anchors(&anchors);
-            removed.edit_text(forgotten);
             // What the queue recorded of anything no longer kept goes, the
             // anchors of a freed node with it.
             pending.forget(|carried| match carried {
@@ -485,15 +520,16 @@ impl Store {
 
     /// Frees every node of window `hwnd`, which has been destroyed, so a
     /// reused window handle never inherits them, with everything kept for
-    /// them.
-    pub(super) fn forget_window(&self, hwnd: isize) -> Removed {
+    /// them. Returns what it let go of and the nodes it freed, whose text
+    /// facts the caller has the reducer forget.
+    pub(super) fn forget_window(&self, hwnd: isize) -> (Removed, Vec<NodeId>) {
         let mut state = self.lock();
         let (gone, released) = self.msaa.forget_window(hwnd);
-        let gone: HashSet<u64> = gone.iter().map(|node| node.number()).collect();
+        let numbers: HashSet<u64> = gone.iter().map(|node| node.number()).collect();
         let mut removed = Removed::default();
         removed.msaa.push(released);
-        state.forget_nodes(&gone, &mut removed);
-        removed
+        state.forget_nodes(&numbers, &mut removed);
+        (removed, gone)
     }
 
     /// Frees everything, for the outpost's shutdown once no worker runs.
@@ -518,8 +554,15 @@ impl Store {
         removed
             .terminals
             .extend(state.terminals.drain().map(|(_, terminal)| terminal));
+        removed.ranges.extend(
+            state
+                .ranges
+                .drain()
+                .flat_map(|(_, ranges)| ranges.into_values()),
+        );
         state.nodes.clear();
         state.anchors.clear();
+        state.anchor_nodes.clear();
         removed
             .parked
             .extend(state.parked.drain().map(|(_, parked)| parked));
@@ -534,51 +577,6 @@ impl Store {
         self.lock().patterns.get(&node.number()).cloned()
     }
 
-    /// Keeps `patterns` as `node`'s, while the store holds it; returns
-    /// what it replaced, or `patterns` themselves for a node released.
-    pub(super) fn keep_patterns(&self, node: NodeId, patterns: Patterns) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        if self.holds(node) {
-            removed
-                .patterns
-                .extend(state.patterns.insert(node.number(), patterns));
-        } else {
-            removed.patterns.push(patterns);
-        }
-        removed
-    }
-
-    /// Forgets that `node`'s element answered it has no text pattern;
-    /// answers whether it had.
-    pub(super) fn forget_no_text(&self, node: NodeId) -> bool {
-        let mut state = self.lock();
-        let forgotten = state
-            .patterns
-            .get(&node.number())
-            .is_some_and(Option::is_none);
-        if forgotten {
-            state.patterns.remove(&node.number());
-        }
-        forgotten
-    }
-
-    /// Forgets `node`'s text: its patterns, what it supports, and its
-    /// anchors in both backends, for a node whose runtime id names a new
-    /// element.
-    pub(super) fn forget_text(&self, node: NodeId) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        let number = node.number();
-        removed.patterns.extend(state.patterns.remove(&number));
-        state.support.remove(&number);
-        let forgotten = state.uia_text.forget_node(number);
-        removed.uia_text(forgotten);
-        let forgotten = state.edit_text.forget_node(number);
-        removed.edit_text(forgotten);
-        removed
-    }
-
     /// What `node`'s text is known to support.
     pub(super) fn support(&self, node: NodeId) -> TextSupport {
         self.lock()
@@ -588,92 +586,120 @@ impl Store {
             .unwrap_or_default()
     }
 
-    /// Keeps what `node`'s text is now known to support, while the store
-    /// holds it.
-    pub(super) fn keep_support(&self, node: NodeId, support: TextSupport) {
-        let mut state = self.lock();
-        if self.holds(node) {
-            state.support.insert(node.number(), support);
-        }
+    /// The counter anchors are numbered from, which a text call's copy
+    /// mints from.
+    pub(super) fn anchor_numbers(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.anchor_numbers)
     }
 
-    /// A copy of `node`'s UIA text anchors for a text call made with no
-    /// lock held: the anchors `named` (the operation's positions'), with
-    /// the node's kept selection and carets.
-    pub(super) fn uia_text(&self, node: NodeId, named: &[u64]) -> NodeTextCopy<UiaPos> {
-        self.lock().uia_text.copy(node.number(), named)
+    /// A new key for a UIA range a text call made.
+    pub(super) fn next_range_key(&self) -> RangeKey {
+        self.range_keys.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// A copy of `node`'s edit control anchors, as
-    /// [`uia_text`](Self::uia_text) makes one.
-    pub(super) fn edit_text(&self, node: NodeId, named: &[u64]) -> NodeTextCopy<u32> {
-        self.lock().edit_text.copy(node.number(), named)
+    /// Clones of the UIA ranges of `node`'s text kept under `keys`, those
+    /// it keeps, in one hold, for a text call made with no lock held.
+    pub(super) fn ranges(&self, node: NodeId, keys: &[RangeKey]) -> Vec<(RangeKey, UiaPos)> {
+        let state = self.lock();
+        let Some(kept) = state.ranges.get(&node.number()) else {
+            return Vec::new();
+        };
+        keys.iter()
+            .filter_map(|&key| Some((key, kept.get(&key)?.clone())))
+            .collect()
     }
 
-    /// Puts `copy` back as `node`'s UIA text anchors, while the store holds
-    /// the node, its anchors tagged with request `tag`, which the caller has
-    /// judged live. Returns what it replaced, or the copy itself for a node
-    /// released.
-    pub(super) fn put_uia_text(
+    /// Makes `writes`, the text writes of a commit of request `tag` the
+    /// reducer accepts, in order. A change that adds to a node's facts is
+    /// made only while the store holds the node: its ranges are kept and
+    /// its anchors tagged. Returns the facts' changes made, for the
+    /// reducer, and what the writes replaced or did not keep, for the
+    /// caller to drop once no lock is held.
+    pub(super) fn write_text(
         &self,
         tag: Tag,
-        node: NodeId,
-        copy: NodeTextCopy<UiaPos>,
-    ) -> Removed {
+        writes: Vec<TextWrite>,
+    ) -> (Vec<TextChange>, Removed) {
+        let mut removed = Removed::default();
+        let mut changes = Vec::new();
+        let mut state = self.lock();
+        for write in writes {
+            match write {
+                TextWrite::Facts {
+                    change,
+                    ranges,
+                    touched,
+                } => {
+                    let node = change.node();
+                    if change.adds() && !self.holds(NodeId::new(node)) {
+                        removed
+                            .ranges
+                            .extend(ranges.into_iter().map(|(_, range)| range));
+                        continue;
+                    }
+                    state.tag_anchors(node, &touched, tag);
+                    if !ranges.is_empty() {
+                        let kept = state.ranges.entry(node).or_default();
+                        for (key, range) in ranges {
+                            removed.ranges.extend(kept.insert(key, range));
+                        }
+                    }
+                    changes.push(change);
+                }
+                TextWrite::Patterns(node, patterns) => {
+                    if self.holds(node) {
+                        removed
+                            .patterns
+                            .extend(state.patterns.insert(node.number(), patterns));
+                    } else {
+                        removed.patterns.push(patterns);
+                    }
+                }
+                TextWrite::NoTextForgotten(node) => {
+                    if state
+                        .patterns
+                        .get(&node.number())
+                        .is_some_and(Option::is_none)
+                    {
+                        state.patterns.remove(&node.number());
+                    }
+                }
+                TextWrite::Support(node, support) => {
+                    if self.holds(node) {
+                        state.support.insert(node.number(), support);
+                    }
+                }
+                TextWrite::Forget(node) => {
+                    removed
+                        .patterns
+                        .extend(state.patterns.remove(&node.number()));
+                    state.support.remove(&node.number());
+                }
+            }
+        }
+        (changes, removed)
+    }
+
+    /// Lets go of the UIA ranges `ranges` names, by node and key, which no
+    /// text fact names any more.
+    pub(super) fn forget_ranges(&self, ranges: &[(u64, RangeKey)]) -> Removed {
         let mut removed = Removed::default();
         let mut state = self.lock();
-        if self.holds(node) {
-            state.tag_anchors(copy.touched(), tag);
-            let replaced = state.uia_text.put(node.number(), copy);
-            removed.uia_text(replaced);
-        } else {
-            removed.uia_text(copy.into_forgotten());
+        for (node, key) in ranges {
+            if let Some(kept) = state.ranges.get_mut(node) {
+                removed.ranges.extend(kept.remove(key));
+                if kept.is_empty() {
+                    state.ranges.remove(node);
+                }
+            }
         }
         removed
     }
 
-    /// Puts `copy` back as `node`'s edit control anchors, as
-    /// [`put_uia_text`](Self::put_uia_text) does.
-    pub(super) fn put_edit_text(&self, tag: Tag, node: NodeId, copy: NodeTextCopy<u32>) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        if self.holds(node) {
-            state.tag_anchors(copy.touched(), tag);
-            let replaced = state.edit_text.put(node.number(), copy);
-            removed.edit_text(replaced);
-        } else {
-            removed.edit_text(copy.into_forgotten());
-        }
-        removed
-    }
-
-    /// Forgets the selection `node`'s next caret report through `uia` or
-    /// not would be compared with.
-    pub(super) fn forget_selection(&self, node: NodeId, uia: bool) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        if uia {
-            let forgotten = state.uia_text.forget_selection(node.number());
-            removed.uia_text(forgotten);
-        } else {
-            let forgotten = state.edit_text.forget_selection(node.number());
-            removed.edit_text(forgotten);
-        }
-        removed
-    }
-
-    /// Notes that edit control `node`'s text changed.
-    pub(super) fn note_content_changed(&self, node: NodeId) {
-        let mut state = self.lock();
-        if self.holds(node) {
-            state.edit_text.note_content_changed(node.number());
-        }
-    }
-
-    /// The UIA position `position` in `node`'s text was when the outpost
-    /// reported it, a clone, with no call.
-    pub(super) fn reported_point(&self, node: NodeId, position: TextPosition) -> Option<UiaPos> {
-        self.lock().uia_text.reported_point(node.number(), position)
+    /// Whether anchor `anchor` is tagged, for a test.
+    #[cfg(test)]
+    pub(super) fn tags_anchor(&self, anchor: u64) -> bool {
+        self.lock().anchors.contains_key(&anchor)
     }
 
     // Terminals.

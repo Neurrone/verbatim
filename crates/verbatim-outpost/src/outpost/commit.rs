@@ -8,10 +8,11 @@
 //!
 //! [`Effects`] carries, besides the reducer's [`Change`], what only the
 //! shell can apply: the elements a focus's subscription target names, the
-//! element a UIA focus's evidence says is stale, a terminal's entry, and
-//! the caret last sent to Core, all writes to the store or the shell's
-//! table of followed elements, made on the reducer's thread under the
-//! store's lock alone, with no call into the application.
+//! element a UIA focus's evidence says is stale, a terminal's entry, the
+//! caret last sent to Core, and the program's text writes since its last
+//! commit, all writes to the store or the shell's table of followed
+//! elements, made on the reducer's thread under the store's lock alone,
+//! with no call into the application.
 
 #![forbid(unsafe_code)]
 
@@ -21,9 +22,10 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::OutpostToCore;
 
 use super::reducer::{
-    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, VerdictChange,
-    WatchChange,
+    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, TextChange,
+    VerdictChange, WatchChange,
 };
+use super::store::TextWrite;
 
 /// Where the focus-following subscription is to be moved for a focus,
 /// computed before the commit.
@@ -184,6 +186,10 @@ pub(super) struct Effects {
     pub(super) noted_caret: Option<(NodeId, TraceId, u64)>,
     /// The verdicts probed, and the windows found destroyed.
     pub(super) verdicts: Vec<VerdictChange>,
+    /// The program's text writes since its last commit, in order: its
+    /// text facts' changes, which it applied to its own copies as it made
+    /// them, with the ranges they name, and its patterns and support.
+    pub(super) text: Vec<TextWrite>,
 }
 
 impl Effects {
@@ -213,6 +219,25 @@ impl Effects {
             gap: self.gap.clone(),
             noted_caret: self.noted_caret,
             verdicts: self.verdicts.clone(),
+            text: Vec::new(),
+        }
+    }
+
+    /// [`local`](Self::local), with the changes of text facts these
+    /// carry, in order: what the program the worker runs after the console
+    /// poll applies of the poll's commit to its copies, which the poll had
+    /// applied to its own as its text calls made them.
+    pub(super) fn carried(&self) -> Change {
+        Change {
+            text: self
+                .text
+                .iter()
+                .filter_map(|write| match write {
+                    TextWrite::Facts { change, .. } => Some(change.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<TextChange>>(),
+            ..self.local()
         }
     }
 
@@ -242,6 +267,7 @@ impl Effects {
             gap: self.gap,
             noted_caret: self.noted_caret,
             verdicts: self.verdicts,
+            text: Vec::new(),
         };
         let writes = Writes {
             follow: self.follow.map(|follow| {
@@ -256,6 +282,7 @@ impl Effects {
             terminal: self.terminal,
             sent_caret: self.sent_caret,
             stale: self.stale,
+            text: self.text,
         };
         (change, writes)
     }
@@ -274,6 +301,9 @@ pub(super) struct Writes {
     pub(super) sent_caret: Option<(NodeId, CaretReport)>,
     /// A UIA focus's stale element.
     pub(super) stale: Option<Stale>,
+    /// The program's text writes, which give the change its text facts'
+    /// changes as they are made.
+    pub(super) text: Vec<TextWrite>,
 }
 
 /// What [`Worker::commit`](super::worker) did.

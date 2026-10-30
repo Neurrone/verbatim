@@ -30,6 +30,7 @@ mod hold;
 mod intake;
 #[cfg(test)]
 mod tests;
+mod text;
 mod verdicts;
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
@@ -52,6 +53,7 @@ pub(in crate::outpost) use self::follow::{
 pub(in crate::outpost) use self::gap_record::{CopyDropped, GapRead};
 pub(in crate::outpost) use self::held::{Evidence, Focus, Held};
 pub(in crate::outpost) use self::intake::{Handling, Marks, Object, Planned, TimerAction};
+pub(crate) use self::text::{Anchor, CaretSeen, KeptSelection, NodeAnchors, RangeKey, TextChange};
 pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
@@ -193,6 +195,9 @@ pub(in crate::outpost) enum Effect {
     Unfollow(Vec<u64>),
     /// Drop the objects parked under these keys, on a worker.
     Unpark(Vec<u64>),
+    /// Let go of the UIA ranges the store keeps under these keys, by node,
+    /// which no text fact names any more, for a worker to drop.
+    ForgetRanges(Vec<(u64, RangeKey)>),
     /// Mark the generation dead in its slot and start `replacement`;
     /// `count` abandoned workers have not returned.
     Abandon {
@@ -262,9 +267,13 @@ pub(in crate::outpost) enum Input {
     },
     /// An abandoned worker returned from its call.
     Returned,
-    /// What a release let go of, by node number, and whether there are
-    /// objects to drop.
-    Released { nodes: HashSet<u64>, objects: bool },
+    /// What a release let go of, nodes and anchors by number, and whether
+    /// there are objects to drop.
+    Released {
+        nodes: HashSet<u64>,
+        anchors: HashSet<u64>,
+        objects: bool,
+    },
     /// A test times the gap record's bound: the reducer keeps no timer of
     /// its own for it from now on.
     GapTimerGiven,
@@ -486,9 +495,17 @@ impl Reducer {
                     count: self.abandoned,
                 });
             }
-            Input::Released { nodes, objects } => {
+            Input::Released {
+                nodes,
+                anchors,
+                objects,
+            } => {
                 self.releasing = false;
                 self.facts.held.release(&nodes);
+                let ranges = Arc::make_mut(&mut self.facts.text).release(&nodes, &anchors);
+                if !ranges.is_empty() {
+                    effects.push(Effect::ForgetRanges(ranges));
+                }
                 let mut applied = Applied::default();
                 self.facts.follow.release_groups(&nodes, &mut applied);
                 self.subscription_effects(applied, now, &mut effects);
@@ -701,7 +718,11 @@ impl Reducer {
                 observed_at_us,
             ));
         }
-        let applied = follow::apply(&mut self.facts, self.generation, change);
+        let mut applied = follow::apply(&mut self.facts, self.generation, change);
+        let ranges = std::mem::take(&mut applied.ranges);
+        if !ranges.is_empty() {
+            effects.push(Effect::ForgetRanges(ranges));
+        }
         if let Some(open) = &applied.taken
             && let Some(current) = self.slot_of(request)
         {
