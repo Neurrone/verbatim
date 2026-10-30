@@ -59,9 +59,6 @@ use verbatim_model::{
 /// before the key.
 const REMEMBERED_CARETS: usize = 8;
 
-/// How many anchors a node keeps beyond those Core holds.
-pub const KEPT_ANCHORS: usize = 64;
-
 /// The most UTF-16 code units read for a range copied to the clipboard or a
 /// selection change counted: what fits in [`MAX_RANGE_BYTES`] at worst.
 pub(crate) const MAX_RANGE_UNITS: usize = MAX_RANGE_BYTES / 2;
@@ -652,44 +649,55 @@ impl<P> Default for NodeAnchors<P> {
     }
 }
 
-/// The anchors Core holds, which are never forgotten, shared by an
-/// outpost's anchor stores. It has a lock of its own, taken only to set or
-/// look up numbers and never across a call into the application, so the
-/// thread that reads Core's commands sets it as Core's list arrives without
-/// waiting for a read of the text in progress.
-pub type HeldAnchors = Arc<Mutex<HashSet<u64>>>;
+/// The anchors minted or reported since the outpost last sent a message,
+/// shared by an outpost's anchor stores: the next message is recorded as
+/// carrying them, so an anchor is forgotten only once Core has seen it and
+/// does not hold it (`docs/design/ownership-one-judge.md`, "Text anchors
+/// released by message position"). Its lock is taken only to add or take
+/// numbers, never across a call into the application.
+pub type TouchedAnchors = Arc<Mutex<Vec<u64>>>;
 
-/// Every node's anchors in one backend, the anchors Core holds, and the
-/// counter anchors are numbered from, which an outpost's backends share so
-/// no two anchors in an outpost have the same number.
+/// Every node's anchors in one backend, the anchors touched since the last
+/// message, and the counter anchors are numbered from, which an outpost's
+/// backends share so no two anchors in an outpost have the same number.
+/// An anchor is kept until the outpost forgets it
+/// ([`forget_anchors`](Self::forget_anchors)) or its node.
 pub struct Anchors<P> {
     counter: Arc<AtomicU64>,
-    held: HeldAnchors,
+    touched: TouchedAnchors,
     nodes: HashMap<u64, NodeAnchors<P>>,
 }
 
 impl<P: Clone> Anchors<P> {
-    /// An empty store numbering anchors from `counter`, with a set of held
-    /// anchors of its own.
+    /// An empty store numbering anchors from `counter`, with a list of
+    /// touched anchors of its own.
     #[must_use]
     pub fn new(counter: Arc<AtomicU64>) -> Self {
-        Self::sharing(counter, HeldAnchors::default())
+        Self::sharing(counter, TouchedAnchors::default())
     }
 
-    /// An empty store numbering anchors from `counter` and keeping the
-    /// anchors `held` names.
+    /// An empty store numbering anchors from `counter` and adding each
+    /// anchor it mints or reports to `touched`.
     #[must_use]
-    pub fn sharing(counter: Arc<AtomicU64>, held: HeldAnchors) -> Self {
+    pub fn sharing(counter: Arc<AtomicU64>, touched: TouchedAnchors) -> Self {
         Self {
             counter,
-            held,
+            touched,
             nodes: HashMap::new(),
         }
     }
 
-    /// Records the anchors Core holds; the rest may be forgotten.
-    pub fn set_held(&self, held: impl IntoIterator<Item = u64>) {
-        *self.held.lock().unwrap_or_else(PoisonError::into_inner) = held.into_iter().collect();
+    /// Forgets the anchors `forgotten` names, of every node: Core has seen
+    /// the last message that carried each, and does not hold it.
+    pub fn forget_anchors(&mut self, forgotten: &HashSet<u64>) {
+        for anchors in self.nodes.values_mut() {
+            anchors
+                .anchors
+                .retain(|number, _| !forgotten.contains(number));
+            anchors
+                .reported
+                .retain(|(anchor, _), _| !forgotten.contains(anchor));
+        }
     }
 
     /// Forgets a node's anchors, when the node is released.
@@ -721,7 +729,7 @@ impl<P: Clone> Anchors<P> {
     pub fn node(&mut self, node: u64) -> NodeText<'_, P> {
         NodeText {
             counter: &self.counter,
-            held: &self.held,
+            touched: &self.touched,
             anchors: self.nodes.entry(node).or_default(),
         }
     }
@@ -730,13 +738,13 @@ impl<P: Clone> Anchors<P> {
 /// One node's anchors, borrowed from an [`Anchors`] store.
 pub struct NodeText<'a, P> {
     counter: &'a AtomicU64,
-    held: &'a Mutex<HashSet<u64>>,
+    touched: &'a Mutex<Vec<u64>>,
     anchors: &'a mut NodeAnchors<P>,
 }
 
 impl<P: Clone> NodeText<'_, P> {
-    /// Mints an anchor at `pos` for a chunk whose text is `text`, forgetting
-    /// the oldest anchors Core does not hold beyond [`KEPT_ANCHORS`].
+    /// Mints an anchor at `pos` for a chunk whose text is `text`, recorded
+    /// as touched, for the message that reports it.
     fn mint(&mut self, pos: P, text: &str) -> TextAnchor {
         let number = self.counter.fetch_add(1, AtomicOrdering::Relaxed) + 1;
         self.anchors.anchors.insert(
@@ -746,26 +754,7 @@ impl<P: Clone> NodeText<'_, P> {
                 text: Arc::from(text),
             },
         );
-        let count = self.anchors.anchors.len();
-        if count > KEPT_ANCHORS {
-            let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-            let forgotten: Vec<u64> = self
-                .anchors
-                .anchors
-                .keys()
-                .take(count - KEPT_ANCHORS)
-                .copied()
-                .filter(|number| !held.contains(number))
-                .collect();
-            drop(held);
-            let NodeAnchors {
-                anchors, reported, ..
-            } = &mut *self.anchors;
-            for number in &forgotten {
-                anchors.remove(number);
-            }
-            reported.retain(|(anchor, _), _| anchors.contains_key(anchor));
-        }
+        self.touch(number);
         TextAnchor(number)
     }
 
@@ -808,11 +797,21 @@ impl<P: Clone> NodeText<'_, P> {
             .map(|kept| Arc::clone(&kept.text))
     }
 
-    /// Remembers that `position` is `pos`, a position the outpost reported.
+    /// Remembers that `position` is `pos`, a position the outpost reported,
+    /// its anchor recorded as touched, for the message that reports it.
     fn remember(&mut self, position: TextPosition, pos: P) {
+        self.touch(position.anchor.0);
         self.anchors
             .reported
             .insert((position.anchor.0, position.offset), pos);
+    }
+
+    /// Records anchor `number` as touched.
+    fn touch(&self, number: u64) {
+        self.touched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(number);
     }
 
     /// The source position of `position` when the outpost reported it, as

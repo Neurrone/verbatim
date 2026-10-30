@@ -970,6 +970,16 @@ pub(super) fn active_position(
     )
 }
 
+/// Forgets the text anchors `forgotten` names: Core has seen the last
+/// message that carried each, and does not hold it.
+pub(super) fn forget_anchors(context: &Context, forgotten: &std::collections::HashSet<u64>) {
+    if forgotten.is_empty() {
+        return;
+    }
+    context.uia_anchors().forget_anchors(forgotten);
+    context.edit_anchors().forget_anchors(forgotten);
+}
+
 /// Forgets the text caches kept for released nodes; their terminals leave
 /// the follow state in release's commit.
 pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>) {

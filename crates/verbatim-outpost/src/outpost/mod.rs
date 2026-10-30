@@ -86,7 +86,7 @@ use crate::protocol::{
 };
 use crate::supervisor::Target;
 use crate::text::uia::UiaPos;
-use crate::text::{Anchors, HeldAnchors};
+use crate::text::{Anchors, TouchedAnchors};
 
 use gap_record::{CopyDropped, GapRead};
 pub use gap_timer::GapTimer;
@@ -220,12 +220,14 @@ pub(crate) struct Context {
     /// answered, kept while deferred work is pending
     /// (`worker::answer_idle`).
     idle_query: Mutex<Option<u64>>,
-    /// The text anchors Core holds, set by the reader as Core's list
-    /// arrives, under a lock of their own that the worker never holds
-    /// across a call into the application, as it holds the anchor stores'.
-    held_anchors: HeldAnchors,
+    /// The text anchors minted or reported since the last message, which
+    /// the next message is recorded as carrying, under a lock of their own
+    /// that the worker never holds across a call into the application, as
+    /// it holds the anchor stores'.
+    touched_anchors: TouchedAnchors,
     /// The text anchors minted in UIA text and in edit controls; both number
-    /// theirs from one counter and keep the anchors Core holds.
+    /// theirs from one counter, and keep each until Core has seen the last
+    /// message that carried it and does not hold it.
     uia_anchors: Mutex<Anchors<UiaPos>>,
     edit_anchors: Mutex<Anchors<u32>>,
     /// Each UIA node's text patterns, once fetched.
@@ -508,6 +510,16 @@ impl Context {
 
     fn held(&self) -> MutexGuard<'_, held::Held> {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The anchors minted or reported since the last take.
+    fn take_touched_anchors(&self) -> Vec<u64> {
+        std::mem::take(
+            &mut *self
+                .touched_anchors
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     /// Whether the store holds `node`: either registry keeps it.
@@ -1050,7 +1062,7 @@ impl Outpost {
     ) -> Self {
         let id_counter = Arc::new(AtomicU64::new(1));
         let anchor_counter = Arc::new(AtomicU64::new(0));
-        let held_anchors = HeldAnchors::default();
+        let touched_anchors = TouchedAnchors::default();
         let intake = Arc::new(Intake::default());
         let gap_timer = gap_timer::for_intake(&intake);
         let context = Arc::new(Context {
@@ -1071,12 +1083,15 @@ impl Outpost {
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             idle_query: Mutex::new(None),
-            held_anchors: Arc::clone(&held_anchors),
+            touched_anchors: Arc::clone(&touched_anchors),
             uia_anchors: Mutex::new(Anchors::sharing(
                 Arc::clone(&anchor_counter),
-                Arc::clone(&held_anchors),
+                Arc::clone(&touched_anchors),
             )),
-            edit_anchors: Mutex::new(Anchors::sharing(Arc::clone(&anchor_counter), held_anchors)),
+            edit_anchors: Mutex::new(Anchors::sharing(
+                Arc::clone(&anchor_counter),
+                touched_anchors,
+            )),
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
             fetches: Mutex::new(Fetches::default()),
@@ -1525,15 +1540,10 @@ impl Outpost {
                 anchors,
                 acknowledged,
             } => {
-                // Never the anchor stores' own locks, which the worker holds
-                // while it reads text: the reader would wait for the read.
-                *context
-                    .held_anchors
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = anchors.iter().copied().collect();
                 context.push(
                     Item::NodesHeld {
                         nodes: nodes.clone(),
+                        anchors: anchors.clone(),
                         acknowledged: *acknowledged,
                     },
                     TraceId::mint(),

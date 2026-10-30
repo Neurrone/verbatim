@@ -68,6 +68,7 @@ use super::focus_path::{self, FocusPath};
 use super::gap_record::{CopyDropped, GapRead};
 use super::held;
 use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of};
+use super::outbound::Carried;
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
@@ -525,14 +526,21 @@ fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
     (hwnd, OBJID_CLIENT.0, CHILDID_SELF)
 }
 
-/// The numbers of the nodes issued or looked up since the last take.
-pub(super) fn take_touched(context: &Context) -> Vec<u64> {
+/// The nodes issued or looked up, and the text anchors minted or
+/// reported, since the last take.
+pub(super) fn take_touched(context: &Context) -> Vec<Carried> {
     context
         .uia_registry
         .take_touched()
         .into_iter()
         .chain(context.msaa_registry.take_touched())
-        .map(NodeId::number)
+        .map(|node| Carried::Node(node.number()))
+        .chain(
+            context
+                .take_touched_anchors()
+                .into_iter()
+                .map(Carried::Anchor),
+        )
         .collect()
 }
 
@@ -1315,8 +1323,9 @@ impl Worker<'_> {
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             Item::NodesHeld {
                 nodes,
+                anchors,
                 acknowledged,
-            } => self.release(&nodes, acknowledged),
+            } => self.release((&nodes, &anchors), acknowledged),
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
             Item::Settle(done) => self.settle(done, trace),
@@ -2383,11 +2392,16 @@ impl Worker<'_> {
         Some((node_id, target))
     }
 
-    /// Releases every node Core does not hold that was reported at or before
-    /// the position Core acknowledged. A node reported later, or never
-    /// reported, is kept, since Core may not have seen it yet.
-    fn release(&self, held: &[u64], acknowledged: u64) {
-        let held: HashSet<u64> = held.iter().copied().collect();
+    /// Releases every node and text anchor Core does not hold, of `held`,
+    /// that was reported at or before the position Core acknowledged. One
+    /// reported later, or never reported, is kept, since Core may not have
+    /// seen it yet.
+    fn release(&self, (nodes, anchors): (&[u64], &[u64]), acknowledged: u64) {
+        let held: HashSet<Carried> = nodes
+            .iter()
+            .map(|&number| Carried::Node(number))
+            .chain(anchors.iter().map(|&number| Carried::Anchor(number)))
+            .collect();
         // The one change of follow state made outside `Watch::commit`
         // (`super::commit`), with the same in-charge check: it must take the
         // queue's lock and the registries' inside it, which no commit does.
@@ -2407,36 +2421,45 @@ impl Worker<'_> {
                 self.context
                     .outbound
                     .release(&held, acknowledged, |released| {
-                        let keep = |id: NodeId| !released.contains(&id.number());
+                        let keep = |id: NodeId| !released.contains(&Carried::Node(id.number()));
                         (
                             self.context.uia_registry.retain(keep),
                             self.context.msaa_registry.retain(keep),
                         )
                     });
-            let terminals: Vec<crate::terminal::Terminal> = released
+            let Some((released, objects)) = released else {
+                drop(state);
+                tracing::debug!(?held, acknowledged, position, "nothing to release");
+                return;
+            };
+            let (mut nodes, mut anchors) = (HashSet::new(), HashSet::new());
+            for carried in released {
+                match carried {
+                    Carried::Node(number) => nodes.insert(number),
+                    Carried::Anchor(number) => anchors.insert(number),
+                };
+            }
+            let terminals: Vec<crate::terminal::Terminal> = nodes
                 .iter()
-                .flat_map(|(released, _)| released)
                 .filter_map(|node| state.follow.terminals.remove(node))
                 .collect();
             // The reports whose focus node is released are no longer read
             // for, under the same locks as their nodes leave the store.
-            if let Some((released, _)) = &released {
-                self.context.held().release(released);
-            }
+            self.context.held().release(&nodes);
             drop(state);
             tracing::debug!(
                 ?held,
                 acknowledged,
                 position,
-                released = ?released.as_ref().map(|(released, _)| released),
-                "releasing the nodes Core no longer holds"
+                ?nodes,
+                ?anchors,
+                "releasing the nodes and anchors Core no longer holds"
             );
-            let Some((released, objects)) = released else {
-                return;
-            };
-            (objects, released, terminals)
+            (objects, (nodes, anchors), terminals)
         };
-        text_reads::forget(self.context, released);
+        let (nodes, anchors) = released;
+        text_reads::forget_anchors(self.context, &anchors);
+        text_reads::forget(self.context, nodes);
         // Outside the lock: releasing an object can call into the
         // application.
         drop(objects);
@@ -2823,7 +2846,8 @@ impl Worker<'_> {
         if self.edit_event(kind, (hwnd, id_object, id_child), trace, observed_at_us) {
             return;
         }
-        let Some(object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child) else {
+        let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, id_object, id_child)
+        else {
             return;
         };
         let registry = &self.context.msaa_registry;
@@ -2831,7 +2855,7 @@ impl Worker<'_> {
             self.msaa_selection(object, hwnd, (trace, observed_at_us));
             return;
         }
-        let spoken = self.spoken_node(kind, &object);
+        let spoken = self.spoken_node(kind, &mut object);
         if kind == WinEventKind::ValueChange {
             self.value_change(object, spoken, (hwnd, trace, observed_at_us));
             return;
@@ -3106,17 +3130,18 @@ impl Worker<'_> {
     }
 
     /// The node `object` is, with the role it was last read with, when a
-    /// change of `kind` on it is spoken, by the rule the reducer speaks it
-    /// by (`focus_rules::change_target`), judged against the focus Core
-    /// holds and those reported that Core has not judged yet
-    /// ([`super::held`]): a name, description, or value change only for a
-    /// focus, and a state change for a focus or one of its ancestors, as
-    /// NVDA speaks them. Any other object is not read: it is told from
-    /// those by its identity first, without reading any of its properties.
+    /// change of `kind` on it may be spoken, by the rule the reducer speaks
+    /// it by (`focus_rules::change_target`), among the nodes this outpost
+    /// has not released ([`super::held`]): a name, description, or value
+    /// change for the focus of a report, and a state change for any node
+    /// of a report's line or carried by a message still waiting, as NVDA
+    /// speaks them on the focus or an ancestor; Core targets which is
+    /// spoken. Any other object is not read: it is told from those by its
+    /// identity first, without reading any of its properties.
     fn spoken_node(
         &self,
         kind: WinEventKind,
-        object: &verbatim_ia2::acquire::EventObject,
+        object: &mut verbatim_ia2::acquire::EventObject,
     ) -> Option<(NodeId, Role)> {
         let change = match kind {
             WinEventKind::NameChange => ChangeKind::Name,
@@ -3150,11 +3175,24 @@ impl Worker<'_> {
             }
             candidates
         };
+        // A node a message still waiting carries, such as a report's new
+        // node, which Core will hold by the time it judges the change.
+        let mut candidates = candidates;
+        if change == ChangeKind::States {
+            for number in self.context.outbound.waiting_nodes() {
+                let node = NodeId::new(number);
+                if !candidates.contains(&node) && !self.is_logical_ancestor(node) {
+                    candidates.push(node);
+                }
+            }
+        }
         if candidates.is_empty() {
             return None;
         }
         let node = object.which_of(&candidates, &self.context.msaa_registry)?;
-        Some((node, self.known_role(node)?))
+        // A carried node no report's line has is read for its role.
+        let role = self.known_role(node).unwrap_or_else(|| object.role());
+        Some((node, role))
     }
 
     /// Whether `node`, one of the focus's ancestors, was reached through a
@@ -5845,7 +5883,7 @@ mod tests {
             spliced.iter().map(|node| node.id).collect::<Vec<_>>(),
             vec![window, pane, NodeId::new(99)]
         );
-        assert_eq!(take_touched(&context), vec![window.number()]);
+        assert_eq!(take_touched(&context), vec![Carried::Node(window.number())]);
         drop(registry.retain(|id| id != window));
         assert!(read::held_prefix(&context, previous).is_empty());
     }

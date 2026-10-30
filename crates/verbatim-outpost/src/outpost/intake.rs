@@ -283,9 +283,13 @@ pub(super) enum Item {
     Fact(DeliveredFact, Option<WinEventStamp>),
     /// A query from Core.
     Query { request_id: u64, query: Query },
-    /// The nodes Core still holds, and the position of the last message it
-    /// has handled: release the rest.
-    NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
+    /// The nodes and text anchors Core still holds, and the position of
+    /// the last message it has handled: release the rest.
+    NodesHeld {
+        nodes: Vec<u64>,
+        anchors: Vec<u64>,
+        acknowledged: u64,
+    },
     /// A caret event of the focused terminal `node_id`, noted while its
     /// reading was held and its text had changed unread: its caret is read
     /// once nothing else is waiting ([`Intake::when_idle`]), unless a read
@@ -2557,6 +2561,7 @@ mod tests {
     fn core_entries_between_two_focus_facts_neither_join_nor_end_their_run() {
         let held = Item::NodesHeld {
             nodes: Vec::new(),
+            anchors: Vec::new(),
             acknowledged: 0,
         };
         let (key, category, hwnd) = classify(&held);
@@ -2827,6 +2832,7 @@ mod tests {
                 Entry {
                     item: Item::NodesHeld {
                         nodes: Vec::new(),
+                        anchors: Vec::new(),
                         acknowledged,
                     },
                     trace: TraceId::mint(),

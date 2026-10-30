@@ -347,15 +347,15 @@ fn a_position_inside_a_chunk_resolves_through_its_text() {
 }
 
 #[test]
-fn an_anchor_is_forgotten_after_64_newer_unless_core_holds_it() {
+fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     let mut source = Fake::new("one\ntwo", 0);
     let mut anchors = store();
     let first = report(&mut source, &mut anchors).line.start;
-    let held = report(&mut source, &mut anchors).line.start;
-    anchors.set_held([held.0]);
-    for _ in 0..KEPT_ANCHORS {
+    let kept = report(&mut source, &mut anchors).line.start;
+    for _ in 0..100 {
         report(&mut source, &mut anchors);
     }
+    anchors.forget_anchors(&std::collections::HashSet::from([first.0]));
     let read = |anchors: &mut Anchors<usize>, source: &mut Fake, anchor| {
         perform(
             source,
@@ -372,7 +372,7 @@ fn an_anchor_is_forgotten_after_64_newer_unless_core_holds_it() {
         TextReply::AnchorLost
     );
     assert!(matches!(
-        read(&mut anchors, &mut source, held),
+        read(&mut anchors, &mut source, kept),
         TextReply::Read { .. }
     ));
 }
