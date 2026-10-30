@@ -74,6 +74,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [ownership-messages.md](design/ownership-messages.md) — the
     messages build's design: the wire types in the model, their kinds,
     the merges, responders and the supervisor's typestates.
+  - [ownership-outpost-reducer.md](design/ownership-outpost-reducer.md) —
+    the outpost's reducer build's design: the object store, the pure
+    reducer on its own thread, call programs and reply tokens.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events

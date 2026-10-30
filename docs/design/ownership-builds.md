@@ -115,6 +115,8 @@ A lifecycle is an enum whose transitions consume the old state. Evidence: the su
 
 ## The outpost's reducer build
 
+Designed against the code in [the outpost's reducer build's design](ownership-outpost-reducer.md), which replaces its draft.
+
 ### Brief
 
 Scope:
