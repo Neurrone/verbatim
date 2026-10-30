@@ -303,27 +303,31 @@ reducer's `Speak` effect to the speaker (decisions D12, D17, D18;
    Almost everything is `Queued`, as in NVDA.
 3. **Handed on.** When the synth thread is idle, `pump` takes the next
    utterance. One whose `FocusValidity` no longer holds is ended as
-   cancelled. Otherwise it is registered with the mixer
-   (`Source::register`), which from then on owns its ending, and sent to
-   the synth thread with its own cancellation flag.
+   cancelled. Otherwise it is sent to the synth thread with its own
+   cancellation flag and the speech source's cancel generation, under
+   which the synth thread registers it with the mixer
+   (`SpeechLane::register`), which from then on owns its ending.
 4. **Synthesized in another process.** On the synth thread, `run_job`
    calls the active driver's blocking `speak`. The driver is a
    `HostedSynth`: it sends `ToHost::Speak` over a private pipe to
    `verbatim-synth-host.exe`, which runs eSpeak NG or OneCore and writes
    audio as `Pcm` frames and marks as `Mark` frames, then `Done`. The synth
    thread reads the pipe itself and passes each frame to the pipeline
-   sink, which trims silence and writes to the mixer (`Source::write`).
-5. **Backpressure.** `Source::write` blocks while the source is more than
-   the device buffer plus 40 ms ahead of playback, so the synth thread
-   stops reading, the pipe fills, and the host's synthesizer blocks. Little
-   audio is ever queued, so cancelling is cheap.
-6. **Played.** The mixer's audio thread (`crates/verbatim-audio/src/mixer.rs`)
-   sums the sources (`mix_sources`) into the `AudioDevice`: WASAPI shared
+   sink, which trims silence and pushes it into its lane to the mixer
+   (`SpeechLane::write`).
+5. **Backpressure.** `SpeechLane::write` waits while the source is more
+   than the device buffer plus 40 ms ahead of playback, so the synth
+   thread stops reading, the pipe fills, and the host's synthesizer
+   blocks. Little audio is ever queued, so cancelling is cheap.
+6. **Played.** The mixer's audio thread (`crates/verbatim-audio/src/mixer/run.rs`),
+   which takes no lock, drains the lanes and sums the sources
+   (`mix_sources`) into the `AudioDevice`: WASAPI shared
    mode on the default device
    ([verbatim-audio-wasapi](crates/verbatim-audio-wasapi.md)), or the
    silent real-time device under `VERBATIM_TEST_AUDIO=null`. When an
    utterance's first frame has played it reports `PlaybackEvent::Started`,
-   and when every frame has played, `Ended` with `Completed`; the ledger
+   and when every frame has played, `Ended` with `Completed`, through the
+   mixer's delivery thread, which runs the listeners; the ledger
    broadcasts `SpeechStarted` and `SpeechEnded` and logs the
    announcement's `verbatim::latency` line. With `VERBATIM_RECORD_AUDIO`
    set, a `WavRecorder` tap receives exactly the frames that played (D16).
@@ -337,8 +341,10 @@ cut off, and cancellation of expired focus speech"):
 - **A key press.** Every key-down except the volume keys cancels
   everything (`SpeechControl::cancel_through`, with the press's sequence
   number, so speech an earlier press caused that arrives later is
-  cancelled too): waiting utterances end cancelled, the in-flight job's
-  flag is set, and `Source::cancel_all` discards unplayed audio at once.
+  cancelled too): waiting utterances end cancelled, the speech source's
+  cancel generation is raised (`SourceControl::cancel`), so the mixer
+  discards unplayed audio at its next pass, and then the in-flight job's
+  flag is set.
   `HostedSynth` sends the host `Cancel` naming that utterance and reads
   until its `Done`, so a cancel can never cancel the next utterance.
   Shift alone pauses and resumes instead.

@@ -179,8 +179,10 @@ Starvation is not a risk of this policy: only threads that run for microseconds 
 - Relay thread (`verbatim-relay`, the supervisor's owner), `HIGHEST`. Waits only on its port, with the next heartbeat or sweep as its timeout. Woken by a read completion on the listener's pipe or any outpost's pipe, a pended write's completion on any child's command pipe, or its mailbox (launch helpers, retirements, hang-check results, the idle round, the app's requests). It parses and routes the listener's facts and writes them inline; from an outpost's pipe it reads only the frame's kind, handles pongs, `Ready`, `TargetExited` and the pipe's end itself, and posts every other frame whole to the reducer's port, then re-arms that pipe's read. It never blocks on process waits, thread joins, hang detection or file I/O.
 - Reducer thread (`verbatim-reducer`), normal. Waits only on its own completion port. Parses each outpost frame in the order it arrives, reduces, writes requests to outposts inline, and speaks through the speech manager. It never blocks on a pipe.
 - Speech queue thread (`verbatim-speech-queue`), normal: the speech queue's logic, the hook's cancel in order with every `Speak`, and the reply to the idle barrier (section 8).
-- Synth thread (`verbatim-synth`), normal. Waits on its job channel between jobs; during a hosted job, on the host pipe's read event and the utterance's cancellation event together. Writes `Speak` and `Cancel`, reads PCM, trims, converts and appends to the mixer.
-- Audio thread (`verbatim-audio`), MMCSS. Waits on the device's event and its wake event, and mixes.
+- Synth thread (`verbatim-synth`), normal. Waits on its job channel between jobs; during a hosted job, on the host pipe's read event and the utterance's cancellation event together, and on its source's room event when the mixer's source is full. Writes `Speak` and `Cancel`, reads PCM, trims, converts and pushes it into its lane to the mixer.
+- Audio thread (`verbatim-audio`), MMCSS. Waits on the device's event and its wake event, which every push to the mixer sets, drains the lanes, and mixes; it takes no lock (`docs/design/ownership-output.md`, "Real-time audio").
+- Audio events delivery thread (`verbatim-audio-events`), `HIGHEST`. Waits on its event, which the audio thread sets after a pass that sent anything; runs the playback listeners, logs underruns, and frees what the audio thread is done with.
+- Settings saver (`verbatim-settings-saver`), normal: off the path, it writes `settings.toml` for the section owners.
 - Off the path: the router, the GUI threads, the control plane's threads, launch and retire helpers, the hang check, the shutdown thread.
 
 ### 6.3 The listener
@@ -205,7 +207,7 @@ One thread, normal. Idle, it waits on the command pipe's read event, an overlapp
 ### 6.6 Locks shared with the path
 
 - The sender locks: held for one encode and one `WriteFile`.
-- The speech manager's and the mixer's locks, and the latency ledger's and the control plane's registry locks, are taken on the speech path as before; removing them from it was step 10, not adopted (section 8).
+- The mixer has no lock: the audio thread owns its state, and producers reach it through lanes that never wait (`docs/design/ownership-output.md`, "Real-time audio"). The latency ledger's and the control plane's registry locks are still taken on the speech path, now on the mixer's delivery thread rather than the audio thread.
 - No thread on the delivered path writes a file or the console under a lock.
 
 ### 6.7 The harness's idle barrier: a round through every child

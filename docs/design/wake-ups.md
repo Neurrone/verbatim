@@ -24,10 +24,9 @@ The items keep their numbers, since code and the crate guides cite them.
 1. The mixer's writer and audio thread woke each other every few frames
    while a synthesizer ran ahead of playback (about 75,000 synthesizer
    thread wake-ups in an 11-second typing run). Fixed at its source: a
-   blocked writer waits for half its source's room, the audio thread
-   wakes a writer only once that room is free, and a write wakes the
-   audio thread only when the device needs frames (`room_wanted` in
-   `crates/verbatim-audio/src/mixer.rs`).
+   blocked writer waits on its source's room event, which the audio
+   thread sets only once half the source's room is free
+   (`crates/verbatim-audio/src/mixer/run.rs`).
 2. Idle, Verbatim wakes about 50 times in 8 seconds across its
    processes: the three-second liveness pings to each child, and the
    outposts handling applications' own events (File Explorer raises a

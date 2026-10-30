@@ -8,8 +8,9 @@ manager to speak; the keyboard hook's cancel, pause and resume are its one
 speech send. The compiler holds this: every speaking function of the
 speech manager takes the `SpeakToken` `SpeechManager::new` makes, which
 `run` moves into `reducer_loop`, which hands it back when the loop ends;
-the settings window's sound preview plays with `play_sound`, which takes
-none. Its `clipboard` module is the one
+the settings window's sound preview plays through the GUI thread's own
+lane to the mixer, which `SpeechManager::new` returns beside the token.
+Its `clipboard` module is the one
 shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
 Win32 clipboard interaction and reads the clipboard back, and tells the
 reducer how the copy went (`Input::ClipboardCopied`, with the trace of the
@@ -130,16 +131,41 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
 "The text protocol"):
 
 - The reader settings (`settings.toml`'s `[reader]` section) are the
-  reducer's first input, `Input::Settings`. They change by the reducer's
-  own toggle keys, whose `Effect::SettingsChanged` is saved to
-  `settings.toml` through the config store, and by the settings dialog's
-  Terminal page: `terminal_settings::AppTerminalHost` is the GUI's
-  `TerminalHost`, reading the settings from the config store and sending
-  an applied `TerminalChange` to the reducer thread
+  reducer's first input, `Input::Settings`. The reducer thread owns the
+  section: it changes by the reducer's own toggle keys, whose
+  `Effect::SettingsChanged` is handed to the saver, and by the settings
+  dialog's Terminal page: `terminal_settings::AppTerminalHost` is the
+  GUI's `TerminalHost`, reading the settings from the view the reducer
+  thread publishes (`ReaderView`, a copy under a lock never held across a
+  call, which the reducer thread alone writes) and sending an applied
+  `TerminalChange` to the reducer thread
   (`ShellCommand::TerminalSettings`). There it is merged into the
   reducer's own settings (`SrState::settings`), so a toggle key pressed
-  meanwhile is kept, given to the reducer as `Input::Settings`, and
-  saved.
+  meanwhile is kept, given to the reducer as `Input::Settings`,
+  published, and saved.
+- The saver (`saver.rs`, `docs/design/ownership-output.md`, "One saver,
+  one writer per section") is the one thread, `verbatim-settings-saver`,
+  that owns `settings.toml` and writes it whole. Each section has one
+  owner, which hands the saver its new value through the section's
+  writer, a non-`Clone` handle whose save is one post to the saver's
+  completion port, taking no lock and never waiting: the speech section
+  the synth thread (`SpeechWriter`, inside `speech_settings::SpeechSettings`,
+  the speech manager's `SpeechSettingsStore`), the reader section the
+  reducer thread (`ReaderWriter`, in `ReducerContext`), the theme section
+  the GUI thread (`ThemeWriter`, inside `AppThemeHost`). The saver takes
+  everything waiting, keeps the newest value of each section, and writes
+  the file once, a temporary file renamed over it; a failed write is
+  logged. The global fields (locale, log filter, Verbatim keys, keyboard,
+  UIA) are read from the loaded settings before the saver starts and
+  have no writer while Verbatim runs; the `ConfigStore` is the startup
+  load and the file's format, and nothing shares it. At exit, once the
+  exit sound has been heard or its bound passed, the main thread settles
+  the speech pipeline (`SpeechManager::settle`: speech cancelled, then
+  everything posted to the synth thread before carried out, a commit
+  included), then asks the saver to finish (`Saver::finish`), both within
+  one 2-second bound, so a change made just before Exit is saved; only a
+  synthesizer host that has stopped answering can hold a commit past the
+  bound, and that loss is logged.
 - The hook's gesture map observes the caret keys
   (`GestureMap::with_observed(caret_bindings())`): they reach the
   application, and each one the hook reports becomes `Input::CaretKey`
@@ -244,11 +270,13 @@ Milestone M4's themes and earcons are wired here too
   chosen later, setting it on the speech manager's theme handle. It runs
   whenever the settings dialog's Theme panel
   changes the theme or its options: `AppThemeHost` is the GUI's
-  `ThemeHost`, over the configuration store (the themes and sounds
-  folders, the configured theme, and saving the choice in the base
-  settings' `[theme]`) and the speech manager (activating a theme, its
-  options alone through the theme handle, playing a sound as the sound
-  choice shows it, and previews, which go to the reducer as
+  `ThemeHost`, over the themes and sounds folders, the theme section of
+  the settings, which the GUI thread owns (the configured theme is the
+  section it last saved, and saving the choice hands the section to the
+  saver), the GUI thread's lane to the mixer (playing a sound as the
+  sound choice shows it), and the speech manager (activating a theme,
+  its options alone through the theme handle, and previews, which go to
+  the reducer as
   `Input::PreviewSpeech` and `Input::PreviewEarcon`). A sound that is missing (a run
   without the `sounds` folder) is spoken instead, so nothing is lost.
 - `Effect::PlayEarcon` plays through `SpeechManager::play_earcon`. The
@@ -258,8 +286,9 @@ Milestone M4's themes and earcons are wired here too
   loop has ended (`ShellCommand::Exiting`, which the reducer thread
   applies as `Input::Exiting` with whether a new instance is replacing
   this one, which plays no sound); the reducer thread plays the exit sound
-  with `play_earcon_heard` and hands its `EarconHeard` back, on which the
-  main thread waits until it has been heard, for at most two seconds; and
+  with `play_earcon_heard`, one record to the mixer that never waits, and
+  hands its `EarconHeard` back, on which the main thread waits until it
+  has been heard, for at most two seconds; and
   an application not responding (`Input::ApplicationNotResponding`) when
   the outpost's watchdog abandons a query that passed its deadline
   (`QueryOutcome::Abandoned`), once per stall: `LiveOutposts` marks the
@@ -504,7 +533,9 @@ knowing for review:
   shared by the reducer thread, the control plane's `DumpRecorder` handler,
   and the panic hook installed as early as possible so it covers every
   thread spawned after it), the speech pipeline (`build_speech_manager`:
-  eSpeak NG through a `Mixer` over `WasapiDevice` by default; eSpeak NG
+  eSpeak NG through a mixer over `WasapiDevice` by default, whose
+  delivery thread `run` raises to `THREAD_PRIORITY_HIGHEST`, since it
+  only moves messages; eSpeak NG
   and OneCore are both registered as hosted synthesizers, eSpeak NG first
   as the default, by the ids in `verbatim_speech::hosting::synth_ids`,
   each with `verbatim_synth_hosted::factory` starting
@@ -522,8 +553,9 @@ knowing for review:
   with a `verbatim_audio::WavRecorder` tap writing everything Verbatim
   plays to that WAV file, for the end-to-end harness's videos, decision
   D16, and a file that cannot be created is logged as a warning and
-  ignored), the settings host with a persist callback writing through the
-  config store, the supervisor with its focus listener (decision D13;
+  ignored), the saver and its section writers, the settings host, whose
+  commit saves on the synth thread through the speech section's writer,
+  the supervisor with its focus listener (decision D13;
   asking the current foreground application for its focus once at
   startup with a focus-now query (`ShellCommand::FocusNow`), since the
   listener thereafter reports foreground changes as facts — no thread of

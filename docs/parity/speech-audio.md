@@ -125,14 +125,14 @@ be pressed while a switch is under way. Verbatim: **different**
 (2026-10-08): the switch does not block the GUI thread (a
 synthesizer host can take its time limit to start), so the settings
 dialog can be closed meanwhile, and the switch's outcome decides what is
-saved. OK or Apply during the switch saves the synthesizer still active
-at once and, once the switch has started the new one, saves that as the
-configured synthesizer with its settings; Cancel during the switch
-restores nothing until it ends, and restores the previous synthesizer's
-committed values only when it fails, since a synthesizer that starts has
-its own saved values (`verbatim-speech`'s
-`a_commit_during_a_switch_saves_the_synth_the_switch_started` and
-`a_revert_during_a_switch_that_fails_restores_the_committed_values`).
+saved. OK or Apply during the switch is carried out on the synth thread
+behind the switch, so it saves the synthesizer the switch ended with, and
+its values as the driver has them; Cancel during the switch is carried
+out behind it too, and restores the previous synthesizer's committed
+values when the switch fails, while a synthesizer that started keeps the
+values it started with (`verbatim-speech`'s
+`a_change_and_a_commit_during_a_switch_save_the_synth_the_switch_started`
+and `a_revert_during_a_switch_that_fails_restores_the_committed_values`).
 
 ### Instant cancel
 

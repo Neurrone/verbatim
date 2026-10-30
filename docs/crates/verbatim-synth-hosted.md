@@ -85,7 +85,7 @@ come. The host ignores a cancel for an utterance already ended, so a
 cancel that crosses the utterance's own `Done` on the pipe cannot cancel
 the next one. A cancelled utterance returns success, as with any driver.
 
-Backpressure. The mixer's `Source::write` blocks while the speech
+Backpressure. The mixer's `SpeechLane::write` waits while the speech
 manager's source is too far ahead of playback, so `push_pcm` blocks, and
 the driver reads the next frame only once it returns. The pipe's
 4096-byte buffer (about 90 ms of 22 kHz mono audio), with at most one

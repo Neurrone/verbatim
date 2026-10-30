@@ -62,19 +62,27 @@ Public API:
   controls from. Label fields are Fluent message ids, never display text.
 - `SynthRegistry`, `SynthFactory` — drivers registered by id, built on
   demand, switchable at runtime.
-- `SpeechManager` — `new(SpeechManagerConfig)`, which returns the manager
-  with the one `SpeakToken`, `speak(token, utterance)`, which returns the
-  `UtteranceId` the utterance's milestones and ending are reported under,
-  and `settings_host(persist)`. `speak`, `speak_for_key`, `play_earcon`,
-  `play_earcon_heard` and `play_earcon_to_end` take `&SpeakToken`, whose
-  field is private to this crate; it is not `Clone` and holds a
-  `PhantomData<Cell<()>>`, so it is `Send` but not `Sync` and only the
-  thread that owns it, the reducer's in Verbatim, speaks ("Only the
-  reducer speaks", `docs/architecture.md`, section 2). The config carries the
-  registry, the initial synth, a `SavedSettingsFn` that reads any
-  synthesizer's persisted setting values, the `Arc<Mixer>` speech plays
-  through (the manager adds its own source to it, and a second for
-  events' sounds), an optional observer,
+- `SpeechManager` — `new(SpeechManagerConfig)`, which starts the mixer
+  and returns the manager with the one `SpeakToken` and the settings
+  GUI's `Lane` to the events' source, for the sounds its pages play;
+  `speak(token, utterance)`, which returns the `UtteranceId` the
+  utterance's milestones and ending are reported under; `settings_host()`;
+  and `settle(deadline)`, which cancels speech, as a key does, and waits
+  until the synth thread has carried out everything posted before, a
+  commit included, for Verbatim's exit. `speak` and `speak_for_key` take
+  `&SpeakToken`, and `play_earcon`, `play_earcon_heard` and
+  `play_earcon_to_end` take `&mut SpeakToken`, which holds the speaking
+  thread's lane to the mixer's events' source; its fields are private to
+  this crate; it is not `Clone` and holds a `PhantomData<Cell<()>>`, so
+  it is `Send` but not `Sync` and only the thread that owns it, the
+  reducer's in Verbatim, speaks ("Only the reducer speaks",
+  `docs/architecture.md`, section 2). The config carries the registry,
+  the initial synth, the speech section of the settings as a
+  `SpeechSettingsStore`, which moves to the synth thread, the
+  `MixerBuilder` speech plays through, not yet started (the manager adds
+  the speech source, with the synth thread's `SpeechLane` and the queue
+  thread's `SourceControl`, and the events' source, with the token's lane
+  and the GUI's, then starts it), an optional observer,
   the `ActiveTheme` to start with (`theme`: the configured theme, its
   sounds loaded, so the manager never holds a stand-in), an optional
   presenter (`presenter`), and the queue thread's inbox (`inbox`, below).
@@ -84,20 +92,21 @@ Public API:
   dialog switches.
   `play_earcon(token, earcon)` reports an event at once (`Effect::PlayEarcon`)
   as the active theme says: its sound plays now on the events' own mixer
-  source, mixed over speech and never cancelled by it (a progress tone
-  rising with the percentage), and its words, when the theme speaks it or
-  its sound is unavailable, are queued as an utterance.
+  source, through the token's lane, mixed over speech and never cancelled
+  by it (a progress tone rising with the percentage), and its words, when
+  the theme speaks it or its sound is unavailable, are queued as an
+  utterance. A sound that finds the lane full, which only a stalled audio
+  thread leaves it, is not heard, and is logged.
   `play_earcon_heard(token, earcon)` does the same and returns at once with an
   `EarconHeard`, whose `wait_until(deadline)` waits until the event has
-  been heard: its sound plays over an utterance of silence as long as it
-  is on the events' source, whose ending says the sound has played to its
-  end, and its words, if any, are spoken to their end. Verbatim plays its
-  exit sound this way, on the reducer thread, while the main thread waits
-  before it exits. `play_earcon_to_end(token, earcon, timeout)` plays and waits
+  been heard: its sound plays as an utterance of its own on the events'
+  source (`Lane::play_to_end`), which ends when the sound has played to
+  its end, or at once when it cannot play, and its words, if any, are
+  spoken to their end. Verbatim plays its exit sound this way, on the
+  reducer thread, which never waits for the mixer, while the main thread
+  waits before it exits. `play_earcon_to_end(token, earcon, timeout)` plays and waits
   in one call. Every ending passes the manager's own waiters on its way to the
   configured observer.
-  `play_sound(sound, gain)` plays any sound at once on the same source,
-  for the settings dialog to let a sound be heard; it takes no token.
 - `SpeechInbox`, `SpeechInboxTaker` and `QueueItem` — the queue thread's
   inbox (`docs/design/ownership-input.md`, "The speech queue's inbox"):
   every event the queue thread takes, from the manager, `SpeechControl`,
@@ -123,26 +132,41 @@ Public API:
   told, so audio arriving afterwards is ordered after the pause or
   resume.
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
-  GUI's live handle: list synthesizers, switch the active one
+  GUI's live handle (`docs/design/ownership-output.md`, "The mirror
+  follows the synth thread"): list synthesizers, switch the active one
   (`switch_synthesizer`, which returns at once and hands the outcome to a
   `SwitchDone` callback on the synth thread, after the mirror describes
   the new synthesizer; a synthesizer that cannot start, its host's time
-  limit passed included, fails the switch and the previous one stays), read
-  descriptors and values, `set_setting` applying immediately (slider drags
-  are audible as they happen), `commit` persisting through an injected
-  `PersistFn` so this crate never depends on the config layer (it is
-  told whether the active synthesizer is the user's choice: one started
-  in place of the configured one is not, until one is chosen in the
-  dialog), and `revert`
-  restoring the last committed values. Because a switch does not block,
-  the settings dialog can be closed while one is under way, which NVDA's
-  blocking switch never allows: a `commit` then persists the synthesizer
-  still active at once and, once the switch has started the new one,
-  persists that too, so the saved configuration is the switch's outcome;
-  a `revert` then restores nothing until the switch ends, and only if it
-  fails, since a synthesizer that starts has its own saved values and the
-  previous one's must not reach it (`docs/parity/speech-audio.md`, "Settings dialog
-  during a synthesizer switch").
+  limit passed included, fails the switch and the previous one stays),
+  read descriptors and values as the synth thread last read them from
+  the driver, `set_setting(id, value, change)` validating against the
+  mirror and posting the change numbered `change` (slider drags are
+  audible as they happen), `commit` saving what the driver has, and
+  `revert` restoring the committed values, each carried out on the synth
+  thread in order behind every change and switch posted before it, and
+  `answer_to(answered)`, which gives every `SettingsAnswer` to the GUI:
+  after a change or a revert the synth thread reads every value back
+  from the driver, so a refused or clamped value and a side effect such
+  as a voice that resets the rate come back as the driver has them, with
+  the number of the latest change applied. Because a switch does not
+  block, the settings dialog can be closed while one is under way, which
+  NVDA's blocking switch never allows: a `commit` is then carried out
+  behind the switch, so it saves the synthesizer the switch ended with,
+  and a `revert` after a failed switch restores the previous
+  synthesizer's committed values, while after a successful one it
+  restores the values the new synthesizer started with
+  (`docs/parity/speech-audio.md`, "Settings dialog during a synthesizer
+  switch").
+- `SpeechSettingsStore` (trait) — the speech section of the settings,
+  which the synth thread owns: `saved(synth)`, the values a synthesizer
+  starts with, read each time one starts, and `persist(synth, chosen,
+  values)`, a commit, with the values read from the driver and whether
+  the active synthesizer is the user's choice (one started in place of
+  the configured one is not, until one is chosen in the dialog), so this
+  crate never depends on the config layer.
+- `SettingsAnswer` and `SettingsAnswered` — the synth thread's answer,
+  every value the driver has and the number of the latest change applied,
+  and the callback that takes it.
 - `SpeechEvents` — the observability seam, one call per milestone of each
   utterance: `utterance_queued` (with its rendered text), `audio_started`
   (its first frame has played), `audio_heard` (the device's clock passed
@@ -266,19 +290,28 @@ Public API:
   [verbatim-synth-hosted](verbatim-synth-hosted.md).
 
 Implementation notes, `SpeechManager`: two dedicated threads, plus the
-mixer's audio thread that plays what they produce. The queue thread owns
-the priority lanes — `Interrupt` cancels current and queued speech, `Next`
-jumps ahead of `Queued` — and dispatches one job at a time, synchronized
-by a finished handshake from the synth thread. The synth thread owns the
-active driver and is where `SynthDriver::speak` blocks, writing into the
-manager's mixer `Source`. Setting changes and synth switches travel to the
-synth thread as commands, and `SettingsHost` keeps a mirror of descriptors
-and values so GUI reads never hop threads.
+mixer's audio and delivery threads that play what they produce and
+report it. The queue thread owns the priority lanes — `Interrupt`
+cancels current and queued speech, `Next` jumps ahead of `Queued` — and
+dispatches one job at a time, synchronized by a finished handshake from
+the synth thread. The synth thread owns the active driver and is where
+`SynthDriver::speak` blocks, writing into the speech source's
+`SpeechLane`. Setting changes, commits, reverts and synth switches travel
+to the synth thread as commands, in order. The synth thread owns the
+speech section of the settings, the committed values and whether the
+active synthesizer is the user's choice, and alone writes the mirror of
+descriptors and values that `SettingsHost` reads, so GUI reads never hop
+threads. A commit reads every value from the driver and saves them, as
+NVDA saves the driver's own values; a switch that succeeds makes the new
+synthesizer the user's choice, with its values as it started as the
+committed ones. The active synthesizer's name is the registry's, which
+verbatim.exe builds in the user's language, not the name its driver
+reports from a synthesizer host, which never loads the user's locale.
 
 Starting a synthesizer, at startup or on a switch, builds it from the
-registry and then applies its saved values, read through the
-`SavedSettingsFn` at that moment so a switch sees values committed since
-startup. Values are applied in the driver's descriptor order, voice first.
+registry and then applies its saved values, read from the
+`SpeechSettingsStore` at that moment so a switch sees values committed
+since startup. Values are applied in the driver's descriptor order, voice first.
 Each is checked against its descriptor and then set; one that fails
 either check, such as a voice no longer installed, is skipped with a
 warning and the driver keeps its own value, so a stale setting never
@@ -293,24 +326,34 @@ resort.
 Endings (decision D17). Every utterance `speak` accepts ends exactly once,
 reported through `SpeechEvents::utterance_ended`. Until the queue thread
 hands an utterance to the synth thread, the queue thread owns its ending:
-an utterance cleared from a lane is reported cancelled there. When it
-dispatches a job, the queue thread first registers the utterance with the
-mixer, and from then on the mixer owns the ending: completed when the
-device has played the last frame, cancelled when the source is cancelled,
-or failed when synthesis fails (the synth thread calls `Source::fail`) or
-the audio device fails. The mixer's playback events become `SpeechEvents`
-calls in a listener the manager installs on its source.
+an utterance cleared from a lane is reported cancelled there. It hands a
+job on under the speech source's cancel generation, and from then on the
+mixer owns the ending: the synth thread registers every job it takes
+under that generation, a job cancelled before it started too, and the
+mixer reports it completed when the device has played the last frame,
+cancelled when the generation has been raised since, or failed when
+synthesis fails (the synth thread calls `SpeechLane::fail`) or the audio
+device fails. The mixer's playback events become `SpeechEvents` calls in
+a listener the manager installs on its source, which runs on the mixer's
+delivery thread with the time the audio thread read.
 
 Cancellation is per utterance. Each job carries its own cancellation flag,
 which the pipeline's sink checks on every `push_pcm`. Cancelling
 everything (an `Interrupt`, `SpeechControl::cancel`, speech arriving
-while paused, a synth switch, or shutdown) sets the
-in-flight job's flag, reports every lane entry cancelled, and calls
-`Source::cancel_all`, which ends every utterance the mixer holds as
-cancelled and discards its unplayed audio at once. The mixer refuses
-further audio for an utterance it has ended, so a driver still running
-gets `Break` on its next push even if its flag was not yet seen. Utterances
-registered after the cancellation are unaffected.
+while paused, a synth switch, or shutdown) reports every lane entry
+cancelled, raises the speech source's cancel generation
+(`SourceControl::cancel`), which ends every utterance the mixer holds as
+cancelled and discards its unplayed audio, and then sets the in-flight
+job's flag. The order is the rule that makes a cancel exact
+(`docs/design/ownership-output.md`, "Real-time audio"): the generation
+is raised before the token is cancelled, so the records the synth thread
+pushes after it sees the token, such as the finish of a driver the
+cancel woke, reach the mixer behind the raised generation, and the cut
+utterance ends cancelled, never completed. The lane refuses further
+audio for an utterance registered before the raise, so a driver still
+running gets `Break` on its next push even if its flag was not yet seen.
+Utterances handed on after the cancellation, under the raised
+generation, are unaffected.
 
 When speech is cut off (`docs/parity/focus-events.md`, "When speech is cut off, and
 cancellation of expired focus speech"). Besides an `Interrupt` utterance,
@@ -331,8 +374,8 @@ three things end speech early, all carried to the queue thread as events:
   expired focus speech, judged as NVDA judges it. The queue thread
   remembers the validity of every utterance it has handed on whose ending
   the mixer has not reported yet. When any of those no longer holds,
-  everything handed on is stopped (the in-flight job's flag and
-  `Source::cancel_all`): audio cannot be taken out of the middle of the
+  everything handed on is stopped (the raised generation and the
+  in-flight job's flag): audio cannot be taken out of the middle of the
   mixer's buffer, so speech handed on after the expired utterance is
   stopped too, which NVDA keeps. Waiting speech is not judged then: the
   queue thread keeps the latest `FocusNow`, and `pump` checks each waiting
@@ -340,7 +383,7 @@ three things end speech early, all carried to the queue thread as events:
   holds cancelled and moving on, so valid speech queued ahead of expired
   speech is still heard. Utterances without a validity never expire.
 - Pausing. `SpeechControl::toggle_pause`, which Shift calls, pauses the
-  manager's mixer source (`Source::pause`), which holds its audio and
+  manager's mixer source (`SourceControl::pause`), which holds its audio and
   playback events where they are; calling it again resumes. Any cancel ends
   the pause, and an utterance arriving while paused cancels what was paused
   first, as NVDA does, since the key press that would otherwise come first
@@ -363,7 +406,7 @@ other bits are the sound's index; the mark fallback below and the
 silence trimmer treat it like any mark, so the sound keeps its exact place
 whatever the driver does with marks. When such a mark arrives at the
 sink, it is placed in the mixer as a sound of the utterance
-(`Source::sound`) instead of as a mark, so it starts when playback reaches
+(`SpeechLane::sound`) instead of as a mark, so it starts when playback reaches
 it, plays on over the speech that follows, and is dropped or stopped with
 the utterance; it is never reported as a mark. A piece of a sequence with
 no text, such as a sound with no words, is not given to the driver: its

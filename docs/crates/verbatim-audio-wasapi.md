@@ -24,7 +24,12 @@ work while Verbatim or the system is busy.
 render buffer, `start` starts the stream, and `stop` issues Stop plus
 Reset to discard everything queued, which is how speech interruption
 sounds instant. `wait` blocks on the stream's render event and a wake
-event that the mixer's `Waker` signals. `clock_position` reads the
+event that the mixer's `Waker` signals: every producer sets it after
+each push to the mixer, one `SetEvent`. `signal` makes another Windows
+auto-reset event for the mixer's other threads (a producer's room, the
+delivery thread, the WAV tap's writer), whose set stays until the next
+wait takes it, so no wake is lost; when Windows cannot make one it
+falls back to the portable `CondvarSignal`. `clock_position` reads the
 stream's `IAudioClock` position, converted to frames, and how long ago it
 was taken, from the performance counter's value the position carries.
 

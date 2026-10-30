@@ -192,6 +192,17 @@ list of categories on the left, a lazily built page on the right, OK,
 Cancel, and Apply buttons, and a title that tracks the active category.
 The Speech page is generated from the settings host's descriptors; every
 control change applies live, OK and Apply persist, and Cancel reverts.
+The page numbers each change it sends and keeps it as outstanding until
+the synth thread answers it with the driver's values (`SpeechControls`,
+`docs/design/ownership-output.md`, "The mirror follows the synth
+thread"); it takes from an answer only the settings with no later change
+of its own outstanding, so an older answer never overwrites a newer
+request, and when the driver refused or clamped a value, the changed
+control snaps back to the driver's value at once (`set_speech_control`,
+which sets the widget without reporting a change). NVDA leaves the
+control as set; that is a deliberate departure (Dickson, 2026-10-31).
+The other controls are not refreshed after a voice change, where NVDA
+refreshes them, a roadmap follow-up.
 Escape and the close box arrive as a click on Cancel. One `wxEVT_CHAR_HOOK`
 on the dialog sees every key from every child, the Speech page's controls
 included, and asks `keys` what to do: Enter on a button activates that

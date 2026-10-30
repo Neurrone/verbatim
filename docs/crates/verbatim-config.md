@@ -80,10 +80,14 @@ Public API:
   Deliberately has no global fields, so a profile file cannot smuggle in
   modifier keys or a locale; unknown sections are ignored by the schema
   (tested).
-- `ConfigStore` — `load(root)`, `settings()`, `settings_mut()`,
-  `save_settings()`, `ensure_files_exist()`, `active()`, `themes_dir()`,
-  and `sounds_dir()` (the `THEMES_DIR` and `SOUNDS_DIR` folders beside the
-  executable).
+- `ConfigStore` — `load(root)`, `from_settings(root, settings)`,
+  `settings()`, `settings_mut()`, `save_settings()`,
+  `ensure_files_exist()`, `active()`, `themes_dir()`, and `sounds_dir()`
+  (the `THEMES_DIR` and `SOUNDS_DIR` folders beside the executable). In
+  Verbatim it is the startup load and the file's format only: nothing
+  shares it while Verbatim runs, and the app's saver thread writes the
+  file whole with `from_settings` and `save_settings`, each section handed
+  to it by the one thread that owns it ([verbatim-app](verbatim-app.md)).
 - `ActiveConfig` — the resolved read-only view: `synthesizer()`,
   `synth_setting(synth, id)`, and `synth_settings(synth)` resolve each
   setting through the active overlays (most specific first) down to the
