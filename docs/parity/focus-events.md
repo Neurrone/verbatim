@@ -746,7 +746,12 @@ window cancels, as does entering a menu; each focus announcement carries
 what it is about, entered containers are their own utterances, and on
 every focus change the speech manager stops what it has handed on when
 any of that has expired, and judges waiting focus speech when its turn
-comes, as NVDA does. A selection in a list the focus controls still
+comes, as NVDA does. NVDA's tests compare objects with `==`; Verbatim
+compares them by its one identity rule ("Focus-ancestry context" in
+[Focus context](focus-context.md)): the same node, or two windows of one
+handle, so speech for a window one outpost reported holds while another
+outpost's node for that window is the focus, an ancestor or the
+foreground. A selection in a list the focus controls still
 interrupts, as NVDA cancels for it, and notifications keep their
 processing hint. NVDA's settings "Speech interrupt for typed
 characters" and "Speech interrupt for Enter" (both on by default) are

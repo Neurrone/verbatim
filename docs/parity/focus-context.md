@@ -29,25 +29,25 @@ element with the same role and name is entered anew: File Explorer's
 items view list after Enter opens a folder or Backspace goes up, where
 NVDA says "Items View list" before the item (10 of 10 captures,
 alpha-58022); and two MSAA objects are never the same when their windows
-differ. Verbatim chooses the meeting point by node id and by window
-alone: it compares two UI Automation nodes from one outpost by node id,
-the outpost giving one element one id, and two nodes that are both
+differ. Verbatim chooses the meeting point by one identity rule: two entries
+are the same object exactly when they are the same node, or both are
 windows (a window read from the system's own data, a UI Automation
-element that is its window's own, or an MSAA window or client object) are
-the same exactly when they are the same window, whichever outposts read
-them. Nodes from two outposts, or read through MSAA, whose ids cannot be
-compared ("A window and its content in two processes" in
-[Windows and processes](windows-and-processes.md)), are matched by role
-and name only to keep a container quiet: of the containers entered below
-the meeting point, outermost first, each that has the role and name of
-the previous line's entry at the same place below that point, in the same
-top-level window, is not spoken, as long as every one above it matched
-too, since an object is the same as an old one only when its container
-is (Fable, 2026-10-30, pending Dickson's acceptance). The match never chooses where the lines meet:
-in a web page whose document carries its window, a link in a "Search"
-group's unnamed list, after a link in another unnamed list of the same
-document, says "Search grouping", "list", "b link", as NVDA does, where
-stopping at the first list matched by role and name said only "b link".
+element that is its window's own, or an MSAA window or client object)
+and the same window, whichever outposts read them. An outpost gives one
+UI Automation element one node, and one outpost's MSAA objects are the
+same exactly when NVDA's equality holds, in its order: the same child
+id; the same event window, event object id and event child id, each
+where both are known; the same window; the same identity string; the
+same role; the same location, the old object's read live; and the same
+name, the old object's read live when it differs. So a container moved
+or renamed between two focuses is the same, and one destroyed and
+recreated in its place is not. Nodes from two outposts are the same
+only as windows ("A window and its content in two processes" in
+[Windows and processes](windows-and-processes.md)). Nothing is matched
+by role and name: in a web page whose document carries its window, a
+link in a "Search" group's unnamed list, after a link in another unnamed
+list of the same document, says "Search grouping", "list", "b link", as
+NVDA does.
 The Settings frame its own process reports as its focus and the
 page's process as a pane above the page is entered once, so NVDA's
 "Settings", then "Settings window" for the page, is said without the
