@@ -214,6 +214,8 @@ Terminals comply already (Core judges every read; `terminal::reading` is pure; a
 
 ## The output build
 
+Designed against the code in [the output build's design](ownership-output.md), which replaces its draft.
+
 Runs beside the reducer build; it shares no code with it.
 
 - The settings store. `ConfigStore` (`crates/verbatim-config/src/lib.rs`, an `Arc<Mutex>`) has three writers, each writing the whole file under the lock: the GUI thread (the speech commit, the theme's `persist`), the synth thread (`persist_fn`), and the reducer (`save_reader_settings`).
