@@ -1449,3 +1449,73 @@ fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
     assert!(abandons(&effects));
     assert_eq!(replies(&effects), [(7, "abandoned")]);
 }
+
+/// What `effects` send as the idle barrier's answer and dispatch, in
+/// order.
+fn answers_and_dispatches(effects: &[Effect]) -> Vec<&'static str> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Send(message) if matches!(**message, OutpostToCore::IdleAnswer { .. }) => {
+                Some("answer")
+            }
+            Effect::Dispatch(_) => Some("dispatch"),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let busy = program(&effects).request;
+    replay.push(
+        Item::IdleQuery {
+            round: 5,
+            behind_noted: false,
+        },
+        Source::Other,
+        2,
+    );
+    replay.push(focus_now(1), Source::Other, 3);
+    // The query is reached as the program ends: it is answered before the
+    // query that arrived after it is dispatched, not once that is handled.
+    let effects = replay.finish(busy, false, 4);
+    assert_eq!(answers_and_dispatches(&effects), ["answer", "dispatch"]);
+    assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
+    assert_eq!(handles(program(&effects)), (3, None));
+}
+
+#[test]
+fn a_noted_caret_is_read_with_its_events_timing() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    let timing = EventTiming {
+        observed_at_us: 1_000,
+        ..EventTiming::default()
+    };
+    replay.commit(
+        request,
+        Change {
+            noted_caret: Some((NodeId::new(4), TraceId::mint(), 1_000, timing)),
+            ..Change::default()
+        },
+        2,
+    );
+    // Read once nothing else is ready, judged by its event's observation:
+    // a caret read since that event covers it, and no earlier one does.
+    let effects = replay.finish(request, false, 3);
+    match &program(&effects).work {
+        Work::Entry { entry, .. } => {
+            assert!(
+                matches!(entry.item, Item::NotedCaret { node_id } if node_id == NodeId::new(4)),
+                "the noted caret's read, not {:?}",
+                entry.item
+            );
+            assert_eq!(entry.timing.observed_at_us, 1_000);
+        }
+        work => panic!("the noted caret's read, not {work:?}"),
+    }
+}

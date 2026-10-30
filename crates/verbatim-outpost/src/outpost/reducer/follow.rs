@@ -442,8 +442,9 @@ pub(in crate::outpost) struct Change {
     /// The program's judgements for the gap record, in order.
     pub(in crate::outpost) gap: Vec<GapNote>,
     /// A held terminal's caret event, noted to be read once nothing else
-    /// is waiting.
-    pub(in crate::outpost) noted_caret: Option<(NodeId, TraceId, u64)>,
+    /// is waiting, with its event's timing, which the read of the caret
+    /// judges the caret reads since the event by.
+    pub(in crate::outpost) noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
     /// The verdicts the program probed, and the windows it found
     /// destroyed, in order: recorded by the reducer whether or not it
     /// applies the rest of the commit ([`VerdictChange::kept_from_any_generation`]).

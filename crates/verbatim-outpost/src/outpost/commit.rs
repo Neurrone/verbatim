@@ -19,7 +19,7 @@
 use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
 use verbatim_uia::{Agile, Kept};
 
-use verbatim_model::protocol::OutpostToCore;
+use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
     Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, TextChange,
@@ -182,8 +182,8 @@ pub(super) struct Effects {
     /// The program's judgements for the gap record.
     pub(super) gap: Vec<GapNote>,
     /// A held terminal's caret event, noted to be read once nothing else is
-    /// waiting.
-    pub(super) noted_caret: Option<(NodeId, TraceId, u64)>,
+    /// waiting, with its event's timing.
+    pub(super) noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
     /// The verdicts probed, and the windows found destroyed.
     pub(super) verdicts: Vec<VerdictChange>,
     /// The program's text writes since its last commit, in order: its

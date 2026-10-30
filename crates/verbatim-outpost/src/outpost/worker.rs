@@ -1591,7 +1591,7 @@ impl Worker<'_> {
     fn note_caret(&self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         tracing::debug!(%trace, "a held terminal's caret event is noted");
         self.commit(Effects {
-            noted_caret: Some((node_id, trace, observed_at_us)),
+            noted_caret: Some((node_id, trace, observed_at_us, self.timing)),
             ..Effects::default()
         });
     }

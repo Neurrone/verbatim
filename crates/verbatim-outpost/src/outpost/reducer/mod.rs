@@ -366,6 +366,10 @@ struct Current {
     /// ends, and an abandonment of the poll dispatches the work again to
     /// the replacement.
     behind_poll: Option<(Work, Duration)>,
+    /// Whether it does work the idle barrier's answer waits for, as it
+    /// waits for an open watch or an open gap record: it reads the gap
+    /// record, or it took the caret key's watch from the facts.
+    deferred: bool,
 }
 
 /// One try of a focus group, and what is left of it.
@@ -764,16 +768,20 @@ impl Reducer {
         ) && let Some(current) = self.slot_of(request)
         {
             current.running = None;
+            current.deferred = false;
         }
         for note in &change.gap {
             self.gap_note(*note, effects);
         }
-        if let Some((node_id, trace, observed_at_us)) = change.noted_caret {
-            self.intake.when_idle(Entry::own(
-                Item::NotedCaret { node_id },
+        if let Some((node_id, trace, observed_at_us, timing)) = change.noted_caret {
+            // The event's timing goes with it: its read is skipped only
+            // when a caret read since the event covers it.
+            self.intake.when_idle(Entry {
+                item: Item::NotedCaret { node_id },
                 trace,
                 observed_at_us,
-            ));
+                timing,
+            });
         }
         let mut applied = follow::apply(&mut self.facts, self.generation, change);
         let ranges = std::mem::take(&mut applied.ranges);
@@ -784,6 +792,7 @@ impl Reducer {
             && let Some(current) = self.slot_of(request)
         {
             current.running = Some((open.request_id, open.trace));
+            current.deferred = true;
         }
         let marks = applied.adopted.is_some()
             || change.drop_system_caret
@@ -1170,9 +1179,20 @@ impl Reducer {
     }
 
     /// Answers the idle barrier's query once no deferred work is pending:
-    /// no caret key's watch is open and the gap record is closed.
+    /// no caret key's watch is open, no console poll is in flight, the gap
+    /// record is closed, and the program in flight neither reads it nor
+    /// holds the watch. The program in flight is otherwise not waited for:
+    /// the query is reached only with none in flight, so a program in
+    /// flight then handles an entry that arrived after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
-        if self.busy() || self.facts.follow.caret_watch.is_some() || self.intake.gap_open() {
+        if self.poll.is_some()
+            || self
+                .current
+                .as_ref()
+                .is_some_and(|current| current.deferred)
+            || self.facts.follow.caret_watch.is_some()
+            || self.intake.gap_open()
+        {
             return;
         }
         if let Some(round) = self.idle_query.take() {
@@ -1301,7 +1321,9 @@ impl Reducer {
                     };
                     self.intake.push_ahead([noted, query]);
                 } else {
+                    // Answered before anything after it is dispatched.
                     self.idle_query = Some(round);
+                    self.answer_idle(effects);
                 }
             }
             Item::NodesHeld {
@@ -1376,6 +1398,7 @@ impl Reducer {
     ) {
         let (deadline, running) = budget(&entry);
         let window = intake::window_of(&entry.item);
+        let gap_read = matches!(entry.item, Item::GapRead { .. });
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
         if clears_absorb(&entry.item) && self.facts.marks.absorbed.is_some() {
@@ -1393,6 +1416,9 @@ impl Reducer {
             group: group_place,
         };
         self.dispatch(work, (deadline, window, running), group, now, effects);
+        if gap_read && let Some(current) = &mut self.current {
+            current.deferred = true;
+        }
     }
 
     /// Dispatches `work` under `deadline`, concerning `window` (0 for none)
@@ -1419,6 +1445,7 @@ impl Reducer {
             claimed: false,
             group,
             behind_poll,
+            deferred: false,
         });
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
@@ -1483,6 +1510,7 @@ impl Reducer {
             claimed: false,
             group: None,
             behind_poll: None,
+            deferred: false,
         });
         effects.push(Effect::Dispatch(Box::new(Program {
             request,

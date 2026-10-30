@@ -359,7 +359,7 @@ because it judged the window UIA, with its window, top-level window
   gone (`sender_gone`); a late UIA focus of the same element is reported
   under the read's node, which Core takes as a duplicate.
 - The idle barrier's answer waits while the record is open
-  (`worker::answer_idle`); a drop that closes it as its marker resolves,
+  (`Reducer::answer_idle`); a drop that closes it as its marker resolves,
   leaving the worker nothing to handle, pushes `Item::Wake` while a round
   waits, so the answer still goes.
 
@@ -1784,12 +1784,15 @@ progress. The round is in band, so it covers pipes and backlogs.
   has reported, a starting outpost behind its held facts. The query gets
   through a full queue.
 - An outpost queues it (`Item::IdleQuery`), dividing what waits and ending
-  its batch; a noted caret goes just ahead (`Intake::push_ahead`). It is
-  answered once nothing before it is handled, no caret watch or terminal
-  read owed to Core remains, and the gap record is closed, checked after
-  every entry; terminals'
-  owed requests have their own lock, never held across a call. Entries after
-  the query are not waited for. An outpost that ends answers by its `Ended`.
+  its batch; a noted caret goes just ahead (`Intake::push_ahead`), carrying
+  its event's timing, so its read is skipped only when a caret read since
+  that event covers it. The reducer reaches the query with no program in
+  flight, so nothing before it is unhandled, and answers it
+  (`Reducer::answer_idle`) as it is reached and after every input, once no
+  caret key's watch is open or held by the program in flight, no console
+  poll is in flight, and the gap record is closed and not being read by the
+  program in flight. Entries after the query are not waited for, nor is a
+  program handling one. An outpost that ends answers by its `Ended`.
 
 ## Shutting down
 
