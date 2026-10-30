@@ -244,6 +244,45 @@ fn disabling_the_focus_window_is_not_spoken() {
     app.quit();
 }
 
+/// The same owner disabled after a foreground report of its window, which
+/// Core refuses since its focus is already inside: the outpost reads the
+/// window's change, the report's focus being unreleased, and Core, whose
+/// foreground object the window is, says nothing, as NVDA's event on the
+/// window resolves to its foreground object, never to the ancestor.
+fn disabling_the_focus_window_after_its_refused_foreground_report_is_not_spoken() {
+    /// The Remove button, by its index in mockapp's tree.
+    const REMOVE: usize = 1;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-modal-owner-refused");
+    let mut app = common::spawn("modal_owner.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    app.send("client-identity");
+    app.send("set-focus remove");
+    let reported = outpost.msaa_focus(hwnd, REMOVE);
+    assert_eq!(reported.chain(), [Some("Settings"), Some("Remove")]);
+    let _ = spoken_in(&mut state, focus_event(&reported), reported.facts.clone());
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    let (change, facts) = next_event_in(&outpost);
+    assert_eq!(
+        spoken_in(&mut state, change, facts),
+        [] as [Vec<SegmentContent>; 0],
+        "the focus is already in the window"
+    );
+    app.send("disable-client");
+    let (event, facts) = next_event_in(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken_in(&mut state, event, facts),
+        [] as [Vec<SegmentContent>; 0]
+    );
+    app.quit();
+}
+
 /// A top-level window that was not the foreground as the focus entered
 /// it, as a popup menu's never is, keeps its place among the focus's
 /// ancestors, as in NVDA, whose foreground object is another window's: its
@@ -1129,6 +1168,39 @@ fn a_change_of_the_focus_after_its_window_s_refused_foreground_report_is_spoken(
     app.quit();
 }
 
+/// With Core's focus mockapp's window, taken from its foreground report,
+/// the window's client area renamed is that report's focus, which the
+/// outpost has not released: its name change is read, and Core says the
+/// new name.
+fn a_name_change_of_the_window_core_took_is_spoken() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-window-renamed");
+    let mut app = common::spawn("modal_owner.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    let (change, facts) = next_event_in(&outpost);
+    assert_eq!(
+        spoken_in(&mut state, change, facts),
+        [vec![
+            SegmentContent::Label("Settings".to_owned()),
+            SegmentContent::Role(verbatim_model::Role::Dialog),
+        ]]
+    );
+    app.send("client-name Options");
+    let (event, facts) = next_event_in(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken_in(&mut state, event, facts),
+        [vec![SegmentContent::Label("Options".to_owned())]]
+    );
+    app.quit();
+}
+
 /// `facts` as they read with mockapp's window in front, which the
 /// outpost's own foreground reader says it is, though the system's
 /// foreground window is another: Core takes a focus in a window unrelated
@@ -1281,6 +1353,10 @@ fn main() {
             a_change_of_the_focus_after_its_window_s_refused_foreground_report_is_spoken,
         ),
         (
+            "a_name_change_of_the_window_core_took_is_spoken",
+            a_name_change_of_the_window_core_took_is_spoken,
+        ),
+        (
             "a_foreground_change_after_another_application_s_focus_is_reported",
             a_foreground_change_after_another_application_s_focus_is_reported,
         ),
@@ -1323,6 +1399,10 @@ fn main() {
         (
             "disabling_the_focus_window_is_not_spoken",
             disabling_the_focus_window_is_not_spoken,
+        ),
+        (
+            "disabling_the_focus_window_after_its_refused_foreground_report_is_not_spoken",
+            disabling_the_focus_window_after_its_refused_foreground_report_is_not_spoken,
         ),
         (
             "a_change_before_a_focus_within_the_window_is_heard_first",

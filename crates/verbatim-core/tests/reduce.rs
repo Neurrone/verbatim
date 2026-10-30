@@ -2870,6 +2870,39 @@ fn a_refused_foreground_report_makes_a_focus_observed_before_it_stale() {
     );
 }
 
+/// A foreground report of the window holding Core's focus, refused, still
+/// makes the window the foreground object, whose state change, which its
+/// outpost reads as that report's focus, is not spoken as the focus's
+/// ancestor, as NVDA's event on the window resolves to its foreground
+/// object (`docs/parity/focus-announcement.md`, "A top-level window's
+/// state change").
+#[test]
+fn a_state_change_of_the_window_of_a_refused_foreground_report_is_silent() {
+    let mut client = node(3, Role::Pane, Some("Options"), None, StateSet::new());
+    client.details.window = Some(WindowHandle(10));
+    let check_box = node(2, Role::CheckBox, Some("Wrap"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), window(10), check_box, vec![client.clone()]),
+    );
+    let (state, effects) = reduce(&state, &foreground_in(Pid(1), window(10), client));
+    assert_eq!(
+        heard(&effects),
+        vec![],
+        "the focus is already in the window"
+    );
+    let (_, effects) = reduce(
+        &state,
+        &states_changed_input(
+            TraceId::mint(),
+            Pid(1),
+            NodeId::new(3),
+            states(&[State::Disabled]),
+        ),
+    );
+    assert_eq!(heard(&effects), vec![]);
+}
+
 /// An MSAA repeat of the focus Core holds, alive, which its outpost now
 /// reads in full: silent, with its newer states kept.
 #[test]
@@ -2959,7 +2992,7 @@ fn a_groups_older_focus_is_taken_when_its_newer_change_is_refused() {
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 4, &[], None),
+            focus_now(OutpostId(1), 4, &[], Some((OutpostId(1), 3))),
             vec![vec![UtteranceSegment::label("Three")]]
         )
     );

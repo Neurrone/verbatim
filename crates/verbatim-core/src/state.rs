@@ -61,10 +61,8 @@ pub(crate) struct FocusContext {
     /// "State changes after the focus has left").
     #[serde(default)]
     pub(crate) reported_focused: bool,
-    /// The trace of the event Core took this focus from, which names, for
-    /// the focus listener, the element it read for a UIA focus
-    /// ([`crate::focus_rules::HeldFocus`]); `None` in a recording made
-    /// before it was kept.
+    /// The trace of the event Core took this focus from; `None` in a
+    /// recording made before it was kept.
     #[serde(default)]
     pub(crate) trace_id: Option<TraceId>,
     /// When that event was observed, in microseconds on the run's shared
@@ -655,7 +653,10 @@ pub struct SrState {
     /// The newest focus group whose report Core took: the generation of
     /// the report's node, the group's number and the report's rank. An
     /// older report of the same group is not taken
-    /// ([`verbatim_model::FocusGroup`]).
+    /// ([`verbatim_model::FocusGroup`]). Only the newest group taken is
+    /// kept: when another outpost's report is taken between two reports of
+    /// one group, the older entry was observed before that report, and the
+    /// stale rule drops it instead.
     #[serde(default)]
     pub(crate) group_taken: Option<(OutpostId, verbatim_model::FocusGroup)>,
     pub(crate) next_query_id: u64,

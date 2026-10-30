@@ -1006,6 +1006,12 @@ fn reduce_focus_changed(
             source,
             window: window.cloned(),
         }));
+        // Written before the refusal below, so that a refused report of the
+        // window holding the focus still makes it the foreground object, as
+        // NVDA's is while its focus is in that window ([`change_on`]).
+        state
+            .foreground
+            .apply(ForegroundFact::Object(ObjectKey::of(report.node)));
         if let Some(focus) = state.focus.as_ref()
             && let (Some(focus_window), Some(window)) = (focus.window.as_ref(), window)
             && focus_window.top_level == window.top_level
@@ -1067,11 +1073,6 @@ fn reduce_focus_changed(
         state
             .foreground
             .apply(ForegroundFact::LineCut(report.observed_at_us));
-    }
-    if report.foreground {
-        state
-            .foreground
-            .apply(ForegroundFact::Object(ObjectKey::of(report.node)));
     }
     let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
@@ -1390,15 +1391,27 @@ fn states_event(
 
 /// What a change of `kind` on `node_id` concerns, when it is spoken, judged
 /// against the live focus Core holds by the rule the outposts judge it by
-/// before they read it ([`change_target`]).
+/// before they read it ([`change_target`]). The foreground object is never
+/// a speaking ancestor: NVDA's event on the foreground window resolves to
+/// its foreground object, not to the ancestor instance
+/// (`docs/parity/focus-announcement.md`, "A top-level window's state
+/// change"), which an outpost reads for when the window is the focus of a
+/// report Core refused.
 fn change_on(state: &SrState, kind: ChangeKind, node_id: NodeId) -> Option<ChangeTarget> {
     let focus = state.focus.as_ref().filter(|focus| focus.alive)?;
+    let foreground = state.foreground.object();
     change_target(
         kind,
         node_id,
         focus.snapshot.id,
         focus.ancestors.iter().map(|ancestor| ancestor.id),
-        |_| true,
+        |id| {
+            !foreground.is_some_and(|object| {
+                focus.ancestors.iter().any(|ancestor| {
+                    ancestor.id == id && ObjectKey::of(ancestor).is_same_object(&object)
+                })
+            })
+        },
     )
 }
 

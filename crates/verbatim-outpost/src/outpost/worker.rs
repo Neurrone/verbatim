@@ -5965,4 +5965,79 @@ mod tests {
             Vec::<NodeSnapshot>::new()
         );
     }
+
+    /// The effects of reporting and following the UIA focus `node` in
+    /// window `hwnd`, with a terminal entry when it is a terminal.
+    fn uia_focus_effects(context: &Context, node: &NodeSnapshot, hwnd: isize) -> Effects {
+        let (follow, _) = follow_of(
+            context,
+            FocusMade {
+                node: (node.id, node.role),
+                object: None,
+                window: Some(hwnd),
+                chain: vec![node.clone()],
+                batch: 0,
+                event: (TraceId::mint(), 1),
+                redirected: false,
+                caret: None,
+                at_bound: false,
+            },
+        );
+        Effects {
+            result: Some(OutpostToSupervisor::IdleAnswer { round: 1 }),
+            report: Some(Report::Reported(
+                judged_focus(
+                    context,
+                    (TraceId::mint(), node, &[]),
+                    (Some(hwnd), false),
+                    None,
+                ),
+                held::Evidence::Msaa,
+            )),
+            follow: Some(follow),
+            terminal: (node.role == Role::Terminal)
+                .then(|| (node.id, crate::terminal::Terminal::default())),
+            ..Effects::default()
+        }
+    }
+
+    /// A terminal reported before a newer focus in another window, which
+    /// the outpost has not released, still has its output read, for its
+    /// own events and its console window's, since Core may still hold it
+    /// as its focus (`docs/design/ownership-one-judge.md`, "Readers that
+    /// decide what to read").
+    #[test]
+    fn an_older_unreleased_terminal_has_its_output_read() {
+        use super::super::window::tests as window_tests;
+        let context = &quiet_context();
+        let (console, other) = (window_tests::create_window(), window_tests::create_window());
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        let terminal = NodeSnapshot {
+            id: context.uia_registry.id_for(&[42, 7, 1]),
+            backend: Backend::Uia,
+            ..node(0, Role::Terminal)
+        };
+        let _ = context
+            .watch
+            .commit(context, 0, uia_focus_effects(context, &terminal, console));
+        let button = NodeSnapshot {
+            id: context.uia_registry.id_for(&[42, 8, 1]),
+            backend: Backend::Uia,
+            ..node(0, Role::Button)
+        };
+        let _ = context
+            .watch
+            .commit(context, 0, uia_focus_effects(context, &button, other));
+        let mut client = Client::default();
+        let worker = Worker::new(context, &mut client, 0, 0, EventTiming::default());
+        assert_eq!(
+            (
+                worker.focused_terminal(terminal.id),
+                worker.focused_console_terminal(console),
+            ),
+            (true, Some(terminal.id))
+        );
+        window_tests::destroy_window(console);
+        window_tests::destroy_window(other);
+    }
 }

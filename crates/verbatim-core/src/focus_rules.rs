@@ -8,9 +8,10 @@
 //! share, since ported code stays in the Windows-specific crates. The reducer applies them after an event is
 //! read; the focus listener and the outposts apply the same definitions
 //! where a judgment must come before an element is read, because a UI
-//! Automation element cannot pass to another process. Those judgments use
-//! the focus Core holds, which Core sends them whenever it changes
-//! ([`HeldFocus`]), never a copy of the focus they last reported.
+//! Automation element cannot pass to another process. Those judgments
+//! never guess Core's focus: an outpost reads changes for every node it has
+//! not released, and Core's targeting decides what is spoken
+//! (`docs/design/ownership-one-judge.md`, "The rule").
 //!
 //! The behaviour is specified in `docs/parity/focus-events.md` ("Event
 //! acceptance", "Duplicate focus suppression"), from which these are

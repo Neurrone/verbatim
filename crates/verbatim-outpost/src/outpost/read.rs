@@ -195,7 +195,9 @@ fn splice_onto(
 /// The part of `previous`, a focus chain outermost first, that a walk may
 /// stop at and splice from: its entries above the outermost one the store
 /// no longer holds, so a walk that meets the chain below a released entry
-/// reads on rather than splicing a node no message may name any more.
+/// reads on rather than splicing a node no message may name any more. The
+/// entries below that one are dropped even where the store still holds
+/// them, so the walk reads them again rather than splicing.
 pub(super) fn held_prefix(context: &Context, mut previous: Vec<NodeSnapshot>) -> Vec<NodeSnapshot> {
     let held = previous
         .iter()

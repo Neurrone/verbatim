@@ -513,7 +513,7 @@ pub(crate) fn wait_for_process_exit(pid: u32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::sync::mpsc;
     use std::thread;
 
@@ -526,7 +526,7 @@ mod tests {
 
     /// A message-only window owned by the calling thread: never on any
     /// desktop, so a test run puts no window on the one it runs on.
-    fn create_window() -> isize {
+    pub(in crate::outpost) fn create_window() -> isize {
         // SAFETY: a predefined class, the message-only parent, no menu or
         // creation data; the window is destroyed by the thread that created
         // it.
@@ -550,7 +550,7 @@ mod tests {
         window.0 as isize
     }
 
-    fn destroy_window(handle: isize) {
+    pub(in crate::outpost) fn destroy_window(handle: isize) {
         // SAFETY: called on the thread that created `handle`.
         unsafe { DestroyWindow(hwnd(handle)) }.expect("destroy a window");
     }

@@ -318,7 +318,11 @@ is spoken ([MSAA and winevent handling](../nvda/msaa.md), "Object
 wrapping and identity"). Verbatim: the outpost records, as the focus
 enters a top-level window, whether that window is the foreground, and
 while it is, does not count the window's own object, its client area or
-window object, among the ancestors whose state changes are spoken.
+window object, among the ancestors whose state changes are spoken; and
+Core never speaks a state change of its foreground object as an
+ancestor's, since an outpost reads one when the window is the focus of a
+foreground report Core refused, which still makes the window Core's
+foreground object.
 **matched (verified)**: the `msaa_events` mockapp tests, one each way,
 and the `theme_panel` scenario.
 
