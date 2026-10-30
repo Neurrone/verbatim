@@ -164,8 +164,10 @@ impl IdleLine {
     /// so a waiter that reaches the reducer before input `after_input` has
     /// been handled waits for it there (`crate::idle`); one with no
     /// `after_input` follows no harness input and has nothing to wait
-    /// behind. A requester that gives up drops the receiver, and the
-    /// reducer's answer goes nowhere.
+    /// behind. A requester that gives up drops the receiver; its waiter
+    /// stays in the barrier's line until a round takes it, which is once
+    /// input `after_input` or a later one has been handled, and the
+    /// reducer's answer then goes nowhere.
     pub(crate) fn wait(
         &self,
         commands: &crate::Commands,

@@ -4,9 +4,9 @@
 //!
 //! The walk opens the Speech settings dialog (focus lands in the category
 //! list), then exercises the object-navigation gestures, pressed as their
-//! keys through the agent: report the current object, move to the list's first child (the
-//! "Speech" category item), report again to confirm the navigator moved,
-//! then snap the navigator back to focus. Last, it tabs to the rate slider,
+//! keys through the agent: report the current object, move to the list's
+//! first child (the "Speech" category item), report again to confirm the
+//! navigator moved, then snap the navigator back to focus. Last, it tabs to the rate slider,
 //! whose MSAA object answers next and previous with itself, and checks that
 //! object navigation reports the edge ("No next", "No previous") rather than
 //! landing on the slider again. Every step asserts exactly what is said.

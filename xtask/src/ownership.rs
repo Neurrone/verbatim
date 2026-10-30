@@ -10,7 +10,9 @@
 //!   dispatches sent messages, and nothing that would have the thread take
 //!   work from another thread as a message: the hook thread takes only
 //!   keys. Their test modules, which collect reports under a lock, are
-//!   skipped.
+//!   skipped. The hook thread's start-up in `lib.rs`, `hook_thread`, is
+//!   read alone by the same rule, but may report on a channel and log once
+//!   before the loop, and may not run a message loop of its own.
 //!
 //! Each checked module may `use` only the paths its allow-list names, and
 //! no identifier or path on its rule's forbidden list may appear in its
@@ -26,17 +28,20 @@ use std::path::Path;
 use crate::waits::{strip_comments, strip_strings};
 
 /// A module the check reads, the paths it may `use`, what it may not name,
-/// and whether its `#[cfg(test)]` module is read.
+/// whether its `#[cfg(test)]` module is read, and the one function read,
+/// when only that function's body is checked.
 struct Checked {
     path: &'static str,
     allowed: &'static [&'static str],
     forbidden: &'static [&'static str],
     skip_tests: bool,
+    within: Option<&'static str>,
 }
 
 /// The modules checked: the listener's read scheduler, by the pure rule,
-/// and the hook thread's modules, by the hook rule.
-const CHECKED: [Checked; 4] = [
+/// the hook thread's modules, by the hook rule, and the hook thread's body
+/// in `lib.rs`, by the hook thread's start-up rule.
+const CHECKED: [Checked; 5] = [
     Checked {
         path: "crates/verbatim-outpost/src/read_schedule.rs",
         allowed: &[
@@ -51,24 +56,35 @@ const CHECKED: [Checked; 4] = [
         ],
         forbidden: &FORBIDDEN,
         skip_tests: false,
+        within: None,
     },
     Checked {
         path: "crates/verbatim-input-windows/src/hook.rs",
         allowed: &HOOK_ALLOWED,
         forbidden: &HOOK_FORBIDDEN,
         skip_tests: true,
+        within: None,
     },
     Checked {
         path: "crates/verbatim-input-windows/src/typed.rs",
         allowed: &HOOK_ALLOWED,
         forbidden: &HOOK_FORBIDDEN,
         skip_tests: true,
+        within: None,
     },
     Checked {
         path: "crates/verbatim-app/src/key_reports.rs",
         allowed: &HOOK_ALLOWED,
         forbidden: &HOOK_FORBIDDEN,
         skip_tests: true,
+        within: None,
+    },
+    Checked {
+        path: "crates/verbatim-input-windows/src/lib.rs",
+        allowed: &[],
+        forbidden: &HOOK_START_FORBIDDEN,
+        skip_tests: true,
+        within: Some("hook_thread"),
     },
 ];
 
@@ -98,7 +114,7 @@ const HOOK_ALLOWED: [&str; 14] = [
 /// because the thread's one `GetMessageW` loop handles no message but
 /// `WM_QUIT`: another thread hands it no work, so every number it mints is
 /// a key's.
-const HOOK_FORBIDDEN: [&str; 20] = [
+const HOOK_FORBIDDEN: [&str; 26] = [
     "Mutex",
     "RwLock",
     "Condvar",
@@ -116,7 +132,46 @@ const HOOK_FORBIDDEN: [&str; 20] = [
     "SendMessageW",
     "SendMessageTimeoutW",
     "PeekMessageW",
+    "PeekMessageA",
     "DispatchMessageW",
+    "DispatchMessageA",
+    "GetMessageA",
+    "MsgWaitForMultipleObjects",
+    "MsgWaitForMultipleObjectsEx",
+    "WaitForSingleObject",
+    "WM_APP",
+    "WM_USER",
+];
+
+/// What the hook thread's body in `lib.rs`, its start-up around the one
+/// loop in `hook.rs`, may not name: the hook rule's list but `mpsc`,
+/// `std::io` and `tracing`, since it reports its readiness or its error on
+/// a channel and logs a failure to make the text services' profile
+/// manager, each once, before the loop takes a key; and `GetMessageW`,
+/// since its one loop is `hook.rs`'s.
+const HOOK_START_FORBIDDEN: [&str; 24] = [
+    "Mutex",
+    "RwLock",
+    "Condvar",
+    "OnceLock",
+    "LazyLock",
+    "lock",
+    "sleep",
+    "std::thread",
+    "std::fs",
+    "std::net",
+    "std::process",
+    "SendMessageW",
+    "SendMessageTimeoutW",
+    "PeekMessageW",
+    "PeekMessageA",
+    "DispatchMessageW",
+    "DispatchMessageA",
+    "GetMessageW",
+    "GetMessageA",
+    "MsgWaitForMultipleObjects",
+    "MsgWaitForMultipleObjectsEx",
+    "WaitForSingleObject",
     "WM_APP",
     "WM_USER",
 ];
@@ -178,6 +233,11 @@ fn findings(source: &str, checked: &Checked) -> Vec<String> {
     if checked.skip_tests {
         blank_test_modules(&mut code);
     }
+    if let Some(function) = checked.within
+        && !keep_only_function(&mut code, function)
+    {
+        found.push(format!("0: has no function `{function}`"));
+    }
     let allowed = checked.allowed;
     for (index, line) in code.iter().enumerate() {
         for &forbidden in checked.forbidden {
@@ -234,6 +294,44 @@ fn blank_test_modules(code: &mut [String]) {
             line.clear();
         }
     }
+}
+
+/// Blanks every line of `code` but those of the function `function`, from
+/// its `fn` to the brace that closes its body, counting the braces of code
+/// already stripped of comments and strings. Returns whether the function
+/// was found; when not, every line is blank.
+fn keep_only_function(code: &mut [String], function: &str) -> bool {
+    let signature = format!("fn {function}(");
+    let start = code.iter().position(|line| line.contains(&signature));
+    let mut end = start.unwrap_or(0);
+    if let Some(start) = start {
+        let mut depth = 0_i32;
+        let mut opened = false;
+        end = start;
+        while end < code.len() {
+            for character in code[end].chars() {
+                match character {
+                    '{' => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            end += 1;
+            if opened && depth <= 0 {
+                break;
+            }
+        }
+    }
+    let kept = start.map_or(0..0, |start| start..end);
+    for (index, line) in code.iter_mut().enumerate() {
+        if !kept.contains(&index) {
+            line.clear();
+        }
+    }
+    start.is_some()
 }
 
 /// Whether `code` names `forbidden`: a path, with `::`, as written; an
@@ -337,6 +435,7 @@ mod tests {
         allowed: &ALLOWED,
         forbidden: &FORBIDDEN,
         skip_tests: false,
+        within: None,
     };
 
     /// A module checked by the hook rule.
@@ -345,6 +444,16 @@ mod tests {
         allowed: &HOOK_ALLOWED,
         forbidden: &HOOK_FORBIDDEN,
         skip_tests: true,
+        within: None,
+    };
+
+    /// The hook thread's start-up, `start_up` in its module.
+    const HOOK_START: Checked = Checked {
+        path: "lib.rs",
+        allowed: &[],
+        forbidden: &HOOK_START_FORBIDDEN,
+        skip_tests: true,
+        within: Some("start_up"),
     };
 
     #[test]
@@ -360,6 +469,22 @@ mod tests {
     fn a_private_message_in_a_hook_module_is_found() {
         let source = "fn pump(msg: &MSG) {\n    if msg.message == WM_APP {}\n}\n";
         assert_eq!(findings(source, &HOOK), ["2: names `WM_APP`"]);
+    }
+
+    #[test]
+    fn only_the_hook_threads_start_up_is_read_in_its_module() {
+        let source = "fn other() { let _ = state.lock(); }
+fn start_up() {
+    if ready {
+        WaitForSingleObject(event, 0);
+    }
+}
+fn after() { GetMessageW(); }
+";
+        assert_eq!(
+            findings(source, &HOOK_START),
+            ["4: names `WaitForSingleObject`"]
+        );
     }
 
     #[test]

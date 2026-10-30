@@ -10,13 +10,13 @@
 //! ("65"). It holds for Windows 11 Notepad (UIA) and an edit control
 //! alike.
 //!
-//! Single presses are sent as gestures. Presses that count are real key
-//! presses sent together, since a gesture sent through the control plane
-//! is always a first press, and a move comes between two counted presses
-//! of the same key so they are never taken for one longer run: each press
-//! speaks, the first what one press says, the next what the repeat adds,
-//! and each press cuts off what the press before it said, as any key press
-//! cuts speech off; only the last press's speech is heard in full.
+//! Single presses are sent as gestures. Presses that count are sent
+//! together, and since a gesture counts as a repeat of the same key
+//! pressed within 500 ms, as a person's does, each run of counted presses
+//! follows a different gesture or key: each press speaks, the first what
+//! one press says, the next what the repeat adds, and each press cuts off
+//! what the press before it said, as any key press cuts speech off; only
+//! the last press's speech is heard in full.
 //! Every step asserts exactly what it says before the next.
 
 use std::io;
@@ -124,7 +124,6 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // On the Apple row: its first word read and spelled, its first
     // character described and given as a code.
     review(scenario, "kb:shift+numpad1", "A");
-    review(scenario, "kb:numpad5", "Apple");
     press_hearing(scenario, &["numpad5", "numpad5"], &["Apple", "A p p l e"]);
     press_hearing(scenario, &["numpad2", "numpad2"], &["A", "Alfa"]);
     press_hearing(scenario, &["numpad3"], &["p"]);
@@ -160,7 +159,6 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // On the Apple row: its first word read and spelled, its first
     // character described and given as a code.
     review(scenario, "kb:shift+numpad1", "A");
-    review(scenario, "kb:numpad5", "Apple");
     press_hearing(scenario, &["numpad5", "numpad5"], &["Apple", "A p p l e"]);
     press_hearing(scenario, &["numpad2", "numpad2"], &["A", "Alfa"]);
     press_hearing(scenario, &["numpad3"], &["p"]);

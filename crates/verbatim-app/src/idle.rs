@@ -33,7 +33,8 @@ use verbatim_model::OutpostId;
 /// waiter: the reducer keeps the control plane's reply channel.
 pub(crate) struct IdleBarrier<W> {
     /// Waiters no round has taken yet: their input is still to be handled,
-    /// or they came while a round was asking.
+    /// or they came while a round was asking. A waiter whose requester gave
+    /// up stays here until a round takes it, and its answer goes nowhere.
     waiting: Vec<(Option<u64>, W)>,
     /// The round under way, if any.
     round: Option<Round<W>>,

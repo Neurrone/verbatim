@@ -20,9 +20,12 @@ threads call: `InputHook` and its drop, the thread's start-up,
 `KeyHolding` and `ForegroundView`. `cargo xtask ci` checks `hook`,
 `typed` and the app's `key_reports` by the hook rule
 (`xtask/src/ownership.rs`): they may name no lock, wait, log, I/O,
-`SendMessageW`, private message (`WM_APP`, `WM_USER`) or
-`PeekMessageW` and `DispatchMessageW` loop, and `use` only an
-allow-list.
+`SendMessageW`, private message (`WM_APP`, `WM_USER`), message loop
+of their own (`PeekMessage`, `DispatchMessage`, `GetMessageA`) or wait
+(`MsgWaitForMultipleObjects`, `WaitForSingleObject`), and `use` only an
+allow-list. The start-up's own body, `hook_thread`, is checked by the
+same list but may report readiness on a channel and log once before the
+loop, and may not call `GetMessageW`, since the one loop is `hook`'s.
 
 ## Key numbers
 
