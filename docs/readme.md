@@ -61,6 +61,10 @@ suite, the VM harness, NVDA captures and troubleshooting.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary.
 - Design records — the problem, the alternatives weighed, the reasons
   and the limits behind each piece of work:
+  - [ownership.md](design/ownership.md) — one owner for every fact,
+    the rules every component follows, and the order of the refactor.
+  - [ownership-builds.md](design/ownership-builds.md) — the starting
+    drafts of the refactor's builds, with the reviews' known traps.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
@@ -70,6 +74,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [focus-pipeline-rework.md](design/focus-pipeline-rework.md) — the
     reconciliations between the listener, the outposts and Core to
     remove.
+  - [focus-pipeline-rework-remaining.md](design/focus-pipeline-rework-remaining.md)
+    — its remaining builds and the title rule, after the ownership
+    refactor.
   - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
     difference from NVDA's focus handling found on 2026-10-29.
   - [outpost-focused-element-study.md](design/outpost-focused-element-study.md)

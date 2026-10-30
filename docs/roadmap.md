@@ -65,6 +65,21 @@ across text calls; neither is made direct by the commit point. NVDA's
 speech for the equality's edge cases waits for one capture session
 against mockapp's `object_equality.json` fixture.
 
+Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
+between processes' copies of one fact, so the ownership refactor below
+comes first. The rework then resumes with the keep-id review's fix, half
+built and uncommitted in the worktree `verbatim-wt-fix2`, and its remaining
+steps in [the remaining builds](design/focus-pipeline-rework-remaining.md).
+
+### The ownership refactor
+
+Every fact has one owner, logic is a pure reducer with calls as its
+effects, and no process holds a copy of another's state to judge against
+([ownership](design/ownership.md), Dickson, 2026-10-30). It preserves what
+is heard, except the three changes the design names. Built in a session of
+its own, a few large builds, each designed against the code and reviewed
+just before it from [the build drafts](design/ownership-builds.md).
+
 ### The caret and selection rework
 
 The decisions, the design and the order of work are in
@@ -344,6 +359,12 @@ precondition, because the extension surface exposes the messages it moves.
   slower runner, so that can still fail scenarios. Evidence:
   `experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`.
 
+- Configuration versioned, by the ownership model's version rule
+  ([ownership](design/ownership.md); Dickson, 2026-10-30): the rule
+  tables and the fetch configuration carry a version published by Core
+  alone, every judgement the listener or an outpost makes under them
+  names that version, and a receiver recognises a judgement made under
+  a version it has moved past.
 - Focus vetoes and redirects with no read NVDA would not make (Dickson,
   2026-10-29; [the focus pipeline rework](design/focus-pipeline-rework.md),
   "Room for extensions"): a veto declared as a rule judged by the listener
@@ -413,14 +434,16 @@ calls into browsers (Dickson, 2026-10-29). Separate from the focus
 pipeline rework, since cancelling a stuck call frees a thread that is now
 abandoned but changes nothing spoken.
 
-- An experiment on whether `CoCancelCall` ends a UIA client call, as
-  `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/`
-  did for MSAA; the decision of 2026-10-21 not to build MSAA cancellation
-  stands until then.
-- If built: cancelling the outpost worker's and the listener's reading
-  threads' stuck calls, as NVDA's watchdog does, and what that lets go:
-  abandoned threads, the bound on an application's abandoned reads, and
-  the 11-second `READ_DEADLINE`.
+`CoCancelCall` ends no UIA client call, because UIA waits on its own
+channel rather than in a COM call
+(`experiments/cocancelcall-does-not-end-a-uia-client-call/`, 2026-10-30),
+so the UIA readers keep abandonment, the bound and `READ_DEADLINE`. What
+is left is MSAA cancellation:
+
+- If built: cancelling the outpost worker's stuck `IAccessible` calls, as
+  NVDA's watchdog does, through each call's own cancel object, which
+  means fewer abandoned threads in MSAA and IAccessible2 outposts, mostly
+  browsers in M7; it removes no mechanism.
 
 ## M6.2 — Outpost retirement
 
