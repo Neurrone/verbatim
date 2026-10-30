@@ -68,6 +68,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [ownership-one-judge.md](design/ownership-one-judge.md) — the
     one judge build's design: repeats judged in Core, the one foreground
     record, the followed focus and the listener's scheduler.
+  - [ownership-input.md](design/ownership-input.md) — the input
+    build's design: one key-number minter and one ordered route for
+    user input.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events

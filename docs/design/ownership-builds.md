@@ -14,6 +14,8 @@ Designed against the code in [the one judge build](ownership-one-judge.md), whic
 
 ## The input build
 
+Designed against the code in [the input build's design](ownership-input.md), which replaces its draft.
+
 ### Brief
 
 Runs beside the messages build.
