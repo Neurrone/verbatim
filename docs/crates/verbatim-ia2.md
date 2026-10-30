@@ -299,14 +299,17 @@ Public API:
   `IAccIdentity` string; else, for a focus walk, the first of its
   `equality::Candidates` (the kept nodes of Core's focus line and of the
   newest unjudged focus, each line innermost first) that NVDA's
-  `IAccessible._isEqual` finds equal: the same child id, event parameters
-  where both are known, window, identity string where both asked, raw
-  role, location (the kept object's read live once per walk; a kept object
-  gone is never equal) and name (the kept object's read live when the kept
-  one differs). A reissue gives the sighting the candidate's id and
-  nothing else, the node keeping its object, address and event parameters
-  and taking the sighting's name, and each candidate gives its id at most
-  once per walk, the lines then scanned only outward of it. Anything else
+  `IAccessible._isEqual` finds equal, in NVDA's order with its role and
+  location steps swapped, since each step only rejects and the role needs
+  no read: the same child id, event parameters where both are known,
+  window, identity string where both asked, raw role, location (the
+  sighting's as its read made it, else read once; the kept object's read
+  live once per walk; a kept object gone is never equal) and name (the
+  kept object's read live when the kept one differs). A reissue gives the
+  sighting the candidate's id and nothing else, the node keeping its
+  object, address and event parameters and taking the sighting's name;
+  the lines are then scanned only outward of the candidate, so it gives
+  its id at most once per walk. Anything else
   is a new node that keeps the object just read, with the facts the
   equality compares (`registry::Facts`). Each snapshot is read with its provenance: objects
   acquired at an event or window address, and children by id on them,

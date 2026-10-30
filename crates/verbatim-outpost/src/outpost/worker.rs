@@ -60,7 +60,8 @@ use super::alarm::Alarm;
 use super::bound::{self, BoundFocus, FocusProgress};
 use super::caret_poll::{self, Poll};
 use super::commit::{
-    self, Committed, Effects, Follow, FollowState, Owed, OwedWork, Report, Target, WatchChange,
+    self, Committed, Displaced, Effects, Follow, FollowState, Owed, OwedWork, Report, Target,
+    WatchChange,
 };
 use super::focus_path::{self, FocusPath};
 use super::gap_record::{CopyDropped, GapRead};
@@ -170,9 +171,9 @@ pub(super) enum Returned {
     Disarmed,
     /// Published at its bound: its worker sends nothing else for it.
     Published,
-    /// Past its bound and still armed: its worker publishes it from this
-    /// copy of its progress, as the watchdog would.
-    PastBound(Box<FocusProgress>),
+    /// Past its bound and still armed, as the arming numbered here: its
+    /// worker publishes it, as the watchdog would.
+    PastBound(u64),
     /// Its worker was abandoned.
     Abandoned,
 }
@@ -211,8 +212,13 @@ impl Watch {
     /// check: only for the outpost's shutdown, once no worker runs.
     pub(super) fn reset_follow(&self) {
         let mut state = self.lock();
-        state.follow.terminals.clear();
+        let terminals = std::mem::take(&mut state.follow.terminals);
+        let leftover = std::mem::take(&mut state.follow.leftover);
         state.follow.caret_watch = None;
+        drop(state);
+        // Outside the lock: they may hold an application's objects.
+        drop(terminals);
+        drop(leftover);
     }
 
     /// How many abandoned workers have not yet returned.
@@ -322,7 +328,7 @@ impl Watch {
             return Returned::Abandoned;
         }
         if let Some(walk) = state.walk.as_ref().filter(|walk| now >= walk.bound_at) {
-            return Returned::PastBound(Box::new(walk.clone()));
+            return Returned::PastBound(walk.armed);
         }
         if state.walk.take().is_some() {
             if let Some(wake) = state.next_wake(now) {
@@ -340,8 +346,8 @@ impl Watch {
     /// The one commit (`super::commit`): if `generation` is in charge,
     /// records `effects`' report for Core's judgement, sends its messages,
     /// and applies the rest, all under the watch lock; otherwise does
-    /// nothing. A report covering a walk already published at its bound is
-    /// dropped with its message and its follow. An entry's result ends its
+    /// nothing. What it displaces, and what a watchdog's publication left,
+    /// is dropped once the lock is let go. An entry's result ends its
     /// query, so the query never gets a second reply, but not its deadline:
     /// a call that hangs after it is abandoned as one before it is. Returns
     /// what was done, and the caret key's watch taken out by
@@ -355,23 +361,24 @@ impl Watch {
     ) -> (Committed, Option<OpenWatch>) {
         let mut state = self.lock();
         if state.generation != generation {
+            drop(state);
+            // Outside the lock: the effects may hold an application's
+            // objects.
+            drop(effects);
             return (Committed::Refused, None);
         }
-        Self::commit_locked(&mut state, context, effects)
+        let (taken, mut displaced) = Self::commit_locked(&mut state, context, effects);
+        displaced.append(std::mem::take(&mut state.follow.leftover));
+        drop(state);
+        drop(displaced);
+        (Committed::Applied, taken)
     }
 
     fn commit_locked(
         state: &mut WatchState,
         context: &Context,
         mut effects: Effects,
-    ) -> (Committed, Option<OpenWatch>) {
-        let published = effects
-            .covers_walk
-            .is_some_and(|armed| state.bound_published == Some(armed));
-        if published {
-            effects.report = None;
-            effects.result = None;
-        }
+    ) -> (Option<OpenWatch>, Displaced) {
         match effects.report.take() {
             Some(Report::Reported(focus)) => context.held().reported(focus),
             Some(Report::Answered(focus)) => {
@@ -401,44 +408,39 @@ impl Watch {
             state.running = None;
         }
         let generation = state.generation;
-        let taken = state.follow.apply(context, generation, effects, !published);
+        let (taken, displaced) = state.follow.apply(context, generation, effects);
         if let Some(open) = &taken {
             state.running = Some((open.request_id, open.trace));
         }
-        let committed = if published {
-            Committed::PublishedAtBound
-        } else {
-            Committed::Applied
-        };
-        (committed, taken)
+        (taken, displaced)
     }
 
-    /// Commits `effects`, a publication of the walk `walk` at its bound, if
-    /// that walk is still armed by the worker in charge: the walk is
-    /// claimed, so its worker's late result is discarded, and the report
-    /// recorded, sent, and made the followed focus. Returns whether it was.
+    /// Publishes the walk armed as `armed` at its bound, if it is still the
+    /// walk armed by the worker in charge: the walk is claimed, so its
+    /// worker's late result is discarded, and its publication
+    /// ([`publication`]), made under the lock from the walk's progress as it
+    /// stands, so every step it took in before the lock was taken is
+    /// published, is recorded, sent, and made the followed focus. Local
+    /// calls only. Returns the progress published, and what the commit
+    /// displaced, to be dropped once the lock is let go; `None` when the
+    /// walk was not armed.
     fn commit_publication(
         state: &mut WatchState,
         context: &Context,
         alarm: &Alarm,
-        walk: &FocusProgress,
-        effects: Effects,
-    ) -> bool {
-        let open = state.generation == walk.generation
-            && state
-                .walk
-                .as_ref()
-                .is_some_and(|armed| armed.armed == walk.armed);
-        if !open {
-            return false;
-        }
-        state.walk = None;
-        let _ = Self::commit_locked(state, context, effects);
+        armed: u64,
+    ) -> Option<(FocusProgress, Displaced)> {
+        let generation = state.generation;
+        let walk = state
+            .walk
+            .take_if(|walk| walk.generation == generation && walk.armed == armed)?;
+        let effects = publication(context, &walk);
+        let (_, displaced) = Self::commit_locked(state, context, effects);
         state.bound_published = Some(walk.armed);
         if let Some(wake) = state.next_wake(Instant::now()) {
             alarm.set(wake);
         }
-        true
+        Some((walk, displaced))
     }
 
     /// Ends the deadline, if `generation` is still in charge, returning the
@@ -786,22 +788,22 @@ fn wake(context: &Context, now: Instant, moved_on: impl Fn(isize) -> bool) -> Wa
         .walk
         .as_ref()
         .filter(|walk| reason.is_some() || now >= walk.bound_at)
-        .cloned();
-    if let Some(walk) = due {
-        drop(state);
-        // Local calls only, outside the lock.
-        let effects = publication(context, &walk);
-        state = context.watch.lock();
-        if state.stopping {
-            return Wake::Stop;
-        }
-        if Watch::commit_publication(&mut state, context, &context.watch.alarm, &walk, effects) {
+        .map(|walk| walk.armed);
+    if let Some(armed) = due {
+        // Local calls only, under the lock, from the walk's progress as it
+        // stands.
+        if let Some((walk, displaced)) =
+            Watch::commit_publication(&mut state, context, &context.watch.alarm, armed)
+        {
             tracing::info!(
                 trace = %walk.focus.trace,
                 name = ?walk.focus.node.name,
                 abandoning = reason.is_some(),
                 "a focus walk was under way at its bound or its worker's abandonment; the focus is published as read so far"
             );
+            // Never dropped on the watchdog's thread: the worker in charge
+            // drops it after its next commit.
+            state.follow.leftover.append(displaced);
         }
         reason = judge(&state);
     }
@@ -2396,8 +2398,11 @@ impl Worker<'_> {
     /// reported, is kept, since Core may not have seen it yet.
     fn release(&self, held: &[u64], acknowledged: u64) {
         let held: HashSet<u64> = held.iter().copied().collect();
-        // A commit: only the worker in charge releases, and the nodes leave
-        // both registries, and their terminals the follow state, under the
+        // The one change of follow state made outside `Watch::commit`
+        // (`super::commit`), with the same in-charge check: it must take the
+        // queue's lock and the registries' inside it, which no commit does.
+        // Only the worker in charge releases, and the nodes leave both
+        // registries, and their terminals the follow state, under the
         // watch lock and the queue's, so a worker that replaces this one,
         // should it be abandoned while the objects are dropped, can never
         // report a node that is about to vanish, and no message queued
@@ -2651,18 +2656,13 @@ impl Worker<'_> {
                 return true;
             }
             Returned::Published => {}
-            Returned::PastBound(walk) => {
-                let effects = publication(context, &walk);
+            Returned::PastBound(armed) => {
                 let mut state = context.watch.lock();
-                let published = Watch::commit_publication(
-                    &mut state,
-                    context,
-                    &context.watch.alarm,
-                    &walk,
-                    effects,
-                );
+                let published =
+                    Watch::commit_publication(&mut state, context, &context.watch.alarm, armed);
                 drop(state);
-                if published {
+                if let Some((walk, displaced)) = published {
+                    drop(displaced);
                     tracing::info!(
                         trace = %walk.focus.trace,
                         name = ?walk.focus.node.name,
@@ -4923,8 +4923,8 @@ fn sensitive_slider_of(node_id: NodeId, chain: &[NodeSnapshot]) -> Option<NodeId
 }
 
 /// The publication of a walk still under way at its bound, or returned
-/// past it, or whose worker is about to be abandoned, from `walk`, a copy
-/// of its progress (`docs/design/focus-pipeline-rework.md`, "A window's
+/// past it, or whose worker is about to be abandoned, from `walk`, its
+/// progress as it stands (`docs/design/focus-pipeline-rework.md`, "A window's
 /// name, and the one fallback" and "The outpost's commit point"): the
 /// focus as read, its chain as [`bound::chain_at_bound`] makes it,
 /// completed by plain windows, with no selected child, no dialog text and
@@ -5825,6 +5825,40 @@ mod tests {
             context
                 .watch
                 .follow(|follow| !follow.terminals.contains_key(&terminal.number()))
+        );
+    }
+
+    /// A terminal entry a commit replaces, which may hold the last
+    /// reference to a text range of a hung terminal, is handed back by the
+    /// apply code, so the commit drops it once the watch lock is let go.
+    #[test]
+    fn a_terminal_entry_a_commit_replaces_is_handed_back_to_drop_after_the_lock() {
+        let context = &quiet_context();
+        let terminal = NodeId::new(3);
+        let mut follow = FollowState::default();
+        let mut old = crate::terminal::Terminal::default();
+        old.reading = Reading::Held { changed: true };
+        follow.terminals.insert(terminal.number(), old);
+        let (_, displaced) = follow.apply(
+            context,
+            0,
+            Effects {
+                terminal: Some((terminal, crate::terminal::Terminal::default())),
+                ..Effects::default()
+            },
+        );
+        let readings: Vec<Reading> = displaced
+            .terminals
+            .iter()
+            .map(|entry| entry.reading)
+            .collect();
+        assert_eq!(readings, [Reading::Held { changed: true }]);
+        assert_eq!(
+            follow
+                .terminals
+                .get(&terminal.number())
+                .map(|entry| entry.reading),
+            Some(Reading::default())
         );
     }
 

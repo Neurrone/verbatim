@@ -632,16 +632,27 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   it, so its location and the kept group's are read live (2) and it is
   given the group's id; the walk stops there, the group being in the
   followed chain. mockapp answered 29 provider calls, 12 of them
-  `accParent`, most from `WindowFromAccessibleObject`'s own walk, and 3
-  `accLocation`: 2 more `accParent` hits than before for one hop fewer,
-  not yet explained.
+  `accParent` and 3 `accLocation`. Each `accLocation` on an object
+  reached through `accParent`, as both groups are, has oleacc walk that
+  object's parents in the provider: 3 `accParent` hits per read here,
+  measured by leaving the location step out, which gives 18 calls, 6
+  `accParent` and 1 `accLocation`. Against 10 `accParent` before the
+  equality, the walk no longer hopping to the window's root saves 4 and
+  the two reads add 6. The arrow between list items, whose list is one
+  level nearer the root, pays 3 `accParent` for its two reads. A focus
+  that is itself a sighting compared with a candidate reuses the location
+  its read made, so it costs no second read.
 - Target: 18, the two location reads being the cost of comparing as NVDA
   does; an ancestor recognized by its address and identity string, as
   for objects acquired at an address, costs none.
 - Bound: the depth of the focus below its window's root; with the
   candidates capped to Core's line and the newest unjudged focus, at most
   324 calls, the walk's 64 hops each reading a location and each of up to
-  130 candidates read live twice.
+  130 candidates read live twice. In the provider, each of those 194
+  location reads may walk its object's parents, which grows with the
+  object's depth; at the walk's 64-hop bound that is about 65 `accParent`
+  hits a read, about 12,600 in all, inferred from the two depths measured
+  and not measured at depth.
 
 ### The outpost's commit point
 
@@ -655,7 +666,12 @@ adds an `AddRef` and `Release` of where its next read starts and one
 allocation for the sent caret's line per read. Owed work adds one alarm
 set and its cancel per terminal or slider focus. No wake-up is added: the
 watchdog wakes at the same bound, grace and deadline, and an entry's
-alarm is cancelled when it ends rather than when it publishes.
+alarm is cancelled when it ends rather than when it publishes. A
+watchdog's publication is built under the watch lock, with local calls
+only (window text, styles and the registries' lookups), so on the rare
+wake that publishes, a walk's next step waits that long for the lock;
+values a commit displaces cost one small vector each only when there
+are any.
 
 ### A focus change, MSAA, cold
 

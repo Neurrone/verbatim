@@ -808,8 +808,17 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   under the watch lock that the committing generation is in charge, then
   records an `Effects` value's report, sends its messages and applies the
   rest. The locks a commit takes nest inside the watch lock: the judgement
-  list, the intake, the UI Automation registry, the outbound queue; none is
-  held across a call. Owed work (a terminal's first read, a
+  list, the intake, the outbound queue, the UI Automation registry, the
+  MSAA registry; none is held across a call. What a commit displaces that
+  may hold an application's object (`commit::Displaced`: a terminal entry
+  replaced, an element the subscription is not moved to) is dropped once
+  the lock is let go; what a watchdog's publication displaces waits in the
+  follow state for the worker's next commit. The watchdog builds a
+  publication under the lock, from the walk's progress as it stands, with
+  local calls only. The release of nodes Core no longer holds
+  (`Worker::release`) is the one change of follow state outside a commit:
+  it makes the same in-charge check under the watch lock and takes the
+  outbound queue's lock with the registries' inside it. Owed work (a terminal's first read, a
   `SensitiveSlider`'s lookup for a thumb published at its bound) is
   attempted once per worker under a deadline of its own with no moved-on
   window (`Watch::take_owed`). A terminal read works on a copy of its

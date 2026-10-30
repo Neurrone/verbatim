@@ -36,8 +36,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, ProgressReading, QueryKind, Role, State, TreeNode,
-    WindowHandle,
+    Backend, NodeDetails, NodeId, NodeSnapshot, ProgressReading, QueryKind, Rect, Role, State,
+    TreeNode, WindowHandle,
 };
 
 use crate::accessible::{Accessible, Related};
@@ -1916,9 +1916,11 @@ fn read_snapshot_with(
         .shortcut
         .then(|| non_empty(acc.keyboard_shortcut()))
         .flatten();
-    let rect = (reading.purpose == Purpose::Announce && !reading.without_location)
-        .then(|| acc.location())
-        .flatten();
+    // Read or not: the equality compares the location read here, so it
+    // reads none again for this sighting.
+    let located =
+        (reading.purpose == Purpose::Announce && !reading.without_location).then(|| acc.location());
+    let rect = located.flatten();
     // See this function's doc comment: a tree item's accValue is really
     // its 0-based level, not a value.
     // The edit field of a combo box takes the combo box's label, so it
@@ -1992,7 +1994,7 @@ fn read_snapshot_with(
             (key, at_address),
             acc,
             (role, facts),
-            reading.compare,
+            reading.compare.map(|candidates| (candidates, located)),
         ),
         backend: Backend::Msaa,
         role,
@@ -2241,14 +2243,19 @@ fn position_of(
 ///
 /// A sighting neither lookup places is compared with `candidates`, for a
 /// focus walk, by NVDA's equality ([`crate::equality`]), and given the id of
-/// the first that is equal; only then is a new node issued, with `facts`,
-/// what the equality compares of it.
+/// the first that is equal, with the location the snapshot read, when it
+/// read one, so the equality does not read it again; only then is a new
+/// node issued, with `facts`, what the equality compares of it.
+#[expect(
+    clippy::option_option,
+    reason = "the sighting's location, read or not, and once read may be none"
+)]
 fn node_for(
     registry: &NodeIdRegistry,
     (key, at_address): (MsaaKey, bool),
     acc: &Accessible,
     (role, facts): (Role, Facts),
-    candidates: Option<&Candidates>,
+    candidates: Option<(&Candidates, Option<Option<Rect>>)>,
 ) -> NodeId {
     let child = acc.child();
     let identity = acc.canonical();
@@ -2288,11 +2295,12 @@ fn node_for(
         }
         Found::Object(..) | Found::Nothing => {}
     }
-    if let Some(candidates) = candidates {
+    if let Some((candidates, location)) = candidates {
         let sighting = Sighting {
             acc,
             key,
             facts: &facts,
+            location,
         };
         if let Some(id) =
             equality::equal_candidate(registry, candidates, &sighting, |acc, key, role| {

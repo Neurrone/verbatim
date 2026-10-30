@@ -6,22 +6,27 @@
 //! walk: the nodes of the focus line Core holds and of the newest focus the
 //! outpost reported that Core has not judged, each line innermost first,
 //! NVDA's meeting order. A sighting the registry does not already place, by
-//! COM identity or by its address, is compared with each in NVDA's order:
-//! the child id; the event window, event object id and event child id, each
-//! where both are known; the window; the identity string, where both asked
-//! for it; the raw role; the location, the kept object's read live; and the
-//! name, the kept object's read live when the kept name differs. The first
+//! COM identity or by its address, is compared with each in NVDA's order
+//! with its role and location steps swapped: the child id; the event
+//! window, event object id and event child id, each where both are known;
+//! the window; the identity string, where both asked for it; the raw role;
+//! the location, the kept object's read live; and the name, the kept
+//! object's read live when the kept name differs. NVDA compares the
+//! location before the role; since each step only rejects, the order
+//! changes no verdict, and the role, already read, rejects first, saving
+//! the location reads of a candidate of another role. The first
 //! equal candidate gives its id, and nothing else: the node keeps its old
 //! object, address and event parameters, as NVDA keeps its old objects
-//! through the meeting point, and takes the sighting's name. Within one walk
-//! a candidate gives its id at most once, and after a reissue from a line's
-//! entry only the entries outward of it are scanned. `IAccessible2`'s unique
+//! through the meeting point, and takes the sighting's name. After a reissue
+//! from a line's entry only the entries outward of it are scanned, in every
+//! line that has it, so within one walk a candidate gives its id at most
+//! once. `IAccessible2`'s unique
 //! ID, NVDA's second step, waits for milestone M7.
 
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use windows::Win32::UI::Accessibility::IAccessible;
 use windows::core::AgileReference;
@@ -45,8 +50,6 @@ pub struct Candidates {
 struct Scan {
     /// Per line, the first entry still scanned.
     floors: Vec<usize>,
-    /// The candidates that have given their id in this walk.
-    used: HashSet<NodeId>,
     /// Each candidate's live reads, made at most once per walk.
     live: HashMap<NodeId, Live>,
 }
@@ -89,6 +92,10 @@ pub(crate) struct Sighting<'a> {
     pub(crate) acc: &'a Accessible,
     pub(crate) key: MsaaKey,
     pub(crate) facts: &'a Facts,
+    /// Its location, when its read already made it (`None` for a failed
+    /// read), else `None`, read when a candidate first needs it.
+    #[expect(clippy::option_option, reason = "a location, once read, may be none")]
+    pub(crate) location: Option<Option<Rect>>,
 }
 
 /// What NVDA's `IAccessible.__init__` fixes for an object read at `key`:
@@ -114,14 +121,11 @@ pub(crate) fn equal_candidate(
 ) -> Option<NodeId> {
     let child = sighting.acc.child();
     let mine = sighting.facts;
-    let mut location: Option<Option<Rect>> = None;
+    let mut location = sighting.location;
     let mut scan = candidates.scan.borrow_mut();
-    let Scan { floors, used, live } = &mut *scan;
+    let Scan { floors, live } = &mut *scan;
     for (line, ids) in candidates.lines.iter().enumerate() {
         for &id in ids.iter().skip(floors[line]) {
-            if used.contains(&id) {
-                continue;
-            }
             let Some(kept) = registry.facts_of(id) else {
                 continue;
             };
@@ -152,12 +156,14 @@ pub(crate) fn equal_candidate(
             {
                 continue;
             }
-            // 6. The raw role.
+            // 6. The raw role, before the location, which NVDA compares
+            // first: each step only rejects, and this one needs no read.
             if theirs.raw_role != mine.raw_role {
                 continue;
             }
             // 7. The location: the sighting's, read once, against the kept
-            // object's, read live once per walk.
+            // object's, read live once per walk. A kept object reached
+            // through `accParent` has oleacc walk its parents for it.
             let at = *location.get_or_insert_with(|| sighting.acc.location());
             let reads = live.entry(id).or_default();
             let located = *reads
@@ -182,9 +188,9 @@ pub(crate) fn equal_candidate(
                     continue;
                 }
             }
-            // 9. Equal: the node gives its id, once, and only the entries
-            // outward of it are scanned from now on.
-            used.insert(id);
+            // 9. Equal: the node gives its id, and only the entries outward
+            // of it, in every line that has it, are scanned from now on, so
+            // it gives its id at most once.
             for (line, ids) in candidates.lines.iter().enumerate() {
                 if let Some(at) = ids.iter().position(|&other| other == id) {
                     floors[line] = floors[line].max(at + 1);
@@ -206,5 +212,133 @@ fn live_location(object: &AgileReference<IAccessible>, child: i32) -> Located {
         Ok(rect) => Located::At(Some(rect)),
         Err(error) if crate::acquire::disconnected(&error) => Located::Gone,
         Err(_) => Located::At(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
+    use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
+
+    use super::*;
+    use crate::registry::Held;
+
+    /// The desktop window's client object, served in this process, which
+    /// every test sights and keeps: its location reads the same each time.
+    fn desktop() -> Accessible {
+        crate::accessible::join_mta();
+        Accessible::client_of_window(crate::window::desktop()).expect("the desktop's client")
+    }
+
+    /// The facts both sides have unless a test changes one.
+    fn facts() -> Facts {
+        Facts {
+            event: (crate::window::desktop(), None, 0),
+            identity: Some(Some(vec![1, 2, 3])),
+            raw_role: Some(10),
+            name: Some("Desktop".to_owned()),
+        }
+    }
+
+    /// A registry keeping one node, the desktop's client at child id 0
+    /// with `facts`, returned with its id.
+    fn kept(facts: Facts) -> (NodeIdRegistry, NodeId) {
+        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+        let object = desktop();
+        let held = Held {
+            object: object.agile().expect("an agile reference"),
+            child: 0,
+            identity: object.canonical().expect("its identity"),
+        };
+        let key = (crate::window::desktop(), OBJID_CLIENT.0, 0);
+        let id = registry.insert(key, Some(held), (Role::Pane, facts), false);
+        (registry, id)
+    }
+
+    /// The node `sighting`, with `facts`, at child id `child` in window
+    /// `window`, is given among `candidates`.
+    fn compared(
+        registry: &NodeIdRegistry,
+        candidates: &Candidates,
+        (window, child): (isize, i32),
+        facts: &Facts,
+    ) -> Option<NodeId> {
+        let acc = desktop().with_child(child);
+        let location = Some(acc.with_child(0).location());
+        let sighting = Sighting {
+            acc: &acc,
+            key: (window, OBJID_CLIENT.0, child),
+            facts,
+            location,
+        };
+        equal_candidate(registry, candidates, &sighting, |_, _, _| {
+            panic!("the names are the same, so none is read live")
+        })
+    }
+
+    /// Whether a sighting of the desktop's client, otherwise equal to the
+    /// kept node, is given its id with `change` made to its facts, at
+    /// `child` in `window`.
+    fn given(change: impl FnOnce(&mut Facts), (window, child): (isize, i32)) -> bool {
+        let (registry, id) = kept(facts());
+        let mut mine = facts();
+        change(&mut mine);
+        let candidates = Candidates::new(vec![vec![id]]);
+        compared(&registry, &candidates, (window, child), &mine) == Some(id)
+    }
+
+    #[test]
+    fn an_equal_sighting_is_given_the_kept_nodes_id() {
+        assert!(given(|_| {}, (crate::window::desktop(), 0)));
+    }
+
+    #[test]
+    fn a_sighting_at_another_child_id_is_not_given_the_id() {
+        assert!(!given(|_| {}, (crate::window::desktop(), 4)));
+    }
+
+    #[test]
+    fn a_sighting_with_another_event_child_id_is_not_given_the_id() {
+        assert!(!given(
+            |mine| mine.event.2 = 4,
+            (crate::window::desktop(), 0)
+        ));
+    }
+
+    #[test]
+    fn a_sighting_in_another_window_is_not_given_the_id() {
+        assert!(!given(|_| {}, (crate::window::desktop() + 1, 0)));
+    }
+
+    #[test]
+    fn a_sighting_with_another_identity_string_is_not_given_the_id() {
+        assert!(!given(
+            |mine| mine.identity = Some(Some(vec![9])),
+            (crate::window::desktop(), 0)
+        ));
+    }
+
+    #[test]
+    fn a_sighting_with_another_raw_role_is_not_given_the_id() {
+        assert!(!given(
+            |mine| mine.raw_role = Some(20),
+            (crate::window::desktop(), 0)
+        ));
+    }
+
+    /// A candidate gives its id once in a walk: a second equal sighting
+    /// gets none.
+    #[test]
+    fn a_candidate_gives_its_id_at_most_once() {
+        let (registry, id) = kept(facts());
+        let candidates = Candidates::new(vec![vec![id]]);
+        let window = (crate::window::desktop(), 0);
+        let given = [
+            compared(&registry, &candidates, window, &facts()),
+            compared(&registry, &candidates, window, &facts()),
+        ];
+        assert_eq!(given, [Some(id), None]);
     }
 }

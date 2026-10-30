@@ -11,11 +11,25 @@
 //! here, in [`FollowState`], inside the watch's state, so a commit takes one
 //! lock; the facts other threads read stay in their own structures, whose
 //! locks a commit takes nested inside the watch lock, in this order: the
-//! judgement list, the intake, the UI Automation registry, the outbound
-//! queue. Nothing holding any of them takes the watch lock or calls into
-//! the application, and no lock a commit takes is held across a call. The
-//! text caches come before the watch lock: they may be held when it is
-//! taken, and a commit never takes them.
+//! judgement list, the intake, the outbound queue, the UI Automation
+//! registry, the MSAA registry (the release of nodes takes both registries
+//! inside the outbound queue's lock). Nothing holding any of them takes the
+//! watch lock or calls into the application, and no lock a commit takes is
+//! held across a call. The text caches come before the watch lock: they may
+//! be held when it is taken, and a commit never takes them.
+//!
+//! One change of follow state is made outside a commit, with the same
+//! in-charge check under the watch lock: the release of the nodes Core no
+//! longer holds (`Worker::release`), which must take the outbound queue's
+//! lock and the registries' inside it, and removes the released nodes'
+//! terminals.
+//!
+//! What a commit displaces that may hold an application's object, a
+//! terminal entry replaced or an element the subscription is not moved to,
+//! is returned as [`Displaced`] and dropped once the watch lock is let go,
+//! since a `Release` can call into the application; what a watchdog's
+//! publication displaces is left in the follow state for the worker in
+//! charge to drop after its next commit, never on the watchdog's thread.
 //!
 //! An [`Effects`] value is built before the commit with every call it
 //! needs made, so the apply code takes the state and the nested locks
@@ -151,6 +165,35 @@ pub(super) struct FollowState {
     pub(super) focus_path: Option<FocusPath>,
     /// What the followed focus still owes.
     pub(super) owed: Option<Owed>,
+    /// What a watchdog's publication displaced, for the worker in charge
+    /// to drop after its next commit.
+    pub(super) leftover: Displaced,
+}
+
+/// What a commit displaced that may hold the last reference to an
+/// application's object, dropped once the watch lock is let go (the
+/// module's documentation).
+#[derive(Default)]
+#[must_use = "dropped only once the watch lock is let go"]
+pub(super) struct Displaced {
+    /// Terminal entries replaced or removed.
+    pub(super) terminals: Vec<crate::terminal::Terminal>,
+    /// Elements the subscription was not moved to.
+    pub(super) elements: Vec<Agile<Kept>>,
+}
+
+impl Displaced {
+    /// Takes in `other`'s values.
+    pub(super) fn append(&mut self, mut other: Displaced) {
+        self.terminals.append(&mut other.terminals);
+        self.elements.append(&mut other.elements);
+    }
+
+    /// Takes in the elements of `target`.
+    fn target(&mut self, target: Target) {
+        self.elements.extend(target.element);
+        self.elements.extend(target.slider);
+    }
 }
 
 /// Where the focus-following subscription is to be moved for a focus,
@@ -247,10 +290,6 @@ pub(super) struct Effects {
     pub(super) aside: Option<(u64, OutpostToSupervisor)>,
     /// The report to record for Core's judgement.
     pub(super) report: Option<Report>,
-    /// The walk this report covers, by its arming's number: a commit whose
-    /// walk was already published at its bound drops its report and
-    /// follow.
-    pub(super) covers_walk: Option<u64>,
     /// A focus becoming the followed one.
     pub(super) follow: Option<Follow>,
     /// A foreground report's role and batch, with a caret key's watch on
@@ -290,8 +329,6 @@ pub(super) struct Effects {
     pub(super) clear_redirect: bool,
     /// A held node's states, as an MSAA state change read them.
     pub(super) states: Option<(NodeId, StateSet)>,
-    /// Nodes released, whose terminals go with them.
-    pub(super) released: Vec<u64>,
 }
 
 /// What [`Watch::commit`](super::worker::Watch) did.
@@ -301,9 +338,6 @@ pub(super) enum Committed {
     Applied,
     /// Nothing was applied: the worker was abandoned.
     Refused,
-    /// The report covers a walk already published at its bound: the report
-    /// and its follow were dropped, and the rest applied.
-    PublishedAtBound,
 }
 
 /// Sends `message` under the watch lock, recording every node issued or
@@ -358,13 +392,15 @@ impl FollowState {
     }
 
     /// Moves the focus-following subscription to `target`, unless it is
-    /// already there.
-    fn retarget(&mut self, context: &Context, target: Target) {
+    /// already there. The subscription keeps references of its own, so
+    /// `target`'s elements are displaced either way.
+    fn retarget(&mut self, context: &Context, target: Target, displaced: &mut Displaced) {
         if self.followed == target.wanted {
             tracing::debug!(
                 wanted = ?target.wanted,
                 "the focus-following subscription already follows this focus; it is not moved"
             );
+            displaced.target(target);
             return;
         }
         tracing::debug!(
@@ -373,25 +409,26 @@ impl FollowState {
             "the focus-following subscription is moved"
         );
         self.followed = target.wanted;
-        let Some(subscription) = context.focus_events.get() else {
-            return;
-        };
-        match (target.wanted, target.element) {
-            (Some((_, group, _)), Some(element)) => subscription.retarget_with(
-                verbatim_uia::Scope::Elements(vec![element.reference()]),
-                group,
-                target
-                    .slider
-                    .map(|slider| (slider.reference(), Group::Value))
-                    .into_iter()
-                    .collect(),
-            ),
-            _ => subscription.retarget(verbatim_uia::Scope::Nothing),
+        if let Some(subscription) = context.focus_events.get() {
+            match (target.wanted, &target.element) {
+                (Some((_, group, _)), Some(element)) => subscription.retarget_with(
+                    verbatim_uia::Scope::Elements(vec![element.reference()]),
+                    group,
+                    target
+                        .slider
+                        .as_ref()
+                        .map(|slider| (slider.reference(), Group::Value))
+                        .into_iter()
+                        .collect(),
+                ),
+                _ => subscription.retarget(verbatim_uia::Scope::Nothing),
+            }
         }
+        displaced.target(target);
     }
 
     /// Makes `follow` the followed focus.
-    fn follow(&mut self, context: &Context, follow: Follow) {
+    fn follow(&mut self, context: &Context, follow: Follow, displaced: &mut Displaced) {
         let Follow {
             node,
             role,
@@ -424,7 +461,7 @@ impl FollowState {
         } else if let Some(entry) = self.terminals.get_mut(&node.number()) {
             entry.sent_caret = None;
         }
-        self.retarget(context, target);
+        self.retarget(context, target, displaced);
         self.owed = owed.map(|work| Owed {
             node,
             work,
@@ -467,16 +504,15 @@ impl FollowState {
     }
 
     /// Applies `effects` but for their messages and report, which
-    /// [`Watch::commit`](super::worker::Watch) sends and records first;
-    /// `follow` is applied only when `with_follow`. Returns the watch taken
-    /// out by [`WatchChange::Take`].
+    /// [`Watch::commit`](super::worker::Watch) sends and records first.
+    /// Returns the watch taken out by [`WatchChange::Take`], and what was
+    /// displaced, to be dropped once the watch lock is let go.
     pub(super) fn apply(
         &mut self,
         context: &Context,
         generation: u64,
         effects: Effects,
-        with_follow: bool,
-    ) -> Option<OpenWatch> {
+    ) -> (Option<OpenWatch>, Displaced) {
         let Effects {
             follow,
             foreground,
@@ -493,35 +529,37 @@ impl FollowState {
             absorb,
             clear_redirect,
             states,
-            released,
             ..
         } = effects;
+        let mut displaced = Displaced::default();
         if let Some(memo) = dialog {
             self.tracking.dialog = memo;
         }
-        if with_follow {
-            if let Some(follow) = follow {
-                self.follow(context, follow);
-            }
-            if let Some(path) = focus_path {
-                self.focus_path = Some(path);
-            }
-            if let Some(value_from_selection) = value_from_selection {
-                self.tracking.value_from_selection = value_from_selection;
-            }
+        if let Some(follow) = follow {
+            self.follow(context, follow, &mut displaced);
+        }
+        if let Some(path) = focus_path {
+            self.focus_path = Some(path);
+        }
+        if let Some(value_from_selection) = value_from_selection {
+            self.tracking.value_from_selection = value_from_selection;
         }
         if let Some((node, role, batch)) = foreground {
             self.end_watch_elsewhere(context, node);
             self.tracking.role = Some(role);
             self.tracking.batch = Some(batch);
         }
-        if let Some((node, target)) = element
-            && self.tracking.focus == Some(node)
-        {
-            self.retarget(context, target);
+        if let Some((node, target)) = element {
+            if self.tracking.focus == Some(node) {
+                self.retarget(context, target, &mut displaced);
+            } else {
+                displaced.target(target);
+            }
         }
         if let Some((node, entry)) = terminal {
-            self.terminals.insert(node.number(), entry);
+            displaced
+                .terminals
+                .extend(self.terminals.insert(node.number(), entry));
         }
         if let Some((node, caret)) = sent_caret {
             self.terminals.entry(node.number()).or_default().sent_caret = Some(caret);
@@ -549,9 +587,6 @@ impl FollowState {
         if let Some((node, states)) = states {
             let _ = context.held().replace_states(node, states);
         }
-        for node in released {
-            self.terminals.remove(&node);
-        }
         let mut taken = None;
         match watch {
             None => {}
@@ -573,6 +608,6 @@ impl FollowState {
             }
             Some(WatchChange::Wake(at)) => context.intake.wake_at(at),
         }
-        taken
+        (taken, displaced)
     }
 }

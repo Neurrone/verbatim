@@ -435,3 +435,17 @@ fn related(value: &VARIANT) -> Related {
         Related::Other
     }
 }
+
+/// Joins this thread to the multithreaded apartment, for a test that holds
+/// MSAA objects.
+#[cfg(test)]
+pub(crate) fn join_mta() {
+    // SAFETY: the reserved argument is none; a thread already in an
+    // apartment gets an error, which leaves it where it is.
+    let _ = unsafe {
+        windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
+        )
+    };
+}

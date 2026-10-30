@@ -55,8 +55,8 @@ pub(super) struct BoundFocus {
 pub(super) struct FocusProgress {
     /// The worker it is the walk of.
     pub(super) generation: u64,
-    /// Which arming of the walk it is, so a publication made from a copy
-    /// claims only that walk.
+    /// Which arming of the walk it is, so a publication claims only that
+    /// walk.
     pub(super) armed: u64,
     /// The walk's bound, by the system's clock.
     pub(super) bound_at: Instant,
