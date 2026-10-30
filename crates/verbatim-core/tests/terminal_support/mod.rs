@@ -55,6 +55,7 @@ pub fn focus() -> Input {
         selected_child: None,
         text: None,
         earlier: None,
+        group: None,
     })
 }
 

@@ -4,9 +4,9 @@
 
 use verbatim_core::{ReducerRecorder, SrState, replay};
 use verbatim_model::{
-    Backend, Earcon, EarlierElement, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind, Role,
-    SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
+    Backend, Earcon, EarlierElement, Effect, FetchResult, FocusGroup, Input, NodeDetails, NodeId,
+    NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind,
+    Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
     WindowFacts, WindowHandle,
 };
 
@@ -60,6 +60,7 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     }
 }
@@ -117,6 +118,7 @@ fn focus_in(
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     )
 }
@@ -140,6 +142,7 @@ fn focus_in_after(
             selected_child: None,
             text: None,
             earlier: Some(earlier),
+            group: None,
         },
     )
 }
@@ -160,6 +163,7 @@ fn foreground_in(source: Pid, facts: WindowFacts, mut snapshot: NodeSnapshot) ->
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     )
 }
@@ -719,6 +723,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
                 selected_child: None,
                 text: None,
                 earlier: None,
+                group: None,
             },
         ),
     );
@@ -1330,6 +1335,7 @@ fn sample_script() -> Vec<Input> {
                 selected_child: None,
                 text: None,
                 earlier: None,
+                group: None,
             },
         },
         Input::Event {
@@ -1448,6 +1454,7 @@ fn focus_event_with_ancestors(
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     }
 }
@@ -1966,6 +1973,7 @@ fn focus_event_with_selection(
             selected_child,
             text: None,
             earlier: None,
+            group: None,
         },
     }
 }
@@ -2728,40 +2736,300 @@ fn observed_at(mut input: Input, us: u64) -> Input {
     input
 }
 
-/// NVDA's duplicate rule drops a repeated focus on the element Core queued
-/// last before anything else judges it, so it never stands as the newest
-/// focus: a focus from another application observed before the duplicate,
-/// but after the first report, is not stale.
-#[test]
-fn a_duplicate_focus_does_not_make_a_later_focus_stale() {
-    let edit = node(
+/// The text editor of application 1, node 1 in its outpost.
+fn text_editor() -> NodeSnapshot {
+    node(
         1,
         Role::EditableText,
         Some("Text editor"),
         None,
         StateSet::new(),
-    );
+    )
+}
+
+/// The repeat hole's arrival order: the editor's focus A at 1,000, its
+/// repeat at 1,200, whose reader read the element it held still focused,
+/// and then another application's focus B, observed at 1,100 between them.
+/// NVDA's in-order queue would hold A, B, A and end on A; the repeat
+/// records its observation though it is dropped as a duplicate, so B,
+/// observed before it, is stale and silent, and Core stays on A
+/// (`docs/parity/focus-events.md`, "Stale focus events").
+#[test]
+fn a_duplicate_focus_makes_a_focus_observed_before_it_stale() {
     let (state, _) = reduce(
         &SrState::new(),
-        &observed_at(focus_in(Pid(1), window(10), edit.clone(), vec![]), 1_000),
+        &observed_at(focus_in(Pid(1), window(10), text_editor(), vec![]), 1_000),
     );
     let (state, effects) = reduce(
         &state,
-        &observed_at(focus_in(Pid(1), window(10), edit, vec![]), 2_000),
+        &observed_at(
+            focus_in_after(
+                Pid(1),
+                window(10),
+                text_editor(),
+                vec![],
+                EarlierElement::Focused,
+            ),
+            1_200,
+        ),
     );
     assert!(effects.is_empty(), "the same element, still focused");
     let button = node(1, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(focus_in(Pid(2), window(20), button, vec![]), 1_100),
+    );
+    assert_eq!(heard(&effects), vec![], "observed before the repeat");
+    assert_eq!(
+        state.focused().map(|(source, node)| (source, node.id)),
+        Some((Pid(1), NodeId::in_outpost(OutpostId(1), 1)))
+    );
+}
+
+/// The repeat hole in the order observed: the editor's focus A at 1,000,
+/// another application's focus B at 1,100, and A again at 1,200 with its
+/// element still focused. B came between, so A is no duplicate and is
+/// spoken, as NVDA's queue ends on A.
+#[test]
+fn the_repeat_hole_in_the_order_observed_speaks_the_return() {
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at(focus_in(Pid(1), window(10), text_editor(), vec![]), 1_000),
+    );
+    let button = node(1, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, _) = reduce(
+        &state,
+        &observed_at(focus_in(Pid(2), window(20), button, vec![]), 1_100),
+    );
     let (_, effects) = reduce(
         &state,
-        &observed_at(focus_in(Pid(2), window(20), button, vec![]), 1_500),
+        &observed_at(
+            focus_in_after(
+                Pid(1),
+                window(10),
+                text_editor(),
+                vec![],
+                EarlierElement::Focused,
+            ),
+            1_200,
+        ),
     );
     assert_eq!(
         heard(&effects),
         vec![
-            Heard::Expire(focus_now(OutpostId(2), 1, &[], None)),
+            Heard::Expire(focus_now(OutpostId(1), 1, &[], None)),
             Heard::Stop,
-            queued(vec![UtteranceSegment::label("OK"), role(Role::Button)]),
+            queued(vec![
+                UtteranceSegment::label("Text editor"),
+                role(Role::EditableText)
+            ]),
         ]
+    );
+}
+
+/// A foreground report of the window that holds Core's focus is refused,
+/// but records its observation: another application's focus observed
+/// before it and arriving after it is stale, and Core stays in the window,
+/// as NVDA's in-order queue ends on the window's foreground event.
+#[test]
+fn a_refused_foreground_report_makes_a_focus_observed_before_it_stale() {
+    let check_box = node(2, Role::CheckBox, Some("Wrap"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at(
+            focus_in(Pid(1), foreground_window(10), check_box, vec![]),
+            1_000,
+        ),
+    );
+    let window_node = node(3, Role::Window, Some("Options"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(
+            foreground_in(Pid(1), foreground_window(10), window_node),
+            2_000,
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![],
+        "the focus is already in the window"
+    );
+    let button = node(1, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(focus_in(Pid(2), window(20), button, vec![]), 1_900),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![],
+        "observed before the window's report"
+    );
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id),
+        Some(NodeId::in_outpost(OutpostId(1), 2))
+    );
+}
+
+/// An MSAA repeat of the focus Core holds, alive, which its outpost now
+/// reads in full: silent, with its newer states kept.
+#[test]
+fn an_msaa_repeat_of_the_alive_focus_is_silent_and_keeps_its_states() {
+    let mut check_box = node(2, Role::CheckBox, Some("Wrap"), None, StateSet::new());
+    check_box.backend = Backend::Msaa;
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), window(10), check_box.clone(), vec![]),
+    );
+    check_box.states = StateSet::new().with(State::Checked);
+    let (state, effects) = reduce(&state, &focus_in(Pid(1), window(10), check_box, vec![]));
+    assert_eq!(heard(&effects), vec![], "the same object, still the focus");
+    assert_eq!(
+        state.focused().map(|(_, node)| node.states),
+        Some(StateSet::new().with(State::Checked))
+    );
+}
+
+/// A name change of a node that is no longer Core's focus, which its
+/// outpost reads while it has not released the node, is silent.
+#[test]
+fn a_change_off_the_focus_is_silent() {
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), window(10), text_editor(), vec![]),
+    );
+    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, _) = reduce(&state, &focus_in(Pid(1), window(10), button, vec![]));
+    let (_, effects) = reduce(
+        &state,
+        &event_in(
+            Pid(1),
+            Some(window(10)),
+            NormalizedEvent::PropertyChanged {
+                node_id: NodeId::new(1),
+                change: PropertyChange::Name(Some("Notes".to_owned())),
+                child_count: None,
+            },
+        ),
+    );
+    assert_eq!(heard(&effects), vec![]);
+}
+
+/// `input`, a focus report, as the entry of rank `rank` in its outpost's
+/// focus group `number`.
+fn in_group(mut input: Input, number: u64, rank: u32) -> Input {
+    if let Input::Event {
+        event: NormalizedEvent::FocusChanged { group, .. },
+        ..
+    } = &mut input
+    {
+        *group = Some(FocusGroup { number, rank });
+    }
+    input
+}
+
+/// A focus group of window 10's foreground change and the focus beside it,
+/// "Three": with Core's focus a control of window 10, the change is
+/// refused, and the older entry is taken and spoken.
+#[test]
+fn a_groups_older_focus_is_taken_when_its_newer_change_is_refused() {
+    let one = node(2, Role::ListItem, Some("One"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), foreground_window(10), one, vec![]),
+    );
+    let window_node = node(3, Role::Window, Some("Numbers"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &in_group(
+            foreground_in(Pid(1), foreground_window(10), window_node),
+            1,
+            0,
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![],
+        "the focus is already in the window"
+    );
+    let three = node(4, Role::ListItem, Some("Three"), None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &in_group(focus_in(Pid(1), foreground_window(10), three, vec![]), 1, 1),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 4, &[], None),
+            vec![vec![UtteranceSegment::label("Three")]]
+        )
+    );
+}
+
+/// The same group with Core's focus in another application: the change is
+/// taken and its window said, and the older entry of the group is dropped;
+/// another generation's group of the same number is not.
+#[test]
+fn a_groups_older_focus_is_dropped_once_its_newer_change_is_taken() {
+    let other = node(1, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(2), foreground_window(20), other, vec![]),
+    );
+    let window_node = node(3, Role::Window, Some("Numbers"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &in_group(
+            foreground_in(Pid(1), foreground_window(10), window_node),
+            1,
+            0,
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 3, &[], Some((OutpostId(1), 3)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Numbers"), role(Role::Window)]),
+        ]
+    );
+    let three = node(4, Role::ListItem, Some("Three"), None, StateSet::new());
+    let older = in_group(focus_in(Pid(1), foreground_window(10), three, vec![]), 1, 1);
+    let (_, effects) = reduce(&state, &older);
+    assert_eq!(heard(&effects), vec![], "the group ended at the change");
+    let (_, effects) = reduce_from(&state, &older, OutpostId(5));
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(5), 4, &[], Some((OutpostId(1), 3))),
+            vec![vec![UtteranceSegment::label("Three")]]
+        ),
+        "a replacement generation counts its groups again"
+    );
+}
+
+/// With Core's focus another outpost's node inside window 10, the
+/// window's foreground change is refused, and its outpost ends the group
+/// at the change, so no older entry follows it.
+#[test]
+fn a_groups_change_of_the_window_holding_another_outposts_focus_is_refused() {
+    let content = node(1, Role::Button, Some("Apply"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(2), foreground_window(10), content, vec![]),
+    );
+    let window_node = node(3, Role::Window, Some("Settings"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &in_group(
+            foreground_in(Pid(1), foreground_window(10), window_node),
+            1,
+            0,
+        ),
+    );
+    assert_eq!(heard(&effects), vec![]);
+    assert_eq!(
+        state.focused().map(|(source, node)| (source, node.id)),
+        Some((Pid(2), NodeId::in_outpost(OutpostId(2), 1)))
     );
 }
 
@@ -3014,6 +3282,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     };
     let (state, _) = reduce_from(&SrState::new(), &foreground(900), OutpostId(2));
@@ -4500,13 +4769,21 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     // The replacement numbers its nodes afresh.
     let dialog = node(1, Role::Dialog, Some("Save"), None, StateSet::new());
     let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
-    let report = focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]);
+    let report = observed_at(
+        focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]),
+        3_000,
+    );
     let (state, effects) = reduce_from(&state, &report, OutpostId(2));
 
     assert!(effects.is_empty(), "the user already heard this focus");
     assert_eq!(
         state.focused().map(|(_, node)| node.id),
         Some(NodeId::in_outpost(OutpostId(2), 2))
+    );
+    assert_eq!(
+        state.latest_focus_observed_at(),
+        Some(3_000),
+        "the re-read is the newest focus taken"
     );
     let (_, effects) = reduce(
         &state,
@@ -4967,6 +5244,7 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
             selected_child: Some(item),
             text: None,
             earlier: None,
+            group: None,
         },
     );
     let (state, _) = reduce(&SrState::new(), &input);
@@ -6416,6 +6694,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     };
     let menu_item_of_focus = |effects: &[Effect]| match effects.first() {

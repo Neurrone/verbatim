@@ -1296,6 +1296,7 @@ impl OutpostUnderTest {
                         selected_child,
                         text,
                         earlier,
+                        ..
                     },
                 window,
                 timing,

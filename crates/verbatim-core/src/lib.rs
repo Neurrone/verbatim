@@ -18,6 +18,7 @@ pub mod dump;
 mod editing;
 pub mod flight_recorder;
 pub mod focus_rules;
+mod foreground;
 mod recorder;
 mod reduce;
 mod review;

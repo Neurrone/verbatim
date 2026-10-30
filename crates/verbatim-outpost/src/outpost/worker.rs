@@ -2565,6 +2565,7 @@ impl Worker<'_> {
             selected_child,
             text: text.map(Box::new),
             earlier: self.earlier.take(),
+            group: None,
         };
         let message = self.event_message(trace, observed_at_us, backend, window, event);
         let mut effects = Effects {
@@ -5002,6 +5003,7 @@ fn publication(context: &Context, walk: &FocusProgress) -> Effects {
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         },
     );
     let (follow, _) = follow_of(
@@ -5125,6 +5127,7 @@ mod tests {
             selected_child: None,
             text: None,
             earlier: None,
+            group: None,
         };
         let explorer = || "explorer".to_owned();
         let held = || true;

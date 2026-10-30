@@ -19,15 +19,17 @@ use verbatim_model::{
     PropertyChange, Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority,
     State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
-use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle};
+use verbatim_model::{
+    Backend, FocusGroup, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle,
+};
 
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
     is_sensitive_slider, meeting, repeats_focus, selection_target,
 };
+use crate::foreground::{Attention, ForegroundFact, LatestFocus};
 use crate::state::{
-    Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation,
-    SpokenRecord, SrState, TextFollowUp,
+    FocusContext, Navigator, NavigatorRead, PendingNavigation, SpokenRecord, SrState, TextFollowUp,
 };
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
@@ -343,14 +345,18 @@ fn classify(
     }
 }
 
-/// Whether a focus event from `outpost`, observed at `observed_at_us`,
-/// microseconds on the run's shared clock, was observed before the newest
-/// focus applied from another outpost ([`LatestFocus::observed_after`]).
-/// Events from one outpost arrive in order; across outposts they can arrive
-/// out of order, which NVDA's single event queue never does. An answer to a
-/// focus-now query carries the time the outpost began reading it, so it is
-/// ordered with the events by that; a report with no observation time (0)
-/// is never stale.
+/// Whether a focus event from outpost generation `outpost`, observed at
+/// `observed_at_us`, microseconds on the run's shared clock, was observed
+/// before the newest focus observation from another generation, the
+/// ordering stamp ([`LatestFocus::observed_after`]). Events from one
+/// generation arrive in order; across generations they can arrive out of
+/// order, which NVDA's single event queue never does. A replacement
+/// generation's report is judged against its predecessor's newest focus as
+/// another outpost's, which is safe because its first report, the
+/// focus-now answer, carries the time its read began, after the
+/// predecessor's last observation. An answer to a focus-now query is
+/// ordered with the events by that time; a report with no observation time
+/// (0) is never stale.
 ///
 /// A focus in the same top-level window as the newest focus is never stale:
 /// one window can hold several applications (a Settings page's content
@@ -365,7 +371,7 @@ fn is_stale_focus(
 ) -> bool {
     let top_level = window.map(|window| window.top_level);
     observed_at_us != 0
-        && state.latest_focus.is_some_and(|latest| {
+        && state.foreground.latest_focus().is_some_and(|latest| {
             latest.outpost != outpost
                 && latest.observed_after(observed_at_us)
                 && !(top_level.is_some() && top_level == latest.top_level)
@@ -472,7 +478,8 @@ fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[Nod
 fn observed_before_foreground_change(state: &SrState, observed_at_us: u64) -> bool {
     observed_at_us != 0
         && state
-            .foreground_changed_at
+            .foreground
+            .changed_at()
             .is_some_and(|changed_at| observed_at_us < changed_at)
 }
 
@@ -614,10 +621,13 @@ fn reduce_activation_completed(
     })]
 }
 
-/// Whether `event` is a focus dropped before anything else judges it: a
-/// duplicate of the last focus Core queued, whose newer reading is kept
-/// unspoken, a stale focus from another outpost, or a focus an
-/// application's rule refuses whole ([`crate::applications::refuses_focus`]).
+/// Whether `event` is a focus dropped before anything else judges it: an
+/// older entry of a focus group whose newer report Core took
+/// ([`verbatim_model::FocusGroup`]), a focus an application's rule refuses
+/// whole ([`crate::applications::refuses_focus`]), or a stale focus from
+/// another outpost generation. The duplicate rule comes after the
+/// foreground test, so a duplicate that passes both still records its
+/// observation ([`focus_is_a_duplicate`]).
 fn focus_dropped_first(
     state: &mut SrState,
     observed_at_us: u64,
@@ -627,9 +637,8 @@ fn focus_dropped_first(
     let NormalizedEvent::FocusChanged {
         node,
         foreground,
-        ancestors,
-        text,
         earlier,
+        group,
         ..
     } = event
     else {
@@ -638,16 +647,76 @@ fn focus_dropped_first(
     if *earlier == Some(EarlierElement::Gone) {
         forget_text_of(state, node.id);
     }
+    if group.is_some_and(|group| older_than_taken(state, node.id.outpost(), group)) {
+        return true;
+    }
     if !foreground && crate::applications::refuses_focus(window, node) {
         return true;
     }
-    if is_duplicate_focus(state, node, *earlier) {
-        keep_newer_reading(state, node, focus_ancestors(window, node, ancestors));
-        sync_navigator_with_focus(state);
-        editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
-        return true;
-    }
     is_stale_focus(state, node.id.outpost(), observed_at_us, window)
+}
+
+/// Whether `group`, of outpost generation `outpost`, is an older entry of
+/// the focus group whose report Core took last: NVDA's `pumpAll` processes
+/// no older event of a run once one is processed.
+fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> bool {
+    state.group_taken.is_some_and(|(taken_outpost, taken)| {
+        taken_outpost == outpost && taken.number == group.number && taken.rank < group.rank
+    })
+}
+
+/// Records that the focus of `report` was taken: the applied stamp, and
+/// its focus group, which ends the group for its older entries.
+fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
+    if report.observed_at_us != 0 {
+        state
+            .foreground
+            .apply(ForegroundFact::Applied(report.observed_at_us));
+    }
+    if let Some(group) = report.group {
+        state.group_taken = Some((report.node.id.outpost(), group));
+    }
+}
+
+/// Records the observation of `event`, a focus that passed the stale and
+/// foreground tests, as the ordering stamp, and answers whether it is a
+/// duplicate of the focus Core holds, whose newer reading is then kept
+/// unspoken.
+fn focus_is_a_duplicate(
+    state: &mut SrState,
+    observed_at_us: u64,
+    window: Option<&WindowFacts>,
+    event: &NormalizedEvent,
+) -> bool {
+    let NormalizedEvent::FocusChanged {
+        node,
+        ancestors,
+        text,
+        earlier,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    // The ordering stamp: every attended focus observation, taken, a
+    // duplicate, or a foreground report the reducer then refuses, as NVDA's
+    // one queue holds each in the order it was observed.
+    if observed_at_us != 0 {
+        state
+            .foreground
+            .apply(ForegroundFact::Observed(LatestFocus {
+                outpost: node.id.outpost(),
+                observed_at_us,
+                top_level: window.map(|window| window.top_level),
+            }));
+    }
+    if !is_duplicate_focus(state, node, *earlier) {
+        return false;
+    }
+    keep_newer_reading(state, node, focus_ancestors(window, node, ancestors));
+    sync_navigator_with_focus(state);
+    editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
+    true
 }
 
 /// A focus's ancestors as Core takes them: as the event reports them, but
@@ -712,7 +781,7 @@ fn reduce_event(
         return Vec::new();
     }
     match classify(
-        state.attention.as_ref(),
+        state.foreground.attention(),
         state.focus_source(),
         source,
         window,
@@ -722,14 +791,8 @@ fn reduce_event(
         Acceptance::Background => return reduce_background(state, trace_id, observed_at_us, event),
         Acceptance::Attended => {}
     }
-    if let NormalizedEvent::FocusChanged { node, .. } = event
-        && observed_at_us != 0
-    {
-        state.latest_focus = Some(LatestFocus {
-            outpost: node.id.outpost(),
-            observed_at_us,
-            top_level: window.map(|window| window.top_level),
-        });
+    if focus_is_a_duplicate(state, observed_at_us, window, event) {
+        return Vec::new();
     }
 
     let effects = match event {
@@ -740,6 +803,7 @@ fn reduce_event(
             selected_child,
             text,
             earlier,
+            group,
         } => {
             let ancestors = focus_ancestors(window, node, ancestors);
             reduce_focus_changed(
@@ -755,6 +819,7 @@ fn reduce_event(
                     selected_child: selected_child.as_ref(),
                     text: text.as_deref(),
                     earlier: *earlier,
+                    group: *group,
                 },
             )
         }
@@ -878,6 +943,8 @@ struct FocusReport<'a> {
     text: Option<&'a FocusText>,
     /// What its reader read of the element it held before under its node.
     earlier: Option<EarlierElement>,
+    /// Its place in its outpost's focus group.
+    group: Option<FocusGroup>,
 }
 
 impl FocusReport<'_> {
@@ -936,10 +1003,10 @@ fn reduce_focus_changed(
     report: &FocusReport<'_>,
 ) -> Vec<Effect> {
     if report.foreground {
-        state.attention = Some(Attention {
+        state.foreground.apply(ForegroundFact::Reported(Attention {
             source,
             window: window.cloned(),
-        });
+        }));
         if let Some(focus) = state.focus.as_ref()
             && let (Some(focus_window), Some(window)) = (focus.window.as_ref(), window)
             && focus_window.top_level == window.top_level
@@ -974,6 +1041,7 @@ fn reduce_focus_changed(
         // user already heard, so take its ids without speaking.
         state.focus = Some(new_focus);
         state.focuses_queued += 1;
+        record_taken(state, report);
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
         }
@@ -998,16 +1066,20 @@ fn reduce_focus_changed(
     // focus now is.
     let foreground_changed = line.cut;
     if foreground_changed && report.observed_at_us != 0 {
-        state.foreground_changed_at = Some(report.observed_at_us);
+        state
+            .foreground
+            .apply(ForegroundFact::LineCut(report.observed_at_us));
     }
     if report.foreground {
-        state.foreground = Some(ObjectKey::of(report.node));
+        state
+            .foreground
+            .apply(ForegroundFact::Object(ObjectKey::of(report.node)));
     }
     let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: ObjectKey::of(report.node),
         ancestors: new_focus.ancestors.iter().map(ObjectKey::of).collect(),
-        foreground: state.foreground,
+        foreground: state.foreground.object(),
         menu_item_of_focus: menu_item_of_focus(state.focus.as_ref(), report.node),
     })];
     // Entering a menu cuts speech too, at its place among the entered
@@ -1015,6 +1087,7 @@ fn reduce_focus_changed(
     end_text_activity(state, report.node.id, foreground_changed, &mut effects);
     state.focus = Some(new_focus);
     state.focuses_queued += 1;
+    record_taken(state, report);
     state.navigator = Some(navigator);
     // A nameless foreground window, and any focus in the shell's staging
     // windows, say nothing; speech was cut above if the foreground window
@@ -1073,8 +1146,8 @@ fn follow_an_unreported_foreground(
     report: &FocusReport<'_>,
 ) {
     let attended = state
-        .attention
-        .as_ref()
+        .foreground
+        .attention()
         .and_then(|attention| attention.window.as_ref())
         .is_some_and(|attended| {
             attended.top_level == window.top_level || attended.root_owner == window.root_owner
@@ -1082,11 +1155,13 @@ fn follow_an_unreported_foreground(
     if !window.in_foreground || attended {
         return;
     }
-    state.attention = Some(Attention {
-        source,
-        window: Some(window.clone()),
-    });
-    state.foreground = report.ancestors.first().map(ObjectKey::of);
+    state.foreground.apply(ForegroundFact::Unreported(
+        Attention {
+            source,
+            window: Some(window.clone()),
+        },
+        report.ancestors.first().map(ObjectKey::of),
+    ));
 }
 
 /// Ends what the previous focus's text was doing when the focus moves to

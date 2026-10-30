@@ -93,7 +93,10 @@ recorder unchanged. What the reducer does with each type is in
     Automation focus whose node its reader held an element for, `earlier`,
     an `EarlierElement` (focused, not focused or gone): what was read of
     that element with this focus, by which Core tells a repeat from a new
-    element under a reused runtime id. The enrichment
+    element under a reused runtime id; and, for an entry of a focus group
+    its outpost tried newest first, `group`, a `FocusGroup` of the
+    group's number and the entry's rank, by which Core takes no older
+    entry once it took a newer one. The enrichment
     is deadline-guarded and completes a cut chain by plain windows, so it
     never blocks or loses a focus.
   - `PropertyChanged` with a `PropertyChange`: name, value, description,

@@ -292,6 +292,7 @@ mod tests {
                         },
                         text: None,
                         earlier: None,
+                        group: None,
                     },
                 },
                 effect_count: 1,

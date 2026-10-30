@@ -1621,6 +1621,7 @@ mod tests {
                 },
                 text: None,
                 earlier: None,
+                group: None,
             },
         };
         let ready = OutpostToSupervisor::Ready {
@@ -1670,6 +1671,7 @@ mod tests {
                 selected_child: Some(snapshot(3)),
                 text: None,
                 earlier: None,
+                group: None,
             },
         };
         let mut chain = OutpostToSupervisor::Reply {

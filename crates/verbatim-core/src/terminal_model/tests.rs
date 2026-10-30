@@ -85,6 +85,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
                 selected_child: None,
                 text: None,
                 earlier: None,
+                group: None,
             },
         },
     );

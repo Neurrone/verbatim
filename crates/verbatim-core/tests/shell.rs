@@ -10,7 +10,8 @@ use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, Earcon, Effect, ForegroundWindow, HookForeground, Input, LockKey, Message,
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, Role,
-    SegmentContent, SpeechPriority, StateSet, TraceId, Utterance, UtteranceSegment, WindowHandle,
+    SegmentContent, SpeechPriority, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts,
+    WindowHandle,
 };
 
 /// An utterance of `content` alone, with no source node.
@@ -222,6 +223,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
                 selected_child: None,
                 text: None,
                 earlier: None,
+                group: None,
             },
         },
     );
@@ -238,6 +240,68 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     // None since: the application in front is asked for its focus.
     assert_eq!(
         reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_001 }),
+        [Effect::ReadForegroundFocus]
+    );
+}
+
+/// A focus report of node `number` in window 10, observed at `us`: a
+/// foreground change of the window when `foreground` holds.
+fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
+    let window = WindowFacts {
+        top_level: WindowHandle(10),
+        root_owner: WindowHandle(10),
+        topmost: false,
+        under_active_window: None,
+        in_foreground: true,
+        class: String::new(),
+        application: String::new(),
+        alt_held: false,
+    };
+    Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_us: us,
+        source: Pid(1),
+        backend: Backend::Msaa,
+        window: Some(window),
+        event: NormalizedEvent::FocusChanged {
+            node: NodeSnapshot {
+                id: NodeId::in_outpost(OutpostId(1), number),
+                backend: Backend::Msaa,
+                role: if foreground {
+                    Role::Window
+                } else {
+                    Role::Button
+                },
+                name: Some("OK".to_owned()),
+                value: None,
+                states: StateSet::new(),
+                details: NodeDetails::default(),
+            },
+            foreground,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+        },
+    }
+}
+
+/// A menu's end compares with the newest focus taken, not with a
+/// foreground report the reducer refused: the refused report, observed
+/// after the end, does not stand for a focus processed with it.
+#[test]
+fn a_menus_end_is_compared_with_the_focus_taken_only() {
+    let mut state = SrState::new();
+    let _ = reduce(&mut state, &focus_in_window(5, false, 1_000));
+    assert_eq!(
+        reduce(&mut state, &focus_in_window(6, true, 2_000)),
+        [],
+        "the focus is already in the window"
+    );
+    assert_eq!(state.latest_focus_observed_at(), Some(1_000));
+    assert_eq!(
+        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_500 }),
         [Effect::ReadForegroundFocus]
     );
 }

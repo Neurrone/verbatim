@@ -48,7 +48,9 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::ForegroundWindow(foreground) => {
             // Decided into the keyboard hook's view of the foreground
             // (`SrState::hook_foreground`); nothing is said.
-            state.foreground_window = Some(*foreground);
+            state
+                .foreground
+                .apply(crate::foreground::ForegroundFact::Window(*foreground));
             Vec::new()
         }
         _ => Vec::new(),

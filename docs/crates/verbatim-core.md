@@ -79,9 +79,10 @@ guide maps those behaviors onto the crate's types and modules.
     listener and the outposts concerned after every focus event the
     reducer judges and every change of its focus
     (`SupervisorToOutpost::CoreFocus`).
-  - `latest_focus_observed_at()`, when the newest applied focus was
-    observed, in microseconds, which lets the shell skip a fake focus
-    after a menu closes when a later focus has been applied.
+  - `latest_focus_observed_at()`, when the newest focus the reducer took
+    was observed, in microseconds (the applied stamp), which lets the
+    shell skip a fake focus after a menu closes when a later focus has
+    been taken.
   - `attention()`, the application holding attention, which the shell
     sends to the supervisor.
   - `held_nodes()` and `held_anchors()`: every node id and every text
@@ -284,12 +285,28 @@ code is in `reduce.rs` unless named.
   ignored when its top-level window handle equals the current focus's
   (handles, since node ids differ between outposts); a nameless one moves
   focus and attention silently.
+- The foreground record (`foreground.rs`): one `Foreground` with private
+  fields, written only by `apply` with one `ForegroundFact` per writer
+  (`Reported`, `Unreported`, `Object`, `LineCut`, `Window`, `Observed`,
+  `Applied`) and read through accessors. It holds the attention record,
+  the foreground object, the time of the newest foreground change, the
+  listener's foreground window, and two stamps: the ordering stamp
+  (`latest_focus`), written for every attended focus observation, taken,
+  a duplicate or a refused foreground report, which the stale rule reads;
+  and the applied stamp, written only for a focus taken, which a menu's
+  end reads. `SrState` flattens it into the keys it held before, and a
+  dump without the applied stamp takes the ordering stamp for it.
 - Repeats and staleness (`docs/parity/focus-events.md`, "Duplicate focus
-  suppression" and "Stale focus events"). A focus that `repeats_focus`
-  judges a repeat is dropped before anything else judges it, its newer
-  reading kept unspoken; what Core last spoke of the focus is left as it
-  was, so a change the repeat carried in is spoken when its event comes. Across outposts, a focus observed before the
-  applied one is dropped (`observed_at_us`, a tie being no earlier).
+  suppression" and "Stale focus events"). A focus is judged in this
+  order: an older entry of a focus group whose newer report Core took is
+  dropped (`FocusGroup`, keyed by the report's outpost generation and the
+  group's number); an application's rule; the stale rule, which drops a
+  focus from another outpost generation observed before the ordering
+  stamp (`observed_at_us`, a tie being no earlier); the foreground test
+  (`classify`); then the ordering stamp is written, and a focus that
+  `repeats_focus` judges a repeat is dropped, its newer reading kept
+  unspoken; what Core last spoke of the focus is left as it was, so a
+  change the repeat carried in is spoken when its event comes.
 - Background speech across a foreground change
   (`docs/design/focus-pipeline.md`, section 7): a background event
   observed before the newest applied foreground change is dropped.

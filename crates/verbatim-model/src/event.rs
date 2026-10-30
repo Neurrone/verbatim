@@ -180,6 +180,25 @@ pub enum EarlierElement {
     Gone,
 }
 
+/// A focus report's place in its outpost's focus group: a run of focus and
+/// foreground events the outpost tries newest first, as NVDA's `pumpAll`
+/// tries a run of events, stopping at the first one processed
+/// (`docs/parity/backends.md`, "How an outpost turns events into focus
+/// reports"). Whether an entry is
+/// processed is Core's verdict, so every report of a group carries its
+/// number and rank, and Core takes a report only when it took no newer
+/// report of the same group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusGroup {
+    /// The group's number, counted by its outpost generation from 1: a
+    /// replacement generation counts again, so Core keys a group by the
+    /// generation of the report's node with this number.
+    pub number: u64,
+    /// The entry's rank in the group, 0 for the newest, which is tried and
+    /// reported first.
+    pub rank: u32,
+}
+
 /// An accessibility event, normalized by an outpost from either backend.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -242,6 +261,11 @@ pub enum NormalizedEvent {
         /// it held none, or its read was cut before that element's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         earlier: Option<EarlierElement>,
+        /// The report's place in its outpost's focus group, when the
+        /// outpost tried a group's entries for it ([`FocusGroup`]); `None`
+        /// for a report of no group.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<FocusGroup>,
     },
     /// A property of a node changed.
     PropertyChanged {

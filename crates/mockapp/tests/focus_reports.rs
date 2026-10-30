@@ -492,6 +492,7 @@ fn focus_without_a_path(
                     selected_child: None,
                     text: None,
                     earlier: None,
+                    group: None,
                 },
             ..
         } if ancestors.is_empty() => node,

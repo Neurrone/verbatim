@@ -8,11 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 use verbatim_model::{
-    CaretKey, Fetches, ForegroundWindow, HeldAnchors, HookForeground, NodeId, NodeSnapshot,
-    OutpostId, Pid, QueryId, ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet,
-    TextAttributes, TextChunk, TextPosition, TextUnit, TraceId, WindowFacts, WindowHandle,
+    CaretKey, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId, Pid, QueryId,
+    ReaderSettings, ReviewCommand, Selection, SpeechMark, StateSet, TextAttributes, TextChunk,
+    TextPosition, TextUnit, TraceId, WindowFacts,
 };
+
+use crate::foreground::Foreground;
 
 /// The focused node and what the reducer knows about where it sits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,16 +163,6 @@ impl FocusContext {
                     .map(|ancestor| ancestor.states)
             })
     }
-}
-
-/// The application and window of the most recent foreground change (decision
-/// D14): the reducer's stand-in for the
-/// system's foreground window, which is what NVDA classifies events against.
-/// Every event other than a foreground change is classified against it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Attention {
-    pub(crate) source: Pid,
-    pub(crate) window: Option<WindowFacts>,
 }
 
 /// The navigator object and its review cursor (roadmap M3): the object
@@ -636,26 +629,6 @@ pub(crate) struct SayAll {
     pub(crate) display_held: bool,
 }
 
-/// The newest focus event applied, by which a focus from another outpost is
-/// ordered ([`SrState::latest_focus`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct LatestFocus {
-    /// The outpost that reported it.
-    pub(crate) outpost: OutpostId,
-    /// When it was observed, in microseconds on the run's shared clock.
-    pub(crate) observed_at_us: u64,
-    /// Its top-level window, when known.
-    pub(crate) top_level: Option<WindowHandle>,
-}
-
-impl LatestFocus {
-    /// Whether this focus was observed after a focus observed at
-    /// `observed_at_us`, a tie being no later.
-    pub(crate) fn observed_after(&self, observed_at_us: u64) -> bool {
-        observed_at_us < self.observed_at_us
-    }
-}
-
 /// The most recently issued object-navigation query whose completion has not
 /// landed yet, and the node it navigates from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -674,14 +647,21 @@ pub(crate) struct PendingNavigation {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
     pub(crate) focus: Option<FocusContext>,
+    /// The foreground record: attention, the foreground window and object,
+    /// and the stamps that order focuses, under the keys the state held
+    /// before the record existed.
+    #[serde(flatten)]
+    pub(crate) foreground: Foreground,
     /// How many focuses the reducer has taken as the focus, the silent
-    /// re-read of a replacement outpost's report included: what NVDA's
-    /// last queued focus follows, so the host can tell the focus listener
-    /// when a focus it did not accept was queued (`docs/parity/focus-events.md`,
-    /// "Duplicate focus suppression").
+    /// re-read of a replacement outpost's report included.
     #[serde(default)]
     pub(crate) focuses_queued: u64,
-    pub(crate) attention: Option<Attention>,
+    /// The newest focus group whose report Core took: the generation of
+    /// the report's node, the group's number and the report's rank. An
+    /// older report of the same group is not taken
+    /// ([`verbatim_model::FocusGroup`]).
+    #[serde(default)]
+    pub(crate) group_taken: Option<(OutpostId, verbatim_model::FocusGroup)>,
     pub(crate) next_query_id: u64,
     /// The navigator object and review cursor (roadmap M3). `None` until
     /// the first focus lands; from then it tracks focus unless an
@@ -701,26 +681,6 @@ pub struct SrState {
     /// intent superseding whatever navigation was pending; so does the end of
     /// the outpost it was sent to.
     pub(crate) latest_navigation: Option<PendingNavigation>,
-    /// The outpost and observation time of the newest focus event applied.
-    /// Each outpost keeps its own events in order, but two outposts can
-    /// deliver theirs out of the order they were observed in, where NVDA
-    /// handles every event in one queue; a focus event from another outpost
-    /// observed before this one is stale and dropped, unless it is in the
-    /// same top-level window.
-    pub(crate) latest_focus: Option<LatestFocus>,
-    /// When the newest foreground change applied was observed, in
-    /// microseconds since the Unix epoch on the run's shared clock: a focus
-    /// with a known observation time that brought a new foreground window
-    /// and cut speech off. Speech from elsewhere observed before it, but
-    /// reaching the reducer after it, is dropped, as NVDA's foreground
-    /// change cancels speech queued before it
-    /// (`docs/design/focus-pipeline.md`, section 7).
-    #[serde(default)]
-    pub(crate) foreground_changed_at: Option<u64>,
-    /// The window most recently reported as the foreground, as the
-    /// identity rule compares it, whose speech stays valid while it is in
-    /// front (`FocusNow`).
-    pub(crate) foreground: Option<verbatim_model::ObjectKey>,
     /// The reader settings (milestone M4).
     #[serde(default)]
     pub(crate) settings: ReaderSettings,
@@ -802,12 +762,6 @@ pub struct SrState {
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
     #[serde(default)]
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
-    /// The window the focus listener last reported in the system's
-    /// foreground (`Input::ForegroundWindow`), from which the keyboard
-    /// hook's view of the foreground is decided
-    /// ([`SrState::hook_foreground`]).
-    #[serde(default)]
-    pub(crate) foreground_window: Option<ForegroundWindow>,
 }
 
 /// How many progress bars' last indications are remembered: more than are
@@ -853,7 +807,7 @@ impl SrState {
     /// reads itself.
     #[must_use]
     pub fn hook_foreground(&self) -> Option<HookForeground> {
-        let foreground = self.foreground_window?;
+        let foreground = self.foreground.window()?;
         Some(HookForeground {
             window: foreground.window,
             holds_keys: matches!(
@@ -936,7 +890,9 @@ impl SrState {
     /// seen yet. The shell derives the supervisor's view of attention from this.
     #[must_use]
     pub fn attention(&self) -> Option<Pid> {
-        self.attention.as_ref().map(|attention| attention.source)
+        self.foreground
+            .attention()
+            .map(|attention| attention.source)
     }
 
     /// The details to fetch, as the active theme decides: a detail whose
@@ -966,12 +922,12 @@ impl SrState {
         self.focus.as_ref().map(|focus| focus.source)
     }
 
-    /// When the newest focus the reducer applied was observed, in
+    /// When the newest focus the reducer took was observed, in
     /// microseconds since the Unix epoch on the run's shared clock; `None`
-    /// before any.
+    /// before any (the applied stamp).
     #[must_use]
     pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.latest_focus.map(|latest| latest.observed_at_us)
+        self.foreground.applied_at()
     }
 
     /// Every node the state refers to, grouped by the outpost that issued

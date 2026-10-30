@@ -67,6 +67,7 @@ fn terminal_focus(text: Option<verbatim_model::FocusText>) -> Input {
         selected_child: None,
         text: text.map(Box::new),
         earlier: None,
+        group: None,
     })
 }
 
