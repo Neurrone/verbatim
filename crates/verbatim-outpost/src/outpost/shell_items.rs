@@ -1,6 +1,6 @@
 //! The shell's tray icons and taskbar buttons, for Core's system tray list
-//! dialog: the answers to [`Query::ShellItems`](crate::protocol::Query::ShellItems)
-//! and [`Query::ShellItemPosition`](crate::protocol::Query::ShellItemPosition),
+//! dialog: the answers to [`Query::ShellItems`](verbatim_model::protocol::Query::ShellItems)
+//! and [`Query::ShellItemPosition`](verbatim_model::protocol::Query::ShellItemPosition),
 //! read by File Explorer's outpost within its own application, so Core
 //! makes no UIA connection into the shell's windows
 //! (`docs/design/listener-without-connections.md`, decision 9).
@@ -59,7 +59,7 @@ const MAX_NODES: usize = 1024;
 /// the items read by then. With one call under way when it passes, which
 /// UIA's transaction timeout ends after 5 seconds, a walk still answers
 /// within the worker's deadline for the query
-/// ([`WALK_DEADLINE`](crate::protocol::WALK_DEADLINE), 5 seconds), which
+/// ([`WALK_DEADLINE`](verbatim_model::protocol::WALK_DEADLINE), 5 seconds), which
 /// Core outlasts, unless that call takes longer than 3 seconds.
 const WALK_BUDGET: Duration = Duration::from_secs(2);
 

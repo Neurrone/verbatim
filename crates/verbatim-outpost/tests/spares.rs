@@ -37,12 +37,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
+use verbatim_model::protocol::{
+    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
+    OutpostToCore,
+};
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
-};
+use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{
     EndReason, IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor,
 };
@@ -154,7 +155,7 @@ fn value(args: &[String], name: &str) -> Option<String> {
 }
 
 /// The facts [`FACTS`] names, as the listener forwards them.
-fn scripted_facts() -> Vec<OutpostToSupervisor> {
+fn scripted_facts() -> Vec<ListenerToCore> {
     let script = std::env::var(FACTS).unwrap_or_default();
     script
         .split(',')
@@ -173,12 +174,12 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
                 "drop" => DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    answer: verbatim_outpost::protocol::GapAnswer::LeavesOpen,
+                    answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
                 },
                 "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),
             };
-            OutpostToSupervisor::FocusFact {
+            ListenerToCore::FocusFact {
                 trace_id: TraceId::mint(),
                 timing: EventTiming {
                     observed_at_us: us.parse().expect("a time"),
@@ -255,21 +256,21 @@ fn assignment_failure() -> Option<Failure> {
 
 /// A stand-in spare's assignment to `target_pid`: says `Ready`, or fails
 /// as [`assignment_failure`] says. Returns whether it goes mute.
-fn assign(send: &impl Fn(&OutpostToSupervisor), outpost_pid: Pid, target_pid: Pid) -> bool {
+fn assign(send: &impl Fn(&OutpostToCore), outpost_pid: Pid, target_pid: Pid) -> bool {
     match assignment_failure() {
-        None => send(&OutpostToSupervisor::Ready {
+        None => send(&OutpostToCore::Ready {
             outpost_pid,
             target_pid,
         }),
         Some(Failure::Exits) => std::process::exit(3),
         Some(Failure::HookFails) => {
-            send(&OutpostToSupervisor::Fault {
+            send(&OutpostToCore::Fault {
                 detail: HOOK_FAULT.to_owned(),
             });
             std::process::exit(1);
         }
         Some(Failure::HookFailsAndApplicationExits) => {
-            send(&OutpostToSupervisor::Fault {
+            send(&OutpostToCore::Fault {
                 detail: HOOK_FAULT.to_owned(),
             });
             wait_for_exit(target_pid);
@@ -277,7 +278,7 @@ fn assign(send: &impl Fn(&OutpostToSupervisor), outpost_pid: Pid, target_pid: Pi
         }
         Some(Failure::Mute) => return true,
         Some(Failure::MuteAfterReady) => {
-            send(&OutpostToSupervisor::Ready {
+            send(&OutpostToCore::Ready {
                 outpost_pid,
                 target_pid,
             });
@@ -307,70 +308,94 @@ fn stand_in(args: &[String]) -> ! {
         RefCell::new(BlockingWriter::new(messages).expect("a writer")),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
+    let mut commands = BufReader::new(commands);
+    if listener {
+        listener_stand_in(&mut commands, &messages);
+    }
     let spare = value(args, "--spare");
-    let send = |message: &OutpostToSupervisor| {
+    let send = |message: &OutpostToCore| {
         write_message(&mut *messages.borrow_mut(), message).expect("a message is written");
     };
     let outpost_pid = Pid(std::process::id());
     let target = value(args, "--target-pid").map(|pid| Pid(pid.parse().expect("a pid")));
     match target {
         Some(target_pid) => {
-            send(&OutpostToSupervisor::Ready {
+            send(&OutpostToCore::Ready {
                 outpost_pid,
                 target_pid,
             });
-            send(&OutpostToSupervisor::Fault {
+            send(&OutpostToCore::Fault {
                 detail: DIRECT.to_owned(),
             });
         }
-        None if spare.is_some() => send(&OutpostToSupervisor::SpareReady { outpost_pid }),
-        None => send(&OutpostToSupervisor::Ready {
-            outpost_pid,
-            target_pid: Pid(0),
-        }),
+        None => send(&OutpostToCore::SpareReady { outpost_pid }),
     }
     // Answers no ping: the mute spare while it waits, or a given spare
     // whose assignment fails mute.
     let mut mute = spare.is_some() && spare == std::env::var(MUTE_SPARE).ok();
-    let mut facts_sent = false;
-    let mut commands = BufReader::new(commands);
     loop {
-        let command = read_message::<_, SupervisorToOutpost>(&mut commands);
+        let command = read_message::<_, CoreToOutpost>(&mut commands);
         match command {
-            Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
+            Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) if mute => {}
-            Ok(Some(SupervisorToOutpost::Ping { seq, .. })) => send(&OutpostToSupervisor::Pong {
+            Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
                 seq,
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            // The test's first idle round, once facts are scripted, has the
-            // listener send them, and is left unanswered, so no outpost is
-            // asked.
-            Ok(Some(SupervisorToOutpost::IdleQuery { .. }))
-                if listener && !facts_sent && !scripted_facts().is_empty() =>
+            Ok(Some(CoreToOutpost::Assign { target_pid })) => {
+                mute = assign(&send, outpost_pid, target_pid);
+            }
+            Ok(Some(CoreToOutpost::DeliverFact { timing, .. })) => {
+                send(&OutpostToCore::Fault {
+                    detail: format!("fact {}", timing.observed_at_us),
+                });
+            }
+            Ok(Some(CoreToOutpost::IdleQuery { round })) => {
+                send(&OutpostToCore::Fault {
+                    detail: format!("idle query {round}"),
+                });
+                send(&OutpostToCore::IdleAnswer { round });
+            }
+            Ok(Some(_)) => {}
+            Err(error) => panic!("the command pipe failed: {error}"),
+        }
+    }
+}
+
+/// The stand-in listener: says it is ready, answers pings and idle
+/// queries, and at the test's first idle round, once facts are scripted,
+/// sends them and leaves the round unanswered, so no outpost is asked.
+fn listener_stand_in(
+    commands: &mut BufReader<BlockingReader>,
+    messages: &RefCell<BlockingWriter>,
+) -> ! {
+    let send = |message: &ListenerToCore| {
+        write_message(&mut *messages.borrow_mut(), message).expect("a message is written");
+    };
+    send(&ListenerToCore::Ready {
+        outpost_pid: Pid(std::process::id()),
+        target_pid: Pid(0),
+    });
+    let mut facts_sent = false;
+    loop {
+        match read_message::<_, CoreToListener>(commands) {
+            Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
+            Ok(Some(CoreToListener::Ping { seq, .. })) => send(&ListenerToCore::Pong {
+                seq,
+                parked_count: 0,
+                written_at_us: 0,
+            }),
+            Ok(Some(CoreToListener::IdleQuery { .. }))
+                if !facts_sent && !scripted_facts().is_empty() =>
             {
                 facts_sent = true;
                 for fact in scripted_facts() {
                     send(&fact);
                 }
             }
-            Ok(Some(SupervisorToOutpost::Assign { target_pid })) => {
-                mute = assign(&send, outpost_pid, target_pid);
-            }
-            Ok(Some(SupervisorToOutpost::DeliverFact { timing, .. })) => {
-                send(&OutpostToSupervisor::Fault {
-                    detail: format!("fact {}", timing.observed_at_us),
-                });
-            }
-            Ok(Some(SupervisorToOutpost::IdleQuery { round })) if listener => {
-                send(&OutpostToSupervisor::IdleAnswer { round });
-            }
-            Ok(Some(SupervisorToOutpost::IdleQuery { round })) => {
-                send(&OutpostToSupervisor::Fault {
-                    detail: format!("idle query {round}"),
-                });
-                send(&OutpostToSupervisor::IdleAnswer { round });
+            Ok(Some(CoreToListener::IdleQuery { round })) => {
+                send(&ListenerToCore::IdleAnswer { round });
             }
             Ok(Some(_)) => {}
             Err(error) => panic!("the command pipe failed: {error}"),
@@ -529,7 +554,7 @@ impl Run {
                 message,
                 ..
             } if from == outpost && pid == target_pid => match *message {
-                OutpostToSupervisor::Ready {
+                OutpostToCore::Ready {
                     outpost_pid,
                     target_pid: ready,
                 } if ready == target_pid => outpost_pid,
@@ -550,8 +575,8 @@ impl Run {
                 message,
                 ..
             } if from == outpost
-                && matches!(&*message, OutpostToSupervisor::Fault { detail: said } if said == detail) =>
-                {}
+                && matches!(&*message, OutpostToCore::Fault { detail: said } if said == detail) => {
+            }
             other => panic!("the supervisor said {other:?}, not {outpost}'s report {detail:?}"),
         }
     }
@@ -564,7 +589,7 @@ impl Run {
                 message,
                 ..
             } if from == outpost
-                && matches!(*message, OutpostToSupervisor::IdleAnswer { round: answered } if answered == round) =>
+                && matches!(*message, OutpostToCore::IdleAnswer { round: answered } if answered == round) =>
                 {}
             other => {
                 panic!("the supervisor said {other:?}, not {outpost}'s answer to round {round}")
@@ -1048,10 +1073,10 @@ fn served<const N: usize>(run: &Run, applications: [Pid; N]) -> [(OutpostId, Pid
                     panic!("{outpost}, not started, said {message:?}");
                 };
                 match (*message, entry.2) {
-                    (OutpostToSupervisor::Ready { outpost_pid, .. }, 1) => {
+                    (OutpostToCore::Ready { outpost_pid, .. }, 1) => {
                         *entry = (outpost, outpost_pid, 2);
                     }
-                    (OutpostToSupervisor::Fault { detail }, 2) if detail == DIRECT => {
+                    (OutpostToCore::Fault { detail }, 2) if detail == DIRECT => {
                         entry.2 = 3;
                     }
                     (other, step) => panic!("{outpost} said {other:?} at its step {step}"),

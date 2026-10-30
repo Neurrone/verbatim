@@ -27,7 +27,8 @@ use verbatim_process::transport::OwnedFrame;
 use super::OutpostMessage;
 use super::owner::OwnerEvent;
 use super::relay::Mailbox;
-use crate::protocol::{OutpostToSupervisor, decode_message};
+use crate::protocol::decode_message;
+use verbatim_model::protocol::OutpostToCore;
 
 /// A frame from an outpost's pipe, read whole by the relay and not yet
 /// parsed. Only [`Frames`] opens it.
@@ -153,8 +154,8 @@ impl Frames {
 /// Parses `frame` into the message it carries, stamped with when the relay
 /// read it and with its outpost on every node id: node ids name the
 /// generation whose pipe they arrived on, never whatever the body claims.
-fn parse(frame: &Frame) -> io::Result<Box<OutpostToSupervisor>> {
-    let mut message: Box<OutpostToSupervisor> = Box::new(decode_message(frame.bytes.parts())?);
+fn parse(frame: &Frame) -> io::Result<Box<OutpostToCore>> {
+    let mut message: Box<OutpostToCore> = Box::new(decode_message(frame.bytes.parts())?);
     message.core_read(frame.read_at_us);
     message.assign_outpost(frame.outpost);
     Ok(message)

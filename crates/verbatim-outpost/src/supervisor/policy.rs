@@ -1,17 +1,16 @@
 //! The supervisor's pure decisions, kept apart from the I/O that gathers
 //! their inputs so each is unit-tested on its own: when an outpost is stuck,
 //! when an idle one is retired, how long a failed outpost's replacement
-//! waits, how facts that arrive during a spawn are held, and which spare outposts are kept
-//! and given.
+//! waits, how facts that arrive during a spawn are held, which facts may
+//! start an outpost, and which spare outposts are kept and given.
 
 #![forbid(unsafe_code)]
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use verbatim_model::protocol::DeliveredFact;
 use verbatim_model::{OutpostId, TraceId};
-
-use crate::protocol::DeliveredFact;
 
 /// Why the owner killed an otherwise-alive outpost (recovery ladder rung 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,10 +146,10 @@ impl Backoff {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct HeldFact {
     pub(super) trace_id: TraceId,
-    pub(super) timing: crate::protocol::EventTiming,
+    pub(super) timing: verbatim_model::protocol::EventTiming,
     pub(super) fact: DeliveredFact,
     /// For an MSAA `WinEvent`'s fact, the thread that raised it and when.
-    pub(super) win_event: Option<crate::protocol::WinEventStamp>,
+    pub(super) win_event: Option<verbatim_model::protocol::WinEventStamp>,
     /// When verbatim.exe read it from the listener.
     pub(super) received: super::writer::Received,
 }
@@ -286,6 +285,35 @@ impl Spares {
         times: (Duration, Duration, Duration),
     ) -> Duration {
         self.backoff.failed(up, now, times)
+    }
+}
+
+/// Whether `fact` may start an outpost for an application that has none
+/// (architecture section 1, "The focus listener (D13)"): focus, foreground,
+/// menu, and alert facts may, a UIA focus's marker and read among them,
+/// and the shell's window-snap results notification, the one Core speaks
+/// from any application. A selection without an outpost is dropped, and so
+/// is any other notification: Core speaks a notification only from the
+/// focus's application, and an application with no outpost cannot hold the
+/// focus, as NVDA drops a background application's notification. A focus's
+/// drop and the end of a listener's reads resolve only markers an outpost
+/// already holds.
+pub(super) fn may_start_outpost(fact: &DeliveredFact) -> bool {
+    match fact {
+        DeliveredFact::UiaSelection { .. }
+        | DeliveredFact::UiaFocusDropped { .. }
+        | DeliveredFact::UiaFocusReadsEnded => false,
+        DeliveredFact::UiaNotification { notification, .. } => {
+            notification.activity_id.as_deref() == Some(verbatim_core::SNAP_RESULTS_ACTIVITY)
+        }
+        DeliveredFact::UiaFocusMarker { .. }
+        | DeliveredFact::UiaFocusRead { .. }
+        | DeliveredFact::UiaMarked { .. }
+        | DeliveredFact::MsaaFocus { .. }
+        | DeliveredFact::Foreground { .. }
+        | DeliveredFact::MenuPopup { .. }
+        | DeliveredFact::Alert { .. }
+        | DeliveredFact::Show { .. } => true,
     }
 }
 
@@ -460,9 +488,9 @@ mod tests {
     fn held(observed_at_us: u64, fact: DeliveredFact) -> HeldFact {
         HeldFact {
             trace_id: TraceId::mint(),
-            timing: crate::protocol::EventTiming {
+            timing: verbatim_model::protocol::EventTiming {
                 observed_at_us,
-                ..crate::protocol::EventTiming::default()
+                ..verbatim_model::protocol::EventTiming::default()
             },
             fact,
             win_event: None,
@@ -558,5 +586,58 @@ mod tests {
             .collect();
         assert_eq!(released, vec![1, 3, 4]);
         assert!(facts.take().is_empty(), "nothing is left held");
+    }
+
+    #[test]
+    fn a_selection_or_a_background_notification_may_not_start_an_outpost() {
+        use verbatim_model::protocol::{GapAnswer, UiaSnapshotFact};
+        use verbatim_model::{
+            NodeDetails, Notification, NotificationKind, NotificationProcessing, Role, StateSet,
+        };
+        let snapshot = UiaSnapshotFact {
+            runtime_id: vec![1],
+            role: Role::ListItem,
+            name: None,
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        };
+        let selection = DeliveredFact::UiaSelection {
+            hwnd: 0,
+            focus_window: 0,
+            snapshot: snapshot.clone(),
+        };
+        assert!(!may_start_outpost(&selection));
+        let notification = |activity_id: &str| DeliveredFact::UiaNotification {
+            hwnd: 0,
+            snapshot: snapshot.clone(),
+            notification: Notification {
+                kind: NotificationKind::ActionCompleted,
+                processing: NotificationProcessing::ImportantAll,
+                display_string: Some("Copied".into()),
+                activity_id: Some(activity_id.into()),
+            },
+        };
+        assert!(!may_start_outpost(&notification("Clipboard")));
+        // A focus's drop, and the end of a listener's reads, only resolve
+        // markers an outpost holds.
+        assert!(!may_start_outpost(&DeliveredFact::UiaFocusDropped {
+            marker: 1,
+            focus: true,
+            answer: GapAnswer::LeavesOpen,
+        }));
+        assert!(!may_start_outpost(&DeliveredFact::UiaFocusReadsEnded));
+        for fact in [
+            notification(verbatim_core::SNAP_RESULTS_ACTIVITY),
+            DeliveredFact::Foreground { hwnd: 1 },
+            DeliveredFact::UiaFocusMarker { marker: 1 },
+            DeliveredFact::Alert {
+                hwnd: 1,
+                id_object: -4,
+                id_child: 0,
+            },
+        ] {
+            assert!(may_start_outpost(&fact), "{fact:?}");
+        }
     }
 }

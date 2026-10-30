@@ -28,14 +28,12 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, SelectionChange,
     TextOp, TextPoint, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
-use verbatim_outpost::protocol::{
-    DeliveredFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
-};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
 
@@ -55,7 +53,7 @@ fn focus_fact(
     outpost: &OutpostUnderTest,
     hwnd: HWND,
     id: &str,
-) -> verbatim_outpost::protocol::DeliveredFact {
+) -> verbatim_model::protocol::DeliveredFact {
     app.send(&format!("set-focus {id}"));
     let element = focused(hwnd);
     outpost.listener_fact(&element)
@@ -70,7 +68,7 @@ fn focus_notes(
 ) -> (NodeId, CaretReport) {
     outpost.deliver(focus_fact(app, outpost, hwnd, "doc"));
     let (node, caret) = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -109,7 +107,7 @@ fn right_arrow(before: &CaretReport) -> TextOp {
 /// The answer to caret key `key`, which must be the outpost's next message.
 fn answer_to(outpost: &OutpostUnderTest, key: u64) -> TextReply {
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(reply)),
             ..
@@ -163,7 +161,7 @@ fn a_focus_change_during_a_caret_watch_is_handled_at_once() {
     });
     outpost.deliver(to_ok);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
             ..
         } => assert_eq!(node.name.as_deref(), Some("OK")),
@@ -272,7 +270,7 @@ fn a_focus_now_text_fields_caret_event_is_reported() {
     app.send("caret doc 1");
     app.send("caret-event doc");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => assert_eq!(
@@ -336,7 +334,7 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
     let fact = focus_fact(&mut app, &outpost, hwnd, "doc");
     outpost.deliver(fact);
     let notes = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -387,7 +385,7 @@ fn the_system_carets_move_is_the_uia_focuss_caret_event() {
     app.send("caret doc 6");
     app.send("system-caret");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => {
@@ -413,7 +411,7 @@ fn a_focus_with_uia_caret_events_has_no_system_caret_events() {
     app.send("caret doc 1");
     app.send("caret-event doc");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => assert_eq!(caret.line.offset, 1),
@@ -437,7 +435,7 @@ fn a_new_focus_uses_the_system_caret_again() {
     app.send("caret doc 1");
     app.send("caret-event doc");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, .. },
             ..
         } if node_id == notes => {}
@@ -448,7 +446,7 @@ fn a_new_focus_uses_the_system_caret_again() {
     // The focus leaves the document and comes back.
     outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "ok"));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
             ..
         } => assert_eq!(node.name.as_deref(), Some("OK")),
@@ -459,7 +457,7 @@ fn a_new_focus_uses_the_system_caret_again() {
     app.send("caret doc 6");
     app.send("system-caret");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => assert_eq!(caret.line.offset, 6),
@@ -496,13 +494,13 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
         )
     }
     .expect("mockapp's edit control");
-    outpost.deliver(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+    outpost.deliver(verbatim_model::protocol::DeliveredFact::MsaaFocus {
         hwnd: edit.0 as isize,
         id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
         id_child: 0,
     });
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -525,7 +523,7 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
     // so mockapp raises the show.
     app.send("system-caret show");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == node.id => {
@@ -546,7 +544,7 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
 /// caret report of `node`.
 fn reported_changes(outpost: &OutpostUnderTest, node: NodeId) -> Vec<SelectionChange> {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::CaretMoved {
                     node_id,
@@ -619,7 +617,7 @@ fn a_selection_around_the_caret_is_one_change_each_way() {
 /// The caret report of `node` the outpost said next.
 fn reported_caret(outpost: &OutpostUnderTest, node: NodeId) -> CaretReport {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == node => caret,
@@ -867,7 +865,7 @@ fn reported_selection(
     node: NodeId,
 ) -> (Vec<SelectionChange>, bool, Option<SelectionChange>) {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::CaretMoved {
                     node_id,
@@ -885,7 +883,7 @@ fn reported_selection(
 /// The text change of `node`, which must be the outpost's next message.
 fn text_changed(outpost: &OutpostUnderTest, node: NodeId) {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::TextChanged { node_id },
             ..
         } if node_id == node => {}
@@ -982,7 +980,7 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, CaretRe
         id_child: 0,
     });
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -997,7 +995,7 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, CaretRe
     app.send("caret doc 0 5");
     app.send("caret-event doc");
     let caret = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::CaretMoved {
                     node_id,
@@ -1289,7 +1287,7 @@ fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
     app.send("caret doc 0 5");
     app.send("caret-event doc");
     let before = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::CaretMoved {
                     node_id,

@@ -18,9 +18,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use verbatim_model::Pid;
-use verbatim_outpost::protocol::{
-    OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
-};
+use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
+use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::{BlockingReader, BlockingWriter, EVENT_PIPE_BUFFER};
 use verbatim_process::{ChildEnds, ChildSpec};
@@ -50,7 +49,7 @@ fn launch(
 ) -> (
     verbatim_process::Contained,
     BlockingWriter,
-    mpsc::Receiver<OutpostToSupervisor>,
+    mpsc::Receiver<OutpostToCore>,
 ) {
     let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_verbatim-outpost"));
     let arguments = move |pipe_in: usize, pipe_out: usize| {
@@ -75,7 +74,7 @@ fn launch(
     let (messages_tx, messages) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = BufReader::new(BlockingReader::new(from_child).expect("a reader"));
-        while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+        while let Ok(Some(message)) = read_message::<_, OutpostToCore>(&mut reader) {
             if messages_tx.send(message).is_err() {
                 return;
             }
@@ -89,7 +88,7 @@ fn launch(
 }
 
 /// Sends the outpost `command`.
-fn send(to_child: &mut BlockingWriter, command: &SupervisorToOutpost) {
+fn send(to_child: &mut BlockingWriter, command: &CoreToOutpost) {
     write_message(to_child, command).expect("the command is written");
     to_child.flush().expect("the command is sent");
 }
@@ -100,7 +99,7 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
     let (outpost, mut to_child, messages) =
         launch(format!("--target-pid {target_pid}"), "target-exit-test");
     match messages.recv_timeout(WAIT) {
-        Ok(OutpostToSupervisor::Ready { .. }) => {}
+        Ok(OutpostToCore::Ready { .. }) => {}
         other => panic!("the outpost said {other:?}, not Ready"),
     }
 
@@ -109,11 +108,11 @@ fn an_outpost_whose_application_exits_says_so_and_shuts_down_cleanly() {
     assert!(status.success(), "the stand-in exited with {status}");
     assert_eq!(
         messages.recv_timeout(WAIT).ok(),
-        Some(OutpostToSupervisor::TargetExited),
+        Some(OutpostToCore::TargetExited),
         "the outpost says its application exited"
     );
 
-    send(&mut to_child, &SupervisorToOutpost::Shutdown);
+    send(&mut to_child, &CoreToOutpost::Shutdown);
     assert_eq!(
         messages.recv_timeout(WAIT),
         Err(mpsc::RecvTimeoutError::Disconnected),
@@ -130,14 +129,14 @@ fn a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch() {
     let outpost_pid = Pid(outpost.pid);
     assert_eq!(
         messages.recv_timeout(WAIT).ok(),
-        Some(OutpostToSupervisor::SpareReady { outpost_pid }),
+        Some(OutpostToCore::SpareReady { outpost_pid }),
         "a spare says it is one"
     );
 
-    send(&mut to_child, &SupervisorToOutpost::Assign { target_pid });
+    send(&mut to_child, &CoreToOutpost::Assign { target_pid });
     assert_eq!(
         messages.recv_timeout(WAIT).ok(),
-        Some(OutpostToSupervisor::Ready {
+        Some(OutpostToCore::Ready {
             outpost_pid,
             target_pid
         }),
@@ -146,10 +145,10 @@ fn a_spare_takes_its_application_from_assign_and_ends_on_one_it_cannot_watch() {
 
     // A second application is one it cannot watch: it reports why, ends
     // without a `Ready`, and exits with code 1.
-    send(&mut to_child, &SupervisorToOutpost::Assign { target_pid });
+    send(&mut to_child, &CoreToOutpost::Assign { target_pid });
     assert_eq!(
         messages.recv_timeout(WAIT).ok(),
-        Some(OutpostToSupervisor::Fault {
+        Some(OutpostToCore::Fault {
             detail: format!("the outpost already watches {target_pid}")
         }),
         "it reports why it cannot watch the application"

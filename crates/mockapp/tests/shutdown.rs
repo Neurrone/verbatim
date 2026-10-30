@@ -23,14 +23,12 @@ mod harness;
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 
+use verbatim_model::protocol::{CoreToOutpost, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply,
     TextUnit,
 };
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{
-    OutpostToSupervisor, Query, QueryOutcome, QueryResult, SupervisorToOutpost,
-};
 use verbatim_uia::{Node, Shape, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
@@ -73,7 +71,7 @@ fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
     let element = focused(hwnd);
     outpost.deliver(outpost.listener_fact(&element));
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -160,7 +158,7 @@ fn shut_down_during(name: &str, read: &Read) {
 
     // The read finished, and its answer was sent before the pipe closed.
     match messages.recv_timeout(common::WAIT_TIMEOUT) {
-        Ok(OutpostToSupervisor::Reply {
+        Ok(OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved, chunk })),
             timing,
@@ -266,12 +264,12 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
         "TextGetSelection",
         "the worker is in the read's first provider call"
     );
-    outpost.outpost.handle_command(&SupervisorToOutpost::Ping {
+    outpost.outpost.handle_command(&CoreToOutpost::Ping {
         seq: 9,
         sent_at_us: 0,
     });
     match outpost.next() {
-        OutpostToSupervisor::Pong {
+        OutpostToCore::Pong {
             seq: 9,
             parked_count: 0,
             ..
@@ -280,7 +278,7 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
     }
     app.release();
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved, chunk })),
             ..

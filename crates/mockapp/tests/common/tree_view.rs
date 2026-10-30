@@ -9,7 +9,7 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT, SendMessageW};
 use windows::core::{PCWSTR, w};
 
-use verbatim_outpost::protocol::DeliveredFact;
+use verbatim_model::protocol::DeliveredFact;
 
 use super::outpost::{OutpostUnderTest, Reported};
 

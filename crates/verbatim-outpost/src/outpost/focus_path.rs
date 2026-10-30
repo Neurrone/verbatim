@@ -20,7 +20,7 @@ use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 
 use crate::arbitration::{Clock, time_limit};
-use crate::protocol::UiaFocusRead;
+use verbatim_model::protocol::UiaFocusRead;
 
 use super::window::window_exists;
 
@@ -63,7 +63,7 @@ impl FocusPath {
                     .map(|ancestor| (ancestor.snapshot.runtime_id.clone(), ancestor.hwnd)),
             )
             .collect();
-        let cut = read.ancestors_end != crate::protocol::AncestorsEnd::Top;
+        let cut = read.ancestors_end != verbatim_model::protocol::AncestorsEnd::Top;
         Self { chain, cut }
     }
 
@@ -179,7 +179,7 @@ mod tests {
     use verbatim_model::{NodeDetails, Role, StateSet};
 
     use super::*;
-    use crate::protocol::{UiaAncestorFact, UiaSnapshotFact};
+    use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
 
     fn snapshot(id: i32) -> UiaSnapshotFact {
         UiaSnapshotFact {
@@ -207,7 +207,7 @@ mod tests {
                     content: true,
                 })
                 .collect(),
-            ancestors_end: crate::protocol::AncestorsEnd::Top,
+            ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
             window: None,

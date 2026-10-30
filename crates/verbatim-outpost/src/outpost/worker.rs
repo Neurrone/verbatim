@@ -50,9 +50,10 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
-use crate::protocol::{
-    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
+use crate::protocol::now_us;
+use verbatim_model::protocol::{
+    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query, QueryOutcome,
+    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE,
 };
 
 use super::Context;
@@ -695,7 +696,7 @@ fn watchdog(context: &Arc<Context>) {
             "the worker is abandoned and replaced"
         );
         if let Some((request_id, trace_id)) = running {
-            context.outbound.send(OutpostToSupervisor::Reply {
+            context.outbound.send(OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Abandoned,
@@ -879,9 +880,7 @@ pub(super) fn answer_idle(context: &Context) {
     let answered = context.idle_query().take();
     if let Some(round) = answered {
         tracing::debug!(round, "the idle barrier's query is answered");
-        context
-            .outbound
-            .send(OutpostToSupervisor::IdleAnswer { round });
+        context.outbound.send(OutpostToCore::IdleAnswer { round });
     }
 }
 
@@ -958,7 +957,7 @@ fn run_entry(
             if handled.is_err() {
                 tracing::error!(request_id, "the worker failed handling a query");
             }
-            context.outbound.send(OutpostToSupervisor::Reply {
+            context.outbound.send(OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
@@ -1478,7 +1477,7 @@ impl Worker<'_> {
                     waited_ms = open.opened.elapsed().as_millis(),
                     "a caret key's watch is answered"
                 );
-                let answer = OutpostToSupervisor::Reply {
+                let answer = OutpostToCore::Reply {
                     trace_id: open.trace,
                     request_id: open.request_id,
                     outcome: QueryOutcome::Done(QueryResult::Text(reply)),
@@ -2189,7 +2188,7 @@ impl Worker<'_> {
         &self,
         (request_id, trace): (u64, TraceId),
         reply: TextReply,
-    ) -> OutpostToSupervisor {
+    ) -> OutpostToCore {
         self.reply_message(
             request_id,
             trace,
@@ -2520,7 +2519,7 @@ impl Worker<'_> {
         backend: Backend,
         window: Option<isize>,
         event: NormalizedEvent,
-    ) -> OutpostToSupervisor {
+    ) -> OutpostToCore {
         event_message(
             self.context,
             self.timing,
@@ -3728,7 +3727,7 @@ impl Worker<'_> {
                     item: Item::Fact(menu, None),
                     trace,
                     observed_at_us,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 });
             }
         }
@@ -4741,7 +4740,7 @@ impl Worker<'_> {
     /// focus queued, as NVDA's fake focus does.
     fn follow_answer(
         &mut self,
-        result: OutpostToSupervisor,
+        result: OutpostToCore,
         answered: AnsweredFocus,
         judged: held::Focus,
         trace: TraceId,
@@ -4799,8 +4798,8 @@ impl Worker<'_> {
         request_id: u64,
         trace: TraceId,
         outcome: QueryOutcome,
-    ) -> OutpostToSupervisor {
-        OutpostToSupervisor::Reply {
+    ) -> OutpostToCore {
+        OutpostToCore::Reply {
             trace_id: trace,
             request_id,
             outcome,
@@ -4876,7 +4875,7 @@ fn event_message(
     (trace, observed_at_us): (TraceId, u64),
     (backend, window): (Backend, Option<isize>),
     event: NormalizedEvent,
-) -> OutpostToSupervisor {
+) -> OutpostToCore {
     debug_assert!(
         window.is_some() || !matches!(event, NormalizedEvent::FocusChanged { .. }),
         "every focus report carries window facts"
@@ -4884,7 +4883,7 @@ fn event_message(
     let target = context.target_pid();
     let client = window.and_then(|hwnd| console_client(hwnd, target));
     let name = || context.application_name(client.map_or(target, |client| client.0));
-    OutpostToSupervisor::Event {
+    OutpostToCore::Event {
         trace_id: trace,
         observed_at_us,
         backend,
@@ -5299,7 +5298,8 @@ mod tests {
         use verbatim_process::overlapped::{End, Flow, pipe};
         use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 
-        use crate::protocol::{SupervisorToOutpost, read_message};
+        use crate::protocol::read_message;
+        use verbatim_model::protocol::CoreToOutpost;
 
         let (ours, theirs) =
             pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
@@ -5307,7 +5307,7 @@ mod tests {
         let (messages_tx, messages) = mpsc::channel();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(BlockingReader::new(ours).expect("a reader"));
-            while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+            while let Ok(Some(message)) = read_message::<_, OutpostToCore>(&mut reader) {
                 if messages_tx.send(message).is_err() {
                     return;
                 }
@@ -5316,16 +5316,13 @@ mod tests {
         let wait = Duration::from_secs(10);
         assert!(matches!(
             messages.recv_timeout(wait),
-            Ok(OutpostToSupervisor::Ready { .. })
+            Ok(OutpostToCore::Ready { .. })
         ));
         let read_in_progress = outpost.context.uia_anchors();
-        outpost.handle_command(&SupervisorToOutpost::IdleQuery { round: 4 });
+        outpost.handle_command(&CoreToOutpost::IdleQuery { round: 4 });
         let answer = messages.recv_timeout(wait);
         drop(read_in_progress);
-        assert_eq!(
-            answer.ok(),
-            Some(OutpostToSupervisor::IdleAnswer { round: 4 })
-        );
+        assert_eq!(answer.ok(), Some(OutpostToCore::IdleAnswer { round: 4 }));
         outpost.shutdown();
     }
 
@@ -5386,7 +5383,7 @@ mod tests {
         use verbatim_process::overlapped::{End, Flow, pipe};
         use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
-        use crate::protocol::GapAnswer;
+        use verbatim_model::protocol::GapAnswer;
 
         let (_ours, theirs) =
             pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
@@ -5599,7 +5596,7 @@ mod tests {
     /// The effects of the answer to query `request_id`, traced `trace`.
     fn reply_effects(request_id: u64, trace: TraceId) -> Effects {
         Effects {
-            result: Some(OutpostToSupervisor::Reply {
+            result: Some(OutpostToCore::Reply {
                 trace_id: trace,
                 request_id,
                 outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
@@ -5628,7 +5625,7 @@ mod tests {
         );
         follow.owed = owed;
         Effects {
-            result: Some(OutpostToSupervisor::IdleAnswer { round: 1 }),
+            result: Some(OutpostToCore::IdleAnswer { round: 1 }),
             report: Some(Report::Reported(
                 judged_focus(context, (TraceId::mint(), node, &[]), (None, false), None),
                 held::Evidence::Msaa,
@@ -5984,7 +5981,7 @@ mod tests {
             },
         );
         Effects {
-            result: Some(OutpostToSupervisor::IdleAnswer { round: 1 }),
+            result: Some(OutpostToCore::IdleAnswer { round: 1 }),
             report: Some(Report::Reported(
                 judged_focus(
                     context,

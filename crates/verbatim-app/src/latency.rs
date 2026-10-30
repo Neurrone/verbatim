@@ -25,8 +25,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
+use verbatim_model::protocol::EventTiming;
 use verbatim_model::{CallCounts, Indication, TraceId, UtteranceEnding, UtteranceId};
-use verbatim_outpost::protocol::{EventTiming, now_us};
+use verbatim_outpost::protocol::now_us;
 use verbatim_speech::{SpeechEvents, SynthTiming};
 
 /// Milliseconds since the Unix epoch on the run's shared clock

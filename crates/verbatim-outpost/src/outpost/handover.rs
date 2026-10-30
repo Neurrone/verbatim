@@ -70,7 +70,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{FactKey, WinEventStamp, tick_is_after};
+use verbatim_model::protocol::{FactKey, WinEventStamp, tick_is_after};
 
 /// How long after the listener's "forwarding ended" reaches the outpost a
 /// copy can still meet its twin: a late listener copy trails that message

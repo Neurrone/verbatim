@@ -26,7 +26,7 @@ use verbatim_model::Pid;
 use crate::focus_read::{
     ABANDONED_LIMIT, FocusEvent, Judged, MOVED_ON, Meta, NOT_IN_TIME, REPLACED, WAITED_TOO_LONG,
 };
-use crate::protocol::{EventTiming, UiaFocusRead};
+use verbatim_model::protocol::{EventTiming, UiaFocusRead};
 
 /// Why an event is dropped when the listener is shutting down.
 const SHUTTING_DOWN: &str = "the listener is shutting down";
@@ -1152,7 +1152,7 @@ mod tests {
     fn a_read() -> Box<UiaFocusRead> {
         Box::new(UiaFocusRead {
             hwnd: 0,
-            snapshot: crate::protocol::UiaSnapshotFact {
+            snapshot: verbatim_model::protocol::UiaSnapshotFact {
                 runtime_id: vec![42],
                 role: verbatim_model::Role::Button,
                 name: None,
@@ -1161,7 +1161,7 @@ mod tests {
                 details: verbatim_model::NodeDetails::default(),
             },
             ancestors: Vec::new(),
-            ancestors_end: crate::protocol::AncestorsEnd::Top,
+            ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
             window: None,

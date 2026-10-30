@@ -4,7 +4,9 @@
 //! that queues a command writes it itself when the pipe is free and
 //! nothing waits; while a write is in flight, commands wait in a bounded
 //! queue, written in order by the relay once that write's completion
-//! reaches its port ([`super::relay`]).
+//! reaches its port ([`super::relay`]). A writer is of one child's
+//! commands ([`ToChild`]): an outpost's, [`CoreToOutpost`], or the
+//! listener's, [`CoreToListener`], which takes no routed fact.
 //!
 //! When the queue is full, each kind of command has its own policy:
 //!
@@ -46,50 +48,139 @@
 #![forbid(unsafe_code)]
 
 use std::collections::VecDeque;
+use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;
 use std::time::Instant;
 
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, EventTiming, FactKey};
 use verbatim_process::overlapped::{Completion, Port};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
-use crate::protocol::{EventTiming, FactKey, SupervisorToOutpost, now_us, put_message};
+use crate::protocol::{Message, now_us, put_message};
 
 /// How many commands may wait for one child before the overload policy
 /// applies.
 pub(super) const WRITER_CAPACITY: usize = 64;
 
+/// The commands of one kind of child, as its writer's overload policy
+/// needs them.
+pub(crate) trait ToChild: Message + Clone + std::fmt::Debug + Send + 'static {
+    /// The routed fact this child takes: the `DeliverFact` command for an
+    /// outpost, and none for the listener, so its writer cannot be given
+    /// one.
+    type Fact: std::fmt::Debug + Send + 'static;
+
+    /// A ping numbered `seq`.
+    fn ping(seq: u64) -> Self;
+
+    /// The shutdown message.
+    fn shutdown() -> Self;
+
+    /// The command that carries `fact`.
+    fn fact(fact: Self::Fact) -> Self;
+
+    /// Stamps a ping, or a hand-over notice to the listener, with `now`,
+    /// read just before its write begins.
+    fn stamp_sent(&mut self, now: impl FnOnce() -> u64);
+
+    /// The timing a routed fact or a query carries, which verbatim.exe's
+    /// relay stamps are filled into as it is written.
+    fn relay_timing(&mut self) -> Option<&mut EventTiming>;
+}
+
+impl ToChild for CoreToOutpost {
+    type Fact = CoreToOutpost;
+
+    fn ping(seq: u64) -> Self {
+        CoreToOutpost::Ping { seq, sent_at_us: 0 }
+    }
+
+    fn shutdown() -> Self {
+        CoreToOutpost::Shutdown
+    }
+
+    fn fact(fact: Self::Fact) -> Self {
+        fact
+    }
+
+    fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
+        CoreToOutpost::stamp_sent(self, now);
+    }
+
+    fn relay_timing(&mut self) -> Option<&mut EventTiming> {
+        match self {
+            CoreToOutpost::DeliverFact { timing, .. } | CoreToOutpost::Query { timing, .. } => {
+                Some(timing)
+            }
+            CoreToOutpost::SetBackendOverride { .. }
+            | CoreToOutpost::ForwardingEnded { .. }
+            | CoreToOutpost::Cancel { .. }
+            | CoreToOutpost::Ping { .. }
+            | CoreToOutpost::Fetches(_)
+            | CoreToOutpost::NodesHeld { .. }
+            | CoreToOutpost::IdleQuery { .. }
+            | CoreToOutpost::Shutdown
+            | CoreToOutpost::Assign { .. } => None,
+        }
+    }
+}
+
+impl ToChild for CoreToListener {
+    type Fact = Infallible;
+
+    fn ping(seq: u64) -> Self {
+        CoreToListener::Ping { seq, sent_at_us: 0 }
+    }
+
+    fn shutdown() -> Self {
+        CoreToListener::Shutdown
+    }
+
+    fn fact(fact: Self::Fact) -> Self {
+        match fact {}
+    }
+
+    fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
+        CoreToListener::stamp_sent(self, now);
+    }
+
+    fn relay_timing(&mut self) -> Option<&mut EventTiming> {
+        None
+    }
+}
+
 /// One command waiting to be written, with what the overload policy needs
 /// to know about it.
 #[derive(Debug)]
-pub(super) enum Outgoing {
+pub(super) enum Outgoing<M: ToChild> {
     /// A liveness ping.
-    Ping(SupervisorToOutpost),
-    /// The shutdown message, [`SupervisorToOutpost::Shutdown`].
+    Ping(M),
+    /// The shutdown message.
     Shutdown,
     /// A routed fact, keyed by the object and kind it concerns and, for an
     /// MSAA event other than a menu opening, the thread that raised it
     /// (`None` for a notification,
     /// which nothing replaces), with when verbatim.exe read it from the
     /// listener.
-    Fact(Option<FactKey>, SupervisorToOutpost, Received),
+    Fact(Option<FactKey>, M::Fact, Received),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
-    /// `HookInstalled` or `HookRemoved` to the listener.
-    HandOver(SupervisorToOutpost),
+    /// `HookInstalled` or `HookRemoved` to the listener; and a spare's
+    /// `Assign`.
+    HandOver(M),
     /// A part of a UIA focus's read routed to an outpost, which waits on
     /// its marker, so it gets through as a hand-over message does, with
     /// when verbatim.exe read it from the listener.
-    FocusRead(SupervisorToOutpost, Received),
-    /// The idle barrier's query for a round,
-    /// [`SupervisorToOutpost::IdleQuery`].
-    IdleQuery(SupervisorToOutpost),
+    FocusRead(M::Fact, Received),
+    /// The idle barrier's query for a round.
+    IdleQuery(M),
     /// Anything else: a query, an activation, a configuration command, with
     /// when it was queued.
-    Other(SupervisorToOutpost, Received),
+    Other(M, Received),
 }
 
-impl Outgoing {
+impl Outgoing<CoreToOutpost> {
     /// A routed fact for an outpost: a part of a UIA focus's read, which an
     /// outpost waits on in order, gets through as a hand-over message does
     /// and is never merged; any other fact is keyed by the object and kind
@@ -98,7 +189,7 @@ impl Outgoing {
     pub(super) fn delivered(held: super::policy::HeldFact) -> Self {
         let key = held.fact.key(held.win_event);
         let focus_read = held.fact.is_focus_read();
-        let command = SupervisorToOutpost::DeliverFact {
+        let command = CoreToOutpost::DeliverFact {
             trace_id: held.trace_id,
             timing: held.timing,
             fact: held.fact,
@@ -110,49 +201,36 @@ impl Outgoing {
             Outgoing::Fact(key, command, held.received)
         }
     }
+}
 
-    #[cfg(test)]
-    fn command(&self) -> &SupervisorToOutpost {
-        match self {
-            Outgoing::Shutdown => &SupervisorToOutpost::Shutdown,
-            Outgoing::Ping(command)
-            | Outgoing::IdleQuery(command)
-            | Outgoing::Fact(_, command, _)
-            | Outgoing::HandOver(command)
-            | Outgoing::FocusRead(command, _)
-            | Outgoing::Other(command, _) => command,
-        }
-    }
-
+impl<M: ToChild> Outgoing<M> {
     /// The command to write now, a fact or a request stamped with
     /// verbatim.exe's relay time up to this moment ([`Received::stamp`]),
-    /// and a command to the listener with the moment its write begins
-    /// ([`SupervisorToOutpost::stamp_sent`]).
-    pub(super) fn relayed(self) -> SupervisorToOutpost {
+    /// and a ping or a command to the listener with the moment its write
+    /// begins ([`ToChild::stamp_sent`]).
+    pub(super) fn relayed(self) -> M {
         self.relayed_with(now_us)
     }
 
     /// [`relayed`](Self::relayed), with `now` the clock a command to the
     /// listener is stamped from.
-    fn relayed_with(self, now: impl FnOnce() -> u64) -> SupervisorToOutpost {
-        match self {
-            Outgoing::Shutdown => SupervisorToOutpost::Shutdown,
-            Outgoing::Fact(_, mut command, received)
-            | Outgoing::FocusRead(mut command, received)
-            | Outgoing::Other(mut command, received) => {
-                match &mut command {
-                    SupervisorToOutpost::DeliverFact { timing, .. }
-                    | SupervisorToOutpost::Query { timing, .. } => received.stamp(timing),
-                    _ => {}
-                }
-                command
+    fn relayed_with(self, now: impl FnOnce() -> u64) -> M {
+        let (mut command, received) = match self {
+            Outgoing::Shutdown => return M::shutdown(),
+            Outgoing::Fact(_, fact, received) | Outgoing::FocusRead(fact, received) => {
+                (M::fact(fact), received)
             }
+            Outgoing::Other(command, received) => (command, received),
             Outgoing::Ping(mut command) | Outgoing::HandOver(mut command) => {
                 command.stamp_sent(now);
-                command
+                return command;
             }
-            Outgoing::IdleQuery(command) => command,
+            Outgoing::IdleQuery(command) => return command,
+        };
+        if let Some(timing) = command.relay_timing() {
+            received.stamp(timing);
         }
+        command
     }
 }
 
@@ -219,22 +297,32 @@ impl std::fmt::Display for QueueError {
 
 /// The waiting commands, and the slot for the held nodes' list. Pure, so
 /// the overload policy is tested on its own.
-#[derive(Debug, Default)]
-pub(super) struct Queue {
-    items: VecDeque<Outgoing>,
-    /// The latest [`SupervisorToOutpost::NodesHeld`] not yet sent, which
-    /// the next command written carries after its own frame, once every
-    /// command queued before it was left has been written.
-    held: Option<SupervisorToOutpost>,
+#[derive(Debug)]
+pub(super) struct Queue<M: ToChild> {
+    items: VecDeque<Outgoing<M>>,
+    /// The latest held nodes' list not yet sent, which the next command
+    /// written carries after its own frame, once every command queued
+    /// before it was left has been written. Only an outpost's is left.
+    held: Option<M>,
     /// How many of the commands waiting were queued before `held` was
     /// left: the list goes with the last of them, or, with none, with the
     /// next command written.
     held_behind: usize,
 }
 
-impl Queue {
+impl<M: ToChild> Default for Queue<M> {
+    fn default() -> Self {
+        Self {
+            items: VecDeque::new(),
+            held: None,
+            held_behind: 0,
+        }
+    }
+}
+
+impl<M: ToChild> Queue<M> {
     /// Adds `item` under the overload policy for `capacity`.
-    pub(super) fn push(&mut self, item: Outgoing, capacity: usize) -> Result<(), QueueError> {
+    pub(super) fn push(&mut self, item: Outgoing<M>, capacity: usize) -> Result<(), QueueError> {
         match item {
             Outgoing::Ping(_)
             | Outgoing::Shutdown
@@ -281,7 +369,7 @@ impl Queue {
         Ok(())
     }
 
-    fn pop(&mut self) -> Option<Outgoing> {
+    fn pop(&mut self) -> Option<Outgoing<M>> {
         let item = self.items.pop_front()?;
         self.held_behind = self.held_behind.saturating_sub(1);
         Some(item)
@@ -297,21 +385,21 @@ impl Queue {
 
     /// Leaves `held` in the slot, replacing a list not yet sent, behind
     /// every command waiting now.
-    fn leave(&mut self, held: SupervisorToOutpost) {
+    fn leave(&mut self, held: M) {
         self.held = Some(held);
         self.held_behind = self.items.len();
     }
 }
 
-impl Backlog for Queue {
-    type Item = Outgoing;
+impl<M: ToChild> Backlog for Queue<M> {
+    type Item = Outgoing<M>;
     type Refused = QueueError;
 
-    fn push(&mut self, item: Outgoing) -> Result<(), QueueError> {
+    fn push(&mut self, item: Outgoing<M>) -> Result<(), QueueError> {
         Queue::push(self, item, WRITER_CAPACITY)
     }
 
-    fn pop(&mut self) -> Option<Outgoing> {
+    fn pop(&mut self) -> Option<Outgoing<M>> {
         Queue::pop(self)
     }
 
@@ -323,7 +411,7 @@ impl Backlog for Queue {
     /// any and nothing queued before it was left still waits, which the
     /// item's write then carries; the shutdown message carries none, since
     /// the outpost is ending.
-    fn encode(&mut self, item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
+    fn encode(&mut self, item: Outgoing<M>, buffer: &mut Vec<u8>) -> io::Result<()> {
         let carries = !matches!(item, Outgoing::Shutdown) && self.held_behind == 0;
         put_message(buffer, &item.relayed())?;
         if carries && let Some(held) = self.held.take() {
@@ -339,12 +427,19 @@ impl Backlog for Queue {
 
 /// The shared end of one child's writer: the relay and the reducer thread
 /// send through it.
-#[derive(Clone)]
-pub(crate) struct WriterHandle {
-    sender: Sender<Queue>,
+pub(crate) struct WriterHandle<M: ToChild> {
+    sender: Sender<Queue<M>>,
 }
 
-impl WriterHandle {
+impl<M: ToChild> Clone for WriterHandle<M> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+        }
+    }
+}
+
+impl<M: ToChild> WriterHandle<M> {
     /// The writer for a child's command pipe, an overlapped end, whose
     /// writes that pend complete on `port`, the relay's, under `key`.
     pub(super) fn on_port(to_child: OwnedHandle, port: Arc<Port>, key: usize) -> io::Result<Self> {
@@ -353,40 +448,27 @@ impl WriterHandle {
         })
     }
 
-    /// Takes `completion`, of a write of this writer's that pended, from
-    /// the relay: writes what waited behind it.
-    pub(super) fn complete(&self, completion: &Completion) {
-        self.sender.complete(completion);
-    }
-
-    /// Whether the writer has closed and written everything, or failed:
-    /// no completion of its will come again.
-    pub(super) fn is_finished(&self) -> bool {
-        self.sender.is_finished()
-    }
-
     /// Writes `item` now if the pipe is free, or queues it, without
     /// waiting.
-    pub(super) fn push(&self, item: Outgoing) -> Result<(), QueueError> {
+    pub(super) fn push(&self, item: Outgoing<M>) -> Result<(), QueueError> {
         self.sender.send(item).map_err(|error| match error {
             SendError::Refused(refused) => refused,
             SendError::Closed => QueueError::Closed,
         })
     }
 
-    /// Leaves `held`, a [`SupervisorToOutpost::NodesHeld`], in the slot,
-    /// replacing a list not yet sent: it writes nothing, and the next
-    /// command written once every command waiting now has been written
-    /// carries it.
-    pub(super) fn leave_held(&self, held: SupervisorToOutpost) {
+    /// Leaves `held`, a held nodes' list, in the slot, replacing a list not
+    /// yet sent: it writes nothing, and the next command written once every
+    /// command waiting now has been written carries it.
+    pub(super) fn leave_held(&self, held: M) {
         self.sender.with_backlog(|queue| queue.leave(held));
     }
 
-    /// Writes `held`, a [`SupervisorToOutpost::NodesHeld`], behind every
-    /// command waiting now, in place of a list left in the slot, which it
-    /// supersedes. When the queue is full it is left in the slot instead,
-    /// for the next command written to carry.
-    pub(super) fn send_held(&self, held: SupervisorToOutpost) {
+    /// Writes `held`, a held nodes' list, behind every command waiting now,
+    /// in place of a list left in the slot, which it supersedes. When the
+    /// queue is full it is left in the slot instead, for the next command
+    /// written to carry.
+    pub(super) fn send_held(&self, held: M) {
         self.sender.with_backlog(|queue| queue.held = None);
         if let Err(QueueError::Full) = self.push(Outgoing::Other(held.clone(), Received::now())) {
             self.leave_held(held);
@@ -400,37 +482,76 @@ impl WriterHandle {
     }
 }
 
+/// A writer as the relay finishes its writes that pended, whichever kind of
+/// child it writes to.
+pub(super) trait Finishing: Send + Sync {
+    /// Takes `completion`, of a write of this writer's that pended, from
+    /// the relay: writes what waited behind it.
+    fn complete(&self, completion: &Completion);
+
+    /// Whether the writer has closed and written everything, or failed:
+    /// no completion of its will come again.
+    fn is_finished(&self) -> bool;
+}
+
+impl<M: ToChild> Finishing for WriterHandle<M>
+where
+    Sender<Queue<M>>: Send + Sync,
+{
+    fn complete(&self, completion: &Completion) {
+        self.sender.complete(completion);
+    }
+
+    fn is_finished(&self) -> bool {
+        self.sender.is_finished()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use verbatim_model::TraceId;
 
     use super::*;
-    use crate::protocol::{DeliveredFact, UiaSnapshotFact};
-    use crate::supervisor::policy::HeldFact;
 
-    fn ping() -> Outgoing {
-        Outgoing::Ping(SupervisorToOutpost::Ping {
+    impl Outgoing<CoreToOutpost> {
+        fn command(&self) -> &CoreToOutpost {
+            match self {
+                Outgoing::Shutdown => &CoreToOutpost::Shutdown,
+                Outgoing::Ping(command)
+                | Outgoing::IdleQuery(command)
+                | Outgoing::Fact(_, command, _)
+                | Outgoing::HandOver(command)
+                | Outgoing::FocusRead(command, _)
+                | Outgoing::Other(command, _) => command,
+            }
+        }
+    }
+    use crate::supervisor::policy::HeldFact;
+    use verbatim_model::protocol::{DeliveredFact, UiaSnapshotFact};
+
+    fn ping() -> Outgoing<CoreToOutpost> {
+        Outgoing::Ping(CoreToOutpost::Ping {
             seq: 1,
             sent_at_us: 0,
         })
     }
 
-    fn query() -> Outgoing {
+    fn query() -> Outgoing<CoreToOutpost> {
         Outgoing::Other(
-            SupervisorToOutpost::Query {
+            CoreToOutpost::Query {
                 trace_id: TraceId::mint(),
                 request_id: 1,
-                query: crate::protocol::Query::DumpTree { locations: false },
+                query: verbatim_model::protocol::Query::DumpTree { locations: false },
                 timing: EventTiming::default(),
             },
             Received::now(),
         )
     }
 
-    fn fact(hwnd: isize) -> Outgoing {
+    fn fact(hwnd: isize) -> Outgoing<CoreToOutpost> {
         Outgoing::Fact(
             Some(FactKey::Foreground(hwnd, 1)),
-            SupervisorToOutpost::Ping {
+            CoreToOutpost::Ping {
                 seq: hwnd.cast_unsigned() as u64,
                 sent_at_us: 0,
             },
@@ -438,10 +559,10 @@ mod tests {
         )
     }
 
-    fn seqs(queue: &mut Queue) -> Vec<u64> {
+    fn seqs(queue: &mut Queue<CoreToOutpost>) -> Vec<u64> {
         std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::Ping { seq, .. } => *seq,
+                CoreToOutpost::Ping { seq, .. } => *seq,
                 _ => 0,
             })
             .collect()
@@ -474,8 +595,8 @@ mod tests {
     }
 
     /// A held nodes' list acknowledging `acknowledged`.
-    fn held_list(acknowledged: u64) -> SupervisorToOutpost {
-        SupervisorToOutpost::NodesHeld {
+    fn held_list(acknowledged: u64) -> CoreToOutpost {
+        CoreToOutpost::NodesHeld {
             nodes: vec![acknowledged],
             anchors: Vec::new(),
             acknowledged,
@@ -492,7 +613,7 @@ mod tests {
     }
 
     impl Child {
-        fn new() -> (WriterHandle, Self) {
+        fn new() -> (WriterHandle<CoreToOutpost>, Self) {
             use verbatim_process::overlapped::{End, Flow, PipeIo, pipe};
             let (ours, theirs) = pipe(Flow::Inbound, 4096, End::Overlapped).expect("a pipe");
             let writer = WriterHandle::on_port(theirs, Arc::new(Port::new().expect("a port")), 2)
@@ -551,14 +672,14 @@ mod tests {
     fn names(mut data: &[u8]) -> Vec<String> {
         let mut names = Vec::new();
         while let Some(command) =
-            crate::protocol::read_message::<_, SupervisorToOutpost>(&mut data).expect("a frame")
+            crate::protocol::read_message::<_, CoreToOutpost>(&mut data).expect("a frame")
         {
             names.push(match command {
-                SupervisorToOutpost::Ping { seq, .. } => format!("ping {seq}"),
-                SupervisorToOutpost::Query { request_id, .. } => {
+                CoreToOutpost::Ping { seq, .. } => format!("ping {seq}"),
+                CoreToOutpost::Query { request_id, .. } => {
                     format!("query {request_id}")
                 }
-                SupervisorToOutpost::NodesHeld { acknowledged, .. } => {
+                CoreToOutpost::NodesHeld { acknowledged, .. } => {
                     format!("held {acknowledged}")
                 }
                 other => format!("{other:?}"),
@@ -574,16 +695,16 @@ mod tests {
     fn held_nodes_go_after_every_command_queued_before_they_were_left() {
         let request = |id| {
             Outgoing::Other(
-                SupervisorToOutpost::Query {
+                CoreToOutpost::Query {
                     trace_id: TraceId::mint(),
                     request_id: id,
-                    query: crate::protocol::Query::DumpTree { locations: false },
+                    query: verbatim_model::protocol::Query::DumpTree { locations: false },
                     timing: EventTiming::default(),
                 },
                 Received::now(),
             )
         };
-        let writes = |queue: &mut Queue| {
+        let writes = |queue: &mut Queue<CoreToOutpost>| {
             let mut writes = Vec::new();
             while let Some(item) = queue.pop() {
                 let mut buffer = Vec::new();
@@ -649,7 +770,7 @@ mod tests {
     }
 
     /// A selection of `runtime_id` named `name`, as routed.
-    fn selection(runtime_id: i32, name: &str) -> Outgoing {
+    fn selection(runtime_id: i32, name: &str) -> Outgoing<CoreToOutpost> {
         Outgoing::delivered(held(DeliveredFact::UiaSelection {
             hwnd: 0,
             focus_window: 0,
@@ -675,14 +796,14 @@ mod tests {
     }
 
     /// What a routed fact in the queue is, for the order asserted.
-    fn routed(queue: &mut Queue) -> Vec<String> {
+    fn routed(queue: &mut Queue<CoreToOutpost>) -> Vec<String> {
         std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::DeliverFact {
+                CoreToOutpost::DeliverFact {
                     fact: DeliveredFact::UiaFocusMarker { marker },
                     ..
                 } => format!("marker {marker}"),
-                SupervisorToOutpost::DeliverFact {
+                CoreToOutpost::DeliverFact {
                     fact: DeliveredFact::UiaSelection { snapshot, .. },
                     ..
                 } => format!(
@@ -722,7 +843,7 @@ mod tests {
     fn a_foreground_change_or_msaa_focus_replaces_only_the_one_its_thread_raised() {
         let raised = |fact, thread, time| {
             Outgoing::delivered(HeldFact {
-                win_event: Some(crate::protocol::WinEventStamp { thread, time }),
+                win_event: Some(verbatim_model::protocol::WinEventStamp { thread, time }),
                 ..held(fact)
             })
         };
@@ -745,7 +866,7 @@ mod tests {
         }
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::DeliverFact {
+                CoreToOutpost::DeliverFact {
                     fact,
                     win_event: Some(stamp),
                     ..
@@ -775,7 +896,7 @@ mod tests {
     fn alerts_and_tooltips_are_replaced_per_thread_and_menu_openings_per_address() {
         let raised = |fact, thread, time| {
             Outgoing::delivered(HeldFact {
-                win_event: Some(crate::protocol::WinEventStamp { thread, time }),
+                win_event: Some(verbatim_model::protocol::WinEventStamp { thread, time }),
                 ..held(fact)
             })
         };
@@ -809,7 +930,7 @@ mod tests {
         }
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::DeliverFact {
+                CoreToOutpost::DeliverFact {
                     fact,
                     win_event: Some(stamp),
                     ..
@@ -831,15 +952,15 @@ mod tests {
 
     #[test]
     fn a_hand_over_message_gets_through_a_full_queue_behind_the_facts_before_it() {
-        let ended = || Outgoing::HandOver(SupervisorToOutpost::ForwardingEnded { through: 99 });
+        let ended = || Outgoing::HandOver(CoreToOutpost::ForwardingEnded { through: 99 });
         let mut queue = Queue::default();
         queue.push(fact(1), 2).expect("queued");
         queue.push(fact(2), 2).expect("queued");
         queue.push(ended(), 2).expect("gets through the full queue");
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::Ping { seq, .. } => seq.to_string(),
-                SupervisorToOutpost::ForwardingEnded { .. } => "ended".to_owned(),
+                CoreToOutpost::Ping { seq, .. } => seq.to_string(),
+                CoreToOutpost::ForwardingEnded { .. } => "ended".to_owned(),
                 other => format!("{other:?}"),
             })
             .collect();
@@ -852,7 +973,7 @@ mod tests {
     /// the query.
     #[test]
     fn the_idle_query_gets_through_behind_the_facts_before_it_and_nothing_merges_across_it() {
-        let idle = || Outgoing::IdleQuery(SupervisorToOutpost::IdleQuery { round: 3 });
+        let idle = || Outgoing::IdleQuery(CoreToOutpost::IdleQuery { round: 3 });
         let mut queue = Queue::default();
         queue.push(fact(1), 2).expect("queued");
         queue.push(fact(2), 2).expect("queued");
@@ -862,8 +983,8 @@ mod tests {
             .expect("queued behind it, the waiting fact 1 kept");
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                SupervisorToOutpost::Ping { seq, .. } => seq.to_string(),
-                SupervisorToOutpost::IdleQuery { round } => format!("idle {round}"),
+                CoreToOutpost::Ping { seq, .. } => seq.to_string(),
+                CoreToOutpost::IdleQuery { round } => format!("idle {round}"),
                 other => format!("{other:?}"),
             })
             .collect();
@@ -873,8 +994,8 @@ mod tests {
     #[test]
     fn a_command_to_the_listener_is_stamped_as_its_write_begins() {
         let commands = [
-            ping(),
-            Outgoing::HandOver(SupervisorToOutpost::HookRemoved {
+            Outgoing::Ping(CoreToListener::ping(1)),
+            Outgoing::HandOver(CoreToListener::HookRemoved {
                 pid: verbatim_model::Pid(5),
                 sent_at_us: 0,
             }),
@@ -883,9 +1004,14 @@ mod tests {
             .into_iter()
             .map(|command| {
                 let written = command.relayed_with(|| 5_000);
-                crate::protocol::hop_us(written.sent_at_us(), 5_400)
+                verbatim_model::protocol::hop_us(written.sent_at_us(), 5_400)
             })
             .collect();
         assert_eq!(hops, [Some(400), Some(400)]);
+        let ping = ping().relayed_with(|| 5_000);
+        assert_eq!(
+            verbatim_model::protocol::hop_us(ping.sent_at_us(), 5_400),
+            Some(400)
+        );
     }
 }

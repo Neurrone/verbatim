@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use verbatim_model::{Backend, NodeSnapshot, TraceId};
 
-use crate::protocol::EventTiming;
+use verbatim_model::protocol::EventTiming;
 
 use super::Context;
 use super::intake::Object;

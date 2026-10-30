@@ -18,11 +18,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
+use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, OutpostToCore};
 use verbatim_model::{NormalizedEvent, TraceId};
 use verbatim_outpost::Outpost;
-use verbatim_outpost::protocol::{
-    DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, read_message,
-};
+use verbatim_outpost::protocol::read_message;
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 
@@ -61,7 +60,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     let (messages_tx, messages) = mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = BufReader::new(BlockingReader::new(pipe_in).expect("a reader"));
-        while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut reader) {
+        while let Ok(Some(message)) = read_message::<_, OutpostToCore>(&mut reader) {
             if messages_tx.send(message).is_err() {
                 return;
             }
@@ -69,7 +68,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     });
     assert_eq!(
         messages.recv_timeout(common::WAIT_TIMEOUT).ok(),
-        Some(OutpostToSupervisor::Ready {
+        Some(OutpostToCore::Ready {
             outpost_pid: verbatim_model::Pid(std::process::id()),
             target_pid: verbatim_model::Pid(pid),
         }),
@@ -78,9 +77,9 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
 
     // The window thread is stalled before the fact arrives.
     app.stall(STALL);
-    outpost.handle_command(&SupervisorToOutpost::DeliverFact {
+    outpost.handle_command(&CoreToOutpost::DeliverFact {
         trace_id: TraceId::mint(),
-        timing: verbatim_outpost::protocol::EventTiming::default(),
+        timing: verbatim_model::protocol::EventTiming::default(),
         fact: DeliveredFact::MsaaFocus {
             hwnd,
             id_object,
@@ -92,7 +91,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     let message = messages
         .recv_timeout(STALL + common::WAIT_TIMEOUT)
         .expect("the outpost reports the focus before the wait times out");
-    let OutpostToSupervisor::Event {
+    let OutpostToCore::Event {
         event: NormalizedEvent::FocusChanged { node, .. },
         timing,
         ..

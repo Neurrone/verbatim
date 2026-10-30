@@ -34,7 +34,7 @@ pub(crate) fn now_ms() -> u64 {
 
 /// The observation `timing` holds, in microseconds on the run's shared
 /// clock; now, when `timing` holds none.
-pub(crate) fn observed_us(timing: &crate::protocol::EventTiming) -> u64 {
+pub(crate) fn observed_us(timing: &verbatim_model::protocol::EventTiming) -> u64 {
     match timing.observed_at_us {
         0 => crate::protocol::now_us(),
         observed_at_us => observed_at_us,
@@ -559,9 +559,9 @@ pub(super) mod tests {
     /// microseconds of its observation, its own clock read.
     #[test]
     fn an_observation_is_stamped_from_its_own_clock_read() {
-        let timing = crate::protocol::EventTiming {
+        let timing = verbatim_model::protocol::EventTiming {
             observed_at_us: 6_543_210,
-            ..crate::protocol::EventTiming::default()
+            ..verbatim_model::protocol::EventTiming::default()
         };
         assert_eq!(observed_us(&timing), 6_543_210);
     }

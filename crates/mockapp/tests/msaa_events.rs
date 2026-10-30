@@ -25,11 +25,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use verbatim_core::SrState;
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, WinEventStamp};
 use verbatim_model::{
     Backend, CallCounts, Earcon, Effect, FocusGroup, Input, NormalizedEvent, OutpostId, Pid,
     SegmentContent, State, TraceId, WindowFacts,
 };
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, WinEventStamp};
 
 use common::outpost::{OutpostUnderTest, Reported};
 use windows::Win32::Foundation::HWND;
@@ -151,7 +151,7 @@ fn next_event(outpost: &OutpostUnderTest) -> NormalizedEvent {
 /// its window facts.
 fn next_event_in(outpost: &OutpostUnderTest) -> (NormalizedEvent, Option<WindowFacts>) {
     match outpost.next() {
-        OutpostToSupervisor::Event { event, window, .. } => (event, window),
+        OutpostToCore::Event { event, window, .. } => (event, window),
         other => panic!("the outpost said {other:?}, not an event"),
     }
 }
@@ -420,7 +420,7 @@ fn disable_then_move(batching: Batching, (to_id, to_index): (&str, usize)) -> Ve
             outpost.deliver_observed_now(focus_fact);
             app.send("slow 0");
             match outpost.next() {
-                OutpostToSupervisor::Reply { request_id, .. } => assert_eq!(request_id, request),
+                OutpostToCore::Reply { request_id, .. } => assert_eq!(request_id, request),
                 other => panic!("the outpost said {other:?}, not the ancestors"),
             }
             vec![next_event(&outpost), next_event(&outpost)]
@@ -787,9 +787,11 @@ fn raise_focus_on(app: &mut common::MockApp, id: &str) -> (DeliveredFact, WinEve
     app.send(&format!("focus {id}"));
     let event = common::pump_until(|| *seen.lock().unwrap_or_else(PoisonError::into_inner));
     drop(hook);
-    let fact =
-        DeliveredFact::from_win_event(event.kind, (event.hwnd, event.id_object, event.id_child))
-            .expect("a focus in mockapp's window");
+    let fact = verbatim_outpost::protocol::fact_of_win_event(
+        event.kind,
+        (event.hwnd, event.id_object, event.id_child),
+    )
+    .expect("a focus in mockapp's window");
     let stamp = WinEventStamp {
         thread: event.thread,
         time: event.time,
@@ -954,7 +956,7 @@ fn msaa_focus_fact(hwnd: HWND, index: usize) -> DeliveredFact {
 /// window's name, and the calls the outpost made for it.
 fn foreground_report(outpost: &OutpostUnderTest) -> (Option<String>, CallCounts) {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -1297,7 +1299,7 @@ fn next_event_with_calls(
     outpost: &OutpostUnderTest,
 ) -> (NormalizedEvent, Option<WindowFacts>, CallCounts) {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event,
             window,
             timing,
@@ -1337,7 +1339,7 @@ fn a_foreground_change_after_another_application_s_focus_is_reported() {
 /// and when its event was first observed, both in microseconds.
 fn focus_stamp(outpost: &OutpostUnderTest) -> (u64, u64) {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             observed_at_us,
             timing,
             event: NormalizedEvent::FocusChanged { .. },

@@ -141,12 +141,13 @@ use crate::outpost::window::{
     MOVED_ON_GRACE, front_is_another_thread_of_its_application, top_level_of,
     window_belongs_to_hidden_frame, window_is_hung,
 };
-use crate::protocol::{
-    AncestorsEnd, DeliveredFact, EventTiming, GapAnswer, UiaAncestorFact, UiaFocusRead,
-    UiaSnapshotFact, now_us,
-};
+use crate::protocol::now_us;
 use crate::read_schedule::{
     AlarmChange, Claim, QueuePlace, Schedule, ScheduleEffect, ScheduleInput, TickRead, Waking,
+};
+use verbatim_model::protocol::{
+    AncestorsEnd, DeliveredFact, EventTiming, GapAnswer, UiaAncestorFact, UiaFocusRead,
+    UiaSnapshotFact,
 };
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -990,7 +991,7 @@ pub struct FocusReader {
     last_top: Option<isize>,
     /// Whether a backend override forcing UIA is set for this reader's
     /// application, so no focus is skipped by its window's class
-    /// ([`SupervisorToOutpost::SetBackendOverride`](crate::protocol::SupervisorToOutpost::SetBackendOverride)).
+    /// ([`CoreToListener::SetBackendOverride`](verbatim_model::protocol::CoreToListener::SetBackendOverride)).
     forced_uia: Arc<AtomicBool>,
     /// The read under way as the reading threads' watchdog watches it,
     /// told a focus's sender's nearest window once the read finds it, and asked
@@ -2688,9 +2689,9 @@ impl ReadingThreads {
             marker,
             kind: FocusEvent::Focus,
             trace: TraceId::mint(),
-            timing: crate::protocol::EventTiming {
+            timing: verbatim_model::protocol::EventTiming {
                 observed_at_us,
-                ..crate::protocol::EventTiming::default()
+                ..verbatim_model::protocol::EventTiming::default()
             },
         };
         self.readers
@@ -2766,7 +2767,7 @@ mod tests {
                 details: NodeDetails::default(),
             },
             ancestors: Vec::new(),
-            ancestors_end: crate::protocol::AncestorsEnd::Top,
+            ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
             window: None,

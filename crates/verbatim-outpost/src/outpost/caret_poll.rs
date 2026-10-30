@@ -110,7 +110,7 @@ mod tests {
     use verbatim_model::{CallCounts, CaretWatch, NodeId, TextUnit, TraceId};
 
     use super::*;
-    use crate::protocol::EventTiming;
+    use verbatim_model::protocol::EventTiming;
 
     /// A watch for request `request_id` on node 1, opened at `opened`,
     /// polling as `poll` says.

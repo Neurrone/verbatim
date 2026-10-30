@@ -30,11 +30,12 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, unbounded};
+use verbatim_model::protocol::{
+    CoreToListener, CoreToOutpost, EventTiming, ListenerToCore, OutpostToCore,
+};
 use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{
-    EventTiming, OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
-};
+use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{
     EventSink, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
 };
@@ -68,20 +69,20 @@ fn value(args: &[String], name: &str) -> String {
 
 /// A fault whose detail is `name`, padded with `padding` more bytes: how
 /// the stand-in outpost writes a frame the test can tell apart.
-fn fault(name: &str, padding: usize) -> OutpostToSupervisor {
+fn fault(name: &str, padding: usize) -> OutpostToCore {
     let mut detail = name.to_owned();
     if padding > 0 {
         detail.push(' ');
         detail.push_str(&"x".repeat(padding));
     }
-    OutpostToSupervisor::Fault { detail }
+    OutpostToCore::Fault { detail }
 }
 
 /// A value change of node 7 to `value`: two of them are merged by the
 /// outpost's outbound rules whenever the second is sent while the first
 /// waits behind a write in flight.
-fn value_change(value: &str) -> OutpostToSupervisor {
-    OutpostToSupervisor::Event {
+fn value_change(value: &str) -> OutpostToCore {
+    OutpostToCore::Event {
         trace_id: TraceId::mint(),
         observed_at_us: 0,
         backend: Backend::Uia,
@@ -97,7 +98,7 @@ fn value_change(value: &str) -> OutpostToSupervisor {
 
 /// What the stand-in outpost writes for request number `request`, in
 /// order; `None` for the end of its process, with code 3.
-fn script(request: u64, ready: &OutpostToSupervisor) -> Vec<Option<OutpostToSupervisor>> {
+fn script(request: u64, ready: &OutpostToCore) -> Vec<Option<OutpostToCore>> {
     match request {
         1 => vec![Some(fault("A", 0)), Some(ready.clone())],
         2 => vec![Some(fault("B", 0))],
@@ -129,7 +130,7 @@ fn script(request: u64, ready: &OutpostToSupervisor) -> Vec<Option<OutpostToSupe
 }
 
 /// Writes `message` to Core.
-fn send(messages: &mut BlockingWriter, message: &OutpostToSupervisor) {
+fn send(messages: &mut BlockingWriter, message: &OutpostToCore) {
     write_message(messages, message).expect("a message is written");
 }
 
@@ -162,55 +163,74 @@ fn stand_in(args: &[String]) -> ! {
         BlockingWriter::new(messages).expect("a writer"),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
-    let target_pid = if listener {
-        Pid(0)
-    } else {
-        Pid(value(args, "--target-pid").parse().expect("a pid"))
-    };
-    let ready = OutpostToSupervisor::Ready {
-        outpost_pid: Pid(std::process::id()),
-        target_pid,
-    };
-    let signal = listener.then(|| {
+    let mut commands = BufReader::new(commands);
+    if listener {
         let name = std::env::var(SIGNAL_ENV).expect("the test names its event");
         // SAFETY: opens the test's named event, or makes it; the handle is
         // owned here until the process ends.
-        unsafe { CreateEventW(None, false, false, &HSTRING::from(name)) }.expect("the test's event")
-    });
-    if listener {
-        send(&mut messages, &ready);
+        let signal = unsafe { CreateEventW(None, false, false, &HSTRING::from(name)) }
+            .expect("the test's event");
+        write_message(
+            &mut messages,
+            &ListenerToCore::Ready {
+                outpost_pid: Pid(std::process::id()),
+                target_pid: Pid(0),
+            },
+        )
+        .expect("a message is written");
+        loop {
+            let command = match read_message::<_, CoreToListener>(&mut commands) {
+                Ok(Some(command)) => command,
+                Ok(None) => std::process::exit(0),
+                Err(error) => panic!("the command pipe failed: {error}"),
+            };
+            match command {
+                CoreToListener::Ping { seq, .. } => write_message(
+                    &mut messages,
+                    &ListenerToCore::Pong {
+                        seq,
+                        parked_count: 0,
+                        written_at_us: 0,
+                    },
+                )
+                .expect("a message is written"),
+                CoreToListener::Shutdown => std::process::exit(0),
+                CoreToListener::HookInstalled { .. } => {
+                    // SAFETY: an event handle this process holds.
+                    unsafe { SetEvent(signal) }.expect("the test's event is set");
+                }
+                _ => {}
+            }
+        }
     }
+    let ready = OutpostToCore::Ready {
+        outpost_pid: Pid(std::process::id()),
+        target_pid: Pid(value(args, "--target-pid").parse().expect("a pid")),
+    };
     // Whether to write a frame when shut down.
     let mut farewell = false;
-    let mut commands = BufReader::new(commands);
     loop {
-        let command = match read_message::<_, SupervisorToOutpost>(&mut commands) {
+        let command = match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(command)) => command,
             Ok(None) => std::process::exit(0),
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            SupervisorToOutpost::Ping { seq, .. } => send(
+            CoreToOutpost::Ping { seq, .. } => send(
                 &mut messages,
-                &OutpostToSupervisor::Pong {
+                &OutpostToCore::Pong {
                     seq,
                     parked_count: 0,
                     written_at_us: 0,
                 },
             ),
-            SupervisorToOutpost::Shutdown => {
+            CoreToOutpost::Shutdown => {
                 if farewell {
                     send(&mut messages, &fault("Z", 0));
                 }
                 std::process::exit(0)
             }
-            SupervisorToOutpost::HookInstalled { .. } => {
-                if let Some(signal) = signal {
-                    // SAFETY: an event handle this process holds.
-                    unsafe { SetEvent(signal) }.expect("the test's event is set");
-                }
-            }
-            SupervisorToOutpost::Cancel { request_id } if !listener => {
+            CoreToOutpost::Cancel { request_id } => {
                 if matches!(request_id, 8 | 9) {
                     send_unreadable(&mut messages);
                 }
@@ -363,12 +383,12 @@ impl Reducer {
             } => {
                 let from = &self.names[&outpost];
                 match *message {
-                    OutpostToSupervisor::Fault { detail } => {
+                    OutpostToCore::Fault { detail } => {
                         let name = detail.split(' ').next().unwrap_or_default();
                         format!("{from}: {name}")
                     }
-                    OutpostToSupervisor::Ready { .. } => format!("{from}: ready"),
-                    OutpostToSupervisor::Event {
+                    OutpostToCore::Ready { .. } => format!("{from}: ready"),
+                    OutpostToCore::Event {
                         event: NormalizedEvent::ValueChanged { node_id, value },
                         ..
                     } => format!(
@@ -409,7 +429,7 @@ impl Reducer {
         self.supervisor
             .send_to_outpost(
                 outpost,
-                SupervisorToOutpost::Cancel {
+                CoreToOutpost::Cancel {
                     request_id: request,
                 },
             )

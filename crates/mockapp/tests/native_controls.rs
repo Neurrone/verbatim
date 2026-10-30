@@ -31,8 +31,8 @@ use verbatim_model::{
 };
 
 use verbatim_ia2::WinEventKind;
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
 use verbatim_outpost::Heard;
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::UIA_ValueValuePropertyId;
@@ -289,7 +289,7 @@ fn a_group_box_is_the_context_of_the_controls_inside_it() {
             .expect("mockapp made the button")
     };
     let focus = |hwnd: windows::Win32::Foundation::HWND| {
-        outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+        outpost.focus(verbatim_model::protocol::DeliveredFact::MsaaFocus {
             hwnd: hwnd.0 as isize,
             id_object: OBJID_CLIENT.0,
             id_child: 0,
@@ -348,7 +348,7 @@ fn a_report_view_item_is_named_by_its_columns() {
     .expect("mockapp made the list view");
     let outpost = OutpostUnderTest::new(&app);
     let item = |child: i32| {
-        outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+        outpost.focus(verbatim_model::protocol::DeliveredFact::MsaaFocus {
             hwnd: list.0 as isize,
             id_object: OBJID_CLIENT.0,
             id_child: child,
@@ -411,7 +411,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     }
     .expect("mockapp made the list view");
     let outpost = OutpostUnderTest::new(&app);
-    let date = outpost.focus(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+    let date = outpost.focus(verbatim_model::protocol::DeliveredFact::MsaaFocus {
         hwnd: list.0 as isize,
         id_object: OBJID_CLIENT.0,
         id_child: 1,
@@ -718,7 +718,7 @@ fn a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus()
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
     let mut change = match outpost.next() {
-        OutpostToSupervisor::Event { event, .. } => event,
+        OutpostToCore::Event { event, .. } => event,
         other => panic!("the outpost said {other:?}, not the slider's value change"),
     };
     outpost.settled();

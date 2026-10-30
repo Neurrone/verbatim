@@ -16,9 +16,8 @@ use verbatim_text::terminal_reading::{Settings, Speech, Step, TerminalReader};
 use verbatim_text::terminal_rows::{Read, ReadText};
 
 use super::Terminal;
-use crate::protocol::{
-    EventTiming, OutpostToSupervisor, decode_message, encode_message, put_message,
-};
+use crate::protocol::{decode_message, encode_message, put_message};
+use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 /// The simulated terminal read as the outpost reads it, each read the
 /// outpost sends given to the reading rules.
@@ -331,7 +330,7 @@ fn event(
     text: TerminalText,
     screen: TerminalText,
     colours: Option<Vec<Vec<TerminalColourRun>>>,
-) -> OutpostToSupervisor {
+) -> OutpostToCore {
     let snapshot = TerminalSnapshot {
         text,
         screen,
@@ -351,7 +350,7 @@ fn event(
         colours,
         caret: None,
     };
-    OutpostToSupervisor::Event {
+    OutpostToCore::Event {
         trace_id: TraceId::mint(),
         observed_at_us: 0,
         backend: Backend::Uia,
@@ -366,8 +365,8 @@ fn event(
 }
 
 /// The read in an [`event`], given back once it is written.
-fn read_of(message: OutpostToSupervisor) -> TerminalSnapshot {
-    let OutpostToSupervisor::Event {
+fn read_of(message: OutpostToCore) -> TerminalSnapshot {
+    let OutpostToCore::Event {
         event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
         ..
     } = message
@@ -468,7 +467,7 @@ fn measure_conversion() {
             .expect("a frame");
         let parts = frame.parts();
         let raw = parts.raw.expect("a terminal's event has a raw section");
-        let parse = || decode_message::<OutpostToSupervisor>(parts).expect("parsed");
+        let parse = || decode_message::<OutpostToCore>(parts).expect("parsed");
         assert_eq!(parse(), message, "the event read back");
         let started = Instant::now();
         for _ in 0..RUNS {

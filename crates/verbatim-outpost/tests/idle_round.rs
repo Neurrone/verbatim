@@ -32,12 +32,13 @@ use crossbeam_channel::unbounded;
 
 mod common;
 use common::Delivered;
+use verbatim_model::protocol::{
+    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
+    OutpostToCore,
+};
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
-};
+use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{OutpostMessage, ShutdownSummary, Supervisor};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
@@ -79,53 +80,90 @@ fn stand_in(args: &[String]) -> ! {
         std::cell::RefCell::new(Some(BlockingWriter::new(messages).expect("a writer"))),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
-    let target_pid = if listener {
-        Pid(0)
-    } else {
-        Pid(value(args, "--target-pid").parse().expect("a pid"))
-    };
+    let mut commands = BufReader::new(commands);
+    if listener {
+        listener_stand_in(&mut commands, &messages);
+    }
+    let target_pid = Pid(value(args, "--target-pid").parse().expect("a pid"));
     // Nothing is sent once the pipe to Core is closed.
-    let send = |message: &OutpostToSupervisor| {
+    let send = |message: &OutpostToCore| {
         if let Some(messages) = messages.borrow_mut().as_mut() {
             write_message(messages, message).expect("a message is written");
         }
     };
-    let ready = OutpostToSupervisor::Ready {
+    let ready = OutpostToCore::Ready {
         outpost_pid: Pid(std::process::id()),
         target_pid,
     };
-    if listener {
-        send(&ready);
-    }
-    let mut commands = BufReader::new(commands);
     let mut facts = 0;
     loop {
-        let command = match read_message::<_, SupervisorToOutpost>(&mut commands) {
+        let command = match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(command)) => command,
             Ok(None) => std::process::exit(0),
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            SupervisorToOutpost::Ping { seq, .. } => send(&OutpostToSupervisor::Pong {
+            CoreToOutpost::Ping { seq, .. } => send(&OutpostToCore::Pong {
                 seq,
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            SupervisorToOutpost::Shutdown => std::process::exit(0),
-            SupervisorToOutpost::Cancel { request_id: 0 } if !listener => send(&ready),
-            SupervisorToOutpost::DeliverFact { .. } => facts += 1,
-            SupervisorToOutpost::IdleQuery { round: 1 } if listener => {
+            CoreToOutpost::Shutdown => std::process::exit(0),
+            CoreToOutpost::Cancel { request_id: 0 } => send(&ready),
+            CoreToOutpost::DeliverFact { .. } => facts += 1,
+            CoreToOutpost::IdleQuery { round } => {
+                send(&OutpostToCore::Fault {
+                    detail: format!("facts before round {round}: {facts}"),
+                });
+                facts = 0;
+                send(&OutpostToCore::IdleAnswer { round });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The stand-in listener: says it is ready, answers pings, closes its
+/// pipe to Core at round 1, and before answering a round that names an
+/// application ([`naming`]) sends a focus fact from it.
+fn listener_stand_in(
+    commands: &mut BufReader<BlockingReader>,
+    messages: &std::cell::RefCell<Option<BlockingWriter>>,
+) -> ! {
+    // Nothing is sent once the pipe to Core is closed.
+    let send = |message: &ListenerToCore| {
+        if let Some(messages) = messages.borrow_mut().as_mut() {
+            write_message(messages, message).expect("a message is written");
+        }
+    };
+    send(&ListenerToCore::Ready {
+        outpost_pid: Pid(std::process::id()),
+        target_pid: Pid(0),
+    });
+    loop {
+        let command = match read_message::<_, CoreToListener>(commands) {
+            Ok(Some(command)) => command,
+            Ok(None) => std::process::exit(0),
+            Err(error) => panic!("the command pipe failed: {error}"),
+        };
+        match command {
+            CoreToListener::Ping { seq, .. } => send(&ListenerToCore::Pong {
+                seq,
+                parked_count: 0,
+                written_at_us: 0,
+            }),
+            CoreToListener::Shutdown => std::process::exit(0),
+            CoreToListener::IdleQuery { round: 1 } => {
                 drop(messages.borrow_mut().take());
             }
-            SupervisorToOutpost::IdleQuery { round } => {
-                let named = u32::try_from(round & u64::from(u32::MAX)).expect("a pid");
-                if listener && round > u64::from(u32::MAX) {
-                    let pid = Pid(named);
-                    send(&OutpostToSupervisor::FocusFact {
+            CoreToListener::IdleQuery { round } => {
+                if round > u64::from(u32::MAX) {
+                    let named = u32::try_from(round & u64::from(u32::MAX)).expect("a pid");
+                    send(&ListenerToCore::FocusFact {
                         trace_id: TraceId::mint(),
                         timing: EventTiming::default(),
                         fact: ListenerFact {
-                            pid,
+                            pid: Pid(named),
                             fact: DeliveredFact::MsaaFocus {
                                 hwnd: 1,
                                 id_object: -4,
@@ -135,15 +173,11 @@ fn stand_in(args: &[String]) -> ! {
                         win_event: None,
                     });
                 }
-                if !listener {
-                    send(&OutpostToSupervisor::Fault {
-                        detail: format!("facts before round {round}: {facts}"),
-                    });
-                    facts = 0;
-                }
-                send(&OutpostToSupervisor::IdleAnswer { round });
+                send(&ListenerToCore::IdleAnswer { round });
             }
-            _ => {}
+            CoreToListener::SetBackendOverride { .. }
+            | CoreToListener::HookInstalled { .. }
+            | CoreToListener::HookRemoved { .. } => {}
         }
     }
 }
@@ -197,7 +231,7 @@ fn started(events: &Delivered, target_pid: Pid) -> OutpostId {
 
 /// Asserts the next thing the supervisor says is `expected` from
 /// `outpost`.
-fn from_outpost(events: &Delivered, outpost: OutpostId, expected: &OutpostToSupervisor) {
+fn from_outpost(events: &Delivered, outpost: OutpostId, expected: &OutpostToCore) {
     match next(events) {
         OutpostMessage::Event {
             outpost: from,
@@ -224,8 +258,8 @@ fn queried(events: &Delivered, round: u64, outposts: &[OutpostId]) {
 }
 
 /// The outpost's fault saying how many facts reached it before `round`.
-fn facts_before(facts: u32, round: u64) -> OutpostToSupervisor {
-    OutpostToSupervisor::Fault {
+fn facts_before(facts: u32, round: u64) -> OutpostToCore {
+    OutpostToCore::Fault {
         detail: format!("facts before round {round}: {facts}"),
     }
 }
@@ -234,7 +268,7 @@ fn facts_before(facts: u32, round: u64) -> OutpostToSupervisor {
 /// is ready, which must be the next thing the supervisor says.
 fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target_pid: Pid) {
     supervisor
-        .send_to_outpost(outpost, SupervisorToOutpost::Cancel { request_id: 0 })
+        .send_to_outpost(outpost, CoreToOutpost::Cancel { request_id: 0 })
         .expect("the stand-in's cue is queued");
     match next(events) {
         OutpostMessage::Event {
@@ -242,7 +276,7 @@ fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, t
             message,
             ..
         } if from == outpost
-            && matches!(*message, OutpostToSupervisor::Ready { target_pid: ready, .. } if ready == target_pid) =>
+            && matches!(*message, OutpostToCore::Ready { target_pid: ready, .. } if ready == target_pid) =>
             {}
         other => panic!("the supervisor said {other:?}, not that {outpost} was ready"),
     }
@@ -284,7 +318,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     supervisor.query_idle(round);
     queried(&events, round, &[first]);
     from_outpost(&events, first, &facts_before(1, round));
-    from_outpost(&events, first, &OutpostToSupervisor::IdleAnswer { round });
+    from_outpost(&events, first, &OutpostToCore::IdleAnswer { round });
 
     // Round 3: the listener's fact is for an application with no outpost,
     // which starts one, holding the fact for it. The round asks both
@@ -296,10 +330,10 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     let second = started(&events, second_pid);
     queried(&events, round, &[first, second]);
     from_outpost(&events, first, &facts_before(0, round));
-    from_outpost(&events, first, &OutpostToSupervisor::IdleAnswer { round });
+    from_outpost(&events, first, &OutpostToCore::IdleAnswer { round });
     make_ready(&supervisor, &events, second, second_pid);
     from_outpost(&events, second, &facts_before(1, round));
-    from_outpost(&events, second, &OutpostToSupervisor::IdleAnswer { round });
+    from_outpost(&events, second, &OutpostToCore::IdleAnswer { round });
 
     assert_eq!(
         supervisor.shutdown(),

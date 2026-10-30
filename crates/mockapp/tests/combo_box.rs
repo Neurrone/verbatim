@@ -30,12 +30,12 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use verbatim_core::SrState;
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
 use verbatim_model::{
     Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
     TraceId,
 };
 use verbatim_outpost::focus_read::Judged;
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_uia::{
     Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Subscription, Uia,
 };
@@ -97,7 +97,7 @@ fn focus(
     app.send(&format!("set-focus {id}"));
     outpost.deliver(outpost.listener_fact(&focused(hwnd)));
     let reported = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -150,7 +150,7 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
     app.send("select ten");
     outpost.deliver(selections.next(&outpost, "Ten"));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { node_id, value },
             ..
         } => assert_eq!((node_id, value.as_deref()), (combo.id, Some("Ten"))),
@@ -256,7 +256,7 @@ fn selection_of(hwnd: HWND, name: &str, cached_name: Option<&str>) -> DeliveredF
 /// which must be a selection, not a change of the focus's value.
 fn selected_name(outpost: &OutpostUnderTest) -> Option<String> {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::SelectionChanged { node },
             ..
         } => node.name,
@@ -273,7 +273,7 @@ fn the_new_value_is_the_items_name_as_it_is_now() {
     app.send("select ten");
     outpost.deliver(selection_of(hwnd, "Ten", None));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { node_id, value },
             ..
         } => assert_eq!((node_id, value.as_deref()), (combo.id, Some("Ten"))),
@@ -326,7 +326,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
 /// The outpost's next message, which must be an event, as its event.
 fn next_event(outpost: &OutpostUnderTest) -> NormalizedEvent {
     match outpost.next() {
-        OutpostToSupervisor::Event { event, .. } => event,
+        OutpostToCore::Event { event, .. } => event,
         other => panic!("the outpost said {other:?}, not an event"),
     }
 }

@@ -13,9 +13,9 @@ mod harness;
 
 use std::time::Duration;
 
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_uia::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe};
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
@@ -109,7 +109,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_entry() {
         .recv_timeout(stall + common::WAIT_TIMEOUT)
         .expect("the outpost reports the foreground window");
     app.stall_ended(stall);
-    let OutpostToSupervisor::Event {
+    let OutpostToCore::Event {
         event: NormalizedEvent::FocusChanged { node, .. },
         timing,
         ..

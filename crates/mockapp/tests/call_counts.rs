@@ -58,6 +58,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 
+use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, OutpostToCore, Query};
 use verbatim_model::{
     CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, WindowHandle,
 };
@@ -69,7 +70,6 @@ use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, SupervisorToOutpost};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
@@ -439,7 +439,7 @@ fn msaa_focus_changes_cost_exactly() {
     app.send("set-value first Changed");
     app.send("set-value item2 Picked");
     let calls_made = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { value, .. },
             timing,
             ..
@@ -511,7 +511,7 @@ fn msaa_state_change_costs_exactly() {
         common::reset_hits(hwnd);
         app.send(command);
         let (change, calls_made) = match outpost.next() {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event: NormalizedEvent::PropertyChanged { change, .. },
                 timing,
                 ..
@@ -800,7 +800,7 @@ fn msaa_tree_view_costs_exactly() {
     let state_change = |action: u32| {
         common::tree_view::send(tree, TVM_EXPAND, action as usize, software);
         let change = match outpost.next() {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event:
                     NormalizedEvent::PropertyChanged {
                         child_count,
@@ -1054,7 +1054,7 @@ fn msaa_navigation_steps_cost_exactly() {
     // the change at once, before the step is queued.
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::Fetches(Fetches {
+        .handle_command(&CoreToOutpost::Fetches(Fetches {
             description: false,
             shortcut: false,
             ..Fetches::default()
@@ -2433,9 +2433,7 @@ fn uia_navigation_steps(remote: bool) -> [(NodeSnapshot, Cost); 2] {
     );
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::Fetches(
-            Theme::builtin_default().fetches(),
-        ));
+        .handle_command(&CoreToOutpost::Fetches(Theme::builtin_default().fetches()));
     let (first, _) = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
 
     common::reset_hits(hwnd);
@@ -2559,7 +2557,7 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
     let mut outpost = OutpostUnderTest::on_frozen_time(&app);
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::Fetches(Fetches {
+        .handle_command(&CoreToOutpost::Fetches(Fetches {
             description: false,
             ..Fetches::default()
         }));
@@ -2623,7 +2621,7 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
     };
     assert_eq!(read.hwnd, 0, "the button has no window of its own");
     read.ancestors.clear();
-    read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::PlainFrom(0);
+    read.ancestors_end = verbatim_model::protocol::AncestorsEnd::PlainFrom(0);
     read.window = None;
     outpost.deliver(DeliveredFact::UiaFocusRead {
         marker: 0,
@@ -2631,7 +2629,7 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
         focus: true,
     });
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged {
                 node, ancestors, ..
             },
@@ -4793,7 +4791,7 @@ fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]
     outpost.deliver(DeliveredFact::UiaSelection {
         hwnd: hwnd.0 as isize,
         focus_window: hwnd.0 as isize,
-        snapshot: verbatim_outpost::protocol::UiaSnapshotFact {
+        snapshot: verbatim_model::protocol::UiaSnapshotFact {
             runtime_id: ten,
             role: Role::ListItem,
             name: Some("Ten".to_owned()),
@@ -4803,7 +4801,7 @@ fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]
         },
     });
     let calls = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { value, .. },
             timing,
             ..

@@ -20,11 +20,11 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use common::outpost::OutpostUnderTest;
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore, WinEventStamp};
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, WinEventStamp};
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,
@@ -873,7 +873,7 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
         assert!(
             matches!(
                 outpost.next(),
-                OutpostToSupervisor::Event {
+                OutpostToCore::Event {
                     event: NormalizedEvent::FocusChanged { .. },
                     ..
                 }
@@ -900,7 +900,7 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
         outpost.deliver(fact);
         let said = outpost.next();
         match said {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event:
                     NormalizedEvent::FocusChanged {
                         node, ancestors, ..
@@ -947,7 +947,7 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
 /// when it answers none (verified), so a step that fails with a code is
 /// covered by the walk's own unit test.
 fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
-    use verbatim_outpost::protocol::AncestorsEnd;
+    use verbatim_model::protocol::AncestorsEnd;
     use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
     // SAFETY: GetDesktopWindow has no preconditions.
     let desktop = unsafe { GetDesktopWindow() }.0 as isize;
@@ -960,7 +960,7 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
         assert!(
             matches!(
                 outpost.next(),
-                OutpostToSupervisor::Event {
+                OutpostToCore::Event {
                     event: NormalizedEvent::FocusChanged { .. },
                     ..
                 }
@@ -983,7 +983,7 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
         );
         outpost.deliver(fact);
         match outpost.next() {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event:
                     NormalizedEvent::FocusChanged {
                         node, ancestors, ..
@@ -1163,7 +1163,7 @@ fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_i
     outpost.pass_time(Duration::from_secs(1));
     outpost.settle();
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged {
                 node, ancestors, ..
             },
@@ -1202,7 +1202,7 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     fixture.app.send("answer-parent group2 fail 1");
     outpost.deliver(outpost.listener_fact(&group));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged { ancestors, .. },
             ..
         } => assert_eq!(ancestors, [], "the group's chain: nothing above it"),
@@ -1213,7 +1213,7 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     let deep = fixture.focus_delivered("deep", "Deep button");
     outpost.deliver(outpost.listener_fact(&deep));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged {
                 node, ancestors, ..
             },
@@ -1286,7 +1286,7 @@ fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
         (read.ancestors.len(), read.ancestors_end),
         (
             0,
-            verbatim_outpost::protocol::AncestorsEnd::PlainFrom(fixture.hwnd)
+            verbatim_model::protocol::AncestorsEnd::PlainFrom(fixture.hwnd)
         ),
         "completed by plain windows from mockapp's window"
     );

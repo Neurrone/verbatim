@@ -43,7 +43,8 @@ use std::collections::HashMap;
 use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TextReply, TraceId};
 use verbatim_uia::{Agile, Group, Kept};
 
-use crate::protocol::{EventTiming, OutpostToSupervisor, QueryOutcome, QueryResult, now_us};
+use crate::protocol::now_us;
+use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, QueryResult};
 
 use super::Context;
 use super::focus_path::FocusPath;
@@ -311,10 +312,10 @@ pub(super) enum Report {
 #[derive(Default)]
 pub(super) struct Effects {
     /// The entry's result, which ends its query.
-    pub(super) result: Option<OutpostToSupervisor>,
+    pub(super) result: Option<OutpostToCore>,
     /// An answer given outside its query's own entry (a caret key's
     /// watch), with its request.
-    pub(super) aside: Option<(u64, OutpostToSupervisor)>,
+    pub(super) aside: Option<(u64, OutpostToCore)>,
     /// The report to record for Core's judgement.
     pub(super) report: Option<Report>,
     /// A focus becoming the followed one.
@@ -372,15 +373,15 @@ pub(super) enum Committed {
 /// Sends `message` under the watch lock, recording every node issued or
 /// looked up since the last send as reported at the position it takes
 /// (`worker::take_touched`).
-pub(super) fn send(context: &Context, message: OutpostToSupervisor) {
+pub(super) fn send(context: &Context, message: OutpostToCore) {
     context
         .outbound
         .publish(message, super::worker::take_touched(context));
 }
 
 /// The `WatchEnded` answer to `open`, which Core says nothing for.
-pub(super) fn watch_ended(open: &OpenWatch) -> OutpostToSupervisor {
-    OutpostToSupervisor::Reply {
+pub(super) fn watch_ended(open: &OpenWatch) -> OutpostToCore {
+    OutpostToCore::Reply {
         trace_id: open.trace,
         request_id: open.request_id,
         outcome: QueryOutcome::Done(QueryResult::Text(TextReply::WatchEnded)),

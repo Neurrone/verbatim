@@ -26,7 +26,7 @@ use verbatim_model::{
     TerminalSnapshot, TerminalText, TextReply, TraceId, WindowFacts,
 };
 
-use super::{EventTiming, OutpostToSupervisor, QueryOutcome, QueryResult};
+use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, QueryResult};
 
 /// A place in the raw section: where it starts and how many bytes it
 /// takes, written `[start, length]`.
@@ -35,7 +35,7 @@ type Range = (usize, usize);
 /// The bytes of one colour run's record.
 const RUN_BYTES: usize = 16;
 
-/// [`OutpostToSupervisor`] as the body of a frame with a raw section
+/// [`OutpostToCore`] as the body of a frame with a raw section
 /// gives it: only the messages that carry a terminal's text.
 #[derive(Serialize, Deserialize)]
 enum Wire<'a> {
@@ -163,10 +163,10 @@ struct Layout<'a> {
 impl<'a> Terminal<'a> {
     /// `message` ready to be framed, when it carries a terminal's text;
     /// `None` for every other message, framed as a body alone.
-    pub(super) fn of(message: &'a OutpostToSupervisor) -> Option<Self> {
+    pub(super) fn of(message: &'a OutpostToCore) -> Option<Self> {
         let mut layout = Layout::default();
         let wire = match message {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 trace_id,
                 observed_at_us,
                 backend,
@@ -186,7 +186,7 @@ impl<'a> Terminal<'a> {
                     snapshot: Box::new(layout.snapshot(snapshot)),
                 },
             },
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Done(QueryResult::Text(reply)),
@@ -332,7 +332,7 @@ impl Terminal<'_> {
 }
 
 /// Reads a message from the body and raw section of its frame.
-pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor> {
+pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToCore> {
     // A body that is not a terminal's message is one that may not have a
     // raw section.
     let wire: Wire<'static> =
@@ -350,7 +350,7 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor>
             application,
             timing,
             event: WireEvent::TerminalSnapshot { node_id, snapshot },
-        } => OutpostToSupervisor::Event {
+        } => OutpostToCore::Event {
             trace_id,
             observed_at_us,
             backend,
@@ -390,7 +390,7 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor>
                     read,
                 },
             };
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome: QueryOutcome::Done(QueryResult::Text(reply)),
@@ -585,8 +585,8 @@ mod tests {
         }
     }
 
-    fn event(snapshot: TerminalSnapshot) -> OutpostToSupervisor {
-        OutpostToSupervisor::Event {
+    fn event(snapshot: TerminalSnapshot) -> OutpostToCore {
+        OutpostToCore::Event {
             trace_id: trace(7),
             observed_at_us: 1_752_000_000_000_000,
             backend: Backend::Uia,
@@ -631,8 +631,8 @@ mod tests {
         }
     }
 
-    fn reply(reply: TextReply) -> OutpostToSupervisor {
-        OutpostToSupervisor::Reply {
+    fn reply(reply: TextReply) -> OutpostToCore {
+        OutpostToCore::Reply {
             trace_id: trace(8),
             request_id: 4,
             outcome: QueryOutcome::Done(QueryResult::Text(reply)),
@@ -641,7 +641,7 @@ mod tests {
     }
 
     /// The body and raw section of `message`'s frame.
-    fn parts_of(message: &OutpostToSupervisor) -> (Vec<u8>, Option<Vec<u8>>) {
+    fn parts_of(message: &OutpostToCore) -> (Vec<u8>, Option<Vec<u8>>) {
         let frame = encode_message(message).expect("encoded");
         let frame = read_frame(&mut frame.as_slice())
             .expect("read")
@@ -670,7 +670,7 @@ mod tests {
             // Empty texts, and colours taken but with no rows.
             event(snapshot("", "", Some(Vec::new()))),
             // The event's window and the read's caret, both given.
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 trace_id: trace(7),
                 observed_at_us: 1_752_000_000_000_000,
                 backend: Backend::Uia,
@@ -725,7 +725,7 @@ mod tests {
         for message in &messages {
             let (body, raw) = parts_of(message);
             let raw = raw.expect("a terminal's message has a raw section");
-            let read: OutpostToSupervisor = decode_message(Parts {
+            let read: OutpostToCore = decode_message(Parts {
                 body: &body,
                 raw: Some(&raw),
             })
@@ -782,12 +782,12 @@ mod tests {
     #[test]
     fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
         let messages = [
-            OutpostToSupervisor::Pong {
+            OutpostToCore::Pong {
                 seq: 1,
                 parked_count: 0,
                 written_at_us: 2,
             },
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 trace_id: trace(7),
                 observed_at_us: 0,
                 backend: Backend::Uia,
@@ -810,7 +810,7 @@ mod tests {
         // Such a message read with a raw section is refused: it never has
         // one.
         let json = serde_json::to_vec(&messages[0]).expect("JSON");
-        let error = OutpostToSupervisor::from_parts(Parts {
+        let error = OutpostToCore::from_parts(Parts {
             body: &json,
             raw: Some(b""),
         })
@@ -820,12 +820,12 @@ mod tests {
 
     /// A terminal history whose text is at `range`, read from a frame with
     /// `raw` as its raw section.
-    fn history(range: &str, raw: &[u8]) -> io::Result<OutpostToSupervisor> {
+    fn history(range: &str, raw: &[u8]) -> io::Result<OutpostToCore> {
         let timing = serde_json::to_string(&EventTiming::default()).expect("JSON");
         let body = format!(
             r#"{{"Reply":{{"trace_id":8,"request_id":4,"outcome":{{"Done":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0,"read":0}}}}}}}},"timing":{timing}}}}}"#
         );
-        OutpostToSupervisor::from_parts(Parts {
+        OutpostToCore::from_parts(Parts {
             body: body.as_bytes(),
             raw: Some(raw),
         })
@@ -857,7 +857,7 @@ mod tests {
             let body = format!(
                 r#"{{"Reply":{{"trace_id":8,"request_id":4,"outcome":{{"Done":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}],"read":0}}}}}}}},"timing":{timing}}}}}"#
             );
-            OutpostToSupervisor::from_parts(Parts {
+            OutpostToCore::from_parts(Parts {
                 body: body.as_bytes(),
                 raw: Some(b"abcdef"),
             })
@@ -910,7 +910,7 @@ mod tests {
             Some(vec![vec![run(0, 1, 2, 3)], vec![run(1, 1, 2, 3)]]),
         )));
         let raw = raw.expect("a raw section");
-        let error = OutpostToSupervisor::from_parts(Parts {
+        let error = OutpostToCore::from_parts(Parts {
             body: &body,
             raw: Some(&raw[..raw.len() - RUN_BYTES]),
         })
@@ -920,7 +920,7 @@ mod tests {
         let body = String::from_utf8(body)
             .expect("UTF-8")
             .replace(r#""rows":[1,1]"#, r#""rows":[1,2]"#);
-        let error = OutpostToSupervisor::from_parts(Parts {
+        let error = OutpostToCore::from_parts(Parts {
             body: body.as_bytes(),
             raw: Some(&raw),
         })

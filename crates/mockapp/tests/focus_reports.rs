@@ -35,16 +35,16 @@ use std::time::Duration;
 
 use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
+use verbatim_model::protocol::{
+    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, UiaFocusRead,
+    UiaSnapshotFact, WinEventStamp,
+};
 use verbatim_model::{
     Backend, CallCounts, EarlierElement, Effect, Fetches, FocusText, Input, NodeDetails,
     NodeSnapshot, NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent,
     State, StateSet, TextFormat, TraceId, WindowHandle,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
-use verbatim_outpost::protocol::{
-    DeliveredFact, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost, UiaFocusRead,
-    UiaSnapshotFact, WinEventStamp,
-};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
     Cached, ListenerEvent, ListenerSelection, Part, RAW_PROBE_TIMEOUT_MS, Registration,
@@ -482,7 +482,7 @@ fn focus_without_a_path(
         panic!("the listener dropped the focus: {judged:?}");
     };
     read.ancestors.clear();
-    read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::PlainFrom(0);
+    read.ancestors_end = verbatim_model::protocol::AncestorsEnd::PlainFrom(0);
     read.window = None;
     outpost.deliver(DeliveredFact::UiaFocusRead {
         marker: 0,
@@ -490,7 +490,7 @@ fn focus_without_a_path(
         focus: true,
     });
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -525,7 +525,7 @@ fn assert_followed(
         Heard::Msaa(WinEventKind::NameChange),
     ]);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::PropertyChanged {
                     node_id,
@@ -648,7 +648,7 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
         (
             0,
             1,
-            verbatim_outpost::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize),
+            verbatim_model::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize),
             Some(hwnd.0 as isize)
         ),
         "the walk was cut below the field's nearest window"
@@ -659,7 +659,7 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
         focus: true,
     });
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -726,7 +726,7 @@ fn cut_read_of_notes(
     assert_eq!(read.hwnd, 0, "the field has no window of its own");
     read.ancestors.clear();
     read.ancestors_end =
-        verbatim_outpost::protocol::AncestorsEnd::PlainFrom(read.window.unwrap_or(0));
+        verbatim_model::protocol::AncestorsEnd::PlainFrom(read.window.unwrap_or(0));
     read
 }
 
@@ -745,7 +745,7 @@ fn assert_notes_reported(
         focus: true,
     });
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node, text: found, ..
@@ -910,7 +910,7 @@ fn a_route_walk_out_of_time_fails_rather_than_answering_gone() {
         kind: QueryKind::FirstChild,
     });
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id: answered,
             outcome,
             ..
@@ -976,7 +976,7 @@ fn focus_in_caret_fixture(
     let element = client.focused();
     outpost.deliver(outpost.listener_fact(&element));
     let (node, text) = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged { node, text, .. },
             ..
         } => (node, text),
@@ -1019,7 +1019,7 @@ fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::TextChanged { node_id },
             ..
         } => assert_eq!(node_id, notes.id),
@@ -1053,7 +1053,7 @@ fn a_change_of_an_unreleased_older_focus_is_heard_for_its_node() {
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::TextChanged { node_id },
             ..
         } => assert_eq!(node_id, notes.id),
@@ -1098,14 +1098,14 @@ fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
     ]);
     outpost.deliver(read.into_fact(3, FocusEvent::Focus, None));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
             ..
         } => assert_eq!(node.name.as_deref(), Some("Level")),
         other => panic!("the outpost said {other:?}, not the slider's focus first"),
     }
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::PropertyChanged {
                     node_id,
@@ -1179,7 +1179,7 @@ fn a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first() 
     let (read, _) = outpost.listener_read(&client.focused());
     outpost.deliver(read.into_fact(3, FocusEvent::Focus, None));
     let change = match outpost.next() {
-        OutpostToSupervisor::Event { event, .. } => event,
+        OutpostToCore::Event { event, .. } => event,
         other => panic!("the outpost said {other:?}, not the combo box's change"),
     };
     let NormalizedEvent::PropertyChanged {
@@ -1265,7 +1265,7 @@ fn a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_pla
         [vec![SegmentContent::Label("Nine".to_owned())]]
     );
     let change = match outpost.next() {
-        OutpostToSupervisor::Event { event, .. } => event,
+        OutpostToCore::Event { event, .. } => event,
         other => panic!("the outpost said {other:?}, not the combo box's value change"),
     };
     outpost.settled();
@@ -1373,9 +1373,9 @@ fn winevent_focus_observed(outpost: &OutpostUnderTest, hwnd: HWND, observed_at_u
 }
 
 /// The focus change the outpost said, which must be one.
-fn focus_changed(message: OutpostToSupervisor) -> NormalizedEvent {
+fn focus_changed(message: OutpostToCore) -> NormalizedEvent {
     match message {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: event @ NormalizedEvent::FocusChanged { .. },
             ..
         } => event,
@@ -1603,9 +1603,8 @@ fn a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped() {
     let read = outpost.listener_fact(&client.focused());
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::SetBackendOverride {
+        .handle_command(&CoreToOutpost::SetBackendOverride {
             backend_override: Some(Backend::Msaa),
-            pid: None,
         });
     outpost.deliver(read);
     outpost.settled();
@@ -1702,7 +1701,7 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_whe
     outpost.settled();
     outpost.pass_time(Duration::from_secs(1));
     let message = outpost.next();
-    let OutpostToSupervisor::Event { observed_at_us, .. } = &message else {
+    let OutpostToCore::Event { observed_at_us, .. } = &message else {
         panic!("the outpost said {message:?}, not a focus change");
     };
     assert_eq!(*observed_at_us, copy_observed_at_us, "the copy's stamp");
@@ -1923,7 +1922,7 @@ fn an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict()
         .recv_timeout(stall + common::WAIT_TIMEOUT)
         .expect("the outpost reports the foreground window");
     app.stall_ended(stall);
-    let OutpostToSupervisor::Event {
+    let OutpostToCore::Event {
         backend, timing, ..
     } = &message
     else {
@@ -1965,7 +1964,7 @@ fn a_return_within_the_bound_is_read_with_the_returns_stamp() {
     outpost.settled();
     outpost.pass_time(Duration::from_millis(200));
     let message = outpost.next();
-    let OutpostToSupervisor::Event { observed_at_us, .. } = &message else {
+    let OutpostToCore::Event { observed_at_us, .. } = &message else {
         panic!("the outpost said {message:?}, not a focus change");
     };
     assert_eq!(*observed_at_us, returned_at_us, "the return's stamp");
@@ -2002,7 +2001,7 @@ fn an_accepted_foreground_change_into_the_records_window_restamps_it() {
     outpost.settled();
     outpost.pass_time(Duration::from_millis(200));
     let message = outpost.next();
-    let OutpostToSupervisor::Event { observed_at_us, .. } = &message else {
+    let OutpostToCore::Event { observed_at_us, .. } = &message else {
         panic!("the outpost said {message:?}, not a focus change");
     };
     assert_eq!(
@@ -2093,9 +2092,8 @@ fn a_forced_uia_override_has_the_listener_read_a_class_listed_window() {
     outpost.listener_forces_uia(true);
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::SetBackendOverride {
+        .handle_command(&CoreToOutpost::SetBackendOverride {
             backend_override: Some(Backend::Uia),
-            pid: None,
         });
     let reported = outpost.uia_focus(&client.focused());
     assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
@@ -2122,7 +2120,7 @@ fn a_forwarded_copy_opens_the_starting_outposts_record() {
     let copied_at_us = outpost.observed_now() - 2_000_000;
     winevent_focus_observed(&outpost, hwnd, copied_at_us);
     let message = outpost.next();
-    let OutpostToSupervisor::Event { observed_at_us, .. } = &message else {
+    let OutpostToCore::Event { observed_at_us, .. } = &message else {
         panic!("the outpost said {message:?}, not a focus change");
     };
     assert_eq!(*observed_at_us, copied_at_us, "the copy's stamp");
@@ -2157,7 +2155,7 @@ fn the_idle_answer_waits_for_the_wait_for_a_uia_focus() {
         unreachable!("a focus change");
     };
     assert_eq!(node.name.as_deref(), Some("Original Name"));
-    assert_eq!(outpost.next(), OutpostToSupervisor::IdleAnswer { round: 4 });
+    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 4 });
     outpost.settled();
 
     drop(outpost);
@@ -2226,7 +2224,7 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
         ),
         (
             reported.node.name.as_deref(),
-            verbatim_outpost::protocol::AncestorsEnd::Top,
+            verbatim_model::protocol::AncestorsEnd::Top,
             false
         ),
         "read with its ancestors"
@@ -2461,7 +2459,7 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
                 },
             },
             ancestors: Vec::new(),
-            ancestors_end: verbatim_outpost::protocol::AncestorsEnd::PlainFrom(
+            ancestors_end: verbatim_model::protocol::AncestorsEnd::PlainFrom(
                 verbatim_uia::parent_window(hwnd.0 as isize)
             ),
             selected_child: None,
@@ -2616,7 +2614,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     );
     outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
     let (node, ancestors) = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -2718,7 +2716,7 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
     assert!(matches!(judged, Judged::Read(_)), "dropped: {judged:?}");
     outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -2734,7 +2732,7 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
     app.send("set-description search Type to search");
     outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::PropertyChanged {
                     node_id,
@@ -2757,7 +2755,7 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
         app.send(command);
         outpost.heard(&[Heard::UiaProperty(UIA_ControllerForPropertyId.0)]);
         match outpost.next() {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event:
                     NormalizedEvent::PropertyChanged {
                         node_id,
@@ -2794,7 +2792,7 @@ fn a_windowless_selection_is_given_its_nearest_window() {
 
     app.send("set-focus item1");
     let item = client.focused();
-    let snapshot = || verbatim_outpost::protocol::UiaSnapshotFact {
+    let snapshot = || verbatim_model::protocol::UiaSnapshotFact {
         runtime_id: item.runtime_id(),
         role: Role::ListItem,
         name: None,
@@ -2890,7 +2888,7 @@ fn a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache(
     common::reset_hits(hwnd);
     outpost.deliver(fact);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::SelectionChanged { node },
             timing,
             ..
@@ -2945,7 +2943,7 @@ fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off
     let mut outpost = OutpostUnderTest::new(&app);
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::Fetches(Fetches {
+        .handle_command(&CoreToOutpost::Fetches(Fetches {
             description: false,
             ..Fetches::default()
         }));
@@ -3027,7 +3025,7 @@ fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
     let received_at_us = verbatim_process::clock::now_us();
     outpost.deliver_stamped(fact, received_at_us);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             observed_at_us,
             event: NormalizedEvent::FocusChanged { .. },
             ..
@@ -3335,7 +3333,7 @@ fn a_chain_cut_at_the_depth_limit_is_completed_by_its_windows() {
         (read.ancestors.len(), read.ancestors_end),
         (
             64,
-            verbatim_outpost::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize)
+            verbatim_model::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize)
         ),
         "the listener's walk, cut at its depth limit"
     );
@@ -3486,7 +3484,7 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
             marker,
             Some("First"),
             0,
-            verbatim_outpost::protocol::AncestorsEnd::PlainFrom(window)
+            verbatim_model::protocol::AncestorsEnd::PlainFrom(window)
         ),
         "the focus as read before its stuck step"
     );
@@ -3515,7 +3513,7 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
             next,
             Some("Second"),
             vec![Some("Items"), Some("Mockapp Tree Fixture")],
-            verbatim_outpost::protocol::AncestorsEnd::Top
+            verbatim_model::protocol::AncestorsEnd::Top
         ),
         "the next focus, read by the same thread once the step returned"
     );
@@ -3724,7 +3722,7 @@ fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
     outpost.heard(&[Heard::Msaa(WinEventKind::NameChange); 11]);
     outpost.release_worker();
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::PropertyChanged {
                     node_id,
@@ -3841,7 +3839,7 @@ fn the_continuation_of_a_listeners_chain_ends_at_the_reads_bound() {
         panic!("the listener dropped the focus");
     };
     read.ancestors = Vec::new();
-    read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::ContinueFrom(hwnd.0 as isize);
+    read.ancestors_end = verbatim_model::protocol::AncestorsEnd::ContinueFrom(hwnd.0 as isize);
     let report = |observed_at_us: u64| {
         outpost.deliver_stamped(
             DeliveredFact::UiaFocusRead {
@@ -3982,7 +3980,7 @@ fn a_hung_window_above_a_uia_focus_ends_the_listeners_walk() {
         ),
         (
             vec![Some("Embedded")],
-            verbatim_outpost::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
+            verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
             5
         ),
         "the listener's walk and its calls"

@@ -28,7 +28,8 @@ use crate::dialog_text::is_dialog;
 
 use crate::arbitration::{time_limit, window_class_name};
 use crate::gates;
-use crate::protocol::{DumpedTree, FocusNow, FocusedControl, now_us};
+use crate::protocol::now_us;
+use verbatim_model::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
@@ -850,14 +851,14 @@ pub(super) fn uia_chain_from_read(
     context: &Context,
     client: &mut Client,
     (ancestors, own_window, nearest, end): (
-        &[crate::protocol::UiaAncestorFact],
+        &[verbatim_model::protocol::UiaAncestorFact],
         isize,
         Option<isize>,
-        crate::protocol::AncestorsEnd,
+        verbatim_model::protocol::AncestorsEnd,
     ),
     (previous, bound_at_us): (&[NodeSnapshot], u64),
 ) -> Vec<NodeSnapshot> {
-    use crate::protocol::AncestorsEnd;
+    use verbatim_model::protocol::AncestorsEnd;
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest.unwrap_or(0), hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let parents: Vec<verbatim_uia::AncestorParts> = ancestors

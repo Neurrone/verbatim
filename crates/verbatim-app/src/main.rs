@@ -43,12 +43,10 @@ use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout, SharedGestureMap};
 use verbatim_input_windows::{ForegroundView, Injected, Injector, InputHook, KeyHolding};
+use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
     ReaderSettings, TextRequest, TraceId, WindowHandle,
-};
-use verbatim_outpost::protocol::{
-    EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
 };
 use verbatim_outpost::supervisor::{EndReason, Frames};
 use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
@@ -1195,7 +1193,7 @@ impl ReducerThread<'_> {
         self.send(
             outpost,
             id,
-            SupervisorToOutpost::Query {
+            CoreToOutpost::Query {
                 trace_id,
                 request_id: id.0,
                 query: Query::FocusNow,
@@ -1274,7 +1272,7 @@ impl ReducerThread<'_> {
         self.send(
             outpost,
             id,
-            SupervisorToOutpost::Query {
+            CoreToOutpost::Query {
                 trace_id,
                 request_id: id.0,
                 query: Query::FocusNow,
@@ -1285,16 +1283,17 @@ impl ReducerThread<'_> {
 
     /// Turns one message from a live outpost into reducer input, or routes a
     /// reply to whoever asked.
-    fn on_outpost_input(&mut self, source: Pid, outpost: OutpostId, message: OutpostToSupervisor) {
+    #[deny(clippy::wildcard_enum_match_arm)]
+    fn on_outpost_input(&mut self, source: Pid, outpost: OutpostId, message: OutpostToCore) {
         match message {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 trace_id,
                 observed_at_us,
                 backend,
-                window,
+                ref window,
                 application,
                 timing,
-                event,
+                ref event,
             } => {
                 // The latency timeline starts when the event was first
                 // observed. That is `observed_at_us` except for a foreground
@@ -1305,14 +1304,10 @@ impl ReducerThread<'_> {
                 // An event in a console window, reported by the console
                 // host's outpost, belongs to the console's client, and so
                 // does that outpost from now on.
-                let source = match application {
-                    Some(application) => {
-                        self.live.reports_for(outpost, application);
-                        application
-                    }
-                    None => source,
-                };
-                if self.in_ignored_window(&event, window.as_ref()) {
+                if let Some(application) = application {
+                    self.live.reports_for(outpost, application);
+                }
+                if self.in_ignored_window(event, window.as_ref()) {
                     // Core has judged the focus, refused: the outpost hears
                     // the nodes Core holds after it, as after any focus
                     // report.
@@ -1336,22 +1331,17 @@ impl ReducerThread<'_> {
                 {
                     server.broadcast_event(
                         trace_id,
-                        source,
+                        application.unwrap_or(source),
                         backend,
                         window.clone(),
                         event.clone(),
                     );
                 }
-                self.apply(Input::Event {
-                    trace_id,
-                    observed_at_us,
-                    source,
-                    backend,
-                    window,
-                    event,
-                });
+                if let Some(input) = verbatim_model::protocol::event_input(source, message) {
+                    self.apply(input);
+                }
             }
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 trace_id,
                 request_id,
                 outcome,
@@ -1364,7 +1354,7 @@ impl ReducerThread<'_> {
                 }
                 self.finish(RequestId(request_id), outpost, outcome);
             }
-            OutpostToSupervisor::Ready {
+            OutpostToCore::Ready {
                 outpost_pid,
                 target_pid,
             } => {
@@ -1391,12 +1381,14 @@ impl ReducerThread<'_> {
                 );
                 self.context.readiness.notify();
             }
-            OutpostToSupervisor::Fault { detail } => {
+            OutpostToCore::Fault { detail } => {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
             }
-            OutpostToSupervisor::IdleAnswer { round } => self.barrier.answered(round, outpost),
-            // Pong and any future message kinds carry nothing for the reducer.
-            _ => {}
+            OutpostToCore::IdleAnswer { round } => self.barrier.answered(round, outpost),
+            // The relay consumes these, and hands none of them on.
+            OutpostToCore::Pong { .. }
+            | OutpostToCore::TargetExited
+            | OutpostToCore::SpareReady { .. } => {}
         }
     }
 
@@ -1727,7 +1719,7 @@ impl ReducerThread<'_> {
                 match self
                     .context
                     .supervisor
-                    .send_to_outpost(*outpost, SupervisorToOutpost::Fetches(fetches))
+                    .send_to_outpost(*outpost, CoreToOutpost::Fetches(fetches))
                 {
                     Ok(()) => live.fetches_sent = Some(fetches),
                     // A full queue is retried after the next input; a closed
@@ -1764,7 +1756,7 @@ impl ReducerThread<'_> {
                         trace_id,
                     },
                 );
-                let command = SupervisorToOutpost::Query {
+                let command = CoreToOutpost::Query {
                     trace_id,
                     request_id: id.0,
                     query: Query::Navigate {
@@ -1778,7 +1770,7 @@ impl ReducerThread<'_> {
             Effect::Activate { node_id } => {
                 let outpost = node_id.outpost();
                 let id = self.requests.begin(outpost, Asker::Activation { trace_id });
-                let command = SupervisorToOutpost::Query {
+                let command = CoreToOutpost::Query {
                     trace_id,
                     request_id: id.0,
                     query: Query::Activate { node_id },
@@ -1857,7 +1849,7 @@ impl ReducerThread<'_> {
         } else {
             self.requests.begin(outpost, asker)
         };
-        let command = SupervisorToOutpost::Query {
+        let command = CoreToOutpost::Query {
             trace_id,
             request_id: id.0,
             query: Query::Text { node_id, op },
@@ -1868,7 +1860,7 @@ impl ReducerThread<'_> {
 
     /// Sends request `id` to `outpost`, failing it at once when it cannot be
     /// sent, so it still gets its one outcome.
-    fn send(&mut self, outpost: OutpostId, id: RequestId, command: SupervisorToOutpost) {
+    fn send(&mut self, outpost: OutpostId, id: RequestId, command: CoreToOutpost) {
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             tracing::warn!(%error, %outpost, "a query could not reach its outpost");
             self.finish(id, outpost, QueryOutcome::Failed(error.to_string()));
@@ -1891,7 +1883,7 @@ impl ReducerThread<'_> {
         let id = self
             .requests
             .begin(outpost, Asker::DumpTree { ticket, reply });
-        let command = SupervisorToOutpost::Query {
+        let command = CoreToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
             query: Query::DumpTree { locations },
@@ -1945,7 +1937,7 @@ impl ReducerThread<'_> {
             ),
         };
         let id = self.requests.begin_until(outpost, asker, deadline);
-        let command = SupervisorToOutpost::Query {
+        let command = CoreToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
             query,
@@ -2064,7 +2056,7 @@ impl ReducerThread<'_> {
         let Some((id, outpost)) = self.requests.dump_tree_request(ticket) else {
             return;
         };
-        let command = SupervisorToOutpost::Cancel { request_id: id.0 };
+        let command = CoreToOutpost::Cancel { request_id: id.0 };
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             // The outpost is going away; its end answers the request.
             tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");

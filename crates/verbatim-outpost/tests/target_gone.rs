@@ -26,10 +26,9 @@ use crossbeam_channel::unbounded;
 
 mod common;
 use common::Delivered;
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 use verbatim_model::{OutpostId, Pid};
-use verbatim_outpost::protocol::{
-    OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
-};
+use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{EndReason, OutpostMessage, ShutdownSummary, Supervisor};
 use verbatim_outpost::{EventSink, OutpostOptions, Undelivered};
 
@@ -73,29 +72,50 @@ fn stand_in(args: &[String]) -> ! {
         BlockingWriter::new(messages).expect("a writer"),
     );
     let outpost = !args.iter().any(|arg| arg == "--listener");
-    let target_pid = if outpost {
-        Pid(value(args, "--target-pid").parse().expect("a pid"))
-    } else {
-        Pid(0)
-    };
-    let mut send = |message: &OutpostToSupervisor| {
+    let mut commands = BufReader::new(commands);
+    if !outpost {
+        write_message(
+            &mut messages,
+            &ListenerToCore::Ready {
+                outpost_pid: Pid(std::process::id()),
+                target_pid: Pid(0),
+            },
+        )
+        .expect("a message is written");
+        loop {
+            match read_message::<_, CoreToListener>(&mut commands) {
+                Ok(Some(CoreToListener::Ping { seq, .. })) => write_message(
+                    &mut messages,
+                    &ListenerToCore::Pong {
+                        seq,
+                        parked_count: 0,
+                        written_at_us: 0,
+                    },
+                )
+                .expect("a message is written"),
+                Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
+                Ok(Some(_)) => {}
+                Err(error) => panic!("the command pipe failed: {error}"),
+            }
+        }
+    }
+    let target_pid = Pid(value(args, "--target-pid").parse().expect("a pid"));
+    let mut send = |message: &OutpostToCore| {
         write_message(&mut messages, message).expect("a message is written");
     };
-    send(&OutpostToSupervisor::Ready {
+    send(&OutpostToCore::Ready {
         outpost_pid: Pid(std::process::id()),
         target_pid,
     });
-    let mut commands = BufReader::new(commands);
     loop {
-        match read_message::<_, SupervisorToOutpost>(&mut commands) {
-            Ok(Some(SupervisorToOutpost::Ping { seq, .. })) => send(&OutpostToSupervisor::Pong {
+        match read_message::<_, CoreToOutpost>(&mut commands) {
+            Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
                 seq,
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
-            Ok(Some(_)) if outpost => std::process::exit(3),
-            Ok(Some(_)) => {}
+            Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),
+            Ok(Some(_)) => std::process::exit(3),
             Err(error) => panic!("the command pipe failed: {error}"),
         }
     }
@@ -143,7 +163,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
     };
     match next(&events) {
         OutpostMessage::Event { message, .. }
-            if matches!(*message, OutpostToSupervisor::Ready { .. }) => {}
+            if matches!(*message, OutpostToCore::Ready { .. }) => {}
         other => panic!("the supervisor said {other:?}, not that the outpost was ready"),
     }
 
@@ -151,7 +171,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
     let status = application.wait().expect("the application exits");
     assert!(status.success(), "the application exited with {status}");
     supervisor
-        .send_to_outpost(outpost, SupervisorToOutpost::Cancel { request_id: 0 })
+        .send_to_outpost(outpost, CoreToOutpost::Cancel { request_id: 0 })
         .expect("the command that crashes the stand-in is queued");
     match next(&events) {
         OutpostMessage::Ended {
@@ -199,7 +219,7 @@ fn started_and_ready(events: &Delivered, target_pid: Pid) -> OutpostId {
     };
     match next(events) {
         OutpostMessage::Event { message, .. }
-            if matches!(*message, OutpostToSupervisor::Ready { .. }) => {}
+            if matches!(*message, OutpostToCore::Ready { .. }) => {}
         other => panic!("the supervisor said {other:?}, not that the outpost was ready"),
     }
     outpost
@@ -250,7 +270,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
     let outpost = started_and_ready(&events, target_pid);
 
     supervisor
-        .send_to_outpost(outpost, SupervisorToOutpost::Cancel { request_id: 0 })
+        .send_to_outpost(outpost, CoreToOutpost::Cancel { request_id: 0 })
         .expect("the command that crashes the stand-in is queued");
     match next(&events) {
         OutpostMessage::Ended {

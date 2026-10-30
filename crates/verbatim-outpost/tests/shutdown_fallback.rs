@@ -18,8 +18,9 @@ use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
 use crossbeam_channel::unbounded;
 use verbatim_model::Pid;
+use verbatim_model::protocol::ListenerToCore;
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{OutpostToSupervisor, write_message};
+use verbatim_outpost::protocol::write_message;
 use verbatim_outpost::supervisor::{OutpostMessage, ShutdownSummary, Supervisor};
 
 /// How long the stand-in has to exit after the shutdown message: short, as
@@ -54,7 +55,7 @@ fn stuck_child(args: &[String]) -> ! {
     );
     write_message(
         &mut messages,
-        &OutpostToSupervisor::Ready {
+        &ListenerToCore::Ready {
             outpost_pid: Pid(std::process::id()),
             target_pid: Pid(0),
         },

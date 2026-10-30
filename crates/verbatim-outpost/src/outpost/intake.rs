@@ -179,14 +179,14 @@ use windows::core::AgileReference;
 
 use verbatim_uia::{Agile, Cached, Kept, PropertyEvent, TextEvent};
 
-use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
+use verbatim_model::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
 
 use super::alarm::Alarm;
 use super::gap_record::{Accepted, CopyDropped, GapRead, GapRecord, Outcome};
 use super::gap_timer::GapTimer;
 use super::handover::Arrival;
 use super::worker::is_state_property;
-use crate::protocol::GapAnswer;
+use verbatim_model::protocol::GapAnswer;
 
 /// The object id of a window's client area (`OBJID_CLIENT`), which the
 /// hook gives an event on a window object, as NVDA's event callback does.
@@ -352,7 +352,7 @@ pub(super) struct Entry {
     pub(super) trace: TraceId,
     pub(super) observed_at_us: u64,
     /// When it was raised, observed, and relayed, for the latency log.
-    pub(super) timing: crate::protocol::EventTiming,
+    pub(super) timing: verbatim_model::protocol::EventTiming,
 }
 
 /// The object and kind an entry concerns, for the one-per-object rule and for
@@ -688,7 +688,7 @@ impl State {
             item: Item::Wake,
             trace: TraceId::mint(),
             observed_at_us: crate::protocol::now_us(),
-            timing: crate::protocol::EventTiming::default(),
+            timing: verbatim_model::protocol::EventTiming::default(),
         }
     }
 }
@@ -732,7 +732,7 @@ impl Intake {
                 item: Item::GapBound,
                 trace: TraceId::mint(),
                 observed_at_us: crate::protocol::now_us(),
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
             None,
             None,
@@ -1936,7 +1936,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_us: u64::try_from(child).unwrap_or(0),
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
         }
     }
@@ -1960,7 +1960,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_us,
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
         }
     }
@@ -1994,11 +1994,11 @@ mod tests {
     fn uia_focus(marker: u64, hwnd: isize, runtime_id: Vec<i32>) -> DeliveredFact {
         DeliveredFact::UiaFocusRead {
             marker,
-            read: Box::new(crate::protocol::UiaFocusRead {
+            read: Box::new(verbatim_model::protocol::UiaFocusRead {
                 hwnd,
                 snapshot: snapshot(runtime_id),
                 ancestors: Vec::new(),
-                ancestors_end: crate::protocol::AncestorsEnd::Top,
+                ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
                 selected_child: None,
                 value_from_selection: false,
                 window: Some(hwnd),
@@ -2026,7 +2026,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_us: 0,
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
         }
     }
@@ -2480,7 +2480,7 @@ mod tests {
                         item: Item::Fact(fact, stamp(time)),
                         trace: TraceId::mint(),
                         observed_at_us,
-                        timing: crate::protocol::EventTiming::default(),
+                        timing: verbatim_model::protocol::EventTiming::default(),
                     },
                     arrival,
                 );
@@ -2576,7 +2576,7 @@ mod tests {
                 item: held,
                 trace: TraceId::mint(),
                 observed_at_us: 2,
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
         };
         let waiting = vec![
@@ -2692,7 +2692,7 @@ mod tests {
                     item,
                     trace: TraceId::mint(),
                     observed_at_us,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer,
             );
@@ -2743,7 +2743,7 @@ mod tests {
                     },
                     trace: TraceId::mint(),
                     observed_at_us,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer,
             );
@@ -2778,7 +2778,7 @@ mod tests {
                     },
                     trace: TraceId::mint(),
                     observed_at_us,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer,
             );
@@ -2813,7 +2813,7 @@ mod tests {
                     ),
                     trace: TraceId::mint(),
                     observed_at_us,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer,
             );
@@ -2837,7 +2837,7 @@ mod tests {
                     },
                     trace: TraceId::mint(),
                     observed_at_us: 0,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer,
             );
@@ -2862,7 +2862,7 @@ mod tests {
                 item: Item::Fact(fact, None),
                 trace: TraceId::mint(),
                 observed_at_us: 0,
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
             &NoGapTimer,
         );
@@ -2902,7 +2902,7 @@ mod tests {
                 },
                 trace: TraceId::mint(),
                 observed_at_us: 0,
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
             &NoGapTimer,
         );
@@ -2916,7 +2916,7 @@ mod tests {
                 item,
                 trace: TraceId::mint(),
                 observed_at_us,
-                timing: crate::protocol::EventTiming::default(),
+                timing: verbatim_model::protocol::EventTiming::default(),
             },
             &NoGapTimer,
         );
@@ -3104,7 +3104,7 @@ mod tests {
                     item: dropped(7, GapAnswer::Answers(Some(0x10))),
                     trace: TraceId::mint(),
                     observed_at_us: 1_500,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer
             ),
@@ -3122,7 +3122,7 @@ mod tests {
                     item: dropped(8, GapAnswer::ReadsNow),
                     trace: TraceId::mint(),
                     observed_at_us: 501_000,
-                    timing: crate::protocol::EventTiming::default(),
+                    timing: verbatim_model::protocol::EventTiming::default(),
                 },
                 &NoGapTimer
             ),
@@ -3313,7 +3313,7 @@ mod tests {
         if let DeliveredFact::UiaFocusRead { read, .. } = &mut fact {
             read.ancestors = ancestors
                 .iter()
-                .map(|runtime_id| crate::protocol::UiaAncestorFact {
+                .map(|runtime_id| verbatim_model::protocol::UiaAncestorFact {
                     snapshot: snapshot(runtime_id.to_vec()),
                     hwnd: 0,
                     content: true,

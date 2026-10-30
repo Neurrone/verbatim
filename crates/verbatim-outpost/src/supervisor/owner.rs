@@ -32,20 +32,22 @@ use verbatim_process::port_queue::Progress;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{FrameBody, Reading};
 
-use crate::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    WinEventStamp, decode_message, hop_us, message_kind, now_us,
+use crate::protocol::{Peeked, decode_message, now_us, peek};
+use verbatim_model::protocol::{
+    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
+    OutpostToCore, WinEventStamp, hop_us,
 };
 
 use super::frames::Frame;
 use super::ignored::IgnoredProcesses;
 use super::policy::{
-    Backoff, HeldFact, HeldFacts, Spares, WedgeReason, retirement_decision, wedge_decision,
+    Backoff, HeldFact, HeldFacts, Spares, WedgeReason, may_start_outpost, retirement_decision,
+    wedge_decision,
 };
 use super::process::{self, Launched, Role, Target};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
-use super::writer::{Outgoing, Received, WriterHandle};
+use super::writer::{Outgoing, Received, ToChild, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, BACKOFF, EndReason, EventSink, IDLE_RETIREMENT, MISSED_PONG_THRESHOLD,
     OutpostMessage, PING_INTERVAL, ReducerStall, SPARES, SWEEP_INTERVAL, Undelivered, Writers,
@@ -122,15 +124,26 @@ pub(super) enum OwnerEvent {
 }
 
 /// A running child: its process, held so ending the record kills it, and
-/// its writer.
-pub(super) struct Child {
+/// its writer, of the commands its kind of child takes.
+pub(super) struct Child<M: ToChild> {
     pub(super) process: Launched,
-    pub(super) writer: WriterHandle,
+    pub(super) writer: WriterHandle<M>,
+}
+
+/// An outpost's running process, given or spare.
+type OutpostChild = Child<CoreToOutpost>;
+
+/// A launched child of either kind.
+pub(super) enum LaunchedChild {
+    /// The focus listener.
+    Listener(Child<CoreToListener>),
+    /// An outpost, for an application or a spare.
+    Outpost(OutpostChild),
 }
 
 /// A launched child, with its pipe to Core, which the relay reads.
 pub(super) struct Launch {
-    child: Child,
+    child: LaunchedChild,
     from_child: OwnedHandle,
     source: Source,
 }
@@ -157,7 +170,7 @@ pub(super) struct Setup {
 struct Record {
     outpost: OutpostId,
     /// `None` while the launch helper is still at work.
-    child: Option<Child>,
+    child: Option<OutpostChild>,
     /// Whether this generation was a spare
     /// (`docs/design/focus-pipeline.md`, section 19), whose end before
     /// `Ready` is a spare's failure, not the application's crash, and
@@ -225,14 +238,14 @@ enum Assigned {
 /// The focus listener.
 struct ListenerRecord {
     outpost: OutpostId,
-    child: Option<Child>,
+    child: Option<Child<CoreToListener>>,
     last_pong_at: Instant,
     /// Whether this listener replaces an earlier one: facts were lost in the
     /// gap, so the attention application is asked to report again on `Ready`.
     replacement: bool,
     /// The hand-over's news for it, held while its launch is still at work,
     /// in order, and written once it has a writer.
-    pending: Vec<SupervisorToOutpost>,
+    pending: Vec<CoreToListener>,
 }
 
 /// The relay's messages to the app, delivered through its sink in the
@@ -358,7 +371,7 @@ struct App {
 /// A spare outpost's process while it waits.
 struct SpareChild {
     /// `None` while the launch helper is still at work.
-    child: Option<Child>,
+    child: Option<OutpostChild>,
     last_pong_at: Instant,
     /// The last fault it reported: logged with its failure.
     fault: Option<String>,
@@ -590,9 +603,10 @@ impl Owner {
             return Ok(());
         }
         let read_at_us = now_us();
-        match message_kind(body.parts().body) {
-            Some("Pong") => {
-                let OutpostToSupervisor::Pong {
+        #[deny(clippy::wildcard_enum_match_arm)]
+        match peek(body.parts().body) {
+            Peeked::Pong => {
+                let OutpostToCore::Pong {
                     parked_count,
                     written_at_us,
                     ..
@@ -608,32 +622,32 @@ impl Owner {
                     abandoned: parked_count,
                 });
             }
-            Some("TargetExited") => {
+            Peeked::TargetExited => {
                 if let Some(pid) = self.pid_of(outpost) {
                     self.target_exited(pid, "target exited");
                 }
             }
-            Some("Ready") => {
+            Peeked::Ready => {
                 self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
                 self.on_ready(outpost);
             }
             // Written by a spare before it read its `Assign`, and read
             // since: it was given already.
-            Some("SpareReady") => {}
-            Some("Fault") => {
+            Peeked::SpareReady => {}
+            Peeked::Fault => {
                 // A given spare's fault before its `Ready`, such as its
                 // hook failing, is kept for the log of its failure.
                 if let Some(record) = self
                     .records
                     .get_mut(&pid)
                     .filter(|record| record.spare.is_some() && !record.ready)
-                    && let OutpostToSupervisor::Fault { detail } = decode_message(body.parts())?
+                    && let OutpostToCore::Fault { detail } = decode_message(body.parts())?
                 {
                     record.fault = Some(detail);
                 }
                 self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
             }
-            _ => self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us)),
+            Peeked::Other => self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us)),
         }
         Ok(())
     }
@@ -645,10 +659,11 @@ impl Owner {
         let Some(spare) = self.spare_children.get_mut(&outpost) else {
             return Ok(());
         };
-        match message_kind(body.parts().body) {
-            Some("Pong") => spare.last_pong_at = Instant::now(),
-            Some("SpareReady") => {
-                let OutpostToSupervisor::SpareReady { outpost_pid } = decode_message(body.parts())?
+        #[deny(clippy::wildcard_enum_match_arm)]
+        match peek(body.parts().body) {
+            Peeked::Pong => spare.last_pong_at = Instant::now(),
+            Peeked::SpareReady => {
+                let OutpostToCore::SpareReady { outpost_pid } = decode_message(body.parts())?
                 else {
                     return Err(io::Error::other("a spare's ready that is not one"));
                 };
@@ -661,13 +676,15 @@ impl Owner {
                     });
                 }
             }
-            Some("Fault") => {
-                if let OutpostToSupervisor::Fault { detail } = decode_message(body.parts())? {
+            Peeked::Fault => {
+                if let OutpostToCore::Fault { detail } = decode_message(body.parts())? {
                     tracing::warn!(%outpost, detail, "spare outpost fault");
                     spare.fault = Some(detail);
                 }
             }
-            kind => tracing::debug!(%outpost, ?kind, "a spare outpost's message dropped"),
+            kind @ (Peeked::Ready | Peeked::TargetExited | Peeked::Other) => {
+                tracing::debug!(%outpost, ?kind, "a spare outpost's message dropped");
+            }
         }
         Ok(())
     }
@@ -686,10 +703,11 @@ impl Owner {
         &mut self,
         outpost: OutpostId,
         received: Received,
-        message: OutpostToSupervisor,
+        message: ListenerToCore,
     ) {
+        #[deny(clippy::wildcard_enum_match_arm)]
         let event = match message {
-            OutpostToSupervisor::FocusFact {
+            ListenerToCore::FocusFact {
                 trace_id,
                 timing,
                 fact,
@@ -701,7 +719,7 @@ impl Owner {
                 win_event,
                 received,
             },
-            OutpostToSupervisor::ForwardingEnded {
+            ListenerToCore::ForwardingEnded {
                 pid,
                 outpost,
                 through,
@@ -710,7 +728,7 @@ impl Owner {
                 outpost,
                 through,
             },
-            OutpostToSupervisor::Pong { written_at_us, .. } => {
+            ListenerToCore::Pong { written_at_us, .. } => {
                 if let Some(us) = hop_us(written_at_us, received.at_us()) {
                     tracing::trace!(target: "verbatim::stage", stage = "listener's pipe to verbatim.exe", us, "pong");
                 }
@@ -719,7 +737,7 @@ impl Owner {
                     abandoned: 0,
                 }
             }
-            OutpostToSupervisor::MenuOrSwitchEnded {
+            ListenerToCore::MenuOrSwitchEnded {
                 ended_at_us,
                 timing,
             } => {
@@ -732,7 +750,7 @@ impl Owner {
                 );
                 OwnerEvent::MenuOrSwitchEnded { ended_at_us }
             }
-            OutpostToSupervisor::ForegroundWindow {
+            ListenerToCore::ForegroundWindow {
                 window,
                 thread,
                 console,
@@ -743,16 +761,15 @@ impl Owner {
                 console,
                 integrity,
             }),
-            OutpostToSupervisor::Ready { .. } => OwnerEvent::Ready(outpost),
-            OutpostToSupervisor::IdleAnswer { round } => {
+            ListenerToCore::Ready { .. } => OwnerEvent::Ready(outpost),
+            ListenerToCore::IdleAnswer { round } => {
                 self.listener_idle(outpost, round);
                 return;
             }
-            OutpostToSupervisor::Fault { detail } => {
+            ListenerToCore::Fault { detail } => {
                 tracing::warn!(detail, "focus listener fault");
                 return;
             }
-            _ => return, // The listener sends nothing else.
         };
         self.handle(event);
     }
@@ -842,7 +859,7 @@ impl Owner {
             self.query_outposts(round);
             return;
         };
-        let query = SupervisorToOutpost::IdleQuery { round };
+        let query = CoreToListener::IdleQuery { round };
         let reached = if let Some(child) = &listener.child {
             let pushed = child.writer.push(Outgoing::IdleQuery(query));
             if let Err(error) = &pushed {
@@ -1085,11 +1102,9 @@ impl Owner {
         };
         let outpost = record.outpost;
         if let Some(child) = &record.child
-            && let Err(error) = child
-                .writer
-                .push(Outgoing::HandOver(SupervisorToOutpost::Assign {
-                    target_pid: pid,
-                }))
+            && let Err(error) = child.writer.push(Outgoing::HandOver(CoreToOutpost::Assign {
+                target_pid: pid,
+            }))
         {
             // Its pipe's end follows, and is the spare's failure.
             tracing::warn!(%error, %outpost, %pid, "a spare could not be sent its application");
@@ -1254,7 +1269,7 @@ impl Owner {
         if ready {
             // Its hook goes with it: the listener forwards the
             // application's MSAA events again until the next is ready.
-            self.tell_listener(SupervisorToOutpost::HookRemoved { pid, sent_at_us: 0 });
+            self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
             self.outbox.send(OutpostMessage::Ended {
                 outpost: failed,
                 target_pid: pid,
@@ -1364,7 +1379,7 @@ impl Owner {
     /// order, while the listener's launch is at work. With no listener, it
     /// is not needed: the next one is told the applications whose outposts
     /// have their hooks in on its command line.
-    fn tell_listener(&mut self, command: SupervisorToOutpost) {
+    fn tell_listener(&mut self, command: CoreToListener) {
         let Some(listener) = self.listener.as_mut() else {
             return;
         };
@@ -1391,7 +1406,7 @@ impl Owner {
             tracing::debug!(%pid, %outpost, "forwarding ended for an outpost that has gone");
             return;
         };
-        let command = SupervisorToOutpost::ForwardingEnded { through };
+        let command = CoreToOutpost::ForwardingEnded { through };
         if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
             tracing::warn!(%error, %pid, "forwarding ended could not be relayed");
         }
@@ -1475,7 +1490,30 @@ impl Owner {
         }
     }
 
-    fn launched(&mut self, outpost: OutpostId, result: io::Result<Child>) {
+    fn launched(&mut self, outpost: OutpostId, result: io::Result<LaunchedChild>) {
+        let result = match result {
+            Ok(LaunchedChild::Listener(child)) => {
+                self.listener_launched(outpost, Ok(child));
+                return;
+            }
+            Ok(LaunchedChild::Outpost(child)) => Ok(child),
+            Err(error) => Err(error),
+        };
+        if self
+            .listener
+            .as_ref()
+            .is_some_and(|listener| listener.outpost == outpost)
+        {
+            if let Err(error) = result {
+                self.listener_launched(outpost, Err(error));
+            }
+            return;
+        }
+        self.outpost_launched(outpost, result);
+    }
+
+    /// The listener `outpost`'s launch reported.
+    fn listener_launched(&mut self, outpost: OutpostId, result: io::Result<Child<CoreToListener>>) {
         if let Some(listener) = self
             .listener
             .as_mut()
@@ -1508,8 +1546,18 @@ impl Owner {
                     self.listener_gone();
                 }
             }
-            return;
+        } else if let Ok(child) = result {
+            self.retire_child(
+                child,
+                format!("focus listener {outpost}"),
+                "launched after it was no longer wanted".to_owned(),
+            );
         }
+    }
+
+    /// The outpost `outpost`'s launch reported, a spare's or an
+    /// application's.
+    fn outpost_launched(&mut self, outpost: OutpostId, result: io::Result<OutpostChild>) {
         if self.spare_children.contains_key(&outpost) {
             self.spare_launched(outpost, result);
             return;
@@ -1569,7 +1617,7 @@ impl Owner {
     /// The launch of the spare `outpost` reported: it waits from now on,
     /// unless Verbatim is exiting, when it is ended; a failed launch is a
     /// spare's failure.
-    fn spare_launched(&mut self, outpost: OutpostId, result: io::Result<Child>) {
+    fn spare_launched(&mut self, outpost: OutpostId, result: io::Result<OutpostChild>) {
         match result {
             Ok(child) if self.shutting_down.is_some() => {
                 self.spare_children.remove(&outpost);
@@ -1651,7 +1699,7 @@ impl Owner {
         // An outpost is ready once its own `WinEvent` hook is in: the
         // listener stops forwarding the application's MSAA events raised
         // from now on, and says so behind the last it forwarded.
-        self.tell_listener(SupervisorToOutpost::HookInstalled {
+        self.tell_listener(CoreToListener::HookInstalled {
             pid,
             outpost,
             sent_at_us: 0,
@@ -1685,7 +1733,7 @@ impl Owner {
                 // A selection, or a notification Core would not speak, in
                 // an application with no outpost is not worth starting one
                 // for.
-                if held.fact.may_start_outpost() {
+                if may_start_outpost(&held.fact) {
                     let _ = self.start_outpost(pid, Some(held));
                 }
             }
@@ -1790,7 +1838,7 @@ impl Owner {
         if record.ready {
             // Its hook goes with it: the listener forwards the
             // application's MSAA events again, to start the next outpost.
-            self.tell_listener(SupervisorToOutpost::HookRemoved { pid, sent_at_us: 0 });
+            self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
         }
         self.writers
             .lock()
@@ -1808,7 +1856,7 @@ impl Owner {
 
     /// Ends `child` cleanly on a thread of its own ([`retire`]), which
     /// reports how it ended ([`OwnerEvent::Retired`]).
-    fn retire_child(&mut self, child: Child, label: String, why: String) {
+    fn retire_child<M: ToChild>(&mut self, child: Child<M>, label: String, why: String) {
         let limit = self.shutdown_limit;
         let own_tx = self.own_tx.clone();
         let spawned = thread::Builder::new()
@@ -1965,10 +2013,7 @@ impl Owner {
             self.outbox.sink.stalled(stall);
         }
         self.ping_seq += 1;
-        let ping = SupervisorToOutpost::Ping {
-            seq: self.ping_seq,
-            sent_at_us: 0,
-        };
+        let ping = CoreToOutpost::ping(self.ping_seq);
         let mut wedged = Vec::new();
         let mut exited = Vec::new();
         let mut hang_checks = Vec::new();
@@ -2031,7 +2076,9 @@ impl Owner {
                         self.listener_gone();
                         self.start_listener(true);
                     } else {
-                        let _ = child.writer.push(Outgoing::Ping(ping));
+                        let _ = child
+                            .writer
+                            .push(Outgoing::Ping(CoreToListener::ping(self.ping_seq)));
                     }
                 }
             }
@@ -2040,7 +2087,7 @@ impl Owner {
 
     /// Pings every spare waiting and ends any that has missed its pings, as
     /// a spare's failure.
-    fn spare_heartbeat(&mut self, now: Instant, ping: &SupervisorToOutpost) {
+    fn spare_heartbeat(&mut self, now: Instant, ping: &CoreToOutpost) {
         let mut wedged = Vec::new();
         for (&outpost, spare) in &self.spare_children {
             let Some(child) = &spare.child else { continue };
@@ -2236,8 +2283,8 @@ fn check_served_by(pid: Pid, hwnd: isize) {
     );
 }
 
-fn ask_idle(writer: &WriterHandle, round: u64) {
-    let query = SupervisorToOutpost::IdleQuery { round };
+fn ask_idle(writer: &WriterHandle<CoreToOutpost>, round: u64) {
+    let query = CoreToOutpost::IdleQuery { round };
     if let Err(error) = writer.push(Outgoing::IdleQuery(query)) {
         tracing::debug!(%error, "the idle query could not reach an outpost");
     }
@@ -2245,7 +2292,7 @@ fn ask_idle(writer: &WriterHandle, round: u64) {
 
 /// Sends a routed fact to an outpost: written at once when its pipe is
 /// free, queued otherwise.
-pub(super) fn deliver(writer: &WriterHandle, held: HeldFact) {
+pub(super) fn deliver(writer: &WriterHandle<CoreToOutpost>, held: HeldFact) {
     if let Err(error) = writer.push(Outgoing::delivered(held)) {
         tracing::warn!(%error, "a routed fact could not be queued");
     }
@@ -2263,23 +2310,35 @@ fn launch_child(
     let (launched, pipes) = process::launch(exe_path, role, options, (ignored, hooks_in))?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     // A failure from here drops the process's job, which kills it.
-    let writer = commands.open(outpost, pipes.to_child)?;
-    let source = match role {
-        Role::Listener => Source::Listener,
-        Role::Outpost(pid) => Source::Outpost(pid),
-        Role::Spare(_) => Source::Spare,
+    let (child, source) = match role {
+        Role::Listener => (
+            LaunchedChild::Listener(Child {
+                process: launched,
+                writer: commands.open(outpost, pipes.to_child)?,
+            }),
+            Source::Listener,
+        ),
+        Role::Outpost(_) | Role::Spare(_) => {
+            let writer = commands.open(outpost, pipes.to_child)?;
+            writers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(outpost, writer.clone());
+            let source = match role {
+                Role::Outpost(pid) => Source::Outpost(pid),
+                Role::Spare(_) | Role::Listener => Source::Spare,
+            };
+            (
+                LaunchedChild::Outpost(Child {
+                    process: launched,
+                    writer,
+                }),
+                source,
+            )
+        }
     };
-    if let Role::Outpost(_) | Role::Spare(_) = role {
-        writers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(outpost, writer.clone());
-    }
     Ok(Launch {
-        child: Child {
-            process: launched,
-            writer,
-        },
+        child,
         from_child: pipes.from_child,
         source,
     })

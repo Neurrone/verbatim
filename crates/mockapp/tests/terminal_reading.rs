@@ -68,13 +68,11 @@ mod harness;
 use std::time::{Duration, Instant};
 
 use verbatim_ia2::WinEventKind;
+use verbatim_model::protocol::DeliveredFact;
+use verbatim_model::protocol::{FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
     CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalScope,
     TerminalSnapshot, TextOp, TextPosition, TextReply, TextUnit,
-};
-use verbatim_outpost::protocol::DeliveredFact;
-use verbatim_outpost::protocol::{
-    FocusedControl, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -113,7 +111,7 @@ fn focused(hwnd: HWND) -> Cached<ListenerEvent> {
 /// The caret the outpost reports, which must be its next message.
 fn caret_read(outpost: &OutpostUnderTest, node: NodeId) {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::CaretMoved { node_id, .. },
             ..
         } if node_id == node => {}
@@ -152,7 +150,7 @@ fn start_with(
     let element = focused(hwnd);
     outpost.deliver(outpost.listener_fact(&element));
     let node = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -220,7 +218,7 @@ fn write_held(
 /// next message.
 fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalSnapshot {
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::TerminalSnapshot { node_id, snapshot },
             ..
         } if node_id == node => *snapshot,
@@ -232,7 +230,7 @@ fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalSnapshot {
 /// message.
 fn answer_to(outpost: &OutpostUnderTest, request: u64) -> TextReply {
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(reply)),
             ..
@@ -279,7 +277,7 @@ fn rows(rows: &[&str]) -> String {
 fn focus_now(outpost: &mut OutpostUnderTest) -> FocusedControl {
     let request = outpost.ask(Query::FocusNow);
     let control = match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Focus(now)),
             ..
@@ -349,7 +347,7 @@ fn a_terminal_stays_followed_through_a_foreground_report() {
         hwnd: find.0 as isize,
     });
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     foreground: true, ..
@@ -518,7 +516,7 @@ fn the_console_hosts_caret_comes_from_its_console() {
         Heard::UiaProperty(UIA_HelpTextPropertyId.0),
     ]);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::PropertyChanged {
                     node_id,

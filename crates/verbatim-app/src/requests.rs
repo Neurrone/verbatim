@@ -14,11 +14,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
+use verbatim_model::protocol::{FocusNow, QueryOutcome, QueryResult};
 use verbatim_model::{
     FetchResult, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, QueryKind,
     TextReply, TraceId, TreeNode, WindowFacts,
 };
-use verbatim_outpost::protocol::{FocusNow, QueryOutcome, QueryResult};
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
 /// walk was truncated, or a reason it failed.
@@ -295,7 +295,7 @@ fn describe(outcome: &QueryOutcome) -> String {
         QueryOutcome::Failed(reason) => reason.clone(),
         QueryOutcome::NotStarted => "the query was withdrawn before it started".to_owned(),
         QueryOutcome::Abandoned => "the query passed its deadline".to_owned(),
-        _ => "the query returned an unexpected answer".to_owned(),
+        QueryOutcome::Done(_) => "the query returned an unexpected answer".to_owned(),
     }
 }
 
@@ -501,8 +501,8 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
+    use verbatim_model::protocol::{DumpedTree, FocusedControl};
     use verbatim_model::{Backend, FocusText, NodeDetails, NodeId, Role, StateSet, WindowHandle};
-    use verbatim_outpost::protocol::{DumpedTree, FocusedControl};
 
     use super::*;
 

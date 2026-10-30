@@ -22,7 +22,7 @@ mod common;
 mod harness;
 
 use verbatim_model::NormalizedEvent;
-use verbatim_outpost::protocol::OutpostToSupervisor;
+use verbatim_model::protocol::OutpostToCore;
 
 use common::outpost::OutpostUnderTest;
 
@@ -41,7 +41,7 @@ fn a_window_renamed_after_activation_is_not_reported() {
     common::apply(&mut app, hwnd, "client-name notes.txt - Notepad");
     common::apply(&mut app, hwnd, "set-value slider1 77");
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { value, .. },
             ..
         } => assert_eq!(value.as_deref(), Some("77")),

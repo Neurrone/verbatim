@@ -68,14 +68,14 @@
 //! for an application whose outpost's hook is not yet in, so that the
 //! application's first events start its outpost and reach it. When the
 //! supervisor tells it an outpost's hook is in
-//! ([`SupervisorToOutpost::HookInstalled`]), the listener reads the event
+//! ([`CoreToListener::HookInstalled`]), the listener reads the event
 //! clock, forwards none of that application's events raised after it, and
 //! queues "forwarding ended" naming that tick behind every fact it has
-//! queued ([`OutpostToSupervisor::ForwardingEnded`]); events raised at or
+//! queued ([`ListenerToCore::ForwardingEnded`]); events raised at or
 //! before it, which can still reach its hook late, it forwards still. The
 //! outpost matches the two hooks' copies of an event by counting. When the
 //! application has no outpost with its hook in any more
-//! ([`SupervisorToOutpost::HookRemoved`]), the listener forwards its events
+//! ([`CoreToListener::HookRemoved`]), the listener forwards its events
 //! again, and its reading thread ends once the events waiting for it are
 //! read. A listener that replaces another is told on its command line the
 //! applications whose outposts' hooks are in, and forwards none of their
@@ -91,7 +91,7 @@
 //! backend verdict; it skips a focus only by its window's class
 //! (`crate::focus_read::MSAA_CLASS`), unless a backend override forcing
 //! UIA holds for the application
-//! ([`SupervisorToOutpost::SetBackendOverride`]).
+//! ([`CoreToListener::SetBackendOverride`]).
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
@@ -157,12 +157,13 @@ use crate::focus_read::{
 use crate::foreground::{ForegroundWatch, Front, Step};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::MOVED_ON_GRACE;
-use crate::protocol::{
-    DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
-};
+use crate::protocol::{decode_message, now_us, put_message};
 use crate::read_schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
 use crate::supervisor::IgnoredProcesses;
+use verbatim_model::protocol::{
+    CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore,
+    UiaSnapshotFact, WinEventStamp, hop_us,
+};
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
 /// before telling Core, so a focus event the end causes can arrive first:
@@ -217,11 +218,11 @@ impl Default for Clock {
 /// under the lock every fact is sent under.
 #[derive(Default)]
 struct Waiting {
-    urgent: VecDeque<OutpostToSupervisor>,
-    facts: VecDeque<(Option<(Pid, FactKey)>, OutpostToSupervisor)>,
+    urgent: VecDeque<ListenerToCore>,
+    facts: VecDeque<(Option<(Pid, FactKey)>, ListenerToCore)>,
     /// The end of a menu or of the Alt+Tab switcher whose grace has passed,
     /// sent once no fact waits.
-    menu_end: Option<OutpostToSupervisor>,
+    menu_end: Option<ListenerToCore>,
     /// The applications whose outposts have their own hooks in, each with
     /// the tick on the event clock after which none of its `WinEvent`
     /// facts is forwarded.
@@ -232,12 +233,12 @@ struct Waiting {
 enum Sent {
     /// A message that goes ahead of everything waiting: a pong, `Ready`,
     /// or a fault.
-    Urgent(OutpostToSupervisor),
+    Urgent(ListenerToCore),
     /// A fact, with the key it is coalesced under, and, for a `WinEvent`'s,
     /// the application and the event's stamp.
     Fact(
         Option<(Pid, FactKey)>,
-        OutpostToSupervisor,
+        ListenerToCore,
         Option<(Pid, WinEventStamp)>,
     ),
     /// "Forwarding ended" for an application whose outpost's hook is in,
@@ -248,12 +249,12 @@ enum Sent {
         through: u32,
     },
     /// A menu's or the switcher's end, its grace passed.
-    MenuEnd(OutpostToSupervisor),
+    MenuEnd(ListenerToCore),
     /// The idle barrier's answer for a round, behind everything waiting
     /// ([`Outgoing::idle_answer`]).
     IdleAnswer(u64),
     /// A message taken from what waits, to be written.
-    Message(OutpostToSupervisor),
+    Message(ListenerToCore),
 }
 
 impl Backlog for Waiting {
@@ -278,7 +279,9 @@ impl Backlog for Waiting {
                     let after_answer = self
                         .facts
                         .iter()
-                        .rposition(|(_, waiting)| waiting.is_idle_answer())
+                        .rposition(|(_, waiting)| {
+                            matches!(waiting, ListenerToCore::IdleAnswer { .. })
+                        })
                         .map_or(0, |answer| answer + 1);
                     let mut index = after_answer;
                     while index < self.facts.len() {
@@ -299,7 +302,7 @@ impl Backlog for Waiting {
                 self.hooked.insert(pid, through);
                 self.facts.push_back((
                     None,
-                    OutpostToSupervisor::ForwardingEnded {
+                    ListenerToCore::ForwardingEnded {
                         pid,
                         outpost,
                         through,
@@ -314,7 +317,7 @@ impl Backlog for Waiting {
                     self.facts.push_back((None, end));
                 }
                 self.facts
-                    .push_back((None, OutpostToSupervisor::IdleAnswer { round }));
+                    .push_back((None, ListenerToCore::IdleAnswer { round }));
             }
         }
         Ok(())
@@ -338,12 +341,12 @@ impl Backlog for Waiting {
             | Sent::Message(message)
             | Sent::Fact(_, message, _)
             | Sent::MenuEnd(message) => message,
-            Sent::IdleAnswer(round) => OutpostToSupervisor::IdleAnswer { round },
+            Sent::IdleAnswer(round) => ListenerToCore::IdleAnswer { round },
             Sent::ForwardingEnded {
                 pid,
                 outpost,
                 through,
-            } => OutpostToSupervisor::ForwardingEnded {
+            } => ListenerToCore::ForwardingEnded {
                 pid,
                 outpost,
                 through,
@@ -402,12 +405,14 @@ impl MenuEnd {
                 GraceEffect::SendEnd {
                     ended_at_us,
                     timing,
-                } => sent(&self.sender.send(Sent::MenuEnd(
-                    OutpostToSupervisor::MenuOrSwitchEnded {
-                        ended_at_us,
-                        timing,
-                    },
-                ))),
+                } => sent(
+                    &self
+                        .sender
+                        .send(Sent::MenuEnd(ListenerToCore::MenuOrSwitchEnded {
+                            ended_at_us,
+                            timing,
+                        })),
+                ),
                 GraceEffect::SendIdleAnswer(round) => {
                     sent(&self.sender.send(Sent::IdleAnswer(round)));
                 }
@@ -551,7 +556,7 @@ impl Outgoing {
         })
     }
 
-    fn urgent(&self, message: OutpostToSupervisor) {
+    fn urgent(&self, message: ListenerToCore) {
         sent(&self.sender.send(Sent::Urgent(message)));
     }
 
@@ -591,7 +596,7 @@ impl Outgoing {
     /// since the keyboard hook needs to know of every window in front.
     fn foreground_window(&self, front: Front) {
         let owner = window_pid(front.window);
-        let message = OutpostToSupervisor::ForegroundWindow {
+        let message = ListenerToCore::ForegroundWindow {
             window: front.window,
             thread: front.thread,
             console: front.console,
@@ -673,7 +678,7 @@ impl Outgoing {
             timing.listener_handled_at_us = self.now();
         }
         let key = fact.key(win_event).map(|key| (pid, key));
-        let message = OutpostToSupervisor::FocusFact {
+        let message = ListenerToCore::FocusFact {
             trace_id,
             timing,
             fact: ListenerFact { pid, fact },
@@ -743,7 +748,7 @@ impl Outgoing {
     }
 
     fn fault(&self, detail: String) {
-        self.urgent(OutpostToSupervisor::Fault { detail });
+        self.urgent(ListenerToCore::Fault { detail });
     }
 
     /// Takes nothing more, and has what waits written and the pipe closed,
@@ -781,7 +786,7 @@ struct UiaFocusReading {
     outgoing: Arc<Outgoing>,
     /// Whether a backend override forcing UIA holds, per application, each
     /// shared with that application's readers
-    /// ([`SupervisorToOutpost::SetBackendOverride`]).
+    /// ([`CoreToListener::SetBackendOverride`]).
     forced_uia: Mutex<HashMap<Pid, Arc<AtomicBool>>>,
 }
 
@@ -1065,7 +1070,7 @@ impl Listener {
         })
     }
 
-    /// Shuts the listener down cleanly ([`SupervisorToOutpost::Shutdown`]),
+    /// Shuts the listener down cleanly ([`CoreToListener::Shutdown`]),
     /// returning once it is done: the `WinEvent` hooks are removed with the
     /// thread that pumped them, the desktop-wide UIA subscriptions'
     /// installation is waited for if it has not ended, the desktop-wide UIA
@@ -1109,28 +1114,29 @@ impl Listener {
     /// its count is always zero), takes the hand-over's news of outposts'
     /// hooks, takes a backend override forcing UIA for an application, so
     /// its readers skip nothing by class, starts the idle barrier's round
-    /// ([`Self::idle_query`]), and ignores everything else. An application with no outpost
+    /// ([`Self::idle_query`]). An application with no outpost
     /// any more has its reading thread ended too
     /// ([`Readers::outpost_ended`]). `received_at_us` is when the command
     /// was read off Core's pipe: the hop from verbatim.exe's write is
     /// logged at trace level, under `verbatim::stage`.
-    fn handle_command(&self, command: &SupervisorToOutpost, received_at_us: u64) {
+    #[deny(clippy::wildcard_enum_match_arm)]
+    fn handle_command(&self, command: &CoreToListener, received_at_us: u64) {
         if let Some(us) = hop_us(command.sent_at_us(), received_at_us) {
             tracing::trace!(target: "verbatim::stage", stage = "verbatim.exe to the listener", us, ?command);
         }
         match command {
-            SupervisorToOutpost::Ping { seq, .. } => {
-                self.outgoing.urgent(OutpostToSupervisor::Pong {
+            CoreToListener::Ping { seq, .. } => {
+                self.outgoing.urgent(ListenerToCore::Pong {
                     seq: *seq,
                     parked_count: 0,
                     written_at_us: 0,
                 });
             }
-            SupervisorToOutpost::HookInstalled { pid, outpost, .. } => {
+            CoreToListener::HookInstalled { pid, outpost, .. } => {
                 self.outgoing
                     .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
             }
-            SupervisorToOutpost::HookRemoved { pid, .. } => {
+            CoreToListener::HookRemoved { pid, .. } => {
                 self.outgoing.hook_removed(*pid);
                 // The override is its outpost's, and ends with it.
                 self.readers
@@ -1139,9 +1145,9 @@ impl Listener {
                     .store(false, Ordering::Relaxed);
                 self.readers.outpost_ended(*pid);
             }
-            SupervisorToOutpost::SetBackendOverride {
+            CoreToListener::SetBackendOverride {
                 backend_override,
-                pid: Some(pid),
+                pid,
             } => {
                 let forced = *backend_override == Some(Backend::Uia);
                 tracing::info!(%pid, forced, "a backend override forcing UIA for an application");
@@ -1150,8 +1156,9 @@ impl Listener {
                     .forced_uia(*pid)
                     .store(forced, Ordering::Relaxed);
             }
-            SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
-            _ => {}
+            CoreToListener::IdleQuery { round } => self.idle_query(*round),
+            // The serving loop ends on `Shutdown`, before it is handled here.
+            CoreToListener::Shutdown => {}
         }
     }
 
@@ -1197,7 +1204,7 @@ fn install_on_its_thread(
             );
             // The listener has no target application; `target_pid` is a
             // sentinel the supervisor only logs.
-            outgoing.urgent(OutpostToSupervisor::Ready {
+            outgoing.urgent(ListenerToCore::Ready {
                 outpost_pid: Pid(std::process::id()),
                 target_pid: Pid(0),
             });
@@ -1542,7 +1549,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
     // Every kind the listener subscribes to (LISTENER_SUBSCRIPTIONS) that
     // reaches here is a fact: the console's and the shell's foreground
     // events are handled before this.
-    let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
+    let Some(fact) = crate::protocol::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
         return (console, None);
     };
     outgoing.fact(
@@ -1580,7 +1587,7 @@ fn front_now() -> Option<Front> {
 
 /// Carries out a step of the foreground's watch, on the `WinEvent` thread:
 /// sends Core the window in front, with its process's integrity level read
-/// locally ([`OutpostToSupervisor::ForegroundWindow`]), and hooks or
+/// locally ([`ListenerToCore::ForegroundWindow`]), and hooks or
 /// unhooks every console's events.
 fn foreground_step(outgoing: &Outgoing, step: Step) {
     if let Some(front) = step.report {
@@ -1697,8 +1704,8 @@ pub fn run_listener(
         // The command's receipt, one clock read, for the hop from
         // verbatim.exe's write.
         let received_at_us = now_us();
-        match decode_message::<SupervisorToOutpost>(body)? {
-            SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
+        match decode_message::<CoreToListener>(body)? {
+            CoreToListener::Shutdown => return Ok(Serving::Stop),
             command => listener.handle_command(&command, received_at_us),
         }
         Ok(Serving::Continue)
@@ -1775,7 +1782,7 @@ mod tests {
     }
 
     /// Everything `outgoing` sent, which is closed first, as Core reads it.
-    fn sent(outgoing: &Outgoing, reader: &mut BufReader<File>) -> Vec<OutpostToSupervisor> {
+    fn sent(outgoing: &Outgoing, reader: &mut BufReader<File>) -> Vec<ListenerToCore> {
         outgoing.close();
         std::iter::from_fn(|| read_message(reader).expect("read")).collect()
     }
@@ -1817,12 +1824,12 @@ mod tests {
         let kinds: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
-                OutpostToSupervisor::FocusFact {
+                ListenerToCore::FocusFact {
                     fact, win_event, ..
                 } => {
                     format!("{} {:?}", fact.pid.0, fact.fact.key(win_event))
                 }
-                OutpostToSupervisor::ForwardingEnded {
+                ListenerToCore::ForwardingEnded {
                     pid,
                     outpost,
                     through,
@@ -1867,14 +1874,14 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 2,
                 focus: true,
-                answer: crate::protocol::GapAnswer::LeavesOpen,
+                answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
             },
             meta(2),
         );
         let facts: Vec<DeliveredFact> = sent(&outgoing, &mut reader)
             .into_iter()
             .filter_map(|message| match message {
-                OutpostToSupervisor::FocusFact { fact, .. } => Some(fact.fact),
+                ListenerToCore::FocusFact { fact, .. } => Some(fact.fact),
                 _ => None,
             })
             .collect();
@@ -1886,12 +1893,12 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    answer: crate::protocol::GapAnswer::LeavesOpen,
+                    answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,
                     focus: true,
-                    answer: crate::protocol::GapAnswer::LeavesOpen,
+                    answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
                 },
             ]
         );
@@ -1920,7 +1927,7 @@ mod tests {
         // Replaces the waiting one for the same element and kind, and goes
         // to the back.
         outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
-        outgoing.urgent(OutpostToSupervisor::Pong {
+        outgoing.urgent(ListenerToCore::Pong {
             seq: 4,
             parked_count: 0,
             written_at_us: 0,
@@ -1928,10 +1935,10 @@ mod tests {
         let order: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
-                OutpostToSupervisor::FocusFact { fact, timing, .. } => {
+                ListenerToCore::FocusFact { fact, timing, .. } => {
                     format!("{} {}", fact.pid.0, timing.observed_at_us)
                 }
-                OutpostToSupervisor::Pong { seq, .. } => format!("pong {seq}"),
+                ListenerToCore::Pong { seq, .. } => format!("pong {seq}"),
                 other => format!("{other:?}"),
             })
             .collect();
@@ -1949,8 +1956,8 @@ mod tests {
             matches!(
                 sent.as_slice(),
                 [
-                    OutpostToSupervisor::ForwardingEnded { .. },
-                    OutpostToSupervisor::FocusFact { .. }
+                    ListenerToCore::ForwardingEnded { .. },
+                    ListenerToCore::FocusFact { .. }
                 ]
             ),
             "{sent:?}"
@@ -1978,7 +1985,7 @@ mod tests {
 
     /// Reads the messages `reader` brings on another thread, since a read
     /// blocks while nothing has been written.
-    fn drain(mut reader: BufReader<File>) -> mpsc::Receiver<OutpostToSupervisor> {
+    fn drain(mut reader: BufReader<File>) -> mpsc::Receiver<ListenerToCore> {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             while let Ok(Some(message)) = read_message(&mut reader) {
@@ -2044,7 +2051,7 @@ mod tests {
         outgoing.fact(own, msaa_focus(), None, None, 1_000);
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
         let sent = sent(&outgoing, &mut reader);
-        let [OutpostToSupervisor::FocusFact { fact, .. }] = sent.as_slice() else {
+        let [ListenerToCore::FocusFact { fact, .. }] = sent.as_slice() else {
             panic!("one fact is sent, the other process's: {sent:?}");
         };
         assert_eq!(fact.pid, Pid(5));
@@ -2130,10 +2137,8 @@ mod tests {
         let first =
             std::iter::from_fn(|| read_message(&mut reader).expect("read")).find_map(|message| {
                 match message {
-                    OutpostToSupervisor::Ready { .. } => Some(None),
-                    OutpostToSupervisor::FocusFact { fact, .. } if fact == alert => {
-                        Some(Some(fact))
-                    }
+                    ListenerToCore::Ready { .. } => Some(None),
+                    ListenerToCore::FocusFact { fact, .. } if fact == alert => Some(Some(fact)),
                     _ => None,
                 }
             });
@@ -2146,10 +2151,10 @@ mod tests {
 
         release.send(()).expect("the installation waits");
         let ready = std::iter::from_fn(|| read_message(&mut reader).expect("read"))
-            .find(|message| matches!(message, OutpostToSupervisor::Ready { .. }));
+            .find(|message| matches!(message, ListenerToCore::Ready { .. }));
         assert_eq!(
             ready,
-            Some(OutpostToSupervisor::Ready {
+            Some(ListenerToCore::Ready {
                 outpost_pid: Pid(std::process::id()),
                 target_pid: Pid(0),
             })
@@ -2180,10 +2185,7 @@ mod tests {
         let message = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent");
-        assert!(matches!(
-            message,
-            OutpostToSupervisor::MenuOrSwitchEnded { .. }
-        ));
+        assert!(matches!(message, ListenerToCore::MenuOrSwitchEnded { .. }));
         assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
     }
 
@@ -2201,10 +2203,7 @@ mod tests {
         let message = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent");
-        assert!(matches!(
-            message,
-            OutpostToSupervisor::MenuOrSwitchEnded { .. }
-        ));
+        assert!(matches!(message, ListenerToCore::MenuOrSwitchEnded { .. }));
         assert!(ended.elapsed() >= MENU_END_GRACE, "not before the grace");
         outgoing.close();
         assert_eq!(messages.iter().count(), 0, "the end is sent once");
@@ -2221,14 +2220,11 @@ mod tests {
         let first = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the focus fact is sent");
-        assert!(matches!(first, OutpostToSupervisor::FocusFact { .. }));
+        assert!(matches!(first, ListenerToCore::FocusFact { .. }));
         let second = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent too");
-        assert!(matches!(
-            second,
-            OutpostToSupervisor::MenuOrSwitchEnded { .. }
-        ));
+        assert!(matches!(second, ListenerToCore::MenuOrSwitchEnded { .. }));
     }
 
     #[test]
@@ -2259,8 +2255,8 @@ mod tests {
         let order: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
-                OutpostToSupervisor::FocusFact { fact, .. } => format!("fact {}", fact.pid.0),
-                OutpostToSupervisor::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
+                ListenerToCore::FocusFact { fact, .. } => format!("fact {}", fact.pid.0),
+                ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
                 other => format!("{other:?}"),
             })
             .collect();
@@ -2291,7 +2287,7 @@ mod tests {
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
         outgoing.idle_answer(1);
         outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
-        outgoing.urgent(OutpostToSupervisor::Pong {
+        outgoing.urgent(ListenerToCore::Pong {
             seq: 4,
             parked_count: 0,
             written_at_us: 0,
@@ -2304,12 +2300,12 @@ mod tests {
         let order: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
-                OutpostToSupervisor::FocusFact { fact, timing, .. } => {
+                ListenerToCore::FocusFact { fact, timing, .. } => {
                     format!("{} {}", fact.pid.0, timing.observed_at_us)
                 }
-                OutpostToSupervisor::Pong { seq, .. } => format!("pong {seq}"),
-                OutpostToSupervisor::IdleAnswer { round } => format!("idle {round}"),
-                OutpostToSupervisor::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
+                ListenerToCore::Pong { seq, .. } => format!("pong {seq}"),
+                ListenerToCore::IdleAnswer { round } => format!("idle {round}"),
+                ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
                 other => format!("{other:?}"),
             })
             .collect();
@@ -2331,7 +2327,7 @@ mod tests {
     /// The timing of the one fact `outgoing` sends.
     fn timing_of_the_fact(outgoing: &Outgoing, reader: &mut BufReader<File>) -> EventTiming {
         let sent = sent(outgoing, reader);
-        let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
+        let [ListenerToCore::FocusFact { timing, .. }] = sent.as_slice() else {
             panic!("one fact is sent: {sent:?}");
         };
         *timing
@@ -2355,7 +2351,7 @@ mod tests {
         let (outgoing, mut reader) = at_seven_thousand();
         outgoing.fact(Pid(5), msaa_focus(), None, None, 6_543_210);
         let sent = sent(&outgoing, &mut reader);
-        let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
+        let [ListenerToCore::FocusFact { timing, .. }] = sent.as_slice() else {
             panic!("one fact is sent: {sent:?}");
         };
         assert_eq!(timing.observed_at_us, 6_543_210);
@@ -2380,7 +2376,7 @@ mod tests {
             meta,
         );
         let sent = sent(&outgoing, &mut reader);
-        let [OutpostToSupervisor::FocusFact { timing, .. }] = sent.as_slice() else {
+        let [ListenerToCore::FocusFact { timing, .. }] = sent.as_slice() else {
             panic!("one fact is sent: {sent:?}");
         };
         assert_eq!(timing.observed_at_us, 6_543_900);
@@ -2423,7 +2419,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 1,
                 focus: true,
-                answer: crate::protocol::GapAnswer::LeavesOpen,
+                answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
             },
             meta,
         );
@@ -2443,7 +2439,7 @@ mod tests {
         let message = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent");
-        let OutpostToSupervisor::MenuOrSwitchEnded { ended_at_us, .. } = message else {
+        let ListenerToCore::MenuOrSwitchEnded { ended_at_us, .. } = message else {
             panic!("a menu end: {message:?}");
         };
         assert_eq!(ended_at_us, 6_543_210);
@@ -2457,7 +2453,7 @@ mod tests {
         let message = messages
             .recv_timeout(Duration::from_secs(5))
             .expect("the menu end is sent");
-        let OutpostToSupervisor::MenuOrSwitchEnded { timing, .. } = message else {
+        let ListenerToCore::MenuOrSwitchEnded { timing, .. } = message else {
             panic!("a menu end: {message:?}");
         };
         assert_eq!(

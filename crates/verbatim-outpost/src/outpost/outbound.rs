@@ -10,18 +10,18 @@
 //!   dead one.
 //! - Sending never waits: nothing that sends a message, the worker and the
 //!   watchdog above all, can be held up by a pipe Core is slow to read.
-//! - While messages wait, they are merged by object and kind, as the intake
-//!   and the supervisor merge what reaches the outpost and as NVDA's
-//!   limiters do: an event replaces a waiting event of the same kind for
-//!   the same node and goes to the back. A terminal's read is never
-//!   merged: where each read starts is where the one before it said to
-//!   start, so a read dropped for a newer one would leave the rows between
-//!   them unread by Core. Answers to Core's requests, notifications, and
-//!   faults are never merged, and keep their order. The
-//!   idle barrier's answer is never merged either, and no event is merged
-//!   across it, so it never overtakes what was sent before it.
-//!   What waits is therefore bounded by the nodes and kinds there are, by
-//!   Core's requests, and by the intake's own limits.
+//! - While messages wait, they are merged as their type declares
+//!   (`Merge for OutpostToCore` in `verbatim_model::protocol`): an event
+//!   replaces a waiting event of the same kind for the same node and goes
+//!   to the back. A terminal's read is never merged: where each read starts
+//!   is where the one before it said to start, so a read dropped for a
+//!   newer one would leave the rows between them unread by Core. Answers
+//!   to Core's requests, notifications, and faults are never merged, and
+//!   keep their order. The idle barrier's answer is never merged either,
+//!   and no event is merged across it, so it never overtakes what was sent
+//!   before it; nor is anything merged across a flush marker. What waits
+//!   is therefore bounded by the nodes and kinds there are, by Core's
+//!   requests, and by the intake's own limits.
 //! - The messages that carry node ids are numbered as Core counts them, as
 //!   each is written, and the nodes and text anchors each may have reported
 //!   are recorded at its number then; one a message still waiting may
@@ -33,59 +33,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::io;
-use std::mem::Discriminant;
 
-use verbatim_model::{NodeId, NormalizedEvent, PropertyChange};
+use verbatim_model::NormalizedEvent;
+use verbatim_model::protocol::{Merge, OutpostToCore, Urgent, merge_into};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
-use crate::protocol::{OutpostToSupervisor, now_us, put_message};
-
-/// What two waiting events must share to be merged: the node and the kind
-/// of event (and, for a property change, which property; for a focus,
-/// whether it is a foreground change).
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Key {
-    node: NodeId,
-    kind: Discriminant<NormalizedEvent>,
-    detail: Detail,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Detail {
-    None,
-    Property(Discriminant<PropertyChange>),
-    Foreground(bool),
-}
-
-/// The key `message` is merged under, or `None` for one that is never
-/// merged: anything but an event, and a notification, each of which says
-/// something of its own.
-fn key(message: &OutpostToSupervisor) -> Option<Key> {
-    let OutpostToSupervisor::Event { event, .. } = message else {
-        return None;
-    };
-    let kind = std::mem::discriminant(event);
-    let (node, detail) = match event {
-        NormalizedEvent::FocusChanged {
-            node, foreground, ..
-        } => (node.id, Detail::Foreground(*foreground)),
-        NormalizedEvent::PropertyChanged {
-            node_id, change, ..
-        } => (*node_id, Detail::Property(std::mem::discriminant(change))),
-        NormalizedEvent::SelectionChanged { node }
-        | NormalizedEvent::ControlledSelection { node, .. }
-        | NormalizedEvent::Alert { node } => (node.id, Detail::None),
-        NormalizedEvent::ProgressChanged { bar } => (bar.id, Detail::None),
-        NormalizedEvent::ValueChanged { node_id, .. }
-        | NormalizedEvent::CaretMoved { node_id, .. }
-        | NormalizedEvent::TextChanged { node_id }
-        | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => (*node_id, Detail::None),
-        // A notification, and any kind of event added later, is never
-        // merged.
-        _ => return None,
-    };
-    Some(Key { node, kind, detail })
-}
+use crate::protocol::{now_us, put_message};
 
 /// Something a message may carry that the outpost keeps until Core has
 /// seen it and does not hold it: a node, or a text anchor, by number.
@@ -101,10 +54,10 @@ pub(crate) enum Carried {
 pub(crate) enum Outgoing {
     /// A message that goes ahead of everything waiting: a pong, `Ready`,
     /// or `TargetExited`.
-    Urgent(OutpostToSupervisor),
+    Urgent(OutpostToCore),
     /// An ordinary message, with the nodes issued or looked up and the
     /// anchors minted or reported since the last one, which it may carry.
-    Message(OutpostToSupervisor, Vec<Carried>),
+    Message(OutpostToCore, Vec<Carried>),
     /// Answered once every message sent before it is written, every write
     /// before it having completed. Nothing sent after it is merged into a
     /// message before it.
@@ -113,9 +66,8 @@ pub(crate) enum Outgoing {
 
 /// One entry in the ordinary queue.
 enum Waiting {
-    /// A message to write, with the key it is merged under and the nodes it
-    /// may report.
-    Message(Option<Key>, Box<OutpostToSupervisor>, Vec<Carried>),
+    /// A message to write, with the nodes it may report.
+    Message(Box<OutpostToCore>, Vec<Carried>),
     /// [`Outgoing::Flushed`].
     Flushed(std::sync::mpsc::Sender<()>),
 }
@@ -135,7 +87,7 @@ struct Report {
 /// in the order the messages are written. Pure, so the merging and the
 /// numbering are tested on their own.
 pub(crate) struct Pending {
-    urgent: VecDeque<OutpostToSupervisor>,
+    urgent: VecDeque<OutpostToCore>,
     ordinary: VecDeque<Waiting>,
     /// How many messages that carry node ids have been written: the
     /// position of the last one, as Core counts them.
@@ -155,57 +107,40 @@ impl Pending {
     }
 
     /// Queues `message`, which may report each of `touched`, merged with a
-    /// waiting message of the same key.
-    fn push_message(&mut self, message: OutpostToSupervisor, mut touched: Vec<Carried>) {
+    /// waiting message as [`Merge for OutpostToCore`](Merge) declares,
+    /// among those waiting since the last flush marker.
+    fn push_message(&mut self, message: OutpostToCore, mut touched: Vec<Carried>) {
         for &number in &touched {
             self.reported.entry(number).or_default().waiting += 1;
         }
-        let key = key(&message);
         let mut message = message;
-        if let Some(key) = &key
-            && let Some(index) = self.waiting_with(key, &message)
-            && let Some(Waiting::Message(_, older, older_touched)) = self.ordinary.remove(index)
+        let since_flush = self
+            .ordinary
+            .iter()
+            .rposition(|waiting| matches!(waiting, Waiting::Flushed(_)))
+            .map_or(0, |marker| marker + 1);
+        let waiting = self
+            .ordinary
+            .iter()
+            .enumerate()
+            .skip(since_flush)
+            .filter_map(|(place, waiting)| match waiting {
+                Waiting::Message(message, _) => Some((place, &**message)),
+                Waiting::Flushed(_) => None,
+            });
+        if let Some(place) = merge_into(waiting, &message)
+            && let Some(Waiting::Message(older, older_touched)) = self.ordinary.remove(place)
         {
-            message = merged(*older, message);
+            message = OutpostToCore::merged(*older, message);
             touched.extend(older_touched);
         }
         self.ordinary
-            .push_back(Waiting::Message(key, Box::new(message), touched));
-    }
-
-    /// Where the waiting message with `key` is, if one is waiting since the
-    /// last flush marker and the last answer to the idle barrier, and, for
-    /// a caret report that carries selection changes, since the last reply:
-    /// a message merged across an answer would move what it reports behind
-    /// it, and a change moved behind a reply would reach Core after the
-    /// reply to a key pressed before Core saw it, whose own selection
-    /// changes, compared with the selection Core knew, already include it.
-    /// Nor is a caret report that carries selection changes merged with
-    /// `newer` when either says its changes in general terms
-    /// ([`verbatim_model::CaretReply::content_changed`]): each such report's
-    /// words are worked out from its own selection.
-    fn waiting_with(&self, key: &Key, newer: &OutpostToSupervisor) -> Option<usize> {
-        let mut past_reply = false;
-        for (index, waiting) in self.ordinary.iter().enumerate().rev() {
-            match waiting {
-                Waiting::Message(Some(other), message, _) if other == key => {
-                    let kept = carries_selection_changes(message)
-                        && (past_reply || content_changed(message) || content_changed(newer));
-                    return (!kept).then_some(index);
-                }
-                Waiting::Message(_, message, _) if message.is_idle_answer() => return None,
-                Waiting::Message(_, message, _) => {
-                    past_reply |= matches!(**message, OutpostToSupervisor::Reply { .. });
-                }
-                Waiting::Flushed(_) => return None,
-            }
-        }
-        None
+            .push_back(Waiting::Message(Box::new(message), touched));
     }
 
     /// Numbers `message`, being written now, if it carries node ids, and
     /// records each of `touched` as reported at its number.
-    fn number(&mut self, message: &OutpostToSupervisor, touched: &[Carried]) {
+    fn number(&mut self, message: &OutpostToCore, touched: &[Carried]) {
         if message.carries_nodes() {
             self.position += 1;
         }
@@ -267,7 +202,7 @@ impl Backlog for Pending {
             return Some(Outgoing::Urgent(message));
         }
         Some(match self.ordinary.pop_front()? {
-            Waiting::Message(_, message, touched) => Outgoing::Message(*message, touched),
+            Waiting::Message(message, touched) => Outgoing::Message(*message, touched),
             Waiting::Flushed(done) => Outgoing::Flushed(done),
         })
     }
@@ -335,20 +270,21 @@ impl Outbound {
     }
 
     /// Sends a message that must not wait behind others: a pong, `Ready`,
-    /// or `TargetExited`.
-    pub(crate) fn urgent(&self, message: OutpostToSupervisor) {
-        sent(&self.sender.send(Outgoing::Urgent(message)));
+    /// or `TargetExited`, none of which carries a node, so none skips the
+    /// numbering of those that do.
+    pub(crate) fn urgent(&self, message: Urgent) {
+        sent(&self.sender.send(Outgoing::Urgent(message.into())));
     }
 
     /// Sends an ordinary message that reports no node, without waiting.
-    pub(crate) fn send(&self, message: OutpostToSupervisor) {
+    pub(crate) fn send(&self, message: OutpostToCore) {
         self.publish(message, Vec::new());
     }
 
     /// Sends an ordinary message without waiting, recording each of
     /// `touched`, the nodes issued or looked up and the anchors minted or
     /// reported since the last message, as reported by it.
-    pub(crate) fn publish(&self, message: OutpostToSupervisor, touched: Vec<Carried>) {
+    pub(crate) fn publish(&self, message: OutpostToCore, touched: Vec<Carried>) {
         sent(&self.sender.send(Outgoing::Message(message, touched)));
     }
 
@@ -399,103 +335,23 @@ impl Outbound {
     }
 }
 
-/// Whether `message` is a caret report that carries selection changes.
-fn carries_selection_changes(message: &OutpostToSupervisor) -> bool {
-    matches!(
-        message,
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { selection_changes, .. },
-            ..
-        } if !selection_changes.is_empty()
-    )
-}
-
 /// The terminal's read `message` carries, as an event or an answer.
-fn terminal_read(message: OutpostToSupervisor) -> Option<verbatim_model::TerminalSnapshot> {
+fn terminal_read(message: OutpostToCore) -> Option<verbatim_model::TerminalSnapshot> {
     match message {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
             ..
         }
-        | OutpostToSupervisor::Reply {
+        | OutpostToCore::Reply {
             outcome:
-                crate::protocol::QueryOutcome::Done(crate::protocol::QueryResult::Text(
-                    verbatim_model::TextReply::TerminalSnapshot(snapshot),
-                )),
+                verbatim_model::protocol::QueryOutcome::Done(
+                    verbatim_model::protocol::QueryResult::Text(
+                        verbatim_model::TextReply::TerminalSnapshot(snapshot),
+                    ),
+                ),
             ..
         } => Some(*snapshot),
         _ => None,
-    }
-}
-
-/// Whether `message` is a caret report whose selection changes are said in
-/// general terms.
-fn content_changed(message: &OutpostToSupervisor) -> bool {
-    matches!(
-        message,
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved {
-                content_changed: true,
-                ..
-            },
-            ..
-        }
-    )
-}
-
-/// `newer` in place of `older`, the waiting message with the same key: a
-/// caret report
-/// carrying the waiting one's selection changes before its own, each
-/// change being from the report before, and anything else replacing it.
-/// Two caret reports merged are never both in general terms, nor is the
-/// waiting one when it carries changes ([`Pending::waiting_with`]), so the
-/// newer's general terms are kept.
-fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSupervisor {
-    match (older, newer) {
-        (
-            OutpostToSupervisor::Event {
-                event:
-                    NormalizedEvent::CaretMoved {
-                        selection_changes: mut waiting,
-                        ..
-                    },
-                ..
-            },
-            OutpostToSupervisor::Event {
-                trace_id,
-                observed_at_us,
-                backend,
-                window,
-                application,
-                timing,
-                event:
-                    NormalizedEvent::CaretMoved {
-                        node_id,
-                        caret,
-                        selection_changes,
-                        content_changed,
-                        new_selection,
-                    },
-            },
-        ) => {
-            waiting.extend(selection_changes);
-            OutpostToSupervisor::Event {
-                trace_id,
-                observed_at_us,
-                backend,
-                window,
-                application,
-                timing,
-                event: NormalizedEvent::CaretMoved {
-                    node_id,
-                    caret,
-                    selection_changes: waiting,
-                    content_changed,
-                    new_selection,
-                },
-            }
-        }
-        (_, newer) => newer,
     }
 }
 
@@ -506,18 +362,21 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use verbatim_model::{Backend, TerminalColourRun, TerminalSnapshot, TerminalText, TraceId};
+    use verbatim_model::{
+        Backend, NodeId, TerminalColourRun, TerminalSnapshot, TerminalText, TraceId,
+    };
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
-    use crate::protocol::{EventTiming, QueryOutcome, read_message};
+    use crate::protocol::read_message;
+    use verbatim_model::protocol::{EventTiming, QueryOutcome};
 
     fn node(number: u64) -> NodeId {
         NodeId::new(number)
     }
 
-    fn event(event: NormalizedEvent) -> OutpostToSupervisor {
-        OutpostToSupervisor::Event {
+    fn event(event: NormalizedEvent) -> OutpostToCore {
+        OutpostToCore::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,
             backend: Backend::Uia,
@@ -528,21 +387,21 @@ mod tests {
         }
     }
 
-    fn text_changed(number: u64) -> OutpostToSupervisor {
+    fn text_changed(number: u64) -> OutpostToCore {
         event(NormalizedEvent::TextChanged {
             node_id: node(number),
         })
     }
 
-    fn value_changed(number: u64) -> OutpostToSupervisor {
+    fn value_changed(number: u64) -> OutpostToCore {
         event(NormalizedEvent::ValueChanged {
             node_id: node(number),
             value: None,
         })
     }
 
-    fn reply(request_id: u64) -> OutpostToSupervisor {
-        OutpostToSupervisor::Reply {
+    fn reply(request_id: u64) -> OutpostToCore {
+        OutpostToCore::Reply {
             trace_id: TraceId::mint(),
             request_id,
             outcome: QueryOutcome::Abandoned,
@@ -552,7 +411,7 @@ mod tests {
 
     /// A read of a terminal whose text is `text`, with colours when
     /// `coloured`.
-    fn terminal(text: &str, coloured: bool) -> OutpostToSupervisor {
+    fn terminal(text: &str, coloured: bool) -> OutpostToCore {
         event(NormalizedEvent::TerminalSnapshot {
             node_id: node(9),
             snapshot: Box::new(TerminalSnapshot {
@@ -585,9 +444,9 @@ mod tests {
     }
 
     /// The text of a terminal's read written.
-    fn text_of(message: &OutpostToSupervisor) -> &str {
+    fn text_of(message: &OutpostToCore) -> &str {
         match message {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
                 ..
             } => &snapshot.text.text,
@@ -597,7 +456,7 @@ mod tests {
 
     /// A terminal's read larger than a pipe's 4 KiB buffer, so the write
     /// that carries it pends until the test reads.
-    fn large() -> OutpostToSupervisor {
+    fn large() -> OutpostToCore {
         terminal(&"x".repeat(20_000), false)
     }
 
@@ -606,7 +465,7 @@ mod tests {
     }
 
     /// Queues `message`, which may report the nodes `touched`.
-    fn push(pending: &mut Pending, message: OutpostToSupervisor, touched: &[u64]) {
+    fn push(pending: &mut Pending, message: OutpostToCore, touched: &[u64]) {
         let touched = touched
             .iter()
             .map(|&number| Carried::Node(number))
@@ -624,7 +483,7 @@ mod tests {
 
     /// Writes what waits, as the sender does: each item taken and encoded
     /// in turn. Returns the messages, as Core reads them.
-    fn write(pending: &mut Pending) -> Vec<OutpostToSupervisor> {
+    fn write(pending: &mut Pending) -> Vec<OutpostToCore> {
         let mut written = Vec::new();
         while let Some(item) = pending.pop() {
             let mut buffer = Vec::new();
@@ -637,10 +496,10 @@ mod tests {
         written
     }
 
-    fn summary(message: &OutpostToSupervisor) -> String {
+    fn summary(message: &OutpostToCore) -> String {
         match message {
-            OutpostToSupervisor::Event { event, .. } => format!("{event:?}"),
-            OutpostToSupervisor::Reply { request_id, .. } => format!("reply {request_id}"),
+            OutpostToCore::Event { event, .. } => format!("{event:?}"),
+            OutpostToCore::Reply { request_id, .. } => format!("reply {request_id}"),
             other => format!("{other:?}"),
         }
     }
@@ -713,7 +572,7 @@ mod tests {
         assert_eq!(text_of(&written[0]), text);
     }
 
-    fn caret_moved(offset: u32, changes: &[(bool, &str)]) -> OutpostToSupervisor {
+    fn caret_moved(offset: u32, changes: &[(bool, &str)]) -> OutpostToCore {
         event(NormalizedEvent::CaretMoved {
             node_id: node(1),
             caret: verbatim_model::CaretReport {
@@ -800,11 +659,11 @@ mod tests {
         push(&mut pending, text_changed(1), &[]);
         assert!(
             pending
-                .push(Outgoing::Urgent(OutpostToSupervisor::TargetExited))
+                .push(Outgoing::Urgent(OutpostToCore::TargetExited))
                 .is_ok()
         );
         let written = write(&mut pending);
-        assert_eq!(written.first(), Some(&OutpostToSupervisor::TargetExited));
+        assert_eq!(written.first(), Some(&OutpostToCore::TargetExited));
     }
 
     #[test]
@@ -900,7 +759,7 @@ mod tests {
         (Outbound::new(sender), BufReader::new(File::from(theirs)))
     }
 
-    fn read(reader: &mut BufReader<File>) -> OutpostToSupervisor {
+    fn read(reader: &mut BufReader<File>) -> OutpostToCore {
         read_message(reader)
             .expect("read")
             .expect("a message, not the end")
@@ -915,14 +774,13 @@ mod tests {
         outbound.send(text_changed(2));
         outbound.send(reply(7));
         outbound.send(text_changed(1));
-        outbound.urgent(OutpostToSupervisor::Pong {
+        outbound.urgent(Urgent::Pong {
             seq: 3,
             parked_count: 0,
-            written_at_us: 0,
         });
         assert_eq!(summary(&read(&mut reader)), summary(&large()));
         assert!(
-            matches!(read(&mut reader), OutpostToSupervisor::Pong { seq: 3, .. }),
+            matches!(read(&mut reader), OutpostToCore::Pong { seq: 3, .. }),
             "the pong goes ahead of what waited"
         );
         let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();
@@ -937,7 +795,7 @@ mod tests {
         );
         outbound.close();
         assert_eq!(
-            read_message::<_, OutpostToSupervisor>(&mut reader).expect("read"),
+            read_message::<_, OutpostToCore>(&mut reader).expect("read"),
             None
         );
     }
@@ -953,16 +811,15 @@ mod tests {
         outbound.send(large());
         outbound.send(text_changed(1));
         outbound.send(reply(7));
-        outbound.send(OutpostToSupervisor::IdleAnswer { round: 4 });
+        outbound.send(OutpostToCore::IdleAnswer { round: 4 });
         outbound.send(text_changed(1));
-        outbound.urgent(OutpostToSupervisor::Pong {
+        outbound.urgent(Urgent::Pong {
             seq: 3,
             parked_count: 0,
-            written_at_us: 0,
         });
         assert_eq!(summary(&read(&mut reader)), summary(&large()));
         assert!(
-            matches!(read(&mut reader), OutpostToSupervisor::Pong { seq: 3, .. }),
+            matches!(read(&mut reader), OutpostToCore::Pong { seq: 3, .. }),
             "the pong goes ahead of what waited"
         );
         let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();
@@ -971,13 +828,13 @@ mod tests {
             vec![
                 summary(&text_changed(1)),
                 "reply 7".to_owned(),
-                summary(&OutpostToSupervisor::IdleAnswer { round: 4 }),
+                summary(&OutpostToCore::IdleAnswer { round: 4 }),
                 summary(&text_changed(1)),
             ]
         );
         outbound.close();
         assert_eq!(
-            read_message::<_, OutpostToSupervisor>(&mut reader).expect("read"),
+            read_message::<_, OutpostToCore>(&mut reader).expect("read"),
             None
         );
     }

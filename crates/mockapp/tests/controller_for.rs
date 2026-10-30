@@ -37,11 +37,11 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
+use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, StateSet,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
     Agile, Cached, Fill, ListenerEvent, ListenerSelection, Live, Node, Part, Registration, Shape,
@@ -242,7 +242,7 @@ fn focus_search_box(
     outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
     // The search box has no text pattern in mockapp.
     let search = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -369,7 +369,7 @@ fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selec
     );
     outpost.deliver(fact);
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ControlledSelection { controller, node },
             ..
         } => assert_eq!(
@@ -414,7 +414,7 @@ fn a_selection_of_the_focus_itself_is_reported_as_its_own() {
         "Search box",
     ));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::SelectionChanged { node },
             ..
         } => assert_eq!(node.id, search, "the search box's own selection"),
@@ -453,7 +453,7 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     assert!(
         matches!(
             outpost.next(),
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event: NormalizedEvent::PropertyChanged {
                     change: PropertyChange::Description(_),
                     ..
@@ -474,7 +474,7 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
         "Sound settings",
     ));
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ControlledSelection { controller, node },
             ..
         } => assert_eq!(
@@ -535,7 +535,7 @@ fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
     outpost.deliver(judged.into_fact(1, FocusEvent::Focus, None));
 
     let search = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -568,7 +568,7 @@ fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
         }
     };
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::ControlledSelection { controller, node },
             ..
         } => assert_eq!(

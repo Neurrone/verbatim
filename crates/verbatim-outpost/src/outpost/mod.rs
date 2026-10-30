@@ -80,13 +80,14 @@ use verbatim_uia::{
 
 use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
-use crate::protocol::{
-    DeliveredFact, EventTiming, FactKey, OutpostToSupervisor, Query, QueryOutcome,
-    SupervisorToOutpost, UiaSnapshotFact, WinEventStamp, decode_message, now_us, read_message,
-};
+use crate::protocol::{decode_message, now_us, read_message};
 use crate::supervisor::Target;
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, TouchedAnchors};
+use verbatim_model::protocol::{
+    CoreToOutpost, DeliveredFact, EventTiming, FactKey, OutpostToCore, Query, QueryOutcome,
+    UiaSnapshotFact, Urgent, WinEventStamp,
+};
 
 use gap_record::{CopyDropped, GapRead};
 pub use gap_timer::GapTimer;
@@ -241,7 +242,7 @@ pub(crate) struct Context {
     /// until the node is released.
     text_support: Mutex<HashMap<u64, crate::text::uia::TextSupport>>,
     /// The details the active theme wants read for each node
-    /// ([`SupervisorToOutpost::Fetches`]); everything until Core says
+    /// ([`CoreToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
     /// their cache requests; MSAA reads skip their calls, through the MSAA
     /// registry, which holds the same.
@@ -704,7 +705,7 @@ impl Context {
     }
 
     /// Core's backend override, forced on every window, or none
-    /// ([`SupervisorToOutpost::SetBackendOverride`]): every window is
+    /// ([`CoreToOutpost::SetBackendOverride`]): every window is
     /// decided anew, the event thread's too, which decides its hook again.
     fn set_backend_override(&self, backend_override: Option<Backend>) {
         self.arbitrator()
@@ -786,7 +787,8 @@ impl Context {
             );
             return;
         }
-        let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
+        let Some(fact) = crate::protocol::fact_of_win_event(kind, (hwnd, id_object, id_child))
+        else {
             return;
         };
         let stamp = WinEventStamp { thread, time };
@@ -1024,7 +1026,7 @@ impl Outpost {
     /// A spare outpost, with no application, in a test's own process
     /// (`docs/design/focus-pipeline.md`, section 19.2): it does everything
     /// of an outpost's start that needs no application, its worker's UIA
-    /// client included, writes [`OutpostToSupervisor::SpareReady`] to
+    /// client included, writes [`OutpostToCore::SpareReady`] to
     /// `pipe`, and watches the application [`Outpost::assign`] gives it
     /// from then on. It reads the keyboard focus for a focus-now query with
     /// `focused_element`, as [`Outpost::with_focused_element_reader`] does.
@@ -1051,12 +1053,9 @@ impl Outpost {
             options,
             (focused_element, true),
         );
-        outpost
-            .context
-            .outbound
-            .urgent(OutpostToSupervisor::SpareReady {
-                outpost_pid: Pid(std::process::id()),
-            });
+        outpost.context.outbound.urgent(Urgent::SpareReady {
+            outpost_pid: Pid(std::process::id()),
+        });
         outpost
     }
 
@@ -1191,9 +1190,9 @@ impl Outpost {
 
     /// Gives the outpost its application, `target_pid`, for the rest of
     /// its life: the MSAA hand-over's clock is read, the process-scoped
-    /// `WinEvent` hook installed, and [`OutpostToSupervisor::Ready`] sent.
+    /// `WinEvent` hook installed, and [`OutpostToCore::Ready`] sent.
     /// Called once: by [`run_pipe`] at the start of an outpost started for
-    /// an application, or for a spare's [`SupervisorToOutpost::Assign`];
+    /// an application, or for a spare's [`CoreToOutpost::Assign`];
     /// by the constructors of an outpost in a test's own process; and by a
     /// test for an [`Outpost::spare`].
     ///
@@ -1201,7 +1200,7 @@ impl Outpost {
     ///
     /// Returns why the outpost cannot watch the application: it already
     /// has one, or its hook could not be installed. The failure is also
-    /// reported to Core ([`OutpostToSupervisor::Fault`]), and no `Ready` is
+    /// reported to Core ([`OutpostToCore::Fault`]), and no `Ready` is
     /// sent: the caller ends the outpost, since an application no hook
     /// watches would have its `WinEvent`s handed over to nothing
     /// (`docs/design/focus-pipeline.md`, section 19.8, item 5).
@@ -1241,7 +1240,7 @@ impl Outpost {
             image = %context.application_name(target_pid),
             "watching its application"
         );
-        context.outbound.urgent(OutpostToSupervisor::Ready {
+        context.outbound.urgent(Urgent::Ready {
             outpost_pid: Pid(std::process::id()),
             target_pid: Pid(target_pid),
         });
@@ -1271,7 +1270,7 @@ impl Outpost {
         }
     }
 
-    /// Shuts the outpost down cleanly ([`SupervisorToOutpost::Shutdown`]),
+    /// Shuts the outpost down cleanly ([`CoreToOutpost::Shutdown`]),
     /// on the calling thread, returning once it is done:
     ///
     /// 1. The intake closes: nothing new is taken, and what was waiting is
@@ -1466,15 +1465,14 @@ impl Outpost {
     /// Handles one command from Core, on the I/O thread. Pings are
     /// answered here, the pong written at once unless a write is in flight;
     /// everything that reads the application is queued for the worker.
-    pub fn handle_command(&self, command: &SupervisorToOutpost) {
+    #[deny(clippy::wildcard_enum_match_arm)]
+    pub fn handle_command(&self, command: &CoreToOutpost) {
         let context = &self.context;
         match command {
-            SupervisorToOutpost::SetBackendOverride {
-                backend_override, ..
-            } => {
+            CoreToOutpost::SetBackendOverride { backend_override } => {
                 context.set_backend_override(*backend_override);
             }
-            SupervisorToOutpost::DeliverFact {
+            CoreToOutpost::DeliverFact {
                 trace_id,
                 timing,
                 fact,
@@ -1488,12 +1486,12 @@ impl Outpost {
                     ..*timing
                 },
             ),
-            SupervisorToOutpost::ForwardingEnded { through } => {
+            CoreToOutpost::ForwardingEnded { through } => {
                 context
                     .handover()
                     .forwarding_ended(*through, std::time::Instant::now());
             }
-            SupervisorToOutpost::Query {
+            CoreToOutpost::Query {
                 trace_id,
                 request_id,
                 query,
@@ -1514,12 +1512,12 @@ impl Outpost {
                     ..EventTiming::default()
                 },
             ),
-            SupervisorToOutpost::IdleQuery { round } => context.queue_idle_query(*round),
-            SupervisorToOutpost::Cancel { request_id } => {
+            CoreToOutpost::IdleQuery { round } => context.queue_idle_query(*round),
+            CoreToOutpost::Cancel { request_id } => {
                 if context.intake.cancel(*request_id) {
                     // Queuing never waits, so the answer keeps its place
                     // among the others.
-                    context.outbound.send(OutpostToSupervisor::Reply {
+                    context.outbound.send(OutpostToCore::Reply {
                         trace_id: TraceId::mint(),
                         request_id: *request_id,
                         outcome: QueryOutcome::NotStarted,
@@ -1527,14 +1525,13 @@ impl Outpost {
                     });
                 }
             }
-            SupervisorToOutpost::Ping { seq, .. } => {
-                context.outbound.urgent(OutpostToSupervisor::Pong {
+            CoreToOutpost::Ping { seq, .. } => {
+                context.outbound.urgent(Urgent::Pong {
                     seq: *seq,
                     parked_count: context.watch.abandoned(),
-                    written_at_us: 0,
                 });
             }
-            SupervisorToOutpost::Fetches(fetches) => {
+            CoreToOutpost::Fetches(fetches) => {
                 *context
                     .fetches
                     .lock()
@@ -1543,13 +1540,9 @@ impl Outpost {
             }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the
-            // outpost when it fails; the hand-over's news of hooks is for
-            // the listener alone.
-            SupervisorToOutpost::Shutdown
-            | SupervisorToOutpost::Assign { .. }
-            | SupervisorToOutpost::HookInstalled { .. }
-            | SupervisorToOutpost::HookRemoved { .. } => {}
-            SupervisorToOutpost::NodesHeld {
+            // outpost when it fails.
+            CoreToOutpost::Shutdown | CoreToOutpost::Assign { .. } => {}
+            CoreToOutpost::NodesHeld {
                 nodes,
                 anchors,
                 acknowledged,
@@ -1598,7 +1591,7 @@ mod hook_stamp_tests {
     use verbatim_ia2::{WinEvent, WinEventKind};
 
     use super::take_in_hooked;
-    use crate::protocol::EventTiming;
+    use verbatim_model::protocol::EventTiming;
 
     /// A hooked event is stamped when its callback began, not after the
     /// event thread's bookkeeping, however long that took. This exercises
@@ -1802,24 +1795,24 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
 }
 
 fn fault(context: &Context, detail: String) {
-    context.outbound.send(OutpostToSupervisor::Fault { detail });
+    context.outbound.send(OutpostToCore::Fault { detail });
 }
 
 /// Runs an outpost driven by the Core pipes, watching `target_pid` for its
 /// whole life, or, for `None`, as a spare (`docs/design/focus-pipeline.md`,
-/// section 19.2): it sends [`OutpostToSupervisor::SpareReady`] and watches
-/// the application Core's [`SupervisorToOutpost::Assign`] gives it from
+/// section 19.2): it sends [`OutpostToCore::SpareReady`] and watches
+/// the application Core's [`CoreToOutpost::Assign`] gives it from
 /// then on. It runs on the transport's child side
 /// (`docs/design/communication.md`, sections 4.6 and 6.4): the calling
 /// thread becomes the outpost's I/O thread, which reads commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
 /// thread that sends Core a message writes it itself. It runs until Core
-/// asks the outpost to shut down ([`SupervisorToOutpost::Shutdown`]) or
+/// asks the outpost to shut down ([`CoreToOutpost::Shutdown`]) or
 /// the command stream ends, or its application cannot be watched
 /// ([`Outpost::assign`]), then shuts it down cleanly
 /// ([`Outpost::shutdown`]), waiting for every write in flight, and
 /// returns. When the target application exits, Core is told
-/// ([`OutpostToSupervisor::TargetExited`]) and asks for the shutdown. Both
+/// ([`OutpostToCore::TargetExited`]) and asks for the shutdown. Both
 /// ends must be overlapped.
 ///
 /// # Errors
@@ -1849,12 +1842,9 @@ pub fn run_pipe(
         }
     } else {
         tracing::info!("a spare, waiting for its application");
-        outpost
-            .context
-            .outbound
-            .urgent(OutpostToSupervisor::SpareReady {
-                outpost_pid: Pid(std::process::id()),
-            });
+        outpost.context.outbound.urgent(Urgent::SpareReady {
+            outpost_pid: Pid(std::process::id()),
+        });
     }
     // This thread is the outpost's I/O thread from here on.
     prioritize_role("outpost I/O", IO_PRIORITY);
@@ -1862,9 +1852,9 @@ pub fn run_pipe(
         Ok(Served::Stopped)
     } else {
         io.serve(&sender, |body| {
-            match decode_message::<SupervisorToOutpost>(body)? {
-                SupervisorToOutpost::Shutdown => return Ok(Serving::Stop),
-                SupervisorToOutpost::Assign { target_pid } => match outpost.assign(target_pid.0) {
+            match decode_message::<CoreToOutpost>(body)? {
+                CoreToOutpost::Shutdown => return Ok(Serving::Stop),
+                CoreToOutpost::Assign { target_pid } => match outpost.assign(target_pid.0) {
                     Ok(()) => watch_target(&outpost.context),
                     Err(error) => {
                         unwatched = Some(error);
@@ -1908,7 +1898,7 @@ fn watch_target(context: &Arc<Context>) {
                     target_pid = context.target_pid(),
                     "the target application exited"
                 );
-                context.outbound.urgent(OutpostToSupervisor::TargetExited);
+                context.outbound.urgent(Urgent::TargetExited);
             }
         });
     if let Err(error) = spawned {
@@ -1933,7 +1923,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
             use std::io::Write as _;
             // Each message is printed as the model's JSON, a terminal's
             // text in it rather than in the frame's raw section.
-            while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut printed) {
+            while let Ok(Some(message)) = read_message::<_, OutpostToCore>(&mut printed) {
                 let Ok(json) = serde_json::to_vec(&message) else {
                     continue;
                 };
@@ -1947,7 +1937,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     // No listener forwards anything here: the outpost's own hook takes in
     // every `WinEvent`.
     outpost.context.handover().without_listener();
-    outpost.handle_command(&SupervisorToOutpost::Query {
+    outpost.handle_command(&CoreToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: 0,
         query: Query::FocusNow,

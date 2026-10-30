@@ -14,6 +14,7 @@ mod calls;
 mod event;
 mod gesture;
 mod key_seq;
+pub mod protocol;
 mod settings;
 mod shell;
 mod speech;

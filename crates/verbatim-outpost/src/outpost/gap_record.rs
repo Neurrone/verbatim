@@ -36,7 +36,7 @@
 
 use std::collections::HashMap;
 
-use crate::protocol::GapAnswer;
+use verbatim_model::protocol::GapAnswer;
 
 /// How long a record waits, from its first copy's observation, for a UIA
 /// focus, in microseconds. The UIA focus of a `WinEvent` focus usually

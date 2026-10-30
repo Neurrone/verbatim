@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use verbatim_process::Waited;
 
 use super::owner::Child;
-use super::writer::Outgoing;
+use super::writer::{Outgoing, ToChild};
 
 /// How long a child has to exit after the shutdown message before it is
 /// killed through its job.
@@ -62,7 +62,12 @@ pub(super) enum Ending {
 /// how it ended, and every kill with `why` and what it was waiting for, as
 /// a warning. `label` names the child in the log. Blocks until the child
 /// has ended, so the owner runs it on a thread of its own.
-pub(super) fn retire(child: Child, label: &str, why: &str, limit: Duration) -> Ending {
+pub(super) fn retire<M: ToChild>(
+    child: Child<M>,
+    label: &str,
+    why: &str,
+    limit: Duration,
+) -> Ending {
     let started = Instant::now();
     let Child { process, writer } = child;
     let contained = &process.contained;

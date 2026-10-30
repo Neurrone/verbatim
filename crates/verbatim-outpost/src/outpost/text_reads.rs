@@ -34,10 +34,10 @@ use verbatim_uia::{Cached, Kept};
 use verbatim_uia_rops::Path;
 
 use crate::arbitration::{normalize_class_name, window_class_name};
-use crate::protocol::EventTiming;
 use crate::text::edit::EditText;
 use crate::text::uia::UiaText;
 use crate::text::{self, CaretSignal, LastSelection, TextError, Watched};
+use verbatim_model::protocol::EventTiming;
 
 use super::Context;
 

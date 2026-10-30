@@ -2,7 +2,7 @@
 //! keyboard hook (architecture section 5): the window, the thread that
 //! raised its event, and whether it is a console host window, which the
 //! listener reports to Core with its process's integrity level
-//! ([`crate::protocol::OutpostToSupervisor::ForegroundWindow`]). Core
+//! ([`verbatim_model::protocol::ListenerToCore::ForegroundWindow`]). Core
 //! decides from it whether the hook may hold keys back for the window and
 //! which thread's keyboard layout translates its keys, and publishes that
 //! in the snapshot the hook reads; the hook itself hooks no event.

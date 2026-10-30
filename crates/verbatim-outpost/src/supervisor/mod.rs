@@ -74,7 +74,7 @@ use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::port_queue::Progress;
 
-use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
+use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 
 pub use frames::{Frame, Frames};
 pub use ignored::{IGNORE_PIDS_ENV, IgnoredProcesses, parse_pids};
@@ -262,7 +262,7 @@ impl std::fmt::Debug for EventSink {
 }
 
 /// The window in the foreground as the focus listener reported it
-/// ([`crate::protocol::OutpostToSupervisor::ForegroundWindow`]).
+/// ([`verbatim_model::protocol::ListenerToCore::ForegroundWindow`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForegroundReport {
     /// The window.
@@ -301,7 +301,7 @@ pub enum OutpostMessage {
         position: u64,
         /// The message, boxed so every channel send is small, not sized to
         /// the largest reply.
-        message: Box<OutpostToSupervisor>,
+        message: Box<OutpostToCore>,
     },
     /// A spare outpost said it is ready, and `waiting` spares are ready and
     /// waiting now (`docs/design/focus-pipeline.md`, section 19). Verbatim
@@ -383,7 +383,7 @@ pub enum OutpostMessage {
     /// behind every fact relayed to it before, one still starting once it
     /// is ready. Sent before any of them is asked, so it reaches the app
     /// ahead of every answer. Each answers
-    /// [`OutpostToSupervisor::IdleAnswer`] as a message of its own, or
+    /// [`OutpostToCore::IdleAnswer`] as a message of its own, or
     /// ends ([`OutpostMessage::Ended`]), which counts as its answer, unless
     /// it was a spare that failed before its `Ready`: then the generation
     /// [`OutpostMessage::Regenerated`] names answers in its place.
@@ -399,7 +399,8 @@ pub enum OutpostMessage {
 /// command for an outpost without going through the owner. The owner adds a
 /// writer when an outpost starts and removes it when the outpost ends; the
 /// lock is held only to look one up, never across any I/O.
-type Writers = Arc<Mutex<std::collections::HashMap<OutpostId, writer::WriterHandle>>>;
+type Writers =
+    Arc<Mutex<std::collections::HashMap<OutpostId, writer::WriterHandle<CoreToOutpost>>>>;
 
 /// Starts, routes to, and ends outposts and the focus listener.
 pub struct Supervisor {
@@ -516,7 +517,7 @@ impl Supervisor {
     pub fn send_to_outpost(
         &self,
         outpost: OutpostId,
-        command: SupervisorToOutpost,
+        command: CoreToOutpost,
     ) -> Result<(), QueueError> {
         let writer = self
             .writers
@@ -550,7 +551,7 @@ impl Supervisor {
             .get(&outpost)
             .cloned();
         if let Some(writer) = writer {
-            writer.leave_held(SupervisorToOutpost::NodesHeld {
+            writer.leave_held(CoreToOutpost::NodesHeld {
                 nodes,
                 anchors,
                 acknowledged,
@@ -581,7 +582,7 @@ impl Supervisor {
             .get(&outpost)
             .cloned();
         if let Some(writer) = writer {
-            writer.send_held(SupervisorToOutpost::NodesHeld {
+            writer.send_held(CoreToOutpost::NodesHeld {
                 nodes,
                 anchors,
                 acknowledged,

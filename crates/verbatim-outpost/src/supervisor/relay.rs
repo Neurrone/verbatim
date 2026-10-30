@@ -35,7 +35,7 @@ use verbatim_model::{OutpostId, Pid};
 use verbatim_process::overlapped::{Completion, Completions, Port};
 use verbatim_process::transport::PortReader;
 
-use super::writer::WriterHandle;
+use super::writer::{Finishing, ToChild, WriterHandle};
 
 /// The key of the wake-up that says the mailbox has something. Every pipe's
 /// key is at least 2, outpost ids starting at 1.
@@ -144,11 +144,11 @@ pub(super) fn mailbox<T>(port: Arc<Port>) -> (Mailbox<T>, Inbox<T>) {
 #[derive(Clone)]
 pub(super) struct CommandPipes {
     port: Arc<Port>,
-    writers: Arc<Mutex<HashMap<usize, WriterHandle>>>,
+    writers: Arc<Mutex<HashMap<usize, Arc<dyn Finishing>>>>,
 }
 
 impl CommandPipes {
-    fn lock(&self) -> MutexGuard<'_, HashMap<usize, WriterHandle>> {
+    fn lock(&self) -> MutexGuard<'_, HashMap<usize, Arc<dyn Finishing>>> {
         self.writers.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -158,10 +158,17 @@ impl CommandPipes {
     /// # Errors
     ///
     /// Returns the error of associating the pipe with the port.
-    pub(super) fn open(&self, outpost: OutpostId, pipe: OwnedHandle) -> io::Result<WriterHandle> {
+    pub(super) fn open<M: ToChild>(
+        &self,
+        outpost: OutpostId,
+        pipe: OwnedHandle,
+    ) -> io::Result<WriterHandle<M>>
+    where
+        WriterHandle<M>: Finishing,
+    {
         let key = command_key(outpost);
         let writer = WriterHandle::on_port(pipe, Arc::clone(&self.port), key)?;
-        self.lock().insert(key, writer.clone());
+        self.lock().insert(key, Arc::new(writer.clone()));
         Ok(writer)
     }
 
@@ -362,19 +369,21 @@ mod tests {
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
-    use crate::protocol::{
-        DeliveredFact, EventTiming, OutpostToSupervisor, SupervisorToOutpost, read_message,
-        write_message,
-    };
+    use crate::protocol::{read_message, write_message};
     use crate::supervisor::policy::{HeldFact, HeldFacts};
     use crate::supervisor::writer::{Outgoing, QueueError, Received};
+    use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, EventTiming, ListenerToCore};
 
     /// How long a test waits for a completion it caused before it fails.
     const BOUND: Duration = Duration::from_secs(10);
 
     /// A child's command pipe on `relay`, with a buffer of `buffer` bytes:
     /// its writer, and the child's end.
-    fn command_pipe(relay: &Relay, outpost: u64, buffer: u32) -> (WriterHandle, BufReader<File>) {
+    fn command_pipe(
+        relay: &Relay,
+        outpost: u64,
+        buffer: u32,
+    ) -> (WriterHandle<CoreToOutpost>, BufReader<File>) {
         let (core, child) = pipe(Flow::Outbound, buffer, End::Synchronous).expect("a pipe");
         let writer = relay
             .commands()
@@ -397,12 +406,12 @@ mod tests {
     }
 
     /// What a command read off a child's pipe is, for the order asserted.
-    fn name(command: &SupervisorToOutpost) -> String {
+    fn name(command: &CoreToOutpost) -> String {
         match command {
-            SupervisorToOutpost::DeliverFact { timing, .. } => {
+            CoreToOutpost::DeliverFact { timing, .. } => {
                 format!("fact {}", timing.observed_at_us)
             }
-            SupervisorToOutpost::ForwardingEnded { through } => format!("ended {through}"),
+            CoreToOutpost::ForwardingEnded { through } => format!("ended {through}"),
             other => format!("{other:?}"),
         }
     }
@@ -410,7 +419,7 @@ mod tests {
     fn read_names(child: &mut BufReader<File>, count: usize) -> Vec<String> {
         (0..count)
             .map(|_| {
-                let command: SupervisorToOutpost = read_message(child)
+                let command: CoreToOutpost = read_message(child)
                     .expect("a message")
                     .expect("not the end");
                 name(&command)
@@ -452,7 +461,7 @@ mod tests {
         }
         super::super::owner::deliver(&writer, held(3, 30));
         writer
-            .push(Outgoing::HandOver(SupervisorToOutpost::ForwardingEnded {
+            .push(Outgoing::HandOver(CoreToOutpost::ForwardingEnded {
                 through: 99,
             }))
             .expect("queued");
@@ -475,7 +484,7 @@ mod tests {
         // reader that never comes.
         stuck
             .push(Outgoing::Other(
-                SupervisorToOutpost::NodesHeld {
+                CoreToOutpost::NodesHeld {
                     nodes: (0..2_000).collect(),
                     anchors: Vec::new(),
                     acknowledged: 1,
@@ -499,7 +508,7 @@ mod tests {
             "the stuck write's completion"
         );
         assert_eq!(
-            stuck.push(Outgoing::Ping(SupervisorToOutpost::Ping {
+            stuck.push(Outgoing::Ping(CoreToOutpost::Ping {
                 seq: 1,
                 sent_at_us: 0,
             })),
@@ -525,7 +534,7 @@ mod tests {
         for seq in [1, 2] {
             write_message(
                 &mut listener,
-                &OutpostToSupervisor::Pong {
+                &ListenerToCore::Pong {
                     seq,
                     parked_count: 0,
                     written_at_us: 0,
@@ -548,9 +557,9 @@ mod tests {
                 assert_eq!(read.outpost, outpost);
                 let port = Arc::clone(relay.port());
                 match read.pipe.take(&completion, &port, |body| {
-                    let message: OutpostToSupervisor =
+                    let message: ListenerToCore =
                         crate::protocol::decode_message(body).expect("a message");
-                    if let OutpostToSupervisor::Pong { seq, .. } = message {
+                    if let ListenerToCore::Pong { seq, .. } = message {
                         seqs.push(seq);
                     }
                     Ok(())

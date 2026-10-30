@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use verbatim_gui::{ShellAsk, ShellItemKind};
 use verbatim_model::Pid;
-use verbatim_outpost::protocol::WALK_DEADLINE;
+use verbatim_model::protocol::WALK_DEADLINE;
 
 /// How long Core waits for the answer to a shell items or position query
 /// from when it sends it, 6 seconds: the outpost's own deadline for the walk

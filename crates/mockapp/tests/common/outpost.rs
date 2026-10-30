@@ -95,15 +95,16 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use verbatim_model::protocol::{
+    CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
+    QueryOutcome, QueryResult, WinEventStamp,
+};
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowFacts, WindowHandle,
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged};
-use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
-};
+use verbatim_outpost::protocol::read_message;
 use verbatim_outpost::{GapTimer, Heard, Outpost, OutpostOptions};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::BlockingReader;
@@ -139,10 +140,10 @@ impl MessagePipe {
     }
 
     /// The first whole message among the bytes read, taken.
-    fn take(&self) -> Option<OutpostToSupervisor> {
+    fn take(&self) -> Option<OutpostToCore> {
         let mut pending = self.pending.borrow_mut();
         let mut rest = pending.as_slice();
-        let message = match read_message::<_, OutpostToSupervisor>(&mut rest) {
+        let message = match read_message::<_, OutpostToCore>(&mut rest) {
             Ok(message) => message?,
             // A frame not yet whole.
             Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return None,
@@ -160,7 +161,7 @@ impl MessagePipe {
     /// [`RecvTimeoutError::Timeout`] when none came in that time, and
     /// [`RecvTimeoutError::Disconnected`] once the outpost has closed its
     /// pipe.
-    pub fn recv_timeout(&self, timeout: Duration) -> Result<OutpostToSupervisor, RecvTimeoutError> {
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<OutpostToCore, RecvTimeoutError> {
         let deadline = Instant::now() + timeout;
         let mut buffer = vec![0; 64 * 1024];
         loop {
@@ -184,7 +185,7 @@ impl MessagePipe {
     ///
     /// [`TryRecvError::Empty`] when nothing is there, and
     /// [`TryRecvError::Disconnected`] once the outpost has closed its pipe.
-    pub fn try_recv(&self) -> Result<OutpostToSupervisor, TryRecvError> {
+    pub fn try_recv(&self) -> Result<OutpostToCore, TryRecvError> {
         if let Some(message) = self.take() {
             return Ok(message);
         }
@@ -558,7 +559,7 @@ impl OutpostUnderTest {
         let under_test = Self::build(app, options, buffer, false, time);
         assert_eq!(
             under_test.next(),
-            OutpostToSupervisor::Ready {
+            OutpostToCore::Ready {
                 outpost_pid: Pid(std::process::id()),
                 target_pid: Pid(app.pid()),
             }
@@ -580,7 +581,7 @@ impl OutpostUnderTest {
         );
         assert_eq!(
             under_test.next(),
-            OutpostToSupervisor::SpareReady {
+            OutpostToCore::SpareReady {
                 outpost_pid: Pid(std::process::id()),
             }
         );
@@ -595,7 +596,7 @@ impl OutpostUnderTest {
             .expect("the spare's hook is installed");
         assert_eq!(
             self.next(),
-            OutpostToSupervisor::Ready {
+            OutpostToCore::Ready {
                 outpost_pid: Pid(std::process::id()),
                 target_pid: Pid(app.pid()),
             }
@@ -732,7 +733,7 @@ impl OutpostUnderTest {
 
     /// Tells the listener's reader whether a backend override forcing UIA
     /// holds for mockapp's application, as the listener is told
-    /// (`SupervisorToOutpost::SetBackendOverride`).
+    /// (`CoreToOutpost::SetBackendOverride`).
     pub fn listener_forces_uia(&self, forced: bool) {
         self.reader.borrow().forces_uia(forced);
     }
@@ -783,7 +784,7 @@ impl OutpostUnderTest {
     /// listener has nothing waiting, and the outpost is asked.
     pub fn idle_round(&self, round: u64) {
         self.outpost
-            .handle_command(&SupervisorToOutpost::IdleQuery { round });
+            .handle_command(&CoreToOutpost::IdleQuery { round });
     }
 
     /// Hands the outpost what the listener sends for the UIA focus event
@@ -806,7 +807,7 @@ impl OutpostUnderTest {
     /// Hands the outpost `fact`, observed at `observed_at_us`, as the
     /// supervisor relays the listener's fact.
     fn hand_over(&self, fact: DeliveredFact, observed_at_us: u64) {
-        let command = SupervisorToOutpost::DeliverFact {
+        let command = CoreToOutpost::DeliverFact {
             trace_id: self.trace_for(&fact),
             timing: EventTiming {
                 observed_at_us,
@@ -899,7 +900,7 @@ impl OutpostUnderTest {
 
     /// The outpost's next message, a focus in it judged as Core judges it
     /// ([`Self::core_judges`]).
-    pub fn next(&self) -> OutpostToSupervisor {
+    pub fn next(&self) -> OutpostToCore {
         let message = self
             .messages
             .recv_timeout(super::WAIT_TIMEOUT)
@@ -915,9 +916,9 @@ impl OutpostUnderTest {
     /// or a focus-now answer's control, becomes the focus Core holds, with
     /// the line it was reported with, but for a foreground change of the
     /// window its focus is already in, which Core refuses.
-    fn core_judges(&self, message: &OutpostToSupervisor) {
+    fn core_judges(&self, message: &OutpostToCore) {
         let (trace, node, foreground, ancestors, top_level) = match message {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 trace_id,
                 window,
                 event:
@@ -935,7 +936,7 @@ impl OutpostUnderTest {
                 ancestors,
                 window.as_ref().map(|window| window.top_level),
             ),
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 trace_id,
                 outcome: QueryOutcome::Done(QueryResult::Focus(now)),
                 ..
@@ -981,12 +982,11 @@ impl OutpostUnderTest {
     /// or before that position that is not among them, and so stops reading
     /// changes for it.
     pub fn release(&self, held: &[NodeId]) {
-        self.outpost
-            .handle_command(&SupervisorToOutpost::NodesHeld {
-                nodes: held.iter().map(|id| id.number()).collect(),
-                anchors: Vec::new(),
-                acknowledged: self.position.get(),
-            });
+        self.outpost.handle_command(&CoreToOutpost::NodesHeld {
+            nodes: held.iter().map(|id| id.number()).collect(),
+            anchors: Vec::new(),
+            acknowledged: self.position.get(),
+        });
     }
 
     /// [`release`](Self::release) with the focus line Core holds: what
@@ -1102,7 +1102,7 @@ impl OutpostUnderTest {
         stamp: WinEventStamp,
         observed_at_us: u64,
     ) {
-        let command = SupervisorToOutpost::DeliverFact {
+        let command = CoreToOutpost::DeliverFact {
             trace_id: TraceId::mint(),
             timing: EventTiming {
                 observed_at_us,
@@ -1119,7 +1119,7 @@ impl OutpostUnderTest {
     /// `through`, an event clock time: the MSAA hand-over's end.
     pub fn forwarding_ended(&self, through: u32) {
         self.outpost
-            .handle_command(&SupervisorToOutpost::ForwardingEnded { through });
+            .handle_command(&CoreToOutpost::ForwardingEnded { through });
     }
 
     /// Hands the outpost `fact`, as the listener would, stamped on the
@@ -1134,7 +1134,7 @@ impl OutpostUnderTest {
     pub fn ask(&mut self, query: Query) -> u64 {
         let request_id = self.next_request;
         self.next_request += 1;
-        self.outpost.handle_command(&SupervisorToOutpost::Query {
+        self.outpost.handle_command(&CoreToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id,
             query,
@@ -1281,7 +1281,7 @@ impl OutpostUnderTest {
     /// control raised.
     pub fn reported_focus(&self) -> Reported {
         let reported = match self.next() {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event:
                     NormalizedEvent::FocusChanged {
                         node,
@@ -1323,7 +1323,7 @@ impl OutpostUnderTest {
     /// terminal has the focus, which must be the next thing it says.
     pub fn first_terminal_read(&self, node: NodeId) {
         match self.next() {
-            OutpostToSupervisor::Event {
+            OutpostToCore::Event {
                 event: NormalizedEvent::TerminalSnapshot { node_id, .. },
                 ..
             } if node_id == node => {}
@@ -1363,7 +1363,7 @@ impl OutpostUnderTest {
     pub fn navigate(&mut self, node_id: NodeId, kind: QueryKind) -> (NodeSnapshot, CallCounts) {
         let request_id = self.ask(Query::Navigate { node_id, kind });
         let answer = match self.next() {
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 request_id: answered,
                 outcome: QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))),
                 timing,
@@ -1393,7 +1393,7 @@ impl OutpostUnderTest {
     pub fn focus_now_answer(&mut self) -> (FocusNow, CallCounts) {
         let request_id = self.ask(Query::FocusNow);
         let answer = match self.next() {
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 request_id: answered,
                 outcome: QueryOutcome::Done(QueryResult::Focus(now)),
                 timing,
@@ -1411,7 +1411,7 @@ impl OutpostUnderTest {
     pub fn gone(&mut self, query: Query) -> CallCounts {
         let request_id = self.ask(query);
         let calls = match self.next() {
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 request_id: answered,
                 outcome: QueryOutcome::Gone,
                 timing,
@@ -1429,7 +1429,7 @@ impl OutpostUnderTest {
     pub fn ancestors(&mut self, node_id: NodeId) -> (Vec<NodeSnapshot>, CallCounts) {
         let request_id = self.ask(Query::Ancestors { node_id });
         let answer = match self.next() {
-            OutpostToSupervisor::Reply {
+            OutpostToCore::Reply {
                 request_id: answered,
                 outcome: QueryOutcome::Done(QueryResult::Ancestors(chain)),
                 timing,

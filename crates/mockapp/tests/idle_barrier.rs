@@ -14,12 +14,12 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
+use verbatim_model::protocol::{
+    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult,
+};
 use verbatim_model::{
     CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextPosition,
     TextReply, TextUnit,
-};
-use verbatim_outpost::protocol::{
-    DeliveredFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult, SupervisorToOutpost,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::Uia;
@@ -48,7 +48,7 @@ fn start(name: &str) -> (common::MockApp, HWND) {
 /// of the document's whole long text.
 fn whole_text(outpost: &OutpostUnderTest, request: u64) {
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Range { text, truncated })),
             ..
@@ -86,7 +86,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     });
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::IdleQuery { round: 7 });
+        .handle_command(&CoreToOutpost::IdleQuery { round: 7 });
     // A foreground change behind the query holds the worker again once it
     // has handled everything before it.
     outpost.deliver(DeliveredFact::Foreground {
@@ -97,7 +97,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     // answer wait behind it; only now does Core read.
     whole_text(&outpost, first);
     whole_text(&outpost, second);
-    assert_eq!(outpost.next(), OutpostToSupervisor::IdleAnswer { round: 7 });
+    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 7 });
     outpost.release_worker();
     outpost.settled();
     drop(outpost);
@@ -117,7 +117,7 @@ fn notes_focus(
     let element = common::listener_focus(&uia, hwnd.0 as isize);
     outpost.deliver(outpost.listener_fact(&element));
     let (node, caret) = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -164,20 +164,20 @@ fn the_answer_waits_for_an_open_caret_watch() {
     outpost.settled();
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::IdleQuery { round: 3 });
+        .handle_command(&CoreToOutpost::IdleQuery { round: 3 });
     // The worker has reached the query, and nothing is said.
     outpost.settled();
     app.send("caret doc 1");
     app.send("caret-event doc");
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(reply))),
             ..
         } if request_id == key => assert!(reply.moved),
         other => panic!("the outpost said {other:?}, not the key's answer"),
     }
-    assert_eq!(outpost.next(), OutpostToSupervisor::IdleAnswer { round: 3 });
+    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 3 });
     outpost.heard(&[
         Heard::UiaTextSelection,
         Heard::Msaa(WinEventKind::TextSelectionChange),
@@ -206,7 +206,7 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     let element = common::listener_focus(&uia, hwnd.0 as isize);
     outpost.deliver(outpost.listener_fact(&element));
     let term = match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
                     node,
@@ -218,7 +218,7 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
         other => panic!("the outpost said {other:?}, not the terminal's focus with its caret"),
     };
     match outpost.next() {
-        OutpostToSupervisor::Event {
+        OutpostToCore::Event {
             event: NormalizedEvent::TerminalSnapshot { node_id, .. },
             ..
         } if node_id == term => {}
@@ -230,7 +230,7 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
         op: TextOp::TerminalHold,
     });
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
             ..
@@ -269,17 +269,17 @@ fn a_noted_caret_holds_the_answer_back_only_for_its_own_read() {
     ]);
     outpost
         .outpost
-        .handle_command(&SupervisorToOutpost::IdleQuery { round: 5 });
+        .handle_command(&CoreToOutpost::IdleQuery { round: 5 });
     let read = outpost.ask(Query::Text {
         node_id: term,
         op: TextOp::TerminalRead { hold: false },
     });
     outpost.release_worker();
-    assert_eq!(outpost.next(), OutpostToSupervisor::IdleAnswer { round: 5 });
+    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 5 });
     // The read reads the caret with the text, and answers with the line
     // written while the terminal was held.
     match outpost.next() {
-        OutpostToSupervisor::Reply {
+        OutpostToCore::Reply {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::TerminalSnapshot(snapshot))),
             ..

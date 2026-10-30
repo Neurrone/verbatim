@@ -15,10 +15,10 @@ mod common;
 mod harness;
 
 use verbatim_core::SrState;
+use verbatim_model::protocol::DeliveredFact;
 use verbatim_model::{
     Backend, Effect, Input, NormalizedEvent, OutpostId, Pid, Role, SegmentContent, TraceId,
 };
-use verbatim_outpost::protocol::DeliveredFact;
 
 use common::outpost::{OutpostUnderTest, Reported};
 

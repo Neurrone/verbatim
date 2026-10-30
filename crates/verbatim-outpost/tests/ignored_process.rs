@@ -25,12 +25,13 @@ use crossbeam_channel::unbounded;
 
 mod common;
 use common::Delivered;
+use verbatim_model::protocol::{
+    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
+    OutpostToCore,
+};
 use verbatim_model::{Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
-};
+use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor};
 
 /// An application's argument.
@@ -55,8 +56,8 @@ fn value(args: &[String], name: &str) -> Option<String> {
 }
 
 /// A focus fact from `pid`, as the listener forwards one.
-fn focus_fact(pid: u32) -> OutpostToSupervisor {
-    OutpostToSupervisor::FocusFact {
+fn focus_fact(pid: u32) -> ListenerToCore {
+    ListenerToCore::FocusFact {
         trace_id: TraceId::mint(),
         timing: EventTiming::default(),
         fact: ListenerFact {
@@ -93,21 +94,15 @@ fn stand_in(args: &[String]) -> ! {
         BlockingWriter::new(messages).expect("a writer"),
     );
     let listener = args.iter().any(|arg| arg == "--listener");
-    let target_pid = if listener {
-        Pid(0)
-    } else {
-        Pid(value(args, "--target-pid")
-            .and_then(|pid| pid.parse().ok())
-            .expect("an outpost is told its application's pid"))
-    };
-    let mut send = |message: &OutpostToSupervisor| {
-        write_message(&mut messages, message).expect("a message is written");
-    };
-    send(&OutpostToSupervisor::Ready {
-        outpost_pid: Pid(std::process::id()),
-        target_pid,
-    });
+    let mut commands = BufReader::new(commands);
     if listener {
+        let mut send = |message: &ListenerToCore| {
+            write_message(&mut messages, message).expect("a message is written");
+        };
+        send(&ListenerToCore::Ready {
+            outpost_pid: Pid(std::process::id()),
+            target_pid: Pid(0),
+        });
         let ignored =
             value(args, "--ignore-pids").expect("the listener is told the pids to ignore");
         let other: u32 = std::env::var(OTHER_APPLICATION)
@@ -118,16 +113,37 @@ fn stand_in(args: &[String]) -> ! {
             send(&focus_fact(pid.parse().expect("a pid")));
         }
         send(&focus_fact(other));
+        loop {
+            match read_message::<_, CoreToListener>(&mut commands) {
+                Ok(Some(CoreToListener::Ping { seq, .. })) => send(&ListenerToCore::Pong {
+                    seq,
+                    parked_count: 0,
+                    written_at_us: 0,
+                }),
+                Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
+                Ok(Some(_)) => {}
+                Err(error) => panic!("the command pipe failed: {error}"),
+            }
+        }
     }
-    let mut commands = BufReader::new(commands);
+    let target_pid = Pid(value(args, "--target-pid")
+        .and_then(|pid| pid.parse().ok())
+        .expect("an outpost is told its application's pid"));
+    let mut send = |message: &OutpostToCore| {
+        write_message(&mut messages, message).expect("a message is written");
+    };
+    send(&OutpostToCore::Ready {
+        outpost_pid: Pid(std::process::id()),
+        target_pid,
+    });
     loop {
-        match read_message::<_, SupervisorToOutpost>(&mut commands) {
-            Ok(Some(SupervisorToOutpost::Ping { seq, .. })) => send(&OutpostToSupervisor::Pong {
+        match read_message::<_, CoreToOutpost>(&mut commands) {
+            Ok(Some(CoreToOutpost::Ping { seq, .. })) => send(&OutpostToCore::Pong {
                 seq,
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
+            Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) => {}
             Err(error) => panic!("the command pipe failed: {error}"),
         }
@@ -192,7 +208,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
     }
     match next(&events) {
         OutpostMessage::Event { pid, message, .. }
-            if pid == other_pid && matches!(*message, OutpostToSupervisor::Ready { .. }) => {}
+            if pid == other_pid && matches!(*message, OutpostToCore::Ready { .. }) => {}
         other => panic!("the supervisor said {other:?}, not that the other's outpost was ready"),
     }
 
