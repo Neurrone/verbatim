@@ -223,7 +223,7 @@ pub(super) enum Source {
 
 /// A child's pipe to Core, being read.
 pub(super) struct Reader {
-    /// The child's incarnation.
+    /// The child's generation.
     pub(super) outpost: OutpostId,
     pub(super) source: Source,
     pub(super) pipe: PortReader,

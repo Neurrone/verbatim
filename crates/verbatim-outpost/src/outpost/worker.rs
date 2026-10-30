@@ -98,7 +98,7 @@ const STEP_DEADLINE: Duration = Duration::from_millis(400);
 /// outside it.
 const TEXT_DEADLINE: Duration = Duration::from_secs(2);
 
-/// The worker incarnation in charge, its deadline, the walk the watchdog
+/// The worker generation in charge, its deadline, the walk the watchdog
 /// may publish, and the follow state every commit changes.
 #[derive(Default)]
 pub(super) struct WatchState {

@@ -4612,10 +4612,10 @@ fn the_same_node_number_from_another_outpost_never_reaches_the_focus() {
 #[test]
 fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
     // Additional finding 1: a replaced outpost started its counters again
-    // while Core remembered the old ones. Node ids name their incarnation,
+    // while Core remembered the old ones. Node ids name their generation,
     // so a replacement's small numbers are accepted at once, and the same
-    // numbers stamped with the old incarnation are a different node. The
-    // app drops the old incarnation's messages before they reach the
+    // numbers stamped with the old generation are a different node. The
+    // app drops the old generation's messages before they reach the
     // reducer (`LiveOutposts` in verbatim-app).
     let source = Pid(1);
     let mut state = SrState::new();

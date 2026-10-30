@@ -77,7 +77,7 @@ The end-to-end harness's hooks (private `harness` module):
   it asked (`OutpostMessage::IdleQueried`). Each child answers behind
   every message it sent before, and an outpost that ends counts as having
   answered, except an outpost that failed before its `Ready`, whose
-  place goes to the incarnation `OutpostMessage::Reincarnated` names,
+  place goes to the generation `OutpostMessage::Regenerated` names,
   which holds its facts and its query. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: no outpost request
   outstanding, no outpost still starting, no focus wanted from an outpost
@@ -285,7 +285,7 @@ knowing for review:
   size, in the order the frames arrive. The supervisor's relay watches the port's counts and
   logs a warning when the reducer has taken nothing for three ping
   intervals while inputs waited (`EventSink::watched`). Every outpost message arrives tagged with the
-  outpost incarnation whose pipe carried it; an outpost joins the live set
+  outpost generation whose pipe carried it; an outpost joins the live set
   on `OutpostMessage::Started`, which precedes all its messages, and leaves
   it on `OutpostMessage::Ended`, and a message from an outpost not in the
   set is dropped, so nothing from an ended outpost reaches the reducer, even
@@ -319,7 +319,7 @@ knowing for review:
 - `requests::RequestTable` — the single owner of "exactly one outcome per
   query" (`docs/architecture.md`, section 1). Every query sent to an
   outpost (a navigation step, an activation, a tree dump, a focus-now
-  query) is recorded with a fresh `RequestId` and the outpost incarnation it
+  query) is recorded with a fresh `RequestId` and the outpost generation it
   went to, and sent as a `Query` carrying that id; the outpost's one `Reply`
   echoes it with one of five outcomes. The first outcome removes the
   entry and goes to the asker: a navigation outcome re-enters the reducer

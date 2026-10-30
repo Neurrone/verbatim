@@ -14,7 +14,7 @@
 //! never given up, and are spaced by the backoff, whose count a foreground
 //! change to the application starts again. The focus Core holds is told to
 //! the outposts concerned as well as to the listener, and to no other
-//! outpost, and never to an incarnation that has ended.
+//! outpost, and never to a generation that has ended.
 //!
 //! This test binary runs itself four ways: as an application, a process with
 //! no windows that runs until its standard input closes; as a stand-in for
@@ -578,9 +578,9 @@ impl Run {
 
     /// The next message, that the spare `outpost` given to `target_pid`
     /// failed and `next` holds its facts.
-    fn expect_reincarnated(&self, outpost: OutpostId, next: OutpostId, target_pid: Pid) {
+    fn expect_regenerated(&self, outpost: OutpostId, next: OutpostId, target_pid: Pid) {
         match self.next() {
-            OutpostMessage::Reincarnated {
+            OutpostMessage::Regenerated {
                 outpost: failed,
                 next: then,
                 target_pid: pid,
@@ -881,7 +881,7 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_spare(5, 2);
     failing.fail(1);
-    run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
+    run.expect_regenerated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
     assert_eq!(
         run.expect_started(first_pid),
@@ -904,10 +904,10 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
 }
 
 /// The idle round that asked a given spare still starting waits, when the
-/// spare fails, for the answer of the incarnation that takes its facts and
-/// its query: the app hears that incarnation named before the failed
+/// spare fails, for the answer of the generation that takes its facts and
+/// its query: the app hears that generation named before the failed
 /// one's end, so the end does not answer the round.
-fn a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer() {
+fn a_round_that_asked_a_failed_spare_waits_for_the_next_generations_answer() {
     let failing = Failing::assignments(&[1], Failure::Exits, true);
     let run = Run::start(&[]);
     run.keep_spares();
@@ -929,7 +929,7 @@ fn a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer() {
     run.expect_idle_answer(OWN, 1);
 
     failing.fail(1);
-    run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
+    run.expect_regenerated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
     assert_eq!(run.expect_started(first_pid), OutpostId(4));
     run.expect_ready(OutpostId(4), first_pid);
@@ -1016,7 +1016,7 @@ fn a_stuck_outpost_is_ended_and_replaced() {
 /// its own and is a process of its own, so the app hears them start in the
 /// order their launches finish, and one's messages may come between
 /// another's; the order the supervisor decided to start them in is the
-/// order of their incarnations' numbers. Returns each application's outpost
+/// order of their generations' numbers. Returns each application's outpost
 /// and its process id.
 fn served<const N: usize>(run: &Run, applications: [Pid; N]) -> [(OutpostId, Pid); N] {
     // Each application's outpost, process, and how many of its three
@@ -1146,7 +1146,7 @@ fn core_s_focus_is_told_to_the_outposts_concerned_and_no_other() {
 }
 
 /// Core's focus, for an outpost that has since ended, is told to the
-/// listener alone: the incarnation that replaced it for its application
+/// listener alone: the generation that replaced it for its application
 /// reported no focus, and hears nothing of it.
 fn core_s_focus_is_not_told_to_an_outpost_that_ended() {
     let (first, first_pid) = application_and_pid();
@@ -1259,7 +1259,7 @@ fn a_given_spare_whose_hook_fails_is_replaced() {
     run.expect_spare(5, 2);
     failing.fail(1);
     run.expect_report(OutpostId(3), HOOK_FAULT);
-    run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
+    run.expect_regenerated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Exited);
     assert_eq!(run.expect_started(first_pid), OutpostId(4));
     run.expect_ready(OutpostId(4), first_pid);
@@ -1309,7 +1309,7 @@ fn a_given_spare_that_misses_its_pings_is_ended_as_killed() {
     run.supervisor.ensure_spawned(first_pid);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_spare(5, 2);
-    run.expect_reincarnated(OutpostId(3), OutpostId(4), first_pid);
+    run.expect_regenerated(OutpostId(3), OutpostId(4), first_pid);
     run.expect_ended(OutpostId(3), first_pid, EndReason::Killed);
     assert_eq!(run.expect_started(first_pid), OutpostId(4));
     run.expect_ready(OutpostId(4), first_pid);
@@ -1360,8 +1360,8 @@ fn main() {
             a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next,
         ),
         (
-            "a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer",
-            a_round_that_asked_a_failed_spare_waits_for_the_next_incarnations_answer,
+            "a_round_that_asked_a_failed_spare_waits_for_the_next_generations_answer",
+            a_round_that_asked_a_failed_spare_waits_for_the_next_generations_answer,
         ),
         (
             "an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once",

@@ -389,7 +389,7 @@ fn is_stale_focus(
 /// it is announced.
 ///
 /// The evidence of "same element" is the node id, which names one object
-/// in one outpost incarnation; a UI Automation runtime id keeps its node
+/// in one outpost generation; a UI Automation runtime id keeps its node
 /// even when its application gave it to a new element after the one it
 /// named died (`docs/design/focus-pipeline-rework.md`, "One object, one
 /// identity"). So "still focused" is `earlier`, what the reader read live
@@ -1233,7 +1233,7 @@ fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSn
             .all(|(old, new)| old.role == new.role && old.name == new.name)
 }
 
-/// Handles the end of an outpost incarnation: the focus keeps its copied
+/// Handles the end of an outpost generation: the focus keeps its copied
 /// data but its ids are dead, and a navigator or pending navigation in that
 /// outpost is cleared. Navigation then does nothing until focus is reported
 /// again.

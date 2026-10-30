@@ -9,7 +9,7 @@
 //! message it sent before. The relay says which outposts it asked
 //! ([`verbatim_outpost::OutpostMessage::IdleQueried`]); each answers, or
 //! ends, which counts as its answer, except a spare that failed before its
-//! `Ready`, whose place goes to the incarnation holding its facts. When
+//! `Ready`, whose place goes to the generation holding its facts. When
 //! every one has, the reducer takes
 //! in what is already queued for it and checks its own conditions (no
 //! request to an outpost outstanding, no outpost starting, no focus
@@ -116,8 +116,8 @@ impl<W> IdleBarrier<W> {
     }
 
     /// `outpost`, a spare given to an application, failed before its
-    /// `Ready`, and the incarnation `next` holds what was held for it
-    /// ([`verbatim_outpost::OutpostMessage::Reincarnated`]): in a round
+    /// `Ready`, and the generation `next` holds what was held for it
+    /// ([`verbatim_outpost::OutpostMessage::Regenerated`]): in a round
     /// asking `outpost` that it has not answered, `next` answers in its
     /// place, so `outpost`'s end, which follows, does not end the round
     /// before the facts held for it are handled.
@@ -288,10 +288,10 @@ mod tests {
     }
 
     /// A spare that failed before its `Ready` hands its place in the round
-    /// to the incarnation that holds its facts: its end, which follows,
-    /// does not end the round, the next incarnation's answer does.
+    /// to the generation that holds its facts: its end, which follows,
+    /// does not end the round, the next generation's answer does.
     #[test]
-    fn a_failed_spares_place_in_a_round_goes_to_its_next_incarnation() {
+    fn a_failed_spares_place_in_a_round_goes_to_its_next_generation() {
         const NEXT: OutpostId = OutpostId(3);
         let mut barrier = asking(&[A, B]);
         barrier.answered(1, A);

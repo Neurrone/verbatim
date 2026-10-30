@@ -382,7 +382,7 @@ impl Reducer {
             OutpostMessage::Ended {
                 outpost, reason, ..
             } => format!("{} ended: {reason}", self.names[&outpost]),
-            OutpostMessage::Reincarnated { outpost, .. } => {
+            OutpostMessage::Regenerated { outpost, .. } => {
                 format!("{} replaced", self.names[&outpost])
             }
             other => format!("{other:?}"),

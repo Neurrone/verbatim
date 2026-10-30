@@ -231,7 +231,7 @@ application, so events and query replies leave the outpost in the order
 they were queued. Every query gets exactly one reply: done, gone, failed,
 not started, or abandoned. The outpost keeps the live UIA element or MSAA
 object behind every node Core still holds, and releases the rest when Core
-reports which nodes it holds; a node id names its outpost incarnation, so
+reports which nodes it holds; a node id names its outpost generation, so
 an id from a replaced outpost can never reach its successor.
 
 The outposts are built on four rules, adopted on 2026-10-01 to replace
@@ -594,7 +594,7 @@ text ranges, relationships, node identity — as a superset that both backends
 the reducer, browse mode, extensions, and all tests speak this model only.
 
 - Node identity: backend runtime IDs and MSAA objects map to `NodeId`s
-  issued per outpost incarnation; a `NodeId` carries its outpost id, so an
+  issued per outpost generation; a `NodeId` carries its outpost id, so an
   id from a replaced outpost can never name a node in its successor.
 - Snapshots are not versioned. Events and replies from one outpost reach
   the reducer in the order the outpost queued them, so the reducer needs

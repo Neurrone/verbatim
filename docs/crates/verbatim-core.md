@@ -339,7 +339,7 @@ code is in `reduce.rs` unless named.
   interrupting for `MostRecent` and `ImportantMostRecent`, queued
   otherwise.
 - Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an
-  outpost is replaced"). Node ids carry the outpost incarnation. On
+  outpost is replaced"). Node ids carry the outpost generation. On
   `Input::OutpostEnded` the focus is marked dead and a navigator or
   pending navigation there is cleared; a later focus matching the kept
   copy (role, name, value, states, ancestors' names and roles) takes its

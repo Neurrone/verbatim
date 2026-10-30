@@ -160,12 +160,12 @@ pub(super) struct Setup {
 /// One application's outpost: starting until its launch reports back, or
 /// until a spare given to it sends `Ready`, then running; or, after its
 /// outpost failed, waiting for the failure's backoff to end, with no
-/// incarnation (`outpost` is `OutpostId(0)` and its backoff is due).
+/// generation (`outpost` is `OutpostId(0)` and its backoff is due).
 struct Record {
     outpost: OutpostId,
     /// `None` while the launch helper is still at work.
     child: Option<Child>,
-    /// Whether this incarnation was a spare
+    /// Whether this generation was a spare
     /// (`docs/design/focus-pipeline.md`, section 19), whose end before
     /// `Ready` is a spare's failure, not the application's crash, and
     /// whether it has been sent its `Assign`.
@@ -185,19 +185,19 @@ struct Record {
     /// The last fault a spare given to the application reported before its
     /// `Ready`, such as its hook failing: logged with its failure.
     fault: Option<String>,
-    /// When the current incarnation was given to the application or
+    /// When the current generation was given to the application or
     /// launched for it: how long it had been up when it fails.
     since: Instant,
     /// The failures of the application's outposts while serving it, and,
-    /// while a failure's wait runs, when the next incarnation is given.
+    /// while a failure's wait runs, when the next generation is given.
     backoff: Backoff,
-    /// The incarnation that failed before its `Ready`, while its backoff
-    /// runs: the app hears it replaced ([`OutpostMessage::Reincarnated`])
+    /// The generation that failed before its `Ready`, while its backoff
+    /// runs: the app hears it replaced ([`OutpostMessage::Regenerated`])
     /// when the next is given.
     unready: Option<Unready>,
 }
 
-/// An incarnation that failed before its `Ready`, whose replacement waits
+/// A generation that failed before its `Ready`, whose replacement waits
 /// for the failure's backoff.
 #[derive(Clone, Copy, Debug)]
 struct Unready {
@@ -222,7 +222,7 @@ enum IdleStage {
 /// Whether a spare given to an application has been sent its `Assign`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Assigned {
-    /// Sent, and the app told the incarnation `Started`.
+    /// Sent, and the app told the generation `Started`.
     Sent,
     /// Not yet: it was given while its launch was still at work, and is
     /// sent `Assign`, and the app `Started`, once it has reported.
@@ -591,7 +591,7 @@ impl Owner {
             .get(&pid)
             .is_none_or(|record| record.outpost != outpost)
         {
-            // The owner has ended this incarnation itself, and told the
+            // The owner has ended this generation itself, and told the
             // app, which drops whatever it sent after; its pipe is read
             // until it ends, and the rest is dropped here.
             return Ok(());
@@ -945,7 +945,7 @@ impl Owner {
     /// still being launched, the app may not have heard it started, so the
     /// outposts are asked once every launch has reported. An application
     /// whose failed outpost's replacement waits for its backoff has no
-    /// incarnation to ask.
+    /// generation to ask.
     fn query_outposts(&mut self, round: u64) {
         if self.shutting_down.is_none()
             && self
@@ -974,7 +974,7 @@ impl Owner {
         }
     }
 
-    /// The record of the outpost incarnation `outpost`, if it is current.
+    /// The record of the outpost generation `outpost`, if it is current.
     fn record_of(&mut self, outpost: OutpostId) -> Option<&mut Record> {
         self.records
             .values_mut()
@@ -1047,22 +1047,22 @@ impl Owner {
     }
 
     /// Gives `pid`'s record, starting or after a failure, a new
-    /// incarnation ([`next_incarnation`](Self::next_incarnation)) and
-    /// starts it ([`start_incarnation`](Self::start_incarnation)). When
-    /// the incarnation before failed before its `Ready`, the app hears
+    /// generation ([`next_generation`](Self::next_generation)) and
+    /// starts it ([`start_generation`](Self::start_generation)). When
+    /// the generation before failed before its `Ready`, the app hears
     /// first that this one takes its place
-    /// ([`OutpostMessage::Reincarnated`]), then the failed one's end if it
+    /// ([`OutpostMessage::Regenerated`]), then the failed one's end if it
     /// heard it started.
     fn incarnate(&mut self, pid: Pid) {
         let unready = self
             .records
             .get_mut(&pid)
             .and_then(|record| record.unready.take());
-        let Some(next) = self.next_incarnation(pid) else {
+        let Some(next) = self.next_generation(pid) else {
             return;
         };
         if let Some(failed) = unready {
-            self.outbox.send(OutpostMessage::Reincarnated {
+            self.outbox.send(OutpostMessage::Regenerated {
                 outpost: failed.outpost,
                 next,
                 target_pid: pid,
@@ -1075,14 +1075,14 @@ impl Owner {
                 });
             }
         }
-        self.start_incarnation(pid);
+        self.start_generation(pid);
     }
 
-    /// Gives `pid`'s record its next incarnation without starting it: the
+    /// Gives `pid`'s record its next generation without starting it: the
     /// oldest spare waiting, ready or not, whose replacement starts at
     /// once, or, with no spare, a new outpost to launch for it. Returns the
-    /// incarnation.
-    fn next_incarnation(&mut self, pid: Pid) -> Option<OutpostId> {
+    /// generation.
+    fn next_generation(&mut self, pid: Pid) -> Option<OutpostId> {
         if !self.records.contains_key(&pid) {
             return None;
         }
@@ -1119,11 +1119,11 @@ impl Owner {
         Some(outpost)
     }
 
-    /// Starts the incarnation [`next_incarnation`](Self::next_incarnation)
+    /// Starts the generation [`next_generation`](Self::next_generation)
     /// gave `pid`'s record: a spare is sent `Assign` and the app `Started`
     /// at once, or once its launch has reported; an outpost for it is
     /// launched.
-    fn start_incarnation(&mut self, pid: Pid) {
+    fn start_generation(&mut self, pid: Pid) {
         let Some(record) = self.records.get(&pid) else {
             return;
         };
@@ -1136,7 +1136,7 @@ impl Owner {
 
     /// Sends `pid`'s spare its `Assign`, ahead of everything the app will
     /// send it, reads its pipe as the application's from now on, and tells
-    /// the app the incarnation started.
+    /// the app the generation started.
     fn assign(&mut self, pid: Pid) {
         let Some(record) = self.records.get(&pid) else {
             return;
@@ -1216,7 +1216,7 @@ impl Owner {
     }
 
     /// Ends every backoff due at `now`: each application waiting is given
-    /// its next incarnation, and the spares are replenished.
+    /// its next generation, and the spares are replenished.
     fn start_due(&mut self, now: Instant) {
         if self.shutting_down.is_some() {
             return;
@@ -1242,13 +1242,13 @@ impl Owner {
     /// outpost started for the application, before or after its `Ready`.
     /// It is ended, unless its application has exited, which ends it as
     /// the application's exit. Otherwise the record keeps its held facts,
-    /// and the idle query held for it, for the next incarnation, given at
+    /// and the idle query held for it, for the next generation, given at
     /// once for the application's first failure and after the backoff for
     /// each further one ([`Backoff`]); facts arriving meanwhile are held
     /// too. One that was ready is ended for the app now, which asks the
     /// next for the focus where it needs to; one that failed before its
     /// `Ready` lost nothing, and the app hears it replaced
-    /// ([`OutpostMessage::Reincarnated`]) as the next is given.
+    /// ([`OutpostMessage::Regenerated`]) as the next is given.
     fn outpost_failed(&mut self, pid: Pid, why: &str, reason: EndReason) {
         if self.has_exited(pid) {
             self.target_exited(pid, why);
@@ -1438,7 +1438,7 @@ impl Owner {
 
     /// Relays the listener's "forwarding ended" to the outpost it was for,
     /// behind every fact the listener sent before it, if that outpost still
-    /// watches `pid`; one for an earlier incarnation is dropped.
+    /// watches `pid`; one for an earlier generation is dropped.
     fn forwarding_ended(&self, pid: Pid, outpost: OutpostId, through: u32) {
         let Some(child) = self
             .records
@@ -1459,8 +1459,8 @@ impl Owner {
     /// writer on the relay's port and, for an outpost, registers it; then
     /// it reports [`OwnerEvent::Launched`]. The relay sends `Started` to the
     /// app as it takes the launch, through the same [`Outbox`] as the end
-    /// of the incarnation before, and only then reads the child's pipe. So
-    /// the app hears of an incarnation after the end of the one before and
+    /// of the generation before, and only then reads the child's pipe. So
+    /// the app hears of a generation after the end of the one before and
     /// before any of its messages, a query can reach the outpost as soon as
     /// the app has heard, and the owner always learns of the launch before
     /// the child's `Ready` or the end of its pipe.
@@ -1807,7 +1807,7 @@ impl Owner {
 
     /// [`end`](Self::end), saying `why` in the log of the process's end.
     /// An application whose failed outpost's replacement waits for its
-    /// backoff has no incarnation to end, but an incarnation that failed
+    /// backoff has no generation to end, but a generation that failed
     /// before its `Ready`, and whose end the app has not heard yet, ends
     /// now.
     fn end_because(&mut self, pid: Pid, reason: EndReason, why: &str) {
@@ -1838,7 +1838,7 @@ impl Owner {
 
     /// Removes `pid`'s record and writer and retires its process, if it
     /// has one yet, for `why`. Returns the record's outpost id, `OutpostId(0)`
-    /// while a failure's backoff runs, and the incarnation that failed
+    /// while a failure's backoff runs, and the generation that failed
     /// before its `Ready` whose replacement that backoff holds.
     fn take_record(&mut self, pid: Pid, why: &str) -> Option<(OutpostId, Option<Unready>)> {
         let record = self.records.remove(&pid)?;

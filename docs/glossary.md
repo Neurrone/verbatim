@@ -119,7 +119,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Outpost** — the per-application process owning that app's event
   hooks, queries, and announcements (D9); also the binary
   `verbatim-outpost.exe`, which runs as an app outpost or, with
-  `--listener`, as the focus listener. Each process incarnation has an
+  `--listener`, as the focus listener. Each process generation has an
   **outpost id**, which every node id it issues carries.
   [verbatim-outpost](crates/verbatim-outpost.md).
 - **Pending key** — a key Core has taken in for a terminal and not yet

@@ -712,8 +712,8 @@ pub enum SupervisorToOutpost {
     HookInstalled {
         /// The application.
         pid: Pid,
-        /// Its outpost incarnation, echoed in the answer so a late answer
-        /// never reaches a later incarnation.
+        /// Its outpost generation, echoed in the answer so a late answer
+        /// never reaches a later generation.
         outpost: OutpostId,
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch; 0 from an older peer
@@ -1175,7 +1175,7 @@ pub enum OutpostToSupervisor {
     ForwardingEnded {
         /// The application.
         pid: Pid,
-        /// The outpost incarnation the hand-over was for.
+        /// The outpost generation the hand-over was for.
         outpost: OutpostId,
         /// The listener's clock when it stopped, on the `WinEvent` clock.
         through: u32,
@@ -1295,7 +1295,7 @@ impl OutpostToSupervisor {
 
     /// Stamps `outpost` on every node id this message carries. Core applies
     /// it to everything arriving on an outpost's pipe, so node ids name their
-    /// outpost incarnation and never come from the message body.
+    /// outpost generation and never come from the message body.
     pub fn assign_outpost(&mut self, outpost: OutpostId) {
         match self {
             OutpostToSupervisor::Event { event, .. } => event.assign_outpost(outpost),

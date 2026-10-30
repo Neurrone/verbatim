@@ -56,7 +56,7 @@ pub const MAX_READ_AHEAD_TEXT: usize = 32 * 1024;
 /// whatever the backend needs to find the position again.
 ///
 /// An anchor means something only together with the node it was minted
-/// for, and only to that node's outpost incarnation. The outpost keeps
+/// for, and only to that node's outpost generation. The outpost keeps
 /// every anchor Core holds (`SrState::held_anchors` in `verbatim-core`,
 /// sent to the outpost alongside the held nodes) and may forget any other
 /// once it has minted 64 newer ones for the node; a request naming a

@@ -12,7 +12,7 @@
 //! takes 0.02 to 0.3 ms to parse in a release build (`docs/performance.md`).
 //!
 //! Parsing here does what the outposts' reader threads did: it stamps every
-//! node id with the outpost's incarnation, records when the relay read the
+//! node id with the outpost's generation, records when the relay read the
 //! frame, and numbers the messages that carry node ids, in pipe order, as
 //! the outpost numbers them.
 
@@ -66,7 +66,7 @@ impl std::fmt::Debug for Frame {
     }
 }
 
-/// One outpost incarnation's frames on the reducer's side.
+/// One outpost generation's frames on the reducer's side.
 #[derive(Default)]
 struct Stream {
     /// How many messages that carry node ids it has sent, as the outpost
@@ -152,7 +152,7 @@ impl Frames {
 
 /// Parses `frame` into the message it carries, stamped with when the relay
 /// read it and with its outpost on every node id: node ids name the
-/// incarnation whose pipe they arrived on, never whatever the body claims.
+/// generation whose pipe they arrived on, never whatever the body claims.
 fn parse(frame: &Frame) -> io::Result<Box<OutpostToSupervisor>> {
     let mut message: Box<OutpostToSupervisor> = Box::new(decode_message(frame.bytes.parts())?);
     message.core_read(frame.read_at_us);

@@ -110,9 +110,9 @@ releases Alt. Notepad has no outpost yet.
    finds no outpost for Notepad's pid. Focus, foreground, menu,
    notification, and alert facts may start one
    (`DeliveredFact::may_start_outpost`), so it gives Notepad a spare
-   outpost, or launches one, with a fresh outpost id (the incarnation,
+   outpost, or launches one, with a fresh outpost id (the generation,
    never reused), and holds the fact. The app hears `OutpostMessage::Started`
-   before any of the incarnation's messages. Facts arriving meanwhile are
+   before any of the generation's messages. Facts arriving meanwhile are
    held in arrival order (`HeldFacts`); on the outpost's `Ready`,
    `Owner::on_ready` releases them onto its writer as
    `SupervisorToOutpost::DeliverFact`.
@@ -162,10 +162,10 @@ releases Alt. Notepad has no outpost yet.
    write is in flight; otherwise the message waits, merged by object and
    kind. In Core the relay posts each frame whole to the reducer thread
    (`OutpostMessage::Frame`), whose `Frames` parses it, stamps every node
-   id with the incarnation whose pipe it arrived on, and hands each on as
+   id with the generation whose pipe it arrived on, and hands each on as
    `OutpostMessage::Event`.
 10. **The reducer thread gates and records.** In
-    `ReducerThread::on_outpost_message`, a message from an incarnation not
+    `ReducerThread::on_outpost_message`, a message from a generation not
     in the live set (`LiveOutposts` in `crates/verbatim-app/src/live.rs`) is
     dropped. An accepted event goes to the latency ledger, to control-plane
     subscribers, and to `apply`, which runs the pure `reduce`, records the
@@ -245,9 +245,9 @@ while focus is in Notepad's text area.
 4. **The reducer thread sends a query.** `ReducerThread::execute` records
    it in the request table (`RequestTable::begin` in
    `crates/verbatim-app/src/requests.rs`) with a fresh request id, the
-   outpost incarnation the node id names, and `Asker::Reducer`, and queues
+   outpost generation the node id names, and `Asker::Reducer`, and queues
    `SupervisorToOutpost::Query` with `Query::Navigate`
-   (`Supervisor::send_to_outpost`). If the incarnation has ended or its
+   (`Supervisor::send_to_outpost`). If the generation has ended or its
    queue is full, the request fails at once.
 5. **The outpost answers in order.** The outpost strips Core's stamp from
    the node id (`unstamped`) and queues the query behind any events, so
@@ -258,7 +258,7 @@ while focus is in Notepad's text area.
    NVDA's `correctAPIForRelation`). It publishes one `Reply`: the
    neighbor, no neighbor (a real edge), gone, or failed.
 6. **The outcome re-enters the reducer.** `RequestTable::finish` accepts
-   it only from the incarnation it was sent to and only once, as
+   it only from the generation it was sent to and only once, as
    `Input::FetchCompleted` with a `FetchResult`.
 7. **The reducer acts on it** (`reduce_navigate_completed`), only if its
    query id is still the latest navigation. A node moves the navigator and
@@ -386,7 +386,7 @@ every query follows.
    `request_dump_tree` mints a `DumpTicket`, sends `ShellCommand::DumpTree`
    to the reducer thread, and waits up to five seconds.
 2. **Recorded.** `ReducerThread::dump_tree` finds the attention
-   application's newest live incarnation, records the request with
+   application's newest live generation, records the request with
    `Asker::DumpTree`, and queues `Query::DumpTree`. Request ids are never
    reused, so an old reply can never satisfy a newer request.
 3. **Queued in the outpost.** The query waits in the intake queue, exempt
@@ -418,17 +418,17 @@ every query follows.
    outpost `SupervisorToOutpost::Cancel`. A dump still queued answers "not
    started"; one already running finishes within its own budget.
 7. **Delivered.** `RequestTable::finish` drops an outcome for an id that
-   already has one, or from another incarnation. The first outcome goes to
+   already has one, or from another generation. The first outcome goes to
    its asker: a tree to the control client; `Input::FetchCompleted` for
    navigation; `Input::ActivationCompleted` for an activation, except that
    an abandoned activation is only logged; for a focus-now query, a
    foreground change and a focus.
 8. **The outpost ends.** On `OutpostMessage::Ended` the reducer thread
-   removes the incarnation from the live set, applies
+   removes the generation from the live set, applies
    `Input::OutpostEnded`, and `RequestTable::outpost_ended` answers every
    outstanding request for it "gone".
 
-Incarnations make this safe: every spawn gets a fresh `OutpostId`, Core's
+Generations make this safe: every spawn gets a fresh `OutpostId`, Core's
 reader stamps it on every node id from the pipe, never from the message
 body, and the request table and the live set both check it, so nothing an
 old outpost said can reach the reducer or satisfy a query sent to its
@@ -463,7 +463,7 @@ Each failure, what notices it, and what happens next
 3. **An outpost crashes.** Its pipe closes; Core's reader forwards
    everything it wrote, then the owner sends `Ended` as exited.
 4. **After either.** The reducer thread drops later messages from that
-   incarnation, the reducer marks the focus dead but keeps its copied
+   generation, the reducer marks the focus dead but keeps its copied
    data, and outstanding queries end "gone". The owner gives the
    application the next spare outpost (`Owner::outpost_failed`), at once
    for its first failure and after a backoff of 1, 2, 4, up to 30 seconds

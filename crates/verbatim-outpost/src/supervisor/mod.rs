@@ -39,7 +39,7 @@
 //! - It keeps two spare outposts started and waiting, with no application
 //!   (`docs/design/focus-pipeline.md`, section 19), from the moment Core's
 //!   own outpost is ready: a start for an application takes the oldest,
-//!   sends it `Assign`, and tells the app the incarnation `Started`; a
+//!   sends it `Assign`, and tells the app the generation `Started`; a
 //!   spare given never returns, and its replacement starts at once.
 //! - Every outpost failure takes one path, whatever its cause: a crash, a
 //!   hook that fails, missed pings, piled-up abandoned workers, or a spare
@@ -48,12 +48,12 @@
 //!   repeated failures being spaced by an exponential backoff
 //!   ([`policy::Backoff`]).
 //!
-//! The app hears of each outpost incarnation through [`OutpostMessage`]:
+//! The app hears of each outpost generation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
 //! When an outpost exits on its own, `Ended` follows everything it wrote; when
 //! the owner kills or retires it, `Ended` is sent at once, and the relay
 //! drops anything the child wrote afterwards. One application's
-//! incarnations come in the order the supervisor ended and started them:
+//! generations come in the order the supervisor ended and started them:
 //! an outpost's `Ended` before its replacement's `Started`.
 
 mod frames;
@@ -122,7 +122,7 @@ const STAYED_UP: Duration = Duration::from_mins(1);
 /// The backoff's three times, as [`policy::Backoff::failed`] takes them.
 const BACKOFF: (Duration, Duration, Duration) = (BACKOFF_FIRST, BACKOFF_LIMIT, STAYED_UP);
 
-/// Why an outpost incarnation ended.
+/// Why an outpost generation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EndReason {
     /// Its pipe closed: it exited or crashed.
@@ -281,19 +281,19 @@ pub struct ForegroundReport {
 /// A message from the supervisor to the app.
 #[derive(Debug)]
 pub enum OutpostMessage {
-    /// An outpost incarnation started. Sent before any of its messages.
+    /// An outpost generation started. Sent before any of its messages.
     Started {
-        /// The new incarnation.
+        /// The new generation.
         outpost: OutpostId,
         /// The application it watches.
         target_pid: Pid,
     },
     /// A message an outpost sent, tagged with its target pid and the outpost
-    /// incarnation whose pipe it arrived on.
+    /// generation whose pipe it arrived on.
     Event {
         /// The application the outpost watches.
         pid: Pid,
-        /// The incarnation whose pipe the message arrived on.
+        /// The generation whose pipe the message arrived on.
         outpost: OutpostId,
         /// How many messages carrying node ids the outpost has sent up to and
         /// including this one: what the app acknowledges in
@@ -308,7 +308,7 @@ pub enum OutpostMessage {
     /// is ready for the end-to-end harness once [`SPARES`] are, so every
     /// scenario's applications take a spare.
     SpareReady {
-        /// The spare's incarnation: the id it has once given.
+        /// The spare's generation: the id it has once given.
         spare: OutpostId,
         /// The spare's own process id.
         outpost_pid: Pid,
@@ -335,19 +335,19 @@ pub enum OutpostMessage {
     /// learned it: the app gives it to Core, which decides the keyboard
     /// hook's view of the foreground (architecture section 5).
     ForegroundWindow(ForegroundReport),
-    /// An outpost incarnation ended. Its node ids are dead from now on.
+    /// An outpost generation ended. Its node ids are dead from now on.
     Ended {
-        /// The incarnation that ended.
+        /// The generation that ended.
         outpost: OutpostId,
         /// The application it watched.
         target_pid: Pid,
         /// Why it ended.
         reason: EndReason,
     },
-    /// The incarnation `outpost` given to `target_pid` failed before its
+    /// The generation `outpost` given to `target_pid` failed before its
     /// `Ready` (`docs/design/focus-pipeline.md`, section 19.5), and the
     /// application's held facts, and the idle query held for it, go to the
-    /// incarnation `next`: the next spare, or an outpost launched for the
+    /// generation `next`: the next spare, or an outpost launched for the
     /// application. Sent when `next` is given, at once or when the
     /// failure's backoff ends, before `outpost`'s `Ended`, which follows
     /// when the app heard it started, and before `next`'s `Started`, which
@@ -355,10 +355,10 @@ pub enum OutpostMessage {
     /// idle round that asked `outpost`, `next` answers in its place; and
     /// nothing the application reported is lost, so the app asks it for
     /// nothing again.
-    Reincarnated {
-        /// The incarnation that failed.
+    Regenerated {
+        /// The generation that failed.
         outpost: OutpostId,
-        /// The incarnation that takes its place.
+        /// The generation that takes its place.
         next: OutpostId,
         /// The application.
         target_pid: Pid,
@@ -385,12 +385,12 @@ pub enum OutpostMessage {
     /// ahead of every answer. Each answers
     /// [`OutpostToSupervisor::IdleAnswer`] as a message of its own, or
     /// ends ([`OutpostMessage::Ended`]), which counts as its answer, unless
-    /// it was a spare that failed before its `Ready`: then the incarnation
-    /// [`OutpostMessage::Reincarnated`] names answers in its place.
+    /// it was a spare that failed before its `Ready`: then the generation
+    /// [`OutpostMessage::Regenerated`] names answers in its place.
     IdleQueried {
         /// The round.
         round: u64,
-        /// The outpost incarnations asked.
+        /// The outpost generations asked.
         outposts: Vec<OutpostId>,
     },
 }
@@ -504,13 +504,13 @@ impl Supervisor {
             .send(owner::OwnerEvent::EnsureSpawned(target_pid));
     }
 
-    /// Queues `command` for one outpost incarnation without waiting. A node
-    /// id names the incarnation that issued it, so a command for a replaced
+    /// Queues `command` for one outpost generation without waiting. A node
+    /// id names the generation that issued it, so a command for a replaced
     /// outpost's node can never reach its successor.
     ///
     /// # Errors
     ///
-    /// Returns [`QueueError::Closed`] if that incarnation has ended and
+    /// Returns [`QueueError::Closed`] if that generation has ended and
     /// [`QueueError::Full`] if its queue is full; either way the command was
     /// not sent and the caller gives its asker an outcome at once.
     pub fn send_to_outpost(
@@ -528,14 +528,14 @@ impl Supervisor {
         writer.push(writer::Outgoing::Other(command, writer::Received::now()))
     }
 
-    /// Leaves for one outpost incarnation the list of its nodes and text
+    /// Leaves for one outpost generation the list of its nodes and text
     /// anchors Core still holds, with the position of the last of its
     /// messages the app has handled (`docs/design/communication.md`, step
     /// 11). Nothing is written for it: the next command written to that
-    /// incarnation, a request from the app or the relay's ping within
+    /// generation, a request from the app or the relay's ping within
     /// three seconds, carries it after its own frame, in the same write. A
     /// newer list replaces one not yet sent. Nothing happens if the
-    /// incarnation has ended.
+    /// generation has ended.
     pub fn leave_nodes_held(
         &self,
         outpost: OutpostId,

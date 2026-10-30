@@ -57,11 +57,11 @@ first events start its outpost:
 - An outpost reads the `WinEvent` clock (`verbatim_ia2::event_clock`)
   before it installs its hook, and says `Ready` once it is in.
 - On `Ready` the supervisor sends the listener `HookInstalled` (application
-  and incarnation). The listener reads the clock, forwards none of that
+  and generation). The listener reads the clock, forwards none of that
   application's facts raised after that tick, still forwards those raised
   at or before it, and queues `ForwardingEnded`, naming the tick, behind
-  every fact queued; the supervisor relays it to that incarnation, or drops
-  it if the incarnation has gone.
+  every fact queued; the supervisor relays it to that generation, or drops
+  it if the generation has gone.
 - Every `WinEvent` fact carries its raising thread and time
   (`WinEventStamp`). The outpost matches the two hooks' copies by counting
   (`outpost::handover`): a copy whose kind, address, thread, and time the
@@ -466,7 +466,7 @@ first failure at once, further ones after a backoff (`policy::Backoff`) of
 1, 2, 4, 8, 16, then 30 seconds, counted again once an outpost stayed up a
 minute (`STAYED_UP`) or the application comes to the foreground. A ready
 outpost's `Ended` and `HookRemoved` go at once; for one that failed before
-`Ready` the app hears `Reincarnated`, then the failed one's `Ended` if it
+`Ready` the app hears `Regenerated`, then the failed one's `Ended` if it
 heard it start, then the next one's `Started`, which also answers an idle
 round in its place. Spares' failures are replaced with their own backoff.
 
@@ -957,15 +957,15 @@ section 6.3).
   at their time limit, or were killed because ending them failed.
 - `ensure_spawned(pid)` starts an outpost, from a spare when one waits.
 - `send_to_outpost(outpost_id, command)` queues a command without waiting,
-  failing at once with a `QueueError` when the incarnation ended or its
+  failing at once with a `QueueError` when the generation ended or its
   queue is full.
 - `note_views(attention, holding)`, `core_focus(judged, focus, outposts)`,
   `leave_nodes_held`, `query_idle(round)`, `is_ignored`, and `frames`.
 - `SPARES` is two; Verbatim's readiness waits for them.
 
 The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
-`Reincarnated`, `IdleQueried`, `NotWatched`, `ForegroundWindow`, and per
-incarnation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
+`Regenerated`, `IdleQueried`, `NotWatched`, `ForegroundWindow`, and per
+generation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
 reason (exited, killed, retired, target exited). `Frames::arrived` (from
 `Supervisor::frames()`, on the reducer's thread) turns a frame into
 `Event(pid, outpost_id, position, message)`, the payload boxed: it parses

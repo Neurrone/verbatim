@@ -43,7 +43,7 @@ Core takes outpost events and key commands from one input, in the order they rea
 
 NVDA ignores a focus event whose object equals the last queued focus while it still has the keyboard focus, for any application. The rule is defined once, in `verbatim_core::focus_rules::repeats_focus` (decision D14, "Where the rules run"): a focus repeats when its event names the element of the focus Core holds, which still has the focus, and Core has judged every focus the judge sent it. Only the process that holds an element can read it live, and only Core knows the focus of every application, so each judge gathers the evidence its own way and judges against the focus Core holds, which Core sends after every focus event it judges and every change of its focus (`SupervisorToOutpost::CoreFocus`):
 
-- Core: the node id, which names one element in one outpost incarnation, and the focus alive.
+- Core: the node id, which names one element in one outpost generation, and the focus alive.
 - The listener, before it reads a UIA focus: `CompareElements` with the element of the focus Core holds, when Core took that focus from one of the listener's reads, and that element's keyboard focus read live (section 16.3).
 - An outpost, before it reads an MSAA focus: the event's address against the focus Core holds, a whole object rather than a child by id; and NVDA's two foreground tests.
 - While a focus a judge sent waits for Core's judgement, Core's focus can yet become it, so the judges drop only what repeats whatever Core judges; a repeat that comes in that time is read, and Core's own rule drops it.

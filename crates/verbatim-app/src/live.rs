@@ -1,4 +1,4 @@
-//! The outpost incarnations the reducer thread treats as live (outpost
+//! The outpost generations the reducer thread treats as live (outpost
 //! redesign, "The app shell"): started and not yet ended, with the
 //! application each watches, whether it is ready, the bookkeeping for the
 //! nodes held in it and the details it was told to read, and whether its
@@ -7,14 +7,14 @@
 //! This is the one owner of the rule that a message from an outpost that
 //! has ended never reaches the reducer, even when it arrives after its
 //! replacement for the same application has started: the supervisor can
-//! still deliver messages the old incarnation wrote before it ended, and
+//! still deliver messages the old generation wrote before it ended, and
 //! its node ids are dead.
 
 use std::collections::{BTreeSet, HashMap};
 
 use verbatim_model::{Fetches, OutpostId, Pid};
 
-/// A live outpost incarnation.
+/// A live outpost generation.
 pub(crate) struct Live {
     /// The process it watches.
     pub(crate) target_pid: Pid,
@@ -53,7 +53,7 @@ impl Live {
     }
 }
 
-/// The live outpost incarnations, by outpost id.
+/// The live outpost generations, by outpost id.
 #[derive(Default)]
 pub(crate) struct LiveOutposts {
     outposts: HashMap<OutpostId, Live>,
@@ -94,7 +94,7 @@ impl LiveOutposts {
     }
 
     /// Whether a message from `outpost` may reach the reducer: only while
-    /// that incarnation is live. An accepted message's `position` is
+    /// that generation is live. An accepted message's `position` is
     /// recorded as handled.
     pub(crate) fn accept(&mut self, outpost: OutpostId, position: u64) -> bool {
         match self.outposts.get_mut(&outpost) {
@@ -118,7 +118,7 @@ impl LiveOutposts {
         self.outposts.remove(&outpost).is_some()
     }
 
-    /// How many live incarnations have not sent `Ready` yet.
+    /// How many live generations have not sent `Ready` yet.
     pub(crate) fn starting(&self) -> usize {
         self.outposts.values().filter(|live| !live.ready).count()
     }
@@ -141,25 +141,25 @@ impl LiveOutposts {
     }
 
     /// The process whose outpost serves the application `pid`: the target
-    /// of the newest live incarnation reporting for it, else `pid` itself.
+    /// of the newest live generation reporting for it, else `pid` itself.
     pub(crate) fn target_for(&self, pid: Pid) -> Pid {
         self.newest(pid)
             .and_then(|outpost| self.outposts.get(&outpost))
             .map_or(pid, |live| live.target_pid)
     }
 
-    /// The newest live incarnation serving the application `pid`, ready or
+    /// The newest live generation serving the application `pid`, ready or
     /// not.
     pub(crate) fn newest(&self, pid: Pid) -> Option<OutpostId> {
         self.of(pid, false)
     }
 
-    /// The newest ready incarnation serving the application `pid`.
+    /// The newest ready generation serving the application `pid`.
     pub(crate) fn ready(&self, pid: Pid) -> Option<OutpostId> {
         self.of(pid, true)
     }
 
-    /// An incarnation serving `pid`: one whose events name `pid` as their
+    /// A generation serving `pid`: one whose events name `pid` as their
     /// application, a console host's for its console's client, else one
     /// watching `pid` itself; the newest of them.
     fn of(&self, pid: Pid, must_be_ready: bool) -> Option<OutpostId> {
@@ -174,7 +174,7 @@ impl LiveOutposts {
             .or_else(|| newest(&|live| live.target_pid == pid))
     }
 
-    /// Every live incarnation, for sending the nodes held in each.
+    /// Every live generation, for sending the nodes held in each.
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&OutpostId, &mut Live)> {
         self.outposts.iter_mut()
     }
@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_message_from_a_replaced_incarnation_never_reaches_the_reducer() {
+    fn a_message_from_a_replaced_generation_never_reaches_the_reducer() {
         let mut live = LiveOutposts::default();
         live.started(OutpostId(3), Pid(40));
         live.mark_ready(OutpostId(3));
@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ready_outpost_is_the_newest_ready_incarnation() {
+    fn the_ready_outpost_is_the_newest_ready_generation() {
         let mut live = LiveOutposts::default();
         live.started(OutpostId(3), Pid(40));
         live.mark_ready(OutpostId(3));

@@ -592,10 +592,10 @@ pub enum Input {
         /// What the outpost found.
         result: FetchResult,
     },
-    /// An outpost incarnation ended: it exited, was killed, or was retired.
+    /// An outpost generation ended: it exited, was killed, or was retired.
     /// Every node id it issued is dead from now on.
     OutpostEnded {
-        /// The incarnation that ended.
+        /// The generation that ended.
         outpost: OutpostId,
     },
     /// A review or object-navigation command, from a bound gesture

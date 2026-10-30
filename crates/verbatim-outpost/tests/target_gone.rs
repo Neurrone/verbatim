@@ -188,7 +188,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
 }
 
 /// Waits for the outpost watching `target_pid` to start and say it is
-/// ready, and returns its incarnation.
+/// ready, and returns its generation.
 fn started_and_ready(events: &Delivered, target_pid: Pid) -> OutpostId {
     let outpost = match next(events) {
         OutpostMessage::Started {
@@ -265,7 +265,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
         "the sink refused the end once"
     );
     let replacement = started_and_ready(&events, target_pid);
-    assert_ne!(replacement, outpost, "a new incarnation replaced it");
+    assert_ne!(replacement, outpost, "a new generation replaced it");
 
     assert_eq!(
         supervisor.shutdown(),

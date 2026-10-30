@@ -15,10 +15,10 @@ recorder unchanged. What the reducer does with each type is in
   process id in the high 32 bits, so ids minted in Core and in each
   outpost never collide in the latency ledger.
 - `OutpostId`, `NodeId`, `Pid`, `QueryId`: small identity types. An
-  `OutpostId` names one outpost process incarnation and is never reused. A
+  `OutpostId` names one outpost process generation and is never reused. A
   `NodeId` is an outpost id plus a number that outpost issued: outposts
   mint ids with `NodeId::new(number)`, leaving the outpost `UNASSIGNED`,
-  and Core stamps the real incarnation on everything arriving on that
+  and Core stamps the real generation on everything arriving on that
   outpost's pipe (`assign_outpost` on snapshots, trees, events, and fetch
   results), so an id from a replaced outpost never names a node in its
   successor.
@@ -113,7 +113,7 @@ recorder unchanged. What the reducer does with each type is in
   - Inputs are events (each with its source pid, backend, optional
     `WindowFacts`, and the observation time on the run's shared clock in
     microseconds, one clock read for every event kind), fetch completions (with
-    their `QueryKind`), `OutpostEnded` (an incarnation ended, so its node
+    their `QueryKind`), `OutpostEnded` (a generation ended, so its node
     ids are dead), timer ticks, `Command` (a `ReviewCommand` and a
     press-repeat count), and what the shell's threads learn, since only
     the reducer speaks: `Started`, `Exiting { replaced }`, `ErrorLogged`,
@@ -230,7 +230,7 @@ implements. What each answer says is in `docs/parity/text.md`,
   holds, by outpost, which the shell sends with the held nodes; the
   outpost keeps those and may forget any other once it has minted 64
   newer ones for the node. A request naming a forgotten anchor is
-  answered `AnchorLost`. Anchors die with the outpost incarnation.
+  answered `AnchorLost`. Anchors die with the outpost generation.
 
 ### Chunks
 

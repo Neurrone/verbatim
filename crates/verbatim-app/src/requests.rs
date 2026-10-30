@@ -2,7 +2,7 @@
 //! (`docs/crates/verbatim-app.md`, `requests::RequestTable`).
 //!
 //! Every query Core sends an outpost is recorded here, on the reducer thread,
-//! with a request id and the outpost incarnation it went to. The first
+//! with a request id and the outpost generation it went to. The first
 //! outcome removes the entry and goes to whoever asked; any later outcome
 //! for the same id is dropped, and so is an outcome arriving from a
 //! different outpost than the one asked. Core creates the outcome itself

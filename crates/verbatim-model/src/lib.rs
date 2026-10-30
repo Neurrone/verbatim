@@ -115,7 +115,7 @@ impl fmt::Display for TraceId {
 /// another application from hiding its own windows by setting the property.
 pub const HIDDEN_FRAME_WINDOW_PROP: &str = "VerbatimHiddenFrame";
 
-/// Names one outpost process incarnation.
+/// Names one outpost process generation.
 ///
 /// The supervisor assigns a fresh one at every spawn and never reuses one, so
 /// a node id from a replaced outpost can never name a node in its successor.
@@ -129,7 +129,7 @@ pub struct OutpostId(pub u64);
 
 impl OutpostId {
     /// The placeholder an outpost mints its node ids with, before Core stamps
-    /// the real incarnation on them. Never assigned to a running outpost.
+    /// the real generation on them. Never assigned to a running outpost.
     pub const UNASSIGNED: OutpostId = OutpostId(0);
 }
 
@@ -139,8 +139,8 @@ impl fmt::Display for OutpostId {
     }
 }
 
-/// Identity of one node: the outpost incarnation that issued it plus a number
-/// unique within that incarnation.
+/// Identity of one node: the outpost generation that issued it plus a number
+/// unique within that generation.
 ///
 /// Backend runtime identifiers (UIA runtime IDs, MSAA object and child IDs)
 /// are mapped to numbers by the owning outpost; the reducer and everything
@@ -169,7 +169,7 @@ impl NodeId {
         Self { outpost, number }
     }
 
-    /// The outpost incarnation that issued this id.
+    /// The outpost generation that issued this id.
     #[must_use]
     pub const fn outpost(self) -> OutpostId {
         self.outpost
