@@ -211,3 +211,84 @@ The builder updates the crate guides of `verbatim-input-windows`, `verbatim-app`
 
 - The time, menu and tray-list gestures wait behind a held key as review commands do, matching NVDA's one script queue (`inputCore.py` lines 647 to 649, `scriptHandler.py` lines 242 to 250); queued behind a held key, the key says nothing and only the time is heard (Dickson, 2026-10-30).
 - A command behind a held key waits for that key's watch, at most 100 ms after the pass, so it reads the moved line as the kept change says (`docs/design/ownership.md`, "The refactor preserves behaviour"); so does a command pressed after the key was passed on while its watch is still open, which follows from the same decision, so that what it reads does not depend on timing. This departs from NVDA, which reads the old line in every case (`editableText.py` lines 94 to 95 and 165 to 175, `queueHandler.py` lines 61 to 69, `globalCommands.py` line 1976), as a capture confirmed ("line one", `docs/parity/input.md`) (Dickson, 2026-10-30).
+
+## Design check: the hook sees only keys
+
+Status: design check, written on 2026-10-31 against main at fb83a51a, for Dickson's concern about the hand-written lock-free inbox (`Inbox` in `crates/verbatim-input-windows/src/lib.rs`, commit 93a10bd5). The proposal checked: the control plane's gestures are sent as real keystrokes, and an idle barrier is an injected keystroke marked as Verbatim's own and swallowed by the hook, so the hook thread takes nothing but keys and the inbox, its `WM_APP` wake and its exit-time case go. Line numbers below are at fb83a51a.
+
+Verdict: the first half works as proposed. The second half is not needed: every harness keystroke already carries a number that the hook reports back in order, so an idle waiter can go straight to the reducer's port and be ordered by that number, with no barrier through the hook at all. The hook thread then takes nothing from another thread but the `WM_QUIT` that stops it.
+
+### Gestures as real keys
+
+Every gesture the scenarios send can be pressed as real keys:
+
+- All 44 uses in `crates/verbatim-e2e` are keyboard gestures: numpad digits with and without Shift, and the Verbatim modifier with a digit, a letter, an arrow, Alt and an arrow, F9, F10, End, and numpad keys. None is a gesture with no key.
+- Compare mode already presses them as keys through the agent: `press_gesture_for_nvda` (`crates/verbatim-e2e/src/scenario.rs` lines 710 to 720) maps `verbatim` to `insert` (`nvda_keys`, lines 2643 to 2648) and sends the rest as `SendKeys` names. `Scenario::send_gesture` can take that path in every mode, so no scenario body changes.
+- The Verbatim modifier: Insert is a modifier by default (`DecisionConfig::default`, `crates/verbatim-input/src/state.rs` lines 79 to 89) and is recognised only with the extended flag (`is_verbatim_modifier`, lines 636 to 640); the key name `insert` carries that flag (`crates/verbatim-input/src/keys.rs` line 71), and `keybd_input` sets `KEYEVENTF_EXTENDEDKEY` from it (`crates/verbatim-control/src/send_keys.rs` lines 117 to 124). Caps Lock is a modifier too and `capslock` is an accepted modifier name (lines 22 to 31); the hook swallows it unless the modifier is shared, so it does not toggle.
+- Numpad keys: the numpad digit names are the non-extended twins of the navigation keys (`keys.rs` lines 29 to 36 and 54 to 75), which is how the hook names them; the operator keys are their own virtual keys.
+- Lock keys: `SendGesture` already refuses a lock key's gesture and points to `SendKeys` (`crates/verbatim-app/src/main.rs` lines 2353 to 2360), which `lock_key_announcements` uses.
+- A modal: the Verbatim menu's scenarios already send real keys into the open menu (`open_speech_settings`, `crates/verbatim-e2e/src/scenarios/mod.rs` line 167), so the hook sees keys while it is up.
+
+What the hook does with injected keys today, and why a gesture pressed as keys does not clash with it:
+
+- The decision machine treats an injected key as a physical one (`injected_events_are_treated_like_physical`, `state.rs` line 1080).
+- `decide` (`crates/verbatim-input-windows/src/hook.rs`) reads three marks from `dwExtraInfo`. A key Verbatim passes on after holding it, `PASSED_ON_TAG` in the high 32 bits (`lib.rs` lines 81 to 105), goes straight to the application, and nothing is decided or reported for it. A key Verbatim injects for itself, `OWN_INPUT_TAG` (line 79), leaves speech alone, is never held and reports no typing. A harness keystroke carries the tag `0x5645` in its top 16 bits and its number below (`crates/verbatim-input/src/harness.rs`), and after the stroke's last event the hook reports `Handled(number)` behind everything the stroke caused. The agent's keys carry only the harness tag, whose top 16 bits differ from the passed-on tag's `0x5642`, so a gesture pressed through the agent is decided, numbered and cancels speech as a person's key does.
+
+What changes for a scenario:
+
+- A gesture becomes a numbered input: `send_gesture` sets `last_input`, so `expect_nothing_more` and the other waits are ordered by the gesture's number, which they are not today.
+- The same gesture pressed twice within 500 ms (`DEFAULT_MULTI_PRESS_TIMEOUT`, `state.rs` line 35) counts as a second press, as for a person and for NVDA in compare mode; today an injected gesture is always a first press (`inject` in `hook.rs`). Core dispatches on the count for the report-current commands, the time and the tray list (`crates/verbatim-core/src/reduce.rs` lines 1846 to 1916 and 2067 to 2102, `crates/verbatim-core/src/review_text.rs` lines 276 to 296). The builder checks each step that sends one of these twice in a row.
+- Scenarios exercise the user's own path for a gesture, the modifier's handling and the hook's decision included, which today's injection skips.
+
+### The idle barrier without the hook
+
+`AwaitIdle` already names the number of the last harness input (`after_input`, `crates/verbatim-control/src/protocol.rs` lines 100 to 118), and the reducer's barrier holds a waiter until that number has been handled (`IdleBarrier::start`, `crates/verbatim-app/src/idle.rs` line 182, against `handled_input`, `main.rs` line 1472). `Handled(n)` is posted by the hook to the reducer's port after every report its stroke caused, and the port is first in, first out (`crates/verbatim-process/src/port_queue.rs` lines 150 to 174). Once gestures are numbered keys, every input a scenario sends through the agent is numbered, so the waiter needs no place in the hook's line:
+
+- `IdleLine::wait` (`crates/verbatim-app/src/harness.rs` lines 168 to 194) posts `ShellCommand::AwaitIdle` carrying the waiter to the reducer's port through `Commands` (`main.rs` line 932), as `DumpFocus` does; the token, the token map and `KeyReport::Barrier` go.
+- A waiter that reaches the reducer before `Handled(n)` waits for it; one with no `after_input` follows no harness input, so there is nothing to order it behind.
+- A waiter behind a lock key's announcement is still held by the marks behind the pending announcements (`main.rs` lines 1446 to 1451), unchanged.
+
+The marked barrier key was checked too, and works less well:
+
+- Ordering: `SendInput` inserts its events serially into the input stream, and they "are not interspersed with other keyboard or mouse input events inserted either by the user (with the keyboard or mouse) or by calls to keybd_event, mouse_event, or other calls to SendInput" (Microsoft, SendInput); the low-level hook is called "every time a new keyboard input event is about to be posted into a thread input queue" (Microsoft, LowLevelKeyboardProc). So a barrier key from Verbatim's process would follow every key inserted before it.
+- Swallowing: a hook procedure "may return a nonzero value to prevent the system from passing the message to the rest of the hook chain or the target window procedure" (LowLevelKeyboardProc), as the hook already does for held keys. Microsoft describes `KBDLLHOOKSTRUCT.dwExtraInfo` only as "Additional information associated with the message"; that it carries `KEYBDINPUT.dwExtraInfo` is shown by the harness numbers and the passed-on tag, which the hook already reads back.
+- Where it fails: `SendInput` "fails when it is blocked by UIPI", and "neither GetLastError nor the return value will indicate the failure was caused by UIPI blocking" (SendInput), so with an elevated window in front a barrier key could be lost with no error and its waiter would time out. A hook that took longer than `LowLevelHooksTimeout` "is silently removed" (LowLevelKeyboardProc) and loses it the same way. A barrier key would also need a fourth `dwExtraInfo` tag and a virtual key no application uses, kept out of the decision machine and out of the holding and deferring of keys.
+- The number the harness's keys already carry gives the same order with none of these, since a waiter is answered by the reducer, not by a key.
+
+One input stays unordered, as today: `send_keys_from_verbatim` (`scenario.rs` lines 976 to 1000), used only by `measure_keys_text_box` for Pause keys that say nothing, injects through Verbatim's own control plane with no number. Microsoft does not document whether the hook has been called for those keys when `SendInput` returns, so today's barrier through the inbox does not order them either.
+
+### Who else hands work to the hook thread
+
+Only these two. `Injector` and `Injected` are used by the control plane's `send_gesture` and `await_idle` handlers (`main.rs` lines 2351 to 2381) and by `IdleLine::wait` (`harness.rs` line 180), and nowhere else in `crates/`; the GUI and the tray post to the reducer. The later inputs this document's terms list:
+
+- M5's module commands are bound gestures, rebindable at run time (the M5 work plan, `docs/design/m5-extensions-work.md`), so they reach the hook as keys.
+- M12's remote input is real keys: NVDA's remote client presses a remote key with `SendInput` (`nvda/source/_remoteClient/input.py` lines 130 to 149), so it would pass the hook like the agent's keys.
+- M15's braille display gestures are not keys. NVDA executes them through `executeGesture`, which queues the speech cancel behind what is already queued (`nvda/source/inputCore.py` lines 584 to 604). With no inbox, M15's design decides how such a gesture is numbered against the keys; see the open questions.
+
+### Alternatives compared
+
+- Numbering in Core. The hook cancels speech when a key is pressed, before Core sees it, so its cancel needs a number then; if Core numbered gestures while the hook numbered keys there would again be two minters, design review 3's finding 5 (the control plane takes n, the hook takes n+1 and cancels through it, and n's speech is fenced). Avoiding that would mean moving every cancel into Core's order, a change to what is heard on every key, so it is not simpler.
+- A standard channel and `MsgWaitForMultipleObjectsEx` on the hook thread. This replaces the hand-written list with a library channel and an event, but keeps a cross-thread hand-off, the refused-after-exit case and a second kind of wait on the hook thread, and needs a `PeekMessageW` loop to dispatch the hook's sent messages, which this design rules out ("The injector": the thread runs only its `GetMessageW` loop). It moves the concurrency rather than removing it.
+- Keys only, with the waiter in the reducer, removes the hand-off and keeps the single minter: the hook numbers every key it decides, and nothing else numbers anything.
+
+### Recommendation
+
+Press gestures as real keys and post idle waiters straight to the reducer's port:
+
+- `crates/verbatim-input-windows`: delete `Inbox`, `Pending`, `Injected`, `Injector`, `InjectTarget`, `WM_INJECTED`, `inject`, `on_message`, `KeyReport::Barrier`, the inbox's close at exit, and their tests; `pump_messages` keeps its `GetMessageW` loop for the hook's calls and `WM_QUIT`. The hook thread's cross-thread work is then its posts to the reducer's and the speech queue's ports and its loads of `KeyHolding` and `ForegroundView`.
+- `crates/verbatim-app`: `IdleLine::wait` and `ShellCommand::AwaitIdle` carry the waiter; the `send_gesture` handler and `ControlHandlersConfig::injector` go, and `key_reports.rs` loses its `Barrier` arm.
+- `crates/verbatim-control`: `Request::SendGesture` and its handler go, with `PROTOCOL_VERSION` raised to 3; `verbatim-inspect`'s `send-gesture` command presses the keys through `SendKeys` with the modifier as Insert, or goes (the first open question).
+- `crates/verbatim-e2e`: `Scenario::send_gesture` presses keys through the agent in every mode, mapping the modifier as compare mode does; the 44 call sites are unchanged.
+
+Costs:
+
+- Scenarios: steps that send one report-current, time or tray-list gesture twice within 500 ms become double presses; the builder finds and fixes each. The related scenarios run three times each: those listed under "Scenarios" above, and `review_cursor`, `review_words`, `notepad_say_all`, `typed_words` and the terminal review scenarios, which send gestures.
+- Latency and wake-ups on the user's path: none; a person's keys take the same path as today. In tests a gesture becomes two to four key events, each a call on the hook thread, where today it is one wake from the inbox; the gesture workloads in `measure_keys_text_box` and the say-all workload are measured again and recorded in `docs/performance.md`. An idle waiter costs one wake of the reducer, as today, and no longer wakes the hook thread.
+- Code: the inbox and the injector in `lib.rs`, the inbox's tests in `hook.rs`, and the control plane's gesture route are removed; nothing is added but the waiter carried in `ShellCommand::AwaitIdle`.
+- Documents: this design's "The injector", its injected-gesture edge cases, the sequences "An idle waiter overtaking an injected gesture" and "An injection reported failed but run later", the "user input" and "injector" terms and the posted-message limitation; the crate guides `docs/crates/verbatim-input-windows.md`, `docs/crates/verbatim-app.md`, `docs/crates/verbatim-control.md` and `docs/crates/verbatim-e2e.md`; and `docs/tooling/inspect.md`, `docs/tooling/troubleshooting.md` and `docs/walkthroughs.md`, which name `SendGesture`.
+
+### Open questions for Dickson
+
+- Should `verbatim-inspect` keep a `send-gesture` command that presses the gesture's keys through Verbatim's `SendKeys`, or lose it along with the control plane's `SendGesture`?
+- M15's braille gestures are user inputs that are not keys. Is it right to leave how they are numbered against the keys to M15's design, rather than keeping an inbox for them now?
+- Scenarios' gestures will count repeated presses within 500 ms, as a person's do. Is that wanted, or should such steps be spaced so each stays a first press?
