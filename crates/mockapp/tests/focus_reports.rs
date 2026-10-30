@@ -3638,20 +3638,32 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
 /// title, above it; once the call returns, the worker adopts the published
 /// focus and says nothing more. The button's own `accParent` is not the
 /// one made late, since its object's acquisition calls it before NVDA's
-/// checks, which the bound does not cover.
+/// checks, which the bound does not cover. Adopted, the focus counts as
+/// reported: its focus event is the newest of a group planned with a focus
+/// on the "Enable feature" check box, which also has the focused state,
+/// and the check box's older event is not tried after it.
 fn an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound() {
     let title = common::unique_title("mockapp-msaa-bound-stuck");
     let mut app = common::spawn("tree.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
     app.send("set-focus btn_ok");
+    app.send("set-states chk_enable focusable checked focused");
     app.send(&format!("slow-acc-parent group1 {STUCK_PARENT_MS}"));
-    // The OK button, node 2 of the tree, at its object id.
+    // The check box, node 4, then the OK button, node 2, at their object
+    // ids, planned as one group.
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: 5,
+        id_child: 0,
+    });
     outpost.deliver(DeliveredFact::MsaaFocus {
         hwnd: hwnd.0 as isize,
         id_object: 3,
         id_child: 0,
     });
+    outpost.release_worker();
     let published = focus_changed(outpost.next());
     let published_at = common::now_us();
     app.stamped_line("slow-acc-parent started");
@@ -3703,7 +3715,7 @@ fn chain_of(event: &NormalizedEvent) -> Vec<(Role, Option<String>)> {
 /// bound, 500 ms from the read's start, is met only by the watchdog: the
 /// focus is published before the step returns, with its window, a plain
 /// window named by its title, above it, and nothing more is said once the
-/// step returns.
+/// step returns. Adopted, the focus is followed: its rename is reported.
 fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
     let title = common::unique_title("mockapp-gap-bound-stuck");
     let mut app = common::spawn("tree.json", "uia", &title);
@@ -3736,6 +3748,171 @@ fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
         "the focus as read before its stuck step, below its window"
     );
     outpost.settled();
+    let NormalizedEvent::FocusChanged { node, .. } = &published else {
+        unreachable!("a focus change");
+    };
+    assert_followed(&mut app, &outpost, "item1", node);
+    drop(outpost);
+    app.quit();
+}
+
+/// A focus published at its walk's bound passes to the worker that
+/// replaces its own, when its own is abandoned before it adopts it: the OK
+/// button of mockapp's MSAA tree, as in
+/// [`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound`], has its
+/// walk's step to its parent answer 12 seconds late, past the worker's
+/// 10-second deadline. The watchdog publishes the focus at the bound, then
+/// abandons the worker at the deadline, and the worker that replaces it
+/// adopts the focus before anything else. Once the step has returned, the
+/// button's rename, raised before ten renames of other objects of the
+/// same thread and planned in one batch with them, is kept beyond NVDA's
+/// limit of ten events a thread, as the focused object's events are
+/// (`EVENTS_PER_THREAD`), and reported.
+fn a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own() {
+    let title = common::unique_title("mockapp-msaa-bound-abandoned");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus btn_ok");
+    app.send("slow-acc-parent group1 12000");
+    // The OK button, node 2 of the tree, at its object id.
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: 3,
+        id_child: 0,
+    });
+    let published = focus_changed(outpost.next());
+    app.stamped_line("slow-acc-parent started");
+    // Answered at once from the call after this one, which waits for it.
+    app.write("slow-acc-parent group1 0");
+    app.stamped_line("slow-acc-parent ended");
+    app.expect_line("applied", || "the late call's end".to_owned());
+    assert_eq!(
+        chain_of(&published),
+        [
+            (Role::Window, Some(title.clone())),
+            (Role::Button, Some("OK".to_owned()))
+        ],
+        "the focus as read before its stuck step, below its window"
+    );
+    outpost.settled();
+    let NormalizedEvent::FocusChanged { node, .. } = &published else {
+        unreachable!("a focus change");
+    };
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    app.send("set-name btn_ok Renamed");
+    let others = [
+        "group1",
+        "btn_cancel",
+        "chk_enable",
+        "chk_mixed",
+        "radio1",
+        "toggle_on",
+        "toggle_off",
+        "list1",
+        "item1",
+        "item2",
+    ];
+    for other in others {
+        app.send(&format!("set-name {other} Other"));
+    }
+    outpost.heard(&[Heard::Msaa(WinEventKind::NameChange); 11]);
+    outpost.release_worker();
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::PropertyChanged {
+                    node_id,
+                    change: PropertyChange::Name(name),
+                    child_count: None,
+                },
+            ..
+        } => assert_eq!((node_id, name.as_deref()), (node.id, Some("Renamed"))),
+        other => panic!("the outpost said {other:?}, not the focus's new name"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A terminal published at its walk's bound and adopted once the walk
+/// returns is followed as a reported terminal is: the gap's read of the
+/// terminal of mockapp's terminal reading fixture, as in
+/// [`a_gap_read_whose_walk_is_stuck_is_published_at_its_bound`], is
+/// published with no text, and once its stuck step returns the outpost
+/// reads the terminal's caret and sends its first read, which speaks
+/// nothing, so its later output is spoken.
+fn an_adopted_terminal_gets_its_first_read() {
+    let title = common::unique_title("mockapp-gap-bound-terminal");
+    let mut app = common::spawn("terminal_reading.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus term");
+    outpost.read_focus_as(client.focused().live().element());
+    app.send(&format!("slow-parent term {STUCK_PARENT_MS} 1"));
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    let published = focus_changed(outpost.next());
+    app.stamped_line("slow-parent started");
+    // Answered at once from the step after this one, which waits for it.
+    app.write("slow-parent term 0");
+    app.stamped_line("slow-parent ended");
+    app.expect_line("applied", || "the late step's end".to_owned());
+    let NormalizedEvent::FocusChanged { node, text, .. } = &published else {
+        unreachable!("a focus change");
+    };
+    assert_eq!(
+        (chain_of(&published), text),
+        (
+            vec![
+                (Role::Window, Some(title.clone())),
+                (Role::Terminal, Some("Terminal".to_owned()))
+            ],
+            &None
+        ),
+        "the terminal as read before its stuck step, below its window"
+    );
+    outpost.first_terminal_read(node.id);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A focus handled already past its walk's bound is reported by its worker
+/// alone, from the walk it cuts at once, with everything read after the
+/// walk: the "Options" list of mockapp's MSAA counts fixture, its focus
+/// observed 10 seconds before it is handed over, is reported with plain
+/// windows above it, its own window named by its title, and with its
+/// selected item, "One", which the watchdog's publication at the bound
+/// would not have.
+fn a_focus_handled_past_its_bound_is_reported_by_its_worker() {
+    let title = common::unique_title("mockapp-msaa-past-bound");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    app.send("set-focus list");
+    // The list, node 4, at its object id.
+    outpost.deliver_stamped(
+        DeliveredFact::MsaaFocus {
+            hwnd: hwnd.0 as isize,
+            id_object: 5,
+            id_child: 0,
+        },
+        outpost.observed_now() - 10_000_000,
+    );
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        (
+            reported.chain(),
+            reported
+                .selected_child
+                .as_ref()
+                .and_then(|child| child.name.as_deref())
+        ),
+        (vec![Some(title.as_str()), Some("Options")], Some("One"))
+    );
     drop(outpost);
     app.quit();
 }
@@ -4095,6 +4272,18 @@ fn main() {
         (
             "a_gap_read_whose_walk_is_stuck_is_published_at_its_bound",
             a_gap_read_whose_walk_is_stuck_is_published_at_its_bound,
+        ),
+        (
+            "a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own",
+            a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own,
+        ),
+        (
+            "an_adopted_terminal_gets_its_first_read",
+            an_adopted_terminal_gets_its_first_read,
+        ),
+        (
+            "a_focus_handled_past_its_bound_is_reported_by_its_worker",
+            a_focus_handled_past_its_bound_is_reported_by_its_worker,
         ),
         (
             "the_continuation_of_a_listeners_chain_ends_at_the_reads_bound",

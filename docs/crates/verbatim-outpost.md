@@ -738,7 +738,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   `is_another_thread_of_its_application`). It answers the query
   `Abandoned` and starts a replacement worker. A returning abandoned worker
   publishes nothing, since publishing checks under the watchdog's lock that
-  it is in charge; nothing is sent while that lock is held.
+  it is in charge; nothing is sent while that lock is held but a focus
+  published at its walk's bound, below.
 - The bound met when a call is stuck (`outpost::bound`;
   `docs/design/focus-pipeline-rework.md`, "A window's name, and the one
   fallback"). An MSAA focus that has passed NVDA's checks, its focused-state
@@ -755,22 +756,35 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   walk each ancestor (`verbatim_ia2::acquire::AncestorLimits::progress`)
   and its chain once it stops and once it is complete, the classic UIA
   walk each ancestor it keeps (`verbatim_uia_rops::FocusQuery::progress`),
-  a remote program nothing until it returns. The alarm is set to the bound
-  when it comes before the entry's next check. Should the walk still be
-  under way at the bound, the watchdog publishes the focus from that
-  progress (`publish_at_bound`), its chain as `bound::chain_at_bound` makes
-  it: the chain once the walk ended, else the ancestors read and plain
-  windows from the window the walk had reached, included, by local calls on
-  its thread, with no selected child, dialog text or text of its own. It
-  records the report for Core's judgement and claims the walk under the
-  watch lock, only while that walk is armed by the worker in charge, and
-  sends after the lock is let go. The worker is not abandoned for this:
-  when its walk returns it disarms it (`Watch::disarm`), which answers the
-  published focus, and adopts that focus as if it had reported it
-  (`Worker::adopt_published`): it follows it, its caret, its text and the
-  focus-following subscription, and sends nothing else for it. A focus
-  whose object is not yet acquired, a focus-now answer and a foreground
-  report are left to the deadline.
+  a remote program nothing until it returns. A walk already past its
+  bound when it begins is not armed: it cuts itself at its first check,
+  and its worker reports it alone. The alarm is set to the bound when it
+  comes before the entry's next check. Should the walk still be under way
+  at the bound, the watchdog publishes the focus from that progress
+  (`publish_at_bound`), its chain as `bound::chain_at_bound` makes it: the
+  chain once the walk ended, else the ancestors read and plain windows from
+  the window the walk had reached, included, by local calls, with no
+  selected child, dialog text or text of its own. A walk that returns
+  still armed past its bound, before the watchdog has published it, is
+  published by its worker through the same `publish_at_bound` from the
+  same progress (`Worker::walk_returned`), so the report does not depend on
+  which thread comes first. The publication records the report for Core's
+  judgement, claims the walk and sends the report, all under the watch
+  lock, only while that walk is armed by the worker in charge; sending
+  never waits for the pipe, and nothing holding the outbound queue's lock
+  takes the watch lock, so this cannot deadlock. The worker is not
+  abandoned for this: when its walk returns it learns of the publication
+  under the same lock (`Watch::walk_returned`), so nothing it sends
+  afterwards reaches Core first, and adopts the focus as if it had
+  reported it (`Worker::adopt_published`): it follows it, its caret, its
+  text and the focus-following subscription, and sends nothing else for
+  it, but for a terminal, whose caret is read and whose first read is
+  sent, as for a reported terminal. A worker abandoned before it adopts
+  the focus hands it to the worker that replaces it
+  (`WatchState::abandon`, `Watch::take_handed_over`), which adopts it as
+  its first act, before its next entry, under an entry's deadline
+  (`adopt_handed_over`). A focus whose object is not yet acquired, a
+  focus-now answer and a foreground report are left to the deadline.
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
   `TRANSACTION_TIMEOUT` (5 s); the listener's read's bound bounds the

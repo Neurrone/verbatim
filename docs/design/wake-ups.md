@@ -48,7 +48,12 @@ The items keep their numbers, since code and the crate guides cite them.
    bound, an MSAA focus's or the gap's read's, sets the timer to the bound
    when that comes sooner and sets it back when the walk returns, two more
    timer calls a focus and no wake, so the watchdog wakes for it only when
-   the walk is still under way at its bound. The listener's reading threads' watchdog
+   the walk is still under way at its bound. The walk's progress costs the
+   watch lock, uncontended, as the walk is armed, for each ancestor and
+   chain it tells, and as it returns, and a copy of the focus's and each
+   ancestor's `NodeSnapshot` and of an MSAA walk's chain
+   (`docs/performance.md`, "A focus whose walk is stuck at its bound, the
+   outpost"). The listener's reading threads' watchdog
    sleeps on the same kind of alarm, set as each read starts and as it
    reaches its bound, and cancelled once no read is under way, so it wakes
    only for a read still under way at its bound, grace or deadline.

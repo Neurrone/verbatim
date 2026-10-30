@@ -597,9 +597,13 @@ bound, is published then from what it has read, the windows not reached
 as plain windows, with no selected child, dialog text or text of its own,
 and its late result is discarded, a deliberate difference (Dickson,
 2026-10-29): NVDA waits for every late parent call, and past the hung
-judgement says nothing for the focus. The outpost's worker, once its call
-returns, follows the focus published, as if it had reported it (the
-outpost's half: Fable, 2026-10-30, pending Dickson's acceptance). A focus
+judgement says nothing for the focus. A walk already past its bound when
+it begins cuts itself at once and is reported by its reader alone, with
+what it reads after the walk. The outpost's worker, once its call
+returns, follows the focus published, as if it had reported it, and a
+worker abandoned before that hands the focus to the worker that replaces
+it, which follows it before anything else (the outpost's half: Fable,
+2026-10-30, pending Dickson's acceptance). A focus
 whose object is not yet acquired at the bound, and a focus-now answer or
 a foreground report, are left to the watchdog's deadline. A step that reaches a ghost's or a hung application's window
 other than the focus's nearest one ends every UIA walk there, as NVDA

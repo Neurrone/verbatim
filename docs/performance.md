@@ -506,6 +506,43 @@ walk's first step to its parent answers 3 seconds late (`slow-parent`;
   UIA's transaction timeout ends the call, the application's later events
   waiting for it until `READ_DEADLINE` abandons it.
 
+### A focus whose walk is stuck at its bound, the outpost
+
+An MSAA focus past NVDA's checks, and the gap's read once its focused
+element is read, share their walk's progress with the outpost's watchdog
+(`docs/crates/verbatim-outpost.md`, the worker and its watchdog). Measured
+by `focus_reports.rs`'s
+`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound` and
+`a_gap_read_whose_walk_is_stuck_is_published_at_its_bound`, whose step to
+a parent answers 3 seconds late.
+
+- Per focus, on the steady path: the watch lock, uncontended, taken when
+  the walk is armed (`Watch::arm`), once for each ancestor the walk tells
+  (`Watch::advance`), for an MSAA walk once more for its chain as it stops
+  below the top and once as it is complete, and once when the walk returns
+  (`Watch::walk_returned`); two timer calls, which wake no thread. No walk
+  is armed for a focus already past its bound, which costs none of this.
+- Copies per focus: the focus's `NodeSnapshot` into the progress
+  (`bound::BoundFocus`), each ancestor's `NodeSnapshot` as it is told,
+  for an MSAA walk that stops below the top its chain so far reversed, and
+  for an MSAA walk its whole chain once it is complete. None is avoided:
+  the watchdog's thread must own what it may publish while the worker
+  goes on with its own, and handing the classic UIA walk's ancestors over
+  rather than copying them needs each boxed, an allocation in place of the
+  copy.
+- At the bound, with a call still under way: the watchdog wakes once,
+  copies the progress, completes the chain by local calls, about four per
+  plain window, and sends the report under the watch lock; a walk that
+  returns past its bound before the watchdog has published it is published
+  the same way by its worker, with no wake-up. When the walk returns, the
+  worker adopts the focus, and for a terminal reads its caret and its first
+  read, which a reported terminal reads too. No thread is abandoned or
+  started, and no second message is sent.
+- Bound: an MSAA call has no bound of its own, so a walk stuck in one
+  stays there until the entry's deadline abandons its worker; the focus
+  then passes to the worker that replaces it, which adopts it before its
+  next entry.
+
 ### A focus change into a list, UIA
 
 The focus lands on the list, and its selected item is read with it.

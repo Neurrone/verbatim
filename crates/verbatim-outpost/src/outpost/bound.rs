@@ -1,13 +1,15 @@
 //! A focus walk's progress, which the worker shares with the watchdog so
 //! that the watchdog publishes the focus at the walk's bound should one of
-//! the walk's calls still be under way then
+//! the walk's calls still be under way then, or the worker itself should
+//! the walk return past its bound unpublished
 //! (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
 //! fallback"), as the listener's watchdog publishes a stuck UIA focus read
 //! (`crate::focus_read`, `ReadProgress`).
 //!
 //! The worker arms it once a focus has passed every check NVDA makes before
 //! it queues a focus and has been read, for an MSAA focus and the gap's
-//! read: the focus, its event, and the bound. The walk then tells it each
+//! read, unless the walk is already past its bound: the focus, its event,
+//! and the bound. The walk then tells it each
 //! ancestor it reads and the window from which plain windows would
 //! complete the chain ([`super::read::WalkStep`]). Plain data, kept under
 //! the watch lock, so the watchdog's thread can make the chain from it with
@@ -33,6 +35,8 @@ pub(super) struct BoundFocus {
     pub(super) observed_at_us: u64,
     /// Its entry's timing so far.
     pub(super) timing: EventTiming,
+    /// The batch its entry belongs to.
+    pub(super) batch: u64,
     /// The backend it was read through.
     pub(super) backend: Backend,
     /// The window it is reported in.

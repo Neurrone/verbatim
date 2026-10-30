@@ -113,13 +113,17 @@ struct WatchState {
     walk: Option<FocusProgress>,
     /// How many walks have been armed, which numbers each.
     arms: u64,
-    /// The focus the watchdog published at its bound for the entry in
-    /// hand, which the worker adopts when its walk returns.
+    /// The focus published at its walk's bound for the entry in hand,
+    /// which the worker adopts when its walk returns.
     published: Option<Published>,
+    /// The focus published at its walk's bound for the entry of a worker
+    /// abandoned before it adopted it, which the worker that replaced it
+    /// adopts before its first entry ([`Watch::take_handed_over`]).
+    handed_over: Option<Published>,
 }
 
-/// A focus the watchdog published at its walk's bound, as the worker
-/// follows it ([`Worker::adopt_published`]).
+/// A focus published at its walk's bound, as the worker follows it
+/// ([`Worker::adopt_published`]).
 struct Published {
     node: NodeId,
     role: Role,
@@ -127,16 +131,24 @@ struct Published {
     window: Option<isize>,
     /// Its ancestors, outermost first, and itself.
     chain: Vec<NodeSnapshot>,
+    /// The trace of the event it came from, and the observation it is
+    /// stamped with.
+    trace: TraceId,
+    observed_at_us: u64,
+    /// The batch its entry belongs to.
+    batch: u64,
 }
 
 impl WatchState {
     /// Abandons the worker in charge: the next generation takes over, and
     /// the query it was running, if any, is returned for an "abandoned"
-    /// reply.
+    /// reply. A focus published at its walk's bound that the worker has not
+    /// adopted yet is handed over to the next generation.
     fn abandon(&mut self) -> Option<(u64, TraceId)> {
         self.generation += 1;
         self.deadline = None;
         self.started = None;
+        self.handed_over = self.published.take();
         self.end_walk();
         self.running.take()
     }
@@ -242,21 +254,43 @@ impl Watch {
         }
     }
 
-    /// The walk `generation` armed has returned: the watchdog no longer
-    /// publishes it, and its alarm goes back to the entry's next check.
-    /// Answers the focus the watchdog published at the walk's bound, if it
-    /// did, which the worker adopts and reports no other way.
-    fn disarm(&self, generation: u64) -> Option<Published> {
+    /// The walk `generation` armed has returned at `now`. A walk still
+    /// armed past its bound is answered as `Err`, a copy of its progress,
+    /// and stays armed, for its worker to publish it from that progress as
+    /// the watchdog would ([`Worker::walk_returned`]). Otherwise the walk is
+    /// disarmed: the watchdog no longer publishes it, and its alarm goes
+    /// back to the entry's next check. Answers the focus published at the
+    /// walk's bound, if it was, which the worker adopts and reports no
+    /// other way.
+    fn walk_returned(
+        &self,
+        generation: u64,
+        now: Instant,
+    ) -> Result<Option<Published>, Box<FocusProgress>> {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return Ok(None);
+        }
+        if let Some(walk) = state.walk.as_ref().filter(|walk| now >= walk.bound_at) {
+            return Err(Box::new(walk.clone()));
+        }
+        if state.walk.take().is_some()
+            && let Some(wake) = state.next_wake(now)
+        {
+            self.alarm.set(wake);
+        }
+        Ok(state.published.take())
+    }
+
+    /// The focus published at its walk's bound for the entry of the worker
+    /// `generation` replaced, if that worker was abandoned before it
+    /// adopted it.
+    fn take_handed_over(&self, generation: u64) -> Option<Published> {
         let mut state = self.lock();
         if state.generation != generation {
             return None;
         }
-        if state.walk.take().is_some()
-            && let Some(wake) = state.next_wake(Instant::now())
-        {
-            self.alarm.set(wake);
-        }
-        state.published.take()
+        state.handed_over.take()
     }
 
     /// Claims the right to publish an entry's result for `generation`, if
@@ -703,7 +737,9 @@ fn watchdog(context: &Arc<Context>) {
                 .cloned();
             if let Some(walk) = due {
                 drop(state);
-                publish_at_bound(context, &walk);
+                publish_at_bound(context, &walk, |message, touched| {
+                    context.outbound.publish(message, touched);
+                });
             } else if let Some(wake) = state.next_wake(now) {
                 context.watch.alarm.set(wake);
             }
@@ -756,6 +792,11 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
     let mut client = Client::default();
     if warm {
         let _ = client.uia();
+    }
+    if let Some(published) = context.watch.take_handed_over(generation)
+        && adopt_handed_over(context, &mut client, generation, published).is_err()
+    {
+        return;
     }
     while let Some((planned, batch)) = context.intake.next() {
         let mut run = |entry: Entry, menu: bool| {
@@ -895,6 +936,45 @@ fn run_entry(
         }
     }
     Ok(())
+}
+
+/// Adopts `published`, the focus published at its walk's bound for the
+/// entry of the worker this one, `generation`, replaced, which was
+/// abandoned before it adopted it ([`WatchState::abandon`]): the first act
+/// of the worker that replaces it, before its next entry, under the
+/// deadline of an entry concerning the focus's window, so the outpost
+/// follows the focus Core was sent ([`Worker::adopt_published`]). `Err`
+/// when this worker was abandoned meanwhile and must exit.
+fn adopt_handed_over(
+    context: &Context,
+    client: &mut Client,
+    generation: u64,
+    published: Published,
+) -> Result<(), ()> {
+    context
+        .watch
+        .start(HANDLING_DEADLINE, None, published.window.unwrap_or(0));
+    context
+        .arbitrator()
+        .begin_entry(published.observed_at_us, generation);
+    let handled = catch_unwind(AssertUnwindSafe(|| {
+        let mut worker = Worker {
+            context,
+            client,
+            generation,
+            batch: published.batch,
+            timing: EventTiming::default(),
+            msaa_event: None,
+        };
+        worker.adopt_published(published);
+    }));
+    context.arbitrator().end_entry();
+    // The adoption sends nothing of its own but a terminal's first read.
+    let _ = take_calls();
+    if handled.is_err() {
+        tracing::error!("the worker failed adopting the focus handed over to it");
+    }
+    context.watch.finish(generation).map(|_| ())
 }
 
 /// The observation `entry`'s verdicts are judged at: its event's, for an
@@ -1445,13 +1525,14 @@ impl Worker<'_> {
         let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
         let uia_focus_before = first_uia_focus_us != 0 && first_uia_focus_us < stamp_us;
         let sender_gone = !window_exists(window);
-        // Its walk is published by the watchdog at its bound, measured from
-        // the read's start, should a call of it still be under way then.
-        let timing = self.timing;
+        // Its walk is published at its bound, measured from the read's
+        // start, should a call of it still be under way then.
+        let (timing, batch) = (self.timing, self.batch);
         let watched = walk_watcher(context, self.generation, |node, window| BoundFocus {
             trace,
             observed_at_us: stamp_us,
             timing,
+            batch,
             backend: node.backend,
             window: Some(window),
             node: node.clone(),
@@ -1463,8 +1544,8 @@ impl Worker<'_> {
             self.client,
             (context.observed_now(), Some(&watched)),
         );
-        if let Some(published) = context.watch.disarm(self.generation) {
-            self.adopt_published(published, (trace, stamp_us));
+        if let Some(published) = self.walk_returned() {
+            self.adopt_published(published);
             return;
         }
         let Ok((hwnd, control)) = found else {
@@ -2273,28 +2354,63 @@ impl Worker<'_> {
         )
     }
 
-    /// Follows `published`, the focus the watchdog published at its walk's
-    /// bound while the walk was still under way ([`publish_at_bound`]),
-    /// from the entry of the event traced `trace`, observed at
-    /// `observed_at_us`, once the walk has returned: the outpost adopts it
-    /// as if it had reported it itself, its caret, text and the
+    /// Follows `published`, the focus published at its walk's bound while
+    /// the walk was still under way ([`publish_at_bound`]), once the walk
+    /// has returned, or, for a worker abandoned before it adopted it, by the
+    /// worker that replaced it ([`adopt_handed_over`]): the outpost adopts
+    /// it as if it had reported it itself, its caret, text and the
     /// focus-following subscription following it, and sends nothing else
-    /// for it, its own late result discarded.
-    fn adopt_published(&mut self, published: Published, (trace, observed_at_us): (TraceId, u64)) {
+    /// for it, its own late result discarded, but for a terminal, which
+    /// has its caret read and its first read sent, as a reported terminal
+    /// does ([`follow_text`](Self::follow_text)); the publication carried
+    /// no text. The caret of any other focus is not read, since nothing
+    /// would send it.
+    fn adopt_published(&mut self, published: Published) {
         let Published {
             node,
             role,
             object,
             window,
             chain,
+            trace,
+            observed_at_us,
+            batch,
         } = published;
         tracing::debug!(%trace, "the walk returned after the focus was published at its bound; its result is discarded");
+        let text = if role == Role::Terminal {
+            self.read_focus_text(node, role)
+        } else {
+            None
+        };
         self.adopt_focus((node, role), object, window, Some(chain));
         let mut tracking = self.context.tracking();
-        tracking.batch = Some(self.batch);
+        tracking.batch = Some(batch);
         tracking.reported += 1;
         drop(tracking);
-        self.follow_text((node, role), None, (trace, observed_at_us));
+        self.follow_text((node, role), text.as_ref(), (trace, observed_at_us));
+    }
+
+    /// The focus walk this worker armed has returned: answers the focus
+    /// published at the walk's bound, if it was, which the worker adopts
+    /// ([`adopt_published`](Self::adopt_published)). A walk that returns
+    /// still armed past its bound, before the watchdog has published it,
+    /// is published here by the same function from the same progress
+    /// ([`publish_at_bound`]), so whichever thread publishes a walk that
+    /// ends at its bound, the report is the same.
+    fn walk_returned(&self) -> Option<Published> {
+        let watch = &self.context.watch;
+        match watch.walk_returned(self.generation, Instant::now()) {
+            Ok(published) => published,
+            Err(due) => {
+                publish_at_bound(self.context, &due, |message, touched| {
+                    self.context.outbound.publish(message, touched);
+                });
+                // Published by this worker or, just before, by the watchdog.
+                watch
+                    .walk_returned(self.generation, Instant::now())
+                    .unwrap_or(None)
+            }
+        }
     }
 
     /// Makes `node_id`, of `role`, the focus this outpost follows: the
@@ -3606,15 +3722,16 @@ impl Worker<'_> {
             .as_ref()
             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
         let msaa_event = (event, simple_child);
-        // Its walk, past NVDA's checks, is published by the watchdog at its
-        // bound should a call of it still be under way then; the chain
-        // goes on from the focus's own window until it reads more.
+        // Its walk, past NVDA's checks, is published at its bound should a
+        // call of it still be under way then; the chain goes on from the
+        // focus's own window until it reads more.
         let left = read::walk_left(context, hwnd, observed_at_us);
-        let timing = self.timing;
+        let (timing, batch) = (self.timing, self.batch);
         let watched = walk_watcher(context, self.generation, |node, window| BoundFocus {
             trace,
             observed_at_us,
             timing,
+            batch,
             backend: Backend::Msaa,
             window: Some(window),
             node: node.clone(),
@@ -3637,8 +3754,8 @@ impl Worker<'_> {
             (&node, &previous),
             (left, Some(&watched)),
         );
-        if let Some(published) = context.watch.disarm(self.generation) {
-            self.adopt_published(published, (trace, observed_at_us));
+        if let Some(published) = self.walk_returned() {
+            self.adopt_published(published);
         } else {
             self.msaa_event = Some(msaa_event);
             self.emit_focus(
@@ -4361,18 +4478,27 @@ fn event_message(
     }
 }
 
-/// Publishes the focus of a walk whose call is still under way at its
-/// bound, from `walk`, a copy of its progress the watchdog took
+/// Publishes the focus of a walk still under way at its bound, or
+/// returned past it, from `walk`, a copy of its progress
 /// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
 /// fallback"): the focus as read, its chain as [`bound::chain_at_bound`]
 /// makes it, completed by plain windows, with no selected child, no dialog
-/// text and no text of its own, which the walk had not reached. The report
-/// is recorded for Core's judgement and the walk claimed under the watch
-/// lock, only while that walk is still armed by the worker in charge, so
-/// the worker's late result is not sent: its worker adopts this focus when
-/// its walk returns ([`Watch::disarm`]). The watchdog's thread makes only
-/// local calls here, and sends after the lock is let go.
-fn publish_at_bound(context: &Context, walk: &FocusProgress) {
+/// text and no text of its own. The one function both publishers call,
+/// the watchdog at the bound and the worker whose walk returns past it
+/// ([`Worker::walk_returned`]), so the report does not depend on which
+/// comes first. The report is recorded for Core's judgement, the walk
+/// claimed, and the report sent with `send`, all under the watch lock, only
+/// while that walk is still armed by the worker in charge: the worker
+/// learns of the publication under the same lock
+/// ([`Watch::walk_returned`]), so nothing it sends once it has adopted the
+/// focus can reach Core before the focus. Sending never waits for the pipe,
+/// and nothing that holds the outbound queue's lock takes the watch lock,
+/// so sending under it cannot deadlock. Local calls only.
+fn publish_at_bound(
+    context: &Context,
+    walk: &FocusProgress,
+    send: impl FnOnce(OutpostToSupervisor, Vec<u64>),
+) {
     let focus = &walk.focus;
     let ancestors = bound::chain_at_bound(context, walk);
     let judged = judged_focus(
@@ -4415,28 +4541,31 @@ fn publish_at_bound(context: &Context, walk: &FocusProgress) {
                 object: focus.object.clone(),
                 window: focus.window,
                 chain,
+                trace: focus.trace,
+                observed_at_us: focus.observed_at_us,
+                batch: focus.batch,
             });
             context.held().reported(judged);
             if let Some(wake) = state.next_wake(Instant::now()) {
                 context.watch.alarm.set(wake);
             }
-            take_touched(context)
+            send(message, take_touched(context));
         })
     };
-    let Some(touched) = claimed else {
-        return;
-    };
-    tracing::info!(
-        trace = %focus.trace,
-        name = ?focus.node.name,
-        "a focus walk was still under way at its bound; the focus is published as read so far"
-    );
-    context.outbound.publish(message, touched);
+    if claimed.is_some() {
+        tracing::info!(
+            trace = %focus.trace,
+            name = ?focus.node.name,
+            "a focus walk was under way at its bound; the focus is published as read so far"
+        );
+    }
 }
 
 /// What tells the watchdog a focus walk's progress, for worker
 /// `generation`: arming it with the focus `focus` makes of the node and
 /// window read ([`read::WalkStep::Focus`]), and taking in each step after.
+/// A walk already past its bound when it begins is not armed: it cuts
+/// itself at its first check, and its worker reports it alone.
 fn walk_watcher<'a>(
     context: &'a Context,
     generation: u64,
@@ -4448,12 +4577,16 @@ fn walk_watcher<'a>(
             window,
             from,
             left,
-        } => context.watch.arm(FocusProgress::new(
-            generation,
-            focus(node, window),
-            from,
-            left,
-        )),
+        } => {
+            if !left.is_zero() {
+                context.watch.arm(FocusProgress::new(
+                    generation,
+                    focus(node, window),
+                    from,
+                    left,
+                ));
+            }
+        }
         step => context.watch.advance(generation, &step),
     }
 }
@@ -4934,6 +5067,110 @@ mod tests {
             ),
             deadline,
             "a check never falls after the deadline"
+        );
+    }
+
+    /// A button in no window, as a focus walk's progress holds it.
+    fn bound_focus() -> BoundFocus {
+        BoundFocus {
+            trace: TraceId::mint(),
+            observed_at_us: 1,
+            timing: EventTiming::default(),
+            batch: 0,
+            backend: Backend::Msaa,
+            window: None,
+            node: NodeSnapshot {
+                id: NodeId::new(1),
+                backend: Backend::Msaa,
+                role: Role::Button,
+                name: None,
+                value: None,
+                states: StateSet::new(),
+                details: verbatim_model::NodeDetails::default(),
+            },
+            object: None,
+            msaa_event: None,
+        }
+    }
+
+    /// A walk that returns before its bound is disarmed, and one that
+    /// returns past it, unpublished, stays armed for its worker to publish
+    /// it from its progress, as the watchdog would.
+    #[test]
+    fn a_walk_returned_past_its_bound_is_left_for_its_worker_to_publish() {
+        let watch = Watch::default();
+        let arm = || {
+            watch.start(HANDLING_DEADLINE, None, 0);
+            watch.arm(FocusProgress::new(
+                0,
+                bound_focus(),
+                0,
+                Duration::from_secs(1),
+            ));
+            watch.lock().walk.as_ref().expect("the walk armed").bound_at
+        };
+        let bound = arm();
+        assert!(watch.walk_returned(0, bound).is_err());
+        assert!(watch.lock().walk.is_some(), "still armed");
+        let before = arm()
+            .checked_sub(Duration::from_millis(1))
+            .expect("a time before the bound");
+        assert!(matches!(watch.walk_returned(0, before), Ok(None)));
+        assert!(watch.lock().walk.is_none(), "disarmed");
+    }
+
+    /// A focus published at its walk's bound is sent before its worker can
+    /// take it up, so nothing the worker sends once it has adopted the
+    /// focus, a settle's flush or the next entry's event, reaches Core
+    /// before it: the publication is sent under the watch lock, which the
+    /// worker takes to learn of it. The test holds the publication's send
+    /// and finds the watch lock held meanwhile.
+    #[test]
+    fn a_focus_published_at_its_bound_is_sent_before_its_worker_can_adopt_it() {
+        use std::sync::mpsc;
+
+        use verbatim_process::overlapped::{End, Flow, pipe};
+        use verbatim_process::transport::EVENT_PIPE_BUFFER;
+
+        let (_ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        let outpost = super::super::Outpost::new(theirs, std::process::id());
+        // The outpost's own worker and watchdog are stopped, so nothing but
+        // the test touches the watch: the first worker, in charge, has an
+        // entry whose walk is armed.
+        let context = &Arc::clone(&outpost.context);
+        outpost.shutdown();
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.arm(FocusProgress::new(
+            0,
+            bound_focus(),
+            0,
+            Duration::from_secs(3600),
+        ));
+        let walk = context.watch.lock().walk.clone().expect("the walk armed");
+        let (sending_tx, sending) = mpsc::channel();
+        let (go, go_rx) = mpsc::channel::<()>();
+        let adoptable = std::thread::scope(|scope| {
+            let walk = &walk;
+            scope.spawn(move || {
+                publish_at_bound(context, walk, |message, touched| {
+                    sending_tx.send(()).expect("the test waits for the send");
+                    go_rx.recv().expect("the test lets the send go on");
+                    context.outbound.publish(message, touched);
+                });
+            });
+            sending.recv().expect("the publication is sent");
+            let adoptable = context.watch.state.try_lock().is_ok();
+            go.send(()).expect("the publication waits");
+            adoptable
+        });
+        assert!(
+            !adoptable,
+            "the worker could take up the focus before it was sent"
+        );
+        assert!(
+            matches!(context.watch.walk_returned(0, Instant::now()), Ok(Some(_))),
+            "the worker takes it up once it is sent"
         );
     }
 }
