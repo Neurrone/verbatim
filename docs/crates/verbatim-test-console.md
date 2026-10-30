@@ -8,24 +8,32 @@ tests and their builds compile them once, with the same features.
 
 Public API:
 
-- `Console::start()` starts `conhost.exe` running PowerShell in a hidden
-  console window, in a job that ends both when the `Console` is dropped,
-  and returns once the evidence that the client runs in it arrives: the
-  window's title changed by the client to one unique to the test process,
-  raised as a `WinEvent` from the console host. It panics when the console
-  cannot be started or the title has not changed within ten seconds.
-  PowerShell is the client because `cmd.exe`'s `title` command prefixes
-  "Administrator: " when elevated, as GitHub's runner is.
+- `Console::with(test)` makes a desktop of its own in the process's
+  window station, starts `conhost.exe` running PowerShell in a hidden
+  console window on it, in a job that ends both when the `Console` is
+  dropped, and runs `test` with the `Console` on a new thread moved to
+  that desktop, returning what `test` returns and raising its panic again.
+  The console is on a desktop of its own because a console host started on
+  the interactive desktop takes the foreground even with its window hidden,
+  which breaks an end-to-end run on that desktop; `test` runs on that
+  desktop because `SetWinEventHook`, window enumeration and UI Automation
+  see only their own thread's desktop. `test` is called once the evidence
+  that the client runs in the console arrives: the window's title changed
+  by the client to one unique to the test process, raised as a `WinEvent`
+  from the console host. It panics when the console cannot be started or
+  the title has not changed within ten seconds. PowerShell is the client
+  because `cmd.exe`'s `title` command prefixes "Administrator: " when
+  elevated, as GitHub's runner is.
 - `Console::host`, the console host's process id, and `Console::window`,
   the console window, whose owner by `GetWindowThreadProcessId` is the
   client, PowerShell, while the host serves it.
-- `Console::start_with_client_window()` starts the console as `start`
-  does, its client first making a hidden Windows Forms window of its own
+- `Console::with_client_window(test)` runs `test` as `with` does, the
+  console's client first making a hidden Windows Forms window of its own
   on PowerShell's pipeline thread, another thread than the one Windows
-  names as the console window's, and finds it by a title unique to the
-  test process; it panics as `start` does, or when that window is not
-  found. `Console::client_window` is that window, 0 for a console started
-  with `start`. The moved-on rule's test in `verbatim-outpost` uses it.
+  names as the console window's, found by a title unique to the test
+  process; it panics as `with` does, or when that window is not found.
+  `Console::client_window` is that window, 0 for a console started with
+  `with`. The moved-on rule's test in `verbatim-outpost` uses it.
 
 ## verbatim-stream-test
 

@@ -324,13 +324,16 @@ mod tests {
 
     #[test]
     fn a_console_window_is_served_by_its_console_host_not_its_owner() {
-        let console = Console::start();
-        let mut owner = 0u32;
-        // SAFETY: `owner` is a local; the window is the console's.
-        unsafe { GetWindowThreadProcessId(HWND(console.window as *mut _), Some(&raw mut owner)) };
-        assert_ne!(owner, console.host, "the console's client owns its window");
-        assert_eq!(console_host_of(owner), Some(console.host));
-        assert_eq!(provider_process(console.window), Some(console.host));
+        Console::with(|console| {
+            let mut owner = 0u32;
+            // SAFETY: `owner` is a local; the window is the console's.
+            unsafe {
+                GetWindowThreadProcessId(HWND(console.window as *mut _), Some(&raw mut owner))
+            };
+            assert_ne!(owner, console.host, "the console's client owns its window");
+            assert_eq!(console_host_of(owner), Some(console.host));
+            assert_eq!(provider_process(console.window), Some(console.host));
+        });
     }
 
     #[test]
@@ -351,12 +354,15 @@ mod tests {
 
     #[test]
     fn a_console_window_is_its_console_hosts_threads_own_not_its_clients() {
-        let console = Console::start();
-        let mut client = 0u32;
-        // SAFETY: `client` is a local; the window is the console's.
-        unsafe { GetWindowThreadProcessId(HWND(console.window as *mut _), Some(&raw mut client)) };
-        assert!(threads_own_window(console.host, console.window));
-        assert!(!threads_own_window(client, console.window));
+        Console::with(|console| {
+            let mut client = 0u32;
+            // SAFETY: `client` is a local; the window is the console's.
+            unsafe {
+                GetWindowThreadProcessId(HWND(console.window as *mut _), Some(&raw mut client))
+            };
+            assert!(threads_own_window(console.host, console.window));
+            assert!(!threads_own_window(client, console.window));
+        });
     }
 
     #[test]

@@ -2217,13 +2217,14 @@ mod tests {
 
     #[test]
     fn only_the_console_host_reads_the_focus_in_its_console_window() {
-        let console = verbatim_test_console::Console::start();
-        let (_, client) = window_owner(console.window);
-        assert_eq!(control_window(client, || Some(console.window)), None);
-        assert_eq!(
-            control_window(console.host, || Some(console.window)),
-            Some(console.window)
-        );
+        verbatim_test_console::Console::with(|console| {
+            let (_, client) = window_owner(console.window);
+            assert_eq!(control_window(client, || Some(console.window)), None);
+            assert_eq!(
+                control_window(console.host, || Some(console.window)),
+                Some(console.window)
+            );
+        });
     }
 
     #[test]

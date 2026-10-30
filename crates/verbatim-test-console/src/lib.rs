@@ -3,17 +3,26 @@
 //! another thread, for the tests of a console window's provider process in
 //! `verbatim-uia` and `verbatim-outpost`. A dev-dependency only, so the
 //! crates it serves are built once for their tests and their builds alike.
+//!
+//! The console runs on a desktop made for it, and the test on a thread of
+//! that desktop, because a console host started on the interactive
+//! desktop takes the foreground even with its window hidden, which breaks
+//! an end-to-end run using that desktop.
 
 use std::cell::{Cell, RefCell};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{GENERIC_ALL, HANDLE, HWND};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject,
+};
+use windows::Win32::System::StationsAndDesktops::{
+    CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, GetProcessWindowStation,
+    GetUserObjectInformationW, HDESK, SetThreadDesktop, UOI_NAME,
 };
 use windows::Win32::System::Threading::{
     CREATE_SUSPENDED, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION, ResumeThread,
@@ -29,6 +38,113 @@ use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 /// How long the console's client is waited for.
 const WAIT: Duration = Duration::from_secs(10);
+
+/// Numbers this process's desktops, so each is new.
+static DESKTOPS: AtomicUsize = AtomicUsize::new(0);
+
+/// A desktop made for one console, in this process's window station,
+/// closed once the test's thread on it has ended; the system destroys it
+/// when nothing uses it any more.
+struct Desktop {
+    handle: HDESK,
+    /// Its name after its window station's, as a process is started on it.
+    path: Vec<u16>,
+}
+
+impl Desktop {
+    fn new() -> Self {
+        let name = format!(
+            "verbatim-console-test-{}-{}",
+            std::process::id(),
+            DESKTOPS.fetch_add(1, Ordering::Relaxed)
+        );
+        // SAFETY: a nul-terminated name, no device or mode, and no
+        // security attributes: the desktop gets this user's default
+        // access, and its handle is not inheritable.
+        let handle = unsafe {
+            CreateDesktopW(
+                &HSTRING::from(name.as_str()),
+                PCWSTR::null(),
+                None,
+                DESKTOP_CONTROL_FLAGS(0),
+                GENERIC_ALL.0,
+                None,
+            )
+        }
+        .unwrap_or_else(|error| panic!("the desktop {name} could not be made: {error}"));
+        let path = format!("{}\\{name}", window_station_name())
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        Self { handle, path }
+    }
+}
+
+impl Drop for Desktop {
+    fn drop(&mut self) {
+        // SAFETY: the handle `new` made, closed once, after the thread
+        // that used it has ended.
+        let closed = unsafe { CloseDesktop(self.handle) };
+        if let Err(error) = closed
+            && !std::thread::panicking()
+        {
+            panic!("the console's desktop could not be closed: {error}");
+        }
+    }
+}
+
+/// The name of this process's window station.
+fn window_station_name() -> String {
+    // SAFETY: no preconditions; the handle is not to be closed.
+    let station = unsafe { GetProcessWindowStation() }
+        .unwrap_or_else(|error| panic!("this process has no window station: {error}"));
+    let mut name = [0u16; 256];
+    // SAFETY: `name` is writable for the size given, in bytes.
+    unsafe {
+        GetUserObjectInformationW(
+            HANDLE(station.0),
+            UOI_NAME,
+            Some(name.as_mut_ptr().cast()),
+            u32::try_from(size_of_val(&name)).unwrap_or(0),
+            None,
+        )
+    }
+    .unwrap_or_else(|error| panic!("the window station's name could not be read: {error}"));
+    let length = name
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(name.len());
+    String::from_utf16_lossy(&name[..length])
+}
+
+/// Makes a desktop, starts a console on it with `launch` from a new
+/// thread of that desktop, and runs `test` with the console on that
+/// thread, so the window, `WinEvent` and UIA calls it makes see the
+/// console's desktop; a panic in either is raised again here.
+fn on_desktop<R: Send>(
+    launch: impl FnOnce(&[u16]) -> Console + Send,
+    test: impl FnOnce(&Console) -> R + Send,
+) -> R {
+    let desktop = Desktop::new();
+    // The handle as a number, since a handle is not `Send`.
+    let handle = desktop.handle.0 as isize;
+    let path = desktop.path.as_slice();
+    let outcome = std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                // SAFETY: a desktop handle that stays open until this
+                // thread has ended; the thread is new, so it has no
+                // windows or hooks yet.
+                unsafe { SetThreadDesktop(HDESK(handle as *mut _)) }
+                    .expect("the test's thread moves to the console's desktop");
+                let console = launch(path);
+                test(&console)
+            })
+            .join()
+    });
+    drop(desktop);
+    outcome.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
 
 thread_local! {
     /// The title a console's window is waited for with, and the window
@@ -62,7 +178,8 @@ unsafe extern "system" fn renamed(
 }
 
 /// A console host the test starts, `conhost.exe` running PowerShell in
-/// a hidden console window, in a job that ends both when dropped.
+/// a hidden console window on a desktop of its own, in a job that ends
+/// both when dropped.
 pub struct Console {
     /// The console host's process id.
     pub host: u32,
@@ -70,57 +187,67 @@ pub struct Console {
     pub window: isize,
     /// A hidden window of the console's client, PowerShell, made on its
     /// pipeline thread, another thread than the one Windows names as the
-    /// console window's ([`Console::start_with_client_window`]); 0 for a
-    /// console started with [`Console::start`].
+    /// console window's ([`Console::with_client_window`]); 0 for a
+    /// console started with [`Console::with`].
     pub client_window: isize,
     _job: OwnedHandle,
 }
 
 impl Console {
-    /// Starts the console and waits for the evidence that its client
-    /// runs in it: the window's title changed by the client, raised as a
-    /// `WinEvent` from the console host. The client is PowerShell, whose
+    /// Starts the console on a desktop made for it, waits for the
+    /// evidence that its client runs in it, and runs `test` with it on a
+    /// thread of that desktop, returning what `test` returns. The evidence
+    /// is the window's title changed by the client, raised as a `WinEvent`
+    /// from the console host. The client is PowerShell, whose
     /// `WindowTitle` sets the title exactly as given; `cmd.exe`'s `title`
     /// command prefixes "Administrator: " when elevated, as GitHub's
     /// runner is, so the title waited for never came there.
     ///
     /// # Panics
     ///
-    /// When the console cannot be started, or its client has not set its
-    /// title within ten seconds.
-    #[must_use]
-    pub fn start() -> Self {
-        Self::launch("")
+    /// When the console cannot be started, its client has not set its
+    /// title within ten seconds, or `test` panics.
+    pub fn with<R: Send>(test: impl FnOnce(&Self) -> R + Send) -> R {
+        on_desktop(|desktop| Self::launch(desktop, ""), test)
     }
 
-    /// Starts the console as [`Console::start`] does, with a hidden
-    /// Windows Forms window of the client's own, made before the client
+    /// Runs `test` as [`Console::with`] does, the console's client having
+    /// a hidden Windows Forms window of its own, made before the client
     /// sets the console's title, so the window exists once the title is
     /// seen and is found by its own title.
     ///
     /// # Panics
     ///
-    /// As [`Console::start`], and when the client's window is not found.
-    #[must_use]
-    pub fn start_with_client_window() -> Self {
-        let marker = format!("verbatim-console-client-window-{}", std::process::id());
-        let mut console = Self::launch(&format!(
-            "Add-Type -AssemblyName System.Windows.Forms; \
-             $form=[Windows.Forms.Form]::new(); $form.Text='{marker}'; \
-             $null=$form.Handle; "
-        ));
-        let marker = HSTRING::from(marker);
-        // SAFETY: no class, a nul-terminated title; answers an error when
-        // no top-level window has it.
-        let window = unsafe { FindWindowW(PCWSTR::null(), &marker) }
-            .expect("the client's window was made before the title was set");
-        console.client_window = window.0 as isize;
-        console
+    /// As [`Console::with`], and when the client's window is not found.
+    pub fn with_client_window<R: Send>(test: impl FnOnce(&Self) -> R + Send) -> R {
+        on_desktop(
+            |desktop| {
+                let marker = format!("verbatim-console-client-window-{}", std::process::id());
+                let mut console = Self::launch(
+                    desktop,
+                    &format!(
+                        "Add-Type -AssemblyName System.Windows.Forms; \
+                         $form=[Windows.Forms.Form]::new(); $form.Text='{marker}'; \
+                         $null=$form.Handle; "
+                    ),
+                );
+                let marker = HSTRING::from(marker);
+                // SAFETY: no class, a nul-terminated title; answers an
+                // error when no top-level window of this thread's desktop
+                // has it.
+                let window = unsafe { FindWindowW(PCWSTR::null(), &marker) }
+                    .expect("the client's window was made before the title was set");
+                console.client_window = window.0 as isize;
+                console
+            },
+            test,
+        )
     }
 
-    /// Starts the console, its client running `prelude` before it sets
-    /// the window's title.
-    fn launch(prelude: &str) -> Self {
+    /// Starts the console on the desktop named `desktop`, nul-terminated,
+    /// which this thread is on, its client running `prelude` before it
+    /// sets the window's title.
+    fn launch(desktop: &[u16], prelude: &str) -> Self {
         let title = format!("verbatim-console-test-{}", std::process::id());
         TITLE.with(|cell| cell.borrow_mut().clone_from(&title));
         RENAMED.with(|renamed| renamed.set(0));
@@ -147,14 +274,17 @@ impl Console {
         .encode_utf16()
         .chain(Some(0))
         .collect();
+        let mut desktop_path = desktop.to_vec();
         let startup = STARTUPINFOW {
             cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(0),
+            lpDesktop: PWSTR(desktop_path.as_mut_ptr()),
             dwFlags: STARTF_USESHOWWINDOW,
             wShowWindow: u16::try_from(SW_HIDE.0).unwrap_or(0),
             ..Default::default()
         };
         let mut info = PROCESS_INFORMATION::default();
-        // SAFETY: a writable, nul-terminated command line; no handles
+        // SAFETY: a writable, nul-terminated command line and desktop
+        // name, which outlive the call; no handles
         // are inherited, no standard handles given, and no console of
         // this process's, so the console host opens a window of its
         // own.

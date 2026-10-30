@@ -614,24 +614,25 @@ mod tests {
 
     #[test]
     fn a_console_window_is_its_console_hosts_not_its_clients() {
-        let console = verbatim_test_console::Console::start();
-        let (_, client) = window_owner(console.window);
-        assert_ne!(
-            client, console.host,
-            "Windows names the client as its owner"
-        );
-        assert!(served_by(console.window, console.host));
-        assert!(!served_by(console.window, client));
-        // Only their console windows: other top-level windows, such as a
-        // thread's IME window, are not at issue.
-        let consoles = |pid| {
-            top_level_windows(pid)
-                .into_iter()
-                .filter(|&window| window_class_name(window) == CONSOLE_WINDOW_CLASS)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(consoles(console.host), [console.window]);
-        assert_eq!(consoles(client), Vec::<isize>::new());
+        verbatim_test_console::Console::with(|console| {
+            let (_, client) = window_owner(console.window);
+            assert_ne!(
+                client, console.host,
+                "Windows names the client as its owner"
+            );
+            assert!(served_by(console.window, console.host));
+            assert!(!served_by(console.window, client));
+            // Only their console windows: other top-level windows, such as
+            // a thread's IME window, are not at issue.
+            let consoles = |pid| {
+                top_level_windows(pid)
+                    .into_iter()
+                    .filter(|&window| window_class_name(window) == CONSOLE_WINDOW_CLASS)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(consoles(console.host), [console.window]);
+            assert_eq!(consoles(client), Vec::<isize>::new());
+        });
     }
 
     #[test]
@@ -672,25 +673,26 @@ mod tests {
 
     #[test]
     fn a_console_window_and_its_clients_own_window_are_not_one_application() {
-        let console = verbatim_test_console::Console::start_with_client_window();
-        let (console_thread, client) = window_owner(console.window);
-        let (window_thread, window_owner_pid) = window_owner(console.client_window);
-        assert_eq!(
-            window_owner_pid, client,
-            "Windows names the client as both windows' owner"
-        );
-        assert_ne!(
-            window_thread, console_thread,
-            "the client's window is on another thread than the console window's"
-        );
+        verbatim_test_console::Console::with_client_window(|console| {
+            let (console_thread, client) = window_owner(console.window);
+            let (window_thread, window_owner_pid) = window_owner(console.client_window);
+            assert_eq!(
+                window_owner_pid, client,
+                "Windows names the client as both windows' owner"
+            );
+            assert_ne!(
+                window_thread, console_thread,
+                "the client's window is on another thread than the console window's"
+            );
 
-        assert!(
-            !is_another_thread_of_its_application(console.client_window, console.window),
-            "a console window in front is its console host's"
-        );
-        assert!(
-            !is_another_thread_of_its_application(console.window, console.client_window),
-            "a console window being read is its console host's"
-        );
+            assert!(
+                !is_another_thread_of_its_application(console.client_window, console.window),
+                "a console window in front is its console host's"
+            );
+            assert!(
+                !is_another_thread_of_its_application(console.window, console.client_window),
+                "a console window being read is its console host's"
+            );
+        });
     }
 }
