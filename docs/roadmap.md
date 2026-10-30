@@ -71,6 +71,11 @@ comes first. The rework then resumes with the keep-id review's fix, half
 built and uncommitted in the worktree `verbatim-wt-fix2`, and its remaining
 steps in [the remaining builds](design/focus-pipeline-rework-remaining.md).
 
+Follow-up, not established from the code alone: Core refuses a foreground
+report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
+`reduce_focus_changed`) with no check that the focus is alive, so a window
+handle Windows reused could have a new window refused as the dead focus's.
+
 ### The ownership refactor
 
 Every fact has one owner, logic is a pure reducer with calls as its
@@ -187,6 +192,7 @@ Events and controls:
 - The events NVDA registers desktop-wide that Verbatim lacks are deferred until each is supported (Dickson, 2026-10-20; `docs/parity/backends.md`, "UIA event registration"); a foreground UIA progress bar that is not the focus is in M4.2, background progress bars in M4.3.
 - Table cells: the suppression of an unchanged row and column within the same table is not ported (pending Dickson), nor are header texts, spans, a cell's own coordinates text, or MSAA and IAccessible2 cells.
 - On this Windows 11 build `TrayNotifyWnd`'s UIA subtree is empty, so the tray list (`crates/verbatim-outpost/src/outpost/shell_items.rs`) is empty unless the overflow flyout is open; and a double press of Verbatim+F11 opens the tray list rather than the taskbar list.
+- The shell items' `refind` (`crates/verbatim-gui/src/shell_items.rs`) takes a candidate by its runtime id alone, without its name, so a runtime id the shell has reused for another button clicks that button.
 
 Text and selection:
 

@@ -10,52 +10,7 @@ Starting drafts for the builds that [the ownership model](ownership.md) orders. 
 
 ## The one judge build
 
-### Brief
-
-Scope: Core's changes (`CoreFocus` and its feeders removed, repeats only on full facts, the one foreground record, which keeps `classify`'s second test as a function of it); the listener's (`HeldElements` removed, every repeat read, the menu-opening comparison with its own current read, the scheduler as a pure transition with the first ownership check on it); the outposts' (`Held`'s copy of Core's focus removed and its `states_read` kept as the outpost's own, every MSAA repeat and foreground change read in full, the followed focus with its two exceptions, targeting against it, MSAA equality's candidates from the own reported line). The marker's responder waits for the messages build. The rule for `earlier` stays exactly as on main. First step: list Core's refusal paths in `reduce_focus_changed` and `focus_dropped_first`, and stop and report if one is outside the design's four.
-
-Tests added:
-
-- Core: the repeat hole's sequence; the one record's tests, keeping `notepads_foreground_report_after_the_desktops_last_focuses_is_spoken` and the stale rule's two recorded sequences.
-- The outpost: the followed control kept when Core ignores its window's foreground report, and the control's state change then spoken.
-- The listener: replay tests of e46d4183's four orderings, 0b5826cd's, 073d63b0's and 69c06239's; a menu opening compared only while the last read is current.
-- Mockapp: a repeated UIA focus and an MSAA repeat each read in full; the `call_counts` repeat tests updated to the full read's calls.
-
-Test cost, examples. Removed with the mechanism: `crates/verbatim-outpost/src/outpost/held.rs`'s unit tests; the listener's tests of `HeldElements`; the app's tests of the notice's recipients. These mockapp tests of `crates/mockapp/tests/focus_reports.rs` exist for the back-channel: `a_focus_waiting_for_core_s_judgement_is_no_repeat`, `a_focus_is_no_repeat_once_core_holds_another`, `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus` and `a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus`. Each becomes a Core unit test of the repeat rule on full facts where the behaviour is still wanted, and goes.
-
-Scenarios: the full suite once, then `text_box_editing`, `second_application_and_verbatim_menu`, `settings_system_page`, `settings_combo_box_expanded`, `explorer_folder_window`, `menu_and_settings_dialog`, `windows_terminal_two_windows`.
-
-### Mechanism draft
-
-#### Core
-
-- `CoreFocus` and its feeders go: `tell_core_focus` (app and supervisor), `focuses_queued`, `held_focus_owner`, `notice_recipients`, `HeldFocus::for_outpost`, `SrState::held_focus`.
-- Repeats are judged only in `is_duplicate_focus`, from full facts (`earlier`, the MSAA event address, the simple-child mark); the rule for `earlier` stays exactly as on main, so the paused keep-id fix rebases cleanly.
-- One foreground record replaces the five notions (`attention`, `foreground`, `foreground_changed_at`, `foreground_window`, the top-level window of `latest_focus`): one private type, one `apply`, read-only accessors; attention, the foreground cut, the stale rule and the hook's view read it. `classify`'s second foreground test stays, as a function of the record; its removal moved to the focus pipeline rework (Dickson, 2026-10-30). Evidence: b1917eed, audit difference 12, the Settings chain (5f1c8e81 and three more).
-- Core refuses a report of an application only for: the stale rule (across applications); the duplicate rule (the outpost follows the same node); a foreground report of the window already holding Core's focus (matched by the outpost's followed-focus exception); the application rules (residual). The build lists the refusal paths of `reduce_focus_changed` and `focus_dropped_first` and stops if another exists.
-
-#### The listener
-
-- `HeldElements` and the repeat drop against `CoreFocus` go; every UIA focus passing the local checks is read in full.
-- A UIA menu opening is compared, as NVDA compares it with its focus object, with the reading thread's own last read of that application while that read is current (no focus or foreground event in another top-level window observed since); if the same, it is judged with that read's window, otherwise with its own. A failed comparison drops it, as today. The opening is read either way.
-- The read scheduler (`ReadersState`) becomes a pure transition under its lock; a marker's outcome is a responder whose `Drop` sends a drop (0b5826cd).
-- Kept: the `FocusReader` as call code, `LastFocus`, the claim and publication at the bound, the moved-on rule, the hand-over map, `Waiting`, the menu opening's pending focus (`Readers::focus_pending`), readiness.
-
-#### No back-channel
-
-No message tells a reader what Core holds. A reader skips a read only on its own observations of the event (hung, not in front, UIA's, no keyboard focus). So a repeat focus is read in full and judged in Core (Dickson), and the outpost's followed focus is its own newest report. Evidence: the repeat hole, where a focus returning while Core's notice is in flight is never spoken; 43de3932. Enforcement: `SrState::held_focus`, `held_focus_owner` and `HeldFocus::for_outpost` deleted, so no API exports Core's focus to a reader.
-
-#### The followed focus
-
-The followed focus is the newest focus report, except that a foreground report of the top-level window holding the followed focus does not replace it, decided from the outpost's own record. Reason: Core ignores such a report while its focus is in that window, so following the window would drop a check box's change on Space that Core would speak. When Core's focus is elsewhere, Core takes the report as the focus on the window while the outpost keeps following the control; the outpost then sends changes of both and Core's targeting drops what its focus does not cover, adding messages, never words. The same holds across processes in one top-level window (ApplicationFrameHost's outpost following the frame while Settings' follows its control). No refusal notice exists.
-
-### Known traps
-
-- Review 3, nits: `Held` also holds `states_read`, which decides "newly expanded" and the child count; a repeat read in full must not update it before the state change arrives, or the expansion's count is lost. A report the outpost can refuse by Core's one definition of the application rules must not become the followed focus. The cost of every foreground change read in full is stated.
-- Review 1, finding 2: Core refuses a foreground report for the window that already holds its focus, within one application; the draft's foreground exception for the followed focus answers it.
-- Review 1, finding 3: the listener's menu-opening comparison lost its subject with `HeldElements`; the draft compares with the reading thread's own current read.
-- Review 1, nits: the cost of MSAA repeats read in full; the menu opening's pending focus lives in the listener.
-- Review 2, nit: the "only messages added" case of the foreground exception also arises across processes in one top-level window.
+Designed against the code in [the one judge build](ownership-one-judge.md), which replaces its draft and answers its known traps: an outpost reads changes for every node it has not released and Core targets, so no outpost follows a guess of Core's verdict.
 
 ## The input build
 
@@ -110,7 +65,7 @@ Scope:
 
 Tests added: a shell-items request answered "gone" when its outpost ends or backs off; a wanted focus-now request answered "gone" when its application's outpost ends; each `Merge` implementation's equivalence test; a reply never merged across; the supervisor's df4c15d9 sequences and difference 25 as typestate tests.
 
-Test cost, examples: the supervisor's lifecycle tests that pin combinations of flags become typestate tests. Responders: the request table's endings (an incarnation's `Ended` or backoff, the deadline) each get a unit test, since a killed outpost runs no `Drop`; the listener's marker gets its responder here.
+Test cost, examples: the supervisor's lifecycle tests that pin combinations of flags become typestate tests. Responders: the request table's endings (an outpost generation's `Ended` or backoff, the deadline) each get a unit test, since a killed outpost runs no `Drop`; the listener's marker gets its responder here.
 
 Scenarios: the full suite once, then `outpost_crash_recovery`, `return_after_retirement`, `explorer_folder_window`, `system_information_tree`, `settings_system_page`.
 
@@ -122,8 +77,8 @@ Every message between processes, and every message a reducer sends to another th
 
 - A query, with exactly one answer. The side that answers holds a responder, `#[must_use]`, consumed by answering, whose `Drop` answers "gone". Responders live only in a thread's shell, never in a pure reducer's state, since an answer sent by `Drop` inside a transition would break replay: Core's request table in the app, and each outpost's reply tokens in its reducer thread's shell, keyed by request id. The reducer emits an answer effect; the shell asserts in debug builds that a transition ending a request emitted one, and replay tests assert one answer per query. A query with several answers (the caret rework's key request) holds a stream responder that must end with a final answer. Evidence: 886d8e73, 76180512, 8d01bbd1, 0b5826cd.
 - A one-way report.
-- A release, `NodesHeld`, by message position (under "Identity and the release rule").
-- Lifecycle, from one ordered path per source incarnation (evidence: 1a3dc022, 8d01bbd1, a39f01f8, de7f481e).
+- A release, `NodesHeld`, by message position (under "Identity and the release rule"). Its trigger is the one judge build's: written on its own when the nodes Core holds in an outpost change or after Core handles a focus report, every other change of its list or position riding on the next message to that outpost; the kind declares it a barrier and gives it that trigger.
+- Lifecycle, from one ordered path per source generation (evidence: 1a3dc022, 8d01bbd1, a39f01f8, de7f481e).
 - A routed report: another child's fact passed on unjudged.
 - Configuration, a standing parameter Core sets in another process or thread: `Fetches`, the backend override, the class tables, M5's rule tables. Rules below.
 
@@ -162,9 +117,9 @@ Scope:
 
 - The reducer on its own thread, owning everything the design lists.
 - Workers run call programs on copies, including the yielding console poll and releases under a deadline. The watchdog only posts timers.
-- The commit point's lock and lock order are removed.
+- The commit point's lock and its lock ordering (the commit's locks nested inside the watch lock; [prior art](../../experiments/ownership-study/prior-art.md), "Who may block on whom") are removed.
 - The object store in `outpost::store`, owning both registries and the handle map. Walks intern through its trait, every mint tagged by generation and request.
-- `Recorded` snapshots and the release rule; the splice fixed (no speech change). One node per window is not built here: it moved to the focus pipeline rework's third build (Dickson, 2026-10-30).
+- `Recorded` snapshots, which make the release rule a property of the store's types; the rule itself, the splice fix and text anchors released by message position are built in the one judge build. One node per window is not built here: it moved to the focus pipeline rework's third build (Dickson, 2026-10-30).
 - The outpost's MSAA hand-over (`crates/verbatim-outpost/src/outpost/handover.rs`) moves into the reducer once, as the hold Dickson decided on 2026-10-25 (hook copies held until forwarding's end, in place of counting with `TWIN_BOUND`), with released events tried as today's batch, newest first, so nothing heard changes; the remaining doc's hold section and its review's cost finding are its draft. `handover.rs`'s ten tests become replay tests of the hold.
 - The ownership check's reducer rule.
 - Identity and the store change only in this build.
@@ -188,8 +143,6 @@ Replay tests added:
 - a focus group's older entries kept across an abandoned worker;
 - a walk in flight crossing a `NodesHeld` that keeps its unrecorded nodes, and a dead generation's nodes freed;
 
-Mockapp tests added: `an_ancestor_spliced_into_a_later_report_is_not_released_by_an_older_acknowledgement`, `a_walk_does_not_meet_the_followed_chain_above_a_released_ancestor`.
-
 Test cost, examples. These mockapp tests of `crates/mockapp/tests/focus_reports.rs` wait on the real one-second gap bound or race real orderings: `a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed`, `an_answered_record_cancels_its_timer`, `a_return_within_the_bound_is_read_with_the_returns_stamp`, `a_change_raised_after_a_focus_event_waits_for_the_focus_read` and `a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first`. They become replay tests with injected timers, keeping one mockapp test per path into a real provider. 6dbcca25's counterexample needed two 10-second deadlines and was pinned by a hand-driven unit test; it becomes a plain replay test. The gap record's unit tests in `crates/verbatim-outpost/src/outpost/gap_record.rs` move onto the reducer's inputs.
 
 Measured, at most 20 runs each, for wake-ups, processor time and latency: `measure_focus_explorer`, `measure_focus_text_box`, `measure_keys_windows_terminal`, `measure_keys_conhost`, and the terminal baseline of 2026-10-23. `docs/performance.md` states the reducer's hop and wake-up cost.
@@ -212,11 +165,11 @@ No thread holds a lock or a borrow across a call into an application on state an
 
 #### The outpost's reducer
 
-Each outpost holds one pure state machine for its application, in `crates/verbatim-outpost/src/outpost/reducer` (planned), with no Windows types. It contains ported NVDA code, so it lives in this Windows-specific crate; platform-neutral pieces stay in `crates/verbatim-core/src/focus_rules.rs`. It owns every remembered fact of the application: the intake's order (the marker's hold, the limiter, the newest-first batch); the gap record and its timer; the verdict keeps; the followed focus and follow state, today's commit point; the line a walk may stop at and MSAA equality's candidates, both the outpost's own reported line; change targeting; the hand-over's hold; owed work and abandonment; text records, the caret watch and terminals.
+Each outpost holds one pure state machine for its application, in `crates/verbatim-outpost/src/outpost/reducer` (planned), with no Windows types. It contains ported NVDA code, so it lives in this Windows-specific crate; platform-neutral pieces stay in `crates/verbatim-core/src/focus_rules.rs`. It owns every remembered fact of the application: the intake's order (the marker's hold, the limiter, the newest-first batch); the gap record and its timer; the verdict keeps; the unreleased reports and follow state, today's commit point; the line a walk may stop at and MSAA equality's candidates, from the unreleased reports; the hand-over's hold; owed work and abandonment; text records, the caret watch and terminals.
 
 Inputs: the intake's ordered entries; call-program results tagged by worker generation and request; timer expiries; Core's queries, configuration and `NodesHeld`. Effects: call programs, local reads, messages to Core, timers, releases.
 
-The followed focus is the newest focus report, except that a foreground report of the top-level window holding the followed focus does not replace it, decided from the outpost's own record. Reason: Core ignores such a report while its focus is in that window, so following the window would drop a check box's change on Space that Core would speak. When Core's focus is elsewhere, Core takes the report as the focus on the window while the outpost keeps following the control; the outpost then sends changes of both and Core's targeting drops what its focus does not cover, adding messages, never words. The same holds across processes in one top-level window (ApplicationFrameHost's outpost following the frame while Settings' follows its control). No refusal notice exists.
+What the outpost reads for changes is not a decision of the reducer: it reads for every node the store has not released, and Core targets ([the one judge build](ownership-one-judge.md)).
 
 Threading (Dickson, 2026-10-30): the reducer runs on a thread of its own, since UIA calls cannot be cancelled; workers run call programs and post results; the watchdog only posts timer inputs (the bound, the deadline, the moved-on grace); objects the reducer releases are handed to a worker. The I/O thread, the event thread, UIA's callbacks and timer callbacks only append to its mailbox, today's intake; the intake's push-time drops stay, on copies written only by the reducer under the intake lock. A focus makes one to three call programs, so its latency grows by under 0.2 ms. What it removes: the commit point's lock and lock order, the watchdog publishing, the gap record written by three threads.
 
@@ -235,7 +188,7 @@ The object store is `crates/verbatim-outpost/src/outpost/store` (planned): a mon
 - Identity is decided where it is today, in the walk on the worker: the program carries copies of the outpost's own reported line (ids, window handles, MSAA identity keys) and the stop windows; as the walk reads each object it looks it up or mints it through the store, so the id exists when the object is read, and it stops at an entry of the reported line, judging MSAA equality with the live reads it makes. Every mint is tagged with its worker generation and request.
 - The walk's progress is the slot it is today (`FocusProgress` in `crates/verbatim-outpost/src/outpost/bound.rs`), written by the worker between calls and read by the reducer at the bound under a lock held for one copy. At the bound the reducer copies it, describes the plain windows from the outermost element's nearest window through its local reads, minting them in the store by handle, publishes, and marks the request claimed.
 - Not in the refactor (Dickson, 2026-10-30): one node per window moved to the focus pipeline rework's third build, and this item is its draft. In one chain at most one entry stands for each window handle. The store's handle map gives a window-standing entry (a UIA element hosting the window, an MSAA window or client object with `top_level_client`, a plain window) the node already minted for that handle. The node keeps the object of the backend the window's verdict reads it by; a plain window's node, which holds no object, takes that object when a walk first reaches it, keeping its id; an object of the other backend for the same handle is not kept. Before coding, the build reads NVDA's MSAA parent step (`nvda/source/NVDAObjects/IAccessible/__init__.py` 1229 to 1261) and stops if NVDA speaks two entries for one handle. Past defect: defect A in `explorer_folder_window`, one window entered twice and spoken twice.
-- The release rule: a snapshot is sent only as a `Recorded` value, a type whose constructor is private to the store's module, handed out by the store; the outbound queue records each carried node at the message's position when it numbers the message at write. A node carried by a message is freed when Core's `NodesHeld` acknowledges a position at or after the last message that carried it and does not hold it. A node never carried is freed only when its mint tag names a dead worker generation or a claimed or ended request, so a walk still running keeps its nodes, as `take_releasable` in `crates/verbatim-outpost/src/outpost/outbound.rs` keeps never-reported nodes today. A spliced entry is re-sent through a store lookup that fails once its node is freed, which removes the splice sequence of [the remaining focus builds](focus-pipeline-rework-remaining.md). Release is an effect naming ids, executed by the worker in charge outside the store's lock.
+- The release rule: a snapshot is sent only as a `Recorded` value, a type whose constructor is private to the store's module, handed out by the store; the outbound queue records each carried node at the message's position when it numbers the message at write. A node carried by a message is freed when Core's `NodesHeld` acknowledges a position at or after the last message that carried it and does not hold it. A node never carried is freed only when its mint tag names a dead worker generation or a claimed or ended request, so a walk still running keeps its nodes, as `take_releasable` in `crates/verbatim-outpost/src/outpost/outbound.rs` keeps never-reported nodes today. Every node a message carries, spliced and looked-up entries included, is recorded as carried, as the one judge build records it. Release is an effect naming ids, executed by the worker in charge outside the store's lock.
 
 #### Text, terminals and the caret watch
 
@@ -301,6 +254,7 @@ Each change is specified, with its sequence, in the briefs; here only what chang
 
 - The caret and selection rework.
   - The last read per node and the pinned baseline are reducer state, released by the release rule.
+  - Caret and text events are read for every node the outpost has not released, not only its newest focus, and Core decides which is spoken.
   - A repeat is read in full and compared with the last read, and Core's choice between a repeat and a new focus decides what is spoken, which removes the Control+A loss.
   - The key request is a stream responder; the 100 ms and 1-second bounds are reducer timers.
   - The auto-repeat mark, the edge facts and the chords' gesture travel with the report.
@@ -313,7 +267,7 @@ Each change is specified, with its sequence, in the briefs; here only what chang
 - M5.
   - The loader owns the rule tables, configuration with a generation.
   - A listener veto names its generation, and the outpost's rules apply to recovery reads under its current generation.
-  - A module's `focus()` is the outpost's followed focus.
+  - A module's `focus()` is the outpost's newest report of a control, its own fact; a module that reacts to changes is given every change of a node the outpost has not released, and Core decides what is spoken.
   - A hook runs on a worker in a call program, and its answer is a reducer input.
   - The wasmtime store is owned by the worker generation in charge, and abandonment while it is lent is the module's fault: the store is discarded and the module instantiated again.
   - Load, swap and `on-command` are queries with responders.
@@ -331,7 +285,7 @@ Each change is specified, with its sequence, in the briefs; here only what chang
   - The worker calls `CoEnableCallCancellation` at its start.
   - The worker publishes its current call ticket under a ticket lock as it enters and leaves each call.
   - The canceller holds that lock across `CoGetCancelObject` and `ICancelMethodCalls::Cancel`, and does nothing for a ticket no longer current.
-- M6.2: starting an incarnation takes proof that the previous one exited; a marker's outcome names its incarnation.
+- M6.2: starting an outpost generation takes proof that the previous one exited; a marker's outcome names its generation.
 - M6.3.
   - The queue thread owns each utterance's ending, and the mixer only each attempt's.
   - `Source::register` consumes an admission token (3ebb7be0).
