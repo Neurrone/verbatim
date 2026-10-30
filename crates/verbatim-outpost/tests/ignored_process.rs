@@ -197,7 +197,9 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
     assert!(supervisor.is_ignored(ignored_pid));
     assert!(!supervisor.is_ignored(other_pid));
     match next(&events) {
-        OutpostMessage::ListenerReady { replacement: false } => {}
+        OutpostMessage::ListenerReady {
+            replacement: false, ..
+        } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
     // The ignored application's fact came first: an outpost started for it
@@ -214,7 +216,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
 
     supervisor.ensure_spawned(ignored_pid);
     match next(&events) {
-        OutpostMessage::NotWatched { target_pid } if target_pid == ignored_pid => {}
+        OutpostMessage::NotWatched { target_pid, .. } if target_pid == ignored_pid => {}
         other => panic!("the supervisor said {other:?}, not that it started no outpost"),
     }
 

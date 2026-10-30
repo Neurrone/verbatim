@@ -21,8 +21,6 @@ pub(crate) struct Live {
     /// The application it reports for when that is not its target: a
     /// console host's console's client, which its events name.
     application: Option<Pid>,
-    /// Whether it has sent `Ready`.
-    pub(crate) ready: bool,
     /// The position of the last of its messages handled here.
     pub(crate) position: u64,
     /// The held nodes and text anchors last left for it, and the position
@@ -61,6 +59,40 @@ impl Live {
     }
 }
 
+/// A live generation, before its `Ready` and after it: only
+/// [`Generation::ready`] makes a ready one, consuming the one starting.
+pub(crate) enum Generation {
+    /// Started, and not yet `Ready`.
+    Starting(Live),
+    /// It has sent `Ready`.
+    Ready(Live),
+}
+
+impl Generation {
+    fn live(&self) -> &Live {
+        match self {
+            Generation::Starting(live) | Generation::Ready(live) => live,
+        }
+    }
+
+    fn live_mut(&mut self) -> &mut Live {
+        match self {
+            Generation::Starting(live) | Generation::Ready(live) => live,
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        matches!(self, Generation::Ready(_))
+    }
+
+    /// It sent `Ready`.
+    fn ready(self) -> Self {
+        match self {
+            Generation::Starting(live) | Generation::Ready(live) => Generation::Ready(live),
+        }
+    }
+}
+
 /// What changed of what the state holds in an outpost since it was last
 /// left for it ([`Live::held_changed`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +109,7 @@ pub(crate) enum HeldChange {
 /// The live outpost generations, by outpost id.
 #[derive(Default)]
 pub(crate) struct LiveOutposts {
-    outposts: HashMap<OutpostId, Live>,
+    outposts: HashMap<OutpostId, Generation>,
 }
 
 impl LiveOutposts {
@@ -85,15 +117,14 @@ impl LiveOutposts {
     pub(crate) fn started(&mut self, outpost: OutpostId, target_pid: Pid) {
         self.outposts.insert(
             outpost,
-            Live {
+            Generation::Starting(Live {
                 target_pid,
                 application: None,
-                ready: false,
                 position: 0,
                 held_left: (BTreeSet::new(), BTreeSet::new(), 0),
                 stalled: false,
                 fetches_sent: None,
-            },
+            }),
         );
     }
 
@@ -104,12 +135,13 @@ impl LiveOutposts {
     pub(crate) fn query_abandoned(&mut self, outpost: OutpostId) -> bool {
         self.outposts
             .get_mut(&outpost)
+            .map(Generation::live_mut)
             .is_some_and(|live| !std::mem::replace(&mut live.stalled, true))
     }
 
     /// Records that `outpost` answered: its application responds again.
     pub(crate) fn answered(&mut self, outpost: OutpostId) {
-        if let Some(live) = self.outposts.get_mut(&outpost) {
+        if let Some(live) = self.outposts.get_mut(&outpost).map(Generation::live_mut) {
             live.stalled = false;
         }
     }
@@ -118,7 +150,7 @@ impl LiveOutposts {
     /// that generation is live. An accepted message's `position` is
     /// recorded as handled.
     pub(crate) fn accept(&mut self, outpost: OutpostId, position: u64) -> bool {
-        match self.outposts.get_mut(&outpost) {
+        match self.outposts.get_mut(&outpost).map(Generation::live_mut) {
             Some(live) => {
                 live.position = position;
                 true
@@ -127,10 +159,11 @@ impl LiveOutposts {
         }
     }
 
-    /// Records that `outpost` sent `Ready`.
+    /// Records that `outpost` sent `Ready`: its starting generation is
+    /// consumed for a ready one.
     pub(crate) fn mark_ready(&mut self, outpost: OutpostId) {
-        if let Some(live) = self.outposts.get_mut(&outpost) {
-            live.ready = true;
+        if let Some(generation) = self.outposts.remove(&outpost) {
+            self.outposts.insert(outpost, generation.ready());
         }
     }
 
@@ -141,14 +174,17 @@ impl LiveOutposts {
 
     /// How many live generations have not sent `Ready` yet.
     pub(crate) fn starting(&self) -> usize {
-        self.outposts.values().filter(|live| !live.ready).count()
+        self.outposts
+            .values()
+            .filter(|generation| !generation.is_ready())
+            .count()
     }
 
     /// Records that `outpost`'s events belong to `application`, which is not
     /// its target: the console's client, for a console host's outpost
     /// (`docs/design/focus-pipeline.md`, section 5.4).
     pub(crate) fn reports_for(&mut self, outpost: OutpostId, application: Pid) {
-        if let Some(live) = self.outposts.get_mut(&outpost) {
+        if let Some(live) = self.outposts.get_mut(&outpost).map(Generation::live_mut) {
             live.application = Some(application);
         }
     }
@@ -158,6 +194,7 @@ impl LiveOutposts {
     pub(crate) fn application_of(&self, outpost: OutpostId) -> Option<Pid> {
         self.outposts
             .get(&outpost)
+            .map(Generation::live)
             .map(|live| live.application.unwrap_or(live.target_pid))
     }
 
@@ -166,7 +203,7 @@ impl LiveOutposts {
     pub(crate) fn target_for(&self, pid: Pid) -> Pid {
         self.newest(pid)
             .and_then(|outpost| self.outposts.get(&outpost))
-            .map_or(pid, |live| live.target_pid)
+            .map_or(pid, |generation| generation.live().target_pid)
     }
 
     /// The newest live generation serving the application `pid`, ready or
@@ -187,7 +224,9 @@ impl LiveOutposts {
         let newest = |serves: &dyn Fn(&Live) -> bool| {
             self.outposts
                 .iter()
-                .filter(|(_, live)| serves(live) && (live.ready || !must_be_ready))
+                .filter(|(_, generation)| {
+                    serves(generation.live()) && (generation.is_ready() || !must_be_ready)
+                })
                 .map(|(outpost, _)| *outpost)
                 .max()
         };
@@ -197,7 +236,9 @@ impl LiveOutposts {
 
     /// Every live generation, for sending the nodes held in each.
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&OutpostId, &mut Live)> {
-        self.outposts.iter_mut()
+        self.outposts
+            .iter_mut()
+            .map(|(outpost, generation)| (outpost, generation.live_mut()))
     }
 }
 

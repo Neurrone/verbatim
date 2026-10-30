@@ -57,6 +57,7 @@
 //! an outpost's `Ended` before its replacement's `Started`.
 
 mod frames;
+mod generation;
 mod ignored;
 mod owner;
 mod policy;
@@ -278,7 +279,31 @@ pub struct ForegroundReport {
     pub integrity: Option<u32>,
 }
 
-/// A message from the supervisor to the app.
+/// The seal on the lifecycle notices of [`OutpostMessage`]: only the
+/// supervisor's owner thread makes one, so no other code can announce a
+/// generation started or ended, or an idle round asked, and the app takes
+/// every such notice as the supervisor's own. A test of the app makes one
+/// with [`Sealed::for_tests`], behind the `lifecycle-for-tests` feature.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Sealed(());
+
+impl Sealed {
+    /// The seal, for the supervisor's own notices.
+    fn new() -> Self {
+        Self(())
+    }
+
+    /// The seal, for a test that hands the app notices of its own.
+    #[cfg(feature = "lifecycle-for-tests")]
+    #[must_use]
+    pub fn for_tests() -> Self {
+        Self(())
+    }
+}
+
+/// A message from the supervisor to the app. Its lifecycle notices carry a
+/// [`Sealed`], so only the supervisor makes them; a pattern that
+/// destructures one ends in `..`.
 #[derive(Debug)]
 pub enum OutpostMessage {
     /// An outpost generation started. Sent before any of its messages.
@@ -287,6 +312,8 @@ pub enum OutpostMessage {
         outpost: OutpostId,
         /// The application it watches.
         target_pid: Pid,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
     /// A message an outpost sent, tagged with its target pid and the outpost
     /// generation whose pipe it arrived on.
@@ -314,6 +341,8 @@ pub enum OutpostMessage {
         outpost_pid: Pid,
         /// How many spares are ready and waiting.
         waiting: usize,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
     /// The focus listener is ready. When it is a replacement for one that
     /// ended, facts were lost in the gap, so the app asks the foreground
@@ -321,6 +350,8 @@ pub enum OutpostMessage {
     ListenerReady {
         /// Whether this listener replaced one that ended.
         replacement: bool,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
     /// somewhere on the desktop, at `ended_at_us`: unless a focus observed
@@ -343,6 +374,13 @@ pub enum OutpostMessage {
         target_pid: Pid,
         /// Why it ended.
         reason: EndReason,
+        /// Whether a next generation follows for the application, at once
+        /// or after a failure's backoff: the supervisor's decision, made
+        /// as it ended this one, so nothing else infers it. When none
+        /// follows, [`OutpostMessage::NotWatched`] comes next.
+        follows: bool,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
     /// The generation `outpost` given to `target_pid` failed before its
     /// `Ready` (`docs/design/focus-pipeline.md`, section 19.5), and the
@@ -362,16 +400,23 @@ pub enum OutpostMessage {
         next: OutpostId,
         /// The application.
         target_pid: Pid,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
-    /// An outpost was wanted for `target_pid`, and none was started: the
-    /// application's process has exited, or cannot be opened to be held,
-    /// or is one Verbatim ignores ([`IgnoredProcesses`]). Nothing should
-    /// wait for one. An application whose outposts fail is never given up
-    /// and never reported so: each failure's replacement only waits for
-    /// its backoff.
+    /// No outpost watches `target_pid` now, nor will one until something
+    /// asks for one again: one was wanted and none was started, its
+    /// process having exited, or being one that cannot be opened to be
+    /// held, or one Verbatim ignores ([`IgnoredProcesses`]); or its record
+    /// was removed, after the `Ended` of every generation the app heard
+    /// started, as its application exited or its outpost retired, a record
+    /// waiting for a failure's backoff among them. Nothing should wait for
+    /// one. An application whose outposts fail is never given up and never
+    /// reported so: each failure's replacement only waits for its backoff.
     NotWatched {
         /// The application.
         target_pid: Pid,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
     /// A frame from an outpost's pipe, read whole by the relay and not yet
     /// parsed: the app passes it through [`Frames`], which turns it into
@@ -392,6 +437,8 @@ pub enum OutpostMessage {
         round: u64,
         /// The outpost generations asked.
         outposts: Vec<OutpostId>,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
     },
 }
 

@@ -79,7 +79,9 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
     )
     .expect("the supervisor starts");
     match events.recv_timeout(READY_TIMEOUT) {
-        Ok(OutpostMessage::ListenerReady { replacement: false }) => {}
+        Ok(OutpostMessage::ListenerReady {
+            replacement: false, ..
+        }) => {}
         Ok(other) => panic!("the supervisor said {other:?} before the listener was ready"),
         Err(error) => panic!("the stand-in did not say it was ready: {error}"),
     }

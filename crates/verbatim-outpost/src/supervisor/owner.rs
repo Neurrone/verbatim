@@ -39,6 +39,7 @@ use verbatim_model::protocol::{
 };
 
 use super::frames::Frame;
+use super::generation::{Generation, Next, Notice, Removed, Run};
 use super::ignored::IgnoredProcesses;
 use super::policy::{
     Backoff, HeldFact, HeldFacts, Spares, WedgeReason, may_start_outpost, retirement_decision,
@@ -50,7 +51,8 @@ use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, ToChild, WriterHandle};
 use super::{
     ABANDONED_WORKER_LIMIT, BACKOFF, EndReason, EventSink, IDLE_RETIREMENT, MISSED_PONG_THRESHOLD,
-    OutpostMessage, PING_INTERVAL, ReducerStall, SPARES, SWEEP_INTERVAL, Undelivered, Writers,
+    OutpostMessage, PING_INTERVAL, ReducerStall, SPARES, SWEEP_INTERVAL, Sealed, Undelivered,
+    Writers,
 };
 
 /// The relay thread's priority: it reads each of the listener's facts and
@@ -163,54 +165,24 @@ pub(super) struct Setup {
     pub(super) ignored: std::sync::Arc<IgnoredProcesses>,
 }
 
-/// One application's outpost: starting until its launch reports back, or
-/// until a spare given to it sends `Ready`, then running; or, after its
-/// outpost failed, waiting for the failure's backoff to end, with no
-/// generation (`outpost` is `OutpostId(0)` and its backoff is due).
+/// One application's record: what belongs to the application, and its
+/// outpost generation's state ([`Generation`]), which says whether a
+/// generation is launching, given, starting, ready, or, after a failure,
+/// waiting for its backoff with none.
 struct Record {
-    outpost: OutpostId,
-    /// `None` while the launch helper is still at work.
-    child: Option<OutpostChild>,
-    /// Whether this generation was a spare
-    /// (`docs/design/focus-pipeline.md`, section 19), whose end before
-    /// `Ready` is a spare's failure, not the application's crash, and
-    /// whether it has been sent its `Assign`.
-    spare: Option<Assigned>,
-    /// Whether the outpost has sent `Ready`.
-    ready: bool,
+    generation: Generation<OutpostChild>,
     /// Facts that arrived before `Ready`, released in order on `Ready`.
     held: HeldFacts,
-    last_pong_at: Instant,
-    abandoned: usize,
-    /// Whether a check of whether its application is hung is running.
-    hang_check: bool,
     /// When the application last held attention.
     last_attention_at: Instant,
     /// The idle barrier's round, held behind the held facts until `Ready`.
     idle_query: Option<u64>,
-    /// The last fault a spare given to the application reported before its
-    /// `Ready`, such as its hook failing: logged with its failure.
-    fault: Option<String>,
     /// When the current generation was given to the application or
     /// launched for it: how long it had been up when it fails.
     since: Instant,
     /// The failures of the application's outposts while serving it, and,
     /// while a failure's wait runs, when the next generation is given.
     backoff: Backoff,
-    /// The generation that failed before its `Ready`, while its backoff
-    /// runs: the app hears it replaced ([`OutpostMessage::Regenerated`])
-    /// when the next is given.
-    unready: Option<Unready>,
-}
-
-/// A generation that failed before its `Ready`, whose replacement waits
-/// for the failure's backoff.
-#[derive(Clone, Copy, Debug)]
-struct Unready {
-    outpost: OutpostId,
-    reason: EndReason,
-    /// Whether the app heard it started, and so hears it ended.
-    started: bool,
 }
 
 /// Where the idle barrier's round is in the relay
@@ -225,20 +197,10 @@ enum IdleStage {
     Launches(u64),
 }
 
-/// Whether a spare given to an application has been sent its `Assign`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Assigned {
-    /// Sent, and the app told the generation `Started`.
-    Sent,
-    /// Not yet: it was given while its launch was still at work, and is
-    /// sent `Assign`, and the app `Started`, once it has reported.
-    Pending,
-}
-
 /// The focus listener.
 struct ListenerRecord {
     outpost: OutpostId,
-    child: Option<Child<CoreToListener>>,
+    child: Run<Child<CoreToListener>>,
     last_pong_at: Instant,
     /// Whether this listener replaces an earlier one: facts were lost in the
     /// gap, so the attention application is asked to report again on `Ready`.
@@ -370,8 +332,7 @@ struct App {
 
 /// A spare outpost's process while it waits.
 struct SpareChild {
-    /// `None` while the launch helper is still at work.
-    child: Option<OutpostChild>,
+    child: Run<OutpostChild>,
     last_pong_at: Instant,
     /// The last fault it reported: logged with its failure.
     fault: Option<String>,
@@ -595,7 +556,7 @@ impl Owner {
         if self
             .records
             .get(&pid)
-            .is_none_or(|record| record.outpost != outpost)
+            .is_none_or(|record| record.generation.outpost() != Some(outpost))
         {
             // The owner has ended this generation itself, and told the
             // app, which drops whatever it sent after; its pipe is read
@@ -637,13 +598,18 @@ impl Owner {
             Peeked::Fault => {
                 // A given spare's fault before its `Ready`, such as its
                 // hook failing, is kept for the log of its failure.
-                if let Some(record) = self
+                if self
                     .records
                     .get_mut(&pid)
-                    .filter(|record| record.spare.is_some() && !record.ready)
+                    .and_then(|record| record.generation.spare_fault())
+                    .is_some()
                     && let OutpostToCore::Fault { detail } = decode_message(body.parts())?
+                    && let Some(fault) = self
+                        .records
+                        .get_mut(&pid)
+                        .and_then(|record| record.generation.spare_fault())
                 {
-                    record.fault = Some(detail);
+                    *fault = Some(detail);
                 }
                 self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
             }
@@ -673,6 +639,7 @@ impl Owner {
                         spare: outpost,
                         outpost_pid,
                         waiting,
+                        sealed: Sealed::new(),
                     });
                 }
             }
@@ -827,8 +794,10 @@ impl Owner {
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
             OwnerEvent::Pong { outpost, abandoned } => {
                 if let Some(record) = self.record_of(outpost) {
-                    record.last_pong_at = Instant::now();
-                    record.abandoned = abandoned;
+                    if let Some(live) = record.generation.live_mut() {
+                        live.last_pong_at = Instant::now();
+                        live.abandoned = abandoned;
+                    }
                 } else if let Some(listener) = self
                     .listener
                     .as_mut()
@@ -860,7 +829,7 @@ impl Owner {
             return;
         };
         let query = CoreToListener::IdleQuery { round };
-        let reached = if let Some(child) = &listener.child {
+        let reached = if let Some(child) = listener.child.running() {
             let pushed = child.writer.push(Outgoing::IdleQuery(query));
             if let Err(error) = &pushed {
                 tracing::warn!(%error, "the idle query could not reach the listener");
@@ -910,7 +879,7 @@ impl Owner {
             && self
                 .records
                 .values()
-                .any(|record| record.child.is_none() && record.backoff.due().is_none())
+                .any(|record| record.generation.is_launching())
         {
             self.idle = Some(IdleStage::Launches(round));
             return;
@@ -919,15 +888,18 @@ impl Owner {
         let outposts = self
             .records
             .values()
-            .filter(|record| record.child.is_some())
-            .map(|record| record.outpost)
+            .filter(|record| record.generation.child().is_some())
+            .filter_map(|record| record.generation.outpost())
             .collect();
-        self.outbox
-            .send(OutpostMessage::IdleQueried { round, outposts });
+        self.outbox.send(OutpostMessage::IdleQueried {
+            round,
+            outposts,
+            sealed: Sealed::new(),
+        });
         for record in self.records.values_mut() {
-            match record.child.as_ref().filter(|_| record.ready) {
+            match record.generation.ready_child() {
                 Some(child) => ask_idle(&child.writer, round),
-                None if record.backoff.due().is_none() => record.idle_query = Some(round),
+                None if record.generation.outpost().is_some() => record.idle_query = Some(round),
                 None => {}
             }
         }
@@ -937,14 +909,14 @@ impl Owner {
     fn record_of(&mut self, outpost: OutpostId) -> Option<&mut Record> {
         self.records
             .values_mut()
-            .find(|record| record.outpost == outpost)
+            .find(|record| record.generation.outpost() == Some(outpost))
     }
 
     /// The application `outpost` watches, if it is current.
     fn pid_of(&self, outpost: OutpostId) -> Option<Pid> {
         self.records
             .iter()
-            .find(|(_, record)| record.outpost == outpost)
+            .find(|(_, record)| record.generation.outpost() == Some(outpost))
             .map(|(pid, _)| *pid)
     }
 
@@ -954,17 +926,15 @@ impl Owner {
     }
 
     /// Records `pid` as starting, once its process is held
-    /// ([`hold_target`](Self::hold_target)), and gives it the oldest spare
-    /// outpost, or, with none, hands its launch to a helper thread
-    /// ([`incarnate`](Self::incarnate)); says whether it did. An
+    /// ([`hold_target`](Self::hold_target)), and gives it its first
+    /// generation ([`incarnate`](Self::incarnate)); says whether it did. An
     /// application whose process has exited, or cannot be held, gets no
     /// outpost, and the app is told ([`OutpostMessage::NotWatched`]), so
     /// nothing waits for one.
     fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) -> bool {
         if self.ignored.contains(pid) {
             tracing::debug!(%pid, "no outpost is started for a process Verbatim ignores");
-            self.outbox
-                .send(OutpostMessage::NotWatched { target_pid: pid });
+            self.not_watched(pid);
             return false;
         }
         if let Err(not_held) = self.hold_target(pid) {
@@ -984,124 +954,100 @@ impl Owner {
         self.records.insert(
             pid,
             Record {
-                // Set by `incarnate` below.
-                outpost: OutpostId(0),
-                child: None,
-                spare: None,
-                ready: false,
+                generation: Generation::new(),
                 held,
-                last_pong_at: now,
-                abandoned: 0,
-                hang_check: false,
                 last_attention_at: now,
                 idle_query: None,
-                fault: None,
                 since: now,
                 backoff: Backoff::default(),
-                unready: None,
             },
         );
         self.incarnate(pid);
         true
     }
 
-    /// Gives `pid`'s record, starting or after a failure, a new
-    /// generation ([`next_generation`](Self::next_generation)) and
-    /// starts it ([`start_generation`](Self::start_generation)). When
-    /// the generation before failed before its `Ready`, the app hears
-    /// first that this one takes its place
-    /// ([`OutpostMessage::Regenerated`]), then the failed one's end if it
-    /// heard it started.
-    fn incarnate(&mut self, pid: Pid) {
-        let unready = self
-            .records
-            .get_mut(&pid)
-            .and_then(|record| record.unready.take());
-        let Some(next) = self.next_generation(pid) else {
-            return;
-        };
-        if let Some(failed) = unready {
-            self.outbox.send(OutpostMessage::Regenerated {
-                outpost: failed.outpost,
-                next,
-                target_pid: pid,
-            });
-            if failed.started {
-                self.outbox.send(OutpostMessage::Ended {
-                    outpost: failed.outpost,
-                    target_pid: pid,
-                    reason: failed.reason,
-                });
-            }
-        }
-        self.start_generation(pid);
+    /// Runs `transition` on `pid`'s generation: takes its state out,
+    /// leaving a record with no generation while it runs, and stores the
+    /// state it returns. `None` when `pid` has no record.
+    fn transition<T>(
+        &mut self,
+        pid: Pid,
+        transition: impl FnOnce(Generation<OutpostChild>) -> (Generation<OutpostChild>, T),
+    ) -> Option<T> {
+        let record = self.records.get_mut(&pid)?;
+        let generation = std::mem::replace(&mut record.generation, Generation::new());
+        let (next, value) = transition(generation);
+        record.generation = next;
+        Some(value)
     }
 
-    /// Gives `pid`'s record its next generation without starting it: the
-    /// oldest spare waiting, ready or not, whose replacement starts at
-    /// once, or, with no spare, a new outpost to launch for it. Returns the
-    /// generation.
-    fn next_generation(&mut self, pid: Pid) -> Option<OutpostId> {
+    /// Does what a transition of `pid`'s generation says, in order.
+    fn apply(&mut self, pid: Pid, notices: Vec<Notice>) {
+        for notice in notices {
+            match notice {
+                Notice::HookInstalled { pid, outpost } => {
+                    self.tell_listener(CoreToListener::HookInstalled {
+                        pid,
+                        outpost,
+                        sent_at_us: 0,
+                    });
+                }
+                Notice::HookRemoved { pid } => {
+                    self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
+                }
+                Notice::Assign { outpost } => self.assign(pid, outpost),
+                Notice::Launch { outpost } => self.launch(outpost, Role::Outpost(pid)),
+                Notice::App(message) => self.outbox.send(message),
+            }
+        }
+    }
+
+    /// Gives `pid`'s record, starting or after a failure, its next
+    /// generation: the oldest spare waiting, ready or not, whose
+    /// replacement starts at once, or, with no spare, a new outpost to
+    /// launch for it ([`Generation::given`]). When the generation before
+    /// failed before its `Ready`, the app hears first that this one takes
+    /// its place ([`OutpostMessage::Regenerated`]), then the failed one's
+    /// end if it heard it started.
+    fn incarnate(&mut self, pid: Pid) {
         if !self.records.contains_key(&pid) {
-            return None;
+            return;
         }
         let now = Instant::now();
-        let spare = self.spares.take();
-        let (outpost, child) = match spare {
-            Some(spare) => (
-                spare,
-                self.spare_children
+        let next = match self.spares.take() {
+            Some(spare) => Next::Spare {
+                outpost: spare,
+                child: self
+                    .spare_children
                     .remove(&spare)
-                    .and_then(|spare| spare.child),
-            ),
-            None => (self.next_outpost_id(), None),
+                    .and_then(|spare| spare.child.into_running()),
+            },
+            None => Next::Launch {
+                outpost: self.next_outpost_id(),
+            },
         };
-        let record = self.records.get_mut(&pid)?;
-        record.outpost = outpost;
-        record.spare = spare.map(|_| {
-            if child.is_some() {
-                Assigned::Sent
-            } else {
-                Assigned::Pending
-            }
-        });
-        record.child = child;
-        record.ready = false;
-        record.last_pong_at = now;
-        record.abandoned = 0;
-        record.hang_check = false;
-        record.fault = None;
-        record.since = now;
-        if spare.is_some() {
+        let took_spare = matches!(next, Next::Spare { .. });
+        let Some(notices) = self.transition(pid, |generation| generation.given(pid, next, now))
+        else {
+            return;
+        };
+        if let Some(record) = self.records.get_mut(&pid) {
+            record.since = now;
+        }
+        if took_spare {
             self.replenish_spares();
         }
-        Some(outpost)
+        self.apply(pid, notices);
     }
 
-    /// Starts the generation [`next_generation`](Self::next_generation)
-    /// gave `pid`'s record: a spare is sent `Assign` and the app `Started`
-    /// at once, or once its launch has reported; an outpost for it is
-    /// launched.
-    fn start_generation(&mut self, pid: Pid) {
-        let Some(record) = self.records.get(&pid) else {
-            return;
-        };
-        match record.spare {
-            Some(Assigned::Sent) => self.assign(pid),
-            Some(Assigned::Pending) => {}
-            None => self.launch(record.outpost, Role::Outpost(pid)),
-        }
-    }
-
-    /// Sends `pid`'s spare its `Assign`, ahead of everything the app will
-    /// send it, reads its pipe as the application's from now on, and tells
-    /// the app the generation started.
-    fn assign(&mut self, pid: Pid) {
-        let Some(record) = self.records.get(&pid) else {
-            return;
-        };
-        let outpost = record.outpost;
-        if let Some(child) = &record.child
+    /// Sends `pid`'s spare `outpost` its `Assign`, ahead of everything the
+    /// app will send it, and reads its pipe as the application's from now
+    /// on.
+    fn assign(&mut self, pid: Pid, outpost: OutpostId) {
+        if let Some(child) = self
+            .records
+            .get(&pid)
+            .and_then(|record| record.generation.child())
             && let Err(error) = child.writer.push(Outgoing::HandOver(CoreToOutpost::Assign {
                 target_pid: pid,
             }))
@@ -1111,10 +1057,6 @@ impl Owner {
         }
         self.relay.set_source(outpost, Source::Outpost(pid));
         tracing::info!(%outpost, %pid, "a spare outpost is given to the application");
-        self.outbox.send(OutpostMessage::Started {
-            outpost,
-            target_pid: pid,
-        });
     }
 
     /// Starts keeping spare outposts, once: Core's own outpost is ready, or
@@ -1139,7 +1081,7 @@ impl Owner {
             self.spare_children.insert(
                 spare,
                 SpareChild {
-                    child: None,
+                    child: Run::Launching,
                     last_pong_at: now,
                     fault: None,
                     started_at: now,
@@ -1218,31 +1160,27 @@ impl Owner {
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
-        let failed = record.outpost;
-        let ready = record.ready;
-        let child = record.child.take();
-        // What it reported before it failed is the evidence of why.
-        let why = match record.fault.take() {
-            Some(fault) => format!("{why}, after its fault: {fault}"),
-            None => why.to_owned(),
+        let generation = std::mem::replace(&mut record.generation, Generation::new());
+        let failure = match generation.failed(pid, reason) {
+            Ok(failure) => failure,
+            Err(waiting) => {
+                record.generation = waiting;
+                return;
+            }
         };
+        record.generation = failure.next;
         let wait = record
             .backoff
             .failed(record.since.elapsed(), Instant::now(), BACKOFF);
-        if !ready {
-            record.unready = Some(Unready {
-                outpost: failed,
-                reason,
-                started: child.is_some(),
-            });
-        }
-        record.outpost = OutpostId(0);
-        record.spare = None;
-        record.ready = false;
-        record.abandoned = 0;
-        record.hang_check = false;
+        let failed = failure.outpost;
+        let ready = failure.ready;
+        // What it reported before it failed is the evidence of why.
+        let why = match failure.fault {
+            Some(fault) => format!("{why}, after its fault: {fault}"),
+            None => why.to_owned(),
+        };
         self.forget_writer(failed);
-        if let Some(child) = child {
+        if let Some(child) = failure.child {
             self.retire_child(child, format!("outpost {failed} for {pid}"), why.clone());
         }
         // A failure before `Ready`, such as a hook that fails, is an error,
@@ -1266,16 +1204,10 @@ impl Owner {
                 "an outpost failed before it was ready; its application is given the next"
             );
         }
-        if ready {
-            // Its hook goes with it: the listener forwards the
-            // application's MSAA events again until the next is ready.
-            self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
-            self.outbox.send(OutpostMessage::Ended {
-                outpost: failed,
-                target_pid: pid,
-                reason,
-            });
-        } else if pid == self.own_pid {
+        // A ready one's hook goes with it, and the app hears it ended, a
+        // generation following.
+        self.apply(pid, failure.notices);
+        if !ready && pid == self.own_pid {
             self.keep_spares();
         }
         if wait.is_zero() {
@@ -1294,8 +1226,10 @@ impl Owner {
     /// Tells the app that no outpost will watch `pid` for now
     /// ([`OutpostMessage::NotWatched`]), so nothing waits for one.
     fn not_watched(&mut self, pid: Pid) {
-        self.outbox
-            .send(OutpostMessage::NotWatched { target_pid: pid });
+        self.outbox.send(OutpostMessage::NotWatched {
+            target_pid: pid,
+            sealed: Sealed::new(),
+        });
     }
 
     /// Holds `pid`'s process, unless it is held already: the pid then names
@@ -1356,7 +1290,7 @@ impl Owner {
         let outpost = self.next_outpost_id();
         self.listener = Some(ListenerRecord {
             outpost,
-            child: None,
+            child: Run::Launching,
             last_pong_at: Instant::now(),
             replacement,
             pending: Vec::new(),
@@ -1369,8 +1303,8 @@ impl Owner {
     fn hooks_in(&self) -> Vec<(Pid, OutpostId)> {
         self.records
             .iter()
-            .filter(|(_, record)| record.ready)
-            .map(|(pid, record)| (*pid, record.outpost))
+            .filter(|(_, record)| record.generation.is_ready())
+            .filter_map(|(pid, record)| record.generation.outpost().map(|outpost| (*pid, outpost)))
             .collect()
     }
 
@@ -1383,7 +1317,7 @@ impl Owner {
         let Some(listener) = self.listener.as_mut() else {
             return;
         };
-        match &listener.child {
+        match listener.child.running() {
             Some(child) => {
                 if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
                     tracing::warn!(%error, "the hand-over could not be told to the listener");
@@ -1400,8 +1334,7 @@ impl Owner {
         let Some(child) = self
             .records
             .get(&pid)
-            .filter(|record| record.outpost == outpost && record.ready)
-            .and_then(|record| record.child.as_ref())
+            .and_then(|record| record.generation.forwarding_target(outpost))
         else {
             tracing::debug!(%pid, %outpost, "forwarding ended for an outpost that has gone");
             return;
@@ -1452,16 +1385,6 @@ impl Owner {
     }
 
     fn on_launched(&mut self, outpost: OutpostId, result: io::Result<Launch>) {
-        if let Ok(Launch {
-            source: Source::Outpost(pid),
-            ..
-        }) = &result
-        {
-            self.outbox.send(OutpostMessage::Started {
-                outpost,
-                target_pid: *pid,
-            });
-        }
         // The child's pipe to Core is read from now on, whoever ends up
         // ending the child, so its end is always seen. A spare given while
         // it was launching is read as its application's.
@@ -1522,12 +1445,12 @@ impl Owner {
             match result {
                 Ok(child) => {
                     let pending = std::mem::take(&mut listener.pending);
-                    listener.child = Some(child);
+                    listener.child = Run::Running(child);
                     listener.last_pong_at = Instant::now();
                     let Some(child) = self
                         .listener
                         .as_ref()
-                        .and_then(|listener| listener.child.as_ref())
+                        .and_then(|listener| listener.child.running())
                     else {
                         return;
                     };
@@ -1582,17 +1505,29 @@ impl Owner {
         };
         match result {
             Ok(child) => {
-                let mut assign = false;
-                if let Some(record) = self.records.get_mut(&pid) {
-                    record.child = Some(child);
-                    record.last_pong_at = Instant::now();
-                    assign = record.spare == Some(Assigned::Pending);
-                    if assign {
-                        record.spare = Some(Assigned::Sent);
+                let now = Instant::now();
+                let taken = self.transition(pid, |generation| {
+                    let taken = if generation.is_spare_given() {
+                        generation.assigned(pid, child, now)
+                    } else {
+                        generation.launched(pid, child, now)
+                    };
+                    match taken {
+                        Ok((next, notices)) => (next, Ok(notices)),
+                        Err((kept, child)) => (kept, Err(child)),
                     }
-                }
-                if assign {
-                    self.assign(pid);
+                });
+                match taken {
+                    Some(Ok(notices)) => self.apply(pid, notices),
+                    Some(Err(child)) => {
+                        tracing::warn!(%outpost, %pid, "launched a child for a generation that is not launching");
+                        self.retire_child(
+                            child,
+                            format!("outpost {outpost}"),
+                            "launched for a generation that was not launching".to_owned(),
+                        );
+                    }
+                    None => {}
                 }
                 if self.shutting_down.is_some() {
                     self.end_quietly(pid, "Verbatim is exiting");
@@ -1630,7 +1565,7 @@ impl Owner {
             }
             Ok(child) => {
                 if let Some(spare) = self.spare_children.get_mut(&outpost) {
-                    spare.child = Some(child);
+                    spare.child = Run::Running(child);
                     spare.last_pong_at = Instant::now();
                 }
             }
@@ -1659,17 +1594,22 @@ impl Owner {
         {
             tracing::info!(%outpost, "focus listener ready");
             let replacement = listener.replacement;
-            self.outbox
-                .send(OutpostMessage::ListenerReady { replacement });
+            self.outbox.send(OutpostMessage::ListenerReady {
+                replacement,
+                sealed: Sealed::new(),
+            });
             return;
         }
         let Some(pid) = self.pid_of(outpost) else {
             return;
         };
+        let Some(notices) = self.transition(pid, |generation| generation.ready(pid, outpost))
+        else {
+            return;
+        };
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
-        record.ready = true;
         if let Some(held_at) = record.held.first_held_at() {
             // The time the supervisor held the application's first fact
             // for its outpost's start (`docs/design/focus-pipeline.md`,
@@ -1681,7 +1621,11 @@ impl Owner {
                 "outpost ready, its application's first fact held until now"
             );
         }
-        let Some(writer) = record.child.as_ref().map(|child| child.writer.clone()) else {
+        let Some(writer) = record
+            .generation
+            .ready_child()
+            .map(|child| child.writer.clone())
+        else {
             return;
         };
         for mut held in record.held.take() {
@@ -1699,11 +1643,7 @@ impl Owner {
         // An outpost is ready once its own `WinEvent` hook is in: the
         // listener stops forwarding the application's MSAA events raised
         // from now on, and says so behind the last it forwarded.
-        self.tell_listener(CoreToListener::HookInstalled {
-            pid,
-            outpost,
-            sent_at_us: 0,
-        });
+        self.apply(pid, notices);
     }
 
     /// Routes a listener fact to its application's outpost: delivered at
@@ -1725,7 +1665,7 @@ impl Owner {
             self.incarnate(pid);
         }
         match self.records.get_mut(&pid) {
-            Some(record) => match record.child.as_ref().filter(|_| record.ready) {
+            Some(record) => match record.generation.ready_child() {
                 Some(child) => deliver(&child.writer, held),
                 None => record.held.hold(held),
             },
@@ -1761,7 +1701,7 @@ impl Owner {
             let listed = self.spares.remove(outpost);
             let up = spare.started_at.elapsed();
             self.forget_writer(outpost);
-            if let Some(child) = spare.child {
+            if let Some(child) = spare.child.into_running() {
                 self.retire_child(
                     child,
                     format!("spare outpost {outpost}"),
@@ -1795,63 +1735,47 @@ impl Owner {
         self.end_because(pid, reason, &reason.to_string());
     }
 
-    /// [`end`](Self::end), saying `why` in the log of the process's end.
-    /// An application whose failed outpost's replacement waits for its
-    /// backoff has no generation to end, but a generation that failed
-    /// before its `Ready`, and whose end the app has not heard yet, ends
-    /// now.
+    /// [`end`](Self::end), saying `why` in the log of the process's end:
+    /// the app hears the end of every generation it heard started, the
+    /// one that failed before its `Ready` and whose backoff runs among
+    /// them, with no generation following, and then that the application
+    /// is not watched ([`Generation::removed`]).
     fn end_because(&mut self, pid: Pid, reason: EndReason, why: &str) {
-        let Some((outpost, unready)) = self.take_record(pid, why) else {
+        let Some(record) = self.records.remove(&pid) else {
             return;
         };
-        let unready = unready
-            .filter(|unready| unready.started)
-            .map(|unready| unready.outpost);
-        for outpost in [Some(outpost).filter(|outpost| outpost.0 != 0), unready]
-            .into_iter()
-            .flatten()
-        {
-            tracing::info!(%outpost, %pid, %reason, "outpost ended");
-            self.outbox.send(OutpostMessage::Ended {
-                outpost,
-                target_pid: pid,
-                reason,
-            });
-        }
+        tracing::info!(%pid, %reason, "outpost ended");
+        let removed = record.generation.removed(pid, Some(reason));
+        self.finish_removal(pid, removed, why);
     }
 
     /// Ends `pid`'s outpost as [`end`](Self::end) does, without telling the
     /// app: Verbatim is exiting.
     fn end_quietly(&mut self, pid: Pid, why: &str) {
-        let _ = self.take_record(pid, why);
+        if let Some(record) = self.records.remove(&pid) {
+            let removed = record.generation.removed(pid, None);
+            self.finish_removal(pid, removed, why);
+        }
     }
 
-    /// Removes `pid`'s record and writer and retires its process, if it
-    /// has one yet, for `why`. Returns the record's outpost id, `OutpostId(0)`
-    /// while a failure's backoff runs, and the generation that failed
-    /// before its `Ready` whose replacement that backoff holds.
-    fn take_record(&mut self, pid: Pid, why: &str) -> Option<(OutpostId, Option<Unready>)> {
-        let record = self.records.remove(&pid)?;
-        if pid == self.own_pid && !record.ready {
+    /// Ends what a removed record left: its writer goes, its process is
+    /// retired, for `why`, and its notices are sent, its hook's removal
+    /// among them.
+    fn finish_removal(&mut self, pid: Pid, removed: Removed<OutpostChild>, why: &str) {
+        if pid == self.own_pid && !removed.ready {
             self.keep_spares();
         }
-        if record.ready {
-            // Its hook goes with it: the listener forwards the
-            // application's MSAA events again, to start the next outpost.
-            self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
+        if let Some(outpost) = removed.outpost {
+            self.forget_writer(outpost);
+            if let Some(child) = removed.child {
+                self.retire_child(
+                    child,
+                    format!("outpost {outpost} for {pid}"),
+                    why.to_owned(),
+                );
+            }
         }
-        self.writers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&record.outpost);
-        if let Some(child) = record.child {
-            self.retire_child(
-                child,
-                format!("outpost {} for {pid}", record.outpost),
-                why.to_owned(),
-            );
-        }
-        Some((record.outpost, record.unready))
+        self.apply(pid, removed.notices);
     }
 
     /// Ends `child` cleanly on a thread of its own ([`retire`]), which
@@ -1893,7 +1817,9 @@ impl Owner {
         let launched: Vec<Pid> = self
             .records
             .iter()
-            .filter(|(_, record)| record.child.is_some() || record.backoff.due().is_some())
+            .filter(|(_, record)| {
+                record.generation.child().is_some() || record.backoff.due().is_some()
+            })
             .map(|(pid, _)| *pid)
             .collect();
         for pid in launched {
@@ -1903,14 +1829,14 @@ impl Owner {
         let spares: Vec<OutpostId> = self
             .spare_children
             .iter()
-            .filter(|(_, spare)| spare.child.is_some())
+            .filter(|(_, spare)| spare.child.running().is_some())
             .map(|(outpost, _)| *outpost)
             .collect();
         for outpost in spares {
             if let Some(child) = self
                 .spare_children
                 .remove(&outpost)
-                .and_then(|spare| spare.child)
+                .and_then(|spare| spare.child.into_running())
             {
                 self.forget_writer(outpost);
                 self.retire_child(
@@ -1923,7 +1849,7 @@ impl Owner {
         if self
             .listener
             .as_ref()
-            .is_some_and(|listener| listener.child.is_some())
+            .is_some_and(|listener| listener.child.running().is_some())
         {
             self.end_listener("Verbatim is exiting");
         }
@@ -1975,7 +1901,7 @@ impl Owner {
                 win_event: None,
                 received: crate::supervisor::writer::Received::now(),
             };
-            match record.child.as_ref().filter(|_| record.ready) {
+            match record.generation.ready_child() {
                 Some(child) => deliver(&child.writer, held),
                 None => record.held.hold(held),
             }
@@ -1986,7 +1912,7 @@ impl Owner {
     /// `why`.
     fn end_listener(&mut self, why: &str) {
         if let Some(listener) = self.listener.take()
-            && let Some(child) = listener.child
+            && let Some(child) = listener.child.into_running()
         {
             self.retire_child(
                 child,
@@ -2018,22 +1944,28 @@ impl Owner {
         let mut exited = Vec::new();
         let mut hang_checks = Vec::new();
         for (&pid, record) in &self.records {
-            let Some(child) = &record.child else { continue };
+            let (Some(child), Some(live), Some(outpost)) = (
+                record.generation.child(),
+                record.generation.live(),
+                record.generation.outpost(),
+            ) else {
+                continue;
+            };
             // An application whose outpost could not tell it exited.
             if self.has_exited(pid) {
                 exited.push(pid);
                 continue;
             }
-            let check_hang = record.abandoned >= ABANDONED_WORKER_LIMIT;
-            if check_hang && !record.hang_check {
-                hang_checks.push((pid, record.outpost));
+            let check_hang = live.abandoned >= ABANDONED_WORKER_LIMIT;
+            if check_hang && !live.hang_check {
+                hang_checks.push((pid, outpost));
             }
             match wedge_decision(
-                record.last_pong_at,
+                live.last_pong_at,
                 now,
                 PING_INTERVAL,
                 MISSED_PONG_THRESHOLD,
-                record.abandoned,
+                live.abandoned,
                 ABANDONED_WORKER_LIMIT,
                 // Abandoned workers are judged when the check answers.
                 check_hang,
@@ -2059,7 +1991,7 @@ impl Owner {
         match &self.listener {
             None => self.start_listener(true),
             Some(listener) => {
-                if let Some(child) = &listener.child {
+                if let Some(child) = listener.child.running() {
                     let decision = wedge_decision(
                         listener.last_pong_at,
                         now,
@@ -2090,7 +2022,9 @@ impl Owner {
     fn spare_heartbeat(&mut self, now: Instant, ping: &CoreToOutpost) {
         let mut wedged = Vec::new();
         for (&outpost, spare) in &self.spare_children {
-            let Some(child) = &spare.child else { continue };
+            let Some(child) = spare.child.running() else {
+                continue;
+            };
             let decision = wedge_decision(
                 spare.last_pong_at,
                 now,
@@ -2111,7 +2045,7 @@ impl Owner {
             let mut up = Duration::ZERO;
             if let Some(spare) = self.spare_children.remove(&outpost) {
                 up = spare.started_at.elapsed();
-                if let Some(child) = spare.child {
+                if let Some(child) = spare.child.into_running() {
                     self.forget_writer(outpost);
                     self.retire_child(
                         child,
@@ -2140,8 +2074,12 @@ impl Owner {
             });
         match spawned {
             Ok(_) => {
-                if let Some(record) = self.records.get_mut(&pid) {
-                    record.hang_check = true;
+                if let Some(live) = self
+                    .records
+                    .get_mut(&pid)
+                    .and_then(|record| record.generation.live_mut())
+                {
+                    live.hang_check = true;
                 }
             }
             // Tried again on the next heartbeat.
@@ -2161,16 +2099,20 @@ impl Owner {
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
-        record.hang_check = false;
-        if self.shutting_down.is_some() || record.child.is_none() {
+        let Some(live) = record.generation.live_mut() else {
+            return;
+        };
+        live.hang_check = false;
+        let live = *live;
+        if self.shutting_down.is_some() {
             return;
         }
         if let Some(reason) = wedge_decision(
-            record.last_pong_at,
+            live.last_pong_at,
             Instant::now(),
             PING_INTERVAL,
             MISSED_PONG_THRESHOLD,
-            record.abandoned,
+            live.abandoned,
             ABANDONED_WORKER_LIMIT,
             hung,
         ) {
@@ -2192,13 +2134,16 @@ impl Owner {
             .iter()
             .filter(|(pid, record)| {
                 **pid != self.own_pid
-                    && record.child.is_some()
+                    && record.generation.child().is_some()
                     && retirement_decision(
                         record.last_attention_at,
                         now,
                         IDLE_RETIREMENT,
                         self.attention == Some(**pid),
-                        self.holding.contains(&record.outpost),
+                        record
+                            .generation
+                            .outpost()
+                            .is_some_and(|outpost| self.holding.contains(&outpost)),
                     )
             })
             .map(|(pid, _)| *pid)

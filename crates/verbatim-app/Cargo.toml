@@ -32,5 +32,9 @@ verbatim-synth-hosted.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[dev-dependencies]
+# The supervisor's sealed lifecycle notices, made by the reducer's tests.
+verbatim-outpost = { workspace = true, features = ["lifecycle-for-tests"] }
+
 [lints]
 workspace = true

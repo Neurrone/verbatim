@@ -713,6 +713,11 @@ mod tests {
         assert_eq!(table.dump_tree_request(ticket), None);
     }
 
+    /// A generation's `Ended` answers its queries "gone", whether a next
+    /// generation follows or not: a ready generation that fails with a
+    /// backoff to wait reaches the app as `Ended` before the backoff runs
+    /// (the supervisor's generation tests), so its queries are answered
+    /// then, not when the replacement comes.
     #[test]
     fn an_ended_outpost_answers_its_outstanding_queries_gone() {
         let mut table = RequestTable::default();

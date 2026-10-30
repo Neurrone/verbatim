@@ -141,7 +141,9 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady { replacement: false } => {}
+        OutpostMessage::ListenerReady {
+            replacement: false, ..
+        } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
@@ -158,6 +160,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
         OutpostMessage::Started {
             outpost,
             target_pid: started,
+            ..
         } if started == target_pid => outpost,
         other => panic!("the supervisor said {other:?}, not that the outpost started"),
     };
@@ -178,15 +181,25 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
             outpost: ended,
             target_pid: ended_pid,
             reason: EndReason::TargetExited,
+            follows: false,
+            ..
         } if ended == outpost && ended_pid == target_pid => {}
         other => {
             panic!("the supervisor said {other:?}, not that the outpost ended with its application")
         }
     }
+    match next(&events) {
+        OutpostMessage::NotWatched {
+            target_pid: gone, ..
+        } if gone == target_pid => {}
+        other => panic!("the supervisor said {other:?}, not that nothing watches the application"),
+    }
 
     supervisor.ensure_spawned(target_pid);
     match next(&events) {
-        OutpostMessage::NotWatched { target_pid: wanted } if wanted == target_pid => {}
+        OutpostMessage::NotWatched {
+            target_pid: wanted, ..
+        } if wanted == target_pid => {}
         other => panic!("the supervisor said {other:?}, not that it started no outpost"),
     }
 
@@ -214,6 +227,7 @@ fn started_and_ready(events: &Delivered, target_pid: Pid) -> OutpostId {
         OutpostMessage::Started {
             outpost,
             target_pid: started,
+            ..
         } if started == target_pid => outpost,
         other => panic!("the supervisor said {other:?}, not that the outpost started"),
     };
@@ -254,7 +268,9 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady { replacement: false } => {}
+        OutpostMessage::ListenerReady {
+            replacement: false, ..
+        } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
@@ -277,6 +293,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
             outpost: ended,
             target_pid: ended_pid,
             reason: EndReason::Exited,
+            ..
         } if ended == outpost && ended_pid == target_pid => {}
         other => panic!("the supervisor said {other:?}, not that the outpost ended"),
     }

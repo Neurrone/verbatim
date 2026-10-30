@@ -439,7 +439,9 @@ impl Run {
             spares: RefCell::new(Vec::new()),
         };
         match run.next() {
-            OutpostMessage::ListenerReady { replacement: false } => {}
+            OutpostMessage::ListenerReady {
+                replacement: false, ..
+            } => {}
             other => panic!("the supervisor said {other:?} before the listener was ready"),
         }
         run
@@ -458,6 +460,7 @@ impl Run {
                     spare,
                     outpost_pid,
                     waiting,
+                    ..
                 } => self.spares.borrow_mut().push(SpareReady {
                     spare,
                     outpost_pid,
@@ -482,6 +485,7 @@ impl Run {
                 spare,
                 outpost_pid,
                 waiting,
+                ..
             } => SpareReady {
                 spare,
                 outpost_pid,
@@ -537,6 +541,7 @@ impl Run {
             OutpostMessage::Started {
                 outpost,
                 target_pid: started,
+                ..
             } if started == target_pid => outpost,
             other => {
                 panic!("the supervisor said {other:?}, not that {target_pid}'s outpost started")
@@ -605,6 +610,7 @@ impl Run {
                 outpost: failed,
                 next: then,
                 target_pid: pid,
+                ..
             } if failed == outpost && then == next && pid == target_pid => {}
             other => panic!(
                 "the supervisor said {other:?}, not that {outpost}'s place for {target_pid} went to {next}"
@@ -620,10 +626,21 @@ impl Run {
                 outpost: ended,
                 target_pid: pid,
                 reason: why,
+                ..
             } if ended == outpost && pid == target_pid && why == reason => {}
             other => panic!(
                 "the supervisor said {other:?}, not that {outpost} for {target_pid} ended, {reason}"
             ),
+        }
+    }
+
+    /// The next message, that nothing watches `target_pid` now.
+    fn expect_not_watched(&self, target_pid: Pid) {
+        match self.next() {
+            OutpostMessage::NotWatched {
+                target_pid: pid, ..
+            } if pid == target_pid => {}
+            other => panic!("the supervisor said {other:?}, not that {target_pid} is not watched"),
         }
     }
 
@@ -939,7 +956,9 @@ fn a_round_that_asked_a_failed_spare_waits_for_the_next_generations_answer() {
 
     run.supervisor.query_idle(1);
     match run.next() {
-        OutpostMessage::IdleQueried { round: 1, outposts } => {
+        OutpostMessage::IdleQueried {
+            round: 1, outposts, ..
+        } => {
             let mut outposts = outposts;
             outposts.sort_unstable();
             assert_eq!(outposts, [OWN, OutpostId(3)]);
@@ -1051,6 +1070,7 @@ fn served<const N: usize>(run: &Run, applications: [Pid; N]) -> [(OutpostId, Pid
             OutpostMessage::Started {
                 outpost,
                 target_pid,
+                ..
             } if applications
                 .iter()
                 .position(|&pid| pid == target_pid)
@@ -1198,6 +1218,7 @@ fn a_given_spare_whose_hook_fails_after_its_application_exited_ends_with_it() {
     run.expect_spare(5, 2);
     end(first);
     run.expect_ended(OutpostId(3), first_pid, EndReason::TargetExited);
+    run.expect_not_watched(first_pid);
 
     run.finish(ShutdownSummary {
         clean: 4,

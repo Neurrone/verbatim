@@ -23,6 +23,11 @@ verbatim-uia-rops.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[features]
+# `Sealed::for_tests`, so the app's tests can hand its reducer the
+# supervisor's lifecycle notices.
+lifecycle-for-tests = []
+
 [dev-dependencies]
 verbatim-term-sim.workspace = true
 verbatim-test-console.workspace = true

@@ -224,6 +224,7 @@ fn started(events: &Delivered, target_pid: Pid) -> OutpostId {
         OutpostMessage::Started {
             outpost,
             target_pid: started,
+            ..
         } if started == target_pid => outpost,
         other => panic!("the supervisor said {other:?}, not that the outpost started"),
     }
@@ -249,6 +250,7 @@ fn queried(events: &Delivered, round: u64, outposts: &[OutpostId]) {
         OutpostMessage::IdleQueried {
             round: asked,
             outposts: mut which,
+            ..
         } if asked == round => {
             which.sort_unstable();
             assert_eq!(which, outposts, "the outposts round {round} asked");
@@ -295,7 +297,9 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady { replacement: false } => {}
+        OutpostMessage::ListenerReady {
+            replacement: false, ..
+        } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
@@ -304,7 +308,9 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     supervisor.query_idle(1);
     queried(&events, 1, &[]);
     match next(&events) {
-        OutpostMessage::ListenerReady { replacement: true } => {}
+        OutpostMessage::ListenerReady {
+            replacement: true, ..
+        } => {}
         other => panic!("the supervisor said {other:?}, not that the listener was replaced"),
     }
 
