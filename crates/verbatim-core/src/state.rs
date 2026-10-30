@@ -717,9 +717,10 @@ pub struct SrState {
     /// (`docs/design/focus-pipeline.md`, section 7).
     #[serde(default)]
     pub(crate) foreground_changed_at: Option<u64>,
-    /// The node of the window most recently reported as the foreground,
-    /// whose speech stays valid while it is in front (`FocusNow`).
-    pub(crate) foreground: Option<NodeId>,
+    /// The window most recently reported as the foreground, as the
+    /// identity rule compares it, whose speech stays valid while it is in
+    /// front (`FocusNow`).
+    pub(crate) foreground: Option<verbatim_model::ObjectKey>,
     /// The reader settings (milestone M4).
     #[serde(default)]
     pub(crate) settings: ReaderSettings,

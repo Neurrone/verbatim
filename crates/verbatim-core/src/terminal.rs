@@ -1053,6 +1053,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             validity: state.terminal.node.map(|node| FocusValidity {
                 node,
                 had_focus: true,
+                window: focus_window(state, node),
             }),
         }));
         state.terminal.ahead.push_back((mark, line));
@@ -1221,6 +1222,16 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         Effect::SettingsChanged(state.settings),
     ]);
     effects
+}
+
+/// The window `node` is, when it is the focus and a window, for its
+/// speech's validity.
+fn focus_window(state: &SrState, node: NodeId) -> Option<verbatim_model::WindowHandle> {
+    state
+        .focus
+        .as_ref()
+        .filter(|focus| focus.snapshot.id == node)
+        .and_then(|focus| focus.snapshot.details.window)
 }
 
 #[cfg(test)]

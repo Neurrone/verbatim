@@ -366,18 +366,23 @@ impl EnteredKey for verbatim_model::NodeSnapshot {
 }
 
 /// Whether `old`, an entry of a previous focus line, and `new`, an entry of
-/// a new one, are the same object by what identifies one
-/// (`docs/parity/focus-context.md`, "Focus-ancestry context"): the same
+/// a new one, are the same object by the one identity rule
+/// ([`verbatim_model::ObjectKey::is_same_object`];
+/// `docs/parity/focus-context.md`, "Focus-ancestry context"): the same
 /// node; or both are windows, and they are the same window, so that one
 /// window two outposts read is one entry. Two windows with the same role
 /// and name are two objects. Where two lines meet is chosen by this alone
 /// ([`meeting`]).
 pub fn same_object(old: &impl EnteredKey, new: &impl EnteredKey) -> bool {
-    old.key_id() == new.key_id()
-        || matches!(
-            (old.key_window(), new.key_window()),
-            (Some(old), Some(new)) if old == new
-        )
+    key_of(old).is_same_object(&key_of(new))
+}
+
+/// `node`'s identity, as [`same_object`] compares it.
+fn key_of(node: &impl EnteredKey) -> verbatim_model::ObjectKey {
+    verbatim_model::ObjectKey {
+        id: node.key_id(),
+        window: node.key_window(),
+    }
 }
 
 /// Whether `old` and `new`, entries of two focus lines that are not the

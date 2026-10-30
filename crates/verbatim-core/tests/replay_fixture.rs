@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use verbatim_core::{RecordedInput, SrState, dump, reduce, replay};
 use verbatim_model::{
     Backend, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, Pid, PropertyChange, Role, SegmentContent, SpeechPriority, State, StateSet,
-    TraceId, Utterance, UtteranceSegment, UtteranceSource,
+    NormalizedEvent, ObjectKey, Pid, PropertyChange, Role, SegmentContent, SpeechPriority, State,
+    StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource,
 };
 
 fn fixture_path() -> PathBuf {
@@ -103,7 +103,7 @@ fn expected_effects(traces: &[TraceId]) -> Vec<Vec<Effect>> {
     vec![
         vec![
             Effect::DropExpiredSpeech(FocusNow {
-                focus: slider,
+                focus: ObjectKey::of_id(slider),
                 ancestors: Vec::new(),
                 foreground: None,
                 menu_item_of_focus: None,
@@ -118,6 +118,7 @@ fn expected_effects(traces: &[TraceId]) -> Vec<Vec<Effect>> {
                 Some(FocusValidity {
                     node: slider,
                     had_focus: true,
+                    window: None,
                 }),
             ),
         ],

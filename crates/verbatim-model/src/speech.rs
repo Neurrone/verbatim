@@ -10,8 +10,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::text::{BulletStyle, LineStyle};
-use crate::tree::{Rect, Role, State};
-use crate::{NodeId, TraceId};
+use crate::tree::{ObjectKey, Rect, Role, State};
+use crate::{NodeId, TraceId, WindowHandle};
 
 /// Identifies one utterance from the moment the speech pipeline accepts it
 /// until its single ending (decision D17). Unlike a [`TraceId`], which names
@@ -441,16 +441,21 @@ pub struct Utterance {
 /// What focus speech is about, for dropping it once the focus has moved on
 /// (`docs/nvda/speech.md`, "Cancellation", and `docs/nvda/events.md`):
 /// queued or playing speech announcing a node stays valid while that node
-/// is the focus, an ancestor of the focus, or the foreground window, if
-/// the node never had the focus at all, as a dialog announced on entering
-/// it never does, or if it is the menu item the focus just left for a
-/// menu above it ([`FocusNow::menu_item_of_focus`]).
+/// is the same object as the focus, an ancestor of the focus, or the
+/// foreground window ([`ObjectKey::is_same_object`]), if the node never
+/// had the focus at all, as a dialog announced on entering it never does,
+/// or if it is the menu item the focus just left for a menu above it
+/// ([`FocusNow::menu_item_of_focus`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusValidity {
     /// The node the speech announces.
     pub node: NodeId,
     /// Whether that node was the focus when the speech was made.
     pub had_focus: bool,
+    /// The window that node is, when it is one, so that another outpost's
+    /// node for the same window is the same object.
+    #[serde(default)]
+    pub window: Option<WindowHandle>,
 }
 
 impl FocusValidity {
@@ -458,23 +463,33 @@ impl FocusValidity {
     /// where the focus now is.
     #[must_use]
     pub fn holds(&self, now: &FocusNow) -> bool {
+        let key = ObjectKey {
+            id: self.node,
+            window: self.window,
+        };
         !self.had_focus
-            || self.node == now.focus
-            || now.ancestors.contains(&self.node)
-            || now.foreground == Some(self.node)
+            || key.is_same_object(&now.focus)
+            || now
+                .ancestors
+                .iter()
+                .any(|ancestor| key.is_same_object(ancestor))
+            || now
+                .foreground
+                .is_some_and(|foreground| key.is_same_object(&foreground))
             || now.menu_item_of_focus == Some(self.node)
     }
 }
 
-/// Where the focus is, for judging [`FocusValidity`].
+/// Where the focus is, for judging [`FocusValidity`], each object by its
+/// [`ObjectKey`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusNow {
     /// The focus.
-    pub focus: NodeId,
+    pub focus: ObjectKey,
     /// The focus's ancestors.
-    pub ancestors: Vec<NodeId>,
-    /// The foreground window's node, when known.
-    pub foreground: Option<NodeId>,
+    pub ancestors: Vec<ObjectKey>,
+    /// The foreground object, when known.
+    pub foreground: Option<ObjectKey>,
     /// The MSAA menu item the focus has just moved from to an MSAA popup
     /// menu that contains it, as some applications focus a submenu's first
     /// item and then the submenu: the item's speech is still heard
@@ -486,6 +501,65 @@ pub struct FocusNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Window `handle`'s node `id`, or a windowless node's for `None`.
+    fn key(id: u64, handle: Option<u64>) -> ObjectKey {
+        ObjectKey {
+            id: NodeId::new(id),
+            window: handle.map(WindowHandle),
+        }
+    }
+
+    #[test]
+    fn a_window_node_is_the_same_object_as_another_node_of_its_window() {
+        assert!(key(1, Some(7)).is_same_object(&key(2, Some(7))));
+        assert!(!key(1, Some(7)).is_same_object(&key(2, Some(8))));
+    }
+
+    #[test]
+    fn windowless_nodes_are_the_same_object_only_by_id() {
+        assert!(key(1, None).is_same_object(&key(1, Some(7))));
+        assert!(!key(1, None).is_same_object(&key(2, None)));
+        assert!(!key(1, Some(7)).is_same_object(&key(2, None)));
+    }
+
+    /// A window's focus speech, reported by one outpost, holds while the
+    /// focus is another outpost's node for the same window.
+    #[test]
+    fn focus_speech_holds_while_the_focus_is_its_object_under_another_node() {
+        let spoken = FocusValidity {
+            node: NodeId::new(1),
+            had_focus: true,
+            window: Some(WindowHandle(7)),
+        };
+        let now = |focus| FocusNow {
+            focus,
+            ancestors: Vec::new(),
+            foreground: None,
+            menu_item_of_focus: None,
+        };
+        assert!(spoken.holds(&now(key(2, Some(7)))));
+        assert!(!spoken.holds(&now(key(2, Some(8)))));
+    }
+
+    /// A window's focus speech holds while the foreground is that window as
+    /// another outpost reported it.
+    #[test]
+    fn focus_speech_holds_while_the_foreground_is_its_window_from_another_outpost() {
+        let spoken = FocusValidity {
+            node: NodeId::new(1),
+            had_focus: true,
+            window: Some(WindowHandle(7)),
+        };
+        let now = |foreground| FocusNow {
+            focus: key(3, None),
+            ancestors: vec![key(4, None)],
+            foreground: Some(foreground),
+            menu_item_of_focus: None,
+        };
+        assert!(spoken.holds(&now(key(2, Some(7)))));
+        assert!(!spoken.holds(&now(key(2, None))));
+    }
 
     #[test]
     fn text_segment_defaults_to_utterance_language() {

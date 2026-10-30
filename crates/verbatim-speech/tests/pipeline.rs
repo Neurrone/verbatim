@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
 use verbatim_model::{
-    FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechMark, SpeechPriority, Theme,
-    ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
+    FocusNow, FocusValidity, NodeId, ObjectKey, Role, SegmentContent, SpeechMark, SpeechPriority,
+    Theme, ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
     ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents,
@@ -823,6 +823,7 @@ fn about(text: &str, node: u64, had_focus: bool) -> Utterance {
         validity: Some(FocusValidity {
             node: NodeId::new(node),
             had_focus,
+            window: None,
         }),
         ..queued(text)
     }
@@ -910,7 +911,7 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
 
     // Focus is now on node 3, inside nothing: both controls have expired.
     harness.manager.control().drop_expired(FocusNow {
-        focus: NodeId::new(3),
+        focus: ObjectKey::of_id(NodeId::new(3)),
         ancestors: Vec::new(),
         foreground: None,
         menu_item_of_focus: None,
@@ -1459,7 +1460,7 @@ fn waiting_focus_speech_is_judged_when_its_turn_comes() {
         .manager
         .speak(about("a control left behind", 2, true));
     harness.manager.control().drop_expired(FocusNow {
-        focus: NodeId::new(3),
+        focus: ObjectKey::of_id(NodeId::new(3)),
         ancestors: Vec::new(),
         foreground: None,
         menu_item_of_focus: None,
@@ -1492,8 +1493,8 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
     control.cancel();
     let dialog = harness.manager.speak(about("a dialog", 2, false));
     control.drop_expired(FocusNow {
-        focus: NodeId::new(3),
-        ancestors: vec![NodeId::new(2)],
+        focus: ObjectKey::of_id(NodeId::new(3)),
+        ancestors: vec![ObjectKey::of_id(NodeId::new(2))],
         foreground: None,
         menu_item_of_focus: None,
     });

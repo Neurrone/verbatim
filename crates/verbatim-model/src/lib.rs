@@ -52,7 +52,9 @@ pub use theme::{
     Presentation, SoundSource, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
     is_plain_file_name, progress_frequency,
 };
-pub use tree::{Backend, NodeDetails, NodeSnapshot, Rect, Role, State, StateSet, TreeNode};
+pub use tree::{
+    Backend, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet, TreeNode,
+};
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};

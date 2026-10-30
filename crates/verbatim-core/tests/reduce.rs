@@ -181,10 +181,13 @@ fn switch_to(state: &SrState, source: Pid) -> SrState {
 /// One effect as these tests compare it. Every effect the reducer returns
 /// becomes exactly one of these, so comparing the whole list checks every
 /// effect an input produces, in order: an utterance by its priority and
-/// segments, and every other effect whole.
+/// segments, where the focus now is by its nodes, and every other effect
+/// whole. The windows the speech manager's keys carry are asserted by the
+/// tests of the identity rule.
 #[derive(Debug, Clone, PartialEq)]
 enum Heard {
-    /// `Effect::DropExpiredSpeech`, with where the focus now is.
+    /// `Effect::DropExpiredSpeech`, with where the focus now is, each key
+    /// by its node alone.
     Expire(FocusNow),
     /// `Effect::StopSpeech`.
     Stop,
@@ -199,7 +202,15 @@ fn heard(effects: &[Effect]) -> Vec<Heard> {
     effects
         .iter()
         .map(|effect| match effect {
-            Effect::DropExpiredSpeech(now) => Heard::Expire(now.clone()),
+            Effect::DropExpiredSpeech(now) => {
+                let node = |key: &ObjectKey| ObjectKey::of_id(key.id);
+                Heard::Expire(FocusNow {
+                    focus: node(&now.focus),
+                    ancestors: now.ancestors.iter().map(node).collect(),
+                    foreground: now.foreground.as_ref().map(node),
+                    menu_item_of_focus: now.menu_item_of_focus,
+                })
+            }
             Effect::StopSpeech => Heard::Stop,
             Effect::Speak(utterance) => Heard::Say(utterance.priority, utterance.segments.clone()),
             other => Heard::Other(other.clone()),
@@ -221,13 +232,14 @@ fn focus_now(
     ancestors: &[u64],
     foreground: Option<(OutpostId, u64)>,
 ) -> FocusNow {
+    let key = |outpost, node| ObjectKey::of_id(NodeId::in_outpost(outpost, node));
     FocusNow {
-        focus: NodeId::in_outpost(outpost, focus),
+        focus: key(outpost, focus),
         ancestors: ancestors
             .iter()
-            .map(|&ancestor| NodeId::in_outpost(outpost, ancestor))
+            .map(|&ancestor| key(outpost, ancestor))
             .collect(),
-        foreground: foreground.map(|(outpost, node)| NodeId::in_outpost(outpost, node)),
+        foreground: foreground.map(|(outpost, node)| key(outpost, node)),
         menu_item_of_focus: None,
     }
 }
@@ -2212,7 +2224,7 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
 
 // ---- Object navigation and review cursor (M3 reducer item 4) ----
 
-use verbatim_model::{FocusNow, FocusValidity, ReviewCommand};
+use verbatim_model::{FocusNow, FocusValidity, ObjectKey, ReviewCommand};
 
 fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
@@ -3175,9 +3187,9 @@ fn a_settings_pages_content_focus_observed_before_its_frame_came_in_front_is_spo
         heard(&effects),
         focus_heard(
             FocusNow {
-                focus: NodeId::in_outpost(OutpostId(2), 1),
-                ancestors: vec![NodeId::in_outpost(OutpostId(1), 1)],
-                foreground: Some(NodeId::in_outpost(OutpostId(1), 1)),
+                focus: ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 1)),
+                ancestors: vec![ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1))],
+                foreground: Some(ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1))),
                 menu_item_of_focus: None,
             },
             vec![vec![
@@ -3761,13 +3773,13 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
         heard(&effects),
         focus_heard(
             FocusNow {
-                focus: NodeId::in_outpost(OutpostId(2), 3),
+                focus: ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 3)),
                 // The line keeps the frame host's entry for the frame.
                 ancestors: vec![
-                    NodeId::in_outpost(OutpostId(1), 1),
-                    NodeId::in_outpost(OutpostId(2), 2),
+                    ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1)),
+                    ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 2)),
                 ],
-                foreground: Some(NodeId::in_outpost(OutpostId(1), 1)),
+                foreground: Some(ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1))),
                 menu_item_of_focus: None,
             },
             vec![
@@ -3894,6 +3906,83 @@ fn a_frame_read_by_two_outposts_is_entered_once() {
                 role(Role::EditableText),
             ],
         ]
+    );
+}
+
+/// The Settings frame's own focus, its MSAA client in window 10 as the
+/// frame host's outpost reports it on a return by Alt+Tab, keeps its
+/// speech when the page's outpost then reports the content's focus with its
+/// own node for that window at the top of its chain: the two nodes are one
+/// object by their window, as NVDA's `==` finds its one object for the
+/// frame (`docs/parity/focus-events.md`, "When speech is cut off, and
+/// cancellation of expired focus speech").
+#[test]
+fn a_frame_s_focus_speech_survives_the_content_s_focus() {
+    let mut client = window_node(1, Backend::Msaa, Role::Pane, "Settings", 10);
+    client.details.top_level_client = true;
+    let mut frame = window_node(4, Backend::Msaa, Role::Pane, "Settings", 10);
+    frame.details.top_level_client = true;
+    let content = window_node(2, Backend::Uia, Role::Window, "Settings", 11);
+    let search = node(
+        3,
+        Role::EditableText,
+        Some("Search box"),
+        None,
+        StateSet::new(),
+    );
+    let (state, said) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), foreground_window(10), client, Vec::new()),
+    );
+    let settings = only_speech(&said[1..]);
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(10), search, vec![frame, content]),
+    );
+    let Some(Effect::DropExpiredSpeech(now)) = effects.first() else {
+        panic!("the speech manager is told where the focus is first: {effects:?}");
+    };
+    assert_eq!(
+        settings
+            .iter()
+            .map(|utterance| utterance.validity.map(|validity| validity.holds(now)))
+            .collect::<Vec<_>>(),
+        [Some(true)],
+        "the frame's \"Settings\" is still worth hearing"
+    );
+}
+
+/// A window's focus speech, reported by one outpost, holds while another
+/// outpost reports the same window as the focus under a node of its own:
+/// the new focus meets the old one by its window, so the old node is not
+/// among the focus's ancestors, and only the identity rule keeps the speech
+/// (`docs/parity/focus-events.md`, "When speech is cut off, and
+/// cancellation of expired focus speech").
+#[test]
+fn a_window_s_focus_speech_holds_while_another_outpost_reports_it_as_the_focus() {
+    let mut client = window_node(1, Backend::Msaa, Role::Pane, "Settings", 10);
+    client.details.top_level_client = true;
+    let mut frame = window_node(4, Backend::Msaa, Role::Pane, "Settings", 10);
+    frame.details.top_level_client = true;
+    let (state, said) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), foreground_window(10), client, Vec::new()),
+    );
+    let settings = only_speech(&said[1..]);
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), foreground_window(10), frame, Vec::new()),
+    );
+    let Some(Effect::DropExpiredSpeech(now)) = effects.first() else {
+        panic!("the speech manager is told where the focus is first: {effects:?}");
+    };
+    assert_eq!(
+        settings
+            .iter()
+            .map(|utterance| utterance.validity.map(|validity| validity.holds(now)))
+            .collect::<Vec<_>>(),
+        [Some(true)],
+        "the first outpost's \"Settings\" is still worth hearing"
     );
 }
 
@@ -5325,12 +5414,12 @@ fn a_new_chain_meets_the_previous_one_at_a_window_reported_by_two_outposts() {
         heard(&effects),
         focus_heard(
             FocusNow {
-                focus: NodeId::in_outpost(OutpostId(2), 3),
+                focus: ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 3)),
                 ancestors: vec![
-                    NodeId::in_outpost(OutpostId(1), 1),
-                    NodeId::in_outpost(OutpostId(2), 2),
+                    ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1)),
+                    ObjectKey::of_id(NodeId::in_outpost(OutpostId(2), 2)),
                 ],
-                foreground: Some(NodeId::in_outpost(OutpostId(1), 1)),
+                foreground: Some(ObjectKey::of_id(NodeId::in_outpost(OutpostId(1), 1))),
                 menu_item_of_focus: None,
             },
             vec![
@@ -6181,8 +6270,11 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
     let Some(Effect::DropExpiredSpeech(now)) = effects.first() else {
         panic!("the speech manager is told where the focus is first: {effects:?}");
     };
-    assert_eq!(now.foreground.map(NodeId::number), Some(10));
-    assert_eq!(now.ancestors, vec![NodeId::in_outpost(OutpostId(4), 10)]);
+    assert_eq!(now.foreground.map(|key| key.id.number()), Some(10));
+    assert_eq!(
+        now.ancestors.iter().map(|key| key.id).collect::<Vec<_>>(),
+        vec![NodeId::in_outpost(OutpostId(4), 10)]
+    );
     assert!(
         title[0]
             .validity
@@ -6197,26 +6289,29 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
 #[test]
 fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
     let now = FocusNow {
-        focus: NodeId::new(3),
-        ancestors: vec![NodeId::new(1)],
-        foreground: Some(NodeId::new(9)),
+        focus: ObjectKey::of_id(NodeId::new(3)),
+        ancestors: vec![ObjectKey::of_id(NodeId::new(1))],
+        foreground: Some(ObjectKey::of_id(NodeId::new(9))),
         menu_item_of_focus: None,
     };
     let left = FocusValidity {
         node: NodeId::new(2),
         had_focus: true,
+        window: None,
     };
     assert!(!left.holds(&now), "a control the user has left");
     for node in [1, 3, 9] {
         let validity = FocusValidity {
             node: NodeId::new(node),
             had_focus: true,
+            window: None,
         };
         assert!(validity.holds(&now), "node {node}");
     }
     let never_focused = FocusValidity {
         node: NodeId::new(2),
         had_focus: false,
+        window: None,
     };
     assert!(
         never_focused.holds(&now),

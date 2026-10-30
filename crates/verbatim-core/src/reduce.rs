@@ -19,7 +19,7 @@ use verbatim_model::{
     Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
     StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
-use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, WindowHandle};
+use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle};
 
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
@@ -958,16 +958,12 @@ fn reduce_focus_changed(
         state.foreground_changed_at = Some(report.observed_at_us);
     }
     if report.foreground {
-        state.foreground = Some(report.node.id);
+        state.foreground = Some(ObjectKey::of(report.node));
     }
     let entered: Vec<&NodeSnapshot> = line.entered[line.quiet..].iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
-        focus: report.node.id,
-        ancestors: new_focus
-            .ancestors
-            .iter()
-            .map(|ancestor| ancestor.id)
-            .collect(),
+        focus: ObjectKey::of(report.node),
+        ancestors: new_focus.ancestors.iter().map(ObjectKey::of).collect(),
         foreground: state.foreground,
         menu_item_of_focus: menu_item_of_focus(state.focus.as_ref(), report.node),
     })];
@@ -1047,7 +1043,7 @@ fn follow_an_unreported_foreground(
         source,
         window: Some(window.clone()),
     });
-    state.foreground = report.ancestors.first().map(|top| top.id);
+    state.foreground = report.ancestors.first().map(ObjectKey::of);
 }
 
 /// Ends what the previous focus's text was doing when the focus moves to
@@ -1114,6 +1110,7 @@ fn focus_speech(
             validity: Some(FocusValidity {
                 node: container.id,
                 had_focus: false,
+                window: container.details.window,
             }),
         }));
     }
@@ -1138,6 +1135,7 @@ fn focus_speech(
         validity: Some(FocusValidity {
             node: report.node.id,
             had_focus: true,
+            window: report.node.details.window,
         }),
     }));
     effects

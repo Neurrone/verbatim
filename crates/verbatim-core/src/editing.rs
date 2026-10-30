@@ -1585,6 +1585,7 @@ fn focus_speech(
         validity: Some(FocusValidity {
             node,
             had_focus: true,
+            window: focus.snapshot.details.window,
         }),
         say_all: false,
     })]

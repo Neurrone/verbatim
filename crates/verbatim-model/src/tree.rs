@@ -532,6 +532,48 @@ impl NodeSnapshot {
     }
 }
 
+/// What identifies an object across reports, as Core and the speech
+/// manager compare objects (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context"): its node, and the window it is when it is
+/// one ([`NodeDetails::window`]). Two reports name the same object exactly
+/// when they have the same node, or both are windows and the same window,
+/// whichever outposts read them ([`is_same_object`](Self::is_same_object)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ObjectKey {
+    /// The node.
+    pub id: NodeId,
+    /// The window the node is, when it is one. Left out of the message when
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<crate::WindowHandle>,
+}
+
+impl ObjectKey {
+    /// The key of `node`.
+    #[must_use]
+    pub fn of(node: &NodeSnapshot) -> Self {
+        Self {
+            id: node.id,
+            window: node.details.window,
+        }
+    }
+
+    /// The key of a node that is no window, or whose window is not known.
+    #[must_use]
+    pub fn of_id(id: NodeId) -> Self {
+        Self { id, window: None }
+    }
+
+    /// Whether `self` and `other` are the same object: the same node, or
+    /// both windows and the same window. The one rule, so that every place
+    /// that compares objects compares them alike.
+    #[must_use]
+    pub fn is_same_object(&self, other: &Self) -> bool {
+        self.id == other.id
+            || matches!((self.window, other.window), (Some(one), Some(other)) if one == other)
+    }
+}
+
 /// One node of a walked accessibility tree: a snapshot plus its children in
 /// tree order.
 ///
