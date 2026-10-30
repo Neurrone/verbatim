@@ -127,6 +127,7 @@ Scope:
 - The outpost's MSAA hand-over (`crates/verbatim-outpost/src/outpost/handover.rs`) moves into the reducer once, as the hold Dickson decided on 2026-10-25 (hook copies held until forwarding's end, in place of counting with `TWIN_BOUND`), with released events tried as today's batch, newest first, so nothing heard changes; the remaining doc's hold section and its review's cost finding are its draft. `handover.rs`'s ten tests become replay tests of the hold.
 - The ownership check's reducer rule.
 - Identity and the store change only in this build.
+- The outposts' reply tokens, moved here from the messages build ([its design](ownership-messages.md), "Decisions"; pending Dickson's acceptance): every query an outpost takes gets one answer from a token held in the reducer thread's shell and consumed by the reply, "abandoned", "failed" or "not started", whose `Drop` answers "failed", in place of the watch's `running` slot.
 
 Every existing intake, worker, gap, commit and mockapp test keeps what it asserts; the unit tests move onto the reducer's inputs.
 

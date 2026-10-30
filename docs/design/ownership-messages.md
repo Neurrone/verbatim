@@ -1,17 +1,18 @@
 # The messages build
 
-Status: design, written on 2026-10-30 against main at 50370e74. It applies [the ownership model](ownership.md)'s rules "Messages are of declared kinds", "Queries have exactly one answer", "Merging only for kinds that declare it" and "Lifecycles as typestates" to the protocol between verbatim.exe and its children, the supervisor and the app shell; its brief, starting draft and known traps are "The messages build" in [the ownership builds](ownership-builds.md). It is roadmap milestone M4.4. It runs beside [the input build](ownership-input.md); "Where it meets the input build" names the shared code. The refactor preserves what is heard, and this build changes no speech; it undoes no recently finished work.
+Status: design, written on 2026-10-30 against main at 50370e74, with its adversarial review's findings folded in the same day (verdict: achievable) and Dickson's decision on merging. It applies [the ownership model](ownership.md)'s rules "Messages are of declared kinds", "Queries have exactly one answer", "Merging only for kinds that declare it" and "Lifecycles as typestates" to the protocol between verbatim.exe and its children, the supervisor and the app shell; its brief, starting draft and known traps are "The messages build" in [the ownership builds](ownership-builds.md). It is roadmap milestone M4.4. It runs beside [the input build](ownership-input.md); "Where it meets the input build" names the shared code. The refactor preserves what is heard, and this build changes no speech; it undoes no recently finished work.
 
 ## Feasibility
 
-The goal is achievable against the current code. Every wire type can move into `verbatim-model` with no new crate edge, every direction's messages already fall into one of the six kinds, and every lifecycle record's flags map onto states. Six facts of the code change the draft, and the design below takes each into account:
+The goal is achievable against the current code. Every wire type can move into `verbatim-model` with no new crate edge, every direction's messages already fall into one of the six kinds, and every lifecycle record's flags map onto states. Seven facts of the code change the draft, and the design below takes each into account:
 
 - The moved enums carry `#[non_exhaustive]` (`crates/verbatim-outpost/src/protocol.rs` lines 664, 865, 944, 966 and 1037). Inside their own crate that attribute is ignored; once they live in `verbatim-model`, every match in `verbatim-outpost` and `verbatim-app` would need a wildcard arm, which defeats the exhaustive matching this build exists for. The attribute is removed: the listener, the outposts and verbatim.exe are one build of these types and need no forward compatibility.
 - `DeliveredFact::may_start_outpost` (lines 549 to 560) reads `verbatim_core::SNAP_RESULTS_ACTIVITY`, and `verbatim-model` cannot depend on `verbatim-core`, which depends on it. The function is the supervisor's routing rule, so it moves to `crates/verbatim-outpost/src/supervisor/policy.rs`, which may use `verbatim-core`. The protocol's re-export of `verbatim_core::focus_rules::HeldNode` (line 119) has no user left since the one judge build and is deleted.
 - The draft's merge test compares Core's utterances with and without the older message. No merge passes that: a merge drops the older report's speech on purpose, as NVDA's limiter does (`nvda/source/IAccessibleHandler/orderedWinEventLimiter.py` line 79 gives a newer event of one key the newest place, and line 99 onward emits one per key). Core speaks a value change of its focus with `SpeechPriority::Queued` (`crates/verbatim-core/src/reduce.rs`, `reduce_value_changed`, lines 2148 to 2180), so "50" then "51" becomes "51" alone. The projection is redefined below ("The equivalence test").
 - The relay's writers hold no judged message that merges. Their one replacement, a routed fact replacing a waiting fact of the same `FactKey` (`crates/verbatim-outpost/src/supervisor/writer.rs` lines 237 to 276), is NVDA's limiter applied to the listener's unjudged facts, the same rule as `HeldFacts::hold` (`policy.rs` lines 176 to 183). The release's slot, a newer `NodesHeld` replacing an unsent one (lines 300 to 304), is the release kind's own rule. So `Merge` is implemented only by `OutpostToCore`, for the outpost's outbound queue.
-- An outpost has no reducer thread yet, so its reply tokens cannot live in that thread's shell as the model says. Today one slot holds the running query for every answer that can end it (`running` in the worker's watch, `crates/verbatim-outpost/src/outpost/worker.rs` lines 107, 456 to 463 and 697 to 703), and the reducer build replaces the intake, the worker and the watch. This is the second open question.
+- An outpost has no reducer thread yet, so its reply tokens cannot live in that thread's shell as the model says. Today one slot holds the running query for every answer that can end it (`running` in the worker's watch, `crates/verbatim-outpost/src/outpost/worker.rs` lines 107, 456 to 463 and 697 to 703), and the reducer build replaces the intake, the worker and the watch, so the tokens go to that build ("Decisions").
 - The writer is shared by the listener and the outposts (`writer.rs`, `Outgoing` over `SupervisorToOutpost`). Splitting the enums by direction makes it generic over the child's message type.
+- `carries_nodes` is not the whole counting rule. The outpost numbers only ordinary messages: an urgent one skips `number` (`crates/verbatim-outpost/src/outpost/outbound.rs` lines 281 to 283). verbatim.exe numbers only the frames the owner hands on (`owner.rs` lines 597 to 639, `frames.rs` line 132): it consumes `Pong` and `TargetExited` and hands `Ready` on. One position is counted at two sites with different filters, which agree today only because none of the filtered messages carries nodes. "Kinds and the reviewed list" makes that a type.
 
 The code has a defect that this build fixes. A wanted focus-now request is never ended when the application's last generation ends:
 
@@ -54,7 +55,7 @@ A new module, `crates/verbatim-model/src/protocol` (planned), holds every wire t
 
 These stay in `crates/verbatim-outpost/src/protocol.rs`, since they use `verbatim-process` or `verbatim-ia2`, which use the Windows bindings: the `Message` trait and its implementations, the raw section (`protocol/raw.rs`), `write_message`, `encode_message`, `put_message`, `read_message`, `decode_message`, `message_kind`, `MAX_MESSAGE_BYTES` and `now_us`. `DeliveredFact::from_win_event` becomes the free function `fact_of_win_event` there. The trait being the outpost crate's own, its implementations for the model's types satisfy the orphan rule.
 
-`verbatim-model` gains no dependency: every type derives only `serde`'s traits, which it has. The serde representation is unchanged, with the same variant names and fields, so every frame on the pipe is byte for byte what it is today, and `message_kind`'s peek still reads "Pong", "Ready", "TargetExited", "SpareReady" and "Fault". `verbatim_outpost::protocol` re-exports nothing from the model, so every import names the crate that owns the type. That means mechanical changes in `verbatim-app`, the outpost's own modules and tests, and 18 `mockapp` test files.
+`verbatim-model` gains no dependency: every type derives only `serde`'s traits, which it has. The serde representation is unchanged, with the same variant names and fields, so every frame on the pipe is byte for byte what it is today except `SetBackendOverride`, whose `pid` field leaves `CoreToOutpost` (only tests send it), and `message_kind`'s peek still reads "Pong", "Ready", "TargetExited", "SpareReady" and "Fault". `verbatim_outpost::protocol` re-exports nothing from the model, so every import names the crate that owns the type. That means mechanical changes in `verbatim-app`, the outpost's own modules and tests, and 18 `mockapp` test files.
 
 The mapping from an `OutpostToCore::Event` to `Input::Event`, today inline in `on_outpost_input` (`main.rs` lines 1424 to 1431), becomes one function of the module. The app and the merge test both call it, so the test reduces exactly what the app applies. `focus_inputs` (`requests.rs` line 461) stays in the app with the request table.
 
@@ -65,11 +66,11 @@ The mapping from an `OutpostToCore::Event` to `Input::Event`, today inline in `o
 - `OutpostToCore`: `Ready`, `SpareReady`, `Event`, `Reply`, `Pong`, `Fault`, `TargetExited` and `IdleAnswer`.
 - `ListenerToCore`: `Ready`, `FocusFact`, `ForwardingEnded`, `MenuOrSwitchEnded`, `ForegroundWindow`, `Pong`, `Fault` and `IdleAnswer`.
 
-Reason: a message its receiver may not take cannot be decoded, so no receiver needs a wildcard to drop it (evidence: the owner's silent `_ => return` for listener messages). A frame of the wrong direction fails to decode and its child is ended as failed, as any frame that is not a message is today (`owner.rs` lines 533 to 562).
+Reason: a message its receiver may not take cannot be decoded, so no receiver needs a wildcard to drop it (evidence: the owner's silent `_ => return` for listener messages). A frame of the wrong direction fails to decode and its child is ended as failed, as any frame that is not a message is today: a listener's frame in the owner's read (`owner.rs` lines 533 to 562), and an outpost's in `Frames` (`frames.rs` lines 121 to 147), which reports `OwnerEvent::Unreadable`.
 
 Each receiver's dispatch becomes an exhaustive match: the listener's and the outpost's `handle_command`, the owner's `listener_message` and `outpost_frame`, and the app's `on_outpost_input`. Each carries `#[deny(clippy::wildcard_enum_match_arm)]`, so a new variant fails the build at every receiver until it is handled.
 
-The writer becomes `WriterHandle<M>` and `Queue<M>` over a trait `ToChild` (planned, in `writer.rs`). The trait gives what the overload policy needs: the ping, the shutdown message, the listener stamp and the relay stamp. The `Writers` map holds `WriterHandle<CoreToOutpost>` and `ListenerRecord` holds `WriterHandle<CoreToListener>`. The listener's writer never receives `Outgoing::Fact` or `FocusRead`, and its queue's policy is otherwise today's.
+The writer becomes `WriterHandle<M>` and `Queue<M>` over a trait `ToChild` (planned, in `writer.rs`). The trait gives what the overload policy needs: the ping, the shutdown message, the listener stamp and the relay stamp. The `Writers` map holds `WriterHandle<CoreToOutpost>` and `ListenerRecord` holds `WriterHandle<CoreToListener>`. `ToChild` has an associated type for the routed facts, the `DeliverFact` command for `CoreToOutpost` and the uninhabited `std::convert::Infallible` for `CoreToListener`, and `Outgoing::Fact` and `FocusRead` hold that type, so the listener's writer cannot be given a fact, by its type rather than by a check at run time. Its queue's policy is otherwise today's.
 
 ### Kinds and the reviewed list
 
@@ -83,9 +84,11 @@ Each direction enum has `kind(&self) -> Kind`, an exhaustive `match`, under `#![
 - `Routed`: `DeliverFact`, `FocusFact`.
 - `Configuration`: `Fetches`, both `SetBackendOverride`s.
 
-A unit test in the module holds the list of every variant's name with its kind, built from one sample of each variant. The samples are made by a function whose `match` over the enum has no wildcard, so a new variant changes the function and the list, both reviewed. The same test asserts that no `CoreToOutpost` or `CoreToListener` variant is a `Report`, which is the back-channel's shape. That a variant carries no state of Core is a review rule, made visible by the list. A second test encodes each variant the relay peeks at and asserts `message_kind` names it as `outpost_frame` and `spare_frame` match it (`owner.rs` lines 586 to 640 and 644 to 674).
+A unit test in the module holds the list of every variant's name with its kind, built from one sample of each variant. The samples are made by a function whose `match` over the enum has no wildcard, so a new variant changes the function and the list, both reviewed. The same test asserts that no `CoreToOutpost` or `CoreToListener` variant is a `Report`, which is the back-channel's shape. That a variant carries no state of Core is a review rule, made visible by the list. A second test encodes each variant the relay peeks at and asserts `message_kind` names it as `outpost_frame` and `spare_frame` match it (`owner.rs` lines 586 to 640 and 644 to 674), and that every kind the owner consumes rather than hands on (`Pong`, `TargetExited`, `SpareReady`) and every urgent kind has `carries_nodes` false.
 
 `carries_nodes` becomes an exhaustive `match` over `OutpostToCore`, with `Reply`'s outcome matched exhaustively over `QueryOutcome`: `Event` and `Reply` with `Done` are true, and every other variant is listed as false. Reason: the outpost and verbatim.exe number positions with this one function, so a variant forgotten here would shift both counts alike and never show, while releasing a node Core still reads from such a message.
+
+The two sites' filters become types too. `Outbound::urgent` (`outbound.rs` line 339) takes an `Urgent` (planned), an enum of `Pong`, `Ready` and `TargetExited` that converts into `OutpostToCore` and carries no node by construction, so no message that carries nodes can skip the outpost's numbering. The owner's consumed kinds are pinned by the peek test above, so a frame verbatim.exe does not number never carries nodes either.
 
 ### Merging in the outbound queue
 
@@ -97,10 +100,10 @@ A unit test in the module holds the list of every variant's name with its kind, 
 - `fn may_merge(older: &Self, newer: &Self, crossed: Barrier) -> bool`.
 - `fn merged(older: Self, newer: Self) -> Self`.
 
-It also defines one generic function, `merge_into<M: Merge>`, which takes the waiting queue and the newer message and returns where the newer goes and what it replaced. `Pending::push_message` (`outbound.rs` line 159) calls it. `waiting_with`, `key`, `merged`, `carries_selection_changes` and `content_changed` become `Merge for OutpostToCore` and reproduce today's merge exactly:
+It also defines one generic function, `merge_into<M: Merge>`, which takes the waiting messages after the last flush marker and the newer message, and returns where the newer goes and what it replaced; `Pending` passes it only that part of its queue, so the marker stays the queue's own item. `Pending::push_message` (`outbound.rs` line 159) calls it. `waiting_with`, `key`, `merged`, `carries_selection_changes` and `content_changed` become `Merge for OutpostToCore` and reproduce today's merge exactly:
 
 - The key is today's node, event kind and detail.
-- `IdleAnswer` is `Barrier::All`, `Reply` is `Barrier::Reply`, and the flush marker, which is the queue's own item and not a message, stays a full barrier in `Pending`.
+- `IdleAnswer` is `Barrier::All` and `Reply` is `Barrier::Reply` (Dickson, 2026-10-30, under "Decisions"); the flush marker bounds what `Pending` passes to `merge_into`.
 - `may_merge` refuses a caret report with selection changes across a reply, and refuses either report in general terms.
 - `merged` carries the older caret report's selection changes before the newer's, and otherwise keeps the newer.
 
@@ -112,7 +115,7 @@ NVDA's limiter is not a merge and stays as it is in four places: the intake, the
 
 `crates/verbatim-core/tests/merge.rs` (planned) is platform-neutral, since the trait, the messages and the mapping to inputs are all in the model. It has one test per merged event kind: a focus, a property change for each property, a selection, a controlled selection, an alert, a progress bar, a value change, a caret report, a text change and an active text position change.
 
-Each test starts from one fixed state, with Core's focus in one outpost and its line of three nodes. It enumerates every sequence of the older message, zero to two others, and the newer. The others come from a fixed set of three: an event of a node outside both reports' lines, a reply to an unrelated query, and a fault. That makes 13 sequences per kind, and for the caret report the reply's placements also test the barrier. For each sequence the test reduces it in order on one side, and on the other side the others followed by `merged(older, newer)` at the newer's place.
+Each test starts from one fixed state, with Core's focus in one outpost and its line of three nodes. It enumerates every sequence of the older message, zero to two others, and the newer. The others come from a fixed set of three: an alert of a node outside both reports' lines, which Core speaks from anywhere (`reduce_alert`, `crates/verbatim-core/src/reduce.rs` line 1503), a reply to an unrelated query, and a fault. That makes 13 sequences per kind, and for the caret report the reply's placements also test the barrier. For each sequence the test reduces it in order on one side, and on the other side the others followed by `merged(older, newer)` at the newer's place.
 
 It asserts equal, on both sides:
 
@@ -125,28 +128,27 @@ A message of the older's node or its line between the two is not in the set. Suc
 
 ### Responders and the endings of a query
 
-Across processes, the asking side's table answers. The request table's endings stay as built, and each gets a unit test: the reply, an outpost generation's `Ended`, and the deadline. A generation that fails while ready reaches the app as `Ended` before its backoff starts (`owner.rs` lines 1254 to 1263), so "gone" at a backoff is that ending, and one test sends a query, fails its generation with a backoff, and asserts "gone" at the `Ended`.
+Across processes, the asking side's table answers. The request table's endings stay as built, and each gets a unit test: the reply, an outpost generation's `Ended`, and the deadline. A generation that fails while ready reaches the app as `Ended` before its backoff starts (`owner.rs` lines 1254 to 1263), so a request's "gone when its outpost backs off" is that ending, and one test sends a query, fails its generation with a backoff, and asserts "gone" at the `Ended`. The focus-now, activation and dump queries have no deadline (`main.rs` lines 1267, 1826, 1847 and 1906), so until the outposts' reply tokens are built in the reducer build, that none of them waits for ever on a live outpost rests on review of the outpost's answering paths.
 
 The wanted requests get one owner, `crates/verbatim-app/src/wanted.rs` (planned), which replaces `shell_requests.rs` and `focus_now_wanted`. It holds both kinds, keyed by the process whose outpost they wait for. Each entry ends exactly once:
 
 - At its outpost's `Ready`, where it is sent and the request table owns it from then on.
 - At the application's `NotWatched`, where it is answered "gone".
-- At the application's `BackingOff`, for a shell items request only, which is answered "gone". A focus-now request waits for the replacement, as today, so the replacement reports the focus.
-- At its deadline, for a shell items request only, as today.
+- At its deadline, for a shell items request only, 6 seconds after the dialog asked, as today (`shell_requests.rs` lines 28 to 33). A request waiting through a backoff keeps waiting: under the first backoff, of a second (`crates/verbatim-outpost/src/supervisor/policy.rs` lines 99 to 121), Verbatim+F11 today waits for the replacement and opens the list, which this build keeps.
 
-`idle_conditions_clear` reads the table's count of focus-now requests in place of `focus_now_wanted.is_empty()`. The app keeps the processes whose replacement waits for a backoff, set at `BackingOff` and cleared at that process's `Started` or `NotWatched`, so a shell items request made during a backoff is answered "gone" at once. This is a lagging copy of the supervisor's lifecycle fact, whose staleness costs no word.
+A focus-now request waits through a backoff for the replacement, as today, so the replacement reports the focus. `idle_conditions_clear` reads the table's count of focus-now requests in place of `focus_now_wanted.is_empty()`.
 
-The supervisor sends the two notices these endings need, from the owner thread's one outbox:
+The supervisor gives the app the facts these endings need, from the owner thread's one outbox:
 
-- `NotWatched` after every `Ended` sent by `end_because` (`owner.rs` lines 1755 to 1774), that is at every retirement and target exit, including a record removed during its backoff with no generation. `no_outpost_follows` in the app is deleted, so "no generation follows" has one writer.
-- `BackingOff { target_pid }` (new) when `outpost_failed` leaves a wait above zero (`owner.rs` lines 1266 to 1268), after the failed generation's `Ended`, if it was ready.
+- `NotWatched` after every `Ended` sent by `end_because` (`owner.rs` lines 1755 to 1774), that is at every retirement and target exit, including a record removed during its backoff with no generation.
+- `Ended` gains `follows: bool`, set by the supervisor's transition: true when `outpost_failed` keeps the record for a next generation, at once or after its backoff, and false from `end_because`. `on_outpost_ended` reads only that field, in place of deriving a replacement from the `EndReason` (`main.rs` lines 2025 to 2027), and `no_outpost_follows` is deleted, so "a generation follows" has one writer.
 
 Within a process, the answering side holds a responder. `verbatim_model::protocol::Responder<T>` (planned) holds a boxed `FnOnce(Option<T>) + Send`. `answer(self, T)` consumes it, and its `Drop` calls the closure with `None` unless it was answered.
 
 - `ShellAsk`'s two variants hold `Responder<Vec<ShellItem>>` and `Responder<ShellCandidates>`. `ShellItemsHost::request` returns nothing, and the GUI's branch for an unsent request (`crates/verbatim-gui/src/lib.rs` lines 400 to 404) is deleted. A request lost with the reducer's port at exit, or dropped anywhere, now answers "nothing" through the GUI's own channel. `answer_nothing` becomes `Drop`.
 - The control plane's replies (`Asker::DumpTree`'s `Sender`, `ShellCommand::DumpFocus`) are channels with room for their one answer. A dropped `Sender` already tells its receiver the request is gone, so they stay as they are.
 - The listener's marker. The schedule is pure and holds each event's `Meta`, which is `Copy`, so the responder lives in the readers' shell. `queue_for_reading` (`listener.rs` lines 1323 to 1366) makes a `MarkerOwed` with the marker and hands it to `Readers::push`, which keeps it in `ReadersState` by marker. Applying `ScheduleEffect::Outcome` takes it out and passes it to `Reading::outcome`, which consumes it with the fact. `MarkerOwed`'s `Drop` sends `UiaFocusDropped` with `GapAnswer::LeavesOpen`, the drop for an element that could not be kept (`listener.rs` lines 1353 to 1363). In debug builds the shell asserts after every step that the owed markers are exactly those the schedule still holds, which is the "transition that ends a request emitted its answer" assertion. The ownership check's pure rule on `read_schedule.rs` keeps the responder out of the schedule.
-- The outposts' reply tokens: the second open question.
+- The outposts' reply tokens: in the reducer build ("Decisions").
 
 ### Lifecycles as typestates
 
@@ -158,11 +160,11 @@ The supervisor's record keeps what belongs to the application: `held`, `idle_que
 - `Ready { outpost, child, live }`: its hook is in. `hooks_in` lists these, and `forwarding_ended` relays only to the `Ready` state that names the generation in the listener's message. That takes any number of them, since a replacement listener sends one for each outpost on its command line (`listener.rs` lines 963 to 967).
 - `Waiting { unready }`: no generation while a failure's backoff runs, with the generation that failed before its `Ready`, if any. It replaces `OutpostId(0)`.
 
-Each transition is a method that consumes the state and returns the next with the notices to send, in order: `launched`, `assigned`, `ready`, `failed`, `given` (from `Waiting`, at the backoff's end) and `removed`. The owner applies the notices: the listener's hand-over messages and the app's `OutpostMessage`s. Leaving `Ready` emits `HookRemoved` in the same step, before any later generation's `HookInstalled`, so no path out of `Ready` can forget it (difference 25). The owner thread itself stays impure, as Dickson decided. `ListenerRecord` and `SpareChild`, whose `child: Option` is the same launch pattern, take the shared `Launching` and `Running` pair.
+Each transition is a method that consumes the state and returns the next with the notices to send, in order: `launched`, `assigned`, `ready`, `failed`, `given` (from `Waiting`, at the backoff's end) and `removed`. The owner applies the notices: the listener's hand-over messages and the app's `OutpostMessage`s. Leaving `Ready` emits `HookRemoved` in the same step, before any later generation's `HookInstalled`, so no path out of `Ready` can forget it (difference 25). A transition on the record in `HashMap<Pid, Record>` takes the state out with `std::mem::replace`, leaving `Waiting { unready: None }` while the method runs, and stores what it returns, so no sentinel value of `OutpostId` is ever stored or read. The owner thread itself stays impure, as Dickson decided. `ListenerRecord` and `SpareChild`, whose `child: Option` is the same launch pattern, take the shared `Launching` and `Running` pair.
 
 The app's `Live` becomes `Starting` or `Ready`, and `mark_ready` consumes `Starting`.
 
-`OutpostMessage`'s lifecycle variants are `Started`, `Ended`, `Regenerated`, `NotWatched`, `BackingOff`, `SpareReady` and `ListenerReady`. Each carries a `Sealed` field, a type whose only constructor is private to the supervisor module, so only the owner's path makes them. With the feature `lifecycle-for-tests` (planned) in `crates/verbatim-outpost/Cargo.toml`, a `Sealed::for_tests()` exists, which `verbatim-app`'s tests take as a dev-dependency feature. `Event` and `Frame` are not lifecycle and are not sealed. Patterns that destructure a sealed variant add `..`.
+`OutpostMessage`'s lifecycle variants are `Started`, `Ended`, `Regenerated`, `NotWatched`, `SpareReady` and `ListenerReady`; they and the idle round's `IdleQueried`, which only the relay may announce, are sealed. Each carries a `Sealed` field, a type whose only constructor is private to the supervisor module, so only the owner's path makes them. With the feature `lifecycle-for-tests` (planned) in `crates/verbatim-outpost/Cargo.toml`, a `Sealed::for_tests()` exists, which `verbatim-app`'s tests take as a dev-dependency feature. `Event` and `Frame` are not sealed. Patterns that destructure a sealed variant add `..`.
 
 ## Where each part runs
 
@@ -170,14 +172,14 @@ The app's `Live` becomes `Starting` or `Ready`, and `mark_ready` consumes `Start
 - An outpost, on whichever thread sends a message: the outbound queue's merge, under the sender's backlog lock as today.
 - The listener: its I/O thread decodes `CoreToListener`. The readers' shell, under the readers' lock it already takes, keeps the owed markers, and each reading thread or the watchdog answers one by applying an outcome.
 - verbatim.exe's relay, the owner thread: the generation states and their notices, the writers' queues, and the peek at each outpost frame.
-- verbatim.exe's reducer thread: `Frames`, `Live`, the request table, the wanted requests and the backoff view, and answering a `ShellAsk`'s responder.
+- verbatim.exe's reducer thread: `Frames`, `Live`, the request table, the wanted requests, and answering a `ShellAsk`'s responder.
 - The GUI thread: makes each `ShellAsk` and takes its answer from its own channel.
 
 ## Edge cases and what is heard
 
 - The attention application's ready outpost crashes, its replacement waits for a backoff, and the application exits meanwhile. Nothing is heard, as today. The focus-now request is answered "gone" at `NotWatched`, and the harness's `AwaitIdle` is answered, where today it never is.
-- The same application exits while a replacement listener's focus-now request waits for its outpost to start. `Ended` with `TargetExited`, then `NotWatched`. Nothing is heard, and idle is answered.
-- Verbatim+F11 while File Explorer's outpost waits for a backoff. No dialog opens and nothing is heard, at once, where today the request waits up to 6 seconds for the same outcome.
+- The same application exits while a replacement listener's focus-now request waits for its outpost to start. `Ended` with `TargetExited` and `follows` false, then `NotWatched`. Nothing is heard, and idle is answered.
+- Verbatim+F11 while File Explorer's outpost waits for a one-second backoff. The request waits, the replacement becomes ready, and the list opens, as today. Under a backoff longer than the 6-second deadline, no dialog opens and nothing is heard, as today.
 - Verbatim+F11 while File Explorer's outpost is starting normally. The request waits for `Ready` and the list opens, as today.
 - File Explorer's outpost retires while a Verbatim+F11 request waits for it. The request is answered "nothing" at `NotWatched`, as `no_outpost_follows` answers it today, and the next press starts an outpost and lists the items.
 - A given spare fails before its `Ready`. `Regenerated`, then the failed one's `Ended` if the app heard it started, then the next generation's `Started`, as today (df4c15d9). The held facts go to the next generation and are spoken once.
@@ -191,6 +193,8 @@ The app's `Live` becomes `Starting` or `Ready`, and `mark_ready` consumes `Start
 - A generation's message after its replacement's `Started`. Prevented as today: `Live::accept` drops it, and the owner's `outpost_frame` drops frames of an ended generation.
 - `HookRemoved` forgotten on a new path out of `Ready`. The listener forwards nothing for an application whose outpost is gone, and its events are lost until the next outpost's hook. Prevented: `Ready` is consumed only by transitions that emit it.
 - `ForwardingEnded` relayed to a later generation of the same application, which would then miscount its hand-over. Prevented: it is relayed only to the `Ready` state naming its generation.
+- A message that carries nodes sent as urgent, so the outpost does not number it while verbatim.exe does. Every later position differs by one, and the outpost releases a node Core still holds. Prevented: `urgent` takes only `Urgent`, which carries no node.
+- The app deciding a replacement follows when the supervisor will start none, so a focus-now request waits for ever. Prevented: the app reads `Ended`'s `follows`, which the supervisor's transition sets.
 - A new message variant that carries nodes, not counted. Core reads a node from it after the outpost released it on a `NodesHeld` acknowledging a position counted without it. Prevented: the exhaustive `carries_nodes`.
 - A new message variant handled by no receiver. It falls through a wildcard and is lost, as `CoreFocus` was added without its kind being asked. Prevented: the exhaustive dispatches, the kind list and the decode refusing the wrong direction.
 - A merge across an idle answer. A change written before the answer reaches Core after the harness heard "idle". Prevented: `Barrier::All` on `IdleAnswer`, which `merge_into` checks for every implementation.
@@ -201,7 +205,7 @@ The app's `Live` becomes `Starting` or `Ready`, and `mark_ready` consumes `Start
 
 ## The facts and their owners
 
-- Which generation serves an application, and whether one follows: the supervisor's owner thread, through the generation states and their notices. The app's `Live` and its backoff view are lagging copies, ordered with what they judge, since every notice comes through the one outbox ahead of the generation's messages.
+- Which generation serves an application, and whether one follows: the supervisor's owner thread, through the generation states and their notices. The app's `Live` is a lagging copy, ordered with what they judge, since every notice comes through the one outbox ahead of the generation's messages.
 - Which generation has its hook in: the owner's `Ready` states. The listener's map follows by `HookInstalled` and `HookRemoved`, a lagging copy whose window is difference 25's one relay hop.
 - A sent query's outcome: the request table. A wanted request's outcome: the wanted table. A GUI request's outcome: its responder. A marker's outcome: the readers' shell.
 - What carries nodes: `carries_nodes`, one function both counters call.
@@ -217,16 +221,15 @@ Facts left with two writers:
 - The merge's reordering: an event of the merged report's node or line queued between the two reaches Core before the merged report, so Core judges it against an older focus than without the merge. It is NVDA's limiter's own effect, and one test per kind pins it.
 - An event's merge still drops its older report's speech, as today and as NVDA does.
 - A wanted request ended at a retirement just before a new start for the same process is answered "nothing", as today.
-- A shell items request made as a backoff ends, before the app hears `Started`, is answered "nothing" by the lagging view; the next request is served.
 - `kind()` exists for the wire enums only. `OutpostMessage` and Core's effects to other threads have no `kind()`. That every variant carries no state of Core stays a review rule.
-- The outposts' queries are answered by today's watch slot until the second open question is settled.
+- The outposts' queries are answered by today's watch slot until the reducer build, and the focus-now, activation and dump queries have no deadline meanwhile.
 
 ## Cost
 
 - The event path gains no wake-up and no call. The exhaustive matches and the generic merge compile to what the current code does.
 - Per UIA event in the listener: one insert and one removal in the owed markers' map, under the lock its schedule step already takes. That is 16 bytes and a box per marker while its event is held. The schedule's own bound limits how many it holds (NVDA's limiter, `ABANDONED_LIMIT`).
-- Per application lifecycle: one `NotWatched` per retirement or target exit, and one `BackingOff` per failure with a wait. Each is a post to the reducer's port, which the app handles in a few microseconds.
-- Memory: the per-process wanted table, and the set of processes backing off.
+- Per application lifecycle: one `NotWatched` per retirement or target exit. Each is a post to the reducer's port, which the app handles in a few microseconds.
+- Memory: the per-process wanted table, as today's two.
 - The builder records the listener's processor time per UIA event from five runs of `measure_focus_explorer` before and after, the worst case being a focus flood, in `docs/performance.md`.
 
 ## Tests
@@ -236,18 +239,19 @@ Facts left with two writers:
 - The kind list for each direction enum, the check that Core sends no report, and the peek-name test (`verbatim-model` and `crates/verbatim-outpost/src/protocol.rs`).
 - `carries_nodes`: one case per `OutpostToCore` variant and per `QueryOutcome` for `Reply`.
 - The equivalence tests, one per merged kind, in `crates/verbatim-core/tests/merge.rs` (planned), and the two reordering tests.
-- `merge_into` (`verbatim-model`): nothing merges across `Barrier::All`. A key that refuses replies does not merge across `Barrier::Reply`, and any other key does.
+- `merge_into` (`verbatim-model`): nothing merges across `Barrier::All`. A key that refuses replies does not merge across `Barrier::Reply`, and any other key does. Under Dickson's decision this replaces the brief's "a reply never merged across" test (`docs/design/ownership-builds.md`, the messages build's brief).
+- `Urgent`: each of its variants converts to the `OutpostToCore` variant of the same name.
 - The request table: a query answered "gone" at the `Ended` of a generation that failed with a backoff. The existing ending tests are kept.
-- The wanted table (`wanted.rs`): a focus-now request answered "gone" at `NotWatched`, and kept through `BackingOff`. A shell items request answered "gone" at `BackingOff`, at `NotWatched`, and at once while its process backs off. Each is ended once, never again by a later `Ready` or deadline.
+- The wanted table (`wanted.rs`): a focus-now request answered "gone" at `NotWatched`, and kept through an `Ended` with `follows`. A shell items request answered "gone" at `NotWatched`, kept through an `Ended` with `follows`, and answered "nothing" at its deadline. Each is ended once, never again by a later `Ready` or deadline.
 - `Responder`: answered once; dropped unanswered gives `None`; answered then dropped gives nothing more.
 - The listener's readers (`focus_read.rs` tests): an event pushed and dropped by the schedule's `REPLACED` answers its marker once, and dropping the readers with an event waiting answers its marker with `UiaFocusDropped`.
 - The generation states (`owner.rs` tests, with `Generation<()>`), the df4c15d9 sequences and difference 25:
   - A spare given and failed before `Ready` gives `Regenerated`, the failed one's `Ended`, then `Started`.
   - The same with its launch still pending gives no `Ended`.
-  - A ready generation's failure with no wait gives `HookRemoved`, then `Ended`, then the next generation's `Started`, and its later `Ready` gives `HookInstalled`.
-  - The same with a wait gives `HookRemoved`, `Ended` and `BackingOff`.
+  - A ready generation's failure with no wait gives `HookRemoved`, then `Ended` with `follows`, then the next generation's `Started`, and its later `Ready` gives `HookInstalled`.
+  - The same with a wait gives `HookRemoved` and `Ended` with `follows`, and nothing more until the backoff ends.
   - A target exit while `Waiting` gives `NotWatched`, with the unready generation's `Ended` first when the app heard it started.
-  - A retirement gives `HookRemoved`, `Ended` with `Retired`, then `NotWatched`.
+  - A retirement gives `HookRemoved`, `Ended` with `Retired` and `follows` false, then `NotWatched`.
   - `ForwardingEnded` naming another generation is not relayed.
 - The app: a sealed notice built with the test constructor reaches the reducer, which keeps `outpost_messages_and_commands_reach_the_reducer_in_arrival_order` (`main.rs` line 2684) compiling.
 
@@ -281,7 +285,7 @@ The two builds share no file in the hook, the speech crate, the supervisor or th
 - `docs/crates/verbatim-model.md` and `docs/crates/verbatim-app.md`.
 - `Input::Event`, which the input build leaves without a key number and this build's mapping builds. The mapping takes the type as the input build leaves it.
 
-## Open questions for Dickson
+## Decisions
 
-- Should a reply be a barrier to every merge now, or only to a caret report with selection changes, as today? The brief asks for a test that nothing merges across a reply. Today a value, name or state change of one node merges across a reply while the outpost's write is in flight, and the caret rework's rule says "the clause against merging a caret report across a reply becomes the barrier on replies", which places the general barrier there. A general barrier now changes speech only under a backlog, such as hearing "50" then "51" where today only "51" is heard. Recommendation: keep today's rule in this build, declared on the type as `Barrier::Reply` that only the caret report's key refuses, so behaviour is preserved, and generalise it in the caret rework as its rule says. NVDA has no replies to compare.
-- Should the outposts' reply tokens be built now on today's intake, worker and watch, or in the outpost's reducer build? The model places them in the outpost reducer thread's shell, which that build creates. Today one slot, the watch's `running`, already holds the running query for every answer (the worker's reply, the watchdog's "abandoned", a panic's "failed"), and `Cancel` answers "not started" from the intake. No query is known to go unanswered. Recommendation: the reducer build, as part of its abandonment and claimed-request records, so no test is written against code the next build replaces; this build adds nothing on the outpost's query path.
+- A reply bars only a caret report with selection changes from merging across it, as today (Dickson, 2026-10-30). A value, name or state change of one node keeps merging across a reply while the outpost's write is in flight; the caret rework generalises the barrier, as its rule says ("the clause against merging a caret report across a reply becomes the barrier on replies"). The `merge_into` test replaces the brief's "a reply never merged across" test.
+- The outposts' reply tokens are built in the outpost's reducer build, as part of its abandonment and claimed-request records, so no test is written against the intake, worker and watch that build replaces, and this build adds nothing on the outpost's query path. Recommended, pending Dickson's acceptance. Until then, that no focus-now, activation or dump query waits for ever on a live outpost rests on review, since those queries have no deadline.
