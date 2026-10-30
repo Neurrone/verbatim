@@ -544,7 +544,7 @@ impl Context {
     /// holds it ([`verbatim_uia::NodeIdRegistry::touch_kept`]).
     fn touch(&self, node: NodeId) {
         if !self.uia_registry.touch_kept(node) {
-            self.msaa_registry.touch_kept(node);
+            let _ = self.msaa_registry.touch_kept(node);
         }
     }
 

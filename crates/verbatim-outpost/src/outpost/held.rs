@@ -187,6 +187,10 @@ impl Held {
 
     /// The text a report's line carried for dialog `node`, the newest
     /// report first, when one did.
+    #[expect(
+        clippy::option_option,
+        reason = "no report carried the dialog, or the text one carried, which may be none"
+    )]
     pub(super) fn dialog_text(&self, node: NodeId) -> Option<Option<String>> {
         self.reports.iter().rev().find_map(|focus| {
             focus

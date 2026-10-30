@@ -887,7 +887,7 @@ mod tests {
         push(&mut pending, text_changed(1), &[7]);
         assert_eq!(pending.waiting_nodes(), vec![7]);
         assert_eq!(write(&mut pending).len(), 1);
-        assert!(pending.waiting_nodes().is_empty());
+        assert_eq!(pending.waiting_nodes(), Vec::<u64>::new());
     }
 
     /// An outbound queue writing to a pipe with a 4 KiB buffer, its writes

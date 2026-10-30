@@ -2364,7 +2364,7 @@ mod tests {
         let previous = [node(1)];
         let (spliced, above) = splice_onto(&previous, vec![node(5), node(6)], NodeId::new(9));
         assert_eq!(ids(&spliced), ids(&[node(5), node(6)]));
-        assert!(above.is_empty());
+        assert_eq!(ids(above), Vec::<NodeId>::new());
     }
 
     fn text_area(role: Role) -> NodeSnapshot {

@@ -325,6 +325,7 @@ impl NodeIdRegistry {
     /// Records `node` as touched, when it is kept, for a message that names
     /// a node it did not look up, such as an entry spliced from a chain
     /// read before; answers whether it is kept.
+    #[must_use]
     pub fn touch_kept(&self, node: NodeId) -> bool {
         let mut inner = self.lock();
         let kept = inner.nodes.contains_key(&node);

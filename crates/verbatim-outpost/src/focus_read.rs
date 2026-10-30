@@ -462,7 +462,7 @@ impl WatchedRead {
 
     /// The watchdog claims the read, as the schedule decided: abandoned,
     /// or published at its bound.
-    fn claim(&self, claim: Claim) {
+    fn mark_claimed(&self, claim: Claim) {
         match claim {
             Claim::Abandon => self.0.claim.store(ABANDONED, Ordering::SeqCst),
             Claim::Publish => {
@@ -2057,7 +2057,7 @@ fn step<R: Reading>(
             }
             ScheduleEffect::Claim { pid, claim } => {
                 if let Some(watched) = state.watched.remove(&pid) {
-                    watched.claim(claim);
+                    watched.mark_claimed(claim);
                     if claim == Claim::Publish {
                         // Published, it is still under way, and watched
                         // for its abandonment at the deadline.

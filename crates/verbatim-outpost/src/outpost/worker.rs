@@ -5960,6 +5960,9 @@ mod tests {
         );
         assert_eq!(take_touched(&context), vec![Carried::Node(window.number())]);
         drop(registry.retain(|id| id != window));
-        assert!(read::held_prefix(&context, previous).is_empty());
+        assert_eq!(
+            read::held_prefix(&context, previous),
+            Vec::<NodeSnapshot>::new()
+        );
     }
 }

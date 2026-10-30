@@ -1241,6 +1241,7 @@ fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
     app.quit();
 }
 
+#[expect(clippy::too_many_lines, reason = "the binary's tests, listed in full")]
 fn main() {
     harness::run_isolated(&[
         (
