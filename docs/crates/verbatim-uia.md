@@ -337,8 +337,9 @@ round trip.
 
 The design is `docs/design/focus-pipeline.md`, section 17.
 
-- `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
-  `retarget_to(scope, group)`: one registration type for every event. A
+- `Registration::with_parts(parts, scope)`, `retarget(scope)`,
+  `retarget_to(scope, group)`, and `retarget_with(scope, group, also)`:
+  one registration type for every event. A
   `Subscription` is `Properties` (property ids, such as
   `FOCUS_PROPERTIES`: name, value, range value, toggle state, enabled,
   expand/collapse, help text, and `ControllerFor`), `Event` (an
@@ -361,12 +362,16 @@ The design is `docs/design/focus-pipeline.md`, section 17.
   `Subscription<Cached<S>>`, wrapped inside into one that receives the
   raw element, so a registration holds parts of several shapes), and
   their reads are counted in `Registration::failed_reads()`.
-  `.extended()` marks a part held only by the extended groups, and
-  `.text_events()` one that delivers text or caret changes.
+  `.extended()` marks a part held only by the extended groups,
+  `.text_events()` one that delivers text or caret changes, and
+  `.value_only()` one held by the value group alone.
 - A `Group` is NVDA's `Base` (every part not marked extended) or
   `Extended` (every part), or `ExtendedWithoutTextEvents`, every part but
   the text events, for an element whose text and caret changes reach the
-  caller another way. Each is built once per registration, on first need.
+  caller another way, or `Value`, only the parts marked value-only, for an
+  element only whose value changes the caller follows, such as a focus's
+  parent; no other group holds those parts. Each is built once per
+  registration, on first need.
 - A focus subscription is not part of the groups: its handler is
   registered on the registering thread's client itself
   (`AddFocusChangedEventHandler`) before any group, as NVDA registers its
@@ -391,8 +396,9 @@ The design is `docs/design/focus-pipeline.md`, section 17.
   the whole desktop, or exactly given elements. The caller looks a
   window's element up itself, so the registering thread makes no
   connection by handle.
-- A move (`retarget` gives the base group, `retarget_to` the group named)
-  is handed to the registering thread, so the caller never waits on UIA's
+- A move (`retarget` gives the base group, `retarget_to` the group named,
+  and `retarget_with` also gives each further element, alone, the group
+  paired with it) is handed to the registering thread, so the caller never waits on UIA's
   removal, which waits for running callbacks; so no callback may wait on
   any registration's moves. The thread adds the group to each element of
   the new scope that does not already have it, then removes it from each

@@ -60,7 +60,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationTextRange, UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
+    IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId, UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 
@@ -227,9 +228,10 @@ pub(crate) struct Context {
     /// ([`register_focus_events`]).
     focus_events: OnceLock<Registration>,
     /// The focus's node and group the focus-following subscription was
-    /// last moved to: `None` for nothing. A move to the same node and group
-    /// is not asked of the subscription at all.
-    followed: Mutex<Option<(NodeId, Group)>>,
+    /// last moved to, with the focus's parent followed for its value
+    /// changes, if one is: `None` for nothing. A move to the same node,
+    /// group and parent is not asked of the subscription at all.
+    followed: Mutex<Option<(NodeId, Group, Option<NodeId>)>>,
     /// Whether UIA reads may use remote operations ([`OutpostOptions`]).
     remote_operations: bool,
     /// Windows whose UIA elements could not be imported into a remote
@@ -1732,9 +1734,11 @@ fn capture_text(event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
 /// holds the name, value, and state changes ([`FOCUS_PROPERTIES`]) and the
 /// caret event (`Text_TextSelectionChanged`); the extended group, given a
 /// focus with text read through UIA, also holds the text changes
-/// (`Text_TextChanged`) and the active text position changes. Selections
-/// and notifications come desktop-wide from the listener instead. A caret
-/// or text change also has the worker check a caret key's watch.
+/// (`Text_TextChanged`) and the active text position changes. A third
+/// group, given only the parent of a focus that is a `SensitiveSlider`'s
+/// thumb, holds its value changes alone. Selections and notifications come
+/// desktop-wide from the listener instead. A caret or text change also has
+/// the worker check a caret key's watch.
 ///
 /// One group carries a cache request per handler, so each event's element
 /// arrives with what its handling reads: a property change with what the
@@ -1744,9 +1748,8 @@ fn capture_text(event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
 /// ([`verbatim_uia::TextEvent`]), since the worker reads the text itself.
 fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let property_context = Arc::clone(context);
-    let properties = Subscription::Properties {
-        properties: FOCUS_PROPERTIES.to_vec(),
-        callback: Arc::new(move |event: &Cached<PropertyEvent>, property_id: i32| {
+    let property_callback: verbatim_uia::PropertyCallback<Cached<PropertyEvent>> =
+        Arc::new(move |event: &Cached<PropertyEvent>, property_id: i32| {
             property_context.take_in(
                 Item::Uia(capture_property(event, property_id)),
                 Heard::UiaProperty(property_id),
@@ -1755,7 +1758,14 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                     ..EventTiming::default()
                 },
             );
-        }),
+        });
+    let properties = Subscription::Properties {
+        properties: FOCUS_PROPERTIES.to_vec(),
+        callback: Arc::clone(&property_callback),
+    };
+    let values = Subscription::Properties {
+        properties: vec![UIA_ValueValuePropertyId, UIA_RangeValueValuePropertyId],
+        callback: property_callback,
     };
     let text_context = Arc::clone(context);
     let text_callback: verbatim_uia::EventCallback<Cached<TextEvent>> =
@@ -1802,6 +1812,7 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     };
     let parts = vec![
         Part::shaped::<PropertyEvent>(properties),
+        Part::shaped::<PropertyEvent>(values).value_only(),
         Part::shaped::<TextEvent>(caret).text_events(),
         Part::shaped::<TextEvent>(text).extended().text_events(),
         Part::shaped::<TextEvent>(position).extended(),

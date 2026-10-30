@@ -30,9 +30,12 @@ use verbatim_model::{
     State, StateSet, TraceId,
 };
 
-use verbatim_outpost::protocol::DeliveredFact;
+use verbatim_ia2::WinEventKind;
+use verbatim_outpost::Heard;
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Accessibility::UIA_ValueValuePropertyId;
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
 use windows::core::{PCWSTR, w};
 
@@ -680,11 +683,87 @@ fn a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value() {
     app.quit();
 }
 
+/// The outpost follows a `SensitiveSlider` for its value changes while
+/// its thumb is the focus, so its value change reaches Core, which speaks
+/// it (`docs/parity/focus-context.md`, "A slider that focuses its thumb"):
+/// mockapp's slider changes its value with its thumb focused, the outpost
+/// reports the slider's value change, and Core says the value.
+fn a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus() {
+    common::init_com();
+    let title = common::unique_title("mockapp-sensitive-slider-value");
+    let mut app = common::spawn("sensitive_slider.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus thumb");
+    let uia = Uia::new().expect("a UIA client");
+    let thumb = common::listener_focus(&uia, hwnd.0 as isize);
+    let reported = outpost.uia_focus(&thumb);
+    let slider = reported
+        .ancestors
+        .last()
+        .expect("the thumb's parent")
+        .clone();
+    assert_eq!(slider.name.as_deref(), Some("Volume"));
+    let mut state = SrState::new();
+    spoken_in(&mut state, &reported);
+    outpost.settled();
+
+    app.send("set-value slider 60");
+    outpost.heard(&[
+        Heard::UiaProperty(UIA_ValueValuePropertyId.0),
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    let mut change = match outpost.next() {
+        OutpostToSupervisor::Event { event, .. } => event,
+        other => panic!("the outpost said {other:?}, not the slider's value change"),
+    };
+    outpost.settled();
+    assert_eq!(
+        change,
+        NormalizedEvent::ValueChanged {
+            node_id: slider.id,
+            value: Some("60".to_owned()),
+        }
+    );
+    change.assign_outpost(OutpostId(1));
+    let effects = verbatim_core::reduce(
+        &mut state,
+        &Input::Event {
+            trace_id: TraceId::mint(),
+            observed_at_us: 0,
+            source: Pid(1),
+            backend: Backend::Uia,
+            window: None,
+            event: change,
+        },
+    );
+    let said: Vec<Vec<SegmentContent>> = effects
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(
+                utterance
+                    .segments
+                    .into_iter()
+                    .map(|segment| segment.content)
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, [vec![SegmentContent::Value("60".to_owned())]]);
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
             "a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value",
             a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value,
+        ),
+        (
+            "a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus",
+            a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus,
         ),
         (
             "a_windows_forms_tree_item_is_read_as_a_tree_view_item",

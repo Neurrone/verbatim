@@ -22,7 +22,10 @@
 //! group, which also holds the parts marked [`Part::extended`]; and a
 //! third, the extended group without the parts marked
 //! [`Part::text_events`], for an element whose text and caret changes
-//! reach the caller another way. Each group is built once per
+//! reach the caller another way; and a fourth, the value group, which holds
+//! only the parts marked [`Part::value_only`], for an element only whose
+//! value changes the caller follows, such as a focus's parent. Each group
+//! is built once per
 //! registration, on first need, and every handler in it is added with its
 //! own part's cache request, so the element each event brings arrives with
 //! that part's properties prefetched and the callback reads them without a
@@ -173,13 +176,18 @@ pub enum Group {
     /// whose text and caret changes the caller learns of another way, so
     /// UIA is not asked to deliver them.
     ExtendedWithoutTextEvents,
+    /// Only the parts marked [`Part::value_only`], which no other group
+    /// holds: for an element only whose value changes the caller follows.
+    Value,
 }
 
 impl Group {
-    /// Whether this group holds a part marked as `extended_only` and as
-    /// `text_events`.
-    fn holds(self, extended_only: bool, text_events: bool) -> bool {
+    /// Whether this group holds a part marked as `extended_only`, as
+    /// `text_events` and as `value_only`.
+    fn holds(self, extended_only: bool, text_events: bool, value_only: bool) -> bool {
         match self {
+            Group::Value => value_only,
+            _ if value_only => false,
             Group::Base => !extended_only,
             Group::Extended => true,
             Group::ExtendedWithoutTextEvents => !text_events,
@@ -306,6 +314,8 @@ pub struct Part {
     /// Whether the part delivers text or caret changes, which
     /// [`Group::ExtendedWithoutTextEvents`] leaves out.
     text_events: bool,
+    /// Whether only [`Group::Value`] holds the part.
+    value_only: bool,
     /// The patterns the cache request also holds, such as the Text
     /// pattern [`crate::ListenerEvent`] prefetches, as NVDA's base cache
     /// request holds it.
@@ -323,6 +333,7 @@ impl Part {
             properties: S::PROPERTIES,
             extended_only: false,
             text_events: false,
+            value_only: false,
             patterns: S::PATTERNS,
         }
     }
@@ -345,6 +356,16 @@ impl Part {
             ..self
         }
     }
+
+    /// The part, held by [`Group::Value`] alone, as one that delivers the
+    /// value changes of an element only whose value changes are followed.
+    #[must_use]
+    pub fn value_only(self) -> Self {
+        Self {
+            value_only: true,
+            ..self
+        }
+    }
 }
 
 /// A live subscription: one or more [`Part`]s registered together as one
@@ -362,11 +383,13 @@ pub struct Registration {
 }
 
 /// Where a registration is asked to listen: a scope, and the group its
-/// elements are given.
+/// elements are given; and further elements, each alone, with a group of
+/// its own.
 #[derive(Clone)]
 struct Target {
     scope: Scope,
     group: Group,
+    also: Vec<(AgileReference<IUIAutomationElement>, Group)>,
 }
 
 /// The id the next registration is given.
@@ -479,6 +502,7 @@ impl Registration {
         let target = Target {
             scope,
             group: Group::Base,
+            also: Vec::new(),
         };
         let to = describe(&target.scope);
         let failed_reads = Arc::new(AtomicU32::new(0));
@@ -534,10 +558,25 @@ impl Registration {
     /// from every other element the group added there (module doc), once
     /// it has made everything asked of it before.
     pub fn retarget_to(&self, scope: Scope, group: Group) {
+        self.retarget_with(scope, group, Vec::new());
+    }
+
+    /// Moves the subscription as [`retarget_to`](Self::retarget_to) does,
+    /// and gives each of `also`, an element alone, the group paired with
+    /// it, such as [`Group::Value`] for a focus's parent whose value
+    /// changes are followed: one more `AddEventHandlerGroup` call for each
+    /// that does not already have its group, and its removal when a later
+    /// move leaves it out.
+    pub fn retarget_with(
+        &self,
+        scope: Scope,
+        group: Group,
+        also: Vec<(AgileReference<IUIAutomationElement>, Group)>,
+    ) {
         if let Some(commands) = self.lock().as_ref() {
             let _ = commands.send(Command::Retarget {
                 id: self.id,
-                target: Target { scope, group },
+                target: Target { scope, group, also },
             });
         }
     }
@@ -801,6 +840,7 @@ struct Built {
     cache: IUIAutomationCacheRequest,
     extended_only: bool,
     text_events: bool,
+    value_only: bool,
 }
 
 /// A group built on the registering thread for one registration, for one
@@ -1040,6 +1080,7 @@ impl Follower {
                     handler: Handler::of(part.subscription, failed_reads),
                     extended_only: part.extended_only,
                     text_events: part.text_events,
+                    value_only: part.value_only,
                 })
             })
             .collect::<windows::core::Result<Vec<_>>>()
@@ -1120,6 +1161,15 @@ impl Follower {
     /// (module doc).
     fn move_to(&mut self, client: &Client, target: &Target) {
         let (elements, tree_scope) = self.resolve(client, &target.scope);
+        let also = target
+            .also
+            .iter()
+            .filter_map(|(agile, group)| Some((agile.resolve().ok()?, *group, TreeScope_Element)));
+        let wanted: Vec<(IUIAutomationElement, Group, TreeScope)> = elements
+            .into_iter()
+            .map(|element| (element, target.group, tree_scope))
+            .chain(also)
+            .collect();
         tracing::debug!(
             registration = self.id,
             from = ?self
@@ -1128,60 +1178,56 @@ impl Follower {
                 .map(|registered| (crate::com::runtime_id(&registered.element), registered.group))
                 .collect::<Vec<_>>(),
             to = describe(&target.scope),
-            elements = ?elements.iter().map(crate::com::runtime_id).collect::<Vec<_>>(),
+            elements = ?wanted
+                .iter()
+                .map(|(element, group, _)| (crate::com::runtime_id(element), *group))
+                .collect::<Vec<_>>(),
             group = ?target.group,
             "a UIA subscription moves"
         );
-        let handlers = if elements.is_empty() {
-            None
-        } else {
-            match self.group(client, target.group, tree_scope) {
-                Ok(handlers) => Some(handlers),
-                Err(error) => {
-                    tracing::warn!(%error, "a UIA event handler group could not be built");
-                    None
-                }
-            }
-        };
         let mut previous = std::mem::take(&mut self.registered);
         let mut now = Vec::new();
-        if let Some(handlers) = handlers {
-            let wanted = |registered: &Registered| {
-                registered.group == target.group && registered.tree_scope == tree_scope
-            };
-            for element in elements {
-                let kept = plan_keep(&previous, &element, |registered, element| {
-                    wanted(registered) && same(client, &registered.element, element)
-                });
-                if let Some(at) = kept {
-                    tracing::debug!(
-                        runtime_id = ?crate::com::runtime_id(&element),
-                        "the element already has the group; no call is made"
-                    );
-                    now.push(previous.swap_remove(at));
+        for (element, group, tree_scope) in wanted {
+            let handlers = match self.group(client, group, tree_scope) {
+                Ok(handlers) => handlers,
+                Err(error) => {
+                    tracing::warn!(%error, "a UIA event handler group could not be built");
                     continue;
                 }
-                let started = Instant::now();
-                // SAFETY: the element and group are live and owned by this
-                // thread's client.
-                let added = unsafe { client.client.AddEventHandlerGroup(&element, &handlers) };
-                log_call(
-                    ("AddEventHandlerGroup", false),
-                    self.id,
-                    &element,
-                    &added,
-                    started.elapsed(),
+            };
+            let kept = plan_keep(&previous, &element, |registered, element| {
+                registered.group == group
+                    && registered.tree_scope == tree_scope
+                    && same(client, &registered.element, element)
+            });
+            if let Some(at) = kept {
+                tracing::debug!(
+                    runtime_id = ?crate::com::runtime_id(&element),
+                    "the element already has the group; no call is made"
                 );
-                // On an error, as NVDA logs it and goes on: the element has
-                // most likely gone, and nothing is registered on it.
-                if added.is_ok() {
-                    now.push(Registered {
-                        element,
-                        group: target.group,
-                        tree_scope,
-                        handlers: handlers.clone(),
-                    });
-                }
+                now.push(previous.swap_remove(at));
+                continue;
+            }
+            let started = Instant::now();
+            // SAFETY: the element and group are live and owned by this
+            // thread's client.
+            let added = unsafe { client.client.AddEventHandlerGroup(&element, &handlers) };
+            log_call(
+                ("AddEventHandlerGroup", false),
+                self.id,
+                &element,
+                &added,
+                started.elapsed(),
+            );
+            // On an error, as NVDA logs it and goes on: the element has
+            // most likely gone, and nothing is registered on it.
+            if added.is_ok() {
+                now.push(Registered {
+                    element,
+                    group,
+                    tree_scope,
+                    handlers,
+                });
             }
         }
         let unremoved = self.remove(client, previous);
@@ -1333,7 +1379,7 @@ impl Follower {
         // SAFETY: a local call on this thread's live client.
         let handlers = unsafe { client.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
-            if group.holds(built.extended_only, built.text_events) {
+            if group.holds(built.extended_only, built.text_events, built.value_only) {
                 built.handler.add_to(&handlers, tree_scope, &built.cache)?;
             }
         }
@@ -1505,18 +1551,29 @@ mod tests {
     #[test]
     fn the_group_without_text_events_holds_every_part_but_the_text_events() {
         let parts = [(false, false), (false, true), (true, false), (true, true)];
-        let held = |group: Group| -> Vec<bool> {
+        let held = |group: Group, value_only: bool| -> Vec<bool> {
             parts
                 .iter()
-                .map(|&(extended_only, text_events)| group.holds(extended_only, text_events))
+                .map(|&(extended_only, text_events)| {
+                    group.holds(extended_only, text_events, value_only)
+                })
                 .collect()
         };
-        assert_eq!(held(Group::Base), [true, true, false, false]);
-        assert_eq!(held(Group::Extended), [true, true, true, true]);
+        assert_eq!(held(Group::Base, false), [true, true, false, false]);
+        assert_eq!(held(Group::Extended, false), [true, true, true, true]);
         assert_eq!(
-            held(Group::ExtendedWithoutTextEvents),
+            held(Group::ExtendedWithoutTextEvents, false),
             [true, false, true, false]
         );
+        assert_eq!(held(Group::Value, false), [false; 4]);
+        for group in [
+            Group::Base,
+            Group::Extended,
+            Group::ExtendedWithoutTextEvents,
+        ] {
+            assert_eq!(held(group, true), [false; 4], "{group:?} and a value part");
+        }
+        assert_eq!(held(Group::Value, true), [true; 4]);
     }
 
     /// An element the registering thread has registered on, by name, with
@@ -1605,6 +1662,7 @@ mod tests {
             target: Target {
                 scope: Scope::Nothing,
                 group: Group::Base,
+                also: Vec::new(),
             },
         }
     }

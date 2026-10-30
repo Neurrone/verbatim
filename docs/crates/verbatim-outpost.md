@@ -682,7 +682,16 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   without its text events (`Group::ExtendedWithoutTextEvents`), and the
   console's caret events are its caret events
   (`docs/design/wake-ups.md`, item 15). Both are on the focused element
-  only (`docs/parity/backends.md`, "UIA event registration"). Elements
+  only (`docs/parity/backends.md`, "UIA event registration"). A focus
+  whose parent is a UIA slider of class `SensitiveSlider`
+  (`verbatim_core::focus_rules::is_sensitive_slider`) has that parent
+  given the value group too (`Group::Value`, value and range value
+  changes alone, through `retarget_with`), since Core speaks its value
+  changes while its thumb is the focus (`docs/parity/focus-context.md`,
+  "A slider that focuses its thumb"); the listener's read keeps no
+  ancestor's element, so the worker finds the slider by the focus's path
+  (`sensitive_slider_parent`, `element_by_focus_path`) and keeps it under
+  the parent's node. Elements
   arrive as `Cached<PropertyEvent>` or `Cached<TextEvent>`, carried as
   `intake::EventElement` and resolved as `Kept`. The worker moves the
   subscription with each focus it reports (`follow_focus`): add the group to

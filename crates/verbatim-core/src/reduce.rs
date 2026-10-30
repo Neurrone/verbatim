@@ -23,7 +23,7 @@ use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, WindowHandle};
 
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
-    meeting, quiet_entered, repeats_focus, selection_target,
+    is_sensitive_slider, meeting, quiet_entered, repeats_focus, selection_target,
 };
 use crate::state::{
     Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation,
@@ -2607,20 +2607,6 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         // Every other role is context, named or not.
         _ => true,
     }
-}
-
-/// The UI Automation class of a slider that gives the keyboard focus to
-/// its thumb (`docs/parity/focus-context.md`, "A slider that focuses its
-/// thumb").
-const SENSITIVE_SLIDER_CLASS: &str = "SensitiveSlider";
-
-/// Whether `node` is a UI Automation slider that gives the focus to its
-/// thumb: entered, it is spoken as a focus is, its value included, and its
-/// value change is spoken while it is the focus's parent
-/// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
-fn is_sensitive_slider(node: &NodeSnapshot) -> bool {
-    node.backend == Backend::Uia
-        && node.details.class_name.as_deref() == Some(SENSITIVE_SLIDER_CLASS)
 }
 
 /// The spoken introduction for one entered container: spoken as a focus

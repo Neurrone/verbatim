@@ -258,6 +258,22 @@ pub fn is_selection_container(role: Role) -> bool {
     matches!(role, Role::List | Role::TabControl)
 }
 
+/// The UI Automation class of a slider that gives the keyboard focus to
+/// its thumb (`docs/parity/focus-context.md`, "A slider that focuses its
+/// thumb").
+const SENSITIVE_SLIDER_CLASS: &str = "SensitiveSlider";
+
+/// Whether `node` is a UI Automation slider that gives the focus to its
+/// thumb: entered, it is spoken as a focus is, its value included, and its
+/// value change is spoken while it is the focus's parent, so an outpost
+/// follows its value changes while it is
+/// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+#[must_use]
+pub fn is_sensitive_slider(node: &verbatim_model::NodeSnapshot) -> bool {
+    node.backend == Backend::Uia
+        && node.details.class_name.as_deref() == Some(SENSITIVE_SLIDER_CLASS)
+}
+
 /// What a selection of `node` concerns, given the focus `focus` of
 /// `focus_role` and its `ancestors`: the focus's or an ancestor's states
 /// (an ancestor `selects_states` refuses, as an outpost refuses a tree view

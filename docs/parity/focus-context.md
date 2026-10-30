@@ -186,11 +186,13 @@ it is the focus's parent, compared with what it last spoke of it
 Automation ancestor carries its class name, from the walk's cache with no
 further call, and Core speaks an entered `SensitiveSlider` as a focus,
 and a value change of one that is the focus's innermost ancestor when
-its value differs from the one it was entered with. **partial**: reducer
-tests and mockapp's
-`a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value`; the
-outposts follow only the focus's own element, so a slider's value change
-does not reach Core yet while its thumb is the focus.
+its value differs from the one it was entered with. The outpost follows
+such a parent for its value changes alone while the focus is its child,
+finding its element by the focus's path when it keeps none (Fable,
+2026-10-30, pending Dickson's acceptance). **done**: reducer tests and
+mockapp's `a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value`
+and
+`a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus`.
 
 ### A File Explorer folder window opening
 

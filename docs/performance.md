@@ -1170,6 +1170,29 @@ ancestor carries its class name; and MSAA's invisible state is carried.
   reading of a node of the line, compared by id, at most the line's
   length times the duplicate chain's.
 
+### A focus whose parent is a SensitiveSlider, UIA
+
+The outpost follows a UIA `SensitiveSlider` for its value changes while
+its thumb is the focus (`docs/parity/focus-context.md`, "A slider that
+focuses its thumb"). The cost is accepted (Fable, 2026-10-30, pending
+Dickson's acceptance).
+
+- Today: for a focus whose parent is such a slider, one connection call
+  and one remote operation find the slider's element by the focus's path,
+  when the outpost keeps none for it, and one `AddEventHandlerGroup` call
+  gives it the value group; the focus leaving it removes that group with
+  one `RemoveEventHandlerGroup`. All of it runs on the worker after the
+  focus is reported, so none is on the speech path. A repeated focus on
+  the thumb, while the outpost keeps the slider's element, makes no call.
+- Any other parent: no call. The class name is already in each UI
+  Automation ancestor's snapshot, so the check reads the focus chain the
+  outpost last reported, and `call_counts`' UIA focus figures, read after
+  the subscription has moved, are unchanged.
+- Minimum: the same. UIA delivers no ancestor's event to a registration
+  on the thumb (`docs/parity/backends.md`, "UIA event registration"), and
+  the listener cannot hand the outpost the slider's element, since a UI
+  Automation element cannot pass to another process.
+
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), handled as a

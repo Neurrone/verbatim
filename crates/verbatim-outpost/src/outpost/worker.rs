@@ -2138,8 +2138,15 @@ impl Worker<'_> {
     /// registration"). A move to the node and group already followed is not
     /// asked of the subscription, so it makes no call; one to the same
     /// element under another node makes none either, as the subscription
-    /// compares the elements. Returns whether the node may have text.
-    fn follow_focus(&self, (node_id, role): (NodeId, Role)) -> bool {
+    /// compares the elements. A focus whose parent, its innermost ancestor
+    /// as last reported, is a UIA slider of class `SensitiveSlider` has that
+    /// parent followed too, for its value changes alone
+    /// ([`verbatim_uia::Group::Value`]), since Core speaks them while the
+    /// focus is in it (`docs/parity/focus-context.md`, "A slider that
+    /// focuses its thumb"): one more registration call for such a focus,
+    /// and its removal when the focus leaves. Returns whether the node may
+    /// have text.
+    fn follow_focus(&mut self, (node_id, role): (NodeId, Role)) -> bool {
         let has_text = text_reads::may_have_text(self.context, node_id, role);
         let element = self.context.uia_registry.element_of(node_id);
         let group = if !has_text {
@@ -2149,7 +2156,10 @@ impl Worker<'_> {
         } else {
             verbatim_uia::Group::Extended
         };
-        let wanted = element.as_ref().map(|_| (node_id, group));
+        let slider = self.sensitive_slider_parent(node_id);
+        let wanted = element
+            .as_ref()
+            .map(|_| (node_id, group, slider.as_ref().map(|(id, _)| *id)));
         let mut followed = self
             .context
             .followed
@@ -2173,15 +2183,52 @@ impl Worker<'_> {
         if let Some(subscription) = self.context.focus_events.get() {
             match element {
                 Some(element) => {
-                    subscription.retarget_to(
+                    subscription.retarget_with(
                         verbatim_uia::Scope::Elements(vec![element.reference()]),
                         group,
+                        slider
+                            .map(|(_, slider)| (slider.reference(), verbatim_uia::Group::Value))
+                            .into_iter()
+                            .collect(),
                     );
                 }
                 None => subscription.retarget(verbatim_uia::Scope::Nothing),
             }
         }
         has_text
+    }
+
+    /// The parent of the focus `node_id`, its innermost ancestor as last
+    /// reported, with its element, when it is a UIA slider of class
+    /// `SensitiveSlider` whose element this outpost keeps
+    /// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+    /// No call for any other parent, or for a slider whose element is kept;
+    /// otherwise one connection call and one remote operation find it.
+    fn sensitive_slider_parent(
+        &mut self,
+        node_id: NodeId,
+    ) -> Option<(NodeId, verbatim_uia::Agile<verbatim_uia::Kept>)> {
+        let parent = {
+            let tracking = self.context.tracking();
+            let [.., parent, focus] = tracking.chain.as_slice() else {
+                return None;
+            };
+            (focus.id == node_id && verbatim_core::focus_rules::is_sensitive_slider(parent))
+                .then_some(parent.id)?
+        };
+        if let Some(element) = self.context.uia_registry.element_of(parent) {
+            return Some((parent, element));
+        }
+        // The listener's read keeps no ancestor's element: the slider is
+        // found by its path, one connection call and one remote operation,
+        // and kept under the node its runtime id names, the parent's.
+        let runtime_id = self.context.uia_registry.runtime_id_of(parent)?;
+        let found = self.element_by_focus_path(&runtime_id)?;
+        let kept = self
+            .context
+            .uia_registry
+            .id_for_element(&runtime_id, &found);
+        Some((kept, self.context.uia_registry.element_of(kept)?))
     }
 
     /// Releases every node Core does not hold that was reported at or before

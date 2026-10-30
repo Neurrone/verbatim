@@ -40,6 +40,11 @@ guide maps those behaviors onto the crate's types and modules.
     a selection of the focus or an ancestor is a change of its states; any
     other is an item spoken only inside a focused list or tab control of
     the same outpost.
+  - `is_sensitive_slider(node)`: whether a node is a UI Automation slider
+    of class `SensitiveSlider`, which gives the focus to its thumb; the
+    reducer speaks it entered as a focus and its value changes while it is
+    the focus's parent, and an outpost follows its value changes while it
+    is (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
   - `same_object(old, new)` with `EnteredKey`: whether an entry of a
     previous focus line and one of a new line are the same object, one
     node id or one window when both are windows.
