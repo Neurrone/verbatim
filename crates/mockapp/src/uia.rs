@@ -319,6 +319,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::FailAccParent(_) => {
             return Err("fail-acc-parent is not supported on the uia backend".into());
         }
+        Command::Move(..) | Command::FailAccLocation(_) | Command::Recreate(_) => {
+            return Err("move, fail-acc-location and recreate are MSAA-only".into());
+        }
         Command::ReportWindow(id) => {
             let mut guard = tree
                 .lock()

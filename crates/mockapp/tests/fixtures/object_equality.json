@@ -1,0 +1,59 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Equality",
+  "children": [
+    {
+      "id": "results",
+      "role": "group",
+      "name": "Results",
+      "location": [10, 10, 300, 100],
+      "children": [
+        {
+          "id": "list1",
+          "role": "list",
+          "location": [20, 20, 200, 40],
+          "children": [
+            { "id": "a", "role": "list_item", "name": "a", "states": ["focusable", "selectable"] },
+            { "id": "b", "role": "list_item", "name": "b", "states": ["focusable", "selectable"] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "list2",
+      "role": "list",
+      "location": [20, 200, 200, 40],
+      "children": [
+        { "id": "c", "role": "list_item", "name": "c", "states": ["focusable", "selectable"] }
+      ]
+    },
+    {
+      "id": "options",
+      "role": "group",
+      "name": "Options",
+      "location": [10, 300, 300, 100],
+      "children": [
+        { "id": "ok", "role": "button", "name": "OK", "states": ["focusable"] },
+        { "id": "apply", "role": "button", "name": "Apply", "states": ["focusable"] }
+      ]
+    },
+    {
+      "id": "cart",
+      "role": "group",
+      "name": "Cart",
+      "location": [10, 420, 300, 100],
+      "children": [
+        {
+          "id": "cartlist",
+          "role": "list",
+          "location": [20, 430, 200, 40],
+          "children": [
+            { "id": "apples", "role": "list_item", "name": "Apples", "states": ["focusable", "selectable"] },
+            { "id": "pears", "role": "list_item", "name": "Pears", "states": ["focusable", "selectable"] }
+          ]
+        }
+      ]
+    }
+  ]
+}

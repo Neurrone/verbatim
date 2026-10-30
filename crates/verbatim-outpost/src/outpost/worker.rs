@@ -2513,10 +2513,7 @@ impl Worker<'_> {
             .follow(|follow| follow.tracking.dialog.clone());
         read::describe_dialogs(
             self.context,
-            (
-                ancestors.iter_mut().chain(std::iter::once(&mut node)),
-                window,
-            ),
+            ancestors.iter_mut().chain(std::iter::once(&mut node)),
             (&mut memo, foreground),
         );
         let role = node.role;
@@ -3920,11 +3917,17 @@ impl Worker<'_> {
             );
             return;
         }
-        let node = candidate.read(&self.context.msaa_registry);
+        // The focus and the ancestors its walk reads are compared with the
+        // focus line Core holds and the newest focus Core has not judged, by
+        // NVDA's equality (`docs/design/focus-pipeline-rework.md`, "MSAA
+        // object equality").
+        let candidates = read::msaa_candidates(self.context);
+        let node = candidate.read(&self.context.msaa_registry, Some(&candidates));
         self.report_msaa_focus(
             node,
             ((hwnd, id_object, id_child), resolved_child > 0),
             (trace, observed_at_us),
+            &candidates,
         );
     }
 
@@ -3939,6 +3942,7 @@ impl Worker<'_> {
         node: NodeSnapshot,
         (event, simple_child): ((isize, i32, i32), bool),
         (trace, observed_at_us): (TraceId, u64),
+        candidates: &verbatim_ia2::equality::Candidates,
     ) {
         let (hwnd, id_object, id_child) = event;
         let context = self.context;
@@ -3984,7 +3988,7 @@ impl Worker<'_> {
         let enrichment = read::msaa_enrichment(
             context,
             self.client,
-            (&node, &previous),
+            (&node, &previous, Some(candidates)),
             (left, Some(&watched)),
         );
         if self.walk_returned() {
@@ -4588,7 +4592,7 @@ impl Worker<'_> {
             } = focus;
             ancestors.iter_mut().chain(std::iter::once(node))
         });
-        read::describe_dialogs(context, (windows.chain(focus), window), (&mut None, false));
+        read::describe_dialogs(context, windows.chain(focus), (&mut None, false));
         let answered = answer.focus.as_mut().map(|control| {
             let node = &control.node;
             let (text, read_at) = self.read_focus_text(node.id, node.role);

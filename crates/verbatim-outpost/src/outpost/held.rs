@@ -125,6 +125,11 @@ impl Held {
         self.core.as_ref()
     }
 
+    /// The newest focus this outpost reported that Core has not judged.
+    pub(super) fn newest_unjudged(&self) -> Option<&Focus> {
+        self.unjudged.back()
+    }
+
     /// Whether Core has judged every focus this outpost reported.
     #[cfg(test)]
     pub(super) fn settled(&self) -> bool {

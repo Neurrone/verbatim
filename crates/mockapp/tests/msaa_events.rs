@@ -68,10 +68,12 @@ const DROPPED_FOREGROUND_FOCUS_CALLS: CallCounts = CallCounts {
 };
 
 /// What reporting a list item costs once its window's backend is known, a
-/// foreground change of the window dropped before it with no call.
+/// foreground change of the window dropped before it with no call: its
+/// list, the container of the item reported before it, is found equal to
+/// that item's by NVDA's equality and the walk stops there.
 const FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS: CallCounts = CallCounts {
     uia: 0,
-    msaa: 28,
+    msaa: 20,
     window_messages: 0,
     connections: 0,
 };

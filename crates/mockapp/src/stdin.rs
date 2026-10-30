@@ -13,7 +13,8 @@
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`,
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
-//! `fail-acc-parent <id>`, `report-window <id>`,
+//! `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
+//! `fail-acc-location <id>`, `recreate <id>`, `report-window <id>`,
 //! `take-runtime-id <id> <from>`, `replace-items <id>`, `disconnect <id>`,
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
@@ -222,6 +223,18 @@ pub(crate) enum Command {
     /// `fail-acc-parent started <us>` and `fail-acc-parent ended <us>` as
     /// each failing call begins and ends. MSAA-only.
     FailAccParent(String),
+    /// `move <id> <left> <top> <width> <height>`: node `id`'s MSAA
+    /// location is that rectangle from now on, raising no event, as a
+    /// scrolled container's moves. MSAA-only.
+    Move(String, [i32; 4]),
+    /// `fail-acc-location <id>`: node `id`'s `accLocation` fails with
+    /// `E_FAIL` from now on. MSAA-only.
+    FailAccLocation(String),
+    /// `recreate <id>`: node `id`'s MSAA object is made again, as an
+    /// application that destroys a container and makes another in its
+    /// place: the object handed out before answers every call as one whose
+    /// server has disconnected it. MSAA-only.
+    Recreate(String),
     /// `report-window <id>`: makes a child window of the host window and
     /// destroys it, and node `id`'s provider answers `NativeWindowHandle`
     /// with its handle, a window it does not host that no longer exists,
@@ -482,6 +495,21 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "answer-property" => answer_property(rest),
         "answer-parent" => answer_parent(rest),
         "slow-parent" | "slow-acc-parent" | "fail-acc-parent" => parent_step(verb, rest),
+        "move" => {
+            let mut parts = rest.split_whitespace();
+            let id = parts.next()?.to_owned();
+            let mut bounds = [0i32; 4];
+            for value in &mut bounds {
+                *value = parts.next()?.parse().ok()?;
+            }
+            parts.next().is_none().then_some(Command::Move(id, bounds))
+        }
+        "fail-acc-location" if !rest.is_empty() && !rest.contains(' ') => {
+            Some(Command::FailAccLocation(rest.to_owned()))
+        }
+        "recreate" if !rest.is_empty() && !rest.contains(' ') => {
+            Some(Command::Recreate(rest.to_owned()))
+        }
         "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
         "take-runtime-id" => take_runtime_id(rest),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),

@@ -296,16 +296,10 @@ pub fn selection_target(
         .then_some(SelectionTarget::Item)
 }
 
-/// A node as [`already_entered`] compares it.
+/// A node as [`same_object`] compares it.
 pub trait EnteredKey {
     /// Its id.
     fn key_id(&self) -> NodeId;
-    /// The backend that read it.
-    fn key_backend(&self) -> Backend;
-    /// Its role.
-    fn key_role(&self) -> Role;
-    /// Its name.
-    fn key_name(&self) -> Option<&str>;
     /// The window it is, when it is one
     /// ([`NodeDetails::window`](verbatim_model::NodeDetails::window)).
     fn key_window(&self) -> Option<WindowHandle>;
@@ -314,15 +308,6 @@ pub trait EnteredKey {
 impl EnteredKey for HeldNode {
     fn key_id(&self) -> NodeId {
         self.id
-    }
-    fn key_backend(&self) -> Backend {
-        self.backend
-    }
-    fn key_role(&self) -> Role {
-        self.role
-    }
-    fn key_name(&self) -> Option<&str> {
-        self.name.as_deref()
     }
     fn key_window(&self) -> Option<WindowHandle> {
         self.window
@@ -333,15 +318,6 @@ impl<T: EnteredKey> EnteredKey for &T {
     fn key_id(&self) -> NodeId {
         (*self).key_id()
     }
-    fn key_backend(&self) -> Backend {
-        (*self).key_backend()
-    }
-    fn key_role(&self) -> Role {
-        (*self).key_role()
-    }
-    fn key_name(&self) -> Option<&str> {
-        (*self).key_name()
-    }
     fn key_window(&self) -> Option<WindowHandle> {
         (*self).key_window()
     }
@@ -350,15 +326,6 @@ impl<T: EnteredKey> EnteredKey for &T {
 impl EnteredKey for verbatim_model::NodeSnapshot {
     fn key_id(&self) -> NodeId {
         self.id
-    }
-    fn key_backend(&self) -> Backend {
-        self.backend
-    }
-    fn key_role(&self) -> Role {
-        self.role
-    }
-    fn key_name(&self) -> Option<&str> {
-        self.name.as_deref()
     }
     fn key_window(&self) -> Option<WindowHandle> {
         self.details.window
@@ -383,53 +350,6 @@ fn key_of(node: &impl EnteredKey) -> verbatim_model::ObjectKey {
         id: node.key_id(),
         window: node.key_window(),
     }
-}
-
-/// Whether `old` and `new`, entries of two focus lines that are not the
-/// same object by their ids ([`same_object`]), are taken as one container
-/// by their role and name: when the new focus is in the same top-level
-/// window as the previous one (`same_window`), neither is a window both
-/// carry, they have one role and name, and they are not two elements one
-/// outpost read through UI Automation, which its node ids alone tell apart
-/// (`docs/parity/focus-context.md`, "Focus-ancestry context"). An MSAA
-/// object reached by another path, or a node from another outpost, can
-/// have another id. It keeps a matched container quiet and never chooses
-/// where two lines meet.
-pub fn same_by_role_and_name(
-    old: &impl EnteredKey,
-    new: &impl EnteredKey,
-    same_window: bool,
-) -> bool {
-    let one_identity = old.key_id().outpost() == new.key_id().outpost()
-        && old.key_backend() == Backend::Uia
-        && new.key_backend() == Backend::Uia;
-    let both_windows = old.key_window().is_some() && new.key_window().is_some();
-    same_window
-        && !both_windows
-        && !one_identity
-        && old.key_role() == new.key_role()
-        && old.key_name() == new.key_name()
-}
-
-/// Whether `old`, an entry of a previous focus line, and `new`, an entry of
-/// a new one, are the same entry: the same object ([`same_object`]), or
-/// taken as one by their role and name ([`same_by_role_and_name`]).
-pub fn same_entry(old: &impl EnteredKey, new: &impl EnteredKey, same_window: bool) -> bool {
-    same_object(old, new) || same_by_role_and_name(old, new, same_window)
-}
-
-/// Whether the focus had already entered `node`, a container of a new
-/// focus, given the previous focus and its ancestors, `previous`: `node`
-/// is the same entry as one of them ([`same_entry`]). An outpost judges by
-/// it whether a dialog is newly entered, and so gathers its own text.
-pub fn already_entered<'a, P: EnteredKey + 'a>(
-    previous: impl IntoIterator<Item = &'a P>,
-    same_window: bool,
-    node: &impl EnteredKey,
-) -> bool {
-    previous
-        .into_iter()
-        .any(|old| same_entry(old, node, same_window))
 }
 
 /// Where a new focus line meets the previous one, as NVDA joins them when
@@ -458,24 +378,19 @@ pub fn meeting<O: EnteredKey, N: EnteredKey>(
     })
 }
 
-/// How many of `entered`, the containers a new focus has entered below
-/// where its line meets the previous one, outermost first, are kept quiet
-/// as the containers `left`, the previous line's entries below that point,
-/// outermost first, taken by their role and name
-/// ([`same_by_role_and_name`]): the first entered is matched with the
-/// first left, the second with the second, and so on while each pair
-/// matches, since a container is the same as one left only when the
-/// container above it is too (`docs/parity/focus-context.md`,
-/// "Focus-ancestry context"). Nothing is allocated.
-pub fn quiet_entered<'a, O: EnteredKey + 'a>(
-    left: impl IntoIterator<Item = &'a O>,
-    entered: &[impl EnteredKey],
-    same_window: bool,
+/// How many of `new`'s entries, a new focus line's ancestors outermost
+/// first and then its focus, are already entered, given `previous`, a line
+/// the focus may have been in, given the same way: those above or at where
+/// the two lines meet ([`meeting`]), since what is below the meeting point
+/// is entered, as NVDA's focus line is joined (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context"); none when they share no object. An outpost
+/// judges by it whether a dialog is newly entered, and so gathers its own
+/// text. Nothing is allocated.
+pub fn already_entered<O: EnteredKey, N: EnteredKey>(
+    previous: (&[O], &O),
+    new: (&[N], &N),
 ) -> usize {
-    left.into_iter()
-        .zip(entered)
-        .take_while(|(old, new)| same_by_role_and_name(*old, *new, same_window))
-        .count()
+    meeting(previous, new).map_or(0, |(_, at_new)| at_new + 1)
 }
 
 #[cfg(test)]
@@ -586,25 +501,25 @@ mod tests {
         }
     }
 
+    /// A dialog of the line the focus was in is already entered by a new
+    /// line that meets that line at it or below it, and one of the same
+    /// role and name that is another object is not.
     #[test]
-    fn a_container_is_entered_unless_the_previous_focus_was_in_it() {
+    fn a_container_is_entered_unless_the_lines_meet_at_or_below_it() {
         let dialog = held(1, Backend::Msaa, Role::Dialog, "Remove");
-        let previous = [dialog.clone()];
-        assert!(already_entered(&previous, false, &dialog));
-        let same_name = held(2, Backend::Msaa, Role::Dialog, "Remove");
-        assert!(
-            already_entered(&previous, true, &same_name),
-            "in the same window"
+        let button = held(2, Backend::Msaa, Role::Button, "OK");
+        let other_button = held(3, Backend::Msaa, Role::Button, "Cancel");
+        let old_line = [dialog.clone()];
+        let previous = (old_line.as_slice(), &button);
+        assert_eq!(
+            already_entered(previous, ([dialog].as_slice(), &other_button)),
+            1
         );
-        assert!(
-            !already_entered(&previous, false, &same_name),
-            "in another window"
-        );
-        let uia_previous = [held(1, Backend::Uia, Role::Dialog, "Remove")];
-        let uia_same_name = held(2, Backend::Uia, Role::Dialog, "Remove");
-        assert!(
-            !already_entered(&uia_previous, true, &uia_same_name),
-            "one outpost's UIA node is one element"
+        let same_name = held(4, Backend::Msaa, Role::Dialog, "Remove");
+        assert_eq!(
+            already_entered(previous, ([same_name].as_slice(), &other_button)),
+            0,
+            "another dialog of the same role and name"
         );
     }
 
@@ -614,13 +529,18 @@ mod tests {
             window: Some(WindowHandle(handle)),
             ..held(id, Backend::Msaa, Role::Dialog, "Remove")
         };
-        let previous = [window(1, 20)];
-        assert!(
-            already_entered(&previous, false, &window(2, 20)),
-            "the same window, in another top-level window by the walk"
+        let focus = held(5, Backend::Msaa, Role::Button, "OK");
+        let old_line = [window(1, 20)];
+        let previous = (old_line.as_slice(), &focus);
+        let other = held(6, Backend::Msaa, Role::Button, "Cancel");
+        assert_eq!(
+            already_entered(previous, ([window(2, 20)].as_slice(), &other)),
+            1,
+            "the same window, from another outpost"
         );
-        assert!(
-            !already_entered(&previous, true, &window(2, 21)),
+        assert_eq!(
+            already_entered(previous, ([window(2, 21)].as_slice(), &other)),
+            0,
             "another window of the same role and name"
         );
     }

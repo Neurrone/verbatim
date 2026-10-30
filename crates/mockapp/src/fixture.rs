@@ -132,6 +132,9 @@ struct RawNode {
     content: bool,
     #[serde(default)]
     msaa_client: bool,
+    /// Its MSAA location, left, top, width and height.
+    #[serde(default)]
+    location: [i32; 4],
     /// How many groups of its own the node is placed under, between it and
     /// its parent: for a tree deeper than a fixture's JSON can nest.
     #[serde(default)]
@@ -283,6 +286,9 @@ pub(crate) struct FixtureNode {
     /// has an MSAA parent that reports the scripted root's states, the
     /// focused state included.
     pub(crate) msaa_client: bool,
+    /// Its MSAA location, left, top, width and height (fixture
+    /// `location`, all 0 when left out).
+    pub(crate) location: [i32; 4],
     pub(crate) children: Vec<FixtureNode>,
 }
 
@@ -421,6 +427,7 @@ fn convert(
         edit_version_6: raw.edit_version_6,
         content: raw.content,
         msaa_client: raw.msaa_client,
+        location: raw.location,
         children,
     };
     nest(node, nested, seen_ids)

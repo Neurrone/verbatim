@@ -56,6 +56,11 @@ pub(crate) fn node_accessible(tree: &SharedTree, hwnd: HWND, index: usize) -> IA
                     tree: tree.clone(),
                     hwnd,
                     index,
+                    generation: tree
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .nodes[index]
+                        .generation,
                 }
                 .into()
             })
@@ -351,6 +356,17 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].acc_parent_fails = true;
         }
+        Command::Move(id, rect) => {
+            with_node(tree, &id, |node| node.location = rect).ok_or_else(|| unknown(&id))?;
+        }
+        Command::FailAccLocation(id) => {
+            with_node(tree, &id, |node| node.location_fails = true).ok_or_else(|| unknown(&id))?;
+        }
+        Command::Recreate(id) => {
+            let index =
+                with_node(tree, &id, |node| node.generation += 1).ok_or_else(|| unknown(&id))?;
+            OBJECTS.with(|objects| objects.borrow_mut().remove(&(hwnd.0 as isize, index)));
+        }
         Command::ReportWindow(_) => {
             return Err("report-window is not supported on the msaa backend".into());
         }
@@ -577,6 +593,8 @@ mod handler {
         pub(crate) tree: SharedTree,
         pub(crate) hwnd: HWND,
         pub(crate) index: usize,
+        /// The node's generation when the object was made (`recreate`).
+        pub(crate) generation: u32,
     }
 
     /// Resolves an MSAA `varChild` argument against `self.index`: either
@@ -601,13 +619,16 @@ mod handler {
     }
 
     /// Fails as a call on an object whose server has disconnected it
-    /// (`RPC_E_DISCONNECTED`) when node `index` has died (`disconnect`).
-    fn alive(tree: &SharedTree, index: usize) -> WinResult<()> {
-        let dead = tree
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .nodes[index]
-            .dead;
+    /// (`RPC_E_DISCONNECTED`) when node `index` has died (`disconnect`), or
+    /// was made again since `generation` (`recreate`).
+    fn alive(tree: &SharedTree, (index, generation): (usize, u32)) -> WinResult<()> {
+        let dead = {
+            let guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let node = &guard.nodes[index];
+            node.dead || node.generation != generation
+        };
         if dead {
             return Err(Error::from_hresult(
                 windows::Win32::Foundation::RPC_E_DISCONNECTED,
@@ -649,7 +670,7 @@ mod handler {
     impl IAccessible_Impl for NodeAccessible_Impl {
         fn accParent(&self) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccParent);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let (delay, fails, parent) = {
                 let mut guard = self
                     .tree
@@ -678,7 +699,7 @@ mod handler {
 
         fn accChildCount(&self) -> WinResult<i32> {
             hits::hit(hits::Method::AccChildCount);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let guard = self
                 .tree
                 .lock()
@@ -689,7 +710,7 @@ mod handler {
 
         fn get_accChild(&self, varchild: &VARIANT) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccChild);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             // Only a VT_I4 names a child.
             if varchild.vt() != VT_I4 {
                 return Err(Error::from_hresult(
@@ -720,7 +741,7 @@ mod handler {
 
         fn get_accName(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccName);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -737,7 +758,7 @@ mod handler {
 
         fn get_accValue(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccValue);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -754,7 +775,7 @@ mod handler {
 
         fn get_accDescription(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccDescription);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -771,7 +792,7 @@ mod handler {
 
         fn get_accRole(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccRole);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -796,7 +817,7 @@ mod handler {
 
         fn get_accState(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccState);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -821,19 +842,19 @@ mod handler {
 
         fn get_accHelp(&self, _varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccHelp);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn get_accHelpTopic(&self, _pszhelpfile: *mut BSTR, _varchild: &VARIANT) -> WinResult<i32> {
             hits::hit(hits::Method::AccHelpTopic);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn get_accKeyboardShortcut(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccKeyboardShortcut);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -849,7 +870,7 @@ mod handler {
 
         fn accFocus(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccFocus);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let (focused, simple_child, elsewhere) = {
                 let guard = self
                     .tree
@@ -902,7 +923,7 @@ mod handler {
 
         fn accSelection(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccSelection);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             // The selected child, as its own object, as a real container
             // reports it; an empty variant when none of the children is
             // selected.
@@ -930,7 +951,7 @@ mod handler {
 
         fn get_accDefaultAction(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccDefaultAction);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -946,7 +967,7 @@ mod handler {
 
         fn accSelect(&self, _flagsselect: i32, _varchild: &VARIANT) -> WinResult<()> {
             hits::hit(hits::Method::AccSelect);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             Ok(())
         }
 
@@ -959,17 +980,28 @@ mod handler {
             _varchild: &VARIANT,
         ) -> WinResult<()> {
             hits::hit(hits::Method::AccLocation);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let outputs = [pxleft, pytop, pcxwidth, pcyheight];
             if outputs.iter().any(|output| output.is_null()) {
                 return Err(E_POINTER.into());
             }
-            // mockapp never lays out real control geometry, so the location
-            // is always zero.
-            for output in outputs {
+            // The scripted location (`move`), all 0 unless the fixture or a
+            // command gives one; `fail-acc-location` fails it.
+            let (location, fails) = {
+                let guard = self
+                    .tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let node = &guard.nodes[self.index];
+                (node.location, node.location_fails)
+            };
+            if fails {
+                return Err(Error::from_hresult(windows::Win32::Foundation::E_FAIL));
+            }
+            for (output, value) in outputs.into_iter().zip(location) {
                 // SAFETY: a non-null out-parameter (checked above), which an
                 // `accLocation` caller owns and points at an `i32`.
-                unsafe { output.write(0) };
+                unsafe { output.write(value) };
             }
             Ok(())
         }
@@ -979,7 +1011,7 @@ mod handler {
                 NAVDIR_FIRSTCHILD, NAVDIR_LASTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS,
             };
             hits::hit(hits::Method::AccNavigate);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let Some(start) = resolve_child(&self.tree, self.index, varstart) else {
                 return Err(Error::from_hresult(S_FALSE));
             };
@@ -1013,13 +1045,13 @@ mod handler {
 
         fn accHitTest(&self, _xleft: i32, _ytop: i32) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccHitTest);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn accDoDefaultAction(&self, varchild: &VARIANT) -> WinResult<()> {
             hits::hit(hits::Method::AccDoDefaultAction);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -1035,13 +1067,13 @@ mod handler {
 
         fn put_accName(&self, _varchild: &VARIANT, _szname: &BSTR) -> WinResult<()> {
             hits::hit(hits::Method::PutAccName);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
 
         fn put_accValue(&self, _varchild: &VARIANT, _szvalue: &BSTR) -> WinResult<()> {
             hits::hit(hits::Method::PutAccValue);
-            alive(&self.tree, self.index)?;
+            alive(&self.tree, (self.index, self.generation))?;
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
     }

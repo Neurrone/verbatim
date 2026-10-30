@@ -46,6 +46,7 @@ pub mod class;
 mod com;
 pub mod dialog;
 pub mod edit;
+pub mod equality;
 mod hook;
 mod list_view;
 pub mod map;

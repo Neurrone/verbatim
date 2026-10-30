@@ -126,3 +126,7 @@ harness = false
 
 [lints]
 workspace = true
+
+[[test]]
+name = "object_equality"
+harness = false

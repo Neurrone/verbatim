@@ -8,6 +8,7 @@
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use verbatim_ia2::CHILDID_SELF;
+use verbatim_ia2::equality::Candidates;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, StateSet,
 };
@@ -21,7 +22,7 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use verbatim_core::focus_rules::already_entered;
+use verbatim_core::focus_rules::{HeldNode, already_entered};
 
 use crate::dialog_text::is_dialog;
 
@@ -451,7 +452,7 @@ fn uia_ancestors(
         context,
         Some((uia, request)),
         (chain, above),
-        previous,
+        (previous, None),
         out_of_time,
     )
 }
@@ -526,13 +527,13 @@ fn complete(
     context: &Context,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     (chain, above): (Vec<NodeSnapshot>, Above),
-    previous: &[NodeSnapshot],
+    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Vec<NodeSnapshot> {
     match above {
         Above::Nothing => chain,
         Above::Met(met) => splice(previous, chain, met),
-        Above::From(hwnd) => window_onward(context, uia, hwnd, previous, out_of_time)
+        Above::From(hwnd) => window_onward(context, uia, hwnd, (previous, candidates), out_of_time)
             .into_iter()
             .chain(chain)
             .collect(),
@@ -696,7 +697,7 @@ fn window_onward(
     context: &Context,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     hwnd: isize,
-    previous: &[NodeSnapshot],
+    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Vec<NodeSnapshot> {
     let started = std::time::Instant::now();
@@ -711,7 +712,8 @@ fn window_onward(
             break;
         }
         if context.window_unreadable(current).is_none()
-            && let Some(chain) = window_object_onward(context, uia, current, previous, out_of_time)
+            && let Some(chain) =
+                window_object_onward(context, uia, current, (previous, candidates), out_of_time)
         {
             above = chain;
             break;
@@ -737,7 +739,7 @@ fn window_object_onward(
     context: &Context,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     hwnd: isize,
-    previous: &[NodeSnapshot],
+    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
@@ -780,7 +782,13 @@ fn window_object_onward(
         let client_id = client.id;
         return Some(splice(previous, vec![client], client_id));
     }
-    let above = msaa_ancestors(context, uia, &client, (previous, None), out_of_time);
+    let above = msaa_ancestors(
+        context,
+        uia,
+        &client,
+        (previous, None, candidates),
+        out_of_time,
+    );
     Some(above.into_iter().chain(std::iter::once(client)).collect())
 }
 
@@ -863,7 +871,7 @@ pub(super) fn uia_chain_from_read(
         context,
         request.as_ref().map(|(uia, request)| (*uia, request)),
         (chain, above),
-        previous,
+        (previous, None),
         Some(&out_of_time),
     )
 }
@@ -1102,7 +1110,7 @@ fn uia_remote_enrichment(
         context,
         Some((uia, request)),
         (chain, above),
-        previous,
+        (previous, None),
         Some(&out_of_time),
     );
     tracing::debug!(
@@ -1164,7 +1172,7 @@ fn msaa_ancestors(
     context: &Context,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     node: &NodeSnapshot,
-    (previous, progress): (&[NodeSnapshot], WalkProgress<'_>),
+    (previous, progress, candidates): (&[NodeSnapshot], WalkProgress<'_>, Option<&Candidates>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Vec<NodeSnapshot> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
@@ -1190,6 +1198,7 @@ fn msaa_ancestors(
         progress: told
             .as_ref()
             .map(|told| told as verbatim_ia2::acquire::AncestorProgress<'_>),
+        candidates,
     };
     let (chain, walked) =
         match verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
@@ -1218,12 +1227,24 @@ fn msaa_ancestors(
         verbatim_ia2::acquire::Walked::Onward(hwnd) => Above::From(hwnd),
     };
     let Some(progress) = progress else {
-        return complete(context, uia, (chain, above), previous, out_of_time);
+        return complete(
+            context,
+            uia,
+            (chain, above),
+            (previous, candidates),
+            out_of_time,
+        );
     };
     if let Above::Plain(hwnd) | Above::From(hwnd) = above {
         let _ = progress(WalkStep::Chain(&chain, Some(hwnd)));
     }
-    let chain = complete(context, uia, (chain, above), previous, out_of_time);
+    let chain = complete(
+        context,
+        uia,
+        (chain, above),
+        (previous, candidates),
+        out_of_time,
+    );
     let _ = progress(WalkStep::Chain(&chain, None));
     chain
 }
@@ -1238,7 +1259,7 @@ fn msaa_ancestors(
 pub(super) fn msaa_enrichment(
     context: &Context,
     client: &mut Client,
-    (node, previous): (&NodeSnapshot, &[NodeSnapshot]),
+    (node, previous, candidates): (&NodeSnapshot, &[NodeSnapshot], Option<&Candidates>),
     (left, progress): (std::time::Duration, WalkProgress<'_>),
 ) -> Enrichment {
     // A window object above a control is layout, never announced as an
@@ -1266,7 +1287,11 @@ pub(super) fn msaa_enrichment(
         context,
         request.as_ref().map(|(uia, request)| (*uia, request)),
         node,
-        (previous, told.as_ref().map(|told| told as WalkTold<'_>)),
+        (
+            previous,
+            told.as_ref().map(|told| told as WalkTold<'_>),
+            candidates,
+        ),
         Some(&out_of_time),
     );
     let selected = if wants_selected_child(node.role) {
@@ -1277,6 +1302,28 @@ pub(super) fn msaa_enrichment(
     (ancestors, selected)
 }
 
+/// The kept MSAA nodes a focus walk compares what it reads with, by NVDA's
+/// equality (`verbatim_ia2::equality`): the focus line Core holds, as this
+/// outpost knows it, and the newest focus this outpost reported that Core
+/// has not judged, each innermost first.
+pub(super) fn msaa_candidates(context: &Context) -> Candidates {
+    let held = context.held();
+    let line = |focus: &super::held::Focus| {
+        std::iter::once(&focus.node)
+            .chain(focus.ancestors.iter().rev())
+            .filter(|node| node.backend == verbatim_model::Backend::Msaa)
+            .map(|node| node.id)
+            .collect::<Vec<NodeId>>()
+    };
+    Candidates::new(
+        held.core()
+            .into_iter()
+            .chain(held.newest_unjudged())
+            .map(line)
+            .collect(),
+    )
+}
+
 /// How long gathering a dialog's own text through UI Automation may take,
 /// all its calls together: the text is worth a short wait, but the focus it
 /// is announced with must not be held back long. Gathering reads the
@@ -1284,18 +1331,23 @@ pub(super) fn msaa_enrichment(
 /// enforced by abandonment ([`verbatim_uia::BoundedClient`]).
 const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Whether any of `focuses` had already entered `node`, a container of a
-/// focus reported in the top-level window `top_level` (0 when not known),
-/// by the rule the reducer speaks entered containers by
+/// How many of `nodes`, a new focus line outermost first ending with its
+/// focus, the focus had already entered from any of the focuses events are
+/// judged against: those above or at where the line meets one of theirs
 /// (`verbatim_core::focus_rules::already_entered`).
-fn entered_before(focuses: &[super::held::Focus], top_level: isize, node: &NodeSnapshot) -> bool {
-    focuses.iter().any(|focus| {
-        already_entered(
-            focus.ancestors.iter().chain(std::iter::once(&focus.node)),
-            top_level != 0 && focus.top_level == top_level,
-            node,
-        )
-    })
+fn entered_before<'a>(
+    focuses: impl IntoIterator<Item = &'a super::held::Focus>,
+    nodes: &[&mut NodeSnapshot],
+) -> usize {
+    let line: Vec<HeldNode> = nodes.iter().map(|node| HeldNode::of(node)).collect();
+    let Some((focus, ancestors)) = line.split_last() else {
+        return 0;
+    };
+    focuses
+        .into_iter()
+        .map(|held| already_entered((&held.ancestors, &held.node), (ancestors, focus)))
+        .max()
+        .unwrap_or(0)
 }
 
 /// The dialog this outpost last gathered text for in a foreground report,
@@ -1303,8 +1355,8 @@ fn entered_before(focuses: &[super::held::Focus], top_level: isize, node: &NodeS
 /// than reading the dialog again.
 pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 
-/// Gives every dialog among `nodes`, the chain of a focus reported in
-/// `window`, that the focus Core holds is not already inside and that has
+/// Gives every dialog among `nodes`, the chain of a focus, outermost first,
+/// that the focus Core holds is not already inside and that has
 /// no description of its own, its own text as its description
 /// (`docs/nvda/object-model.md`, "A dialog's own text"), while descriptions
 /// are read at all: a dialog the focus newly enters, by the rule the
@@ -1319,30 +1371,27 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// inside it.
 pub(super) fn describe_dialogs<'a>(
     context: &Context,
-    (nodes, window): (
-        impl IntoIterator<Item = &'a mut NodeSnapshot>,
-        Option<isize>,
-    ),
+    nodes: impl IntoIterator<Item = &'a mut NodeSnapshot>,
     (memo, remember): (&mut DialogMemo, bool),
 ) {
     let mut remembered = memo.take();
     if !context.fetches().description {
         return;
     }
+    let mut nodes: Vec<&mut NodeSnapshot> = nodes.into_iter().collect();
     // The focuses the focus enters a dialog from: the focus Core holds,
     // when it is this outpost's, and those this outpost reported that Core
     // has not judged yet, one of which Core's focus may yet be. A dialog
-    // inside any of them is not read again.
-    let focuses: Vec<super::held::Focus> = context.held().focuses().cloned().collect();
-    let top_level = window.map_or(0, super::window::top_level_of);
-    for node in nodes {
+    // at or above where the new line meets any of them is not read again.
+    let entered = entered_before(context.held().focuses(), &nodes);
+    for (index, node) in nodes.iter_mut().enumerate() {
         if !is_dialog(node.role)
             || node
                 .details
                 .description
                 .as_deref()
                 .is_some_and(|description| !description.trim().is_empty())
-            || entered_before(&focuses, top_level, node)
+            || index < entered
         {
             continue;
         }
@@ -1486,13 +1535,23 @@ pub(super) fn focused_control_in(
             (ENRICHMENT_BUDGET, None),
         )
     } else {
-        let node =
-            verbatim_ia2::acquire::focused_snapshot(hwnd, &context.msaa_registry, &|window| {
-                serves(context, window)
-            })
-            .ok_or(FocusReadMiss::Failed(None))?;
-        let (ancestors, selected_child) =
-            msaa_enrichment(context, client, (&node, &[]), (ENRICHMENT_BUDGET, None));
+        // A focus-now answer has no chain to splice from, so it walks to
+        // the desktop, comparing what it reads with Core's line and the
+        // newest focus it waits for (`docs/design/focus-pipeline-rework.md`,
+        // "MSAA object equality").
+        let candidates = msaa_candidates(context);
+        let node = verbatim_ia2::acquire::focused_snapshot(
+            hwnd,
+            &context.msaa_registry,
+            (&|window| serves(context, window), Some(&candidates)),
+        )
+        .ok_or(FocusReadMiss::Failed(None))?;
+        let (ancestors, selected_child) = msaa_enrichment(
+            context,
+            client,
+            (&node, &[], Some(&candidates)),
+            (ENRICHMENT_BUDGET, None),
+        );
         Ok((
             hwnd,
             FocusedControl {
@@ -2310,7 +2369,7 @@ mod tests {
     /// so its text is gathered; a node of window 20 is the dialog the focus
     /// is already in.
     #[test]
-    fn a_dialog_of_another_window_with_the_same_role_and_name_is_newly_entered() {
+    fn a_dialog_above_where_the_lines_meet_is_not_newly_entered() {
         let held_node = |id, role, name: Option<&str>, window: Option<u64>| HeldNode {
             id: NodeId::new(id),
             backend: Backend::Msaa,
@@ -2331,20 +2390,30 @@ mod tests {
                 alive: true,
             }),
         );
-        let focuses: Vec<_> = held.focuses().cloned().collect();
-        let dialog = |window| NodeSnapshot {
-            id: NodeId::new(3),
+        let node = |id, role, window: Option<u64>| NodeSnapshot {
+            id: NodeId::new(id),
             backend: Backend::Msaa,
-            role: Role::Dialog,
+            role,
             name: Some("Remove".to_owned()),
             value: None,
             states: StateSet::new(),
             details: NodeDetails {
-                window: Some(WindowHandle(window)),
+                window: window.map(WindowHandle),
                 ..NodeDetails::default()
             },
         };
-        assert!(!entered_before(&focuses, 7, &dialog(21)));
-        assert!(entered_before(&focuses, 7, &dialog(20)));
+        let mut cancel = node(4, Role::Button, None);
+        let mut other = node(3, Role::Dialog, Some(21));
+        assert_eq!(
+            entered_before(held.focuses(), &[&mut other, &mut cancel]),
+            0,
+            "a dialog of another window with the same role and name"
+        );
+        let mut same = node(3, Role::Dialog, Some(20));
+        assert_eq!(
+            entered_before(held.focuses(), &[&mut same, &mut cancel]),
+            1,
+            "the dialog window the lines meet at"
+        );
     }
 }

@@ -56,6 +56,42 @@ struct Node {
     /// Whether the object was acquired at `key`, so the address identifies
     /// it (module doc).
     at_address: bool,
+    /// What NVDA's equality compares of the node as it was read
+    /// ([`Facts`]); `None` for a node issued from local window data, which
+    /// is never compared.
+    facts: Option<Facts>,
+}
+
+/// What NVDA's `IAccessible._isEqual` compares of an MSAA object, as the
+/// node was read when it was issued, but its name, refreshed when a new
+/// sighting is found to be it (`crate::acquire`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Facts {
+    /// The event window, the event object id when known, and the event
+    /// child id, fixed when the object was made: an event's address for an
+    /// object acquired at it, else its window, no object id, and its child
+    /// id.
+    pub(crate) event: (isize, Option<i32>, i32),
+    /// Its identity string, `None` when it was not asked for, and
+    /// `Some(None)` when the object answered none.
+    #[expect(
+        clippy::option_option,
+        reason = "absence counts as a value only where it was asked for"
+    )]
+    pub(crate) identity: Option<Option<Vec<u8>>>,
+    /// Its raw `IAccessible` role, as read.
+    pub(crate) raw_role: Option<i32>,
+    /// Its name, normalised as a snapshot's name is.
+    pub(crate) name: Option<String>,
+}
+
+/// A kept node as a new sighting is compared with it
+/// ([`NodeIdRegistry::facts_of`]).
+pub(crate) struct Kept {
+    pub(crate) key: MsaaKey,
+    pub(crate) object: Option<KeptObject>,
+    pub(crate) role: Option<Role>,
+    pub(crate) facts: Facts,
 }
 
 /// Nodes a [`NodeIdRegistry`] has released, with their objects. Releasing a
@@ -138,7 +174,7 @@ impl NodeIdRegistry {
             inner.touched.push(id);
             return id;
         }
-        self.insert_locked(&mut inner, key, None, None, true)
+        self.insert_locked(&mut inner, key, None, (None, None), true)
     }
 
     /// Looks up a new sighting of `key`: first a kept node that was the same
@@ -191,11 +227,44 @@ impl NodeIdRegistry {
         &self,
         key: MsaaKey,
         held: Option<Held>,
-        role: Role,
+        (role, facts): (Role, Facts),
         at_address: bool,
     ) -> NodeId {
         let mut inner = self.lock();
-        self.insert_locked(&mut inner, key, held, Some(role), at_address)
+        self.insert_locked(&mut inner, key, held, (Some(role), Some(facts)), at_address)
+    }
+
+    /// The kept node `id` as a new sighting is compared with it: its
+    /// address, kept object, role and facts; `None` when it is not kept or
+    /// has no facts.
+    pub(crate) fn facts_of(&self, id: NodeId) -> Option<Kept> {
+        let inner = self.lock();
+        let node = inner.nodes.get(&id)?;
+        Some(Kept {
+            key: node.key,
+            object: node
+                .held
+                .as_ref()
+                .map(|held| (held.object.clone(), held.child)),
+            role: node.role,
+            facts: node.facts.clone()?,
+        })
+    }
+
+    /// A new sighting was found to be the kept node `id`: it keeps its
+    /// object, address and event parameters, as NVDA keeps its old objects
+    /// through the meeting point, and takes the sighting's name. Recorded as
+    /// touched.
+    pub(crate) fn reissue(&self, id: NodeId, name: Option<String>) {
+        let mut inner = self.lock();
+        if let Some(facts) = inner
+            .nodes
+            .get_mut(&id)
+            .and_then(|node| node.facts.as_mut())
+        {
+            facts.name = name;
+        }
+        inner.touched.push(id);
     }
 
     fn insert_locked(
@@ -203,7 +272,7 @@ impl NodeIdRegistry {
         inner: &mut Inner,
         key: MsaaKey,
         held: Option<Held>,
-        role: Option<Role>,
+        (role, facts): (Option<Role>, Option<Facts>),
         at_address: bool,
     ) -> NodeId {
         let id = NodeId::new(self.counter.fetch_add(1, Ordering::Relaxed));
@@ -220,6 +289,7 @@ impl NodeIdRegistry {
                 held,
                 role,
                 at_address,
+                facts,
             },
         );
         inner.touched.push(id);
@@ -315,6 +385,16 @@ fn remove(inner: &mut Inner, gone: &[NodeId]) -> Vec<Node> {
 mod tests {
     use super::*;
 
+    /// The facts of a node read at no address in window 7.
+    fn facts() -> Facts {
+        Facts {
+            event: (7, None, 0),
+            identity: None,
+            raw_role: None,
+            name: None,
+        }
+    }
+
     fn registry() -> NodeIdRegistry {
         NodeIdRegistry::new(Arc::new(AtomicU64::new(1)))
     }
@@ -340,7 +420,7 @@ mod tests {
     fn a_new_node_at_an_address_takes_it_over() {
         let registry = registry();
         let old = registry.id_for((7, 0, 4));
-        let new = registry.insert((7, 0, 4), None, Role::Button, true);
+        let new = registry.insert((7, 0, 4), None, (Role::Button, facts()), true);
         assert_ne!(old, new);
         assert_eq!(
             registry.key_of(old),
@@ -356,7 +436,7 @@ mod tests {
     fn a_node_reached_another_way_never_takes_over_an_address() {
         let registry = registry();
         let window = registry.id_for((7, -4, 0));
-        let ancestor = registry.insert((7, -4, 0), None, Role::Group, false);
+        let ancestor = registry.insert((7, -4, 0), None, (Role::Group, facts()), false);
         assert_ne!(window, ancestor);
         assert_eq!(registry.id_for((7, -4, 0)), window);
         assert!(matches!(

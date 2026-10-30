@@ -23,7 +23,7 @@ use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, ObjectKey, Win
 
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
-    is_sensitive_slider, meeting, quiet_entered, repeats_focus, selection_target,
+    is_sensitive_slider, meeting, repeats_focus, selection_target,
 };
 use crate::state::{
     Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation,
@@ -960,7 +960,7 @@ fn reduce_focus_changed(
     if report.foreground {
         state.foreground = Some(ObjectKey::of(report.node));
     }
-    let entered: Vec<&NodeSnapshot> = line.entered[line.quiet..].iter().collect();
+    let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: ObjectKey::of(report.node),
         ancestors: new_focus.ancestors.iter().map(ObjectKey::of).collect(),
@@ -2438,10 +2438,6 @@ struct FocusLine<'a> {
     /// The new chain's entries below the meeting point, outermost first:
     /// the containers the focus has newly entered.
     entered: &'a [NodeSnapshot],
-    /// How many of `entered`, outermost first, are kept quiet as the
-    /// containers the previous focus was in, taken by their role and name
-    /// ([`quiet_entered`]).
-    quiet: usize,
     /// The two lines differ just below the desktop, sharing no entry: the
     /// focus is in a new foreground window, and speech is cut.
     cut: bool,
@@ -2460,13 +2456,9 @@ struct FocusLine<'a> {
 /// so a window matched by its handle keeps the name it was entered with;
 /// the new entries below it are the containers newly entered, an element
 /// replaced by a new one with the same role and name, such as File
-/// Explorer's items view list after a folder is opened, among them. Of
-/// those, the outermost ones that have the role and name of the previous
-/// line's entries below the same point, pair by pair, are kept quiet when
-/// the focus stays in its top-level window (`window`), since an MSAA
-/// object reached by another path, or a node from another outpost, can
-/// have another id ([`quiet_entered`]); they are entered all the same.
-/// The readers leave out of a chain the entries that are not presentable,
+/// Explorer's items view list after a folder is opened, among them; the
+/// outpost gives an MSAA object reached by another path the id NVDA's
+/// equality finds it to have. The readers leave out of a chain the entries that are not presentable,
 /// among them an unnamed UI Automation top-level window, an MSAA window
 /// object and every layout container, which NVDA's line holds, so the
 /// focus's top-level window, which its window facts name, stands for the
@@ -2487,14 +2479,9 @@ fn focus_line<'a>(
         return FocusLine {
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
-            quiet: 0,
             cut: false,
         };
     };
-    let same_window = matches!(
-        (previous.window.as_ref(), window),
-        (Some(old), Some(new)) if old.top_level == new.top_level
-    );
     let old_line = || {
         previous
             .ancestors
@@ -2511,11 +2498,6 @@ fn focus_line<'a>(
         return FocusLine {
             ancestors: Arc::from(report.ancestors),
             entered: report.ancestors,
-            quiet: if cut {
-                0
-            } else {
-                quiet_entered(old_line(), report.ancestors, same_window)
-            },
             cut,
         };
     };
@@ -2531,7 +2513,6 @@ fn focus_line<'a>(
     FocusLine {
         ancestors: old_line().take(kept).chain(entered).cloned().collect(),
         entered,
-        quiet: quiet_entered(old_line().skip(at_old + 1), entered, same_window),
         cut: false,
     }
 }

@@ -85,6 +85,16 @@ pub(crate) struct NodeData {
     /// Whether the node's MSAA `accParent` fails with `E_FAIL`
     /// (`fail-acc-parent`).
     pub(crate) acc_parent_fails: bool,
+    /// The node's MSAA location, left, top, width and height, from the
+    /// fixture's `location` (all 0 when it gives none), as `move` changes it.
+    pub(crate) location: [i32; 4],
+    /// Whether the node's MSAA `accLocation` fails with `E_FAIL`
+    /// (`fail-acc-location`).
+    pub(crate) location_fails: bool,
+    /// How many times the node's MSAA object was made again
+    /// (`recreate`): an object made before answers as one whose server has
+    /// disconnected it.
+    pub(crate) generation: u32,
     /// The handle of a window that no longer exists, which the node's UIA
     /// provider answers `NativeWindowHandle` with (`report-window`), and
     /// `None` for its usual answer.
@@ -361,6 +371,9 @@ fn insert(
         parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
         parent_delay: (0, 0),
         acc_parent_fails: false,
+        location: node.location,
+        location_fails: false,
+        generation: 0,
         reports_window: None,
         content: node.content,
     });
@@ -420,6 +433,7 @@ mod tests {
             edit_version_6: false,
             content: true,
             msaa_client: false,
+            location: [0; 4],
             children,
         }
     }

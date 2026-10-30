@@ -218,6 +218,12 @@ impl Accessible {
 
     /// `accLocation`, in screen coordinates, or `None` when the call fails.
     pub(crate) fn location(&self) -> Option<Rect> {
+        self.location_read().ok()
+    }
+
+    /// `accLocation`, in screen coordinates, or the error the call
+    /// answered, which tells an object gone from one that cannot say.
+    pub(crate) fn location_read(&self) -> windows::core::Result<Rect> {
         let (mut left, mut top, mut width, mut height) = (0i32, 0i32, 0i32, 0i32);
         count(CallKind::Msaa);
         // SAFETY: a live interface, an integer child `VARIANT`, and four
@@ -230,9 +236,8 @@ impl Accessible {
                 &raw mut height,
                 &child_variant(self.child),
             )
-        }
-        .ok()?;
-        Some(Rect {
+        }?;
+        Ok(Rect {
             left,
             top,
             width,
@@ -340,35 +345,32 @@ impl Accessible {
         unsafe { CoTaskMemFree(Some(data.cast_const().cast())) };
         bytes
     }
+}
 
-    /// The address the object's identity string names, its window, object
-    /// id, and child id, when the object is one of the standard objects
-    /// oleacc makes for a window (`IAccPropServices::DecomposeHwndIdentityString`),
-    /// whose identity string is made from that address. `None` for any other
-    /// object, or when it offers no identity string. The decomposition is an
-    /// in-process call; reading the identity string is not.
-    pub(crate) fn address(&self) -> Option<(isize, i32, i32)> {
-        let identity = self.identity_string()?;
-        // SAFETY: creates an in-process COM object on this thread, which the
-        // worker initialized COM on.
-        let services: IAccPropServices =
-            unsafe { CoCreateInstance(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) }.ok()?;
-        let mut hwnd = HWND::default();
-        let mut object = 0u32;
-        let mut child = 0u32;
-        // SAFETY: the identity string outlives the call, and the three
-        // out-parameters are locals, read only on success.
-        unsafe {
-            services.DecomposeHwndIdentityString(
-                &identity,
-                &raw mut hwnd,
-                &raw mut object,
-                &raw mut child,
-            )
-        }
-        .ok()?;
-        Some((hwnd.0 as isize, object.cast_signed(), child.cast_signed()))
+/// The address `identity`, an identity string, names, when it is one of the
+/// standard objects oleacc makes for a window: its window, object id, and
+/// child id (`IAccPropServices::DecomposeHwndIdentityString`). An
+/// in-process call.
+pub(crate) fn decompose(identity: &[u8]) -> Option<(isize, i32, i32)> {
+    // SAFETY: creates an in-process COM object on this thread, which the
+    // worker initialized COM on.
+    let services: IAccPropServices =
+        unsafe { CoCreateInstance(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) }.ok()?;
+    let mut hwnd = HWND::default();
+    let mut object = 0u32;
+    let mut child = 0u32;
+    // SAFETY: the identity string outlives the call, and the three
+    // out-parameters are locals, read only on success.
+    unsafe {
+        services.DecomposeHwndIdentityString(
+            identity,
+            &raw mut hwnd,
+            &raw mut object,
+            &raw mut child,
+        )
     }
+    .ok()?;
+    Some((hwnd.0 as isize, object.cast_signed(), child.cast_signed()))
 }
 
 /// What an MSAA method that names another object answered (`accNavigate`,

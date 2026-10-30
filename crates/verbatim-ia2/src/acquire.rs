@@ -43,8 +43,9 @@ use verbatim_model::{
 use crate::accessible::{Accessible, Related};
 use crate::class::normalized_class_of;
 use crate::com::{CHILDID_SELF, non_empty, visible_text};
+use crate::equality::{self, Candidates, Sighting};
 use crate::map::{adjust_role_and_states, role_from_msaa, states_from_msaa};
-use crate::registry::{Found, Held, MsaaKey, NodeIdRegistry};
+use crate::registry::{Facts, Found, Held, MsaaKey, NodeIdRegistry};
 use crate::window;
 
 /// Why a read of a node this outpost issued failed.
@@ -58,7 +59,7 @@ pub enum AcquireError {
 }
 
 /// Whether `error` says the object's process or the object itself has gone.
-fn disconnected(error: &windows::core::Error) -> bool {
+pub(crate) fn disconnected(error: &windows::core::Error) -> bool {
     [
         RPC_E_DISCONNECTED,
         CO_E_OBJNOTCONNECTED,
@@ -117,7 +118,7 @@ pub enum Purpose {
 /// its address, why it is read, and the role and state words already read
 /// for it, which are not read again.
 #[derive(Clone, Copy, Debug, Default)]
-struct Reading {
+struct Reading<'a> {
     at_address: bool,
     /// The object is its window's own client object by MSAA's structure,
     /// though not acquired at its address: the parent of a child window's
@@ -134,6 +135,17 @@ struct Reading {
     /// tree dump's node, and for one read for [`Purpose::Context`], which
     /// never uses it.
     without_location: bool,
+    /// The kept nodes a sighting no lookup places is compared with by
+    /// NVDA's equality, for a focus walk ([`crate::equality`]); `None` for
+    /// any other read, which compares with none.
+    compare: Option<&'a Candidates>,
+    /// The object's identity string, when it was asked for: `None` when it
+    /// was not, and `Some(None)` when it answered none.
+    #[expect(
+        clippy::option_option,
+        reason = "absence counts as a value only where it was asked for"
+    )]
+    identity: Option<Option<&'a [u8]>>,
 }
 
 /// A role or state word that may have been read already.
@@ -332,7 +344,17 @@ impl EventObject {
         }
         let rect = self.acc.location();
         let id = known.map_or_else(
-            || node_for(registry, self.key, true, &self.acc, role),
+            || {
+                // Read for its value alone, so with no name or role kept to
+                // compare: a progress bar is never in a focus line.
+                let facts = Facts {
+                    event: equality::event_of(self.key, true, self.acc.child()),
+                    identity: None,
+                    raw_role: None,
+                    name: None,
+                };
+                node_for(registry, (self.key, true), &self.acc, (role, facts), None)
+            },
             |(node, _)| node,
         );
         Some(ProgressReading {
@@ -356,6 +378,8 @@ impl EventObject {
                 role: self.role,
                 state: Prefetched::Unread,
                 without_location: false,
+                compare: None,
+                identity: None,
             },
             registry,
         )
@@ -374,7 +398,7 @@ pub fn snapshot_from_focus_event(
     id_child: i32,
     registry: &NodeIdRegistry,
 ) -> Option<NodeSnapshot> {
-    Some(focus_candidate(hwnd, id_object, id_child)?.read(registry))
+    Some(focus_candidate(hwnd, id_object, id_child)?.read(registry, None))
 }
 
 /// The object an `EVENT_OBJECT_FOCUS` names, acquired and redirected but
@@ -556,9 +580,11 @@ impl FocusCandidate {
         false
     }
 
-    /// Reads the object, as a focus is read to be announced.
+    /// Reads the object, as a focus is read to be announced, comparing it
+    /// with `candidates` by NVDA's equality when no lookup places it
+    /// ([`Candidates`]).
     #[must_use]
-    pub fn read(self, registry: &NodeIdRegistry) -> NodeSnapshot {
+    pub fn read(self, registry: &NodeIdRegistry, candidates: Option<&Candidates>) -> NodeSnapshot {
         read_snapshot_with(
             &self.acc,
             self.key,
@@ -569,6 +595,8 @@ impl FocusCandidate {
                 role: self.role,
                 state: self.state,
                 without_location: false,
+                compare: candidates,
+                identity: None,
             },
             registry,
         )
@@ -757,6 +785,7 @@ pub fn ancestor_chain(
         plain: &|_| false,
         out_of_time: None,
         progress: None,
+        candidates: None,
     };
     ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
 }
@@ -789,6 +818,9 @@ pub struct AncestorLimits<'a> {
     /// chain should the walk be cut there ([`Walked::Cut`]): so a watchdog
     /// can publish the walk as it stands while its next call is under way.
     pub progress: Option<AncestorProgress<'a>>,
+    /// The kept nodes each ancestor no lookup places is compared with by
+    /// NVDA's equality ([`Candidates`]); `None` compares with none.
+    pub candidates: Option<&'a Candidates>,
 }
 
 /// What is told each ancestor a walk reads, with the window the walk is
@@ -837,6 +869,7 @@ pub fn ancestor_chain_until(
     let context = |at_address| Reading {
         at_address,
         purpose: Purpose::Context,
+        compare: limits.candidates,
         ..Reading::default()
     };
     let out_of_time = || limits.out_of_time.is_some_and(|out_of_time| out_of_time());
@@ -978,7 +1011,10 @@ pub fn ancestor_chain_until(
         // window, which only finds it again as the same COM object. A parent
         // `WindowFromAccessibleObject` places in no window is no window's
         // own object, so its identity string is not asked for.
-        let address = parent_window.and_then(|_| parent_acc.address());
+        let identity = parent_window.map(|_| parent_acc.identity_string());
+        let address = identity
+            .as_ref()
+            .and_then(|identity| crate::accessible::decompose(identity.as_deref()?));
         let (parent_key, parent_at) = match address {
             Some(address) if address.0 == parent_hwnd => (address, true),
             _ => ((parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF), false),
@@ -996,6 +1032,7 @@ pub fn ancestor_chain_until(
             parent_key,
             Reading {
                 window_client,
+                identity: identity.as_ref().map(Option::as_deref),
                 ..context(parent_at)
             },
             registry,
@@ -1441,13 +1478,14 @@ pub fn selected_child(node: NodeId, registry: &NodeIdRegistry) -> Option<NodeSna
 /// it names is checked with `serves` before anything else is read of it:
 /// an object of a window the caller's application does not serve answers
 /// `None`, no focused control, and is read no further
-/// (`docs/design/cross-process-calls-study.md`, instance 8). Blocking;
-/// worker only.
+/// (`docs/design/cross-process-calls-study.md`, instance 8). An object no
+/// lookup places is compared with `candidates` by NVDA's equality
+/// ([`Candidates`]). Blocking; worker only.
 #[must_use]
 pub fn focused_snapshot(
     hwnd: isize,
     registry: &NodeIdRegistry,
-    serves: &dyn Fn(isize) -> bool,
+    (serves, candidates): (&dyn Fn(isize) -> bool, Option<&Candidates>),
 ) -> Option<NodeSnapshot> {
     let client = Accessible::client_of_window(hwnd)?;
     // A child object reached through `accFocus` has no address of its
@@ -1481,7 +1519,16 @@ pub fn focused_snapshot(
         return None;
     }
     let key = (node_hwnd, OBJID_CLIENT.0, acc.child());
-    Some(read_snapshot(&acc, key, at_address, registry))
+    Some(read_snapshot_with(
+        &acc,
+        key,
+        Reading {
+            at_address,
+            compare: candidates,
+            ..Reading::default()
+        },
+        registry,
+    ))
 }
 
 /// Walks the MSAA tree from `hwnd`'s client accessible object, bounded by
@@ -1876,7 +1923,7 @@ fn read_snapshot_with(
     // its 0-based level, not a value.
     // The edit field of a combo box takes the combo box's label, so it
     // has none of its own when the combo box is labelled, as in NVDA.
-    let name = name.filter(|_| role != Role::EditableText || !in_labelled_combo_box(acc));
+    let name = labelled_name(acc, role, name);
     let (position_in_set, set_size) = if fetches.position && reading.purpose == Purpose::Announce {
         position_of(key.0, acc.child(), role, tree_item)
     } else {
@@ -1897,10 +1944,7 @@ fn read_snapshot_with(
     // one that shows columns is named by them ("content; Header:
     // content"), as NVDA names it.
     let (mut name, mut description) = if list_view_item {
-        let columns = crate::list_view::column_name(key.0, acc.child(), || description.clone())
-            .ok()
-            .flatten();
-        (columns.or(name), None)
+        (columned_name(acc, key, name, || description.clone()), None)
     } else {
         (name, description)
     };
@@ -1934,8 +1978,22 @@ fn read_snapshot_with(
         && key.2 == CHILDID_SELF
         && (key.1 == OBJID_CLIENT.0 || key.1 == OBJID_WINDOW.0))
         .then(|| WindowHandle(u64::from_ne_bytes(key.0.to_ne_bytes())));
+    let facts = Facts {
+        event: equality::event_of(key, at_address, acc.child()),
+        identity: reading
+            .identity
+            .map(|identity| identity.map(<[u8]>::to_vec)),
+        raw_role,
+        name: name.clone(),
+    };
     NodeSnapshot {
-        id: node_for(registry, key, at_address, acc, role),
+        id: node_for(
+            registry,
+            (key, at_address),
+            acc,
+            (role, facts),
+            reading.compare,
+        ),
         backend: Backend::Msaa,
         role,
         name,
@@ -2181,14 +2239,16 @@ fn position_of(
 /// for an object reached through `accParent` or as a child object is never
 /// compared, since other objects in the same window share it.
 ///
-/// NVDA also compares `IAccessible2` unique ids, which Verbatim does not read
-/// yet, and the location and name, which are not compared here yet either.
+/// A sighting neither lookup places is compared with `candidates`, for a
+/// focus walk, by NVDA's equality ([`crate::equality`]), and given the id of
+/// the first that is equal; only then is a new node issued, with `facts`,
+/// what the equality compares of it.
 fn node_for(
     registry: &NodeIdRegistry,
-    key: MsaaKey,
-    at_address: bool,
+    (key, at_address): (MsaaKey, bool),
     acc: &Accessible,
-    role: Role,
+    (role, facts): (Role, Facts),
+    candidates: Option<&Candidates>,
 ) -> NodeId {
     let child = acc.child();
     let identity = acc.canonical();
@@ -2228,6 +2288,20 @@ fn node_for(
         }
         Found::Object(..) | Found::Nothing => {}
     }
+    if let Some(candidates) = candidates {
+        let sighting = Sighting {
+            acc,
+            key,
+            facts: &facts,
+        };
+        if let Some(id) =
+            equality::equal_candidate(registry, candidates, &sighting, |acc, key, role| {
+                live_name(acc, key, role, registry)
+            })
+        {
+            return id;
+        }
+    }
     let held = identity.and_then(|identity| {
         Some(Held {
             object: acc.agile()?,
@@ -2235,7 +2309,57 @@ fn node_for(
             identity,
         })
     });
-    registry.insert(key, held, role, at_address)
+    registry.insert(key, held, (role, facts), at_address)
+}
+
+/// `name`, the name read for `acc` of `role`, as a snapshot is named: none
+/// for the edit field of a labelled combo box, which takes the combo box's
+/// label, as in NVDA.
+fn labelled_name(acc: &Accessible, role: Role, name: Option<String>) -> Option<String> {
+    name.filter(|_| role != Role::EditableText || !in_labelled_combo_box(acc))
+}
+
+/// `name`, the name of `acc`, a list view item at `key`, as a snapshot is
+/// named: by the columns it shows ("content; Header: content"), as NVDA
+/// names it, else `name`; `description` is its description, which the
+/// columns may name it by.
+fn columned_name(
+    acc: &Accessible,
+    key: MsaaKey,
+    name: Option<String>,
+    description: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    crate::list_view::column_name(key.0, acc.child(), description)
+        .ok()
+        .flatten()
+        .or(name)
+}
+
+/// The name of `acc`, of `role` at `key`, read live and normalised exactly
+/// as a snapshot's is ([`read_snapshot_with`]), for NVDA's equality to
+/// compare a kept object's name with a sighting's.
+fn live_name(
+    acc: &Accessible,
+    key: MsaaKey,
+    role: Role,
+    registry: &NodeIdRegistry,
+) -> Option<String> {
+    let name = labelled_name(acc, role, visible_text(acc.name()));
+    let mut name = if is_list_view_item(acc, key, role) {
+        columned_name(acc, key, name, || {
+            registry
+                .fetches()
+                .description
+                .then(|| non_empty(acc.description()))
+                .flatten()
+        })
+    } else {
+        name
+    };
+    if let Some(text) = &mut name {
+        verbatim_text::strip_bidi_controls(text);
+    }
+    name
 }
 
 /// What `accFocus` named on a client accessible: nothing distinct, a child by
