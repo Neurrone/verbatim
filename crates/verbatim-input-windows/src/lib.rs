@@ -310,21 +310,110 @@ pub enum KeyReport {
     Barrier(u64),
 }
 
-/// The private message an injected input travels in to the hook thread,
-/// its `LPARAM` the boxed [`Injected`] and its `WPARAM` the hook's
-/// injection token: any other process at Verbatim's integrity can post a
-/// `WM_APP` to the thread, or to a COM window on it, so the hook takes a
-/// box only from a thread message carrying the token, drawn at random once
-/// per hook ([`InputHook::start`]).
+/// The private message that wakes the hook thread to take the inputs
+/// injected for it from its [`Inbox`]. It carries nothing: any other
+/// process at Verbatim's integrity can post a `WM_APP` to the thread, and
+/// one from elsewhere only has the thread take what is already waiting,
+/// which its own message would have had it take a moment later.
 const WM_INJECTED: u32 = WM_APP;
 
-/// A fresh random injection token, from the process's random hash keys,
-/// which the system seeds.
-fn injection_token() -> usize {
-    use std::hash::BuildHasher;
-    let token = std::collections::hash_map::RandomState::new().hash_one(0_u8);
-    // `usize` is 64 bits on every target Verbatim builds for.
-    usize::try_from(token).unwrap_or(usize::MAX)
+/// The inputs injected for the hook thread and not yet taken, newest first,
+/// each linking to the one pushed before it.
+///
+/// Injectors push with a compare-and-swap of the newest entry and the hook
+/// thread takes them all with one swap, both lock-free ([`ArcSwapOption`]),
+/// so the hook takes no lock and never waits for an injector part way
+/// through a push. The order of the swaps that pushed them is the order
+/// the hook handles them in.
+#[derive(Debug)]
+pub(crate) struct Inbox {
+    newest: ArcSwapOption<Pending>,
+    /// Cleared once the hook thread has stopped taking inputs: nothing
+    /// injected after that is accepted.
+    open: AtomicBool,
+}
+
+/// One input in the [`Inbox`].
+#[derive(Debug)]
+struct Pending {
+    injected: Injected,
+    /// Set by whichever takes the input first: the hook thread, to handle
+    /// it, or its injector, to give it back as refused.
+    taken: AtomicBool,
+    /// The input pushed before this one.
+    older: Option<Arc<Pending>>,
+}
+
+impl Pending {
+    /// Whether this call took the input, which nothing had yet.
+    fn take(&self) -> bool {
+        !self.taken.swap(true, Ordering::AcqRel)
+    }
+}
+
+impl Inbox {
+    /// An inbox accepting inputs.
+    pub(crate) fn new() -> Self {
+        Self {
+            newest: ArcSwapOption::empty(),
+            open: AtomicBool::new(true),
+        }
+    }
+
+    /// An inbox that accepts nothing.
+    fn closed() -> Self {
+        let inbox = Self::new();
+        inbox.open.store(false, Ordering::SeqCst);
+        inbox
+    }
+
+    /// Whether the hook thread still takes inputs.
+    fn is_open(&self) -> bool {
+        self.open.load(Ordering::SeqCst)
+    }
+
+    /// Pushes `injected` behind every input pushed before it, returning
+    /// its entry.
+    fn push(&self, injected: &Injected) -> Arc<Pending> {
+        let mut pushed = None;
+        self.newest.rcu(|newest| {
+            let entry = Arc::new(Pending {
+                injected: injected.clone(),
+                taken: AtomicBool::new(false),
+                older: newest.clone(),
+            });
+            pushed = Some(Arc::clone(&entry));
+            Some(entry)
+        });
+        // `rcu` calls the closure at least once.
+        pushed.unwrap_or_else(|| unreachable!())
+    }
+
+    /// Takes every input waiting, in the order pushed, skipping any its
+    /// injector has given back. Called on the hook thread.
+    pub(crate) fn take_all(&self) -> Vec<Injected> {
+        let mut entries = Vec::new();
+        let mut next = self.newest.swap(None);
+        while let Some(entry) = next.take() {
+            next.clone_from(&entry.older);
+            entries.push(entry);
+        }
+        entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.take())
+            .map(|entry| entry.injected.clone())
+            .collect()
+    }
+
+    /// Stops accepting inputs and drops those still waiting, untaken, so
+    /// that an injector that finds the inbox closed after its push gives
+    /// its input back as refused. Called on the hook thread once it has
+    /// stopped taking inputs.
+    fn close(&self) {
+        self.open.store(false, Ordering::SeqCst);
+        drop(self.newest.swap(None));
+    }
 }
 
 /// An input injected for the user, handled by the hook thread in its turn
@@ -339,51 +428,51 @@ pub enum Injected {
     Barrier(u64),
 }
 
-/// Posts inputs injected for the user to the hook thread, from any thread:
-/// the control plane's gestures and idle waiters today. Cloneable and
-/// sendable. It holds a handle to the hook thread, so the thread's id is
-/// not given to another thread while any `Injector` can post to it.
+/// Injects inputs for the user into the hook thread's [`Inbox`] and wakes
+/// the thread to take them, from any thread: the control plane's gestures
+/// and idle waiters today. Cloneable and sendable. It holds a handle to the
+/// hook thread, so the thread's id is not given to another thread while any
+/// `Injector` can post to it.
 #[derive(Clone, Debug)]
 pub struct Injector(Arc<InjectTarget>);
 
-/// The thread an [`Injector`] posts to.
+/// The thread an [`Injector`] injects into.
 #[derive(Debug)]
 struct InjectTarget {
     thread_id: u32,
-    /// Sent as the message's `WPARAM` ([`WM_INJECTED`]).
-    token: usize,
+    /// Where the thread takes its injected inputs from.
+    inbox: Arc<Inbox>,
     /// Keeps the thread object, and so its id, while this lives; closed
     /// when the last [`Injector`] goes.
     _thread: Option<OwnedHandle>,
 }
 
 impl Injector {
-    /// Posts `injected` to the hook thread, behind every key and input the
-    /// thread has not yet taken. Never waits.
+    /// Puts `injected` in the hook thread's inbox, behind every input
+    /// injected before it, and wakes the thread to take it in its turn
+    /// among the keys. Never waits.
     ///
     /// # Errors
     ///
-    /// Gives `injected` back when it could not be posted: the hook thread
-    /// has gone, or its message queue is full. An injection given back
-    /// never runs later.
+    /// Gives `injected` back when it is refused: the hook thread has
+    /// stopped taking inputs, or could not be woken (it has gone, or its
+    /// message queue is full). An injection given back never runs later.
     pub fn inject(&self, injected: Injected) -> Result<(), Injected> {
-        let item = Box::into_raw(Box::new(injected));
-        // SAFETY: posting to a thread id is always sound; the pointer is
-        // carried, never read by the system, and taken back below or by
-        // the hook thread, which owns it once the post succeeds.
-        let posted = unsafe {
-            PostThreadMessageW(
-                self.0.thread_id,
-                WM_INJECTED,
-                WPARAM(self.0.token),
-                LPARAM(item as isize),
-            )
-        };
-        if posted.is_ok() {
-            return Ok(());
+        let inbox = &self.0.inbox;
+        if !inbox.is_open() {
+            return Err(injected);
         }
-        // SAFETY: the message was not posted, so the box was never given up.
-        Err(*unsafe { Box::from_raw(item) })
+        let pending = inbox.push(&injected);
+        // SAFETY: posting a message that carries no data to a thread id is
+        // always sound.
+        let posted =
+            unsafe { PostThreadMessageW(self.0.thread_id, WM_INJECTED, WPARAM(0), LPARAM(0)) };
+        // Not woken, or the thread stopped taking inputs meanwhile: the
+        // input is refused unless the thread took it first.
+        if (posted.is_err() || !inbox.is_open()) && pending.take() {
+            return Err(injected);
+        }
+        Ok(())
     }
 
     /// An injector to `thread_id`, holding no handle: for a test.
@@ -391,7 +480,7 @@ impl Injector {
     fn to_thread(thread_id: u32) -> Self {
         Self(Arc::new(InjectTarget {
             thread_id,
-            token: 0,
+            inbox: Arc::new(Inbox::new()),
             _thread: None,
         }))
     }
@@ -434,7 +523,8 @@ impl InputHook {
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
         let (ready_tx, ready_rx) = mpsc::channel::<io::Result<u32>>();
-        let token = injection_token();
+        let inbox = Arc::new(Inbox::new());
+        let thread_inbox = Arc::clone(&inbox);
 
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
@@ -443,7 +533,7 @@ impl InputHook {
                     config,
                     map,
                     (speech, reports, holding, foreground),
-                    token,
+                    &thread_inbox,
                     &ready_tx,
                 );
             })?;
@@ -454,7 +544,7 @@ impl InputHook {
                 let injector = match thread {
                     Ok(thread) => Injector(Arc::new(InjectTarget {
                         thread_id,
-                        token,
+                        inbox,
                         _thread: Some(thread),
                     })),
                     Err(error) => {
@@ -494,11 +584,11 @@ impl InputHook {
 }
 
 impl Injector {
-    /// An injector that posts to no thread, every injection given back.
+    /// An injector to no thread, every injection given back.
     fn detached() -> Self {
         Self(Arc::new(InjectTarget {
             thread_id: 0,
-            token: 0,
+            inbox: Arc::new(Inbox::closed()),
             _thread: None,
         }))
     }
@@ -524,12 +614,13 @@ impl Drop for InputHook {
 const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The body of the hook thread: install the hook, publish readiness, pump
-/// messages until `WM_QUIT`, then unhook and drop the injected inputs left.
+/// messages until `WM_QUIT`, then close the inbox, refusing the injected
+/// inputs left, and unhook.
 fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     effects: Effects,
-    token: usize,
+    inbox: &Arc<Inbox>,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     prioritize_role("keyboard hook", HOOK_PRIORITY);
@@ -577,7 +668,7 @@ fn hook_thread(
             DecisionMachine::new(config, map),
             effects,
             typing,
-            token,
+            Arc::clone(inbox),
         ));
     });
 
@@ -594,12 +685,12 @@ fn hook_thread(
     }
 
     hook::pump_messages();
+    inbox.close();
 
     // SAFETY: `hook` is the handle installed above and not yet unhooked.
     unsafe {
         let _ = UnhookWindowsHookEx(hook);
     }
-    hook::drop_injected();
     hook::HOOK_STATE.with(|state| *state.borrow_mut() = None);
 }
 

@@ -86,36 +86,43 @@ NVDA ignores the keys it injects itself.
 
 ## Injected inputs
 
-`Injector::inject(Injected)` posts an input injected for the user to the
+`Injector::inject(Injected)` injects an input for the user into the
 hook thread, from any thread: `Gesture(GestureId)`, the control plane's
 `SendGesture`, and `Barrier(token)`, an `AwaitIdle` waiter's. The item is
-boxed and posted with `PostThreadMessageW` as a private `WM_APP`
-message whose `LPARAM` is the box and whose `WPARAM` is the hook's
-injection token, a random 64-bit value drawn once in `InputHook::start`
-and kept in the `Injector` and the hook's state. Any process at
-Verbatim's integrity can post a `WM_APP` to the thread, or to a COM
-window on it, so the hook takes a box only from a thread message (no
-window) carrying the token (`hook::injected_in`) and ignores every other,
-its `LPARAM` unread; when the post fails (the thread has
-gone, or its queue of 10,000 messages is full), the box is taken back and
-the item returned as the error, so an injection reported failed never
-runs later. An `Injector` holds a handle to the hook thread, duplicated
-by `InputHook::start` from its join handle and closed with the last
-clone, so the thread's id is not given to another thread while any
-`Injector` can post to it.
+pushed into the thread's `Inbox`, shared by `InputHook::start` with the
+`Injector` and the hook's state, and the thread is woken with
+`PostThreadMessageW`, a private `WM_APP` message that carries no data.
+The inbox is a list linked newest first whose head is an
+`ArcSwapOption`: a push is a compare-and-swap linking the new entry to
+the one before (`Inbox::push`), and the hook thread takes every entry
+with one swap (`Inbox::take_all`), both lock-free, so the hook takes no
+lock and never waits for an injector part way through a push, and the
+order of the pushes is the order of handling. Any process at Verbatim's
+integrity can post a `WM_APP` to the thread, and one from elsewhere only
+has the thread take what is already waiting. Each entry has a taken
+flag, set by whichever takes it first: when the wake cannot be posted
+(the thread has gone, or its queue of 10,000 messages is full), or the
+inbox has closed meanwhile, the injector takes its entry back and
+returns the item as the error unless the thread took it first, so an
+injection reported failed never runs later. An `Injector` holds a
+handle to the hook thread, duplicated by `InputHook::start` from its
+join handle and closed with the last clone, so the thread's id is not
+given to another thread while any `Injector` can post to it.
 
 The hook thread's `GetMessageW` loop (`hook::pump_messages`) takes each
-such message, reclaims the box and calls `inject`: a gesture takes the
-next number, carries out `KeySpeechEffect::Cancel` with it through the
+thread message (no window) of `WM_APP`, whoever posted it
+(`hook::on_message`), and calls `inject` for each input waiting, in the
+order pushed: a gesture takes the next number, carries out `KeySpeechEffect::Cancel` with it through the
 same speech callback a key uses, and is reported as `Gesture`; a barrier
 is reported as `Barrier`. Windows calls the hook procedure from within
 that loop's waits, so keys and injected inputs are handled one at a
 time, in the one order the thread takes them. The thread runs no other
-loop while the hook is installed; once the loop ends and the hook is
-removed, the injected messages left are taken with `PeekMessageW` and
-dropped. One posted after that drain and before the thread exits is
-never taken: its box leaks at exit, and the idle waiter that posted it
-times out.
+loop while the hook is installed; once the loop ends, the thread
+closes the inbox (`Inbox::close`), after which every injection is
+refused, and drops the entries left untaken, so an injector that finds
+the inbox closed after its push gets its item back. One whose push and
+check both came just before the close was told it succeeded: the idle
+waiter that injected it times out.
 
 ## Implementation notes
 
@@ -146,9 +153,10 @@ burst of a thousand Verbatim+V strokes, every gesture and every stroke's
 handled mark reported in order; a key press, an injected gesture and a
 second press numbered 1, 2 and 3, each cancel naming its own number
 before its report; an injected barrier reported behind the keys before
-it; and an injection posted to thread id 0, which no thread has, coming
-back as the error; and a `WM_APP` without the token, or to a window,
-ignored. The `hook_echo` example installs the real hook with
+it; an injection posted to thread id 0, which no thread has, coming
+back as the error; a wake with an empty inbox, whatever it carries,
+handling nothing; and the inputs waiting handled on one wake in the
+order pushed. The `hook_echo` example installs the real hook with
 two bound gestures and prints what each key reports, on its own thread;
 it needs an interactive desktop and is never run in CI.
 

@@ -18,7 +18,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetForegroundWindow, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-    LLKHF_INJECTED, MSG, PM_REMOVE, PeekMessageW, WM_KEYDOWN, WM_SYSKEYDOWN,
+    LLKHF_INJECTED, MSG, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 
 use verbatim_input::state::{Decision, DecisionMachine, EmittedGesture, KeySpeechEffect};
@@ -26,7 +26,7 @@ use verbatim_input::{KeyDecision, KeyEvent};
 use verbatim_model::{KeySeq, TraceId};
 
 use crate::{
-    Effects, ForegroundView, HeldStroke, Injected, KeyHolding, KeyReport, KeyReportFn,
+    Effects, ForegroundView, HeldStroke, Inbox, Injected, KeyHolding, KeyReport, KeyReportFn,
     OWN_INPUT_TAG, SpeechEffectFn, WM_INJECTED, may_hold, passed_on_sequence, typed,
 };
 
@@ -56,8 +56,8 @@ pub(crate) struct HookState {
     last_key: KeySeq,
     /// Core's view of the foreground window ([`ForegroundView`]).
     foreground: Arc<ForegroundView>,
-    /// The token an injected input's message carries ([`WM_INJECTED`]).
-    token: usize,
+    /// Where the inputs injected for the user wait ([`WM_INJECTED`]).
+    inbox: Arc<Inbox>,
     /// Reads the window in front: `GetForegroundWindow`, a local read, or
     /// a fixed window in tests.
     front: fn() -> HWND,
@@ -79,7 +79,7 @@ impl HookState {
         machine: DecisionMachine,
         (speech, reports, holding, foreground): Effects,
         typing: typed::Typing,
-        token: usize,
+        inbox: Arc<Inbox>,
     ) -> Self {
         Self {
             machine,
@@ -92,7 +92,7 @@ impl HookState {
             sequence: 0,
             last_key: KeySeq::NONE_YET,
             foreground,
-            token,
+            inbox,
             front: || {
                 // SAFETY: a local read with no preconditions.
                 unsafe { GetForegroundWindow() }
@@ -156,14 +156,13 @@ fn unix_us() -> u64 {
 }
 
 /// Runs the hook thread's message loop until `WM_QUIT` (or a `GetMessageW`
-/// error) ends it, handling each input injected for the user
-/// ([`Injected`]) as it comes. A low-level hook only fires while its
+/// error) ends it, handling the inputs injected for the user ([`Injected`])
+/// whenever it is woken for them. A low-level hook only fires while its
 /// installing thread pumps messages, and Windows calls the hook procedure
 /// from within this loop's waits, so keys and injected inputs are handled
 /// one at a time, in the one order the thread takes them. The thread runs
 /// no other loop while the hook is installed.
 pub(crate) fn pump_messages() {
-    let token = thread_token();
     let mut msg = MSG::default();
     loop {
         // SAFETY: `msg` is a valid, owned message buffer; a null window handle
@@ -174,52 +173,31 @@ pub(crate) fn pump_messages() {
         if result.0 <= 0 {
             break;
         }
-        if let Some(injected) = injected_in(&msg, token) {
-            HOOK_STATE.with(|state| {
-                // Never already borrowed: this runs from the loop itself,
-                // between the hook procedure's calls, which borrow the
-                // state only for their own length.
-                if let Ok(mut state) = state.try_borrow_mut()
-                    && let Some(state) = state.as_mut()
-                {
-                    inject(state, injected);
-                }
-            });
-        }
+        HOOK_STATE.with(|state| {
+            // Never already borrowed: this runs from the loop itself,
+            // between the hook procedure's calls, which borrow the state
+            // only for their own length.
+            if let Ok(mut state) = state.try_borrow_mut()
+                && let Some(state) = state.as_mut()
+            {
+                on_message(state, &msg);
+            }
+        });
     }
 }
 
-/// The input `msg` carries, when it is one an [`crate::Injector`] posted:
-/// a thread message (no window) of [`WM_INJECTED`] carrying `token`. Any
-/// other message, another process's `WM_APP` or one to a COM window on
-/// this thread, is left alone, its `LPARAM` never read.
-fn injected_in(msg: &MSG, token: usize) -> Option<Injected> {
-    if msg.message != WM_INJECTED || !msg.hwnd.is_invalid() || msg.wParam.0 != token {
-        return None;
+/// Handles one message the loop took: a thread message (no window) of
+/// [`WM_INJECTED`], whoever posted it, has every input waiting in the inbox
+/// handled, in the order injected. The message carries nothing, so one
+/// from another process, or one whose inputs an earlier wake already took,
+/// handles only what is waiting, which may be nothing. Every other message
+/// is left alone.
+fn on_message(state: &mut HookState, msg: &MSG) {
+    if msg.message != WM_INJECTED || !msg.hwnd.is_invalid() {
+        return;
     }
-    // SAFETY: a thread message of `WM_INJECTED` carrying the token was
-    // posted by `Injector::inject`, whose `LPARAM` is a box it gave up,
-    // taken off the queue this once.
-    Some(*unsafe { Box::from_raw(msg.lParam.0 as *mut Injected) })
-}
-
-/// The token this thread's injected inputs carry, kept in its state.
-fn thread_token() -> usize {
-    HOOK_STATE.with(|state| state.borrow().as_ref().map_or(0, |state| state.token))
-}
-
-/// Takes the injected inputs still queued once the hook is removed and
-/// drops them: nothing is left to act on them. One posted after this
-/// drain, before the thread has exited, is never taken, and its box leaks
-/// at exit; the idle waiter that posted it times out.
-pub(crate) fn drop_injected() {
-    let token = thread_token();
-    let mut msg = MSG::default();
-    // SAFETY: `msg` is a valid, owned message buffer; only this thread's
-    // `WM_APP` messages are removed, and only the injector's boxes taken.
-    while unsafe { PeekMessageW(&raw mut msg, None, WM_INJECTED, WM_INJECTED, PM_REMOVE) }.as_bool()
-    {
-        drop(injected_in(&msg, token));
+    for injected in state.inbox.take_all() {
+        inject(state, injected);
     }
 }
 
@@ -576,7 +554,7 @@ mod tests {
                 Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
-            0,
+            Arc::new(Inbox::new()),
         );
         assert_eq!(
             decide(&mut state, key_seq(CAPS, true), 0, 0),
@@ -623,7 +601,7 @@ mod tests {
                 foreground,
             ),
             typed::Typing::default(),
-            0,
+            Arc::new(Inbox::new()),
         );
         state.front = window_in_front;
         (state, holding)
@@ -1040,7 +1018,7 @@ mod tests {
                 Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
-            0,
+            Arc::new(Inbox::new()),
         )
     }
 
@@ -1096,32 +1074,52 @@ mod tests {
         );
     }
 
-    /// A message the hook did not post itself is never taken for an
-    /// injected input: a `WM_APP` with another `WPARAM`, or to a window,
-    /// is ignored with its `LPARAM` unread, whatever it holds.
+    /// A `WM_APP` woken with nothing in the inbox, whatever it carries,
+    /// handles nothing.
     #[test]
-    fn a_message_without_the_token_is_not_taken_for_an_injection() {
-        let token = 0x5eed_u16 as usize;
-        let foreign = MSG {
+    fn a_stray_wake_with_an_empty_inbox_handles_nothing() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut state = logging_state(&log);
+        let stray = MSG {
             message: WM_INJECTED,
-            wParam: WPARAM(0),
+            wParam: WPARAM(0x5eed),
             lParam: LPARAM(0x1234),
             ..MSG::default()
         };
-        assert_eq!(injected_in(&foreign, token), None);
-        let to_a_window = MSG {
-            hwnd: HWND(7 as *mut core::ffi::c_void),
-            wParam: WPARAM(token),
-            ..foreign
+        on_message(&mut state, &stray);
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    /// The inputs waiting in the inbox are handled on one wake in the
+    /// order pushed, and a second wake handles nothing more.
+    #[test]
+    fn the_inputs_waiting_are_handled_in_the_order_pushed() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut state = logging_state(&log);
+        let gesture = |id| Injected::Gesture(GestureId::parse(id).expect("valid id"));
+        for injected in [
+            gesture("kb:verbatim+numpad8"),
+            Injected::Barrier(5),
+            gesture("kb:verbatim+numpad2"),
+        ] {
+            state.inbox.push(&injected);
+        }
+        let wake = MSG {
+            message: WM_INJECTED,
+            ..MSG::default()
         };
-        assert_eq!(injected_in(&to_a_window, token), None);
-        let item = Box::into_raw(Box::new(Injected::Barrier(3)));
-        let posted = MSG {
-            wParam: WPARAM(token),
-            lParam: LPARAM(item as isize),
-            ..foreign
-        };
-        assert_eq!(injected_in(&posted, token), Some(Injected::Barrier(3)));
+        on_message(&mut state, &wake);
+        on_message(&mut state, &wake);
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "Cancel 1",
+                "gesture kb:numpad8+verbatim 1",
+                "barrier 5 ",
+                "Cancel 2",
+                "gesture kb:numpad2+verbatim 2",
+            ]
+        );
     }
 
     /// An injection posted to thread id 0, which no thread has, fails and
