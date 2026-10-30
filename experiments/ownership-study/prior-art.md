@@ -73,7 +73,7 @@ Orca receives every application's AT-SPI events in one process and keeps libatsp
 
 UI Automation's own caching: "The cache is valid only as long as nothing changes in the UI. Your application is responsible for retrieving a new snapshot of the cache, typically, in response to events", and an event subscribed with a cache request delivers its sender with a new snapshot ([Caching UI Automation Properties](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-cachingforclients)). Verdict: UIA delivers changes only to registrations, so for UIA the rule must govern registrations, not only reads (the second lesson above).
 
-JAWS, Narrator and VoiceOver: I found no public description of how they choose which objects' changes to watch or how they coordinate across processes. JAWS and Narrator are closed; Narrator is a UIA client like any other, so it is bound by the same registration model. On macOS, a client registers `AXObserver` notifications per element or on an application element; I did not verify from Apple's reference how notifications registered on an application element cover its descendants, so I draw no conclusion from it.
+JAWS, Narrator and VoiceOver: I found no public description of how they choose which objects' changes to watch or how they coordinate across processes. JAWS and Narrator are closed; Narrator is a UIA client like any other, so it is bound by the same registration model.
 
 ## Other leads
 
@@ -81,7 +81,3 @@ JAWS, Narrator and VoiceOver: I found no public description of how they choose w
 - LSP document versions. Each change increments the document's version ("The version number of a document will increase after each change"), and a versioned edit lets the client "check the text document version before an edit is applied"; the specification leaves a mismatch's handling to the client, and stale requests are cancelled or answered with `ContentModified` ([LSP 3.17](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)). Verdict: the version rule of the model, for configuration in M5; nothing for change targets.
 - Xi editor. Its author's retrospective: "adding async made everything more complicated, in some cases considerably so", with "races between editing actions and word wrap updates", and "I now firmly believe that the process separation between front-end and core was not a good idea" ([xi retrospective](https://raphlinus.github.io/xi/2020/06/27/xi-retrospective.html)). Verdict: supports keeping as few facts shared across processes as possible, as the model does; Verbatim's split is forced by UIA (`docs/design/ownership.md`, "The problem"), Xi's was chosen.
 - Actor systems, Elm and Redux, deterministic replay, VS Code's extension host and Servo's constellation are covered in `architecture-study.md`, section 3, and are reflected in the model's pure reducers and typed messages; they say nothing more about change targets and are not repeated here. Compositors other than Wayland's serials added nothing.
-
-## Not verified
-
-- How macOS notifications on an application element cover its descendants.
