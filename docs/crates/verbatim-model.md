@@ -228,6 +228,86 @@ recorder unchanged. What the reducer does with each type is in
   [verbatim-uia](verbatim-uia.md) and [verbatim-ia2](verbatim-ia2.md)
   count them.
 
+## The wire protocol
+
+`protocol` holds the messages between verbatim.exe and its children, the
+focus listener and the outposts, and the types they carry
+(`docs/design/ownership-messages.md`). They are pure data; the framing
+that carries them on the pipes, `Message`, is
+[verbatim-outpost](verbatim-outpost.md)'s.
+
+- One enum per direction and role, so a receiver cannot be sent what it
+  does not take: a frame of another direction fails to decode, and its
+  child is ended as failed.
+  - `CoreToOutpost`: `SetBackendOverride` (one backend for every window,
+    or normal arbitration); `DeliverFact` (a routed fact: a UIA focus's
+    marker, read, or drop with its `GapAnswer`, an MSAA focus or
+    menu-popup address, a foreground window, with the listener's trace
+    id, its `EventTiming`, whose `observed_at_us` orders the fact, and
+    for a `WinEvent` its `WinEventStamp`); `ForwardingEnded`; `Query`;
+    `Cancel` (withdraws a query not started); `Ping`; `Fetches`;
+    `NodesHeld`; `IdleQuery`; `Shutdown`; and `Assign`.
+  - `CoreToListener`: `SetBackendOverride` for one application's `pid`,
+    `HookInstalled`, `HookRemoved`, `Ping`, `IdleQuery` and `Shutdown`.
+  - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
+    observation time in microseconds, backend, `WindowFacts`, the
+    normalized event, and the application it belongs to when not the
+    outpost's target), `Reply` (exactly one per accepted query, with its
+    `EventTiming` and a `QueryOutcome`: `Done` with a `QueryResult`,
+    `Gone`, `Failed`, `NotStarted`, or `Abandoned`), `Pong`, `Fault`,
+    `TargetExited` and `IdleAnswer`.
+  - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
+    the `DeliveredFact` routed to that pid's outpost), `ForwardingEnded`,
+    `MenuOrSwitchEnded`, `ForegroundWindow`, `Pong`, `Fault` and
+    `IdleAnswer`.
+- Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
+  `Answer`, `Report`, `Release`, `Lifecycle`, `Routed` or
+  `Configuration`. The module denies wildcard matches over its enums, and
+  a test holds the reviewed list of every variant's kind, built from a
+  chain of samples whose matches name every variant; verbatim.exe sends
+  no report.
+- `OutpostToCore::carries_nodes` lists every variant: an event and a
+  completed reply carry node ids, and the outpost and verbatim.exe count
+  the positions `NodesHeld` acknowledges with this one function.
+  `assign_outpost` stamps the arriving generation on every node id,
+  `written` and `core_read` the write and read stamps. `Urgent` is what
+  an outpost sends ahead of its queue (`Pong`, `Ready`, `TargetExited`,
+  `SpareReady`), none of which carries a node.
+- `Query` is `FocusNow`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
+  `Text`, `ShellItems` or `ShellItemPosition`; `WALK_DEADLINE` (5
+  seconds) bounds an outpost's walk, so Core's deadline outlasts it. A
+  `FocusNow` answer carries the foreground window when the application
+  holds the foreground, its focused control (`FocusedControl`) with
+  ancestors, selected child, window facts and text, and when reading
+  began.
+- `EventTiming` records each point of an event's way, in microseconds
+  (`docs/design/communication.md`, section 10.1); `hop_us` is the time
+  between two stamps.
+- `event_input` is the reducer's input an outpost's event is: the app and
+  the merge's tests both reduce what it gives.
+- `Merge` declares how a message type merges while it waits: its key, its
+  `Barrier` to newer messages (`All`, `Reply` or `None`), whether two of a
+  key may merge across a barrier, and the merged message. `merge_into`
+  places a newer message among those waiting since the last flush marker:
+  the newest waiting message of its key decides, and nothing merges
+  across `Barrier::All`. `Merge for OutpostToCore` is the outbound
+  queue's rule: an event replaces a waiting event of its node and kind and
+  goes to the back, a caret report carrying the older's selection changes
+  before its own; the idle answer is `Barrier::All`; a reply bars only a
+  caret report with selection changes, and such a report never merges
+  with one in general terms. `crates/verbatim-core/tests/merge.rs` proves
+  Core's state and the others' speech the same, merged or not, for every
+  merged kind over a fixed set of sequences.
+- `Responder<T>` answers one in-process request once: `answer` consumes
+  it, and its `Drop` answers `None`, "gone", so a request lost anywhere is
+  still answered. Across processes a killed child runs no `Drop`, so there
+  the asking side's request table answers.
+
+The listener's facts and their helpers live here too: `UiaFocusRead`,
+`UiaSnapshotFact`, `UiaAncestorFact`, `AncestorsEnd`, `DeliveredFact`
+(`is_focus_read`, `is_win_event`, and `key`, NVDA's limiter key, a
+`FactKey`), `WinEventStamp` with `tick_is_after`, and `DumpedTree`.
+
 ## The text protocol
 
 How an outpost sends text to Core, and how Core asks an outpost to read

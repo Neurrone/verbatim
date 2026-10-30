@@ -103,3 +103,7 @@ M4.1 is complete (Dickson, 2026-10-21): Verbatim stopped crashing and stalling a
 - A classic ancestor walk whose step from below the root fails, or finds no parent, reports the ancestors unknown, so Core keeps the previous chain (`docs/parity/focus-events.md`, "A focus whose element is gone before its read").
 - No outpost connects to a new window after its probe, so a new File Explorer window's first item is queued within about 320 ms of its event ([the listener design](design/listener-without-connections.md), risk 11).
 - The suggestions-closed sound played twice in Settings' search box matches NVDA (`docs/parity/changes-and-selection.md`, "Suggestions appearing and going away").
+
+## M4.4, message types in their final home
+
+The messages exchanged with the outposts and the listener are `verbatim_model::protocol`'s plain serde types, one enum per direction and role, each variant of a declared kind, with merging declared by the type and the supervisor's generations as typestates ([the messages build](design/ownership-messages.md)). It came before M5 because M5's extension API exposes those types.

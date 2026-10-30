@@ -314,24 +314,12 @@ These are decided designs that daily use needs.
 Exit: the settings dialog covers the settings package's inventory, and
 every indication plays or speaks as its cue says.
 
-## M4.4 — Message types in their final home
-
-Before M5, because M5's extension API exposes events and commands, and the
-types they carry should have their final home first.
-
-- The messages exchanged with the outposts and the listener move into a
-  platform-neutral crate as plain serde types, now that the communication
-  migration is built (the communication design's decision 13, approved).
-
-Exit: the messages exchanged with the outposts and the listener are the
-platform-neutral crate's types.
-
 ## M5 — Extensions v1
 
 The design is [extensions](design/extensions.md); the order of work, with the
 tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md).
-This entry keeps the scope and the exit criteria. M4.4 is the plan's
-precondition, because the extension surface exposes the messages it moves.
+This entry keeps the scope and the exit criteria. M4.4, which gave the
+messages the extension surface exposes their final home, is done.
 
 - Modules as folders: a module is a `module.toml` beside a Wasm component;
   a built-in is a module folder under `extensions/builtin/` (planned), never listed

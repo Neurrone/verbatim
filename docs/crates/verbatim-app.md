@@ -395,10 +395,20 @@ knowing for review:
   serves none of the console window, is never asked for it. When the host
   cannot be read from the client, such as for a client run as another
   user, the window has no provider process and no outpost is asked. When the supervisor reports
-  `OutpostMessage::NotWatched` (the application has exited, so no outpost
-  was started for it), the wish for its focus is dropped, along with a
-  status entry that was only waiting for its outpost, so nothing, the idle
-  barrier included, waits for an outpost that will never come. When the supervisor reports
+  `OutpostMessage::NotWatched` (no outpost was started for the
+  application, or its record was removed as it exited or its outpost
+  retired), the wish for its focus is answered "gone", along with a status
+  entry that was only waiting for its outpost, so nothing, the idle
+  barrier included, waits for an outpost that will never come. The wishes
+  have one owner, `wanted::Wanted`, keyed by the process whose outpost
+  they wait for: a focus-now request and the list dialogs' shell items
+  requests each end exactly once, at that outpost's `Ready`, where it is
+  sent, at `NotWatched`, or, for a shell items request, at its deadline.
+  An `Ended` asks the replacement for the focus only when the supervisor
+  says a generation follows (`follows`), so the app never infers a
+  replacement the supervisor will not start. `LiveOutposts` keeps each
+  live generation as `Starting` or `Ready`; `mark_ready` consumes the
+  starting one. When the supervisor reports
   `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
   closed, told 50 ms later with the time it ended), the reducer is given
   `Input::MenuOrSwitchEnded`, and unless it has applied a focus observed
@@ -554,16 +564,16 @@ knowing for review:
   under `Asker::ShellItems`, or `Query::ShellItemPosition` under
   `Asker::ShellItemPosition`, or starts an outpost for it and sends the
   query once it is ready, and hands the outcome to the dialog's delivery
-  callback, exactly once: the items or the candidates, or `None` for
-  any failure, when the process gets no outpost (`NotWatched`, or an end
-  with no replacement while it starts), when no outpost is ready six
-  seconds after the request, or when no answer has come six seconds after
-  the query was sent (`shell_requests::SHELL_ITEMS_DEADLINE`: the
+  callback, exactly once, through its responder: the items or the
+  candidates, or `None` for any failure, when the process gets no outpost
+  (`NotWatched`), when no outpost is ready six seconds after the request,
+  when no answer has come six seconds after the query was sent, or when
+  the request is dropped anywhere on its way (`wanted::SHELL_ITEMS_DEADLINE`: the
   outpost's own deadline for the walk, `verbatim_outpost::protocol::WALK_DEADLINE`,
   and a second for the way through the pipes, so that Core gives up only
   after the outpost's deadline has run out and what it read by then
   reaches the dialog). The requests still waiting for an
-  outpost are `shell_requests::ShellItemsWanted`'s; a request sent is the
+  outpost are `wanted::Wanted`'s; a request sent is the
   request table's, recorded with its deadline (`RequestTable::begin_until`),
   so a late answer is dropped. The reducer thread waits for its next
   command only until the earliest such deadline (`recv_timeout`), and

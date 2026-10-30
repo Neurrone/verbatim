@@ -960,7 +960,7 @@ ratchet does not measure it.
 
 Core speaks a UIA notification only from the focus's application, the
 shell's window-snap results excepted, so the supervisor starts no outpost
-for one (`DeliveredFact::may_start_outpost`); the snap results still
+for one (`policy::may_start_outpost` in the supervisor); the snap results still
 start one.
 
 ### Speech only the reducer makes

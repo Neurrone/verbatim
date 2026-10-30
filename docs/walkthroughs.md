@@ -108,13 +108,13 @@ releases Alt. Notepad has no outpost yet.
    in the pass that read it; it alone decides lifecycles. `Owner::route_fact`
    finds no outpost for Notepad's pid. Focus, foreground, menu,
    notification, and alert facts may start one
-   (`DeliveredFact::may_start_outpost`), so it gives Notepad a spare
+   (`policy::may_start_outpost` in the supervisor), so it gives Notepad a spare
    outpost, or launches one, with a fresh outpost id (the generation,
    never reused), and holds the fact. The app hears `OutpostMessage::Started`
    before any of the generation's messages. Facts arriving meanwhile are
    held in arrival order (`HeldFacts`); on the outpost's `Ready`,
    `Owner::on_ready` releases them onto its writer as
-   `SupervisorToOutpost::DeliverFact`.
+   `CoreToOutpost::DeliverFact`.
 5. **The outpost's intake queues the facts.** The reader
    (`Outpost::handle_command` in `crates/verbatim-outpost/src/outpost/mod.rs`)
    only pushes each fact onto the intake queue (`Intake::push` in
@@ -146,7 +146,7 @@ releases Alt. Notepad has no outpost yet.
    read by the outpost itself through UIA at its gap record's bound
    (`crates/verbatim-outpost/src/outpost/gap_record.rs`).
 8. **The worker publishes, and keeps what it reported.** `emit_focus`
-   publishes an `OutpostToSupervisor::Event` carrying the trace id, the
+   publishes an `OutpostToCore::Event` carrying the trace id, the
    observation time, the backend, the window's `WindowFacts` (top-level
    window, root owner, topmost, and `in_foreground`, NVDA's test of whether
    the window is in the system's foreground window now, read locally by
@@ -246,7 +246,7 @@ while focus is in Notepad's text area.
    it in the request table (`RequestTable::begin` in
    `crates/verbatim-app/src/requests.rs`) with a fresh request id, the
    outpost generation the node id names, and `Asker::Reducer`, and queues
-   `SupervisorToOutpost::Query` with `Query::Navigate`
+   `CoreToOutpost::Query` with `Query::Navigate`
    (`Supervisor::send_to_outpost`). If the generation has ended or its
    queue is full, the request fails at once.
 5. **The outpost answers in order.** The outpost strips Core's stamp from
@@ -415,7 +415,7 @@ every query follows.
    have happened.
 6. **The caller gives up.** After five seconds the connection thread
    sends `ShellCommand::DumpTreeGivenUp`, and the reducer thread sends the
-   outpost `SupervisorToOutpost::Cancel`. A dump still queued answers "not
+   outpost `CoreToOutpost::Cancel`. A dump still queued answers "not
    started"; one already running finishes within its own budget.
 7. **Delivered.** `RequestTable::finish` drops an outcome for an id that
    already has one, or from another generation. The first outcome goes to
@@ -469,7 +469,7 @@ Each failure, what notices it, and what happens next
    for its first failure and after a backoff of 1, 2, 4, up to 30 seconds
    for each further one, never giving up; an application that has exited
    is left alone. The reducer thread asks the replacement for the current
-   focus when it is ready (`focus_now_wanted`) and compares the answer with
+   focus when it is ready (`wanted::Wanted`) and compares the answer with
    the dead focus's copy (`reads_the_same`): if they match, it takes the
    new node ids silently; otherwise it announces the focus.
 5. **An idle outpost is retired.** Every 30 seconds, an outpost whose

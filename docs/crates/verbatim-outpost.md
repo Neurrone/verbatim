@@ -268,11 +268,19 @@ receives the event's own element, judges and reads a UIA focus
   says so, and the read as it would be published once its bound has
   passed; an answer for a read whose window changed since judges nothing
   and has the watchdog look again at once. Each event's marker gets
-  exactly one outcome. The menu end's grace is the pure `GraceState::step`
+  exactly one answer: `Readers::push` takes the answer owed for it
+  (`Reading::Owed`, the listener's `MarkerOwed`, a
+  `verbatim_model::protocol::Responder`), which the shell keeps by marker
+  beside the schedule, never in it, and the event's outcome consumes; one
+  dropped unanswered, as an event still waiting when the readers stop is,
+  sends the marker's drop, leaving the gap record open. Debug builds
+  assert after every step that the owed markers are exactly those the
+  schedule holds (`Schedule::markers`). The menu end's grace is the pure `GraceState::step`
   in the same module (`GraceInput`: `Ended`, `Fired`, `IdleAnswer`,
   `Close`; `GraceEffect`: `SendEnd`, `SendIdleAnswer`, `SetTimer`), driven
   by the listener's threadpool timer. `cargo xtask ci` reads the module
-  against an allow-list (`xtask/src/ownership.rs`).
+  against an allow-list (`xtask/src/ownership.rs`), which also keeps any
+responder out of it.
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
@@ -466,7 +474,7 @@ hung replaces (`Outpost::set_window_readability_reader` and
 ### Starting an outpost and asking for the focus
 
 A fact for an application with no outpost starts one
-(`DeliveredFact::may_start_outpost`) unless it is a selection or a
+(`policy::may_start_outpost`) unless it is a selection or a
 notification other than the shell's window-snap results. Node identity
 never crosses a process: the outpost mints the `NodeId` from the forwarded
 runtime id. Nothing polls: at startup, and after an outpost or the listener
@@ -524,64 +532,30 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
 
 ### The protocol
 
-`protocol` is the wire vocabulary the supervisor and each child speak.
+The messages themselves, one enum per direction and role, their kinds,
+their merging and the types they carry, are `verbatim_model::protocol`'s
+([verbatim-model](verbatim-model.md), "The wire protocol"); this crate's
+`protocol` module re-exports none of them. It holds what needs the
+Windows crates: the framing below; `now_us`, the run's shared clock;
+`fact_of_win_event`, the fact an MSAA `WinEvent` makes, whichever hook
+took it; and `peek`, which reads a frame's kind from its first bytes
+(`message_kind`) as a `Peeked`, the variants the relay handles itself by
+name, so `outpost_frame` and `spare_frame` match it exhaustively and a test
+pins every variant's name.
 
-- `SupervisorToOutpost`: `SetBackendOverride` (one backend for every
-  window, or normal arbitration; one forcing UIA also goes to the listener
-  with the application's `pid`); `DeliverFact` (a routed fact: a UIA
-  focus's marker, read, or drop with its `GapAnswer`, an MSAA focus or
-  menu-popup address, a foreground window, with the listener's trace id, its `EventTiming`, whose
-  `observed_at_us` is the observation the fact is ordered by, and for a
-  `WinEvent` its `WinEventStamp`); `HookInstalled`
-  and `HookRemoved` (to the listener) and `ForwardingEnded` (to an
-  outpost); `Query`; `Cancel` (withdraws a query not started); `Ping`;
-  `IdleQuery`; `Shutdown`; `Assign`; `NodesHeld`; and `Fetches`. No
-  message carries Core's focus: every reader reads for what it has not
-  released, and Core is the one judge of focuses
-  (`docs/design/ownership-one-judge.md`).
-- `Query` is a request id and a `Query`: `FocusNow`, `Navigate` (a model
-  `QueryKind`), `Activate`, `Ancestors`, `DumpTree`, `Text` (a node and a
-  model `TextOp`), `ShellItems`, or `ShellItemPosition`.
-- `OutpostToSupervisor`: `Ready`; `SpareReady`; `Event` (trace id,
-  observation time in microseconds from one clock read, for every event
-  kind, backend, `WindowFacts`, normalized event); `Reply` (exactly
-  one per accepted query, with its `EventTiming` and a `QueryOutcome`:
-  `Done` with a `QueryResult`, `Gone`, `Failed`, `NotStarted`, or
-  `Abandoned`, after which side effects may have happened); `Pong` (the
-  ping's sequence number and the count of abandoned workers not returned);
-  `Fault`; `FocusFact`, `ForwardingEnded`, `MenuOrSwitchEnded`, and
-  `ForegroundWindow`, from the listener only; `TargetExited`, once, ahead of
-  ordinary messages; and `IdleAnswer` (`is_idle_answer`).
-- A `FocusNow` answer carries the foreground window and its facts when the
-  application holds the foreground, its focused control with ancestors,
-  selected child, window facts, and text read (`FocusedControl::text`), and
-  when reading began, which orders it among focus events.
-- A `ListenerFact` strips to a pid-less `DeliveredFact` once routed. Node
-  ids from Core carry the outpost's stamp, cleared for lookup
-  (`NodeId::unstamped`); `OutpostToSupervisor::assign_outpost` applies it.
-  `WALK_DEADLINE` (5 seconds) is public
-  so Core's deadline for a shell walk can outlast it.
-
-Timing (`docs/design/communication.md`, section 10.1). `EventTiming`
-records, in microseconds from `now_us`, when an event was observed, relayed,
-taken from the outpost's queue, and published, how long before observation
-Windows raised a `WinEvent`, and the worker's cross-process calls (`calls`,
-a `CallCounts`); a caret key's late answer adds `awaited_at_us` and
-`awaited_calls`. verbatim.exe adds `core_received_at_us`, `core_relay_us`,
-`core_held_us`, `core_sent_at_us`, and `core_read_at_us`
-(`OutpostToSupervisor::core_read`); a `Query` carries the first three to the
-outpost, which copies them into its reply. Each message is stamped as its
-write begins, by whichever thread writes it
-(`OutpostToSupervisor::written`): `listener_written_at_us` on a
-`FocusFact`, `written_at_us` on an `Event`, `Reply`, or `Pong`; the listener
-adds `listener_handled_at_us`. Commands to the listener carry `sent_at_us`
-(`SupervisorToOutpost::stamp_sent`), and the listener logs each hop at trace
-under `verbatim::stage`. `hop_us` is the time between two stamps.
+Each message is stamped as its write begins, by whichever thread writes
+it: `listener_written_at_us` on a listener's fact or menu end,
+`written_at_us` on an outpost's `Event`, `Reply`, or `Pong`; the listener
+adds `listener_handled_at_us`. verbatim.exe stamps its relay times on a
+routed fact or query as it writes it, and a ping or a hand-over notice to
+the listener with `sent_at_us`; the listener logs each hop at trace under
+`verbatim::stage`.
 
 Framing. Each message is one frame of `verbatim_process::transport`, a
 `Content-Length` header and compact JSON, through `write_message` and
 `read_message`, for any type that implements `Message` (`put_frame` and
-`from_parts`): `SupervisorToOutpost` and `OutpostToSupervisor`.
+`from_parts`): the four direction enums, the outpost's with the raw
+section below.
 `write_message` writes the whole frame in one `WriteFile`,
 `encode_message` gives the bytes, `put_message` appends them to a sender's
 buffer, and `decode_message` parses a frame's `Parts`. A message that
@@ -998,7 +972,16 @@ section 6.3).
 The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
 `Regenerated`, `IdleQueried`, `NotWatched`, `ForegroundWindow`, and per
 generation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
-reason (exited, killed, retired, target exited). `Frames::arrived` (from
+reason (exited, killed, retired, target exited) and whether a next
+generation follows (`follows`), the supervisor's decision as it ended it.
+Every removal of a record, at a retirement or a target exit, one waiting
+for a failure's backoff among them, sends `NotWatched` after the `Ended` of
+every generation the app heard started, so nothing waits for an outpost
+that will not come. The lifecycle notices (`Started`, `Ended`,
+`Regenerated`, `NotWatched`, `SpareReady`, `ListenerReady`,
+`IdleQueried`) carry a `Sealed` that only the supervisor makes, so no other
+code announces a generation; the `lifecycle-for-tests` feature adds
+`Sealed::for_tests` for the app's tests. `Frames::arrived` (from
 `Supervisor::frames()`, on the reducer's thread) turns a frame into
 `Event(pid, outpost_id, position, message)`, the payload boxed: it parses
 each frame, stamps node ids with the outpost's id, records when the relay
@@ -1022,13 +1005,30 @@ How it works:
   (`docs/design/communication.md`, section 6.2). It waits only on one
   completion port, timing out at the next heartbeat (3 s) or sweep (30 s).
   It reads every child's pipe (`transport::PortReader`) and handles each
-  frame in the pass that read it: a listener's fact is routed and written to
-  its outpost there and then; an outpost's frame is read only for its kind
-  (`message_kind`), a pong and `TargetExited` handled, `Ready` handled and
-  passed on, anything else handed on whole (`transport::FrameBody::Owned`
-  or a copy). Helpers report through `relay::Mailbox`. It never blocks:
+  frame in the pass that read it: a listener's frame decodes as a
+  `ListenerToCore`, matched exhaustively, and its fact is routed and
+  written to its outpost there and then; an outpost's frame is read only
+  for its kind (`protocol::peek`), a pong and `TargetExited` handled,
+  `Ready` handled and passed on, anything else handed on whole
+  (`transport::FrameBody::Owned` or a copy). Helpers report through `relay::Mailbox`. It never blocks:
   launches, retirements, and hang checks run on threads of their own.
-- Each child's commands go through a `transport::Sender` (`writer`): the
+- Each application's record keeps what belongs to the application (its
+  held facts, held idle round, attention time and backoff) and its
+  generation's state (`generation::Generation`): `Launching`,
+  `SpareGiven`, `Starting`, `Ready`, or `Waiting` for a failure's backoff
+  with no generation, the one that failed before its `Ready` kept to be
+  replaced. Each transition (`given`, `launched`, `assigned`, `ready`,
+  `failed`, `removed`) consumes the state and returns the next with its
+  notices in order, which the owner applies (`Owner::apply`): the
+  listener's hand-over messages, a spare's `Assign`, a launch, and the
+  app's messages. Leaving `Ready` always removes the listener's hook in the
+  same step, and the listener's "forwarding ended" is relayed only to the
+  `Ready` generation it names. The listener and the spares waiting, with
+  no generations, are `Run::Launching` or `Run::Running`.
+- Each child's commands go through a `transport::Sender` (`writer`), of
+  the commands its kind of child takes (`WriterHandle<M>` over
+  `ToChild`, whose routed fact for the listener is uninhabited, so the
+  listener's writer cannot be given one): the
   sending thread writes when nothing is in flight or waiting, and otherwise
   the command waits in a queue of 64, written by the relay as writes
   complete (`relay::CommandPipes`). When the queue is full a ping, the
@@ -1318,7 +1318,7 @@ foreground application for its focus unless a newer focus was applied.
   nodes.
 - Held objects: both registries keep every node reported with its live
   element or object. Each message that carries node ids
-  (`OutpostToSupervisor::carries_nodes`) takes the next position as it is
+  (`OutpostToCore::carries_nodes`) takes the next position as it is
   written, and what it carries is recorded at it (`outbound::Carried`): the
   nodes issued or looked up since the last publish, `existing_id` lookups
   and spliced entries included, and the text anchors minted or reported
@@ -1497,8 +1497,8 @@ layer"):
   overtake a `WinEvent`. So "x" typed over a selection in Notepad says
   "selection removed" where NVDA says "x unselected".
 - Two waiting caret reports merge with both reports' changes in order
-  (`outbound::merged`); one with changes never merges across a reply
-  (`Pending::waiting_with`) or with a report in general terms.
+  (`Merge for OutpostToCore` in `verbatim_model::protocol`); one with
+  changes never merges across a reply or with a report in general terms.
 
 Caret and text events:
 
@@ -1585,10 +1585,14 @@ through the transport's `Sender`; `docs/design/communication.md`, section
 into the sender's backlog, which the I/O thread writes as writes complete.
 Nothing that sends ever waits, so the watchdog can always abandon a worker.
 
-- Pongs, `Ready`, and `TargetExited` go ahead of everything waiting.
-- Waiting events merge by node and kind (the same property, or the same kind
-  of focus), the newer at the back, but not past a caret report with
-  selection changes that has a reply after it, and never a terminal's read.
+- Pongs, `Ready`, `TargetExited` and `SpareReady` go ahead of everything
+  waiting: `Outbound::urgent` takes only an `Urgent`, which carries no
+  node, so nothing that carries nodes skips their numbering.
+- Waiting events merge as `Merge for OutpostToCore` declares, placed by
+  `merge_into` among the messages since the last flush marker: by node and
+  kind (the same property, or the same kind of focus), the newer at the
+  back, but not past a caret report with selection changes that has a
+  reply after it, and never a terminal's read.
 - Replies, notifications, and faults never merge and keep their order.
 - Nothing merges across a flush (`Outpost::settle`'s) or an idle answer, and
   a flush is answered once every earlier write has completed.

@@ -27,14 +27,15 @@ Public API:
   second call fails, since wxWidgets cannot start again after it ends.
 - `shell_items` — the system tray and taskbar items the systrayList
   replica lists. `ShellItemsHost` (trait) is how the GUI gets them: its
-  `request(kind, ask)` returns at once and calls the callback `ask`
-  carries once, on another thread. `ShellAsk::Items` (`DeliverShellItems`)
-  asks for the surface's items, delivered as the items or `None` for a
-  failure; `ShellAsk::Position` (`DeliverShellItemPosition`) asks where an
-  item chosen from an earlier list is now, delivered as the
-  `ShellCandidates` the outpost found, the buttons with its runtime id or
-  name and their positions, with whether the walk read every button, or
-  `None` when the request failed; `answer_nothing` hands either `None`.
+  `request(kind, ask)` returns at once, and the
+  `verbatim_model::protocol::Responder` that `ask` holds answers once, on
+  another thread, whatever becomes of the request: dropped unanswered
+  anywhere, it answers `None`. `ShellAsk::Items` asks for the surface's
+  items, answered as the items or `None` for a failure;
+  `ShellAsk::Position` asks where an item chosen from an earlier list is
+  now, answered as the `ShellCandidates` the outpost found, the buttons
+  with its runtime id or name and their positions, with whether the walk
+  read every button, or `None` when the request failed.
   `refind(chosen, name_unique, found)` is the decision of which candidate
   is the item: the one with its runtime id, or else the only one with its
   name, taken only when `name_unique` (no other item of the list it was
