@@ -97,10 +97,10 @@ A step is a key to press, or one of these:
   end and fails when the window is no longer in front and responding,
   since keys it has not read would go to the window behind it when it
   closes ("Keeping keys in the capture's window" below).
-- `--gesture <identifier>` sends a gesture such as `kb:verbatim+v` to
-  the Verbatim running on this machine through its control pipe, so
-  Verbatim's own commands can be used without pressing a modifier key
-  NVDA also uses.
+- `--open-menu` opens the menu of the Verbatim running on this machine
+  through its control pipe (`OpenMenu`), as a click on its tray icon
+  does, so that no key NVDA also uses is pressed: Verbatim+V pressed as
+  Insert+V would reach NVDA too, since NVDA handles injected keys.
 - `--type <text>` types the text through the agent's `TypeText`, as the
   terminal scenarios type their commands.
 - `--hold <key>` presses one key, such as `control`, down through the
@@ -168,7 +168,7 @@ The options are:
 
 To record NVDA reading Verbatim's own GUI, run Verbatim with test audio so
 that it is silent (see "Test-audio mode" in [the end-to-end guide](e2e.md)), open
-its menu with `--gesture kb:verbatim+v`, and move through the menu and
+its menu with `--open-menu`, and move through the menu and
 dialogs with plain keys, which both screen readers let through.
 
 Captures are working material, not kept in the repository: they serve

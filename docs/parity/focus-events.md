@@ -706,8 +706,7 @@ tests cover the rules, and the end-to-end scenarios pass with them, but
 no scenario asserts where live speech is cut off. Focus, value, state,
 selection, navigation, and review speech is queued; the keyboard hook
 cancels, or pauses and resumes, on the key-down before the gesture is
-sent, with NVDA's exceptions, and a gesture injected through the control
-plane cancels too, while the keys Verbatim injects for itself (the
+sent, with NVDA's exceptions, while the keys Verbatim injects for itself (the
 Control tap that unlocks the foreground) leave speech alone, as NVDA
 ignores its own; a foreground report or a focus in another top-level
 window cancels, as does entering a menu; each focus announcement carries

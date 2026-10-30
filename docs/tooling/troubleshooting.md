@@ -190,11 +190,11 @@ rules, each so that nothing of yours is touched:
 - A stray guest-side process is also cleared by restoring a checkpoint
   (`cargo xtask vm restore`).
 
-**A gesture sent just after launch does nothing, though the control plane
-answers `Ok`.** The control server starts before `verbatim-app`'s GUI
-thread wires its gesture handle, and before the focus listener and the
-outpost reading Verbatim's own windows are ready, so an early
-`SendGesture` is dropped or its menu never seen. Wait for `ready` in
+**A gesture pressed just after launch does nothing, though the control
+plane answers `Ok`.** The control server starts before `verbatim-app`'s
+GUI thread is up, and before the focus listener and the outpost reading
+Verbatim's own windows are ready, so an early gesture's menu is never
+shown or never seen. Wait for `ready` in
 `StatusInfo`: `Scenario::launch` passes a named event in
 `VERBATIM_READY_EVENT`, which Verbatim sets once it is ready, and a
 hand-rolled script can do the same or check `Status`, rather than

@@ -72,15 +72,15 @@ The subcommands:
   interleave in the order Verbatim actually produced them, an event line
   reads directly above the speech it caused — the fastest way to eyeball
   whether a gesture produced the announcement you expected.
-- `send-gesture <identifier>` injects a gesture identifier through the
-  keyboard hook's thread, which numbers it in line with real key presses,
-  for example `verbatim-inspect send-gesture kb:verbatim+v` to open the
-  Verbatim menu without touching a keyboard. Like a key press, it cancels
-  current speech first.
+- `send-gesture <identifier>` presses a keyboard gesture's keys through
+  `send-keys`, the Verbatim modifier as Insert, for example
+  `verbatim-inspect send-gesture kb:verbatim+v` presses `insert+v` to
+  open the Verbatim menu. They are real keys, so they need what
+  `send-keys` needs, below.
 - `send-keys <combo...>` synthesizes real OS keyboard input via `SendInput`,
   reaching whatever currently has focus — for example `verbatim-inspect
   send-keys downarrow enter "shift+tab"`. Because this is real synthetic
-  input, not an injected gesture, it needs an unlocked, focused
+  input, it needs an unlocked, focused
   interactive desktop to land anywhere (see [Troubleshooting](troubleshooting.md)). It
   passes through Verbatim's keyboard hook like typed keys, so each key-down
   cancels speech, and a lone `shift` pauses or resumes it.

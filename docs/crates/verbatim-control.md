@@ -1,15 +1,15 @@
 # verbatim-control
 
-The control plane (architecture section 10, decision D8): protocol v2 and
+The control plane (architecture section 10, decision D8): protocol v3 and
 the named-pipe server. Pulled forward from M2 so every M1 change is
 verifiable live.
 
 Public API:
 
 - `protocol` — `Request` (`Hello`, `Status`, `SubscribeEvents`,
-  `SubscribeSpeech`, `SendGesture`, `SendKeys`, `Latency`, `DumpTree`,
-  `DumpRecorder`, `Quit`, and, since version 2, `AwaitIdle` and
-  `DumpFocus`) in a `RequestEnvelope` with a correlation id;
+  `SubscribeSpeech`, `SendKeys`, `Latency`, `DumpTree`,
+  `DumpRecorder`, `Quit`, since version 2 `AwaitIdle` and
+  `DumpFocus`, and since version 3 `OpenMenu`) in a `RequestEnvelope` with a correlation id;
   `Frame` (`Reply`, `Error`, `Event`, `Speech`, `SpeechStarted`,
   `SpeechEnded`, `Sound`, `SpeechPaused`, and, since version 2, `InputHandled` and
   `OutpostEnded`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
@@ -51,7 +51,7 @@ Public API:
   title bar among them, the application's UI thread is asked for them;
   both fields default to false, so older messages read unchanged); a walk that
   could not complete at all comes
-  back as `Frame::Error`, the same convention `SendGesture` uses.
+  back as `Frame::Error`, the same convention `OpenMenu` uses.
   `ReplyPayload::DumpRecorder` answers `Request::DumpRecorder` (milestone
   M2) with the path Core wrote its flight recorder's contents to.
   A `LatencyRecord` carries a timeline's three times and, since protocol
@@ -81,7 +81,7 @@ Public API:
   client in the same vocabulary.
   Version 2 is the end-to-end harness's barrier and focus report.
   `AwaitIdle { after_input, timeout_ms }` is answered once Core has
-  handled the injected input numbered `after_input` (see the
+  handled the harness input numbered `after_input` (see the
   [verbatim-input guide](verbatim-input.md)) and everything before it, and
   is idle: its queues empty, no outpost request outstanding (an open caret
   watch, which only waits for the application and which a key that moved
@@ -91,6 +91,14 @@ Public API:
   speech, so on a speech connection every utterance Core queued first
   arrives before it. It fails, naming what was still outstanding, when
   `timeout_ms` runs out, which is always before a client's read timeout.
+  Version 3 removed the request that injected a gesture into the
+  keyboard hook's thread, so that the thread takes only keys
+  (`docs/design/ownership-input.md`, "Gestures as real keys"): a client
+  presses a gesture's keys with `SendKeys`. An older client that sends
+  the removed request has its connection closed, as for any malformed
+  request. Version 3 also added `OpenMenu`, which opens Verbatim's menu
+  as a click on the tray icon does, pressing no key, for the NVDA
+  capture tool (`docs/tooling/nvda.md`).
   `InputHandled { input }` goes to event subscribers as Core handles each
   numbered input. `OutpostEnded { target_pid, reason }` goes to event
   subscribers once Core has handled an outpost's end, the evidence a test
@@ -126,8 +134,8 @@ Public API:
   as the end-to-end harness's speech collector reads on a thread of its
   own; a socket serves a read and a write at once, where a synchronous
   pipe handle would hold the write until the pending read finished.
-- `ServerHandlers` — the app-injected callbacks answering status, gesture
-  routing, latency queries, tree dumps, flight-recorder dumps, the idle
+- `ServerHandlers` — the app-injected callbacks answering status, the
+  menu's opening, latency queries, tree dumps, flight-recorder dumps, the idle
   barrier, Core's focus report, and quit,
   keeping this crate ignorant of the application's internals.
 - `ControlServer` — `start(handlers)` on the well-known pipe name,
@@ -151,7 +159,10 @@ Public API:
   key, modifier-up sequence via `SendInput` with correct extended-key
   flags; `parse_key` and `inject_transition` press or release one key on
   its own, for the agent's `PressKey` and `ReleaseKey`, numbered as a
-  stroke of its own when a number is given; `inject_numbered` does the same with each combination numbered in
+  stroke of its own when a number is given; `gesture_keys` gives the
+  `SendKeys` entry that presses a keyboard gesture, the Verbatim modifier
+  as Insert (`kb:verbatim+v` as `insert+v`), for the end-to-end harness
+  and `verbatim-inspect`; `inject_numbered` does the same with each combination numbered in
   its key events' `dwExtraInfo` for the end-to-end harness
   (`verbatim_input::harness`), the last event of each marked last, and
   returns the last number. The modifier position accepts Control, Shift, Alt, either Windows

@@ -7,28 +7,31 @@ names, and the gesture tables carry no Windows dependency.
 
 Public API: `InputHook::start(config, map, speech, reports, holding,
 foreground)`, which installs `WH_KEYBOARD_LL` on a dedicated thread; drop
-uninstalls. `InputHook::injector` hands out an `Injector`, by which other
-threads inject inputs for the user. The hook thread hooks nothing else
-and sends nowhere but its two callbacks (architecture section 5): what it
+uninstalls. The hook thread takes nothing from another thread but the
+`WM_QUIT` that stops it: every input it numbers is a key. It hooks
+nothing else and sends nowhere but its two callbacks (architecture section 5): what it
 needs to know of the window in front, `foreground`, is Core's.
 
 The code split follows who calls it (`docs/design/ownership-input.md`,
 "The ownership check on the hook"): the `hook` module holds everything
 that runs on the hook thread (`HookState`, the hook procedure, `decide`,
-`hold`, `report_passed`, `inject` and the message loop), and `lib.rs`
-what other threads call: `InputHook` and its drop, the thread's
-start-up, `KeyHolding`, `ForegroundView` and `Injector`. `cargo xtask
-ci` checks `hook`, `typed` and the app's `key_reports` by the hook rule
-(`xtask/src/ownership.rs`): they may name no lock, wait, log, I/O or
-`SendMessageW`, and `use` only an allow-list.
+`hold`, `report_passed` and the message loop), and `lib.rs` what other
+threads call: `InputHook` and its drop, the thread's start-up,
+`KeyHolding` and `ForegroundView`. `cargo xtask ci` checks `hook`,
+`typed` and the app's `key_reports` by the hook rule
+(`xtask/src/ownership.rs`): they may name no lock, wait, log, I/O,
+`SendMessageW`, private message (`WM_APP`, `WM_USER`) or
+`PeekMessageW` and `DispatchMessageW` loop, and `use` only an
+allow-list.
 
 ## Key numbers
 
 The hook thread is the one minter of key numbers
 (`verbatim_model::KeySeq`). `HookState::last_key` is the last one given
-out: a key press takes the next, a release the last, and an injected
-gesture the next, each in the order the thread handles it. Every report
-of a user input carries its number. Speech is fenced by key order: the
+out: a key press takes the next and a release the last, in the order the
+thread handles them. Every report of a press carries its number. The
+control plane injects no gestures: a harness presses a gesture's keys
+(`docs/design/ownership-input.md`, "Gestures as real keys"). Speech is fenced by key order: the
 key's cancel names its number (`SpeechControl::cancel_through`), Core
 stamps the speech each input causes with its number, and the speech
 queue drops speech of an earlier number that arrives after a later
@@ -41,8 +44,8 @@ with the order the inputs reach Core.
 Send`) that carries out each key press's effect on speech, given the
 press's number, before anything the press caused is reported, so speech
 the press causes is never the speech it cancels. `reports` is a
-`KeyReportFn` that receives, after the speech effect, everything a key or
-an injected input caused, as `KeyReport`s, in the order decided:
+`KeyReportFn` that receives, after the speech effect, everything a key
+caused, as `KeyReport`s, in the order decided:
 
 - `Observed`, the observed gesture the key completed (a caret key,
   `Decision::observed`), its number and `pressed_at_us`, the Unix time in
@@ -63,7 +66,7 @@ an injected input caused, as `KeyReport`s, in the order decided:
   leave a caret watch open until its bound), with its trace id, number
   and `pressed_at_us` (the source of a caret key judged by where the
   caret landed, `CaretMotion::Other`).
-- `Gesture`, a bound gesture that fired, an injected gesture, or a lock
+- `Gesture`, a bound gesture that fired, or a lock
   key's gesture (`ToggleKey::gesture`, repeat 0) when a Caps Lock, Num
   Lock or Scroll Lock press passes to the operating system, so its new
   state can be announced (not for the Verbatim key passed in share mode,
@@ -72,9 +75,9 @@ an injected input caused, as `KeyReport`s, in the order decided:
 - `Handled(n)`, when the last key event of an end-to-end harness's
   numbered key stroke (`verbatim_input::harness`, read from
   `dwExtraInfo`) has been decided, so everything the stroke caused was
-  reported before it.
-- `Barrier(token)`, an injected idle waiter, reported behind everything
-  handled before it.
+  reported before it. The control plane's idle waiters are ordered by
+  this mark: they go straight to the reducer's port and wait there for
+  the number they name.
 
 Both callbacks run on the hook thread, so they must not block nor
 dispatch sent messages. The app's callbacks post to the reducer's completion port
@@ -84,45 +87,13 @@ its own purposes (the GUI's Control tap that unlocks the foreground): the
 hook still decides them, but leaves speech alone and reports nothing, as
 NVDA ignores the keys it injects itself.
 
-## Injected inputs
+## The message loop
 
-`Injector::inject(Injected)` injects an input for the user into the
-hook thread, from any thread: `Gesture(GestureId)`, the control plane's
-`SendGesture`, and `Barrier(token)`, an `AwaitIdle` waiter's. The item is
-pushed into the thread's `Inbox`, shared by `InputHook::start` with the
-`Injector` and the hook's state, and the thread is woken with
-`PostThreadMessageW`, a private `WM_APP` message that carries no data.
-The inbox is a list linked newest first whose head is an
-`ArcSwapOption`: a push is a compare-and-swap linking the new entry to
-the one before (`Inbox::push`), and the hook thread takes every entry
-with one swap (`Inbox::take_all`), both lock-free, so the hook takes no
-lock and never waits for an injector part way through a push, and the
-order of the pushes is the order of handling. Any process at Verbatim's
-integrity can post a `WM_APP` to the thread, and one from elsewhere only
-has the thread take what is already waiting. Each entry has a taken
-flag, set by whichever takes it first: when the wake cannot be posted
-(the thread has gone, or its queue of 10,000 messages is full), or the
-inbox has closed meanwhile, the injector takes its entry back and
-returns the item as the error unless the thread took it first, so an
-injection reported failed never runs later. An `Injector` holds a
-handle to the hook thread, duplicated by `InputHook::start` from its
-join handle and closed with the last clone, so the thread's id is not
-given to another thread while any `Injector` can post to it.
-
-The hook thread's `GetMessageW` loop (`hook::pump_messages`) takes each
-thread message (no window) of `WM_APP`, whoever posted it
-(`hook::on_message`), and calls `inject` for each input waiting, in the
-order pushed: a gesture takes the next number, carries out `KeySpeechEffect::Cancel` with it through the
-same speech callback a key uses, and is reported as `Gesture`; a barrier
-is reported as `Barrier`. Windows calls the hook procedure from within
-that loop's waits, so keys and injected inputs are handled one at a
+The hook thread's `GetMessageW` loop (`hook::pump_messages`) runs until
+`WM_QUIT`, and handles no other message. Windows calls the hook
+procedure from within that loop's waits, so keys are handled one at a
 time, in the one order the thread takes them. The thread runs no other
-loop while the hook is installed; once the loop ends, the thread
-closes the inbox (`Inbox::close`), after which every injection is
-refused, and drops the entries left untaken, so an injector that finds
-the inbox closed after its push gets its item back. One whose push and
-check both came just before the close was told it succeeded: the idle
-waiter that injected it times out.
+loop while the hook is installed.
 
 ## Implementation notes
 
@@ -148,15 +119,9 @@ sent messages, passes its key untouched rather than panicking on the
 state's borrow.
 
 `decide` is the decision for each key, which the hook procedure calls
-with the thread's state; unit tests drive it and `inject` directly: a
-burst of a thousand Verbatim+V strokes, every gesture and every stroke's
-handled mark reported in order; a key press, an injected gesture and a
-second press numbered 1, 2 and 3, each cancel naming its own number
-before its report; an injected barrier reported behind the keys before
-it; an injection posted to thread id 0, which no thread has, coming
-back as the error; a wake with an empty inbox, whatever it carries,
-handling nothing; and the inputs waiting handled on one wake in the
-order pushed. The `hook_echo` example installs the real hook with
+with the thread's state; unit tests drive it directly: a burst of a
+thousand Verbatim+V strokes, every gesture and every stroke's handled
+mark reported in order. The `hook_echo` example installs the real hook with
 two bound gestures and prints what each key reports, on its own thread;
 it needs an interactive desktop and is never run in CI.
 

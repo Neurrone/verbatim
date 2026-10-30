@@ -100,10 +100,11 @@ The end-to-end harness's hooks (private `harness` module):
   whatever the stroke caused (`ShellCommand::InputHandled`), which records
   it and broadcasts `Frame::InputHandled`; a mark taken while a lock key's
   announcement is still to come is held (`idle::HeldMarks`) and handed on
-  after the input that makes it. A control-plane `AwaitIdle` is injected
-  through the hook thread (`Injected::Barrier`), so it is answered only
-  after every key and injected gesture before it; on the
-  reducer thread it waits until the input it names has been handled, then
+  after the input that makes it. A control-plane `AwaitIdle` is posted
+  straight to the reducer's port (`ShellCommand::AwaitIdle`, carrying the
+  waiter, by `harness::IdleLine::wait`); every harness input is a
+  numbered key, so on the reducer thread it waits until the input it
+  names has been handled, then
   runs a round through every child (`idle.rs`, `IdleBarrier`;
   `docs/design/communication.md`, section 6.7). The supervisor's relay
   asks the listener, then every outpost, whether anything that came before
@@ -533,8 +534,7 @@ knowing for review:
   Verbatim's own integrity level read once, from which Core decides the
   keyboard hook's view of the foreground), the reducer thread
   (`ReducerThread`, described below), the keyboard hook (given
-  `key_reports`' callbacks; started before the control plane, whose
-  gestures and idle waiters go through its `Injector`), the control
+  `key_reports`' callbacks), the control
   server with its
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
   `DumpTicket`, whether locations are read, and a one-answer reply
@@ -543,11 +543,9 @@ knowing for review:
   `ShellCommand::DumpTreeGivenUp` with the ticket, and the reducer thread
   sends the outpost a `Cancel`, which withdraws the dump if it has not
   started; `dump_recorder` calls `flight_dump::dump_now` directly, no
-  outpost round trip needed; `send_gesture` checks the gesture is
-  parsable, bound and no lock key's, then injects it, and the hook thread
-  numbers it and cancels speech through its number, as for a key press,
-  since its keys never pass the hook, or answers "the keyboard hook is
-  gone" once the hook has stopped), the startup announcement, and
+  outpost round trip needed; `open_menu` sends the GUI
+  `GuiCommand::ShowMenu`, as a click on the tray icon does, with no key
+  number, or answers "the GUI is not up"), the startup announcement, and
   finally the GUI loop on the main thread. The reducer thread speaks each
   `Effect::Speak` with `speak_for_key` and the key number Core stamped on
   it. Verbatim+V's script opens the menu (`Effect::Show`), Verbatim+F12's

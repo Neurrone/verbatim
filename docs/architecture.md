@@ -868,7 +868,7 @@ display model (M14) as further text sources behind the same review commands.
   start; the snapshot is cheap because the state shares everything that
   grows.
 - `verbatim-inspect`: dev tool over the control plane — live event stream,
-  tree dumps, gesture injection, speech capture, latency histograms.
+  tree dumps, gestures pressed as keys, speech capture, latency histograms.
 
 ## 10. Control plane (dev tooling, then remote support)
 

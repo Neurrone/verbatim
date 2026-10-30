@@ -946,6 +946,12 @@ commands, with no fidelity regression anywhere else.
   displays; braille viewer (on-screen virtual display) so development and
   E2E tests need no hardware; routing keys, cursor tethering, speech-braille
   sync via existing index marks.
+- A braille display's gestures are user inputs that are not keys, so
+  they need key numbers ordered against the keyboard's: the keyboard
+  hook's thread is the one minter and takes only keys
+  (`docs/design/ownership-input.md`, "Decisions"), so M15's design
+  decides how a braille gesture is numbered, as NVDA queues its speech
+  cancel behind what is already queued.
 
 Exit: braille viewer E2E scenarios pass; at least one hardware display
 verified when hardware is available.

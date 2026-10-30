@@ -942,8 +942,9 @@ machine's taskbar, from a separate process running the outpost's walk,
   gesture wakes the reducer once, where it woke the router and then the
   reducer; a lock key wakes the reducer for its press and for its
   deadline, which applies the announcement in the same step, two wakes
-  where there were three. An injected gesture or idle waiter wakes the
-  hook thread once, at `HIGHEST`, in place of the router. Per `Speak` the
+  where there were three. A test's gesture is pressed as keys, each key
+  event a call of the hook procedure as a person's is, and an idle waiter
+  wakes only the reducer, never the hook thread. Per `Speak` the
   reducer scans up to 1,024 pairs of trace and key number, as before,
   inside Core's state and with no lock; each user input adds one pair,
   16 bytes, at most 16 KiB, cloned with each flight recorder checkpoint.

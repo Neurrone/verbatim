@@ -271,9 +271,9 @@ Other commands follow the same path. Verbatim+numpad5 (report the current
 object) needs no outpost: the reducer speaks the navigator's copy, spells
 it on the second press, and on the third emits `Effect::CopyToClipboard`.
 Activation emits `Effect::Activate`, which becomes a `Query::Activate`
-under the same 400 ms deadline. A gesture injected through the control
-plane (`send_gesture`) cancels speech itself, since its keys never pass
-the hook, and is always a first press.
+under the same 400 ms deadline. A gesture a test sends is pressed as its
+keys, so it takes this same path, and a second press within 500 ms is
+counted as a person's is.
 
 Not yet, or known limitations: an object with no text interface is
 reviewed by its flat name or value, whose start and end of line speak the
@@ -545,8 +545,8 @@ guide](tooling/e2e.md)).
 4. **Setup and body.** `registry::run` first asserts the startup speech
    and the desktop's announcement exactly. The scenario opens its
    applications through the agent and drives Verbatim with keys the agent
-   injects through `SendInput`, each numbered in its `dwExtraInfo`, and
-   with `SendGesture`.
+   injects through `SendInput`, each numbered in its `dwExtraInfo`; a
+   gesture is pressed as its keys, the Verbatim modifier as Insert.
 5. **Asserting speech.** `SpeechCollector` reads the speech tunnel. Each
    assertion says the next utterances are exactly these, in order, each
    ending as expected, nothing in between. The body ends with

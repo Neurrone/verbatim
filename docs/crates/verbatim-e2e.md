@@ -277,8 +277,7 @@ shorter (`compare::QuietPeriod`).
   show its first prompt) calls `Scenario::begin_action`, which in compare
   mode closes the step under way and starts one with the action as its
   input (`Timeline::push_action`); a normal run is unchanged by it.
-  `send_gesture` presses every keyboard gesture as keys, the Verbatim
-  modifier as Insert. What needs Verbatim itself (`status`,
+  `send_gesture` presses a gesture's keys as in a normal run. What needs Verbatim itself (`status`,
   `subscribe_events`, `verbatim_children`, `end_verbatim_process`,
   `send_keys_from_verbatim`, and the checks after the body) is an error.
   A wait on one of Verbatim's events has no NVDA equivalent, so
@@ -323,8 +322,15 @@ on. `hold_key` and `release_key` hold one key, such as Control, down
 across the keys sent between them, through the agent's `PressKey` and
 `ReleaseKey`; a key still held when the body ends is released then and
 fails the run (`release_held_keys`, run again by the cleanup).
-`send_gesture` sends a gesture by its identifier through the control
-plane. For the measure set, `send_keys_paced(keys, interval_ms)` and
+`send_gesture` presses a keyboard gesture's keys through the agent, as
+`send_keys` does, the Verbatim modifier as Insert (`kb:verbatim+v` as
+`insert+v`, `verbatim_control::send_keys::gesture_keys`), so the
+keyboard hook decides and numbers them as a person's keys and the waits
+after it are ordered by its number. Pressed again within the
+multi-press timeout (500 ms) with no other key between, the same gesture
+counts as a second press, as a person's does; a step meant as a first
+press follows a different gesture or key, as `review_cursor` does before
+Verbatim+F10. For the measure set, `send_keys_paced(keys, interval_ms)` and
 `type_text_paced(text, interval_ms)` inject one stroke or character every
 `interval_ms` through the agent, numbered like any other input, and
 return the first and last numbers; `repeat_key(key, delay_ms,
@@ -787,7 +793,7 @@ Each exists in both terminals unless named for one.
   reader thread's read ends when a frame arrives, or when dropping the
   collector shuts the connection down (`Sender::shutdown`), and the drop
   joins the thread.
-- `timeline`: injected gestures, keys, typed text, and speech (queued,
+- `timeline`: gestures and keys pressed, typed text, and speech (queued,
   audio started, ended), saved whole in time order, and printed on
   failure with each earlier step shortened to one line. It also holds the
   declared differences from NVDA (`push_deviation`) and, in compare mode,

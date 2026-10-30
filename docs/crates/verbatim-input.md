@@ -192,9 +192,8 @@ rules):
   key-down of a key it swallowed and has not yet seen released. Any key
   other than a modifier that completes no bound gesture ends the streak,
   as NVDA forgets its last script when an unbound gesture comes between.
-  Control-plane gesture injection (which builds an `EmittedGesture`
-  directly in `verbatim-app`, bypassing the machine) always injects
-  `repeat: 0`, a single first press.
+  A test's gestures are pressed as keys, so they are counted as a
+  person's are.
 
 The hook shell that drives the machine is described in
 [verbatim-input-windows](verbatim-input-windows.md).
