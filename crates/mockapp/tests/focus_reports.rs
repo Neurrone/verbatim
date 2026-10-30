@@ -118,23 +118,25 @@ impl Client {
 /// element. UI Automation counts the new element as the dead one, whose
 /// runtime id it has, but the dead one's keyboard focus cannot be read, so
 /// the focus is no repeat (section 16.3); a focus event repeated on the new
-/// element, which still has the focus, is. Both ways the reader reads a
-/// focus: with remote operations and without.
+/// element, which still has the focus, is read in full and reported under
+/// the same node, for Core to judge (`docs/design/ownership-one-judge.md`,
+/// "Repeats"). Both ways the reader reads a focus: with remote operations
+/// and without.
 ///
 /// The calls each read makes are pinned, the outpost's own included, which
 /// are none: it reads nothing before it reports the focus. Before any read,
 /// the listener finds the windowless item's nearest window, for NVDA's
-/// native check and acceptance test, one call; then compares the sender
-/// with the last focus it accepted and, UI Automation equating them, reads
-/// that element's keyboard focus: two calls; then the sender's own keyboard
-/// focus, read plainly as NVDA reads it, one call. The read, the classic
-/// walk whichever way the outpost reads, makes four calls: the earlier
-/// element's keyboard focus, the focus's own cache, and two hops up to an
-/// ancestor of the focus before, with its window. The repeated focus makes
-/// the nearest window, the comparison, and the keyboard focus read alone.
+/// native check and acceptance test, one call; then the sender's own
+/// keyboard focus, read plainly as NVDA reads it, one call. The read, the
+/// classic walk whichever way the outpost reads, makes four calls: the
+/// earlier element's keyboard focus, the focus's own cache, and two hops up
+/// to an ancestor of the focus before, with its window. The repeated focus
+/// makes the nearest window, the keyboard focus, and its read's three: the
+/// earlier element's keyboard focus, its cache, and one hop up to its known
+/// parent.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let gone_cost = 8;
+    let gone_cost = 6;
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -176,12 +178,12 @@ fn reused_runtime_id(remote: bool) {
 
     let (judged, calls) = outpost.listener_read(&inner);
     assert!(
-        matches!(judged, Judged::Dropped(_)),
-        "{path}: the repeated focus is dropped, not {judged:?}"
+        matches!(judged, Judged::Read(_)),
+        "{path}: the repeated focus is read, not {judged:?}"
     );
-    assert_eq!(calls.uia, 3, "{path}: the calls the repeated focus made");
-    outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
-    outpost.settled();
+    assert_eq!(calls.uia, 5, "{path}: the calls the repeated focus made");
+    let again = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+    assert_eq!(again.node.id, dead_node, "{path}: the same node again");
 
     drop(outpost);
     app.quit();
@@ -558,11 +560,11 @@ fn a_focus_is_found_by_its_path_and_followed() {
 /// A UIA focus with no path to its element, as Windows Terminal's tab
 /// focus elements, which are in no tree, have none, is reported from the
 /// listener's read, and nothing is followed. A focus event repeated on it
-/// while it keeps the keyboard focus is a repeat, dropped before it is
-/// read (section 16.3); once the focus has been elsewhere and comes back,
-/// its focus event is read in full and finds the element: the focus is
-/// reported under its node, now with its ancestors, and its changes are
-/// followed from then on.
+/// while it keeps the keyboard focus is read in full too, for Core to
+/// judge (`docs/design/ownership-one-judge.md`, "Repeats"); once the focus
+/// has been elsewhere and comes back, its focus event is read in full and
+/// finds the element: the focus is reported under its node, now with its
+/// ancestors, and its changes are followed from then on.
 fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     let title = common::unique_title("mockapp-focus-not-found");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -574,8 +576,8 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     let node = focus_without_a_path(&outpost, &button);
     let (judged, _) = outpost.listener_read(&button);
     assert!(
-        matches!(judged, Judged::Dropped(_)),
-        "a repeat is dropped, not {judged:?}"
+        matches!(judged, Judged::Read(_)),
+        "a repeat is read, not {judged:?}"
     );
 
     app.send("set-focus slider1");
@@ -953,91 +955,6 @@ fn a_route_walk_that_finds_its_element_gone_answers_gone() {
 
     drop(outpost);
     app.quit();
-}
-
-/// The listener compares a UIA focus event with the focus Core holds, as
-/// NVDA compares it with the last focus it queued, whatever reported it
-/// (`lastQueuedFocusObject`; decision D14, "Where the rules run"): a repeat
-/// on the element of the focus Core took from the listener's read is
-/// dropped; a focus the listener read and Core refused, as Core refuses a
-/// shell window that only stages a switch, changes nothing, and the repeat
-/// is still dropped; once Core holds a focus the listener did not read, as
-/// an MSAA menu's or a foreground change's, a focus event on the element,
-/// which never lost the keyboard focus, is read in full.
-fn a_focus_is_no_repeat_once_core_holds_another() {
-    let title = common::unique_title("mockapp-focus-queued");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus btn1");
-    let button = client.focused();
-    let _ = outpost.uia_focus(&button);
-    let (judged, _) = outpost.listener_read(&button);
-    assert!(
-        matches!(judged, Judged::Dropped(_)),
-        "a repeat of the focus Core holds is dropped, not {judged:?}"
-    );
-    app.send("set-focus slider1");
-    let slider = client.focused();
-    let _ = outpost.listener_fact(&slider);
-    outpost.listener_core_refuses_last_read();
-    app.send("set-focus btn1");
-    let (judged, _) = outpost.listener_read(&button);
-    assert!(
-        matches!(judged, Judged::Dropped(_)),
-        "after a focus Core refused, a repeat is dropped, not {judged:?}"
-    );
-    outpost.listener_core_focus_elsewhere();
-    let (judged, _) = outpost.listener_read(&button);
-    assert!(
-        matches!(judged, Judged::Read(_)),
-        "once Core holds another focus, the focus is read, not {judged:?}"
-    );
-
-    drop(outpost);
-    app.quit();
-}
-
-/// NVDA keeps one last queued focus for every application and backend
-/// (`lastQueuedFocusObject`), and its UIA duplicate test compares with it
-/// only while it is a UIA object: a UIA focus repeated on the element that
-/// still has the keyboard focus is dropped, and once another
-/// application's MSAA focus has been queued in between, which Core tells
-/// the listener, it is read in full.
-fn a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus() {
-    let title = common::unique_title("mockapp-uia-after-msaa");
-    let mut uia_app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let uia_outpost = OutpostUnderTest::new(&uia_app);
-    let title = common::unique_title("mockapp-msaa-before-uia");
-    let mut msaa_app = common::spawn("small.json", "msaa", &title);
-    let msaa_hwnd = common::find_window(&title);
-    common::apply(&mut msaa_app, msaa_hwnd, "set-focus btn1");
-    let msaa_outpost = OutpostUnderTest::new(&msaa_app);
-
-    uia_app.send("set-focus btn1");
-    let button = client.focused();
-    let _ = uia_outpost.uia_focus(&button);
-    let (judged, _) = uia_outpost.listener_read(&button);
-    assert!(
-        matches!(judged, Judged::Dropped(_)),
-        "a repeat with nothing between is dropped, not {judged:?}"
-    );
-
-    let reported = msaa_outpost.msaa_focus(msaa_hwnd, 1);
-    assert_eq!(reported.node.role, Role::Button);
-    uia_outpost.listener_core_focus_elsewhere();
-    let (judged, _) = uia_outpost.listener_read(&button);
-    assert!(
-        matches!(judged, Judged::Read(_)),
-        "after another application's MSAA focus, the focus is read, not {judged:?}"
-    );
-
-    drop(msaa_outpost);
-    drop(uia_outpost);
-    msaa_app.quit();
-    uia_app.quit();
 }
 
 /// NVDA's MSAA duplicate test compares with the last focus queued from any
@@ -2246,15 +2163,15 @@ fn the_idle_answer_waits_for_the_wait_for_a_uia_focus() {
     app.quit();
 }
 
-/// A focus event repeated on the element the listener last accepted, which
-/// still has the keyboard focus, is dropped before anything of it is read,
-/// as NVDA's duplicate rule drops it (`docs/design/focus-pipeline.md`,
-/// section 16.3): the listener makes three calls, the windowless sender's
-/// nearest window for NVDA's native check, which comes first (section 18),
-/// the comparison of the sender with that element, and the element's
-/// keyboard focus, and the outpost says nothing. Once another focus has been accepted in between,
-/// the same element's focus is read and reported again.
-fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
+/// A focus event repeated on the element the listener last read, which
+/// still has the keyboard focus, is read in full and reported, and Core
+/// judges the repeat (`docs/design/ownership-one-judge.md`, "Repeats"):
+/// the listener makes five calls, the windowless sender's nearest window
+/// for NVDA's native check, the sender's keyboard focus, and the read,
+/// whose runtime id is its last read's: whether that element still has
+/// the keyboard focus, the sender's cache, and one step up to its known
+/// parent. The outpost reports the same node again.
+fn a_repeated_focus_on_the_still_focused_element_is_read_in_full() {
     let title = common::unique_title("mockapp-repeated-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -2263,51 +2180,18 @@ fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
     app.send("set-focus btn1");
     let button = outpost.uia_focus(&client.focused());
     let (judged, calls) = outpost.listener_read(&client.focused());
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener read a repeated focus: {judged:?}");
+    let Judged::Read(_) = &judged else {
+        panic!("the listener did not read a repeated focus: {judged:?}");
     };
     assert_eq!(
-        reason,
-        "a repeat of the last focus, which still has the keyboard focus"
-    );
-    assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (3, 0, 0),
-        "the nearest window, the comparison, and the keyboard focus read, and nothing else"
+        (5, 0, 0),
+        "the nearest window, the keyboard focus, and the read"
     );
-    outpost.deliver(Judged::Dropped(reason).into_fact(0, FocusEvent::Focus, None));
-    outpost.settled();
-
-    app.send("set-focus slider1");
-    let slider = outpost.uia_focus(&client.focused());
-    assert_eq!(slider.node.name.as_deref(), Some("Level"));
-    app.send("set-focus btn1");
-    let again = outpost.uia_focus(&client.focused());
+    let again = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
     assert_eq!(
         (again.node.id, again.node.name.as_deref()),
         (button.node.id, Some("Original Name"))
-    );
-
-    drop(outpost);
-    app.quit();
-}
-
-/// A focus the listener read that Core has not judged yet is no repeat's
-/// evidence (decision D14, "Where the rules run"): Core may yet refuse it,
-/// so a second event on the same element, still focused, is read again,
-/// with no comparison made, and Core's own duplicate rule then drops it.
-fn a_focus_waiting_for_core_s_judgement_is_no_repeat() {
-    let title = common::unique_title("mockapp-repeat-unjudged");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus btn1");
-    let _ = outpost.listener_fact(&client.focused());
-    let (judged, _) = outpost.listener_read(&client.focused());
-    assert!(
-        matches!(judged, Judged::Read(_)),
-        "a focus waiting for Core's judgement is read again, not {judged:?}"
     );
 
     drop(outpost);
@@ -2393,14 +2277,15 @@ fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
 
 /// A UIA menu opening whose sender is not the current focus goes through
 /// NVDA's native check, its windowless sender's nearest window read: five
-/// calls, the comparison with the current focus, the nearest window, the
-/// sender's keyboard focus, and the read's two, its cache and one step up
-/// to its known parent. Once Core has queued a focus the listener did not
-/// accept, as an MSAA focus, the current focus is no UIA element the
-/// listener holds, as NVDA's focus object is then no UIA object, and
-/// nothing is compared: five calls, the read now also asking whether the
-/// slider it read just before, under the same runtime id, still has the
-/// keyboard focus.
+/// calls, the comparison with the current focus, the reading thread's own
+/// last read, the nearest window, the sender's keyboard focus, and the
+/// read's two, its cache and one step up to its known parent. Once the
+/// user has moved away from the application since that read, as another
+/// application's focus queued does, the last read is not current, as
+/// NVDA's focus object is then another application's, and nothing is
+/// compared: five calls, the read now also asking whether the slider it
+/// read just before, under the same runtime id, still has the keyboard
+/// focus.
 fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     let title = common::unique_title("mockapp-menu-opening-other");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -2422,7 +2307,7 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
         "the comparison, the nearest window, the keyboard focus, and the read"
     );
 
-    outpost.listener_core_focus_elsewhere();
+    outpost.listener_moved_away();
     let (judged, calls) = outpost.listener_read_as(&slider, FocusEvent::MenuOpened);
     let Judged::Read(read) = judged else {
         panic!("the listener did not read the menu opening: {judged:?}");
@@ -2660,10 +2545,9 @@ fn a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window(
 /// A focus on a menu item that no pattern makes checkable reads its legacy
 /// MSAA state, where a Windows Forms menu item says it is checked, with
 /// one live read after the focus's classic read, made for an element the
-/// read maps to a menu item: seven calls, the nearest window, the
-/// comparison, the keyboard focus, the read's three (the item's cache, and
-/// steps up to the menu and to the window the focus before had), and the
-/// state.
+/// read maps to a menu item: six calls, the nearest window, the keyboard
+/// focus, the read's three (the item's cache, and steps up to the menu and
+/// to the window the focus before had), and the state.
 fn a_menu_items_legacy_state_is_read_with_its_focus() {
     let title = common::unique_title("mockapp-menu-item-focus");
     let mut app = common::spawn("modal_owner.json", "uia", &title);
@@ -2684,8 +2568,8 @@ fn a_menu_items_legacy_state_is_read_with_its_focus() {
             reported.calls.msaa,
             reported.calls.window_messages
         ),
-        (7, 0, 0),
-        "the nearest window, the comparison, the keyboard focus, the read, and the legacy state"
+        (6, 0, 0),
+        "the nearest window, the keyboard focus, the read, and the legacy state"
     );
 
     drop(outpost);
@@ -4447,14 +4331,6 @@ fn main() {
             an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
         ),
         (
-            "a_focus_is_no_repeat_once_core_holds_another",
-            a_focus_is_no_repeat_once_core_holds_another,
-        ),
-        (
-            "a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus",
-            a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus,
-        ),
-        (
             "a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus",
             a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus,
         ),
@@ -4603,12 +4479,8 @@ fn main() {
             a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost,
         ),
         (
-            "a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read",
-            a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read,
-        ),
-        (
-            "a_focus_waiting_for_core_s_judgement_is_no_repeat",
-            a_focus_waiting_for_core_s_judgement_is_no_repeat,
+            "a_repeated_focus_on_the_still_focused_element_is_read_in_full",
+            a_repeated_focus_on_the_still_focused_element_is_read_in_full,
         ),
         (
             "a_foreground_event_for_a_window_read_through_uia_is_dropped",

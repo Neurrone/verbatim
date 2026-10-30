@@ -152,8 +152,7 @@ use verbatim_uia::{
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
-    Arrival, FocusEvent, FocusReader, HeldElements, Judged, Meta, READ_DEADLINE, Readers, Reading,
-    WatchedRead,
+    FocusEvent, FocusReader, Judged, Meta, READ_DEADLINE, Readers, Reading, WatchedRead, arrival_of,
 };
 use crate::foreground::{ForegroundWatch, Front, Step};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
@@ -162,6 +161,7 @@ use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
 };
+use crate::read_schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
 use crate::supervisor::IgnoredProcesses;
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
@@ -193,8 +193,9 @@ struct Outgoing {
     clock: Clock,
     /// The end of a menu or of the Alt+Tab switcher waiting for its grace.
     menu_end: Arc<MenuEnd>,
-    /// The threadpool timer that ends the grace.
-    grace: GraceTimer,
+    /// The threadpool timer that ends the grace, kept until the listener
+    /// is dropped, which closes it.
+    _grace: GraceTimer,
 }
 
 /// The clock the listener's stamps are read from: the shared clock,
@@ -363,7 +364,11 @@ impl Backlog for Waiting {
 /// still be dropped or fail to read, so Core, which knows which focus it
 /// applied, decides, and every end is told.
 struct MenuEnd {
-    waiting: Mutex<Grace>,
+    /// What waits for the grace, a pure transition
+    /// ([`GraceState::step`]).
+    waiting: Mutex<GraceState>,
+    /// The time the grace's microseconds count from.
+    origin: Instant,
     sender: Sender<Waiting>,
     /// The timer that ends the grace, set once it is made, which the
     /// callback sets again when it runs before the end's grace is over.
@@ -375,61 +380,51 @@ struct TimerHandle(PTP_TIMER);
 
 // SAFETY: a threadpool timer may be set from any thread, its own callback
 // included; the handle stays open until `GraceTimer::drop`, which stops
-// the callback setting it first (`Grace::closed`).
+// the callback setting it first (`GraceInput::Close`).
 unsafe impl Send for TimerHandle {}
 // SAFETY: as above.
 unsafe impl Sync for TimerHandle {}
 
-/// What waits for a menu end's grace to pass.
-#[derive(Default)]
-struct Grace {
-    /// The end, when it ended, its stamps, and when its grace is over.
-    end: Option<(u64, EventTiming, Instant)>,
-    /// The idle barrier's rounds answered once the end is sent, behind it:
-    /// the end is work the listener still owes Core.
-    answers: Vec<u64>,
-    /// Whether the timer is being closed, so the callback sets it no more.
-    closed: bool,
-}
-
 impl MenuEnd {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Grace> {
-        self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Now, in the grace's microseconds.
+    fn now(&self) -> u64 {
+        u64::try_from(self.origin.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
 
-    /// The grace has passed: the end waiting is sent, behind every fact
-    /// waiting, and then the idle barrier's answers that waited for it.
-    /// Sent under the grace's lock, so no answer can pass the end. A
-    /// callback that runs before the end's grace is over, one of a grace an
-    /// earlier end began that took the lock only once a newer end had come,
-    /// or a timer that fired a little early, sends nothing and sets the
-    /// timer again for the rest of the grace.
-    fn grace_ended(&self) {
-        let mut grace = self.lock();
-        if let Some((_, _, over)) = grace.end {
-            let now = Instant::now();
-            if now < over {
-                if !grace.closed
-                    && let Some(timer) = self.timer.get()
-                {
-                    set_timer(timer.0, over - now);
-                }
-                return;
-            }
-        }
-        if let Some((ended_at_us, timing, _)) = grace.end.take() {
-            sent(
-                &self
-                    .sender
-                    .send(Sent::MenuEnd(OutpostToSupervisor::MenuOrSwitchEnded {
+    /// Steps the grace with `input` and applies its effects, under the
+    /// grace's lock, so no answer can pass the end: the end is sent behind
+    /// every fact waiting, then the idle barrier's answers that waited for
+    /// it, and the timer is set when the step says so.
+    fn step(&self, input: GraceInput) {
+        let mut grace = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        for effect in grace.step(input, self.now()) {
+            match effect {
+                GraceEffect::SendEnd {
+                    ended_at_us,
+                    timing,
+                } => sent(&self.sender.send(Sent::MenuEnd(
+                    OutpostToSupervisor::MenuOrSwitchEnded {
                         ended_at_us,
                         timing,
-                    })),
-            );
+                    },
+                ))),
+                GraceEffect::SendIdleAnswer(round) => {
+                    sent(&self.sender.send(Sent::IdleAnswer(round)));
+                }
+                GraceEffect::SetTimer(after) => {
+                    if let Some(timer) = self.timer.get() {
+                        set_timer(timer.0, Duration::from_micros(after));
+                    }
+                }
+            }
         }
-        for round in grace.answers.drain(..) {
-            sent(&self.sender.send(Sent::IdleAnswer(round)));
-        }
+    }
+
+    /// The grace's timer went off: the end is sent once its grace is over,
+    /// and a callback that runs before then sets the timer again for the
+    /// rest of the grace.
+    fn grace_ended(&self) {
+        self.step(GraceInput::Fired);
     }
 }
 
@@ -477,12 +472,6 @@ impl GraceTimer {
             }
         }
     }
-
-    /// Ends the grace [`MENU_END_GRACE`] from now, in place of any grace
-    /// already running.
-    fn arm(&self) {
-        set_timer(self.timer, MENU_END_GRACE);
-    }
 }
 
 /// The [`MenuEnd`] a [`GraceTimer`] was made with.
@@ -511,7 +500,7 @@ impl Drop for GraceTimer {
         // The callback sets the timer no more; then the timer is stopped,
         // its callbacks waited for or cancelled, and only then closed and
         // its end released.
-        end_of(self.end).lock().closed = true;
+        end_of(self.end).step(GraceInput::Close);
         // SAFETY: the timer is open.
         unsafe { SetThreadpoolTimer(self.timer, None, 0, None) };
         // SAFETY: as above.
@@ -545,7 +534,8 @@ impl Outgoing {
     /// Returns the error of creating the menu end's grace timer.
     fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
         let menu_end = Arc::new(MenuEnd {
-            waiting: Mutex::new(Grace::default()),
+            waiting: Mutex::new(GraceState::default()),
+            origin: Instant::now(),
             sender: sender.clone(),
             timer: OnceLock::new(),
         });
@@ -557,7 +547,7 @@ impl Outgoing {
             uia_installed: AtomicBool::new(false),
             clock: Clock::default(),
             menu_end,
-            grace,
+            _grace: grace,
         })
     }
 
@@ -721,31 +711,30 @@ impl Outgoing {
     /// listener's callback observed at `observed_at_us`, and starts its
     /// grace, which a later end starts again.
     fn menu_or_switch_ended(&self, observed_at_us: u64) {
-        self.note_menu_end(observed_at_us, Instant::now() + MENU_END_GRACE);
-        self.grace.arm();
+        self.note_menu_end(observed_at_us, MENU_END_GRACE);
     }
 
     /// Notes that a menu or the Alt+Tab switcher closed, observed at
-    /// `observed_at_us`, to be sent once its grace is over, at `over`.
-    fn note_menu_end(&self, observed_at_us: u64, over: Instant) {
+    /// `observed_at_us`, to be sent once its grace, `grace` from now, is
+    /// over, and sets the timer for it, in place of any grace running.
+    fn note_menu_end(&self, observed_at_us: u64, grace: Duration) {
         let timing = EventTiming {
             observed_at_us,
             listener_handled_at_us: self.now(),
             ..EventTiming::default()
         };
-        self.menu_end.lock().end = Some((observed_at_us, timing, over));
+        self.menu_end.step(GraceInput::Ended {
+            ended_at_us: observed_at_us,
+            timing,
+            grace: u64::try_from(grace.as_micros()).unwrap_or(u64::MAX),
+        });
     }
 
     /// Answers the idle barrier's round `round`, behind every fact sent
     /// before, never merged and never ahead as urgent; behind a menu end
     /// still in its grace too, once that is sent.
     fn idle_answer(&self, round: u64) {
-        let mut grace = self.menu_end.lock();
-        if grace.end.is_some() {
-            grace.answers.push(round);
-        } else {
-            sent(&self.sender.send(Sent::IdleAnswer(round)));
-        }
+        self.menu_end.step(GraceInput::IdleAnswer(round));
     }
 
     /// Now, on the clock the listener's stamps are read from.
@@ -776,9 +765,6 @@ type InstallSubscriptions =
 struct Listener {
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
-    /// The elements of the focuses the reading threads accepted, by how
-    /// Core judged them ([`SupervisorToOutpost::CoreFocus`]).
-    held_elements: HeldElements,
     /// The thread making the desktop-wide UIA registration, which returns
     /// it, or `None` when it failed ([`Listener::start`]).
     registering: JoinHandle<Option<Registration>>,
@@ -793,9 +779,6 @@ struct Listener {
 /// sent to its application's outpost behind its marker.
 struct UiaFocusReading {
     outgoing: Arc<Outgoing>,
-    /// The elements of the focuses the reading threads accepted, by how
-    /// Core judged them, which they share.
-    held_elements: HeldElements,
     /// Whether a backend override forcing UIA holds, per application, each
     /// shared with that application's readers
     /// ([`SupervisorToOutpost::SetBackendOverride`]).
@@ -831,7 +814,7 @@ impl Reading for UiaFocusReading {
     type Reader = FocusReader;
 
     fn reader(&self, pid: Pid) -> Option<FocusReader> {
-        match FocusReader::new(self.held_elements.clone()) {
+        match FocusReader::new() {
             Ok(mut reader) => {
                 reader.share_forced_uia(self.forced_uia(pid));
                 Some(reader)
@@ -848,7 +831,7 @@ impl Reading for UiaFocusReading {
         reader: Option<&mut FocusReader>,
         meta: Meta,
         (element, _, _, kind, fact): Self::Job,
-        watched: &WatchedRead,
+        (watched, queue): (&WatchedRead, QueuePlace),
     ) -> Judged {
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
@@ -857,13 +840,7 @@ impl Reading for UiaFocusReading {
             Ok(sender) => reader.judge_watched(
                 &sender,
                 (kind, fact),
-                (
-                    Arrival {
-                        trace: meta.trace,
-                        observed_at_us: meta.timing.observed_at_us,
-                    },
-                    watched.clone(),
-                ),
+                (arrival_of(meta, queue), watched.clone()),
             ),
             Err(_) => Judged::Dropped("its element could not be resolved"),
         }
@@ -883,8 +860,8 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn abandoned(&self, meta: &Meta) {
-        self.held_elements.abandoned(meta.trace);
+    fn forget_last(&self, reader: &mut FocusReader) {
+        reader.forget_last();
     }
 
     fn kind(&self, (_, _, _, kind, _): &Self::Job) -> FocusEvent {
@@ -988,11 +965,9 @@ impl Listener {
         for &(pid, outpost) in hooks_in {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
-        let held_elements = HeldElements::default();
         let readers = Arc::new(Readers::new(
             UiaFocusReading {
                 outgoing: Arc::clone(&outgoing),
-                held_elements: held_elements.clone(),
                 forced_uia: Mutex::default(),
             },
             READ_DEADLINE,
@@ -1039,14 +1014,20 @@ impl Listener {
                     // Forwarded first, so the event's observation time is
                     // taken before anything else the callback does; its
                     // window's class, read to route it, tells a console.
-                    let console = forward_msaa_event(&outgoing, event);
+                    let (console, focus_of) = forward_msaa_event(&outgoing, event);
                     if let Some(front) = foreground {
                         let step = watch.borrow_mut().foreground(Front { console, ..front });
                         foreground_step(&outgoing, step);
                         // A foreground change is the evidence that the
                         // user may have moved on from a slow read's window
-                        // (`focus_read`'s watchdog).
-                        foreground_readers.foreground_changed();
+                        // (`focus_read`'s watchdog), and moves away from a
+                        // reading thread's last read of another window.
+                        foreground_readers.foreground_changed(front.window);
+                    }
+                    // Another process's MSAA focus moves away from every
+                    // other application's last read, for menu currentness.
+                    if let Some(pid) = focus_of {
+                        foreground_readers.msaa_focus(pid);
                     }
                 }),
                 // The idle barrier's query, its round in the first word:
@@ -1078,7 +1059,6 @@ impl Listener {
         Ok(Self {
             outgoing,
             readers,
-            held_elements,
             registering,
             nudger,
             _event_thread: event_thread,
@@ -1102,7 +1082,6 @@ impl Listener {
         let Self {
             outgoing,
             readers,
-            held_elements: _,
             registering,
             nudger: _,
             _event_thread: event_thread,
@@ -1505,9 +1484,10 @@ fn install_desktop_subscriptions(
 /// ([`Outgoing::fact`]). Drops a null window or a pid-zero owner; the raw
 /// object address is forwarded untouched, and the app outpost does the
 /// acquisition. Returns whether the event's window is a console host
-/// window, by the class read to route it; `false` for an event dropped
-/// before that read, whose window is null or has no owner.
-fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
+/// window, by the class read to route it, `false` for an event dropped
+/// before that read, whose window is null or has no owner; and, for an MSAA
+/// focus routed to a process, that process.
+fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid>) {
     // The observation, before the callback's local reads, which the
     // listener's handling stage then holds.
     let observed_at_us = outgoing.now();
@@ -1525,7 +1505,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
         // the focus of whichever application is then in front. NVDA accepts
         // these from any window, even an invalid one.
         outgoing.menu_or_switch_ended(observed_at_us);
-        return false;
+        return (false, None);
     }
     // NVDA takes a null window as the desktop window
     // (`internalWinEventHandler.py` 113 to 129), whose process is the
@@ -1533,23 +1513,23 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
     // (`shouldAllowIAccessibleFocusEvent` on the desktop window's object)
     // and Verbatim cannot open: dropping it here is the same outcome.
     if hwnd == 0 {
-        return false;
+        return (false, None);
     }
     let owner = window_pid(hwnd);
     if owner == 0 {
-        return false;
+        return (false, None);
     }
     let class = window_class_name(hwnd);
     let console = class == CONSOLE_WINDOW_CLASS;
     let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)) else {
         log_unread_console_once(hwnd, thread);
-        return console;
+        return (console, None);
     };
     if pid != owner {
         if outgoing.ignored.contains(Pid(owner)) {
             // The console of a process Verbatim ignores, whose events were
             // dropped by its owner before they went to its console host.
-            return console;
+            return (console, None);
         }
         tracing::debug!(
             hwnd,
@@ -1563,7 +1543,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
     // reaches here is a fact: the console's and the shell's foreground
     // events are handled before this.
     let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
-        return console;
+        return (console, None);
     };
     outgoing.fact(
         Pid(pid),
@@ -1572,7 +1552,9 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
         Some(WinEventStamp { thread, time }),
         observed_at_us,
     );
-    console
+    let focus_of =
+        (kind == WinEventKind::Focus && !outgoing.ignored.contains(Pid(pid))).then_some(Pid(pid));
+    (console, focus_of)
 }
 
 /// The listener's nudge that starts the watch of the window in front
@@ -2270,7 +2252,7 @@ mod tests {
             1_000,
         );
         outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        outgoing.note_menu_end(1_000, Instant::now());
+        outgoing.note_menu_end(1_000, Duration::ZERO);
         // As the timer's callback does when the grace ends.
         outgoing.menu_end.grace_ended();
         outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
@@ -2314,7 +2296,7 @@ mod tests {
             parked_count: 0,
             written_at_us: 0,
         });
-        outgoing.note_menu_end(3_000, Instant::now());
+        outgoing.note_menu_end(3_000, Duration::ZERO);
         outgoing.idle_answer(2);
         outgoing.fact(Pid(6), msaa_focus(), None, None, 3_000);
         // As the timer's callback does when the grace ends.

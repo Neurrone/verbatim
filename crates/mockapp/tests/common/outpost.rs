@@ -83,6 +83,11 @@
 //! released until a test delivers Core's list of the nodes it holds, as
 //! verbatim.exe writes it after a focus report
 //! ([`OutpostUnderTest::release`], [`OutpostUnderTest::release_all`]).
+//!
+//! The test stands in for the listener's read scheduler as well: each read
+//! is the next event queued, and a test says when the user moved away from
+//! mockapp's application since the last read, for a menu opening's
+//! currentness ([`OutpostUnderTest::listener_moved_away`]).
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
@@ -94,7 +99,7 @@ use verbatim_model::{
     CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowFacts, WindowHandle,
 };
-use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, HeldElements, Judged};
+use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged};
 use verbatim_outpost::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
     QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
@@ -485,9 +490,12 @@ pub struct OutpostUnderTest {
     /// The outpost's failed cached reads when last taken
     /// ([`Self::take_failed_reads`]).
     failed_reads_taken: Cell<u32>,
-    /// The elements of the focuses the listener's reader accepted, by how
-    /// Core judged them.
-    held_elements: HeldElements,
+    /// How many events the stand-in for the listener's scheduler has
+    /// queued: each read is the next.
+    listener_queued: Cell<u64>,
+    /// The place of the newest event that moved away from mockapp's
+    /// application, as the listener's scheduler records it.
+    listener_left_at: Cell<u64>,
     /// The focus line the stand-in for Core holds ([`Self::core_judges`]).
     core: RefCell<Option<CoreHolds>>,
     /// The position of the last message read that carries nodes, as Core
@@ -679,9 +687,7 @@ impl OutpostUnderTest {
             // The test may have finished with what the outpost hears.
             let _ = heard_tx.send(event);
         }));
-        let held_elements = HeldElements::default();
-        let mut reader =
-            FocusReader::new(held_elements.clone()).expect("a UIA client for the listener's reads");
+        let mut reader = FocusReader::new().expect("a UIA client for the listener's reads");
         // The listener's acceptance test reads the same foreground window.
         let listener_foreground = Arc::clone(&foreground);
         reader.set_foreground_reader(Arc::new(move || {
@@ -704,7 +710,8 @@ impl OutpostUnderTest {
             system_time,
             foreground,
             reader: RefCell::new(reader),
-            held_elements,
+            listener_queued: Cell::new(0),
+            listener_left_at: Cell::new(0),
             failed_reads_taken: Cell::new(0),
             core: RefCell::new(None),
             position: Cell::new(0),
@@ -1153,10 +1160,7 @@ impl OutpostUnderTest {
     ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
-        let arrival = Arrival {
-            trace: TraceId::mint(),
-            observed_at_us: self.observed_now(),
-        };
+        let arrival = self.listener_arrival();
         self.last_read.set(Some(arrival.trace));
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
@@ -1168,10 +1172,7 @@ impl OutpostUnderTest {
     /// its read, so its walk's bound, measured from its observation, comes
     /// that much sooner.
     pub fn listener_read_after(&self, element: &Cached<ListenerEvent>, waited: Duration) -> Judged {
-        let arrival = Arrival {
-            trace: TraceId::mint(),
-            observed_at_us: self.observed_now(),
-        };
+        let arrival = self.listener_arrival();
         self.last_read.set(Some(arrival.trace));
         self.pass_time(waited);
         self.reader
@@ -1179,22 +1180,26 @@ impl OutpostUnderTest {
             .read(element, FocusEvent::Focus, arrival)
     }
 
-    /// Tells the listener's reader that Core judged the focus it last read
-    /// and refused it, holding the focus it held before, as Core refuses a
-    /// shell window that only stages a switch.
-    pub fn listener_core_refuses_last_read(&self) {
-        let judged = self.last_read.take().expect("a focus the listener read");
-        let held = self.core.borrow().as_ref().map(|core| core.trace);
-        self.held_elements
-            .core_focus(Some(judged), held.map(|trace| (trace, true)));
+    /// The next event the stand-in for the listener's scheduler queues,
+    /// observed now: its place, and where mockapp's application was last
+    /// moved away from.
+    fn listener_arrival(&self) -> Arrival {
+        let place = self.listener_queued.get() + 1;
+        self.listener_queued.set(place);
+        Arrival {
+            trace: TraceId::mint(),
+            observed_at_us: self.observed_now(),
+            place,
+            left_at: self.listener_left_at.get(),
+        }
     }
 
-    /// Tells the listener's reader that Core holds a focus no read of the
-    /// listener's gave it, as an MSAA focus or a foreground change, as the
-    /// supervisor tells the listener (`SupervisorToOutpost::CoreFocus`).
-    pub fn listener_core_focus_elsewhere(&self) {
-        self.held_elements
-            .core_focus(None, Some((TraceId::mint(), true)));
+    /// Has the user moved away from mockapp's application since the
+    /// listener's last read, as another application's focus queued does:
+    /// that read is no longer current for a later menu opening
+    /// (`QueuePlace::current_since` in `verbatim_outpost`'s read schedule).
+    pub fn listener_moved_away(&self) {
+        self.listener_left_at.set(self.listener_queued.get());
     }
 
     /// The fact the focus listener sends for a UIA focus event on `element`

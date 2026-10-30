@@ -1274,21 +1274,20 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// focus and the nearest window it has just read
 /// (`docs/design/listener-without-connections.md`, section 3, step 8): the
 /// refreshed cache and one step per ancestor, so a steady-state focus
-/// costs 5 calls by both of the outpost's paths, where the listener's one
-/// remote operation made 4 and its classic read with the two repeated
-/// calls 7.
+/// costs 4 calls by both of the outpost's paths.
 ///
-/// Since the listener judges a repeat and tests acceptance before it reads
-/// a focus (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3), each
-/// focus costs, before its read, the nearest window of the windowless
-/// element (`NormalizeElementBuildCache`, one call), and each focus after
-/// the first the comparison with the last focus accepted
-/// (`CompareElements`, one call, which mockapp answers nothing for). The
-/// nearest window cost mockapp, for a button or the list, 1
-/// `WM_GETOBJECT`, 14 `ProviderOptions`, 6 `GetPropertyValue`, 4
-/// `HostRawElementProvider`, 5 `Navigate`, and 1 `FragmentRoot`, and for
-/// the list's item 1, 10, 4, 3, 3, and 1: so the cold focus rose by one
-/// call and the others by two.
+/// Since the listener tests acceptance before it reads a focus
+/// (`docs/design/focus-pipeline.md`, section 16.2), each focus costs,
+/// before its read, the nearest window of the windowless element
+/// (`NormalizeElementBuildCache`, one call). The nearest window cost
+/// mockapp, for a button or the list, 1 `WM_GETOBJECT`, 14
+/// `ProviderOptions`, 6 `GetPropertyValue`, 4 `HostRawElementProvider`, 5
+/// `Navigate`, and 1 `FragmentRoot`, and for the list's item 1, 10, 4, 3,
+/// 3, and 1. The listener compares a focus with no earlier focus: Core
+/// judges repeats (`docs/design/ownership-one-judge.md`, "Repeats"), which
+/// took the comparison with the last focus accepted (`CompareElements`,
+/// one call, which mockapp answers nothing for) out of every focus after
+/// the first.
 ///
 /// The listener makes no probe (`docs/design/focus-pipeline-rework.md`,
 /// "Who owns each duplicated fact", the verdicts): the outpost alone
@@ -1317,7 +1316,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                 ],
             ),
             steady: (
-                calls(5, 0, 0),
+                calls(4, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 10),
@@ -1333,7 +1332,7 @@ fn uia_focus_changes_cost_exactly_remote() {
             ),
             // The list's first selected item through `SelectionPattern2`.
             into_list: (
-                calls(7, 0, 0),
+                calls(6, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 11),
@@ -1350,7 +1349,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                 ],
             ),
             next_item: (
-                calls(5, 0, 0),
+                calls(4, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 10),
@@ -1389,7 +1388,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                 ],
             ),
             steady: (
-                calls(5, 0, 0),
+                calls(4, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 10),
@@ -1407,7 +1406,7 @@ fn uia_focus_changes_cost_exactly_classic() {
             // `FirstSelectedItem`, fetched with the `Selection` pattern in
             // one call, and its cache, one more.
             into_list: (
-                calls(7, 0, 0),
+                calls(6, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 11),
@@ -1424,7 +1423,7 @@ fn uia_focus_changes_cost_exactly_classic() {
                 ],
             ),
             next_item: (
-                calls(5, 0, 0),
+                calls(4, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 10),
@@ -1443,27 +1442,22 @@ fn uia_focus_changes_cost_exactly_classic() {
     );
 }
 
-/// A focus event repeated on the element the listener last accepted, which
-/// still has the keyboard focus, is dropped before anything of it is read,
-/// as NVDA drops it (`docs/design/focus-pipeline.md`, section 16.3): the
-/// listener first finds the windowless sender's nearest window, for NVDA's
-/// native check, which comes before the duplicate rule (section 18; one
-/// call, `NormalizeElementBuildCache`, the window's verdict already kept),
-/// then compares the sender with that element (`CompareElements`) and
-/// reads the earlier element's keyboard focus, three calls in all, and the
-/// outpost, handed the drop, makes none and says nothing, so the
-/// focus-following subscription is not moved either (section 17). The
-/// comparison costs mockapp nothing; the nearest window, 1 `WM_GETOBJECT`,
-/// 14 `ProviderOptions`, 6 `GetPropertyValue`, 4 `HostRawElementProvider`,
-/// 5 `Navigate`, and 1 `FragmentRoot`; the keyboard focus read, 1
-/// `GetPropertyValue`, 1 `HostRawElementProvider`, and 1 `FragmentRoot`.
-/// Before the listener
-/// judged repeats, the repeat was read in full, one remote operation
-/// filling the sender's cache afresh and walking to its first known
-/// ancestor, which cost mockapp 54 `GetPropertyValue`, 22
-/// `GetPatternProvider`, 30 `ProviderOptions`, 14 `HostRawElementProvider`,
-/// 9 `Navigate`, 7 `GetRuntimeId`, 7 `FragmentRoot`, 2 `BoundingRectangle`,
-/// and 1 `WM_GETOBJECT`, and was then dropped by Core as a duplicate.
+/// A focus event repeated on the element the listener last read, which
+/// still has the keyboard focus, is read in full, and Core judges the
+/// repeat (`docs/design/ownership-one-judge.md`, "Repeats"): the listener
+/// finds the windowless sender's nearest window, for NVDA's native check
+/// (one call, `NormalizeElementBuildCache`, the window's verdict already
+/// kept), reads the sender's keyboard focus, then reads it as any focus,
+/// asking first whether the element it read last under the same runtime id
+/// still has the keyboard focus, then the sender's cache and one step up to
+/// its known parent: five calls. They cost mockapp 1 `WM_GETOBJECT`, 32
+/// `ProviderOptions`, 25 `GetPatternProvider`, 52 `GetPropertyValue`, 15
+/// `HostRawElementProvider`, 7 `Navigate`, 5 `GetRuntimeId`, 1
+/// `BoundingRectangle` and 11 `FragmentRoot`. Before, the listener dropped
+/// the repeat after three calls, the nearest window, the comparison with
+/// the focus Core held and that element's keyboard focus, which cost
+/// mockapp 1 `WM_GETOBJECT`, 14 `ProviderOptions`, 7 `GetPropertyValue`, 5
+/// `HostRawElementProvider`, 5 `Navigate` and 2 `FragmentRoot`.
 fn uia_repeated_focus_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-repeated-focus");
     let mut app = common::spawn("counts.json", "uia", &title);
@@ -1476,17 +1470,9 @@ fn uia_repeated_focus_costs_exactly() {
     let focused = under_test.focused(hwnd);
     common::reset_hits(hwnd);
     let (judged, listener_calls) = outpost.listener_read(&focused);
-    let verbatim_outpost::focus_read::Judged::Dropped(reason) = judged else {
-        panic!("the listener read a repeated focus: {judged:?}");
+    let verbatim_outpost::focus_read::Judged::Read(_) = &judged else {
+        panic!("the listener did not read a repeated focus: {judged:?}");
     };
-    assert_eq!(
-        reason,
-        "a repeat of the last focus, which still has the keyboard focus"
-    );
-    outpost.deliver(
-        verbatim_outpost::focus_read::Judged::Dropped(reason).into_fact(0, FocusEvent::Focus, None),
-    );
-    outpost.settled();
     let cost = Cost {
         calls: listener_calls,
         hits: common::read_hits(hwnd),
@@ -1495,15 +1481,18 @@ fn uia_repeated_focus_costs_exactly() {
     ratchet.check(
         "UIA focus repeated on the element followed",
         &cost,
-        calls(3, 0, 0),
+        calls(5, 0, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
-            ("ProviderOptions", 14),
-            ("GetPropertyValue", 7),
-            ("HostRawElementProvider", 5),
-            ("Navigate", 5),
-            ("FragmentRoot", 2),
+            ("ProviderOptions", 32),
+            ("GetPatternProvider", 25),
+            ("GetPropertyValue", 52),
+            ("HostRawElementProvider", 15),
+            ("Navigate", 7),
+            ("GetRuntimeId", 5),
+            ("BoundingRectangle", 1),
+            ("FragmentRoot", 11),
         ],
     );
 
@@ -4770,7 +4759,7 @@ fn uia_combo_box_costs_exactly() {
         true,
         [
             (
-                calls(8, 0, 0),
+                calls(7, 0, 0),
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 65),
@@ -4803,7 +4792,7 @@ fn uia_combo_box_costs_exactly() {
         false,
         [
             (
-                calls(8, 0, 0),
+                calls(7, 0, 0),
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 64),
