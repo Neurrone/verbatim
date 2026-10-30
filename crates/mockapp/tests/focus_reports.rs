@@ -52,9 +52,8 @@ use verbatim_uia::{
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation2, UIA_ControllerForPropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_HelpTextPropertyId, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
-    UIA_ValueValuePropertyId,
+    IUIAutomation2, UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
 };
 use windows::core::Interface;
 
@@ -1071,152 +1070,6 @@ fn a_change_of_an_unreleased_older_focus_is_heard_for_its_node() {
     app.quit();
 }
 
-/// A change raised after a UIA focus event, which the outpost's own
-/// subscriptions bring, waits in the outpost behind the focus's marker
-/// until the listener's read takes its place, so the focus is reported
-/// first, as NVDA's UIA events pass in order through the one thread that
-/// judges them (`docs/design/focus-pipeline.md`, section 12.4). The button
-/// was the focus before, so its subscription hears its rename.
-fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
-    let title = common::unique_title("mockapp-marker-wait");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus btn1");
-    let button = client.focused();
-    let button = outpost.uia_focus(&button).node;
-
-    app.send("set-focus slider1");
-    let slider = client.focused();
-    let (read, _) = outpost.listener_read(&slider);
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 3 });
-    app.send("set-name btn1 Renamed");
-    outpost.heard(&[
-        Heard::UiaProperty(UIA_NamePropertyId.0),
-        Heard::Msaa(WinEventKind::NameChange),
-    ]);
-    outpost.deliver(read.into_fact(3, FocusEvent::Focus, None));
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
-            ..
-        } => assert_eq!(node.name.as_deref(), Some("Level")),
-        other => panic!("the outpost said {other:?}, not the slider's focus first"),
-    }
-    match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::PropertyChanged {
-                    node_id,
-                    change: PropertyChange::Name(name),
-                    child_count: None,
-                },
-            ..
-        } => assert_eq!((node_id, name.as_deref()), (button.id, Some("Renamed"))),
-        other => panic!("the outpost said {other:?}, not the button's new name"),
-    }
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
-/// A combo box opening into its list raises its expand state's change
-/// before its item's focus, but the change reaches the outpost through its
-/// own subscription to the combo box, and the focus through the listener,
-/// whose marker the outpost can take in first. The item is inside the
-/// combo box, the focus before, so the combo box's change queued behind
-/// the item's marker is planned ahead of the item's read, in the
-/// provider's order, as NVDA's one event queue sees it
-/// (`docs/design/focus-pipeline.md`, section 12.4): the outpost reports the
-/// combo box's states, then the item, and Core says "expanded", then the
-/// item, as NVDA does in Windows Settings. As the provider does, mockapp
-/// raises the change while the combo box has the keyboard focus and then
-/// moves the focus to the item; the test delivers the item's marker before
-/// the change is raised and its read after the change is heard, so the
-/// order the outpost takes them in is fixed.
-fn a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first() {
-    let title = common::unique_title("mockapp-expand-order");
-    let mut app = common::spawn("combo_box.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    let mut state = SrState::new();
-
-    app.send("set-focus hour");
-    outpost.deliver(outpost.listener_fact(&client.focused()));
-    let combo_box = focus_changed(outpost.next());
-    outpost.settled();
-    let NormalizedEvent::FocusChanged { node, .. } = &combo_box else {
-        unreachable!("a focus change");
-    };
-    let combo_box_id = node.id;
-    assert_eq!(
-        reduced(&mut state, combo_box).1,
-        [
-            vec![
-                SegmentContent::Label("Mockapp Combo Box Fixture".to_owned()),
-                SegmentContent::Role(Role::Window),
-            ],
-            vec![
-                SegmentContent::Label("Hour".to_owned()),
-                SegmentContent::Role(Role::ComboBox),
-                SegmentContent::Value("Nine".to_owned()),
-                SegmentContent::State(State::Collapsed),
-            ],
-        ]
-    );
-
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 3 });
-    // The whole state set, the keyboard focus still the combo box's.
-    app.send("set-states hour focused focusable expanded");
-    // UIA raises a state change `WinEvent` alongside the property change.
-    outpost.heard(&[
-        Heard::UiaProperty(UIA_ExpandCollapseExpandCollapseStatePropertyId.0),
-        Heard::Msaa(WinEventKind::StateChange),
-    ]);
-    app.send("set-focus nine");
-    let (read, _) = outpost.listener_read(&client.focused());
-    outpost.deliver(read.into_fact(3, FocusEvent::Focus, None));
-    let change = match outpost.next() {
-        OutpostToCore::Event { event, .. } => event,
-        other => panic!("the outpost said {other:?}, not the combo box's change"),
-    };
-    let NormalizedEvent::PropertyChanged {
-        node_id,
-        change: PropertyChange::States(states),
-        child_count: None,
-    } = &change
-    else {
-        panic!("the outpost said {change:?}, not the combo box's states first");
-    };
-    assert_eq!(
-        (*node_id, *states),
-        (
-            combo_box_id,
-            StateSet::from_iter([State::Focused, State::Focusable, State::Expanded])
-        )
-    );
-    let item = focus_changed(outpost.next());
-    outpost.settled();
-    let NormalizedEvent::FocusChanged { node, .. } = &item else {
-        unreachable!("a focus change");
-    };
-    assert_eq!(node.name.as_deref(), Some("Nine"));
-
-    assert_eq!(
-        reduced(&mut state, change).1,
-        [vec![SegmentContent::State(State::Expanded)]]
-    );
-    assert_eq!(
-        reduced(&mut state, item).1,
-        [vec![SegmentContent::Label("Nine".to_owned())]]
-    );
-
-    drop(outpost);
-    app.quit();
-}
-
 /// A value change the old focus raises after the focus has moved into it
 /// keeps its place behind the focus, though the outpost's subscription
 /// queues it between the focus's marker and its read: only the old
@@ -1414,41 +1267,6 @@ fn reduced(
         })
         .collect();
     (effects, spoken)
-}
-
-/// A `WinEvent` focus in a UIA window that no UIA focus follows, as UI
-/// Automation sometimes leaves a new process's focus events undelivered
-/// (`docs/design/listener-without-connections.md`, risk 2): the outpost,
-/// which dropped the copy for UIA, opens its gap record, and once a second
-/// has passed, its timer reaches the bound and it reads its application's
-/// focus itself and reports it with its ancestors (decision 11), once. The
-/// time is the test's, which nothing moves but the test.
-fn a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed() {
-    let title = common::unique_title("mockapp-unanswered-focus");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
-
-    app.send("set-focus btn1");
-    outpost.read_focus_as(client.focused().live().element());
-    winevent_focus(&outpost, hwnd);
-    outpost.settled();
-    outpost.pass_time(Duration::from_millis(999));
-    outpost.settled();
-
-    outpost.pass_time(Duration::from_millis(1));
-    outpost.settle();
-    let reported = outpost.reported_focus();
-    assert_eq!(
-        reported.chain(),
-        [Some("Mockapp Events Fixture"), Some("Original Name")]
-    );
-    outpost.pass_time(Duration::from_secs(1));
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
 }
 
 /// A `WinEvent` focus in a UIA window that its UIA focus follows is
@@ -1942,38 +1760,6 @@ fn an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict()
     app.quit();
 }
 
-/// The user's return within the bound, as a later `WinEvent` focus in the
-/// record's top-level window that the outpost drops for UIA, restamps the
-/// record, its bound unchanged: the read at the bound, a second from the
-/// first copy, is stamped with the return's copy, so Core's stale rule
-/// does not take it as older than the focus the user left for.
-fn a_return_within_the_bound_is_read_with_the_returns_stamp() {
-    let title = common::unique_title("mockapp-return-restamp");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
-
-    app.send("set-focus btn1");
-    outpost.read_focus_as(client.focused().live().element());
-    winevent_focus(&outpost, hwnd);
-    outpost.settled();
-    outpost.pass_time(Duration::from_millis(800));
-    let returned_at_us = outpost.observed_now();
-    winevent_focus_observed(&outpost, hwnd, returned_at_us);
-    outpost.settled();
-    outpost.pass_time(Duration::from_millis(200));
-    let message = outpost.next();
-    let OutpostToCore::Event { observed_at_us, .. } = &message else {
-        panic!("the outpost said {message:?}, not a focus change");
-    };
-    assert_eq!(*observed_at_us, returned_at_us, "the return's stamp");
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
 /// A foreground change into the record's top-level window that the outpost
 /// accepts restamps the record, at the point after its acceptance, front,
 /// repeat and readability tests and before its window's verdict, which
@@ -2008,30 +1794,6 @@ fn an_accepted_foreground_change_into_the_records_window_restamps_it() {
         *observed_at_us, returned_at_us,
         "the foreground change's stamp"
     );
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
-/// The gap record's timer is set when a `WinEvent` focus the outpost drops
-/// for UIA opens the record, and cancelled when the focus's UIA read
-/// answers it as its marker resolves.
-fn an_answered_record_cancels_its_timer() {
-    let title = common::unique_title("mockapp-gap-timer-cancelled");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
-
-    app.send("set-focus btn1");
-    winevent_focus(&outpost, hwnd);
-    outpost.settled();
-    assert!(outpost.gap_timer_set(), "the record opened");
-    let reported = outpost.uia_focus(&client.focused());
-    assert_eq!(reported.node.name.as_deref(), Some("Original Name"));
-    assert!(!outpost.gap_timer_set(), "the read answered the record");
-    outpost.pass_time(Duration::from_secs(1));
     outpost.settled();
 
     drop(outpost);
@@ -4210,10 +3972,6 @@ fn main() {
             a_protected_fields_focus_comes_with_its_caret_and_selected_text,
         ),
         (
-            "a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed",
-            a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed,
-        ),
-        (
             "a_winevent_focus_its_uia_focus_follows_is_reported_once",
             a_winevent_focus_its_uia_focus_follows_is_reported_once,
         ),
@@ -4266,16 +4024,8 @@ fn main() {
             an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict,
         ),
         (
-            "a_return_within_the_bound_is_read_with_the_returns_stamp",
-            a_return_within_the_bound_is_read_with_the_returns_stamp,
-        ),
-        (
             "an_accepted_foreground_change_into_the_records_window_restamps_it",
             an_accepted_foreground_change_into_the_records_window_restamps_it,
-        ),
-        (
-            "an_answered_record_cancels_its_timer",
-            an_answered_record_cancels_its_timer,
         ),
         (
             "a_gap_read_whose_focus_window_changes_during_the_read_is_dropped",
@@ -4412,14 +4162,6 @@ fn main() {
         (
             "a_change_of_an_unreleased_older_focus_is_heard_for_its_node",
             a_change_of_an_unreleased_older_focus_is_heard_for_its_node,
-        ),
-        (
-            "a_change_raised_after_a_focus_event_waits_for_the_focus_read",
-            a_change_raised_after_a_focus_event_waits_for_the_focus_read,
-        ),
-        (
-            "a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first",
-            a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first,
         ),
         (
             "a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place",

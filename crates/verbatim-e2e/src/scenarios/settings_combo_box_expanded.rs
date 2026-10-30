@@ -29,8 +29,8 @@
 //! first varies from press to press; the outpost restores the provider's
 //! order (`docs/design/focus-pipeline.md`, section 12.4). Since the race is
 //! intermittent, a pass alone proves little: the judge of that order is
-//! `mockapp`'s
-//! `a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first`,
+//! the outpost's intake test
+//! `the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`,
 //! which fixes the order the outpost takes the two in.
 
 use std::io;

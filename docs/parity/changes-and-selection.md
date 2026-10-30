@@ -325,8 +325,8 @@ Settings raises the combo box's expand state change before the item's
 focus, and when the change reaches the outpost behind the item's focus
 marker, the outpost plans it ahead of the item's focus, since the item
 is inside the combo box that was the focus
-(`docs/design/focus-pipeline.md`, section 12.4; mockapp's
-`a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first`),
+(`docs/design/focus-pipeline.md`, section 12.4; the outpost's intake test
+`the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`),
 so Verbatim says "expanded" there too.
 
 ### What an accepted MSAA change reads

@@ -1,6 +1,6 @@
 # The outpost's reducer build
 
-Status: built in two builds, the store build and the reducer build, with the departures and open parts listed below; designed on 2026-10-31 against main at 98b0388d, with its adversarial review's findings folded in the same day (verdict: achievable with fixes). It applies [the ownership model](ownership.md)'s rules "Pure reducers, with calls as effects", "No state lent across a call into an application", "Nodes are released by message position" and "Queries have exactly one answer" to the outposts; its brief, mechanism draft and known traps are "The outpost's reducer build" in [the ownership builds](ownership-builds.md). The refactor preserves what is heard: this build changes no speech. It undoes recently finished work in two places, both by design: the commit point and its lock order (`docs/design/focus-pipeline-rework.md`, "The outpost's commit point"), and the hand-over's counting (`outpost/handover.rs`), which the hold Dickson decided on 2026-10-25 replaces. The output build runs beside it and shares no code.
+Status: built in two builds, the store build and the reducer build, with the departures listed below; designed on 2026-10-31 against main at 98b0388d, with its adversarial review's findings folded in the same day (verdict: achievable with fixes). It applies [the ownership model](ownership.md)'s rules "Pure reducers, with calls as effects", "No state lent across a call into an application", "Nodes are released by message position" and "Queries have exactly one answer" to the outposts; its brief, mechanism draft and known traps are "The outpost's reducer build" in [the ownership builds](ownership-builds.md). The refactor preserves what is heard: this build changes no speech. It undoes recently finished work in two places, both by design: the commit point and its lock order (`docs/design/focus-pipeline-rework.md`, "The outpost's commit point"), and the hand-over's counting (`outpost/handover.rs`), which the hold Dickson decided on 2026-10-25 replaces. The output build runs beside it and shares no code.
 
 Paths below are under `crates/verbatim-outpost/src/outpost/` unless named in full.
 
@@ -211,7 +211,7 @@ The reducer build, as replay tests on recorded inputs and a recorded `LocalWindo
 
 ### Removed, each once its replacement passes
 
-- The five mockapp tests of `crates/mockapp/tests/focus_reports.rs` the brief names (lines 1080, 1139, 1426, 1950 and 2020), which wait on the real one-second bound or race real orderings, become replay tests with injected timers, keeping one mockapp test per path into a real provider.
+- The five mockapp tests of `crates/mockapp/tests/focus_reports.rs` the brief named, which waited on the real one-second bound or raced real orderings, are replaced by replay tests with injected timers, keeping one mockapp test per path into a real provider.
 - 6dbcca25's hand-driven unit test with two 10-second deadlines becomes a plain replay test.
 - `handover.rs`'s ten tests become the hold's replay tests; `gap_record.rs`'s ten move onto the reducer's inputs; the watchdog's and commit's tests in `worker.rs` (from line 5382) become replay tests of the deadline, bound and result inputs.
 
@@ -247,10 +247,6 @@ The mechanism as built is described in [the crate guide](../crates/verbatim-outp
 - A caret key's check counts a waiting caret event from a copy of the waiting caret events made as its program is dispatched.
 - A focus walk's object (`BoundFocus::object`) is its event address or runtime id, no application object, so nothing is parked for it.
 - Text support per node is divided as the store build left it to be: the facts (the anchors with their chunks' text, the reported positions, the remembered carets and the count of reports, the kept selection with its text, and the content-changed note) are reducer state (`reducer::text`), each position an edit control's offset or the key of a UIA range the store keeps; the ranges, the patterns and what a text supports stay in the store. A text call works on its program's copy of the facts with clones of the ranges they name. Its changes are applied to the program's copies at once and ride the program's next commit rather than one at its end, so a caret event's report and its text change still reach the reducer in one commit; a program that ends with changes no commit carried commits them alone. The shell writes them only when the reducer accepts the commit, and the reducer has the store let go of each range no fact names any more, including a released anchor's, one transition after the release rather than in its hold. A destroyed window's nodes, which the store frees directly, have their facts forgotten with the program's next commit.
-
-Not built in this build, and open:
-
-- The removal of the five mockapp tests the brief names, which wait for their replay tests' review.
 
 ## Open questions for Dickson
 
