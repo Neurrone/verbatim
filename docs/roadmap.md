@@ -96,6 +96,34 @@ Follow-ups from the one judge build:
   line, so the uncounted UIA costs in the performance ledger can be
   measured.
 
+Further follow-ups from the focus work and the ownership builds:
+
+- The end-to-end harness's `set_foreground` minimizes a folder window left
+  behind (`crates/verbatim-agent/src/desktop.rs`, lines 262 to 300), which
+  leaves Explorer's list without focus; open folder windows without
+  minimizing them.
+- A late UIA focus on Explorer's DirectUIHWND window element, arriving
+  after the gap record already read the item, is reported as a new focus
+  and speaks "pane" (the keyboard-focus acceptance in `focus_read.rs`,
+  ede24c07). Check with an NVDA capture first.
+- The window title is doubled when an MSAA walk passes its bound:
+  `chain_at_bound` (`crates/verbatim-outpost/src/outpost/bound.rs`) and the
+  MSAA walk's progress callback start from the focus's own window when the
+  focus is that window's own object. Continue from the parent window, as
+  the UIA path does (since 45379c5c).
+- The Windows Terminal launch walk passes the listener's 500 ms bound, so
+  the window is spoken without its role; the rule is unbuilt, in
+  [the remaining focus builds](design/focus-pipeline-rework-remaining.md),
+  "A window past the bound that the outpost judges UIA".
+- After a voice change, NVDA refreshes the other settings controls from the
+  driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
+- Open question for Dickson, from the output ownership build: the audio
+  thread's wake-ups roughly doubled under key load, because every push
+  sets its wake event, against the rule not to raise wake-ups on the speech
+  path (`docs/performance.md`, "The output ownership's threads"). Fewer,
+  larger pushes from the synth thread are the direction that needs no
+  hand-written fences.
+
 ### The ownership refactor
 
 Every fact has one owner, logic is a pure reducer with calls as its

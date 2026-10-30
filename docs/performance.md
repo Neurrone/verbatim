@@ -975,8 +975,13 @@ machine's taskbar, from a separate process running the outpost's walk,
   reducer scans up to 1,024 pairs of trace and key number, as before,
   inside Core's state and with no lock; each user input adds one pair,
   16 bytes, at most 16 KiB, cloned with each flight recorder checkpoint.
-  The reducer's and the hook's wakes and processor time per key under
-  `measure_keys_notepad` after this change are still to be measured
+  `measure_keys_notepad` traced over 80 s in a debug build (2026-10-30),
+  before and after this change, wakes and processor time: the reducer
+  thread 4,801 and 1,026 ms before, 4,622 and 891 ms after; the hook
+  thread 3,910 and 301 ms before, 4,090 and 253 ms after; the speech queue
+  thread 2,606 and 278 ms before, 2,815 and 201 ms after; the router
+  thread 687 and 73 ms before, gone after. This was measured before the
+  later rework that made the hook take only keys
   (`docs/tooling/measuring.md`).
 
 ### An interrupt
@@ -1012,6 +1017,35 @@ that ends unheard.
   a chunk of 1,323 samples (60 ms at 22,050 Hz) in 0.2 microseconds and
   one of 4,410 in 0.28, and the host encodes them in 0.6 and 2.0 (release,
   best of 30, measured 2026-10-28).
+
+### The output ownership's threads
+
+Debug builds, 2026-10-31, before and after the output ownership build
+(`docs/design/ownership-output.md`), wakes and processor time per trace.
+The audio events thread is new in this build.
+
+- `measure_speech_real` with audible output, traced over 60 s: the audio
+  thread 8,643 wakes and 760 ms before, 12,467 and 805 ms after; the synth
+  thread 3,124 and 1,499 ms before, 1,346 and 1,400 ms after; the reducer
+  2,676 and 607 ms before, 2,615 and 591 ms after; the speech queue
+  thread 1,949 and 143 ms before, 1,524 and 136 ms after; the audio events
+  thread 1,155 and 130 ms after.
+- `measure_keys_notepad`, traced over 80 s: the audio thread 5,832 and
+  752 ms before, 11,995 and 1,034 ms after; the reducer 4,416 and
+  1,152 ms before, 4,760 and 1,106 ms after; the synth thread 2,633 and
+  1,954 ms before, 1,967 and 1,980 ms after; the audio events thread
+  1,317 and 198 ms after.
+- The audio thread's wake-ups roughly doubled under key load, because
+  every push sets its wake event. That goes against the rule not to raise
+  wake-ups on the speech path, and is an open question for Dickson; fewer,
+  larger pushes from the synth thread would lower it and need no
+  hand-written fences.
+- Warnings "the device ran dry" per scenario run, one run before and three
+  after: `settings_dialog_keys` 18, then 0, 0, 0; `theme_panel` 8, then 1,
+  1, 1; `switch_to_onecore` 3, then 0, 0, 0; `menu_and_settings_dialog` 2,
+  then 0, 0, 0; `terminal_settings_page` 2, then 0, 0, 2;
+  `synth_host_crash_recovery` 1, then 0, 0, 0; `notepad_say_all` 0, then
+  1, 0, 2.
 
 ### A caret move, UIA
 
@@ -2258,5 +2292,9 @@ and one removal when the event's outcome consumes it
 (`crates/verbatim-outpost/src/focus_read.rs`), both under the readers' lock
 the schedule's step already takes. No wake-up and no call are added.
 
-- The listener's processor time per UIA event, five runs of
-  `measure_focus_explorer` before and after: to be measured.
+- The listener's processor time per UIA event was not measured end to end:
+  traces of a scenario window could not isolate it from the rest of the
+  window's work, so the figure above is the added work counted from the
+  code, one boxed closure, one `Arc` clone, and one insert and one removal
+  in the owed map under a lock already taken, with no new wake-up or
+  thread.

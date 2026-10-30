@@ -22,13 +22,13 @@ Runs beside the messages build.
 
 Scope:
 
-- `KeySeq` on every user input and on `Speak`, with `KEY_ORIGINS` deleted. One minter, the hook thread: the control plane's injected gestures, today numbered on their own thread (`crates/verbatim-app/src/main.rs`) and posted separately, are posted to the hook thread's message loop, which numbers and forwards them in order with the keys. Test: the race of design review 3, finding 5 (the control plane takes n and is pre-empted; the hook takes n+1 and cancels through it; n's speech is fenced), which can no longer occur.
+- `KeySeq` on every user input and on `Speak`, with `KEY_ORIGINS` deleted. One minter, the hook thread, which takes only keys: the control plane injects no gesture, and a test presses a gesture's keys, which the hook numbers in order ([the input build's design](ownership-input.md), "The hook takes only keys"). Test: the race of design review 3, finding 5 (the control plane takes n and is pre-empted; the hook takes n+1 and cancels through it; n's speech is fenced), which can no longer occur.
 - Gestures posted by the hook to the reducer's port in key order. The router's work becomes reducer effects: its time read, the GUI commands, and the lock key's 30 ms timer, whose expiry reads the toggle state through the shell. Check with `lock_key_announcements` that `GetKeyState` gives the same state on the reducer's thread as on the router's, both with no message queue; use `GetAsyncKeyState` if it does not.
 - `behind_toggles`' ordering (`crates/verbatim-app/src/main.rs`) moves into the reducer: the marks of handled input and the idle waiters behind a pending lock-key announcement wait for it, and the idle conditions gain "no lock-key announcement pending". A command pressed while a key is held waits behind it (`Effect::ForKey`).
 - `SpeakToken` covers `speak`, `speak_for_key`, `play_earcon` and `play_earcon_to_end`. The reducer thread returns it when it ends, so speech at exit uses it. The settings window's sound preview keeps its own function (87b4f284).
 - The ownership check's hook rule, skipping `#[cfg(test)]` modules.
 
-Tests added: a review command pressed while a caret key is held runs after the key's caret read; an injected gesture fences speech as a key does; a lock key's announcement is still heard after a key pressed within its 30 ms, as NVDA; an idle round waits while a lock-key announcement is pending. Test cost: any app test of the router thread's relaying becomes a reducer unit test.
+Tests added: a review command pressed while a caret key is held runs after the key's caret read; a gesture pressed as its keys fences speech as a key does; a lock key's announcement is still heard after a key pressed within its 30 ms, as NVDA; an idle round waits while a lock-key announcement is pending. Test cost: any app test of the router thread's relaying becomes a reducer unit test.
 
 Scenarios: `lock_key_announcements`, `notepad_caret_keys`, `text_box_caret_keys`, `text_box_selection_keys`, `notepad_review_cursor`, `text_box_review_cursor`, `windows_terminal_typing`, `conhost_typing`, `measure_keys_notepad`.
 
@@ -36,7 +36,7 @@ Scenarios: `lock_key_announcements`, `notepad_caret_keys`, `text_box_caret_keys`
 
 #### One route and one sequence for user input
 
-Every user input (the hook, the control plane's injected gestures, later M5's module commands, M12's remote input, M15's braille keys) takes a key number from one counter and enters Core's port by one route in that order, carrying it; an utterance a key causes directly carries the number. Reasons:
+Every user input (the hook, later M5's module commands, M12's remote input, M15's braille keys) takes a key number from one counter and enters Core's port by one route in that order, carrying it; an utterance a key causes directly carries the number. Reasons:
 
 - Review commands reach Core through the router while key reports go straight to the reducer, so they have no common order (Dickson, 2026-10-30, settles the deferred question). Past defects: ba7064e5 and its reversal e180f14a. Sequence: Down Arrow is held for its caret read; the review current-line command runs before Down Arrow reaches the application and reads the old line.
 - The key number travels today through the global `KEY_ORIGINS` mutex, which the hook takes on every key, against `docs/design/communication.md` section 6.2. Sequence: the reducer holds it for a `Speak` lookup and is pre-empted at normal priority; the hook at `HIGHEST` waits on a thread that is not running, so every key and its speech cancel wait, a priority inversion; M12 and M15 would add writers.
