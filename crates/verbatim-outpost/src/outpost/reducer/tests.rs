@@ -1519,3 +1519,109 @@ fn a_noted_caret_is_read_with_its_events_timing() {
         work => panic!("the noted caret's read, not {work:?}"),
     }
 }
+
+#[test]
+fn the_watchs_wake_is_not_timed_while_a_program_or_a_release_is_in_flight() {
+    let mut replay = Replay::new();
+    let effects = replay.push(caret_key(7), Source::Other, 1);
+    let key = program(&effects).request;
+    // A watch with no poll wakes at its bound, 10 s after it opened.
+    let watch = OpenWatch {
+        poll: None,
+        ..polling_watch(7, 1)
+    };
+    replay.commit(key, opens(&watch), 2);
+    replay.finish(key, false, 3);
+    let effects = replay.push(name_change(1), Source::Hook, 9_000);
+    assert_eq!(handles(program(&effects)), (9_000, None));
+    // The wake is due, but only a tick with no program in flight takes it:
+    // the next timer is the program's deadline, not the past wake.
+    assert_eq!(
+        replay.reducer.next_timer(now(10_500)),
+        Some(Duration::from_secs(19))
+    );
+    // A release waiting behind the program is asked for as it ends: until
+    // its result is in, nothing is dispatched, so the wake is not timed.
+    replay.push(
+        Item::NodesHeld {
+            nodes: vec![],
+            anchors: vec![],
+            acknowledged: 0,
+        },
+        Source::Other,
+        10_500,
+    );
+    let effects = replay.finish(program(&effects).request, false, 10_600);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Release { .. })),
+        "the release is asked for"
+    );
+    assert_eq!(replay.reducer.next_timer(now(10_600)), None);
+}
+
+#[test]
+fn the_idle_answer_waits_for_the_hooks_copies_held_at_the_start() {
+    let mut replay = Replay::new();
+    replay.input(Input::Hooked, 0);
+    assert!(programs(&replay.push(name_change(1), Source::Hook, 1)).is_empty());
+    let effects = replay.push(
+        Item::IdleQuery {
+            round: 5,
+            behind_noted: false,
+        },
+        Source::Other,
+        2,
+    );
+    assert!(
+        sent(&effects).is_empty(),
+        "no answer while the copy is held"
+    );
+    let effects = replay.input(Input::ForwardingEnded(0), 3);
+    assert_eq!(answers_and_dispatches(&effects), ["dispatch", "answer"]);
+    assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
+}
+
+#[test]
+fn a_gap_read_dispatched_again_after_an_abandoned_poll_still_holds_the_idle_answer() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.commit(request, copy_dropped(), 2);
+    replay.finish(request, false, 3);
+    let effects = replay.push(caret_key(7), Source::Other, 4);
+    let key = program(&effects).request;
+    replay.commit(key, opens(&polling_watch(7, 5)), 5);
+    let (_, watch) = polls(&replay.finish(key, false, 6));
+    assert_eq!(watch, 7);
+    // The query is reached beside the poll, and waits for it.
+    let effects = replay.push(
+        Item::IdleQuery {
+            round: 5,
+            behind_noted: false,
+        },
+        Source::Other,
+        7,
+    );
+    assert!(
+        sent(&effects).is_empty(),
+        "no answer while the poll is in flight"
+    );
+    // The record's bound passes: its read waits behind the poll.
+    let effects = replay.tick(1_001);
+    assert!(matches!(
+        &program(&effects).work,
+        Work::Entry { entry, .. } if matches!(entry.item, Item::GapRead { window: 0x11 })
+    ));
+    // The poll is abandoned: the read goes to the replacement, and the
+    // answer still waits for it.
+    let effects = replay.tick(6 + 10_000);
+    assert!(abandons(&effects));
+    assert_eq!(replies(&effects), [(7, "abandoned")]);
+    assert_eq!(answers_and_dispatches(&effects), ["dispatch"]);
+    let read = program(&effects).request;
+    assert_eq!(read.generation, 1);
+    let effects = replay.finish(read, false, 10_007);
+    assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
+}

@@ -81,8 +81,7 @@ impl Hold {
     }
 
     /// Whether the hook's copies are being held.
-    #[cfg(test)]
-    fn holding(&self) -> bool {
+    pub(in crate::outpost) fn holding(&self) -> bool {
         matches!(self.state, State::Holding { .. })
     }
 

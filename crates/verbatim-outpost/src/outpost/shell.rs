@@ -240,6 +240,52 @@ impl Garbage {
     }
 }
 
+/// Who waits on each settle, by its number, kept until the settle's
+/// program ends: a settle dispatched behind the console poll is dispatched
+/// again to the replacement if the poll is abandoned, and its worker is
+/// given the same waiter then as the first time.
+#[derive(Default)]
+struct Settles {
+    waiting: HashMap<u64, mpsc::Sender<()>>,
+    taken: u64,
+    /// The settle in flight, by the request of its program.
+    in_flight: Option<(Request, u64)>,
+}
+
+impl Settles {
+    /// Numbers a settle `done` waits on.
+    fn taken(&mut self, done: mpsc::Sender<()>) -> u64 {
+        self.taken += 1;
+        self.waiting.insert(self.taken, done);
+        self.taken
+    }
+
+    /// Settle `id` is dispatched as `request`: its worker's waiter.
+    fn dispatched(&mut self, request: Request, id: u64) -> Option<mpsc::Sender<()>> {
+        self.in_flight = Some((request, id));
+        self.waiting.get(&id).cloned()
+    }
+
+    /// `request`'s program ended: if it was a settle's, the settle is
+    /// done.
+    fn finished(&mut self, request: Request) {
+        if let Some((_, id)) = self.in_flight.take_if(|(settle, _)| *settle == request) {
+            self.waiting.remove(&id);
+        }
+    }
+
+    /// Generation `generation` is in charge: a settle in flight on another,
+    /// abandoned and not dispatched again, is let go of.
+    fn in_charge(&mut self, generation: u64) {
+        if let Some((_, id)) = self
+            .in_flight
+            .take_if(|(settle, _)| settle.generation != generation)
+        {
+            self.waiting.remove(&id);
+        }
+    }
+}
+
 /// A worker generation the shell started.
 struct Generation {
     /// Its inbox: dropping it closes the inbox and rings its doorbell.
@@ -253,9 +299,7 @@ pub(super) struct Shell {
     reducer: Reducer,
     /// The reply tokens of the queries the reducer records, by request id.
     tokens: HashMap<u64, Responder<OutpostToCore>>,
-    /// Who waits on each settle, by its number.
-    settles: HashMap<u64, mpsc::Sender<()>>,
-    settles_taken: u64,
+    settles: Settles,
     /// The elements the subscription follows, by token.
     elements: Elements,
     garbage: Garbage,
@@ -373,8 +417,9 @@ fn discard(effects: Effects, garbage: &mut Garbage) {
     if let Some(stale) = writes.stale {
         garbage.elements.extend(stale.element);
     }
-    garbage.store.push(Removed::of_text(writes.text));
-    drop(writes.terminal);
+    garbage
+        .store
+        .push(Removed::of_text(writes.text).with_terminal(writes.terminal.map(|(_, entry)| entry)));
 }
 
 /// Makes the writes of `effects`, a commit of request `tag`, that only the
@@ -473,8 +518,7 @@ impl Shell {
             context: Arc::clone(context),
             reducer: Reducer::new(),
             tokens: HashMap::new(),
-            settles: HashMap::new(),
-            settles_taken: 0,
+            settles: Settles::default(),
             elements: Elements::default(),
             garbage: Garbage::default(),
             generations: HashMap::new(),
@@ -535,11 +579,16 @@ impl Shell {
                 break;
             }
         }
-        // No program is in flight: the workers end once their channels
-        // close.
+        // No program is in flight: what the shell let go of and the
+        // elements followed are dropped by the worker in charge, as at
+        // runtime, and the workers end once their channels close.
+        let kept = std::mem::take(&mut self.elements.kept);
+        self.garbage.elements.extend(kept.into_values());
+        if !self.garbage.is_empty() {
+            let program = self.reducer.shutdown_drop();
+            self.dispatch(program);
+        }
         self.generations.clear();
-        drop(std::mem::take(&mut self.garbage));
-        drop(std::mem::take(&mut self.elements.kept));
         std::mem::take(&mut self.threads)
     }
 
@@ -582,15 +631,10 @@ impl Shell {
                 }
             }
             Posted::Settle(done) => {
-                self.settles_taken += 1;
-                self.settles.insert(self.settles_taken, done);
+                let id = self.settles.taken(done);
                 let now = self.now();
                 Input::Entry {
-                    entry: Entry::own(
-                        Item::Settle(self.settles_taken),
-                        TraceId::mint(),
-                        now.wall_us,
-                    ),
+                    entry: Entry::own(Item::Settle(id), TraceId::mint(), now.wall_us),
                     source: Source::Other,
                     read_answer: None,
                 }
@@ -627,12 +671,15 @@ impl Shell {
                 reported,
                 panicked,
                 cut,
-            } => Input::Finished {
-                request,
-                reported,
-                panicked,
-                cut,
-            },
+            } => {
+                self.settles.finished(request);
+                Input::Finished {
+                    request,
+                    reported,
+                    panicked,
+                    cut,
+                }
+            }
             Posted::Returned => Input::Returned,
             Posted::GapTimerGiven => Input::GapTimerGiven,
             Posted::GapBound => Input::GapBound,
@@ -735,6 +782,9 @@ impl Shell {
                 }
             }
         }
+        // A settle whose worker was abandoned and that was not dispatched
+        // again is let go of: `Outpost::settle` returns.
+        self.settles.in_charge(self.reducer.generation());
         debug_assert_eq!(
             self.tokens
                 .keys()
@@ -749,7 +799,7 @@ impl Shell {
     /// go of for it to drop, and, for a settle, who waits on it.
     fn dispatch(&mut self, program: Program) {
         let settle = if let Work::Settle(id) = &program.work {
-            self.settles.remove(id)
+            self.settles.dispatched(program.request, *id)
         } else {
             None
         };
@@ -1018,5 +1068,35 @@ mod tests {
         .expect("the change of the program in flight");
         assert_eq!(admitted.text, vec![change]);
         assert!(store.tags_anchor(8));
+    }
+
+    /// A settle dispatched behind the console poll and dispatched again
+    /// after the poll's worker is abandoned gives the replacement the same
+    /// waiter: the dead worker's copy going does not end the wait, the
+    /// replacement's answer does, and its end lets the waiter go.
+    #[test]
+    fn a_settle_dispatched_again_keeps_its_waiter() {
+        let mut settles = Settles::default();
+        let (done, waits) = mpsc::channel();
+        let id = settles.taken(done);
+        let first = Request {
+            generation: 0,
+            number: 3,
+        };
+        let dead = settles.dispatched(first, id).expect("the waiter");
+        let again = Request {
+            generation: 1,
+            number: 4,
+        };
+        let given = settles.dispatched(again, id).expect("the same waiter");
+        settles.in_charge(1);
+        settles.finished(first);
+        drop(dead);
+        assert_eq!(waits.try_recv(), Err(mpsc::TryRecvError::Empty));
+        given.send(()).expect("the settle's waiter");
+        assert_eq!(waits.try_recv(), Ok(()));
+        drop(given);
+        settles.finished(again);
+        assert_eq!(waits.try_recv(), Err(mpsc::TryRecvError::Disconnected));
     }
 }

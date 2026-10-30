@@ -1441,7 +1441,8 @@ foreground application for its focus unless a newer focus was applied.
   commit the reducer accepts (`Store::write_text`): the ranges are kept,
   the anchors tagged with the commit's request, and the facts' change
   given to the reducer, but a change that adds to a node the store has
-  released is not made. A refused commit's writes are dropped by a worker.
+  released is not made. A refused commit's writes, with the terminal entry
+  it made, are dropped by a worker.
   The other text writes, the patterns and what a text supports, a
   forgotten answer of no pattern, and a node's text forgotten for a new
   element, ride the same commits. A destroyed window's nodes have their
@@ -1788,7 +1789,8 @@ progress. The round is in band, so it covers pipes and backlogs.
   its event's timing, so its read is skipped only when a caret read since
   that event covers it. The reducer reaches the query with no program in
   flight, so nothing before it is unhandled, and answers it
-  (`Reducer::answer_idle`) as it is reached and after every input, once no
+  (`Reducer::answer_idle`) as it is reached and after every input, once the
+  hook's copies are no longer held at the outpost's start, no
   caret key's watch is open or held by the program in flight, no console
   poll is in flight, and the gap record is closed and not being read by the
   program in flight. Entries after the query are not waited for, nor is a
@@ -1818,7 +1820,9 @@ The outpost's side (`Outpost::shutdown`), in order:
 3. The subscription's groups are removed (`RemoveEventHandlerGroup`), each
    waiting for callbacks in progress.
 4. The reducer's thread ends once the program in flight has ended, with no
-   worker abandoned meanwhile, then every worker, abandoned or not, and
+   worker abandoned meanwhile, after handing what it let go of and the
+   elements the subscription followed to the worker in charge to drop;
+   then every worker, abandoned or not, and
    every bounded-client thread returns; no call is cut off, since UIA's
    timeouts end it.
 5. Every node leaves the store, with its text patterns, anchors, and

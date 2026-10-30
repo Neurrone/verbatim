@@ -464,7 +464,9 @@ impl Reducer {
 
     /// When the shell is next to call [`tick`](Self::tick): the program's
     /// deadline, the end of its moved-on grace, its walk's bound, the
-    /// watch's wake, and the gap record's bound, on the shell's clock.
+    /// watch's wake while no program is in flight and no release is
+    /// pending (only then does a tick take it), and the gap record's
+    /// bound, on the shell's clock.
     pub(in crate::outpost) fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
         if let Some(poll) = &self.poll
@@ -485,7 +487,9 @@ impl Reducer {
             }
             times.extend(current.walk);
         }
-        times.extend(self.intake.wake());
+        if self.current.is_none() && !self.releasing {
+            times.extend(self.intake.wake());
+        }
         if let Some(due_us) = self.gap_due.filter(|_| !self.gap_timer_given) {
             let left = due_us.saturating_sub(now.observed_us);
             times.push(now.at + Duration::from_micros(left));
@@ -1179,13 +1183,14 @@ impl Reducer {
     }
 
     /// Answers the idle barrier's query once no deferred work is pending:
-    /// no caret key's watch is open, no console poll is in flight, the gap
-    /// record is closed, and the program in flight neither reads it nor
-    /// holds the watch. The program in flight is otherwise not waited for:
+    /// the hook's copies are not held at the start, no caret key's watch is
+    /// open, no console poll is in flight, the gap record is closed, and
+    /// the program in flight neither reads it nor holds the watch. The program in flight is otherwise not waited for:
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
         if self.poll.is_some()
+            || self.hold.holding()
             || self
                 .current
                 .as_ref()
@@ -1206,6 +1211,18 @@ impl Reducer {
         Request {
             generation: self.generation,
             number: self.requests,
+        }
+    }
+
+    /// The program that drops what the shell still holds as the outpost
+    /// shuts down, with no program in flight: releasing an object can call
+    /// into the application, so a worker does it, as at runtime.
+    pub(in crate::outpost) fn shutdown_drop(&mut self) -> Program {
+        Program {
+            request: self.next_request(),
+            facts: Facts::default(),
+            work: Work::Drop,
+            waiting: Vec::new(),
         }
     }
 
@@ -1398,7 +1415,6 @@ impl Reducer {
     ) {
         let (deadline, running) = budget(&entry);
         let window = intake::window_of(&entry.item);
-        let gap_read = matches!(entry.item, Item::GapRead { .. });
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
         if clears_absorb(&entry.item) && self.facts.marks.absorbed.is_some() {
@@ -1416,13 +1432,12 @@ impl Reducer {
             group: group_place,
         };
         self.dispatch(work, (deadline, window, running), group, now, effects);
-        if gap_read && let Some(current) = &mut self.current {
-            current.deferred = true;
-        }
     }
 
     /// Dispatches `work` under `deadline`, concerning `window` (0 for none)
-    /// and answering `running`, as a try of `group` when it is one.
+    /// and answering `running`, as a try of `group` when it is one. A read
+    /// of the gap record is deferred work, whether dispatched first or
+    /// again after an abandoned poll.
     fn dispatch(
         &mut self,
         work: Work,
@@ -1434,6 +1449,16 @@ impl Reducer {
         let request = self.next_request();
         let waiting = self.waiting(&work);
         let behind_poll = self.poll.is_some().then(|| (work.clone(), deadline));
+        let deferred = matches!(
+            &work,
+            Work::Entry {
+                entry: Entry {
+                    item: Item::GapRead { .. },
+                    ..
+                },
+                ..
+            }
+        );
         self.current = Some(Current {
             request,
             deadline: now.at + deadline,
@@ -1445,7 +1470,7 @@ impl Reducer {
             claimed: false,
             group,
             behind_poll,
-            deferred: false,
+            deferred,
         });
         effects.push(Effect::Dispatch(Box::new(Program {
             request,

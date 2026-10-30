@@ -116,6 +116,12 @@ impl Removed {
         }
         removed
     }
+
+    /// `self`, and the terminal entry a refused commit made, if any.
+    pub(super) fn with_terminal(mut self, terminal: Option<Terminal>) -> Self {
+        self.terminals.extend(terminal);
+        self
+    }
 }
 
 /// A program's write to the store's text, made by the shell only when the
