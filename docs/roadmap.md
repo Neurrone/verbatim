@@ -120,8 +120,7 @@ is kept in the repository.
 
 Tests and tooling:
 
-- Three mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_combo_box_costs_exactly`, `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause.
-- `uia_combo_box_costs_exactly` depends on UIA keeping an element's state about 500 ms after `FindFirstBuildCache` (warm, the combo box costs 6 provider calls fewer); what it pins awaits Dickson's decision.
+- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause. The first's counts hold with a 1.5 s pause between each of its steps, so UIA's lapsing element state is not its cause.
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s). `measure_focus_explorer`'s key waits end on their key's item, which two keys share ("alpha 2 of 4" for Down 1 and Up 1), so a late repeat can end the next key's wait; the targets are `explorer_folder_window`'s, so renaming cannot fix it.
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).

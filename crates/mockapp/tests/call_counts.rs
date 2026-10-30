@@ -87,8 +87,9 @@ use verbatim_uia_rops::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId,
-    UIA_MenuOpenedEventId, UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
+    IUIAutomationElement, TreeScope, TreeScope_Children, TreeScope_Descendants,
+    UIA_HasKeyboardFocusPropertyId, UIA_MenuOpenedEventId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_Text_TextChangedEventId,
     UIA_Text_TextSelectionChangedEventId,
 };
 use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVE_EXPAND, TVM_EXPAND};
@@ -1049,6 +1050,16 @@ impl UiaUnderTest {
         Self { uia, elements }
     }
 
+    /// A UIA client on this thread over mockapp's tree that has found none
+    /// of its elements, so UIA has seen none of them before an operation
+    /// finds them.
+    fn without_elements() -> Self {
+        Self {
+            uia: Uia::new().expect("a UIA client"),
+            elements: HashMap::new(),
+        }
+    }
+
     fn element(&self, name: &str) -> &IUIAutomationElement {
         &self.elements[name]
     }
@@ -1072,6 +1083,18 @@ impl UiaUnderTest {
     /// cache request, as a focus event's element arrives: what the system's
     /// focused element would be if mockapp had the keyboard focus.
     fn focused(&self, hwnd: HWND) -> Cached<ListenerEvent> {
+        self.focused_in(hwnd, TreeScope_Descendants)
+    }
+
+    /// [`Self::focused`], searched for among the window's children alone,
+    /// so the search passes by no element below them.
+    fn focused_child(&self, hwnd: HWND) -> Cached<ListenerEvent> {
+        self.focused_in(hwnd, TreeScope_Children)
+    }
+
+    /// The element mockapp reports as having the keyboard focus, searched
+    /// for in `scope` of its window.
+    fn focused_in(&self, hwnd: HWND, scope: TreeScope) -> Cached<ListenerEvent> {
         let root = self
             .uia
             .window_live(hwnd.0 as isize)
@@ -1084,7 +1107,7 @@ impl UiaUnderTest {
             .uia
             .request_fixed::<ListenerEvent>()
             .expect("the listener's cache request");
-        root.find_first(TreeScope_Descendants, &condition, &request)
+        root.find_first(scope, &condition, &request)
             .expect("the search")
             .expect("mockapp reports a focused element")
     }
@@ -4641,12 +4664,27 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 /// every selection is given first, as NVDA's `event_selection` reads its
 /// focus's `ControllerFor` first, one remote operation or the relation's
 /// read, and one `FindFirstBuildCache` over the combo box's children.
+///
+/// The selected item is one UIA has never seen when the outpost searches
+/// for it, so its cost holds whatever time passes before the search: UIA
+/// keeps state for an element it has handed out for about 500 ms, and a
+/// search that meets an element whose state has lapsed asks the provider 6
+/// calls more. So the test searches for no element below the window's
+/// children before the focus onto the combo box, neither focus's search
+/// passes by the combo box's items, and mockapp raises no selection event,
+/// whose raising would hand the item out to the outpost's registrations;
+/// the outpost reads the item's name and keyboard focus, never its
+/// selected state. The fact's runtime id is made rather than read: the
+/// item's is the combo box's with its last part the item's place in the
+/// fixture. The combo box is the focus the outpost has just read, as it
+/// is for a selection that follows its focus within that time; one that
+/// comes later meets the combo box's lapsed state, 6 provider calls more.
 fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-combo-box-{path}"));
     let mut app = common::spawn("combo_box.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let under_test = UiaUnderTest::new(hwnd);
+    let under_test = UiaUnderTest::without_elements();
     let outpost = OutpostUnderTest::on_frozen_time_with_options(
         &app,
         OutpostOptions {
@@ -4654,11 +4692,23 @@ fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]
         },
     );
     let mut ratchet = Ratchet::default();
-    let (reported, _) =
-        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("size", "Size"));
+    app.send("set-focus size");
+    let size = under_test.focused_child(hwnd);
+    assert_eq!(size.read().name.as_deref(), Some("Size"));
+    let reported = outpost.uia_focus(&size);
     assert_eq!(reported.node.value.as_deref(), Some("Large"));
-    let (reported, cost) =
-        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("hour", "Hour"));
+    // The combo box is the window's first child, so the search over the
+    // window's descendants finds it before any item below it.
+    app.send("set-focus hour");
+    let hour = under_test.focused(hwnd);
+    assert_eq!(hour.read().name.as_deref(), Some("Hour"));
+    common::reset_hits(hwnd);
+    let reported = outpost.uia_focus(&hour);
+    let cost = Cost {
+        calls: reported.calls,
+        hits: common::read_hits(hwnd),
+        failed_reads: reported.failed_reads,
+    };
     assert_eq!(reported.node.value.as_deref(), Some("Nine"));
     assert_eq!(reported.selected_child, None);
     let [focus, selection] = expected;
@@ -4669,14 +4719,16 @@ fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]
         0,
         focus.1,
     );
-    app.send("select ten");
-    let item = under_test.element("Ten");
+    // "Ten" is the fixture's third node below the window, after "Hour"
+    // and "Nine".
+    let mut ten = verbatim_uia::runtime_id(hour.live().element());
+    *ten.last_mut().expect("the combo box's runtime id") = 3;
     common::reset_hits(hwnd);
     outpost.deliver(DeliveredFact::UiaSelection {
         hwnd: hwnd.0 as isize,
         focus_window: hwnd.0 as isize,
         snapshot: verbatim_outpost::protocol::UiaSnapshotFact {
-            runtime_id: verbatim_uia::runtime_id(item),
+            runtime_id: ten,
             role: Role::ListItem,
             name: Some("Ten".to_owned()),
             value: None,
