@@ -74,6 +74,25 @@ fn give_client_identity(tree: &SharedTree, hwnd: HWND) {
     let root = handler::IdentifiedRoot {
         inner: node_accessible(tree, hwnd, 0),
         hwnd,
+        identified: true,
+        window_parent: true,
+    };
+    OBJECTS.with(|objects| {
+        objects
+            .borrow_mut()
+            .insert((hwnd.0 as isize, 0), root.into());
+    });
+}
+
+/// `form-client`: the root's object from now on answers as a Windows
+/// Forms form's client area does, with no identity string, and with the
+/// window's own window object as its parent, which offers none either.
+fn give_form_client(tree: &SharedTree, hwnd: HWND) {
+    let root = handler::IdentifiedRoot {
+        inner: node_accessible(tree, hwnd, 0),
+        hwnd,
+        identified: false,
+        window_parent: true,
     };
     OBJECTS.with(|objects| {
         objects
@@ -215,6 +234,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             }
         }
         Command::ClientIdentity => give_client_identity(tree, hwnd),
+        Command::FormClient => give_form_client(tree, hwnd),
         Command::ChildClientIdentity => {
             give_client_identity(
                 tree,
@@ -568,6 +588,7 @@ mod handler {
     use windows::Win32::System::Com::{
         DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO, IDispatch, ITypeInfo,
     };
+    use windows::Win32::System::Ole::IOleWindow;
     use windows::Win32::System::Variant::{
         VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_DISPATCH, VT_I4,
     };
@@ -1083,14 +1104,34 @@ mod handler {
         }
     }
 
-    /// The root node's object once `client-identity` is given: the root's
-    /// own object, `inner`, answering everything but its parent, which is
-    /// the window's own window object, as a client area's is, and
-    /// `IAccIdentity` besides, with the address of `hwnd`'s client area.
-    #[implement(IAccessible, IAccIdentity, Agile = false)]
+    /// The root node's object once `client-identity` or `form-client` is
+    /// given: the root's own object, `inner`, answering everything but its
+    /// parent, which with `window_parent` is the window's own window
+    /// object, as a client area's is, and `IAccIdentity` besides, with the
+    /// address of `hwnd`'s client area when `identified`, and failing
+    /// otherwise, as a Windows Forms object answers none. Without
+    /// `window_parent` it forwards `accParent` too: the window object
+    /// wrapped so that it offers no identity string.
+    #[implement(IAccessible, IAccIdentity, IOleWindow, Agile = false)]
     pub(crate) struct IdentifiedRoot {
         pub(crate) inner: IAccessible,
         pub(crate) hwnd: HWND,
+        pub(crate) identified: bool,
+        pub(crate) window_parent: bool,
+    }
+
+    /// A Windows Forms object names its control's window itself
+    /// (`IOleWindow`); an identified root leaves it to Windows, failing.
+    impl windows::Win32::System::Ole::IOleWindow_Impl for IdentifiedRoot_Impl {
+        fn GetWindow(&self) -> WinResult<HWND> {
+            if self.identified {
+                return Err(windows::Win32::Foundation::E_NOTIMPL.into());
+            }
+            Ok(self.hwnd)
+        }
+        fn ContextSensitiveHelp(&self, _fentermode: windows_core::BOOL) -> WinResult<()> {
+            Err(windows::Win32::Foundation::E_NOTIMPL.into())
+        }
     }
 
     impl IAccIdentity_Impl for IdentifiedRoot_Impl {
@@ -1100,6 +1141,9 @@ mod handler {
             ppidstring: *mut *mut u8,
             pdwidstringlen: *mut u32,
         ) -> WinResult<()> {
+            if !self.identified {
+                return Err(windows::Win32::Foundation::E_FAIL.into());
+            }
             // SAFETY: creates an in-process COM object on the window
             // thread, which initialized COM.
             let services: IAccPropServices =
@@ -1122,6 +1166,10 @@ mod handler {
     impl IAccessible_Impl for IdentifiedRoot_Impl {
         fn accParent(&self) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccParent);
+            if !self.window_parent {
+                // SAFETY: a live interface.
+                return unsafe { self.inner.accParent() };
+            }
             // The window's own window object, which Windows provides, as
             // the parent of a window's client area is.
             let mut parent: *mut core::ffi::c_void = std::ptr::null_mut();
@@ -1136,7 +1184,21 @@ mod handler {
                 )
             }?;
             // SAFETY: on success `parent` holds an owned `IDispatch`.
-            Ok(unsafe { IDispatch::from_raw(parent) })
+            let parent = unsafe { IDispatch::from_raw(parent) };
+            if self.identified {
+                return Ok(parent);
+            }
+            // A Windows Forms form's window object offers no identity
+            // string either.
+            let window: IAccessible = parent.cast()?;
+            let wrapped: IAccessible = IdentifiedRoot {
+                inner: window,
+                hwnd: self.hwnd,
+                identified: false,
+                window_parent: false,
+            }
+            .into();
+            Ok(wrapped.into())
         }
         fn accChildCount(&self) -> WinResult<i32> {
             // SAFETY: a live interface, passed the caller's arguments unchanged.

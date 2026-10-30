@@ -168,8 +168,8 @@ Public API:
   `isPresentableFocusAncestor` singles it out, only for an object read at
   its own address, since NVDA knows a client's object id only from its
   event or its identity string, so a Windows Forms form's client reached
-  through `accParent` is not marked as it is reached, but read again at its
-  address by a walk that reaches its window, below; `window` set on a window or client
+  through `accParent` is not marked as reached, but read at its address
+  instead when reached from a child window's window object, below; `window` set on a window or client
   object, child id 0, read at its own address, and on the object a walk
   reaches from a child window's window object in its parent window,
   which oleacc's window object answers with that window's client
@@ -273,16 +273,12 @@ Public API:
   window's own window object in its parent window; a control's window object met on the way has as its
   next ancestor the group box enclosing it, a `Button` window with
   `BS_GROUPBOX` before it in z-order, as NVDA's `findGroupboxObject`
-  finds it, and the walk goes on from the group box; a walk that reaches
-  the desktop from a top-level window with the `WS_SYSMENU` style, whose
-  client area it holds read as a pane at an address it made up (the
-  outermost entry in that window but its window object, reached through
-  `accParent` with no identity string, as a Windows Forms form's), puts in
-  its place the client area acquired at its own address and read again,
-  so it is marked `top_level_client` and Core decides whether to say it,
-  as NVDA's `doPreGainFocus` speaks the foreground object on entering a new
-  top-level window: one acquisition and six reads, only for a walk that
-  reaches the top; `progress`, an
+  finds it, and the walk goes on from the group box; the client of a
+top-level window reached from a child window's window object is acquired
+at its own address and read there instead of the object `accParent` gave,
+as NVDA reads its foreground object, so it is the node any other path
+gives that client, marked `top_level_client` by the rule above and said
+by Core on entering the window: one acquisition; `progress`, an
   `AncestorProgress`, is told each ancestor as it is read with the window
   the walk is then in, so the outpost's watchdog can publish the walk as
   it stands while its next call is under way) (per-hop `accParent` walks, outermost first, with the simple-child

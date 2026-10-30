@@ -4,7 +4,7 @@
   "name": "Mockapp Form Fixture",
   "client_role": true,
   "children": [
-    { "id": "ok", "role": "button", "name": "OK", "states": ["focusable"] },
+    { "id": "ok", "role": "button", "name": "OK", "states": ["focusable", "focused"] },
     { "id": "cancel", "role": "button", "name": "Cancel", "states": ["focusable"] }
   ]
 }

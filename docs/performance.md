@@ -685,20 +685,21 @@ are any.
 
 ### A focus entering a Windows Forms window, MSAA
 
-A focus on a button in a top-level window whose client area is reached
-through `accParent` with no identity string, as a Windows Forms form's
-(`tests/fixtures/form.json`, `msaa_form_focus_costs_exactly`).
+A focus on a button in a child window of a top-level window whose client
+area is reached through `accParent` from the child window's window object
+with no identity string, its window object offering none either, as a
+Windows Forms form's (`tests/fixtures/form.json` with `form-client`,
+`msaa_form_focus_costs_exactly`).
 
-- Today, cold: 26 MSAA calls and 1 window message, 19 before the walk
-  read the client area again at its own address when it reaches the
-  top-level window (`docs/parity/focus-context.md`, "Top-level windows in
-  the ancestry"): the acquisition (1) and the client area's name, value,
-  role, state, description and keyboard shortcut (6).
-- Today, steady state: 20, unchanged: a second focus in the window meets
-  the first's chain below the top and reads nothing again.
-- Target: 20 cold, the client area read once, at its address, rather than
-  also at the address the walk made up. Bound: one such read per walk that
-  reaches the top.
+- Today, cold: 57 MSAA calls and 2 window messages, 56 before the walk
+  acquired the form's client area at its own address and read it there
+  rather than reading the object `accParent` gave
+  (`docs/parity/focus-context.md`, "Top-level windows in the ancestry"):
+  the acquisition (1), the reads being the same.
+- Today, steady state: 25, unchanged: a second focus in the window meets
+  the first's chain below the client area and reads it no more.
+- Bound: one acquisition per walk that reaches a top-level window's client
+  this way.
 
 ### A focus change into a list, MSAA
 
@@ -1369,8 +1370,11 @@ its probe adds 1 window message (above):
   minimum is met remotely; classically 45, and 57 with a selection. A UIA
   terminal (`terminal_reading.json`) 9 remotely and 27 classically, each
   with 1 connection and no window message. A classic edit control through
-  MSAA 39 MSAA calls and 6 window messages, 2 of them the roles of the
-  focused-state check of a control without the keyboard focus. A focus without text is
+  MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
+  focused-state check of a control without the keyboard focus; one of the
+  calls is the acquisition of its top-level window's client at its own
+  address (`docs/parity/focus-context.md`, "Top-level windows in the
+  ancestry"). A focus without text is
   reported before its search.
 - A windowless text focus whose walk up the listener cut, so that no route
   leads to its element: the application's focused element is read in

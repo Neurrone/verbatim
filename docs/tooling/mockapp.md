@@ -240,6 +240,10 @@ parses them.
   so its parent is its own window object, whose parent Windows answers
   with the host's client area, as a control's window is inside a Windows
   Forms panel whose client area offers no identity string.
+- `form-client` (MSAA only) makes the host's client area answer as a
+  Windows Forms form's: no identity string, its own window as its
+  `IOleWindow`, and as its parent its window object, which offers no
+  identity string either.
 - `window-focus` gives the host window the keyboard focus within its
   thread (`SetFocus`), so it is its thread's focus window, and is
   rejected if the window did not take it.

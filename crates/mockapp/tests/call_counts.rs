@@ -698,38 +698,63 @@ fn msaa_dialog_text_costs_exactly() {
 /// not read, and the hits it counts are other clients', the UIA clients of
 /// this process's other tests among them, answering the control's
 /// creation events at times of their own.
-/// A focus in a window whose client area is reached through `accParent`
+/// A focus on a button in a child window of a window whose client area
+/// is reached through `accParent` from the child window's window object
 /// with no identity string, as a Windows Forms form's
-/// (`tests/fixtures/form.json`): the walk, reaching the top-level window,
-/// reads its client area again at its own address, marked as a top-level
-/// window's client. A second focus in the window meets the first's chain
+/// (`tests/fixtures/form.json`, `form-client`): the walk acquires that
+/// client area at its own address and reads it there, marked as a
+/// top-level window's client, one call more than reading the object
+/// `accParent` gave. A second focus in the window meets the first's chain
 /// below the client area and reads it no more.
 fn msaa_form_focus_costs_exactly() {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-form");
     let mut app = common::spawn("form.json", "msaa", &title);
     let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "child-window");
+    common::apply(&mut app, hwnd, "child-client-identity");
+    common::apply(&mut app, hwnd, "form-client");
+    // SAFETY: a local search of the form's children.
+    let child = unsafe { FindWindowExW(Some(hwnd), None, None, None) }
+        .expect("mockapp made the child window");
     let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
 
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("ok", FORM_OK));
-    assert_eq!(reported.chain(), [Some("Mockapp Form Fixture"), Some("OK")]);
-    assert!(
-        reported.ancestors[0].details.top_level_client,
-        "the client area, read at its address"
-    );
-    ratchet.check_calls("MSAA focus in a form, cold", cost.calls, calls(0, 26, 1));
-    outpost.settled();
-
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("cancel", FORM_CANCEL));
+    let (reported, cost) = measure_msaa_focus(&mut app, child, &outpost, ("ok", FORM_OK));
     assert_eq!(
         reported.chain(),
-        [Some("Mockapp Form Fixture"), Some("Cancel")]
+        [
+            Some("Mockapp Form Fixture"),
+            Some("Mockapp Form Fixture"),
+            Some("OK")
+        ]
+    );
+    assert_eq!(
+        reported
+            .ancestors
+            .iter()
+            .map(|node| node.details.top_level_client)
+            .collect::<Vec<_>>(),
+        [true, false],
+        "the form's client area, read at its address, and the child window's"
+    );
+    ratchet.check_calls("MSAA focus in a form, cold", cost.calls, calls(0, 57, 2));
+    outpost.settled();
+
+    let (reported, cost) = measure_msaa_focus(&mut app, child, &outpost, ("cancel", FORM_CANCEL));
+    assert_eq!(
+        reported.chain(),
+        [
+            Some("Mockapp Form Fixture"),
+            Some("Mockapp Form Fixture"),
+            Some("Cancel")
+        ]
     );
     ratchet.check_calls(
         "MSAA focus in a form, steady state",
         cost.calls,
-        calls(0, 20, 0),
+        calls(0, 25, 0),
     );
     outpost.settled();
 
@@ -5065,7 +5090,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "edit control focus with its caret",
         reported.calls,
-        calls(0, 39, 6),
+        calls(0, 40, 6),
     );
     drop(outpost);
     app.quit();

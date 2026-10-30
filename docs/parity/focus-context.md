@@ -133,15 +133,23 @@ the form's title on entering its window: when the focus line changes
 just below the desktop, `doPreGainFocus` speaks the foreground object,
 the window's client read at its own address, its object id known
 (`eventHandler.py` 402 to 413, `NVDAObjects/IAccessible/__init__.py` 564
-to 578), whether or not a foreground event was read. So an MSAA walk that reaches a top-level window with a system menu,
-holding its client area read as a pane at an address it made up, reads
-that client area again at its own address, marked; the outpost does not
-judge whether the window is new, and Core speaks it only as an entered
-container, so a focus that stays in the window says nothing more
-(Dickson's decision, 2026-10-30, after `text_box_editing` lost the form's
-title when its focus was read before its foreground change). The cost is one acquisition and six reads for a
-walk that reaches the top; a walk that meets the previous line below it
-pays nothing. There is no separate foreground announcement.
+to 578), whether or not a foreground event was read. So an MSAA walk
+that reaches a top-level window's client area from a child window's
+window object, which by MSAA's structure is that window's client, acquires
+it at its own address and reads it there, as NVDA reads its foreground
+object: it is then the same node as the window's foreground report gives,
+and is marked by the rule above. The outpost does not judge whether the
+window is new, and Core speaks it only as an entered container, so a focus
+that stays in the window says nothing more (Dickson's decision,
+2026-10-30, after `text_box_editing` lost the form's title when its focus
+was read before its foreground change). The mark keeps NVDA's
+presentability rule, the system menu and the client role, which is what
+says a top-level window by its title in the ancestry; NVDA's foreground
+speech has neither condition, so a top-level window without a system menu
+entered this way is not said, where NVDA says it. The cost is one
+acquisition. A client area reached through `accParent` from an object
+inside the window rather than from a child window's window object is not
+known to be the client, and is read as reached. There is no separate foreground announcement.
 **matched (unverified)**: reducer tests for the marked pane and for a
 pane without the mark, mockapp's
 `a_window_above_the_process_boundary_is_a_plain_window_with_no_call`

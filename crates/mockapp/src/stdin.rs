@@ -19,7 +19,7 @@
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
-//! `child-window`, `child-client-identity`, `window-focus`, `hold`,
+//! `child-window`, `child-client-identity`, `form-client`, `window-focus`, `hold`,
 //! `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
@@ -288,6 +288,11 @@ pub(crate) enum Command {
     /// it reached it, and `accParent` with the window's own window object.
     /// MSAA-only.
     ClientIdentity,
+    /// `form-client`: the window's client area, the root node, answers as a
+    /// Windows Forms form's does from then on: no identity string, and
+    /// `accParent` with the window's own window object, which offers no
+    /// identity string either. MSAA-only.
+    FormClient,
     /// `disable-client`: the window is disabled, as a modal dialog's owner
     /// is when the dialog opens: the root node gains the unavailable state,
     /// and `EVENT_OBJECT_STATECHANGE` is raised on the client area.
@@ -540,6 +545,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         }
         "client-name" => Some(Command::ClientName(rest.to_owned())),
         "client-identity" => Some(Command::ClientIdentity),
+        "form-client" => Some(Command::FormClient),
         "disable-client" => Some(Command::DisableClient),
         "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
         "child-window" => Some(Command::ChildWindow),

@@ -125,9 +125,9 @@ struct Reading<'a> {
     /// window object, in the parent window. It carries the window as one
     /// acquired at its address does, and is still found again only as the
     /// same COM object, its identity unknown, so it is not marked as a
-    /// top-level window's client either ([`is_top_level_client`]); a walk
-    /// that reaches the top-level window reads that window's client area
-    /// again at its address ([`read_top_level_client`]).
+    /// top-level window's client either ([`is_top_level_client`]); a
+    /// top-level window's client so reached is read at its address instead
+    /// ([`ancestor_chain_until`]).
     window_client: bool,
     purpose: Purpose,
     role: Prefetched,
@@ -883,8 +883,6 @@ pub fn ancestor_chain_until(
     let mut walked = Walked::Complete;
     let (acc, (hwnd, id_object, _), at) = locate(node, registry)?;
     let mut chain = Vec::new();
-    // Each chain entry's window and whether it was acquired at its address.
-    let mut placed: Vec<(isize, bool)> = Vec::new();
     let is_simple_child = acc.child() != CHILDID_SELF;
     let mut hops_used = 0u32;
 
@@ -908,7 +906,6 @@ pub fn ancestor_chain_until(
             let id = snapshot.id;
             told(&snapshot, hwnd);
             chain.push(snapshot);
-            placed.push((hwnd, at));
             hops_used += 1;
             current_acc_id = parent_acc_id;
             if (limits.known)(id) {
@@ -951,7 +948,6 @@ pub fn ancestor_chain_until(
             at_window_object = snapshot.role == Role::Window;
             told(&snapshot, self_hwnd);
             chain.push(snapshot);
-            placed.push((self_hwnd, self_at));
             current_hwnd = self_hwnd;
             at_self = true;
             hops_used += 1;
@@ -1033,6 +1029,20 @@ pub fn ancestor_chain_until(
         // window's, and two such panels are two windows, as NVDA compares
         // two MSAA objects' windows first.
         let window_client = !parent_at && at_window_object && parent_hwnd == above;
+        // A top-level window's client so reached is acquired again at its
+        // own address and read there instead, as NVDA reads the foreground
+        // object (`objectInForeground`) at the window's client address when
+        // the focus enters a new top-level window: so it is the node any
+        // other path gives the window's client, marked as a top-level
+        // window's client when it is one ([`is_top_level_client`]). One
+        // call, the acquisition.
+        let top_client = (window_client && window::parent(parent_hwnd) == desktop)
+            .then(|| Accessible::from_event(parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF))
+            .flatten();
+        let (parent_acc, parent_at, window_client, identity) = match top_client {
+            Some(client) => (client, true, false, None),
+            None => (parent_acc, parent_at, window_client, identity),
+        };
         let snapshot = read_snapshot_with(
             &parent_acc,
             parent_key,
@@ -1047,7 +1057,6 @@ pub fn ancestor_chain_until(
         let is_window_object = snapshot.role == Role::Window;
         told(&snapshot, parent_hwnd);
         chain.push(snapshot);
-        placed.push((parent_hwnd, parent_at));
         hops_used += 1;
         current = parent_acc;
         current_hwnd = parent_hwnd;
@@ -1068,7 +1077,6 @@ pub fn ancestor_chain_until(
             let id = snapshot.id;
             told(&snapshot, group_hwnd);
             chain.push(snapshot);
-            placed.push((group_hwnd, true));
             hops_used += 1;
             current = group;
             current_hwnd = group_hwnd;
@@ -1078,59 +1086,8 @@ pub fn ancestor_chain_until(
             }
         }
     }
-    if walked == Walked::Complete {
-        read_top_level_client(&mut chain, &placed, current_hwnd, |key| {
-            Accessible::from_event(key.0, key.1, key.2)
-                .map(|client| read_snapshot_with(&client, key, context(true), registry))
-        });
-    }
     chain.reverse();
     Ok((chain, walked))
-}
-
-/// Where a walk that reached the top-level window `top` holds that
-/// window's client area at an address it made up, reached through
-/// `accParent` with no identity string, as a Windows Forms form's: puts in
-/// its place the client area `read` reads at its own address, so it is
-/// marked as a top-level window's client when it is one
-/// ([`is_top_level_client`]) and Core decides whether to say it, as NVDA's
-/// `doPreGainFocus` speaks the foreground object, read at the window's
-/// client address, on entering a new top-level window. The client area is
-/// the outermost entry in `top` but its window object; `chain` is nearest
-/// first and `placed` gives each entry's window and whether it was
-/// acquired at its address. Nothing is read for a window that is not
-/// top-level or has no system menu, for a client area not read as a pane,
-/// neither ever so marked, or for a client area already acquired at its
-/// address: one acquisition and the client area's own reads, made only
-/// where the walk reached the top.
-fn read_top_level_client(
-    chain: &mut [NodeSnapshot],
-    placed: &[(isize, bool)],
-    top: isize,
-    read: impl FnOnce(MsaaKey) -> Option<NodeSnapshot>,
-) {
-    const WS_SYSMENU_STYLE: isize = 0x0008_0000;
-    if top == 0 || window::parent(top) != window::desktop() {
-        return;
-    }
-    if window::style(top) & WS_SYSMENU_STYLE == 0 {
-        return;
-    }
-    // A window object is at its address, role window; the client area is
-    // the entry below it.
-    let Some(index) =
-        (0..chain.len()).rfind(|&index| !(placed[index].1 && chain[index].role == Role::Window))
-    else {
-        return;
-    };
-    // Only a client area read as a pane can be marked: one of another role
-    // is presented, or not, by its role alone.
-    if placed[index] != (top, false) || chain[index].role != Role::Pane {
-        return;
-    }
-    if let Some(snapshot) = read((top, OBJID_CLIENT.0, CHILDID_SELF)) {
-        chain[index] = snapshot;
-    }
 }
 
 /// The group box enclosing the window `hwnd`, and its window, as NVDA's
@@ -2089,9 +2046,9 @@ fn read_snapshot_with(
 /// NVDA knows an object's object id only so (`event_objectID`, from the
 /// event or `IAccIdentity`, `NVDAObjects/IAccessible/__init__.py` 803 to
 /// 808), and a client reached through `accParent` with no identity string,
-/// as a Windows Forms form's, is not presented; a walk that reaches its
-/// top-level window reads it again at its address
-/// ([`read_top_level_client`]).
+/// as a Windows Forms form's, is not presented; a walk that reaches a
+/// top-level window's client from a child window's window object reads it
+/// at its address instead ([`ancestor_chain_until`]).
 fn is_top_level_client(key: MsaaKey, raw_role: Option<i32>) -> bool {
     const WS_SYSMENU_STYLE: isize = 0x0008_0000;
     raw_role == Some(ROLE_SYSTEM_CLIENT.cast_signed())
