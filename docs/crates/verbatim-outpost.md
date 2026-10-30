@@ -112,19 +112,25 @@ receives the event's own element, judges and reads a UIA focus
   (`SetBackendOverride` with its `pid`, `FocusReader::forces_uia`); the
   listener makes no other backend verdict, no probe and no console check,
   which are its outpost's. A shell window that only stages a switch is read
-  and Core drops it. Repeats are judged against the focus Core holds
-  (`docs/architecture.md`, "Where the rules run (D14)";
-  `verbatim_core::focus_rules::repeats_focus`): Core tells the listener of
-  every judgement and focus change (`CoreFocus`), the readers share the
-  elements of the focuses they accepted (`focus_read::HeldElements`), and an
-  event whose sender `CompareElements` equates with Core's focus while that
-  element's `HasKeyboardFocus` reads true is dropped; a failed comparison
-  lets it through. Nothing is compared while an accepted focus awaits
-  Core's judgement, after Core refused it, or once Core holds a focus no
-  listener read gave it. Then the acceptance test against the foreground
-  window (`outpost::acceptance`, shared with the outposts) on the element's
-  own or nearest window (`verbatim_uia::nearest_window_handle`); the
-  outpost does not test a UIA focus again.
+  and Core drops it. The listener makes no duplicate test and keeps no
+  judgement of Core's (`docs/design/ownership-one-judge.md`, "The
+  listener"): a focus that passes the other checks is read in full, and
+  Core judges a repeat. A menu opening is compared (`CompareElements`) with
+  the reading thread's own last read (`LastFocus`) while that read is
+  current for it: nothing moved away from the application since that
+  read's event was queued (`read_schedule::QueuePlace::current_since`,
+  the `Arrival`'s `place` and `left_at`), moving away being another
+  application's UIA focus or menu opening queued, another process's MSAA
+  focus forwarded by the `WinEvent` thread (`Readers::msaa_focus`), or a
+  foreground event of another top-level window than the last read's, or
+  than the read under way once it knows its window, one during a read
+  whose window is unknown counting (`Readers::foreground_changed`). An
+  opening UI Automation equates with it is judged as that focus, with its
+  window; a failed comparison drops the opening. Then the acceptance test
+  against the foreground window (`outpost::acceptance`, shared with the
+  outposts) on the element's own or nearest window
+  (`verbatim_uia::nearest_window_handle`); the outpost does not test a UIA
+  focus again.
 - The read (`verbatim_uia_rops::focus_ancestry_classic`) makes every call
   on an element the listener holds, with no remote operation and no
   connection: whether the element with the same runtime id as the previous
@@ -180,15 +186,15 @@ receives the event's own element, judges and reads a UIA focus
   Past it the read makes no calls but still makes every check that needs
   none, the class-list skip among them, taking the keyboard focus from the
   cached `HasKeyboardFocus` (also when a live read fails by UIA's
-  transaction timeout); the repeat check is skipped, a deliberate
-  divergence from NVDA. The walk after the checks has its bound, measured
+  transaction timeout); a menu opening's comparison is skipped. The walk
+  after the checks has its bound, measured
   from the event's observation (`Budget::bound_walk`, the time the event
   waited counted by the reader's observation clock,
   `FocusReader::set_observation_clock`): `MOVED_ON_GRACE` (500 ms) when
   the focus's top-level window is not that of the previous focus the
   listener observed, which the reading thread places in order
   (`FocusReader::last_top`) and which is always elsewhere after another
-  application's focus (`ReadersState::last_focus`), and `READ_BUDGET`
+  application's focus (the schedule's `last_focus`), and `READ_BUDGET`
   otherwise. A walk past its bound is reported by `read_at_bound`: the
   focus as read so far, the ancestors read, and `PlainFrom` the outermost
   one's nearest window. A call over a second is logged at info
@@ -201,9 +207,9 @@ receives the event's own element, judges and reads a UIA focus
   whose call is still under way at the bound is published by the watchdog
   from that progress through the same `read_at_bound`, its chain
   completed by plain windows by local calls on the watchdog's thread
-  (`publish_at_bound`), and claimed (`WatchedRead::publish`), so its
-  thread's late result is discarded when it returns and its element is
-  not kept for Core's judgement. The thread is not abandoned for this: it
+  (`WatchedRead::prepare_publish`), and claimed (`WatchedRead::claim`) as
+  the schedule decides, so its thread's late result is discarded when it
+  returns. The thread is not abandoned for this: it
   reads its application's next event when its call returns, is abandoned
   only at `READ_DEADLINE` or by the moved-on rule, and so counts against
   `ABANDONED_LIMIT` only then, when no second outcome is sent. A read
@@ -227,21 +233,46 @@ receives the event's own element, judges and reads a UIA focus
   the front is judged only with evidence: a foreground event from the
   listener's hook (`Readers::foreground_changed`) or the front already
   elsewhere when the window became known (`WatchedRead::judge_front`). An
-  abandoned read is marked (`Reading::abandoned`, `HeldElements::abandoned`)
-  so a late return keeps nothing, the event is reported dropped, and a new
-  thread takes later events. With `ABANDONED_LIMIT` (two) threads still in
-  calls the application gets no new thread and its events wait;
-  `READ_DEADLINE` after that (`App::limit_reached`) every waiting and later
-  event is dropped until a thread returns. The watchdog sleeps on an alarm
-  (`outpost::alarm::Alarm`, as an outpost's watchdog does): a read sets its
-  timer as it starts, to its deadline, or to the end of its grace when a
-  foreground event came while it waited, and again to its bound once it
-  has passed its checks, each only when no sooner time is set
-  (`alarm_by`); a read that returns with none other under way cancels it
-  (`settle_alarm`). A read whose window is known from the event's cache
-  has the window in front judged as it starts, on its own thread
-  (`WatchedRead::known`). So a read that returns before its bound wakes
-  the watchdog not at all.
+  abandoned read is claimed, the event is reported dropped, and a new
+  thread takes later events; when its thread returns, the schedule answers
+  `ForgetLast` and the thread forgets its last read
+  (`Reading::forget_last`, `FocusReader::forget_last`), a focus Core never
+  got, which no later read compares with or reuses. With `ABANDONED_LIMIT`
+  (two) threads still in calls the application gets no new thread and its
+  events wait, and the first that returns reads them; `READ_DEADLINE` after
+  that every waiting and later event is dropped until a thread returns.
+  The watchdog sleeps on an alarm (`outpost::alarm::Alarm`, as an
+  outpost's watchdog does): a read sets its timer as it starts, to its
+  deadline, or to the end of its grace when a foreground event came while
+  it waited, and again to its bound once it has passed its checks, each
+  only when no sooner time is set (`alarm_by`); a read that returns with
+  none other under way cancels it. A read whose window is known from the
+  event's cache has the window in front judged as it starts, on its own
+  thread (`WatchedRead::known`). So a read that returns before its bound
+  wakes the watchdog not at all.
+- The schedule (`read_schedule`). Every decision above of which thread
+  reads which event, when a read is abandoned or published, which waiting
+  events are dropped, which idle waiters run, and where each application
+  was last moved away from, is the pure `Schedule::step`, an input in
+  (`ScheduleInput`: `Push`, `Next`, `Returned`, `Tick`, `Foreground`,
+  `MsaaFocus`, `OutpostEnded`, `WhenIdle`, `SpawnFailed`, `Stop`) and its
+  effects out, in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`,
+  `Claim`, `ForgetLast`, `Alarm`, `RunIdle`, `Job`), with time as
+  microseconds from the shell's start and no clock, lock or call of its
+  own. `focus_read::Readers` is its shell: it keeps the readers' lock, the
+  threads and the condition variable each waits on, the watchdog's alarm,
+  the idle waiters' closures and the reads under way (`WatchedRead`), and
+  applies each step's effects under the lock. A tick (`TickRead`) carries
+  what the shell found of each read: its window, the front's judgement,
+  whether the user moved on, asked only when `Schedule::moved_on_wanted`
+  says so, and the read as it would be published once its bound has
+  passed; an answer for a read whose window changed since judges nothing
+  and has the watchdog look again at once. Each event's marker gets
+  exactly one outcome. The menu end's grace is the pure `GraceState::step`
+  in the same module (`GraceInput`: `Ended`, `Fired`, `IdleAnswer`,
+  `Close`; `GraceEffect`: `SendEnd`, `SendIdleAnswer`, `SetTimer`), driven
+  by the listener's threadpool timer. `cargo xtask ci` reads the module
+  against an allow-list (`xtask/src/ownership.rs`).
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
@@ -323,11 +354,7 @@ listener makes none (`docs/design/focus-pipeline-rework.md`, "Who owns
 each duplicated fact", the verdicts). A listener's read in a window the
 outpost judges not UIA, by the read's nearest window, judged at the read's
 observation, is dropped (`Worker::uia_focus`), its answer having already
-been applied to the gap record. Until step 11 of the rework removes
-`HeldElements`, such a read stays unjudged in the listener, whose
-duplicate test is off while it waits, so a repeat in such a window costs a
-full read, which Core's duplicate rule drops: an interim cost, with no
-message (Dickson, 2026-10-30).
+been applied to the gap record.
 
 ### Console windows and frames of another process
 

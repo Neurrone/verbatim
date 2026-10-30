@@ -81,9 +81,9 @@ any path, or reaches `windows-sys` through a workspace crate that names it
 directly; `windows-sys` beneath third-party libraries and the
 workspace-hack crate is allowed, since those libraries are cross-platform.
 
-Before it builds anything, `cargo xtask ci` also scans the sources with two
-checks of its own, each failing the run with the file, line, and text of
-every finding:
+Before it builds anything, `cargo xtask ci` also scans the sources with
+checks of its own, each failing the run with the file and line of every
+finding:
 
 - Waits in test code (`xtask/src/waits.rs`): a fixed sleep or a retry
   counter anywhere in test code fails it, and the sleeps left in
@@ -101,6 +101,15 @@ every finding:
   are not scanned, and tests are scanned like everything else: a test
   reads an element through a shape, declaring one in the shape module if
   none holds what it reads.
+- Pure owners' names (`xtask/src/ownership.rs`): a module whose
+  transitions are replayed in tests, the listener's read scheduler
+  (`crates/verbatim-outpost/src/read_schedule.rs`), may `use` only its
+  allow-list (`std::collections`, `std::time::Duration`, `verbatim_model`
+  and the listener's data types), and fails on any name of a thread, a
+  lock, an atomic, an `Arc`, a channel, a clock read, the file system,
+  I/O, the environment, processes, the network, the Windows bindings, or
+  `unsafe`, imported or written in full. Comments and strings are not
+  scanned; it reads text, so its replay tests are the real check.
 - Documents' links and paths (`xtask/src/docs.rs`): the documentation
   check below.
 

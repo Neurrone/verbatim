@@ -213,16 +213,23 @@ Rules that hold for every UIA focus:
   (`docs/design/focus-pipeline.md`, section 18): the sender's nearest
   window (`NormalizeElementBuildCache`, answered from the event's cache
   for a sender that is a window), costing mockapp 31 provider calls for a
-  button or the list and 22 for a list item; the comparison with the
-  focus Core holds (`CompareElements`, NVDA's duplicate rule, which
-  reaches no provider but is a client call); and the sender's keyboard
+  button or the list and 22 for a list item; and the sender's keyboard
   focus read plainly (`CurrentHasKeyboardFocus`, NVDA's last check), 3
-  provider calls. It is read plainly because inside a remote program
+  provider calls. The listener makes no duplicate test: Core judges a
+  repeat (`docs/design/ownership-one-judge.md`, "Repeats"), so no focus
+  pays the comparison with an earlier focus (`CompareElements`, which
+  reaches no provider but is a client call). A menu opening is compared
+  with its thread's last read while that read is current, one call. It is read plainly because inside a remote program
   Windows Terminal's second focus identity answers that it has the focus
   where NVDA's plain read answers that it has not (section 16.8).
 - A repeated focus on the element that still has the keyboard focus is
-  dropped after those three calls (`uia_repeated_focus_costs_exactly`);
-  the window's verdict is kept, so the window is asked nothing.
+  read in full, 5 UIA calls where the listener's duplicate test dropped it
+  after 3 (`uia_repeated_focus_costs_exactly`): the nearest window, the
+  keyboard focus, and the read, which asks whether the element it read
+  last under the runtime id still has the keyboard focus, refreshes the
+  sender's cache, and steps once up to its known parent. They cost mockapp
+  149 provider calls, where the three cost 34. Core drops the repeat; the
+  window's verdict is kept, so the window is asked nothing.
 - A focus on a console window's own element is dropped after the
   console's provider check, made once per console window by the listener
   from the held sender: four calls from the console window's element and
@@ -232,7 +239,7 @@ Rules that hold for every UIA focus:
 - A menu item that no pattern makes checkable has its legacy MSAA state
   read, as NVDA 2027.1 reads it for menu items only: one UIA call more in
   the listener's read, the focus-now answer and a navigation step
-  (`a_menu_items_legacy_state_is_read_with_its_focus`: 7 calls for a menu
+  (`a_menu_items_legacy_state_is_read_with_its_focus`: 6 calls for a menu
   item two steps below the previous focus's window), and none in the
   outpost's remote program
   (`a_windows_forms_menu_item_is_checked_from_the_remote_read`). It is
@@ -248,14 +255,14 @@ Rules that hold for every UIA focus:
 
 ### A focus change, UIA, steady state
 
-- Minimum: 5 UIA calls for a sender without a window of its own, as
-  mockapp's are, and 4 for a sender that is a window: the nearest window,
-  the comparison, the keyboard focus, the sender's cache refreshed
-  (`BuildUpdatedCache`), and one step up to the previous focus's group,
-  whose own ancestors are reused. The listener makes no remote operation,
+- Minimum: 4 UIA calls for a sender without a window of its own, as
+  mockapp's are, and 3 for a sender that is a window: the nearest window,
+  the keyboard focus, the sender's cache refreshed (`BuildUpdatedCache`),
+  and one step up to the previous focus's group, whose own ancestors are
+  reused. The listener makes no remote operation,
   because only the application's outpost may send one into it
   (`docs/design/listener-without-connections.md`, section 2).
-- Today: 5 UIA calls, all the listener's, either way the outpost walks;
+- Today: 4 UIA calls, all the listener's, either way the outpost walks;
   the minimum, met. 312 provider calls in all with the outpost's remote
   walk and 306 with its classic walk, of which 9 `GetPatternProvider`
   calls are the grid item's row and column (3 for each of the three
@@ -377,11 +384,6 @@ the verdicts).
   second), which lost the probe's 3 seconds with the probe, and the
   application's reading threads by `ABANDONED_LIMIT`; each application has
   its own reading thread, so no other application waits.
-- Until the rework's step 11 removes `HeldElements`, a read the outpost
-  drops reaches no judgement of Core's, so it stays unjudged in the
-  listener and its duplicate test is off while it waits: a repeat in such a
-  window costs a full read, which Core's duplicate rule drops, with nothing
-  more heard (Dickson, 2026-10-30).
 
 ### A focus behind other objects' events
 
@@ -547,8 +549,8 @@ a parent answers 3 seconds late.
 
 The focus lands on the list, and its selected item is read with it.
 
-- Minimum and today: 7 UIA calls, all the listener's: a steady-state
-  focus's five, and the selected item's two (`SelectionPattern2`'s
+- Minimum and today: 6 UIA calls, all the listener's: a steady-state
+  focus's four, and the selected item's two (`SelectionPattern2`'s
   `FirstSelectedItem`, fetched with the `Selection` pattern, and
   `BuildUpdatedCache` on it); met. 352 provider calls with the outpost's
   remote walk and 347 with its classic walk, 15 of them the grid items'
@@ -563,14 +565,14 @@ name (`verbatim_uia::map::value_from_selection`,
 `crates/mockapp/tests/combo_box.rs`); then another item is selected.
 Pinned by `uia_combo_box_costs_exactly`, both ways.
 
-- Minimum: 7 UIA calls for the focus, as for a list; 1 for the
+- Minimum: 6 UIA calls for the focus, as for a list; 1 for the
   selection, the search that finds the item among the combo box's
   children with its name and keyboard focus.
-- Today: the focus 8, all the listener's: a steady-state focus's five and
+- Today: the focus 7, all the listener's: a steady-state focus's four and
   the selected item's three through the `Selection` pattern, since
   mockapp's combo box has no `SelectionPattern2`. A combo box with the
   `Value` pattern reads no selected item (`FocusQuery::value_available`);
-  a looping selector is read as a list, 7. The selection 2, in the
+  a looping selector is read as a list, 6. The selection 2, in the
   outpost: the controlled-list test every selection is given first, as
   NVDA's `event_selection` reads `ControllerFor` first, and one
   `FindFirstBuildCache` over the children.
@@ -581,7 +583,7 @@ Pinned by `uia_combo_box_costs_exactly`, both ways.
 
 ### Arrowing through a list, UIA
 
-- Minimum and today: 5 UIA calls, a steady-state focus on a windowless
+- Minimum and today: 4 UIA calls, a steady-state focus on a windowless
   element; the walk stops at the list; met. 327 provider calls with the
   outpost's remote walk and 324 with its classic walk, 11 of them the
   grid item's row and column and the ancestors' automation ids.
