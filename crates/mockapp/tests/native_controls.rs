@@ -53,7 +53,6 @@ fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent
         node: reported.node.clone(),
         foreground: false,
         ancestors: reported.ancestors.clone(),
-        ancestors_unknown: false,
         selected_child: reported.selected_child.clone(),
         text: None,
     };
@@ -570,8 +569,10 @@ fn a_uia_window_that_is_not_content_is_no_context_for_a_win32_control() {
 /// listener's reader goes up through the UIA window's root, a named
 /// grouping, and on past it to the Win32 window, whose client area, read
 /// through MSAA, is a pane that stands for a top-level window with a
-/// system menu: it is spoken by its title, then the grouping, then the
-/// button.
+/// system menu. The host window is hidden here, so its client area is
+/// invisible and, as NVDA counts an invisible object unavailable, not
+/// spoken (`docs/parity/focus-context.md`, "Focus-ancestry context"): the
+/// grouping is spoken, then the button.
 fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
     common::init_com();
     let title = common::unique_title("mockapp-boundary-win32-host");
@@ -596,10 +597,13 @@ fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
         reported.ancestors[0].details.top_level_client,
         "the Win32 window's client area, marked as a top-level window's"
     );
+    assert!(
+        reported.ancestors[0].states.contains(State::Invisible),
+        "the hidden window's client area, invisible"
+    );
     assert_eq!(
         spoken(&reported),
         [
-            vec![SegmentContent::Label(title.clone())],
             vec![
                 SegmentContent::Label("Embedded".to_owned()),
                 SegmentContent::Role(Role::Group)
@@ -614,8 +618,74 @@ fn a_uia_window_in_a_win32_window_has_the_windows_client_as_context() {
     app.quit();
 }
 
+/// A UI Automation ancestor carries its class name from the walk's cache,
+/// so Core speaks a slider of class `SensitiveSlider` above the focus as a
+/// focus is, its value included (`docs/parity/focus-context.md`, "A slider
+/// that focuses its thumb"): mockapp's "Volume" slider of that class, the
+/// focus on the "Position" button inside it.
+fn a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value() {
+    common::init_com();
+    let title = common::unique_title("mockapp-sensitive-slider");
+    let mut app = common::spawn("sensitive_slider.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus thumb");
+    let uia = Uia::new().expect("a UIA client");
+    let thumb = common::listener_focus(&uia, hwnd.0 as isize);
+    let reported = outpost.uia_focus(&thumb);
+    let classes = |ancestors: &[verbatim_model::NodeSnapshot]| {
+        ancestors
+            .iter()
+            .map(|node| (node.role, node.details.class_name.clone()))
+            .collect::<Vec<_>>()
+    };
+    let expected = [
+        (Role::Window, Some("VerbatimMockAppWindow".to_owned())),
+        (Role::Slider, Some("SensitiveSlider".to_owned())),
+    ];
+    assert_eq!(
+        classes(&reported.ancestors),
+        expected,
+        "each ancestor's class, from the listener's walk"
+    );
+    // The outpost's own walk, for the focus-now query.
+    outpost.read_focus_as(thumb.live().element());
+    let now = outpost
+        .focus_now()
+        .expect("the focus now has a focused control");
+    assert_eq!(
+        classes(&now.ancestors),
+        expected,
+        "each ancestor's class, from the outpost's walk"
+    );
+    assert_eq!(
+        spoken(&reported),
+        [
+            vec![
+                SegmentContent::Label("Mockapp Sensitive Slider Fixture".to_owned()),
+                SegmentContent::Role(Role::Window)
+            ],
+            vec![
+                SegmentContent::Label("Volume".to_owned()),
+                SegmentContent::Role(Role::Slider),
+                SegmentContent::Value("50".to_owned())
+            ],
+            vec![
+                SegmentContent::Label("Position".to_owned()),
+                SegmentContent::Role(Role::Button)
+            ],
+        ]
+    );
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value",
+            a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value,
+        ),
         (
             "a_windows_forms_tree_item_is_read_as_a_tree_view_item",
             a_windows_forms_tree_item_is_read_as_a_tree_view_item,

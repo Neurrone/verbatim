@@ -63,6 +63,8 @@ enum Timeout {
 /// A running ancestry fixture and a client reading it.
 struct Fixture {
     app: common::MockApp,
+    /// mockapp's window's title, the name a plain window gives it.
+    title: String,
     uia: Uia,
     root: IUIAutomationElement,
     hwnd: isize,
@@ -106,6 +108,7 @@ impl Fixture {
         );
         Self {
             app,
+            title,
             uia,
             root,
             hwnd,
@@ -782,7 +785,7 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
 /// The timeout is short, and the requests only a little slow, since
 /// mockapp goes on answering a timed-out program's calls, each that much
 /// late, before it takes the next command.
-fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
+fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_CALL: Duration = Duration::from_millis(40);
     for remote in [true, false] {
@@ -837,16 +840,25 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
             OutpostToSupervisor::Event {
                 event:
                     NormalizedEvent::FocusChanged {
-                        node,
-                        ancestors,
-                        ancestors_unknown,
-                        ..
+                        node, ancestors, ..
                     },
                 ..
             } => {
                 assert_eq!(node.name.as_deref(), Some("Deep button"), "{path}");
-                assert!(ancestors_unknown, "{path}: the containers are unknown");
-                assert_eq!(ancestors, [], "{path}");
+                assert_eq!(
+                    ancestors
+                        .iter()
+                        .map(|node| (node.role, node.name.clone(), node.details.window))
+                        .collect::<Vec<_>>(),
+                    [(
+                        Role::Window,
+                        Some(fixture.title.clone()),
+                        Some(verbatim_model::WindowHandle(u64::from_ne_bytes(
+                            fixture.hwnd.to_ne_bytes()
+                        )))
+                    )],
+                    "{path}: mockapp's window, a plain window named by its title"
+                );
             }
             other => panic!("{path}: the outpost said {other:?}, not the focus"),
         }
@@ -902,11 +914,8 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
             panic!("{case}: the listener sent {fact:?}, not its read");
         };
         assert_eq!(
-            (
-                read.ancestors.as_deref().map(<[_]>::len),
-                read.ancestors_end
-            ),
-            (Some(0), AncestorsEnd::ContinueFrom(desktop)),
+            (read.ancestors.len(), read.ancestors_end),
+            (0, AncestorsEnd::ContinueFrom(desktop)),
             "{case}: the listener names the window its chain goes on from"
         );
         outpost.deliver(fact);
@@ -914,15 +923,11 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
             OutpostToSupervisor::Event {
                 event:
                     NormalizedEvent::FocusChanged {
-                        node,
-                        ancestors,
-                        ancestors_unknown,
-                        ..
+                        node, ancestors, ..
                     },
                 ..
             } => {
                 assert_eq!(node.name.as_deref(), Some("Deep button"), "{case}");
-                assert!(!ancestors_unknown, "{case}: the containers are known");
                 assert_eq!(ancestors, [], "{case}");
             }
             other => panic!("{case}: the outpost said {other:?}, not the focus"),
@@ -977,13 +982,12 @@ fn a_slow_parent_answers_the_parent_step_late_after_the_steps_it_lets_pass() {
 /// its container "Inner group" to that container's parent answers
 /// `answer`, after `setup`'s further mockapp commands, with remote
 /// operations on or off: the focus's name, the names of its ancestors,
-/// outermost first, or `None` when they are unknown, and the UIA calls the
-/// read made.
+/// outermost first, and the UIA calls the read made.
 fn focus_now_with_a_missing_grandparent(
     remote: bool,
     answer: &str,
     setup: &[&str],
-) -> (Option<String>, Option<Vec<Option<String>>>, u32) {
+) -> (Option<String>, Vec<Option<String>>, u32) {
     let path = if remote { "remote" } else { "classic" };
     let mut fixture = Fixture::start(&format!("mockapp-rops-now-{answer}-{path}"));
     let mut outpost = OutpostUnderTest::with_options(
@@ -1005,9 +1009,7 @@ fn focus_now_with_a_missing_grandparent(
     let now = now.unwrap_or_else(|| panic!("{answer} {path}: the focus now has a focused control"));
     drop(outpost);
     fixture.app.quit();
-    let ancestors = now
-        .ancestors
-        .map(|ancestors| ancestors.into_iter().map(|node| node.name).collect());
+    let ancestors = now.ancestors.into_iter().map(|node| node.name).collect();
     (now.node.name, ancestors, calls.uia)
 }
 
@@ -1026,7 +1028,7 @@ fn a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_w
         focus_now_with_a_missing_grandparent(true, "none", &[]),
         (
             Some("Deep button".to_owned()),
-            Some(vec![Some("Inner group".to_owned())]),
+            vec![Some("Inner group".to_owned())],
             2
         )
     );
@@ -1043,7 +1045,7 @@ fn a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_han
  {
     assert_eq!(
         focus_now_with_a_missing_grandparent(true, "none", &["report-window group2"]),
-        (Some("Deep button".to_owned()), Some(vec![None]), 2)
+        (Some("Deep button".to_owned()), vec![None], 2)
     );
 }
 
@@ -1059,7 +1061,7 @@ fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_it
             (name, ancestors),
             (
                 Some("Deep button".to_owned()),
-                Some(vec![Some("Inner group".to_owned())])
+                vec![Some("Inner group".to_owned())]
             ),
             "{answer}"
         );
@@ -1099,17 +1101,12 @@ fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_i
     outpost.settle();
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    ancestors,
-                    ancestors_unknown,
-                    ..
-                },
+            event: NormalizedEvent::FocusChanged {
+                node, ancestors, ..
+            },
             ..
         } => {
             assert_eq!(node.name.as_deref(), Some("Deep button"));
-            assert!(!ancestors_unknown, "the containers are known");
             assert_eq!(
                 ancestors
                     .iter()
@@ -1143,12 +1140,9 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     outpost.deliver(outpost.listener_fact(&group));
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    ancestors_unknown, ..
-                },
+            event: NormalizedEvent::FocusChanged { ancestors, .. },
             ..
-        } => assert!(!ancestors_unknown, "the group's containers are known"),
+        } => assert_eq!(ancestors, [], "the group's chain: nothing above it"),
         other => panic!("the outpost said {other:?}, not the group's focus"),
     }
     outpost.settled();
@@ -1157,17 +1151,12 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     outpost.deliver(outpost.listener_fact(&deep));
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    ancestors,
-                    ancestors_unknown,
-                    ..
-                },
+            event: NormalizedEvent::FocusChanged {
+                node, ancestors, ..
+            },
             ..
         } => {
             assert_eq!(node.name.as_deref(), Some("Deep button"));
-            assert!(!ancestors_unknown, "the button's containers are known");
             assert_eq!(
                 ancestors
                     .iter()
@@ -1183,8 +1172,8 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     fixture.app.quit();
 }
 
-/// A focus whose read fails is reported from its event, its containers
-/// unknown, as the focus, its only state focused, whatever the event's
+/// A focus whose read fails is reported from its event, below the window
+/// it is in, as the focus, its only state focused, whatever the event's
 /// cache says of its keyboard focus: NVDA's
 /// last check reads the sender's keyboard focus live
 /// (`shouldAllowUIAFocusEvent`), and once that has said it has the focus,
@@ -1192,7 +1181,9 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
 /// cache is filled before the sender has the focus, the focus then moves to
 /// it, raising no event, so that its live read says it has it, and the read
 /// times out, every pattern request slow (`slow-patterns`) as in
-/// `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`.
+/// `a_focus_whose_walk_times_out_is_reported_below_its_window`. Its chain
+/// is completed by plain windows from mockapp's window, the outermost
+/// ancestor read none.
 fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
     const TIMEOUT: Duration = Duration::from_millis(300);
     const SLOW_CALL: Duration = Duration::from_millis(40);
@@ -1228,7 +1219,14 @@ fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
         verbatim_model::StateSet::new().with(State::Focused),
         "reported as the focus, whatever its event's cache said"
     );
-    assert!(read.ancestors.is_none(), "its containers are unknown");
+    assert_eq!(
+        (read.ancestors.len(), read.ancestors_end),
+        (
+            0,
+            verbatim_outpost::protocol::AncestorsEnd::PlainFrom(fixture.hwnd)
+        ),
+        "completed by plain windows from mockapp's window"
+    );
     drop(outpost);
     fixture.app.quit();
 }
@@ -1629,8 +1627,8 @@ fn main() {
             a_timed_out_nearest_window_lookup_reads_nothing_into_the_application,
         ),
         (
-            "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",
-            a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown,
+            "a_focus_whose_walk_times_out_is_reported_below_its_window",
+            a_focus_whose_walk_times_out_is_reported_below_its_window,
         ),
         (
             "a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent",

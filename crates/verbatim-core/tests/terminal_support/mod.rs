@@ -52,7 +52,6 @@ pub fn focus() -> Input {
         },
         foreground: false,
         ancestors: Vec::new(),
-        ancestors_unknown: false,
         selected_child: None,
         text: None,
     })

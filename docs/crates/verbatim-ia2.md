@@ -165,10 +165,17 @@ Public API:
   the `NodeDetails` half plain MSAA can express, with `top_level_client`
   set on a client object, child id 0, of a window with the `WS_SYSMENU`
   style, from one local style read, as NVDA's
-  `isPresentableFocusAncestor` singles it out, and `window` set on a
-  window or client object, child id 0, read at its own address, never on
-  an object a walk keys at an address it made up, which may be any object
-  inside the window; position-in-set is
+  `isPresentableFocusAncestor` singles it out, only for an object read at
+  its own address, since NVDA knows a client's object id only from its
+  event or its identity string, so a Windows Forms form's client reached
+  through `accParent` is not marked; `window` set on a window or client
+  object, child id 0, read at its own address, and on the object a walk
+  reaches from a child window's window object in its parent window,
+  which oleacc's window object answers with that window's client
+  whether or not it has an identity string, as a Windows Forms panel's
+  has none; never on any other object a walk keys at an address it made
+  up, which may be any object inside the window; `STATE_SYSTEM_INVISIBLE`
+  maps to the invisible state; position-in-set is
   counted for list-view and tree-view items, as described below, and is
   otherwise `None` until IA2's `groupPosition` (roadmap M7)),
   `tree_view_child_count` (a `SysTreeView32` item's number of children,

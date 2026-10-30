@@ -471,12 +471,10 @@ as dead, and clears the navigator if it belonged to that outpost. If
 the application holds attention, a replacement starts at once and is
 asked for its current focus; when the reply arrives, it is compared
 with the kept copy (role, name, value, states, and the ancestors' names
-and roles, which a reply with its ancestors unknown leaves unchanged, as
-the focus keeps its previous chain then), and if all match, the new
-node ids are taken silently, otherwise the focus is announced as usual.
+and roles), and if all match, the new node ids are taken silently,
+otherwise the focus is announced as usual.
 Tests: `crates/verbatim-core/tests/reduce.rs`,
-`a_replacement_outpost_reporting_the_same_focus_is_taken_silently`,
-`a_replacement_outpost_reporting_the_same_focus_with_its_ancestors_unknown_is_taken_silently`,
+`a_replacement_outpost_reporting_the_same_focus_is_taken_silently`
 and `a_replacement_outpost_reporting_a_different_focus_announces_it`. The same question is asked
 after the focus listener is replaced.
 
@@ -575,7 +573,10 @@ event as `NO_WINDOW`; there Verbatim differs, as "A focus UIA does not
 deliver" records: the outpost reads the focus at once and speaks where
 it now is. In NVDA's second case the listener's classic read of the
 sender fails, and the listener reports the focus as the event's cache
-gives it, its ancestors unknown. A walk whose step from an element below
+gives it, with the ancestors read before the failure and the windows
+above them as plain windows, as at the walk's bound, from the parent
+window of the focus's own window when it is one and nothing above it was
+read. A walk whose step from an element below
 the desktop root to its parent fails or finds no parent goes on, as NVDA's
 failed parent read falls back to the window hierarchy
 (`Window._get_parent`), from the parent window of its outermost element's
@@ -644,7 +645,7 @@ No capture of NVDA exists for this case.
 
 Tests: `remote_ops.rs` in `mockapp`,
 `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`,
-`a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`,
+`a_focus_whose_walk_times_out_is_reported_below_its_window`,
 and `a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent`
 (the failed step and the missing parent) for the listener's report;
 `a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_windows_parent`,

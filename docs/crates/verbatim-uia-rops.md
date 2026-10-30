@@ -198,7 +198,8 @@ the element does not have the focus, and otherwise an `Ancestry`:
 - `failed_hop`: how a step to a parent failed below the top, a
   `FailedHop` (`verbatim_uia::FailedHop`, re-exported): `Error` with the
   failing code, or `NoParent`. `Ancestry::ancestors_unknown` is true for a
-  walk out of time or with a failed step. Callers go on from the parent
+  walk out of time or with a failed step, whose chain is not the whole
+  chain read. Callers go on from the parent
   window of the outermost element's nearest window after a failed step, as
   NVDA falls back to the window hierarchy when its parent read fails, and
   complete a walk cut by its time or depth limit by plain windows from that

@@ -78,8 +78,13 @@ const FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS: CallCounts = CallCounts {
 
 /// Gives Core `event` from mockapp, its node ids stamped with outpost 1,
 /// and returns the content of each utterance spoken, in order. A focus's
-/// drop of expired speech is the only other effect allowed.
+/// drop of expired speech is the only other effect allowed, and, for a
+/// focus whose chain shares no entry with the one before, its cut of
+/// speech: these events carry no window facts, by which Core would find
+/// the two in one top-level window, mockapp's root, which the MSAA walk
+/// leaves out of the chain as a window object.
 fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentContent>> {
+    let focus = matches!(event, NormalizedEvent::FocusChanged { .. });
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
@@ -102,6 +107,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentCon
                 .collect(),
         ),
         Effect::DropExpiredSpeech(_) => None,
+        Effect::StopSpeech if focus => None,
         other => panic!("an event makes no {other:?}"),
     })
     .collect()
@@ -113,7 +119,6 @@ fn focus_event(reported: &Reported) -> NormalizedEvent {
         node: reported.node.clone(),
         foreground: false,
         ancestors: reported.ancestors.clone(),
-        ancestors_unknown: false,
         selected_child: reported.selected_child.clone(),
         text: None,
     }

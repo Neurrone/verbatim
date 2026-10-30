@@ -18,7 +18,8 @@
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
-//! `child-window`, `window-focus`, `hold`, `release`, and `quit`.
+//! `child-window`, `child-client-identity`, `window-focus`, `hold`,
+//! `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -292,6 +293,14 @@ pub(crate) enum Command {
     /// objects are the node's own in that window, and `accParent` names
     /// the node's parent in it.
     ChildWindow,
+    /// `child-client-identity`: the client area of the child window
+    /// `child-window` made answers as `client-identity` makes the host's
+    /// answer, `IAccIdentity` with its address and `accParent` with the
+    /// child window's own window object, whose parent Windows answers with
+    /// the host's client area, as a control's window is inside a Windows
+    /// Forms panel whose client area offers no identity string.
+    /// MSAA-only.
+    ChildClientIdentity,
     /// `window-focus`: the host window takes the keyboard focus within its
     /// thread (`SetFocus`), so it is its thread's focus window, as a
     /// window whose application has activated it is.
@@ -506,6 +515,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "disable-client" => Some(Command::DisableClient),
         "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
         "child-window" => Some(Command::ChildWindow),
+        "child-client-identity" => Some(Command::ChildClientIdentity),
         "window-focus" => Some(Command::WindowFocus),
         "focus-child" => {
             let (container, child) = rest.split_once(' ')?;

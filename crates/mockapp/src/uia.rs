@@ -271,7 +271,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::FocusChild(..) => {
             return Err("focus-child is not supported on the uia backend".into());
         }
-        Command::ClientIdentity => {
+        Command::ClientIdentity | Command::ChildClientIdentity => {
             return Err("client-identity is not supported on the uia backend".into());
         }
         Command::DisableClient => {

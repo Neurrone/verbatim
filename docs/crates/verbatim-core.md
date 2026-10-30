@@ -40,10 +40,20 @@ guide maps those behaviors onto the crate's types and modules.
     a selection of the focus or an ancestor is a change of its states; any
     other is an item spoken only inside a focused list or tab control of
     the same outpost.
-  - `already_entered(previous, same_window, node)` with `EnteredKey`:
-    whether the focus was already inside a container of a new focus,
-    which the reducer speaks newly entered and an outpost gathers a newly
-    entered dialog's own text by.
+  - `same_entry(old, new, same_window)` with `EnteredKey`: whether an
+    entry of a previous focus line and one of a new line are the same
+    object: one node id, one window when both are windows, or else one
+    role and name in the same top-level window for nodes that are not
+    one outpost's UI Automation elements. `meeting((previous,
+    previous_focus), (new, new_focus), same_window)` gives where a new
+    focus line meets the previous one, as NVDA's `api.setFocusObject`
+    finds it, the indexes of the two entries, or `None` when the lines
+    share nothing below the desktop; the reducer keeps the previous line
+    to that entry, enters the new entries below it, and cuts speech when
+    there is none. It allocates nothing. `already_entered(previous,
+    same_window, node)`: whether `node` is the same entry as one of
+    `previous`, by which an outpost gathers a newly entered dialog's own
+    text.
   - `HeldFocus` and `HeldNode`: the focus Core holds as it sends it, the
     trace of the event it came from, its observation time, the focus and
     its ancestors (id, backend, role, name, states, and the window a node

@@ -879,11 +879,10 @@ impl Intake {
         if let (Some(at), Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _)) =
             (place.as_mut(), &entry.item)
             && let Some(Object::Uia(old)) = &state.focused
-            && read.ancestors.as_ref().is_some_and(|ancestors| {
-                ancestors
-                    .iter()
-                    .any(|ancestor| ancestor.snapshot.runtime_id == *old)
-            })
+            && read
+                .ancestors
+                .iter()
+                .any(|ancestor| ancestor.snapshot.runtime_id == *old)
         {
             let old = old.clone();
             *at = old_focus_events_first(&mut state.waiting, *at, &old);
@@ -1987,7 +1986,7 @@ mod tests {
             read: Box::new(crate::protocol::UiaFocusRead {
                 hwnd,
                 snapshot: snapshot(runtime_id),
-                ancestors: Some(Vec::new()),
+                ancestors: Vec::new(),
                 ancestors_end: crate::protocol::AncestorsEnd::Top,
                 selected_child: None,
                 value_from_selection: false,
@@ -3300,16 +3299,14 @@ mod tests {
     fn uia_focus_inside(marker: u64, runtime_id: Vec<i32>, ancestors: &[&[i32]]) -> Item {
         let mut fact = uia_focus(marker, 3, runtime_id);
         if let DeliveredFact::UiaFocusRead { read, .. } = &mut fact {
-            read.ancestors = Some(
-                ancestors
-                    .iter()
-                    .map(|runtime_id| crate::protocol::UiaAncestorFact {
-                        snapshot: snapshot(runtime_id.to_vec()),
-                        hwnd: 0,
-                        content: true,
-                    })
-                    .collect(),
-            );
+            read.ancestors = ancestors
+                .iter()
+                .map(|runtime_id| crate::protocol::UiaAncestorFact {
+                    snapshot: snapshot(runtime_id.to_vec()),
+                    hwnd: 0,
+                    content: true,
+                })
+                .collect();
         }
         Item::Fact(fact, None)
     }

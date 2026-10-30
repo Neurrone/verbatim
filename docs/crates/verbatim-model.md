@@ -48,7 +48,9 @@ recorder unchanged. What the reducer does with each type is in
 - `Role`, `State`, `StateSet`: the role vocabulary, with a counterpart for
   every role both backends' NVDA tables map that Verbatim speaks
   (`Role::ALL` lists them; `Role::Terminal` is NVDA's terminal role), the
-  states (no "default", which NVDA does not have), and a bitmask state set
+  states (no "default", which NVDA does not have; `Invisible`, an MSAA
+  object's or a plain window's, never spoken, makes an ancestor
+  unpresentable), and a bitmask state set
   with `contains`, `insert`, `remove`, `with`, and ordered `iter`. Both
   enums are non-exhaustive and ordered.
 - `NodeSnapshot`, `NodeDetails`, `Rect`: everything needed to announce one
@@ -56,9 +58,11 @@ recorder unchanged. What the reducer does with each type is in
   `NodeDetails` group of optional properties: description, keyboard
   shortcut, position in set, set size, level, bounding `Rect`,
   `top_level_client` (the MSAA client area of a top-level window with a
-  system menu, presented as that window), `class_name` and
-  `parent_automation_id` (only on a UIA focus's snapshot, for Core's rules
-  for an application's elements), `row` and `column` (a grid item's,
+  system menu, presented as that window), `class_name` (on a UIA focus's
+  snapshot, for Core's rules for an application's elements, and on each
+  UIA ancestor, for the slider that focuses its thumb) and
+  `parent_automation_id` (only on a UIA focus's snapshot), `row` and
+  `column` (a grid item's,
   read only for a node read alone), and `window` (the `WindowHandle` of
   the window the node is, carried only by a plain window, a UI Automation
   element that is its window's own, and an MSAA window or client object,
@@ -82,11 +86,12 @@ recorder unchanged. What the reducer does with each type is in
   sends.
   - `FocusChanged`: a full snapshot; `foreground`, set when the focus is a
     window that just became the system's foreground window; the ancestor
-    chain, outermost first, with `ancestors_unknown` when the outpost
-    could not read it in time; a selection container's selected child;
-    and, for a focus that may have text, `text` (see "The text protocol").
-    The enrichment is deadline-guarded and degrades to empty, so it never
-    blocks or loses a focus.
+    chain, outermost first, complete to the desktop, which is not in it,
+    windows a walk did not reach being plain windows read from Windows'
+    own state; a selection container's selected child; and, for a focus
+    that may have text, `text` (see "The text protocol"). The enrichment
+    is deadline-guarded and completes a cut chain by plain windows, so it
+    never blocks or loses a focus.
   - `PropertyChanged` with a `PropertyChange`: name, value, description,
     or the complete new `States` set, with a `child_count` read only for a
     state change that newly expands a Win32 tree view item.

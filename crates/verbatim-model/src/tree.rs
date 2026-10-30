@@ -308,11 +308,17 @@ pub enum State {
     Visited,
     /// Linked to other objects (MSAA `STATE_SYSTEM_LINKED`).
     Linked,
+    /// Not visible: MSAA `STATE_SYSTEM_INVISIBLE`, or a window without the
+    /// `WS_VISIBLE` style. Never spoken; an invisible ancestor is not
+    /// presented as an entered container (`docs/parity/focus-context.md`,
+    /// "Focus-ancestry context"). UI Automation's `IsOffscreen` is
+    /// [`State::Offscreen`], not this.
+    Invisible,
 }
 
 impl State {
     /// Every state, in declaration order; the basis for [`StateSet::iter`].
-    pub const ALL: [State; 21] = [
+    pub const ALL: [State; 22] = [
         State::Focused,
         State::Focusable,
         State::Selected,
@@ -334,6 +340,7 @@ impl State {
         State::Multiline,
         State::Visited,
         State::Linked,
+        State::Invisible,
     ];
 
     const fn bit(self) -> u32 {
@@ -453,8 +460,11 @@ pub struct NodeDetails {
     /// The node's own UI Automation class name (`ClassName`), carried only
     /// on the snapshot of a UI Automation focus, a menu opening's or the
     /// outpost's own read of the focus, whose rules for an application's
-    /// elements Core matches it with (decision D6); `None` on every other
-    /// snapshot, and left out of the message, so that they carry no string.
+    /// elements Core matches it with (decision D6), and on each UI
+    /// Automation ancestor of a focus, by which Core presents a slider that
+    /// focuses its thumb (`docs/parity/focus-context.md`, "A slider that
+    /// focuses its thumb"); `None` on every other snapshot, and left out of
+    /// the message, so that they carry no string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class_name: Option<String>,
     /// The one-based row of the grid cell the node is, when it is one

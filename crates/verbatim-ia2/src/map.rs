@@ -146,6 +146,7 @@ pub fn states_from_msaa(state: u32) -> StateSet {
     set(STATE_SYSTEM_BUSY, State::Busy);
     set(STATE_SYSTEM_TRAVERSED, State::Visited);
     set(STATE_SYSTEM_LINKED, State::Linked);
+    set(STATE_SYSTEM_INVISIBLE, State::Invisible);
     states
 }
 

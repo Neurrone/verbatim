@@ -455,10 +455,10 @@ fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_mov
 }
 
 /// Hands the outpost the listener's read of a UIA focus on `element`, as
-/// the listener sends one it could not read beyond the event: its
-/// ancestors and window unknown, so the outpost has no path to its own
-/// copy of the element. Returns the focus it reports from the read, with
-/// its ancestors unknown, which must be the only thing it says.
+/// the listener sends one it could not read beyond the event: no ancestor
+/// read, its walk cut with no window known, so the outpost has no path to
+/// its own copy of the element. Returns the focus it reports from the
+/// read, with no chain, which must be the only thing it says.
 fn focus_without_a_path(
     outpost: &OutpostUnderTest,
     element: &Cached<ListenerEvent>,
@@ -467,7 +467,8 @@ fn focus_without_a_path(
     let Judged::Read(mut read) = judged else {
         panic!("the listener dropped the focus: {judged:?}");
     };
-    read.ancestors = None;
+    read.ancestors.clear();
+    read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::PlainFrom(0);
     read.window = None;
     outpost.deliver(DeliveredFact::UiaFocusRead {
         marker: 0,
@@ -481,13 +482,12 @@ fn focus_without_a_path(
                     node,
                     foreground: false,
                     ancestors,
-                    ancestors_unknown: true,
                     selected_child: None,
                     text: None,
                 },
             ..
         } if ancestors.is_empty() => node,
-        other => panic!("the outpost said {other:?}, not a focus with its ancestors unknown"),
+        other => panic!("the outpost said {other:?}, not a focus with no chain"),
     };
     outpost.settled();
     node
@@ -625,13 +625,13 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
     assert_eq!(
         (
             read.hwnd,
-            read.ancestors.as_deref().map(<[_]>::len),
+            read.ancestors.len(),
             read.ancestors_end,
             read.window
         ),
         (
             0,
-            Some(1),
+            1,
             verbatim_outpost::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize),
             Some(hwnd.0 as isize)
         ),
@@ -648,7 +648,6 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
                 NormalizedEvent::FocusChanged {
                     node,
                     ancestors,
-                    ancestors_unknown: false,
                     text,
                     ..
                 },
@@ -696,9 +695,10 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
 }
 
 /// The listener's read of mockapp's "Notes", the focus, with the chain it
-/// sends cut to the field alone, as a walk up cut below the field's nearest
-/// window sends it: the chain the outpost finds the field's element after a
-/// cut walk for.
+/// sends cut to the field alone, completed by plain windows from its
+/// nearest window, as a walk up cut below the field's nearest window sends
+/// it: the chain the outpost finds the field's element after a cut walk
+/// for.
 fn cut_read_of_notes(
     outpost: &OutpostUnderTest,
     notes: &Cached<ListenerEvent>,
@@ -708,7 +708,9 @@ fn cut_read_of_notes(
         panic!("the listener dropped the focus: {judged:?}");
     };
     assert_eq!(read.hwnd, 0, "the field has no window of its own");
-    read.ancestors = None;
+    read.ancestors.clear();
+    read.ancestors_end =
+        verbatim_outpost::protocol::AncestorsEnd::PlainFrom(read.window.unwrap_or(0));
     read
 }
 
@@ -833,7 +835,7 @@ fn a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element() {
         panic!("the listener dropped the focus: {judged:?}");
     };
     assert_eq!(read.hwnd, 0, "the field has no window of its own");
-    for ancestor in read.ancestors.iter_mut().flatten() {
+    for ancestor in &mut read.ancestors {
         ancestor.hwnd = 0;
     }
     outpost.read_focus_as(notes.live().element());
@@ -1835,27 +1837,18 @@ fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_wi
     outpost.settle();
     let read = focus_changed(outpost.next());
     let NormalizedEvent::FocusChanged {
-        node,
-        ancestors,
-        ancestors_unknown,
-        ..
+        node, ancestors, ..
     } = &read
     else {
         unreachable!("a focus change");
     };
     assert_eq!((node.role, node.name.as_deref()), (Role::Terminal, None));
     assert_eq!(
-        (
-            ancestors
-                .iter()
-                .map(|ancestor| (ancestor.role, ancestor.name.as_deref()))
-                .collect::<Vec<_>>(),
-            *ancestors_unknown
-        ),
-        (
-            vec![(Role::Window, Some("Mockapp Console Window Fixture"))],
-            false
-        )
+        ancestors
+            .iter()
+            .map(|ancestor| (ancestor.role, ancestor.name.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![(Role::Window, Some("Mockapp Console Window Fixture"))]
     );
     let NormalizedEvent::FocusChanged {
         text: Some(text), ..
@@ -2332,8 +2325,16 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
         panic!("the listener did not read the menu opening: {judged:?}");
     };
     assert_eq!(
-        (read.snapshot.name.as_deref(), read.ancestors.is_some()),
-        (reported.node.name.as_deref(), true),
+        (
+            read.snapshot.name.as_deref(),
+            read.ancestors_end,
+            read.ancestors.is_empty()
+        ),
+        (
+            reported.node.name.as_deref(),
+            verbatim_outpost::protocol::AncestorsEnd::Top,
+            false
+        ),
         "read with its ancestors"
     );
 
@@ -2545,8 +2546,9 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
         );
     };
     // Reported whole as its event's cache gives it, its own class and
-    // window included, with the Focused state, its ancestors unknown, in
-    // its own window.
+    // window included, with the Focused state, in its own window, its chain
+    // completed by plain windows from its parent window, the desktop, which
+    // is none of them.
     assert_eq!(
         *read,
         UiaFocusRead {
@@ -2563,8 +2565,10 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
                     ..NodeDetails::default()
                 },
             },
-            ancestors: None,
-            ancestors_end: verbatim_outpost::protocol::AncestorsEnd::Top,
+            ancestors: Vec::new(),
+            ancestors_end: verbatim_outpost::protocol::AncestorsEnd::PlainFrom(
+                verbatim_uia::parent_window(hwnd.0 as isize)
+            ),
             selected_child: None,
             value_from_selection: false,
             window: Some(hwnd.0 as isize),
@@ -3316,6 +3320,47 @@ fn an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none
     assert_eq!(unnamed, [None, None], "without it");
 }
 
+/// An MSAA object a walk reaches from a child window's window object, in
+/// its parent window, is that window's client object, as oleacc's window
+/// object answers `accParent`, so it carries the window even when it names
+/// no address, as a Windows Forms panel's client offers no identity string
+/// (`experiments/focus-pipeline-rework-measurements/captures/two-same-named-dialogs.txt`):
+/// the "Save" button in a child window of mockapp's "Save As" dialog, whose
+/// client area names its address (`child-client-identity`) while the
+/// dialog's does not, has both dialogs carry their windows, so two windows
+/// of one role and name are told apart (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context").
+fn an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client() {
+    let title = common::unique_title("mockapp-msaa-window-client");
+    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    app.send("child-window");
+    app.send("child-client-identity");
+    // SAFETY: a local search of the dialog's children.
+    let child = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(Some(hwnd), None, None, None)
+    }
+    .expect("mockapp made the child window");
+    let outpost = OutpostUnderTest::new(&app);
+    // The button, index 1, at its object id in the child window.
+    let reported = outpost.msaa_focus(child, 1);
+    assert_eq!(
+        (roles_and_names(&reported), windows_of(&reported)),
+        (
+            vec![
+                (Role::Dialog, Some("Save As")),
+                (Role::Dialog, Some("Save As")),
+                (Role::Button, Some("Save"))
+            ],
+            vec![Some(handle(hwnd)), Some(handle(child)), None]
+        ),
+        "the outpost's chain and its windows"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// A failed `accParent` is not the end of a chain: it goes on from the
 /// parent window of the object's window, by that window's object, as
 /// NVDA's parent falls back to the window hierarchy (`Window._get_parent`;
@@ -3425,12 +3470,9 @@ fn a_chain_cut_at_the_depth_limit_is_completed_by_its_windows() {
         panic!("the listener dropped the focus: {judged:?}");
     };
     assert_eq!(
+        (read.ancestors.len(), read.ancestors_end),
         (
-            read.ancestors.as_deref().map(<[_]>::len),
-            read.ancestors_end
-        ),
-        (
-            Some(64),
+            64,
             verbatim_outpost::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize)
         ),
         "the listener's walk, cut at its depth limit"
@@ -3575,13 +3617,13 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
         (
             published,
             read.snapshot.name.as_deref(),
-            read.ancestors.as_deref().map(<[_]>::len),
+            read.ancestors.len(),
             read.ancestors_end
         ),
         (
             marker,
             Some("First"),
-            Some(0),
+            0,
             verbatim_outpost::protocol::AncestorsEnd::PlainFrom(window)
         ),
         "the focus as read before its stuck step"
@@ -3601,16 +3643,16 @@ fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded()
         (
             read_next,
             read.snapshot.name.as_deref(),
-            read.ancestors.as_ref().map(|ancestors| ancestors
+            read.ancestors
                 .iter()
                 .map(|ancestor| ancestor.snapshot.name.as_deref())
-                .collect::<Vec<_>>()),
+                .collect::<Vec<_>>(),
             read.ancestors_end
         ),
         (
             next,
             Some("Second"),
-            Some(vec![Some("Items"), Some("Mockapp Tree Fixture")]),
+            vec![Some("Items"), Some("Mockapp Tree Fixture")],
             verbatim_outpost::protocol::AncestorsEnd::Top
         ),
         "the next focus, read by the same thread once the step returned"
@@ -3935,7 +3977,7 @@ fn the_continuation_of_a_listeners_chain_ends_at_the_reads_bound() {
     let Judged::Read(mut read) = outpost.listener_read(&client.focused()).0 else {
         panic!("the listener dropped the focus");
     };
-    read.ancestors = Some(Vec::new());
+    read.ancestors = Vec::new();
     read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::ContinueFrom(hwnd.0 as isize);
     let report = |observed_at_us: u64| {
         outpost.deliver_stamped(
@@ -4068,15 +4110,15 @@ fn a_hung_window_above_a_uia_focus_ends_the_listeners_walk() {
     };
     assert_eq!(
         (
-            read.ancestors.as_ref().map(|ancestors| ancestors
+            read.ancestors
                 .iter()
                 .map(|ancestor| ancestor.snapshot.name.as_deref())
-                .collect::<Vec<_>>()),
+                .collect::<Vec<_>>(),
             read.ancestors_end,
             listener_calls.uia
         ),
         (
-            Some(vec![Some("Embedded")]),
+            vec![Some("Embedded")],
             verbatim_outpost::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
             5
         ),
@@ -4141,16 +4183,17 @@ fn hung_window_above_a_focus_now(remote: bool) {
     let (answer, calls) = outpost.focus_now_answer();
     let focus = answer.focus.expect("the focus now's focused control");
     assert_eq!(
-        focus.ancestors.as_ref().map(|ancestors| ancestors
+        focus
+            .ancestors
             .iter()
             .chain(std::iter::once(&focus.node))
             .map(|node| (node.role, node.name.as_deref()))
-            .collect::<Vec<_>>()),
-        Some(vec![
+            .collect::<Vec<_>>(),
+        vec![
             (Role::Window, Some(app.title.as_str())),
             (Role::Group, Some("Embedded")),
             (Role::Button, Some("OK"))
-        ]),
+        ],
         "{path}: the focus now's chain"
     );
     assert_eq!(
@@ -4232,6 +4275,10 @@ fn main() {
         (
             "an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none",
             an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none,
+        ),
+        (
+            "an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client",
+            an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client,
         ),
         (
             "the_focused_state_test_continues_past_a_failed_acc_parent",

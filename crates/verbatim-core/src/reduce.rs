@@ -19,11 +19,11 @@ use verbatim_model::{
     Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
     StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
-use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity};
+use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, WindowHandle};
 
 use crate::focus_rules::{
-    ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, already_entered,
-    change_target, repeats_focus, selection_target,
+    ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
+    meeting, repeats_focus, selection_target,
 };
 use crate::state::{
     Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation,
@@ -411,26 +411,19 @@ fn is_duplicate_focus(state: &SrState, node: &NodeSnapshot) -> bool {
 }
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
-/// which an earlier report can have read mid-change, and its ancestors when
-/// they were read in time. What was last spoken of the focus stays as it
-/// was ([`SpokenRecord`]), so a change the repeat carried in is still
-/// spoken when its own event comes. The selected item already announced is kept, so
-/// a selection event for a new one is still spoken; a navigator the user
-/// moved away stays where it is.
-fn keep_newer_reading(
-    state: &mut SrState,
-    node: &NodeSnapshot,
-    ancestors: &[NodeSnapshot],
-    ancestors_unknown: bool,
-) {
+/// which an earlier report can have read mid-change, and its ancestors.
+/// What was last spoken of the focus stays as it was ([`SpokenRecord`]), so
+/// a change the repeat carried in is still spoken when its own event comes.
+/// The selected item already announced is kept, so a selection event for a
+/// new one is still spoken; a navigator the user moved away stays where it
+/// is.
+fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) {
     let Some(focus) = state.focus.as_mut() else {
         return;
     };
     focus.reported_focused |= node.states.contains(State::Focused);
     focus.snapshot = node.clone();
-    if !ancestors_unknown {
-        focus.ancestors = Arc::from(ancestors);
-    }
+    focus.ancestors = Arc::from(ancestors);
 }
 
 /// Whether an event from elsewhere, observed at `observed_at_us`, was
@@ -597,7 +590,6 @@ fn focus_dropped_first(
         node,
         foreground,
         ancestors,
-        ancestors_unknown,
         text,
         ..
     } = event
@@ -608,9 +600,7 @@ fn focus_dropped_first(
         return true;
     }
     if is_duplicate_focus(state, node) {
-        let (ancestors, ancestors_unknown) =
-            focus_ancestors(window, node, (ancestors, *ancestors_unknown));
-        keep_newer_reading(state, node, ancestors, ancestors_unknown);
+        keep_newer_reading(state, node, focus_ancestors(window, node, ancestors));
         sync_navigator_with_focus(state);
         editing::keep_focus_caret(state, node.id, text.as_deref(), whole_ms(observed_at_us));
         return true;
@@ -618,19 +608,18 @@ fn focus_dropped_first(
     is_stale_focus(state, node.id.outpost(), observed_at_us, window)
 }
 
-/// A focus's ancestors and whether they are unknown, as Core takes them:
-/// as the event reports them, but none, and known to be none, for an item
-/// whose containers an application's rule drops
+/// A focus's ancestors as Core takes them: as the event reports them, but
+/// none for an item whose containers an application's rule drops
 /// ([`crate::applications::drops_ancestry`]).
 fn focus_ancestors<'a>(
     window: Option<&WindowFacts>,
     node: &NodeSnapshot,
-    (ancestors, unknown): (&'a [NodeSnapshot], bool),
-) -> (&'a [NodeSnapshot], bool) {
+    ancestors: &'a [NodeSnapshot],
+) -> &'a [NodeSnapshot] {
     if crate::applications::drops_ancestry(window, node) {
-        (&[], false)
+        &[]
     } else {
-        (ancestors, unknown)
+        ancestors
     }
 }
 
@@ -706,12 +695,10 @@ fn reduce_event(
             node,
             foreground,
             ancestors,
-            ancestors_unknown,
             selected_child,
             text,
         } => {
-            let (ancestors, ancestors_unknown) =
-                focus_ancestors(window, node, (ancestors, *ancestors_unknown));
+            let ancestors = focus_ancestors(window, node, ancestors);
             reduce_focus_changed(
                 state,
                 trace_id,
@@ -722,7 +709,6 @@ fn reduce_event(
                     observed_at_us,
                     foreground: *foreground,
                     ancestors,
-                    ancestors_unknown,
                     selected_child: selected_child.as_ref(),
                     text: text.as_deref(),
                 },
@@ -841,9 +827,8 @@ struct FocusReport<'a> {
     /// When its outpost observed it, in microseconds; 0 when not known.
     observed_at_us: u64,
     foreground: bool,
+    /// Its ancestors, outermost first, complete to the desktop.
     ancestors: &'a [NodeSnapshot],
-    /// The outpost could not read the ancestors in time.
-    ancestors_unknown: bool,
     selected_child: Option<&'a NodeSnapshot>,
     /// What the outpost's caret read found, for a focus that may have text.
     text: Option<&'a FocusText>,
@@ -873,17 +858,17 @@ impl FocusReport<'_> {
 ///   from a replacement outpost is taken silently.
 /// - A focus the same as the one already announced has been dropped before
 ///   this, by NVDA's duplicate rule ([`is_duplicate_focus`]).
-/// - Otherwise the newly entered containers, the node, and a selection
-///   container's selected item are spoken, queued behind current speech
-///   (which the key press that moved focus has already cut off), and the
-///   navigator follows focus. When the focus's top-level window changed,
-///   speech is cut off first, and the window, its outermost ancestor, is
-///   one of the entered containers, spoken by the same rule as the others
-///   whether or not a foreground report came for it (`docs/parity/focus-context.md`,
-///   "Window announcement on switching applications"). When the outpost
-///   could not read the ancestors in time, no container is announced and
-///   the previous focus's chain is kept for the next comparison, so the
-///   next focus does not announce every container again.
+/// - Otherwise the new chain is joined to the previous focus line where
+///   they meet ([`focus_line`]), and the containers below the meeting
+///   point, the newly entered ones, the node, and a selection container's
+///   selected item are spoken, queued behind current speech (which the key
+///   press that moved focus has already cut off), and the navigator
+///   follows focus. When the two lines differ just below the desktop,
+///   speech is cut off first, and the new top-level window, its outermost
+///   ancestor, is one of the entered containers, spoken by the same rule as
+///   the others whether or not a foreground report came for it
+///   (`docs/parity/focus-context.md`, "Window announcement on switching
+///   applications").
 fn reduce_focus_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -906,33 +891,9 @@ fn reduce_focus_changed(
         follow_an_unreported_foreground(state, source, window, report);
     }
 
-    let ancestors = if report.ancestors_unknown {
-        state
-            .focus
-            .as_ref()
-            .map(|focus| Arc::clone(&focus.ancestors))
-            .unwrap_or_default()
-    } else {
-        Arc::from(report.ancestors)
-    };
-    // A focus that arrives with no window facts was accepted only because
-    // it came from the attended application (`window_is_attended` has
-    // nothing else to compare), so it is in the attended window, and that
-    // window is recorded as its own. It happens when an outpost builds a
-    // UIA focus from its event while the application is too busy for the
-    // focused element, and so its window, to be read in time. Without a
-    // window, the check above cannot tell that a later foreground report for
-    // that same window is the window already holding the focus, and the
-    // window would replace the control as the focus and be announced over
-    // it. NVDA never meets this: it always has the focused element, and
-    // from it the nearest window handle.
-    let focus_window = window.cloned().or_else(|| {
-        state
-            .attention
-            .as_ref()
-            .filter(|attention| attention.source == source)
-            .and_then(|attention| attention.window.clone())
-    });
+    let line = focus_line(state.focus.as_ref(), window, report);
+    let ancestors = Arc::clone(&line.ancestors);
+    let focus_window = window.cloned();
     let new_focus = FocusContext {
         source,
         window: focus_window.clone(),
@@ -948,11 +909,7 @@ fn reduce_focus_changed(
 
     if let Some(focus) = state.focus.as_ref()
         && !focus.alive
-        && reads_the_same(
-            focus,
-            report.node,
-            (!report.ancestors_unknown).then_some(report.ancestors),
-        )
+        && reads_the_same(focus, report.node, report.ancestors)
     {
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
@@ -975,18 +932,19 @@ fn reduce_focus_changed(
     let navigator = Navigator::on(report.node.clone());
     // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
     // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
-    // new foreground window cancels speech, nameless or not, and so does
-    // entering a menu; speech for a focus the user has since left is
-    // dropped by the speech manager, which is told where the focus now is.
-    let foreground_changed =
-        foreground_changed(state.focus.as_ref(), report, focus_window.as_ref());
+    // focus line that differs from the previous one just below the desktop
+    // brings a new foreground window, which cancels speech, nameless or
+    // not, and so does entering a menu; speech for a focus the user has
+    // since left is dropped by the speech manager, which is told where the
+    // focus now is.
+    let foreground_changed = line.cut;
     if foreground_changed && report.observed_at_us != 0 {
         state.foreground_changed_at = Some(report.observed_at_us);
     }
     if report.foreground {
         state.foreground = Some(report.node.id);
     }
-    let entered = entered_ancestors(state.focus.as_ref(), window, report);
+    let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: report.node.id,
         ancestors: new_focus
@@ -1029,26 +987,19 @@ fn reduce_focus_changed(
 /// ([`SpokenRecord`]): the node as it is about to be spoken, and for each
 /// ancestor the states last spoken of it in the previous focus line, the
 /// previous focus included, or else its reading, from which an entered
-/// container is spoken. With the ancestors unknown, the previous chain is
-/// kept, and its entries with it.
+/// container is spoken.
 fn spoken_record(
     previous: Option<&FocusContext>,
     report: &FocusReport<'_>,
     ancestors: &[NodeSnapshot],
 ) -> SpokenRecord {
-    let kept = previous
-        .filter(|_| report.ancestors_unknown)
-        .and_then(|previous| previous.spoken.as_ref())
-        .map(|spoken| Arc::clone(&spoken.ancestors));
-    let entries = kept.unwrap_or_else(|| {
-        ancestors
-            .iter()
-            .map(|ancestor| {
-                let spoken = previous.and_then(|previous| previous.spoken_states(ancestor.id));
-                (ancestor.id, spoken.unwrap_or(ancestor.states))
-            })
-            .collect()
-    });
+    let entries = ancestors
+        .iter()
+        .map(|ancestor| {
+            let spoken = previous.and_then(|previous| previous.spoken_states(ancestor.id));
+            (ancestor.id, spoken.unwrap_or(ancestor.states))
+        })
+        .collect();
     SpokenRecord::of(report.node, entries)
 }
 
@@ -1060,7 +1011,6 @@ fn spoken_record(
 /// longer held valid as the foreground's; NVDA asks for the real
 /// foreground window instead and takes the ancestry only when that fails
 /// (`docs/nvda/events.md`, step 3 of a focus change).
-/// With the ancestry unread, the new foreground is not known.
 fn follow_an_unreported_foreground(
     state: &mut SrState,
     source: Pid,
@@ -1081,11 +1031,7 @@ fn follow_an_unreported_foreground(
         source,
         window: Some(window.clone()),
     });
-    state.foreground = if report.ancestors_unknown {
-        None
-    } else {
-        report.ancestors.first().map(|top| top.id)
-    };
+    state.foreground = report.ancestors.first().map(|top| top.id);
 }
 
 /// Ends what the previous focus's text was doing when the focus moves to
@@ -1106,26 +1052,6 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
         state.forget_caret();
     }
-}
-
-/// Whether a new focus brings a new foreground window, which cancels
-/// speech: a foreground report, or a focus in another top-level window
-/// than the previous focus (NVDA's foreground event, run when the top of
-/// the focus ancestry changes).
-fn foreground_changed(
-    previous: Option<&FocusContext>,
-    report: &FocusReport<'_>,
-    window: Option<&WindowFacts>,
-) -> bool {
-    let previous_top = previous
-        .and_then(|focus| focus.window.as_ref())
-        .map(|window| window.top_level);
-    report.foreground
-        || match (previous_top, window.map(|window| window.top_level)) {
-            (Some(old), Some(new)) => old != new,
-            (None, Some(_)) => true,
-            _ => false,
-        }
 }
 
 /// The speech for a new focus: each entered container as its own
@@ -1151,11 +1077,12 @@ fn focus_speech(
         // nothing, in its place among the entered containers, outermost
         // first: speech for a container entered outside the menu is cut
         // too (`docs/parity/changes-and-selection.md`, "Entered menus").
-        if is_menu(container) {
+        let sensitive_slider = is_sensitive_slider(container);
+        if is_menu(container) && !sensitive_slider {
             effects.push(Effect::StopSpeech);
             continue;
         }
-        if !is_presentable_container(container) {
+        if !sensitive_slider && !is_presentable_container(container) {
             continue;
         }
         let segments = container_segments(container);
@@ -1232,29 +1159,21 @@ fn has_text(text: Option<&str>) -> bool {
 
 /// Whether a reported focus reads the same as the dead focus's kept copy:
 /// role, name, value, and states, and the ancestors' names and roles. Node
-/// ids are not compared, since a replacement outpost issues new ones.
-/// Ancestors reported unknown (`None`) count as unchanged, as the focus
-/// keeps the previous chain when its ancestors are unknown
-/// (`docs/parity/focus-events.md`, "Recovery after an outpost is replaced"
-/// and "A focus whose element is gone before its read").
-fn reads_the_same(
-    focus: &FocusContext,
-    node: &NodeSnapshot,
-    ancestors: Option<&[NodeSnapshot]>,
-) -> bool {
+/// ids are not compared, since a replacement outpost issues new ones
+/// (`docs/parity/focus-events.md`, "Recovery after an outpost is
+/// replaced").
+fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) -> bool {
     let kept = &focus.snapshot;
     kept.role == node.role
         && kept.name == node.name
         && kept.value == node.value
         && kept.states == node.states
-        && ancestors.is_none_or(|ancestors| {
-            focus.ancestors.len() == ancestors.len()
-                && focus
-                    .ancestors
-                    .iter()
-                    .zip(ancestors)
-                    .all(|(old, new)| old.role == new.role && old.name == new.name)
-        })
+        && focus.ancestors.len() == ancestors.len()
+        && focus
+            .ancestors
+            .iter()
+            .zip(ancestors)
+            .all(|(old, new)| old.role == new.role && old.name == new.name)
 }
 
 /// Handles the end of an outpost incarnation: the focus keeps its copied
@@ -1352,6 +1271,52 @@ fn change_on(state: &SrState, kind: ChangeKind, node_id: NodeId) -> Option<Chang
         focus.ancestors.iter().map(|ancestor| ancestor.id),
         |_| true,
     )
+}
+
+/// A value change of `node_id` that is not the focus's: spoken, the value
+/// alone, when the node is the focus's parent, its innermost ancestor, and
+/// a slider that focuses its thumb ([`is_sensitive_slider`]), and the value
+/// differs from the one it was last read with in the focus line, as NVDA's
+/// slider speaks its value while its thumb is the focus
+/// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+fn slider_value_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    value: Option<String>,
+) -> Vec<Effect> {
+    let Some(focus) = state.focus.as_mut().filter(|focus| focus.alive) else {
+        return Vec::new();
+    };
+    let Some(parent) = focus
+        .ancestors
+        .last()
+        .filter(|parent| parent.id == node_id && is_sensitive_slider(parent))
+    else {
+        return Vec::new();
+    };
+    if parent.value == value {
+        return Vec::new();
+    }
+    let mut updated = parent.clone();
+    updated.value.clone_from(&value);
+    let source = source_of(&updated);
+    let mut ancestors = focus.ancestors.to_vec();
+    if let Some(last) = ancestors.last_mut() {
+        *last = updated;
+    }
+    focus.ancestors = Arc::from(ancestors);
+    let Some(text) = value else {
+        return Vec::new();
+    };
+    vec![Effect::Speak(Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments: vec![UtteranceSegment::value(text)],
+        source: Some(source),
+        say_all: false,
+        validity: None,
+    })]
 }
 
 /// Handles a name change: when the focused node's name differs from the one
@@ -2035,7 +2000,9 @@ fn reduce_controlled_selection(
 /// the role speaks its
 /// value at all. An edit field or document never speaks its changes of
 /// value ("When values and descriptions are spoken" in
-/// `docs/nvda/speech.md`).
+/// `docs/nvda/speech.md`). A slider that focuses its thumb speaks its own
+/// change of value while it is the focus's parent
+/// ([`slider_value_changed`]).
 fn reduce_value_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -2043,7 +2010,7 @@ fn reduce_value_changed(
     value: Option<String>,
 ) -> Vec<Effect> {
     if change_on(state, ChangeKind::Value, node_id) != Some(ChangeTarget::Focus) {
-        return Vec::new();
+        return slider_value_changed(state, trace_id, node_id, value);
     }
     let Some(focus) = state.focus.as_mut() else {
         return Vec::new();
@@ -2448,62 +2415,117 @@ pub(crate) fn source_of(node: &NodeSnapshot) -> UtteranceSource {
     }
 }
 
-/// The ancestors of a newly focused node worth announcing as entered
-/// context, outermost first: presentable containers (see
-/// [`is_presentable_container`]) that the previous focus was not already
-/// inside — NVDA's focus-ancestry behavior, where tabbing within one dialog
-/// stays quiet about the dialog but entering it announces it.
-///
-/// An ancestor counts as already entered when the previous focus or one of
-/// its ancestors is the same node. Two UI Automation nodes from one outpost
-/// are the same node only when their ids are equal, since the outpost gives
-/// one element one id, as NVDA compares UI Automation elements by their
-/// identity alone: an element replaced by a new one with the same role and
-/// name, such as File Explorer's items view list after a folder is opened,
-/// is entered anew (`docs/parity/focus-context.md`, "Focus-ancestry
-/// context"). Two windows are the same node when they are the same window,
-/// whichever outposts read them, and are two otherwise, so that a Settings
-/// page's frame, which `ApplicationFrameHost.exe` reports as its own
-/// focus and the page's outpost reports as a window above its content, is
-/// entered once. Otherwise, when the new focus is in the same top-level
-/// window as the previous one, a previous node with the same role and name
-/// also counts: node ids are comparable only within one outpost, and an
-/// MSAA object reached by another path can have another id, where NVDA's
-/// MSAA comparison weighs the role and name as well. A focus in a
-/// different top-level window, or with no previous focus, enters its whole
-/// chain but for windows it was already in.
-///
-/// Entered menu bars, menus, and menu items are never announced: NVDA
-/// cancels speech and stays silent for them. Only the presentable ones
-/// ([`is_presentable_container`]) are spoken. None are entered when the
-/// outpost could not read the ancestors in time.
-fn entered_ancestors<'a>(
+/// A new focus's place in the focus line ([`focus_line`]).
+struct FocusLine<'a> {
+    /// The focus's ancestors as Core keeps them, outermost first: the
+    /// previous line up to where the new chain meets it, then the new
+    /// chain's entries below that point.
+    ancestors: Arc<[NodeSnapshot]>,
+    /// The new chain's entries below the meeting point, outermost first:
+    /// the containers the focus has newly entered.
+    entered: &'a [NodeSnapshot],
+    /// The two lines differ just below the desktop, sharing no entry: the
+    /// focus is in a new foreground window, and speech is cut.
+    cut: bool,
+}
+
+/// Joins a new focus's chain, `report`'s ancestors and node, to the
+/// previous focus line, `previous`'s ancestors and focus, where they meet
+/// ([`meeting`]), as NVDA builds its focus line when the focus moves
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context"). The new
+/// chain is walked from the focus outward and stops at the first entry that
+/// is the same as one in the previous line: by node id; by window handle
+/// when both are windows, so that one window two outposts read is one
+/// entry, such as the Settings frame its own process reports as its focus
+/// and the page's process as a pane above the page; and otherwise by role
+/// and name in the same top-level window (`window`), for nodes that are not
+/// one outpost's UI Automation elements, whose ids alone tell them apart,
+/// since an MSAA object reached by another path can have another id. The
+/// previous line's entries are kept to that point, as NVDA keeps its old
+/// objects, so a window matched by its handle keeps the name it was
+/// entered with; the new entries below it are the containers newly
+/// entered, an element replaced by a new one with the same role and name,
+/// such as File Explorer's items view list after a folder is opened, among
+/// them. The readers leave out of a chain the entries that are not
+/// presentable, among them an unnamed UI Automation top-level window and
+/// an MSAA window object, which NVDA's line holds, so the focus's
+/// top-level window, which its window facts name, stands for the entry
+/// just below the desktop ([`line_top`]): with no entry of the chains
+/// shared, two lines in one top-level window meet there, the whole chain
+/// is entered and speech is not cut, and lines in two top-level windows
+/// differ just below the desktop: the whole chain is entered and speech is
+/// cut. With
+/// no previous focus, the first focus Core takes, the whole chain is
+/// entered and speech is not cut, as NVDA, starting, makes the focus its
+/// focus object before it handles the focus, so the two lines meet at the
+/// focus itself.
+fn focus_line<'a>(
     previous: Option<&FocusContext>,
     window: Option<&WindowFacts>,
     report: &FocusReport<'a>,
-) -> Vec<&'a NodeSnapshot> {
-    if report.ancestors_unknown {
-        return Vec::new();
+) -> FocusLine<'a> {
+    let whole = |cut| FocusLine {
+        ancestors: Arc::from(report.ancestors),
+        entered: report.ancestors,
+        cut,
+    };
+    let Some(previous) = previous else {
+        return whole(false);
+    };
+    let same_window = matches!(
+        (previous.window.as_ref(), window),
+        (Some(old), Some(new)) if old.top_level == new.top_level
+    );
+    let Some((at_old, at_new)) = meeting(
+        (&previous.ancestors, &previous.snapshot),
+        (report.ancestors, report.node),
+        same_window,
+    ) else {
+        let old_top = line_top(
+            &previous.ancestors,
+            &previous.snapshot,
+            previous.window.as_ref(),
+        );
+        let new_top = line_top(report.ancestors, report.node, window);
+        return whole(old_top.is_none() || old_top != new_top);
+    };
+    // The previous line is kept through the meeting entry, the previous
+    // focus among them when they meet there, unless the meeting entry
+    // stands for the new focus itself.
+    let kept = if at_new == report.ancestors.len() {
+        at_old
+    } else {
+        at_old + 1
+    };
+    let entered = report.ancestors.get(at_new + 1..).unwrap_or_default();
+    FocusLine {
+        ancestors: previous
+            .ancestors
+            .iter()
+            .chain(std::iter::once(&previous.snapshot))
+            .take(kept)
+            .chain(entered)
+            .cloned()
+            .collect(),
+        entered,
+        cut: false,
     }
-    let same_window = previous.is_some_and(|previous| {
-        matches!((previous.window.as_ref(), window), (Some(old), Some(new)) if old.top_level == new.top_level)
-    });
-    report
-        .ancestors
-        .iter()
-        .filter(|ancestor| {
-            !previous.is_some_and(|previous| {
-                already_entered(
-                    previous
-                        .ancestors
-                        .iter()
-                        .chain(std::iter::once(&previous.snapshot)),
-                    same_window,
-                    *ancestor,
-                )
-            })
-        })
-        .collect()
+}
+
+/// The top-level window a focus line, `ancestors` then `focus`, holds just
+/// below the desktop, as its window facts `window` name it, the entry a
+/// reader can leave out of the chain as not presentable ([`focus_line`]):
+/// `None` with no facts, and for a line with no ancestors whose focus is
+/// not that window itself, whose focus has the desktop for its container,
+/// as an application's rule makes it for the task switcher's item
+/// ([`crate::applications::drops_ancestry`]).
+fn line_top(
+    ancestors: &[NodeSnapshot],
+    focus: &NodeSnapshot,
+    window: Option<&WindowFacts>,
+) -> Option<WindowHandle> {
+    let top = window?.top_level;
+    (!ancestors.is_empty() || focus.details.window == Some(top)).then_some(top)
 }
 
 /// Whether a focus ancestor adds context worth speaking when focus first
@@ -2525,6 +2547,8 @@ fn entered_ancestors<'a>(
 ///   description, which would speak as a bare role. NVDA treats these as
 ///   layout; a named window is announced on entry like any container.
 /// - `StaticText` with no text, which is nothing.
+/// - Any node that is invisible ([`State::Invisible`]), which NVDA counts
+///   unavailable, never presented in the focus ancestry.
 ///
 /// Whitespace-only names and descriptions count as absent. Everything else
 /// speaks on entry whether named or not: dialogs, toolbars, and an unnamed
@@ -2532,6 +2556,9 @@ fn entered_ancestors<'a>(
 /// behavior is recorded in `docs/parity/focus-context.md`, "Focus-ancestry
 /// context".
 fn is_presentable_container(node: &NodeSnapshot) -> bool {
+    if node.states.contains(State::Invisible) {
+        return false;
+    }
     let named = has_text(node.name.as_deref());
     let described = has_text(node.details.description.as_deref());
     match node.role {
@@ -2561,12 +2588,30 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
     }
 }
 
+/// The UI Automation class of a slider that gives the keyboard focus to
+/// its thumb (`docs/parity/focus-context.md`, "A slider that focuses its
+/// thumb").
+const SENSITIVE_SLIDER_CLASS: &str = "SensitiveSlider";
+
+/// Whether `node` is a UI Automation slider that gives the focus to its
+/// thumb: entered, it is spoken as a focus is, its value included, and its
+/// value change is spoken while it is the focus's parent
+/// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+fn is_sensitive_slider(node: &NodeSnapshot) -> bool {
+    node.backend == Backend::Uia
+        && node.details.class_name.as_deref() == Some(SENSITIVE_SLIDER_CLASS)
+}
+
 /// The spoken introduction for one entered container: spoken as a focus
 /// is, without its value, its level, or (except for a list) its keyboard
 /// shortcut, which NVDA leaves out for an entered container ("When the role
 /// is spoken" and "When values and descriptions are spoken" in
-/// `docs/nvda/speech.md`).
+/// `docs/nvda/speech.md`). A slider that focuses its thumb is spoken as a
+/// focus, whole ([`is_sensitive_slider`]).
 fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
+    if is_sensitive_slider(node) {
+        return node_segments(node, Reason::Focus, &mut None);
+    }
     let mut entered = node.clone();
     entered.value = None;
     entered.details.level = None;

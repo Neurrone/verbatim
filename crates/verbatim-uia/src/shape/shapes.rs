@@ -747,6 +747,21 @@ uia_shape! {
 }
 
 impl Ancestor {
+    /// The ancestor's parts, with runtime id `runtime_id`: its node's
+    /// ([`Node::parts`]) with its own UI Automation class name, which the
+    /// role's cache already holds, so no property is read for it: Core
+    /// presents a slider that focuses its thumb by its class
+    /// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+    #[must_use]
+    pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
+        let mut parts = self.node.parts(runtime_id);
+        parts
+            .details
+            .class_name
+            .clone_from(&self.node.role.class_name);
+        parts
+    }
+
     /// Whether UIA counts it both a control and content, which NVDA
     /// requires of a UIA element before it counts as content.
     #[must_use]
@@ -765,10 +780,15 @@ impl Ancestor {
 
 impl Cached<Ancestor> {
     /// The ancestor as a snapshot, its id minted by `registry`, which keeps
-    /// the element. Local.
+    /// the element, carrying its class name ([`Ancestor::parts`]). Local.
     #[must_use]
     pub fn snapshot(&self, registry: &NodeIdRegistry) -> NodeSnapshot {
-        snapshot_of(&self.read().node, &self.narrow(), registry)
+        let mut snapshot = snapshot_of(&self.read().node, &self.narrow(), registry);
+        snapshot
+            .details
+            .class_name
+            .clone_from(&self.read().node.role.class_name);
+        snapshot
     }
 }
 

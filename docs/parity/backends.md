@@ -109,8 +109,8 @@ Verbatim: **matched (unverified)**, case by case:
   read, whatever has happened since, as NVDA queues every focus it
   accepts, and Core culls the speech of one no longer current.
 - When the listener's read fails (its application does not answer within
-  the call timeout), the focus is reported from its event with its
-  ancestors unknown, as NVDA lets a focus through whose
+  the call timeout), the focus is reported from its event, its chain
+  completed by plain windows, as NVDA lets a focus through whose
   `HasKeyboardFocus` read fails, whatever the event's cached
   `HasKeyboardFocus` says, always as the focus, with the focused state
   (mockapp's

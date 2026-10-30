@@ -201,8 +201,9 @@ pub struct UiaFocusRead {
     /// Its raw-view ancestors, nearest first, up to its process's
     /// top-level window: read from the element up to the first one the
     /// thread already knew from the focus before, and the rest as they were
-    /// read then. `None` when they could not be read.
-    pub ancestors: Option<Vec<UiaAncestorFact>>,
+    /// read then. Where the walk stopped short, [`Self::ancestors_end`]
+    /// names the window the outpost completes the chain from.
+    pub ancestors: Vec<UiaAncestorFact>,
     /// Where the chain goes on above them, as the walk ended.
     #[serde(default)]
     pub ancestors_end: AncestorsEnd,
@@ -1039,11 +1040,11 @@ pub struct FocusNow {
 pub struct FocusedControl {
     /// The control.
     pub node: NodeSnapshot,
-    /// Its ancestors, outermost first, or `None` when their read left them
-    /// unknown (it ran out of time, or a step to a parent failed or found
-    /// none below the desktop root), so Core keeps the previous focus's
-    /// chain rather than taking the control as having no containers.
-    pub ancestors: Option<Vec<NodeSnapshot>>,
+    /// Its ancestors, outermost first, complete to the desktop: a read cut
+    /// short, by its time or a failed step, is completed by plain windows
+    /// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the
+    /// one fallback").
+    pub ancestors: Vec<NodeSnapshot>,
     /// The selected child, for a selection container.
     pub selected_child: Option<NodeSnapshot>,
     /// Its window's facts.
@@ -1305,7 +1306,7 @@ impl OutpostToSupervisor {
                     }
                     if let Some(control) = &mut focus.focus {
                         control.node.assign_outpost(outpost);
-                        for ancestor in control.ancestors.iter_mut().flatten() {
+                        for ancestor in &mut control.ancestors {
                             ancestor.assign_outpost(outpost);
                         }
                         if let Some(selected) = &mut control.selected_child {
@@ -1605,7 +1606,6 @@ mod tests {
             event: NormalizedEvent::FocusChanged {
                 foreground: false,
                 ancestors: Vec::new(),
-                ancestors_unknown: false,
                 selected_child: None,
                 node: NodeSnapshot {
                     id: NodeId::new(1),
@@ -1663,7 +1663,6 @@ mod tests {
                 node: snapshot(1),
                 foreground: false,
                 ancestors: vec![snapshot(2)],
-                ancestors_unknown: false,
                 selected_child: Some(snapshot(3)),
                 text: None,
             },
@@ -1682,7 +1681,6 @@ mod tests {
                 NormalizedEvent::FocusChanged {
                     node,
                     ancestors,
-                    ancestors_unknown: false,
                     selected_child,
                     ..
                 },
@@ -1774,11 +1772,11 @@ mod tests {
         let read = UiaFocusRead {
             hwnd: 0,
             snapshot: snapshot.clone(),
-            ancestors: Some(vec![UiaAncestorFact {
+            ancestors: vec![UiaAncestorFact {
                 snapshot: snapshot.clone(),
                 hwnd: 0x40,
                 content: true,
-            }]),
+            }],
             ancestors_end: crate::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,
@@ -2049,7 +2047,7 @@ mod tests {
                 window: None,
                 focus: Some(FocusedControl {
                     node: node.clone(),
-                    ancestors: None,
+                    ancestors: Vec::new(),
                     selected_child: None,
                     window: None,
                     text: None,

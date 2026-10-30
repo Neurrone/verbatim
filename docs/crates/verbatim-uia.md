@@ -155,8 +155,9 @@ call waits up to `CONNECTION_TIMEOUT` to connect and
 `Uia::ancestors((element, element_window, nearest), request, registry,
 (max_hops, parent_automation_id), stops)` gives the chain of an element's
 ancestors, each read as the `Ancestor` shape, outermost first, as
-`NodeSnapshot`s, with the automation id of the raw-view parent put in
-`parent_automation_id`. It is a per-hop `GetParentElementBuildCache` walk
+`NodeSnapshot`s, each carrying its own class name from the role's cache
+(`Ancestor::parts`, `Cached<Ancestor>::snapshot`), with the automation id
+of the raw-view parent put in `parent_automation_id`. It is a per-hop `GetParentElementBuildCache` walk
 over the raw view, capped by the caller and stopped by `AncestorStops`:
 at a window read through the other API, at an ancestor the caller
 already knows (`AncestorWalk::MetKnown`), or at the caller's

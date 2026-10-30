@@ -508,6 +508,7 @@ pub(crate) fn state_from_fixture_str(name: &str) -> Option<State> {
         "invalid_entry" => State::InvalidEntry,
         "checkable" => State::Checkable,
         "offscreen" => State::Offscreen,
+        "invisible" => State::Invisible,
         "busy" => State::Busy,
         _ => return None,
     })
@@ -616,6 +617,7 @@ mod tests {
             ("invalid_entry", State::InvalidEntry),
             ("checkable", State::Checkable),
             ("offscreen", State::Offscreen),
+            ("invisible", State::Invisible),
             ("busy", State::Busy),
         ] {
             assert_eq!(

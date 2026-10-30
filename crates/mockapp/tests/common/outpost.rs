@@ -886,11 +886,11 @@ impl OutpostUnderTest {
     /// Stands in for Core judging `message` (decision D14, "Where the rules
     /// run"): a focus the outpost reported, or a focus-now answer's
     /// control, becomes the focus Core holds, but for a foreground change
-    /// of the window its focus is already in, which Core ignores; a focus
-    /// whose ancestors are unknown keeps those of the focus before it, and a
-    /// repeat of the focus Core holds the trace that focus came from, as
-    /// Core keeps them. The outpost and the listener's reader are told,
-    /// as verbatim.exe tells them.
+    /// of the window its focus is already in, which Core ignores, its
+    /// ancestors those it was reported with, where Core keeps the previous
+    /// chain down to where they meet; and a repeat of the focus Core holds
+    /// the trace that focus came from, as Core keeps it. The outpost and the
+    /// listener's reader are told, as verbatim.exe tells them.
     fn core_judges(&self, message: &OutpostToSupervisor) {
         let held = HeldNode::of;
         let (trace, observed, node, foreground, ancestors, top_level) = match message {
@@ -903,7 +903,6 @@ impl OutpostUnderTest {
                         node,
                         foreground,
                         ancestors,
-                        ancestors_unknown,
                         ..
                     },
                 ..
@@ -912,7 +911,7 @@ impl OutpostUnderTest {
                 *observed_at_us,
                 node,
                 *foreground,
-                (!ancestors_unknown).then_some(ancestors),
+                ancestors,
                 window.as_ref().map(|window| window.top_level),
             ),
             OutpostToSupervisor::Reply {
@@ -928,7 +927,7 @@ impl OutpostUnderTest {
                     now.observed_at_us,
                     &control.node,
                     false,
-                    control.ancestors.as_ref(),
+                    &control.ancestors,
                     control
                         .window
                         .as_ref()
@@ -944,13 +943,7 @@ impl OutpostUnderTest {
                 .as_ref()
                 .is_some_and(|focus| focus.top_level.is_some() && focus.top_level == top_level);
         if !ignored {
-            let ancestors = match ancestors {
-                Some(ancestors) => ancestors.iter().map(held).collect(),
-                None => core
-                    .as_ref()
-                    .map(|focus| focus.ancestors.clone())
-                    .unwrap_or_default(),
-            };
+            let ancestors = ancestors.iter().map(held).collect();
             // A repeat of the focus it holds keeps the trace it was taken
             // from, as Core keeps its newer reading under the old one.
             let (trace_id, observed_at_us) = core
@@ -1285,7 +1278,6 @@ impl OutpostUnderTest {
                         node,
                         foreground: false,
                         ancestors,
-                        ancestors_unknown: false,
                         selected_child,
                         text,
                     },

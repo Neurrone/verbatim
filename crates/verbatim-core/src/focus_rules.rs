@@ -313,6 +313,24 @@ impl EnteredKey for HeldNode {
     }
 }
 
+impl<T: EnteredKey> EnteredKey for &T {
+    fn key_id(&self) -> NodeId {
+        (*self).key_id()
+    }
+    fn key_backend(&self) -> Backend {
+        (*self).key_backend()
+    }
+    fn key_role(&self) -> Role {
+        (*self).key_role()
+    }
+    fn key_name(&self) -> Option<&str> {
+        (*self).key_name()
+    }
+    fn key_window(&self) -> Option<WindowHandle> {
+        (*self).key_window()
+    }
+}
+
 impl EnteredKey for verbatim_model::NodeSnapshot {
     fn key_id(&self) -> NodeId {
         self.id
@@ -331,36 +349,70 @@ impl EnteredKey for verbatim_model::NodeSnapshot {
     }
 }
 
+/// Whether `old`, an entry of a previous focus line, and `new`, an entry of
+/// a new one, are the same object (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context"): the same node; or both are windows, and they
+/// are the same window, so that one window two outposts read is one
+/// entry; or, when either is not a window and the new focus is in the same
+/// top-level window as the previous one (`same_window`), they have one
+/// role and name and are not two elements one outpost read through UI
+/// Automation, which its node ids alone tell apart. Two windows with the
+/// same role and name are two objects.
+pub fn same_entry(old: &impl EnteredKey, new: &impl EnteredKey, same_window: bool) -> bool {
+    let one_identity = old.key_id().outpost() == new.key_id().outpost()
+        && old.key_backend() == Backend::Uia
+        && new.key_backend() == Backend::Uia;
+    old.key_id() == new.key_id()
+        || match (old.key_window(), new.key_window()) {
+            (Some(old), Some(new)) => old == new,
+            _ => {
+                same_window
+                    && !one_identity
+                    && old.key_role() == new.key_role()
+                    && old.key_name() == new.key_name()
+            }
+        }
+}
+
 /// Whether the focus had already entered `node`, a container of a new
-/// focus, given the previous focus and its ancestors, `previous`
-/// (`docs/parity/focus-context.md`, "Focus-ancestry context"): `node` is
-/// one of them; or both are windows, and they are the same window, so that
-/// one window two outposts read is one container; or, when either is not a
-/// window and the new focus is in the same top-level window as the previous
-/// one (`same_window`), one of them has `node`'s role and name and is not
-/// the same element under another node, which only a UIA node of the same
-/// outpost can be. Two windows with the same role and name are two
-/// containers. A newly entered container is spoken, and a newly entered
-/// dialog gathers its own text.
+/// focus, given the previous focus and its ancestors, `previous`: `node`
+/// is the same entry as one of them ([`same_entry`]). An outpost judges by
+/// it whether a dialog is newly entered, and so gathers its own text.
 pub fn already_entered<'a, P: EnteredKey + 'a>(
     previous: impl IntoIterator<Item = &'a P>,
     same_window: bool,
     node: &impl EnteredKey,
 ) -> bool {
-    previous.into_iter().any(|old| {
-        let one_identity = old.key_id().outpost() == node.key_id().outpost()
-            && old.key_backend() == Backend::Uia
-            && node.key_backend() == Backend::Uia;
-        old.key_id() == node.key_id()
-            || match (old.key_window(), node.key_window()) {
-                (Some(old), Some(new)) => old == new,
-                _ => {
-                    same_window
-                        && !one_identity
-                        && old.key_role() == node.key_role()
-                        && old.key_name() == node.key_name()
-                }
-            }
+    previous
+        .into_iter()
+        .any(|old| same_entry(old, node, same_window))
+}
+
+/// Where a new focus line meets the previous one, as NVDA joins them when
+/// the focus moves (`docs/parity/focus-context.md`, "Focus-ancestry
+/// context"): each line is a focus's ancestors, outermost first, the
+/// desktop left out, and then the focus, given as the two. The new line is
+/// walked from its focus outward, and at each entry the previous line from
+/// its focus outward, and the first pair that is the same entry
+/// ([`same_entry`]) is the meeting: `Some((old, new))`, their indexes in
+/// the two lines, the focus's being its ancestors' count. The focus line
+/// that results is the previous line up to and including `old`, then the
+/// new line's entries after `new`; those entries below the meeting point
+/// are the ones the focus has newly entered. `None` when the lines share
+/// no entry, that is, when they differ just below the desktop. Nothing is
+/// allocated.
+pub fn meeting<O: EnteredKey, N: EnteredKey>(
+    (previous, previous_focus): (&[O], &O),
+    (new, new_focus): (&[N], &N),
+    same_window: bool,
+) -> Option<(usize, usize)> {
+    let old_at = |index: usize| previous.get(index).unwrap_or(previous_focus);
+    let new_at = |index: usize| new.get(index).unwrap_or(new_focus);
+    (0..=new.len()).rev().find_map(|at_new| {
+        (0..=previous.len())
+            .rev()
+            .find(|&at_old| same_entry(old_at(at_old), new_at(at_new), same_window))
+            .map(|at_old| (at_old, at_new))
     })
 }
 

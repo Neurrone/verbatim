@@ -185,22 +185,20 @@ pub enum NormalizedEvent {
         /// applications").
         #[serde(default)]
         foreground: bool,
-        /// The focused node's ancestors, outermost first, walked by the
-        /// outpost before emitting (deadline-guarded; empty when the walk
-        /// timed out or the backend could not answer). Carried on the event
-        /// rather than fetched afterward so the reducer can speak entered
-        /// containers *before* the control, in NVDA's order, without
-        /// holding an Interrupt announcement hostage to an async round
-        /// trip. `#[serde(default)]` keeps events recorded before this
-        /// field existed deserializing unchanged.
+        /// The focused node's ancestors, outermost first, complete to the
+        /// desktop, which is not one of them: walked by the outpost before
+        /// emitting, and where a walk was cut by its bound, failed or met a
+        /// window it does not call into, completed by plain windows read
+        /// from Windows' own state (`docs/design/focus-pipeline-rework.md`,
+        /// "A window's name, and the one fallback"). Empty only for a
+        /// top-level window's own focus. Carried on the event rather than
+        /// fetched afterward so the reducer can speak entered containers
+        /// *before* the control, in NVDA's order, joining this chain to
+        /// the previous focus's where they meet. `#[serde(default)]` keeps
+        /// events recorded before this field existed deserializing
+        /// unchanged.
         #[serde(default)]
         ancestors: Vec<NodeSnapshot>,
-        /// The outpost could not read the ancestors in time (a busy
-        /// application), so `ancestors` is empty for want of an answer, not
-        /// because the node has none: the reducer keeps the previous focus's
-        /// chain rather than treating every container as newly entered.
-        #[serde(default)]
-        ancestors_unknown: bool,
         /// The selected child of a newly focused selection container (a
         /// list's selected item, a tab control's active tab), fetched by
         /// the outpost alongside the ancestors — only for container roles,

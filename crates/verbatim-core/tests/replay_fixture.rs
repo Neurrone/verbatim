@@ -49,7 +49,6 @@ fn scripted_inputs() -> Vec<Input> {
                 foreground: false,
                 node: slider,
                 ancestors: Vec::new(),
-                ancestors_unknown: false,
                 selected_child: None,
                 text: None,
             },

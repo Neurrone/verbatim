@@ -511,8 +511,12 @@ Each file's module comment says exactly what it asserts; in outline:
   (`boundary_win32_host.json`). The test reports a focus in each and
   asserts its ancestors and what Core speaks: the UIA window's element
   before the button when it is a control and content, and not at all when
-  it is not; and the Win32 window's client area, by its title, before the
-  UIA window's root and its focused button.
+  it is not; and the Win32 window's client area, marked as a top-level
+  window's, unspoken since the hidden window's client area is invisible,
+  before the UIA window's root and its focused button. A UIA slider of
+  class `SensitiveSlider` (`sensitive_slider.json`) above the focus
+  carries its class from the listener's walk and the outpost's own, and
+  Core speaks it with its value.
 - `msaa_events.rs`: MSAA change events handled by a real outpost and
   spoken by the reducer: a description change on the focus is spoken, a
   change on any other object says nothing (`docs/nvda/events.md`, "The
@@ -594,7 +598,8 @@ Each file's module comment says exactly what it asserts; in outline:
   the focus returns early, and how both behave against a stalled mockapp
   and one that has exited; that a walk that hits UIA's transaction
   timeout is a failure both ways and never answered by the classic walk,
-  and a real outpost then reports the focus with its containers unknown;
+  and a real outpost then reports the focus below mockapp's window, a
+  plain window named by its title;
   that a list whose selected item is gone is read both ways without it;
   that the listener drops a focus whose nearest window's lookup timed out
   for that reason, with no call after the lookup;

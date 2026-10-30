@@ -119,6 +119,13 @@ pub enum Purpose {
 #[derive(Clone, Copy, Debug, Default)]
 struct Reading {
     at_address: bool,
+    /// The object is its window's own client object by MSAA's structure,
+    /// though not acquired at its address: the parent of a child window's
+    /// window object, in the parent window. It carries the window as one
+    /// acquired at its address does, and is still found again only as the
+    /// same COM object, its identity unknown, so it is not presented as a
+    /// top-level window's client either ([`is_top_level_client`]).
+    window_client: bool,
     purpose: Purpose,
     role: Prefetched,
     state: Prefetched,
@@ -344,6 +351,7 @@ impl EventObject {
             self.key,
             Reading {
                 at_address: true,
+                window_client: false,
                 purpose,
                 role: self.role,
                 state: Prefetched::Unread,
@@ -556,6 +564,7 @@ impl FocusCandidate {
             self.key,
             Reading {
                 at_address: true,
+                window_client: false,
                 purpose: Purpose::Announce,
                 role: self.role,
                 state: self.state,
@@ -974,7 +983,23 @@ pub fn ancestor_chain_until(
             Some(address) if address.0 == parent_hwnd => (address, true),
             _ => ((parent_hwnd, OBJID_CLIENT.0, CHILDID_SELF), false),
         };
-        let snapshot = read_snapshot_with(&parent_acc, parent_key, context(parent_at), registry);
+        // The parent of a child window's window object in the parent
+        // window, where one that names no window is taken to be, is that
+        // window's client object, as oleacc's window object answers
+        // `accParent`, whether or not it names its address: a Windows
+        // Forms panel's client, which has no identity string, is so its
+        // window's, and two such panels are two windows, as NVDA compares
+        // two MSAA objects' windows first.
+        let window_client = !parent_at && at_window_object && parent_hwnd == above;
+        let snapshot = read_snapshot_with(
+            &parent_acc,
+            parent_key,
+            Reading {
+                window_client,
+                ..context(parent_at)
+            },
+            registry,
+        );
         let id = snapshot.id;
         let is_window_object = snapshot.role == Role::Window;
         told(&snapshot, parent_hwnd);
@@ -1829,7 +1854,7 @@ fn read_snapshot_with(
     let name = visible_text(acc.name());
     let raw_value = visible_text(acc.value());
     let raw_role = reading.role.or_read(|| acc.role());
-    let top_level_client = is_top_level_client(key, raw_role);
+    let top_level_client = at_address && is_top_level_client(key, raw_role);
     let role = raw_role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
     let (role, states, tree_item) =
         role_and_states(acc, key, role, reading.state.or_read(|| acc.state()));
@@ -1902,10 +1927,10 @@ fn read_snapshot_with(
     } else {
         key
     };
-    // A window's own window or client object, acquired at its address,
-    // carries the window: an object at a made-up address may be any object
-    // inside it.
-    let window = (at_address
+    // A window's own window or client object, acquired at its address or
+    // known to be its window's client by MSAA's structure, carries the
+    // window: an object at a made-up address may be any object inside it.
+    let window = ((at_address || reading.window_client)
         && key.2 == CHILDID_SELF
         && (key.1 == OBJID_CLIENT.0 || key.1 == OBJID_WINDOW.0))
         .then(|| WindowHandle(u64::from_ne_bytes(key.0.to_ne_bytes())));
@@ -1940,7 +1965,12 @@ fn read_snapshot_with(
 /// (`_get_isPresentableFocusAncestor`, `NVDAObjects/IAccessible/__init__.py`
 /// 2094 to 2106): a client object, child id 0, of a window with the
 /// `WS_SYSMENU` style. One local read of the window's style, made only for
-/// a client object.
+/// a client object. The caller asks only for an object acquired at its
+/// address, from an event, a window, or an identity string that names it:
+/// NVDA knows an object's object id only so (`event_objectID`, from the
+/// event or `IAccIdentity`, `NVDAObjects/IAccessible/__init__.py` 803 to
+/// 808), and a client reached through `accParent` with no identity string,
+/// as a Windows Forms form's, is not presented.
 fn is_top_level_client(key: MsaaKey, raw_role: Option<i32>) -> bool {
     const WS_SYSMENU_STYLE: isize = 0x0008_0000;
     raw_role == Some(ROLE_SYSTEM_CLIENT.cast_signed())

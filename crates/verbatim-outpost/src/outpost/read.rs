@@ -144,9 +144,9 @@ impl Outermost {
     }
 }
 
-/// A focus's ancestors, outermost first, or `None` when they could not be
-/// read in time; and its selected child, for a selection container.
-pub(super) type Enrichment = (Option<Vec<NodeSnapshot>>, Option<NodeSnapshot>);
+/// A focus's ancestors, outermost first, complete to the desktop; and its
+/// selected child, for a selection container.
+pub(super) type Enrichment = (Vec<NodeSnapshot>, Option<NodeSnapshot>);
 
 /// `chain`, outermost first, whose outermost entry is `met`, extended
 /// outward with the part of `previous` above `met`: NVDA reuses the
@@ -360,8 +360,9 @@ fn wants_selected_child(role: Role) -> bool {
 /// the focus itself) and reuses the rest; within `left`, what is left of
 /// its bound, checked between its calls, and completed above as
 /// [`complete`] says.
-/// Failures degrade to no containers or no selected child. Enrichment
-/// never turns a focus into an error. The automation id of the element's
+/// A walk that fails is completed by plain windows
+/// ([`plain_windows_above`]), and a failed selected child read is none.
+/// Enrichment never turns a focus into an error. The automation id of the element's
 /// raw-view parent, when the walk's first step read it, is put in
 /// `parent_automation_id`.
 pub(super) fn uia_enrichment(
@@ -394,7 +395,7 @@ pub(super) fn uia_enrichment(
     } else {
         None
     };
-    (Some(ancestors), selected)
+    (ancestors, selected)
 }
 
 /// A UIA element's ancestors, outermost first, its own window handle
@@ -406,8 +407,10 @@ pub(super) fn uia_enrichment(
 /// such a window: in File Explorer, the folder window above the UIA file
 /// list is then the client area a foreground report already named, not a
 /// second, UIA copy of it. A walk cut by its time or its hop limit, or
-/// whose step to a parent failed, is completed as [`complete`] says. The
-/// desktop window ends the walk. The automation id of the element's
+/// whose step to a parent failed, is completed as [`complete`] says, and
+/// one that fails before it reads anything, by plain windows
+/// ([`plain_windows_above`]). The desktop window ends the walk. The
+/// automation id of the element's
 /// raw-view parent, when the walk's first step read it, is put in
 /// `parent_automation_id`.
 fn uia_ancestors(
@@ -430,7 +433,7 @@ fn uia_ancestors(
             out_of_time,
         },
     ) else {
-        return Vec::new();
+        return plain_windows_above(context, element_window, nearest);
     };
     // The walk stops below the process boundary itself and answers the
     // parent or owner window there as `crossed`.
@@ -543,13 +546,13 @@ pub(super) fn reads_as_plain(context: &Context, hwnd: isize) -> bool {
 }
 
 /// Window `hwnd` as a plain window (the design's Terms): role window,
-/// named by `InternalGetWindowText`, and unavailable when its style
-/// disables it, read from Windows' own state with no call into any
-/// application. It is never focused, as NVDA's `Window` states hold only
-/// invisible and unavailable. It is kept at its window object's address,
-/// so a node read from it acquires the window's own object. Invisibility,
-/// which NVDA also gives it, waits for the model to carry that state (the
-/// order of work's step 8).
+/// named by `InternalGetWindowText`, unavailable when its style disables
+/// it and invisible when its style does not show it, read from Windows' own
+/// state with no call into any application. It is never focused, as NVDA's
+/// `Window` states hold only invisible and unavailable
+/// (`NVDAObjects/window/__init__.py`, `Window._get_states`). It is kept at
+/// its window object's address, so a node read from it acquires the
+/// window's own object.
 pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
     window_from_local_state(context, hwnd, false)
 }
@@ -573,6 +576,9 @@ fn window_from_local_state(context: &Context, hwnd: isize, client: bool) -> Node
     let mut states = StateSet::new();
     if style.disabled {
         states = states.with(State::Disabled);
+    }
+    if !style.visible {
+        states = states.with(State::Invisible);
     }
     NodeSnapshot {
         id: context
@@ -620,6 +626,25 @@ pub(super) fn parent_window_for_focused_state(
         .and_then(|(uia, nodes)| uia.window_element(hwnd, &nodes).ok())
         .map(|element| element.read().states.has_focus);
     ParentWindow::Uia(focused)
+}
+
+/// The chain of a focus whose walk failed before it read any ancestor,
+/// completed to the desktop by the windows above it, read with local calls
+/// only ([`plain_windows_from`]): from the parent window of `own`, the
+/// window the focus is when it is one, else from `nearest`, the window it
+/// is in, included (`docs/design/focus-pipeline-rework.md`, "A window's
+/// name, and the one fallback"). Empty, and logged, when neither is known,
+/// the one chain that is not complete.
+fn plain_windows_above(context: &Context, own: isize, nearest: isize) -> Vec<NodeSnapshot> {
+    let from = if own == 0 {
+        nearest
+    } else {
+        parent_window(own)
+    };
+    if own == 0 && nearest == 0 {
+        tracing::warn!("a focus's walk failed with no window known; it is reported with no chain");
+    }
+    plain_windows_from(context, from)
 }
 
 /// The windows from `hwnd` up to the desktop, which is none of them,
@@ -873,7 +898,8 @@ pub(super) struct NotFocused;
 /// emitted it; one whose element could not be imported (a client-side
 /// proxy) also has `window` read the classic way from then on. A walk that
 /// fails, the program by UIA's transaction timeout or the classic walk any
-/// way, reports the containers unknown. A walk that ends at a failed or
+/// way, is completed by plain windows ([`plain_windows_above`]). A walk
+/// that ends at a failed or
 /// missing parent below the top
 /// ([`verbatim_uia_rops::Ancestry::failed_hop`]) goes on from the parent
 /// window of its outermost element's nearest window, and one cut at the
@@ -961,10 +987,11 @@ fn uia_remote_enrichment(
         Ok((FocusAncestry::NotFocused, _)) => return Some(Err(NotFocused)),
         Err(error) => {
             // The walk failed, by UIA's transaction timeout or otherwise:
-            // the focus is reported with its containers unknown, never as
-            // having none.
+            // the focus's chain is its windows, read with no call.
             tracing::debug!(%error, "the focus ancestry could not be read");
-            return Some(Ok((None, None)));
+            let ancestors =
+                plain_windows_above(context, element.read().role.hwnd, window.unwrap_or(0));
+            return Some(Ok((ancestors, None)));
         }
     };
     if let Some(parent) = ancestry.ancestors.first() {
@@ -1066,7 +1093,7 @@ fn uia_remote_enrichment(
         ancestors = ancestry.ancestors.len(),
         "UIA focus ancestry read"
     );
-    Some(Ok((Some(ancestors), selected)))
+    Some(Ok((ancestors, selected)))
 }
 
 /// Whether a window above `window`, as UIA's raw view goes up
@@ -1148,8 +1175,21 @@ fn msaa_ancestors(
             .map(|told| told as verbatim_ia2::acquire::AncestorProgress<'_>),
     };
     let (chain, walked) =
-        verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
-            .unwrap_or((Vec::new(), verbatim_ia2::acquire::Walked::Complete));
+        match verbatim_ia2::acquire::ancestor_chain_until(node.id, &context.msaa_registry, &limits)
+        {
+            Ok(walk) => walk,
+            // The node can no longer be reached: its chain is its windows,
+            // read with no call.
+            Err(error) => {
+                tracing::debug!(?error, "the MSAA ancestors could not be read");
+                let own = node.details.window.map_or(0, super::window::hwnd_of);
+                let nearest = context
+                    .msaa_registry
+                    .key_of(node.id)
+                    .map_or(0, |(hwnd, _, _)| hwnd);
+                return plain_windows_above(context, own, nearest);
+            }
+        };
     let chain: Vec<NodeSnapshot> = chain
         .into_iter()
         .filter(|ancestor| ancestor.role != Role::Window)
@@ -1176,8 +1216,8 @@ fn msaa_ancestors(
 /// `left`, what is left of the walk's bound (checked between calls; an MSAA
 /// call has no bound of its own, and a UIA call in the walk ends after
 /// UIA's call timeout), and completed above as [`msaa_ancestors`] says,
-/// which tells `progress` what it reads. Failures degrade to no containers
-/// or no selected child.
+/// which tells `progress` what it reads. A failed selected child read is
+/// none.
 pub(super) fn msaa_enrichment(
     context: &Context,
     client: &mut Client,
@@ -1204,7 +1244,7 @@ pub(super) fn msaa_enrichment(
     } else {
         None
     };
-    (Some(ancestors), selected)
+    (ancestors, selected)
 }
 
 /// How long gathering a dialog's own text through UI Automation may take,
@@ -1398,7 +1438,7 @@ pub(super) fn focused_control_in(
             hung,
             FocusedControl {
                 node: plain_window(context, hung),
-                ancestors: Some(plain_windows_from(context, parent_window(hung))),
+                ancestors: plain_windows_from(context, parent_window(hung)),
                 selected_child: None,
                 window: Some(window_facts(hung)),
                 text: None,

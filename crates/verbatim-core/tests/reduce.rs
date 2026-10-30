@@ -57,7 +57,6 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             foreground: false,
             node: snapshot,
             ancestors: Vec::new(),
-            ancestors_unknown: false,
             selected_child: None,
             text: None,
         },
@@ -114,7 +113,6 @@ fn focus_in(
             node: snapshot,
             foreground: false,
             ancestors,
-            ancestors_unknown: false,
             selected_child: None,
             text: None,
         },
@@ -122,8 +120,11 @@ fn focus_in(
 }
 
 /// A foreground change: the window `snapshot` of application `source`
-/// became the system's foreground window.
-fn foreground_in(source: Pid, facts: WindowFacts, snapshot: NodeSnapshot) -> Input {
+/// became the system's foreground window. The window's node carries its
+/// handle, as every reader's node for a window does, unless the test gave
+/// it one.
+fn foreground_in(source: Pid, facts: WindowFacts, mut snapshot: NodeSnapshot) -> Input {
+    snapshot.details.window.get_or_insert(facts.top_level);
     event_in(
         source,
         Some(facts),
@@ -131,7 +132,6 @@ fn foreground_in(source: Pid, facts: WindowFacts, snapshot: NodeSnapshot) -> Inp
             node: snapshot,
             foreground: true,
             ancestors: Vec::new(),
-            ancestors_unknown: false,
             selected_child: None,
             text: None,
         },
@@ -166,47 +166,6 @@ fn a_focus_read_on_request_is_ordered_by_its_read_time() {
     assert_eq!(
         state.focused().map(|(_, node)| node.id.number()),
         Some(7001)
-    );
-}
-
-/// A focus whose window was not known (its application too busy for the
-/// outpost to read it) is taken to be in the attended window, so a later
-/// foreground report for that window does not replace the control.
-#[test]
-fn a_foreground_report_does_not_replace_a_focus_that_came_without_a_window() {
-    let app = Pid(7);
-    let state = switch_to(&SrState::new(), app);
-    let edit = node(
-        7001,
-        Role::EditableText,
-        Some("Name"),
-        None,
-        StateSet::new(),
-    );
-    let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), app, edit));
-    assert_eq!(
-        heard(&effects),
-        focus_heard(
-            focus_now(OutpostId(7), 7001, &[], Some((OutpostId(7), 7000))),
-            vec![vec![
-                UtteranceSegment::label("Name"),
-                role(Role::EditableText)
-            ]]
-        ),
-        "the control is announced"
-    );
-
-    let window_node = node(7000, Role::Window, Some("App"), None, StateSet::new());
-    let (state, effects) = reduce(&state, &foreground_in(app, window(7000), window_node));
-    assert_eq!(
-        heard(&effects),
-        vec![],
-        "the window is not announced over it"
-    );
-    assert_eq!(
-        state.focused().map(|(_, node)| node.id.number()),
-        Some(7001),
-        "the control stays the focus"
     );
 }
 
@@ -284,6 +243,15 @@ fn plain_focus(focus: u64) -> FocusNow {
 /// `said`, each queued, with no speech cut off.
 fn focus_heard(now: FocusNow, said: Vec<Vec<UtteranceSegment>>) -> Vec<Heard> {
     let mut expected = vec![Heard::Expire(now)];
+    expected.extend(said.into_iter().map(queued));
+    expected
+}
+
+/// The effects of the focus moving to `now` in a focus line that shares
+/// nothing with the previous one below the desktop: speech is cut off, then
+/// the utterances `said` are queued.
+fn cut_focus_heard(now: FocusNow, said: Vec<Vec<UtteranceSegment>>) -> Vec<Heard> {
+    let mut expected = vec![Heard::Expire(now), Heard::Stop];
     expected.extend(said.into_iter().map(queued));
     expected
 }
@@ -710,7 +678,6 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
                 node: button,
                 foreground: false,
                 ancestors: vec![header],
-                ancestors_unknown: false,
                 selected_child: None,
                 text: None,
             },
@@ -1321,7 +1288,6 @@ fn sample_script() -> Vec<Input> {
                 foreground: false,
                 node: checkbox,
                 ancestors: Vec::new(),
-                ancestors_unknown: false,
                 selected_child: None,
                 text: None,
             },
@@ -1439,7 +1405,6 @@ fn focus_event_with_ancestors(
             foreground: false,
             node: snapshot,
             ancestors,
-            ancestors_unknown: false,
             selected_child: None,
             text: None,
         },
@@ -1557,13 +1522,21 @@ fn focus_from_another_application_treats_the_chain_as_new() {
     let state = switch_to(&state, Pid(2));
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), Pid(2), edit_b, vec![dialog_b]),
+        &focus_event_with_ancestors(
+            TraceId::mint(),
+            Pid(2),
+            edit_b,
+            vec![
+                window_node(2000, Backend::Uia, Role::Window, "App", 2000),
+                dialog_b,
+            ],
+        ),
     );
 
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(2), 202, &[201], Some((OutpostId(2), 2000))),
+            focus_now(OutpostId(2), 202, &[2000, 201], Some((OutpostId(2), 2000))),
             vec![
                 vec![UtteranceSegment::label("Open"), role(Role::Dialog)],
                 vec![UtteranceSegment::label("Search"), role(Role::EditableText)],
@@ -1893,7 +1866,12 @@ fn a_tree_items_level_goes_first_only_when_it_changes() {
     ] {
         let (next, effects) = reduce(
             &state,
-            &focus_event(TraceId::mint(), Pid(1), tree_item(id, name, depth)),
+            &focus_event_with_ancestors(
+                TraceId::mint(),
+                Pid(1),
+                tree_item(id, name, depth),
+                vec![window_node(499, Backend::Msaa, Role::Window, "", 499)],
+            ),
         );
         state = next;
         steps.push(heard(&effects));
@@ -1902,22 +1880,22 @@ fn a_tree_items_level_goes_first_only_when_it_changes() {
         steps,
         vec![
             focus_heard(
-                plain_focus(500),
+                focus_now(OutpostId(1), 500, &[499], None),
                 vec![vec![
                     level(1),
                     UtteranceSegment::label("Hardware Resources")
                 ]]
             ),
             focus_heard(
-                plain_focus(501),
+                focus_now(OutpostId(1), 501, &[499], None),
                 vec![vec![UtteranceSegment::label("Components"), level(1)]]
             ),
             focus_heard(
-                plain_focus(502),
+                focus_now(OutpostId(1), 502, &[499], None),
                 vec![vec![level(0), UtteranceSegment::label("System Summary")]]
             ),
             focus_heard(
-                plain_focus(503),
+                focus_now(OutpostId(1), 503, &[499], None),
                 vec![vec![
                     level(1),
                     UtteranceSegment::label("Software Environment")
@@ -1944,7 +1922,6 @@ fn focus_event_with_selection(
             foreground: false,
             node: snapshot,
             ancestors: Vec::new(),
-            ancestors_unknown: false,
             selected_child,
             text: None,
         },
@@ -2212,11 +2189,21 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
     let state = switch_to(&state, Pid(2));
     let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(2), b));
     let state = switch_to(&state, Pid(1));
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), a));
+    // Its chain meets the line at its window, which the return brought
+    // forward.
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(
+            TraceId::mint(),
+            Pid(1),
+            a,
+            vec![window_node(1000, Backend::Uia, Role::Window, "App", 1000)],
+        ),
+    );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 700, &[], Some((OutpostId(1), 1000))),
+            focus_now(OutpostId(1), 700, &[1000], Some((OutpostId(1), 1000))),
             vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
         ),
         "focus that differs from the last announced one is announced, even if seen earlier"
@@ -2773,9 +2760,10 @@ fn the_same_focus_after_another_applications_focus_is_announced() {
 /// queued before it; the same speech observed after the change is spoken.
 #[test]
 fn a_toast_observed_before_a_foreground_change_is_dropped() {
+    let state = switch_to(&SrState::new(), Pid(3));
     let notepad = node(1000, Role::Window, Some("Notepad"), None, StateSet::new());
     let (state, _) = reduce(
-        &SrState::new(),
+        &state,
         &observed_at(foreground_in(Pid(1), window(1000), notepad), 1_000_600),
     );
 
@@ -2811,15 +2799,20 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         None,
         StateSet::new(),
     );
+    // The menu's window, unnamed, which both its items are in.
+    let menu = window_node(3, Backend::Msaa, Role::Window, "", 50);
     let (state, effects) = reduce_from(
         &SrState::new(),
-        &observed_at(focus_event(TraceId::mint(), Pid(1), menu_item), 2_000),
+        &observed_at(
+            focus_event_with_ancestors(TraceId::mint(), Pid(1), menu_item, vec![menu.clone()]),
+            2_000,
+        ),
         OutpostId(1),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            plain_focus(1),
+            focus_now(OutpostId(1), 1, &[3], None),
             vec![vec![UtteranceSegment::label("Settings...")]]
         )
     );
@@ -2839,12 +2832,18 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     let other_item = node(2, Role::MenuItem, Some("Exit"), None, StateSet::new());
     let (_, effects) = reduce_from(
         &state,
-        &observed_at(focus_event(TraceId::mint(), Pid(1), other_item), 1_990),
+        &observed_at(
+            focus_event_with_ancestors(TraceId::mint(), Pid(1), other_item, vec![menu]),
+            1_990,
+        ),
         OutpostId(1),
     );
     assert_eq!(
         heard(&effects),
-        focus_heard(plain_focus(2), vec![vec![UtteranceSegment::label("Exit")]])
+        focus_heard(
+            focus_now(OutpostId(1), 2, &[3], None),
+            vec![vec![UtteranceSegment::label("Exit")]]
+        )
     );
     let edit = node(
         1,
@@ -2860,13 +2859,14 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     );
     assert_eq!(
         heard(&effects),
-        focus_heard(
+        cut_focus_heard(
             focus_now(OutpostId(2), 1, &[], None),
             vec![vec![
                 UtteranceSegment::label("Text editor"),
                 role(Role::EditableText)
             ]]
-        )
+        ),
+        "another application's window"
     );
 }
 
@@ -2958,6 +2958,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     // and is stale.
     let source = Pid(2);
     let facts = foreground_window(30);
+    let client = window_node(2, Backend::Msaa, Role::Pane, "Untitled - Notepad", 30);
     let foreground = |us| Input::Event {
         observed_at_us: us,
         trace_id: TraceId::mint(),
@@ -2965,16 +2966,9 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
         backend: Backend::Msaa,
         window: Some(facts.clone()),
         event: NormalizedEvent::FocusChanged {
-            node: node(
-                2,
-                Role::Pane,
-                Some("Untitled - Notepad"),
-                None,
-                StateSet::new(),
-            ),
+            node: client.clone(),
             foreground: true,
             ancestors: vec![],
-            ancestors_unknown: false,
             selected_child: None,
             text: None,
         },
@@ -2989,13 +2983,16 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     );
     let (state, effects) = reduce_from(
         &state,
-        &observed_at(focus_in(source, facts.clone(), edit, vec![]), 1_000),
+        &observed_at(
+            focus_in(source, facts.clone(), edit, vec![client.clone()]),
+            1_000,
+        ),
         OutpostId(2),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(2), 1, &[], Some((OutpostId(2), 2))),
+            focus_now(OutpostId(2), 1, &[2], Some((OutpostId(2), 2))),
             vec![vec![
                 UtteranceSegment::label("Text editor"),
                 role(Role::EditableText)
@@ -3165,12 +3162,24 @@ fn a_settings_pages_content_focus_observed_before_its_frame_came_in_front_is_spo
         "the frame is said"
     );
     let toggle = node(1, Role::CheckBox, Some("Bluetooth"), None, StateSet::new());
-    let (input, outpost) = focus_observed((Pid(11), OutpostId(2)), &facts, (toggle, vec![]), 1_040);
+    // The page's outpost reads the frame above its process boundary.
+    let frame_from_page = window_node(5, Backend::Msaa, Role::Pane, "Settings", 40);
+    let (input, outpost) = focus_observed(
+        (Pid(11), OutpostId(2)),
+        &facts,
+        (toggle, vec![frame_from_page]),
+        1_040,
+    );
     let (_, effects) = reduce_from(&state, &input, outpost);
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(2), 1, &[], Some((OutpostId(1), 1))),
+            FocusNow {
+                focus: NodeId::in_outpost(OutpostId(2), 1),
+                ancestors: vec![NodeId::in_outpost(OutpostId(1), 1)],
+                foreground: Some(NodeId::in_outpost(OutpostId(1), 1)),
+                menu_item_of_focus: None,
+            },
             vec![vec![
                 UtteranceSegment::label("Bluetooth"),
                 role(Role::CheckBox),
@@ -3659,7 +3668,7 @@ fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
 
     // The control's ancestry reaches the same window through another path,
     // so its node id differs; the same top-level window with the same role
-    // and name counts as already entered.
+    // and name is where the two lines meet, and the line keeps its entry.
     let same_window = node(5, Role::Window, Some("Notepad"), None, StateSet::new());
     let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
     let (_, effects) = reduce(
@@ -3670,7 +3679,7 @@ fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 2, &[5], Some((OutpostId(1), 1))),
+            focus_now(OutpostId(1), 2, &[1], Some((OutpostId(1), 1))),
             vec![vec![
                 UtteranceSegment::label("Text"),
                 role(Role::EditableText)
@@ -3754,7 +3763,16 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(2), 3, &[1, 2], Some((OutpostId(1), 1))),
+            FocusNow {
+                focus: NodeId::in_outpost(OutpostId(2), 3),
+                // The line keeps the frame host's entry for the frame.
+                ancestors: vec![
+                    NodeId::in_outpost(OutpostId(1), 1),
+                    NodeId::in_outpost(OutpostId(2), 2),
+                ],
+                foreground: Some(NodeId::in_outpost(OutpostId(1), 1)),
+                menu_item_of_focus: None,
+            },
             vec![
                 vec![UtteranceSegment::label("Display"), role(Role::Group)],
                 vec![
@@ -4061,16 +4079,10 @@ fn a_focus_read_after_its_window_lost_the_foreground_is_dropped() {
     // window, so it is dropped although the attention record still names
     // the desktop's window (D14, amended 2026-10-05).
     let source = Pid(1);
-    let desktop = node(
-        1,
-        Role::Pane,
-        Some("Program Manager"),
-        None,
-        StateSet::new(),
-    );
+    let desktop = window_node(1, Backend::Uia, Role::Pane, "Program Manager", 10);
     let (state, _) = reduce(
         &SrState::new(),
-        &foreground_in(source, foreground_window(10), desktop),
+        &foreground_in(source, foreground_window(10), desktop.clone()),
     );
     let item = node(
         2,
@@ -4080,18 +4092,21 @@ fn a_focus_read_after_its_window_lost_the_foreground_is_dropped() {
         StateSet::new(),
     );
 
-    let (state, effects) = reduce(&state, &focus_in(source, window(10), item.clone(), vec![]));
+    let (state, effects) = reduce(
+        &state,
+        &focus_in(source, window(10), item.clone(), vec![desktop.clone()]),
+    );
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert_eq!(state.attention(), Some(source));
 
     let (_, effects) = reduce(
         &state,
-        &focus_in(source, foreground_window(10), item, vec![]),
+        &focus_in(source, foreground_window(10), item, vec![desktop]),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 2, &[], Some((OutpostId(1), 1))),
+            focus_now(OutpostId(1), 2, &[1], Some((OutpostId(1), 1))),
             vec![vec![UtteranceSegment::label("Recycle Bin")]]
         ),
         "read while its window was the foreground"
@@ -4143,11 +4158,19 @@ fn without_window_facts_the_application_decides() {
     );
     assert!(effects.is_empty(), "another application without facts");
 
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
+    let (_, effects) = reduce(
+        &state,
+        &focus_event_with_ancestors(
+            TraceId::mint(),
+            Pid(1),
+            button,
+            vec![window_node(1000, Backend::Uia, Role::Window, "App", 1000)],
+        ),
+    );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 2, &[], Some((OutpostId(1), 1000))),
+            focus_now(OutpostId(1), 2, &[1000], Some((OutpostId(1), 1000))),
             vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
         ),
         "the attention application without facts"
@@ -4380,39 +4403,6 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     );
 }
 
-/// A replacement outpost whose read of the same focus leaves its ancestors
-/// unknown, as a walk that cannot reach the top does, has it taken
-/// silently too: unknown ancestors are not a changed chain, and the focus
-/// keeps the chain the user heard.
-#[test]
-fn a_replacement_outpost_reporting_the_same_focus_with_its_ancestors_unknown_is_taken_silently() {
-    let source = Pid(1);
-    let dialog = node(4, Role::Dialog, Some("Save"), None, StateSet::new());
-    let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
-    let report = focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]);
-    let (state, _) = reduce_from(&SrState::new(), &report, OutpostId(1));
-    let (state, _) = reduce(&state, &ended(OutpostId(1)));
-
-    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
-    let mut report = focus_event_with_ancestors(TraceId::mint(), source, button, Vec::new());
-    if let Input::Event {
-        event: NormalizedEvent::FocusChanged {
-            ancestors_unknown, ..
-        },
-        ..
-    } = &mut report
-    {
-        *ancestors_unknown = true;
-    }
-    let (state, effects) = reduce_from(&state, &report, OutpostId(2));
-
-    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
-    assert_eq!(
-        state.focused().map(|(_, node)| node.id),
-        Some(NodeId::in_outpost(OutpostId(2), 2))
-    );
-}
-
 #[test]
 fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
     let source = Pid(1);
@@ -4430,9 +4420,10 @@ fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
         &focus_event(TraceId::mint(), source, other),
         OutpostId(2),
     );
+    // Neither focus has a chain, so the lines share nothing.
     assert_eq!(
         heard(&effects),
-        focus_heard(
+        cut_focus_heard(
             focus_now(OutpostId(2), 1, &[], None),
             vec![vec![UtteranceSegment::label("Cancel"), role(Role::Button)]]
         )
@@ -4499,7 +4490,7 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
     );
     assert_eq!(
         heard(&effects),
-        focus_heard(
+        cut_focus_heard(
             focus_now(OutpostId(2), 1, &[], None),
             vec![vec![
                 UtteranceSegment::label("Volume"),
@@ -4555,13 +4546,15 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
         in_foreground: true,
         ..window(30)
     };
+    // The window, unnamed, which both focuses are in.
+    let frame = window_node(4, Backend::Uia, Role::Window, "", 30);
 
-    let (state, effects) = reduce(&state, &focus_in(Pid(2), facts, item, vec![]));
+    let (state, effects) = reduce(&state, &focus_in(Pid(2), facts, item, vec![frame.clone()]));
 
     assert_eq!(
         heard(&effects),
         vec![
-            Heard::Expire(focus_now(OutpostId(2), 2, &[], None)),
+            Heard::Expire(focus_now(OutpostId(2), 2, &[4], Some((OutpostId(2), 4)))),
             Heard::Stop,
             queued(vec![UtteranceSegment::label("System Summary")]),
         ],
@@ -4571,12 +4564,12 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
-        &focus_in(Pid(2), foreground_window(30), button, vec![]),
+        &focus_in(Pid(2), foreground_window(30), button, vec![frame]),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(2), 3, &[], None),
+            focus_now(OutpostId(2), 3, &[4], Some((OutpostId(2), 4))),
             vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
         ),
         "the window's later events are attended"
@@ -4793,9 +4786,9 @@ fn a_nameless_foreground_window_moves_attention_silently() {
     );
     assert_eq!(state.attention(), Some(Pid(2)));
 
-    // The window has its name by the time its control takes focus, so it is
-    // entered as named context.
-    let named = node(6, Role::Window, Some("Calculator"), None, StateSet::new());
+    // The window has its name by the time its control takes focus, but the
+    // focus line already holds it, so it is not announced later.
+    let named = window_node(6, Backend::Uia, Role::Window, "Calculator", 20);
     let button = node(7, Role::Button, Some("Seven"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
@@ -4804,11 +4797,8 @@ fn a_nameless_foreground_window_moves_attention_silently() {
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(2), 7, &[6], Some((OutpostId(2), 5))),
-            vec![
-                vec![UtteranceSegment::label("Calculator"), role(Role::Window)],
-                vec![UtteranceSegment::label("Seven"), role(Role::Button)],
-            ]
+            focus_now(OutpostId(2), 7, &[5], Some((OutpostId(2), 5))),
+            vec![vec![UtteranceSegment::label("Seven"), role(Role::Button)]]
         )
     );
 }
@@ -4826,7 +4816,6 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
             node: list,
             foreground: false,
             ancestors: vec![pane],
-            ancestors_unknown: false,
             selected_child: Some(item),
             text: None,
         },
@@ -5310,61 +5299,284 @@ fn a_controlled_selection_is_silent_once_the_controller_is_not_the_focus() {
     assert!(effects.is_empty(), "spoke {effects:?}");
 }
 
-// ---- Ancestors an outpost could not read in time ----
+// ---- Where a new chain meets the previous one ----
 
-fn focus_event_with_unknown_ancestors(source: Pid, snapshot: NodeSnapshot) -> Input {
-    Input::Event {
-        observed_at_us: 0,
-        trace_id: TraceId::mint(),
-        source,
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::FocusChanged {
-            foreground: false,
-            node: snapshot,
-            ancestors: Vec::new(),
-            ancestors_unknown: true,
-            selected_child: None,
-            text: None,
-        },
-    }
-}
-
+/// The Settings frame, reported by its own outpost as its focus and by the
+/// page's outpost as a pane above the page, is one entry of the focus
+/// line: the page's chain meets the frame host's focus at the frame by its
+/// handle, the frame host's entry is kept in the line, as NVDA keeps its
+/// old object, only the content window below it is entered, and speech is
+/// not cut (`docs/parity/focus-context.md`, "Focus-ancestry context").
 #[test]
-fn a_focus_with_unknown_ancestors_announces_no_containers_and_keeps_the_chain() {
-    let source = Pid(1);
-    let dialog = node(110, Role::Dialog, Some("Options"), None, StateSet::new());
-    let first = node(111, Role::Button, Some("Apply"), None, StateSet::new());
+fn a_new_chain_meets_the_previous_one_at_a_window_reported_by_two_outposts() {
+    let mut client = window_node(1, Backend::Msaa, Role::Pane, "Settings", 10);
+    client.details.top_level_client = true;
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), source, first, vec![dialog.clone()]),
+        &foreground_in(Pid(1), foreground_window(10), client),
     );
-
-    // A slow read: the outpost reports the focus without its ancestors.
-    let second = node(112, Role::Button, Some("Cancel"), None, StateSet::new());
-    let (state, effects) = reduce(&state, &focus_event_with_unknown_ancestors(source, second));
-    assert_eq!(
-        heard(&effects),
-        focus_heard(
-            focus_now(OutpostId(1), 112, &[110], None),
-            vec![vec![UtteranceSegment::label("Cancel"), role(Role::Button)]]
-        )
-    );
-
-    // The next fully read focus in the same dialog does not announce the
-    // dialog again: the chain was kept, not emptied.
-    let third = node(113, Role::Button, Some("OK"), None, StateSet::new());
+    let mut frame = window_node(4, Backend::Msaa, Role::Pane, "Settings", 10);
+    frame.details.top_level_client = true;
+    let content = window_node(2, Backend::Uia, Role::Window, "Settings", 11);
+    let search = node(3, Role::EditableText, Some("Search"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, third, vec![dialog]),
+        &focus_in(Pid(2), foreground_window(10), search, vec![frame, content]),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 113, &[110], None),
-            vec![vec![UtteranceSegment::label("OK"), role(Role::Button)]]
+            FocusNow {
+                focus: NodeId::in_outpost(OutpostId(2), 3),
+                ancestors: vec![
+                    NodeId::in_outpost(OutpostId(1), 1),
+                    NodeId::in_outpost(OutpostId(2), 2),
+                ],
+                foreground: Some(NodeId::in_outpost(OutpostId(1), 1)),
+                menu_item_of_focus: None,
+            },
+            vec![
+                vec![UtteranceSegment::label("Settings"), role(Role::Window)],
+                vec![UtteranceSegment::label("Search"), role(Role::EditableText)],
+            ]
         )
     );
+}
+
+/// A focus whose walk was cut by its bound, its chain completed by plain
+/// windows from its nearest window, meets the previous line at that window
+/// and enters nothing; the focus line then holds no more than that window,
+/// so the next focus, read in full, enters again the dialog the cut walk
+/// did not reach, as NVDA's focus line would have lost it.
+#[test]
+fn a_chain_cut_in_the_same_window_says_again_what_it_did_not_reach() {
+    let app = window_node(1, Backend::Uia, Role::Window, "App", 10);
+    let options = node(3, Role::Dialog, Some("Options"), None, StateSet::new());
+    let button = |id, name| node(id, Role::Button, Some(name), None, StateSet::new());
+    let plain = window_node(4, Backend::Msaa, Role::Window, "App", 10);
+    assert_eq!(
+        spoken_by(&[
+            focus_in(
+                Pid(1),
+                window(10),
+                button(2, "OK"),
+                vec![app.clone(), options.clone()]
+            ),
+            focus_in(Pid(1), window(10), button(5, "Cancel"), vec![plain]),
+            focus_in(Pid(1), window(10), button(6, "Apply"), vec![app, options]),
+        ]),
+        vec![
+            vec![UtteranceSegment::label("App"), role(Role::Window)],
+            vec![UtteranceSegment::label("Options"), role(Role::Dialog)],
+            vec![UtteranceSegment::label("OK"), role(Role::Button)],
+            vec![UtteranceSegment::label("Cancel"), role(Role::Button)],
+            vec![UtteranceSegment::label("Options"), role(Role::Dialog)],
+            vec![UtteranceSegment::label("Apply"), role(Role::Button)],
+        ]
+    );
+}
+
+/// Speech is cut when the new focus line shares no entry with the previous
+/// one below the desktop, NVDA's focus difference level of one or less,
+/// and not when they meet: a popup in a top-level window of its own whose
+/// chain goes through the window the focus was in meets the previous line
+/// there and is not cut, while a focus in another top-level window, whose
+/// chain shares nothing, is (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context").
+#[test]
+fn speech_is_cut_only_when_the_chains_differ_below_the_desktop() {
+    let first = window_node(1, Backend::Uia, Role::Window, "First", 10);
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(
+            Pid(1),
+            window(10),
+            node(2, Role::Button, Some("OK"), None, StateSet::new()),
+            vec![first.clone()],
+        ),
+    );
+    let popup = window_node(3, Backend::Uia, Role::List, "Choices", 20);
+    let (state, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(1),
+            window(20),
+            node(4, Role::ListItem, Some("Red"), None, StateSet::new()),
+            vec![first, popup],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 4, &[1, 3], None),
+            vec![
+                vec![UtteranceSegment::label("Choices"), role(Role::List)],
+                vec![UtteranceSegment::label("Red")],
+            ]
+        ),
+        "the popup's chain meets the line at the first window"
+    );
+    let second = window_node(5, Backend::Uia, Role::Window, "Second", 30);
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(1),
+            window(30),
+            node(6, Role::Button, Some("Cancel"), None, StateSet::new()),
+            vec![second],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(1), 6, &[5], None)),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Second"), role(Role::Window)]),
+            queued(vec![UtteranceSegment::label("Cancel"), role(Role::Button)]),
+        ],
+        "the chains share nothing below the desktop"
+    );
+}
+
+/// A reader leaves an unpresentable top-level window, such as an unnamed
+/// UI Automation one, out of a chain, which NVDA's line holds: two focuses
+/// in one top-level window whose chains share no entry meet at that
+/// window, which their window facts name, so speech is not cut and their
+/// containers are entered (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context").
+#[test]
+fn a_top_level_window_left_out_of_both_chains_is_where_they_meet() {
+    let group = |id, name: &str| node(id, Role::Group, Some(name), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(
+            Pid(1),
+            window(10),
+            node(2, Role::Button, Some("OK"), None, StateSet::new()),
+            vec![group(1, "Left")],
+        ),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(1),
+            window(10),
+            node(4, Role::Button, Some("Apply"), None, StateSet::new()),
+            vec![group(3, "Right")],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 4, &[3], None),
+            vec![
+                vec![UtteranceSegment::label("Right"), role(Role::Group)],
+                vec![UtteranceSegment::label("Apply"), role(Role::Button)],
+            ]
+        )
+    );
+}
+
+/// An invisible ancestor and a border are not presented as entered
+/// containers, as NVDA counts an invisible object unavailable and a border
+/// layout, while a visible dialog between them is
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+#[test]
+fn an_invisible_or_border_ancestor_is_not_announced() {
+    let msaa = |id, role, name: &str, states| {
+        let mut node = node(id, role, Some(name), None, states);
+        node.backend = Backend::Msaa;
+        node
+    };
+    let hidden = msaa(
+        1,
+        Role::Group,
+        "Hidden",
+        StateSet::new().with(State::Invisible),
+    );
+    let frame = msaa(2, Role::Border, "Frame", StateSet::new());
+    let dialog = msaa(3, Role::Dialog, "Visible", StateSet::new());
+    let ok = msaa(4, Role::Button, "OK", StateSet::new());
+    assert_eq!(
+        spoken_by(&[focus_in(
+            Pid(1),
+            window(10),
+            ok,
+            vec![hidden, frame, dialog]
+        )]),
+        vec![
+            vec![UtteranceSegment::label("Visible"), role(Role::Dialog)],
+            vec![UtteranceSegment::label("OK"), role(Role::Button)],
+        ]
+    );
+}
+
+/// A UI Automation slider of class `SensitiveSlider`, which gives the focus
+/// to its thumb.
+fn sensitive_slider(id: u64, value: &str) -> NodeSnapshot {
+    let mut slider = node(
+        id,
+        Role::Slider,
+        Some("Volume"),
+        Some(value),
+        StateSet::new(),
+    );
+    slider.details.class_name = Some("SensitiveSlider".to_owned());
+    slider
+}
+
+/// An entered `SensitiveSlider` is spoken as a focus is, its value
+/// included, where any other entered container leaves its value out
+/// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+#[test]
+fn a_sensitive_slider_ancestor_is_spoken_with_its_value() {
+    let thumb = node(2, Role::Thumb, Some("Position"), None, StateSet::new());
+    assert_eq!(
+        spoken_by(&[focus_in(
+            Pid(1),
+            window(10),
+            thumb,
+            vec![sensitive_slider(1, "50")]
+        )]),
+        vec![
+            vec![
+                UtteranceSegment::label("Volume"),
+                role(Role::Slider),
+                UtteranceSegment::value("50"),
+            ],
+            vec![UtteranceSegment::label("Position"), role(Role::Thumb)],
+        ]
+    );
+}
+
+/// A `SensitiveSlider`'s change of value is spoken while it is the focus's
+/// parent, its thumb being the focus, and not when it repeats the value it
+/// was last read with (`docs/parity/focus-context.md`, "A slider that
+/// focuses its thumb").
+#[test]
+fn a_sensitive_slider_s_value_change_is_spoken_while_its_thumb_is_the_focus() {
+    let thumb = node(2, Role::Thumb, Some("Position"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), window(10), thumb, vec![sensitive_slider(1, "50")]),
+    );
+    let changed = |value: &str| {
+        event_in(
+            Pid(1),
+            Some(window(10)),
+            NormalizedEvent::ValueChanged {
+                node_id: NodeId::new(1),
+                value: Some(value.to_owned()),
+            },
+        )
+    };
+    let (state, effects) = reduce(&state, &changed("60"));
+    assert_eq!(
+        heard(&effects),
+        vec![queued(vec![UtteranceSegment::value("60")])]
+    );
+    let (_, effects) = reduce(&state, &changed("60"));
+    assert_eq!(heard(&effects), vec![], "the value it was last read with");
 }
 
 // ---- The navigator stays current, and slow answers leave it put ----
@@ -5753,8 +5965,9 @@ fn an_activation_says_its_action_activate_or_no_action() {
 /// window is in front.
 #[test]
 fn a_window_title_is_queued_before_its_control_not_cut_off() {
+    let state = switch_to(&SrState::new(), Pid(3));
     let notepad = node(10, Role::Window, Some("Notepad"), None, StateSet::new());
-    let (state, effects) = reduce(&SrState::new(), &foreground_in(Pid(4), window(40), notepad));
+    let (state, effects) = reduce(&state, &foreground_in(Pid(4), window(40), notepad.clone()));
     assert_eq!(
         heard(&effects),
         vec![
@@ -5780,12 +5993,12 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
     );
     let (_, effects) = reduce(
         &state,
-        &focus_in(Pid(4), foreground_window(40), editor, vec![]),
+        &focus_in(Pid(4), foreground_window(40), editor, vec![notepad]),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(4), 11, &[], Some((OutpostId(4), 10))),
+            focus_now(OutpostId(4), 11, &[10], Some((OutpostId(4), 10))),
             vec![vec![
                 UtteranceSegment::label("Text editor"),
                 role(Role::Document)
@@ -5797,7 +6010,7 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
         panic!("the speech manager is told where the focus is first: {effects:?}");
     };
     assert_eq!(now.foreground.map(NodeId::number), Some(10));
-    assert_eq!(now.ancestors, Vec::<NodeId>::new());
+    assert_eq!(now.ancestors, vec![NodeId::in_outpost(OutpostId(4), 10)]);
     assert!(
         title[0]
             .validity
@@ -5860,7 +6073,6 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
             foreground: false,
             node: snapshot,
             ancestors,
-            ancestors_unknown: false,
             selected_child: None,
             text: None,
         },
@@ -5964,6 +6176,8 @@ fn explorer_item(
 fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
     let app = Pid(1);
     let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
+    // The folder window both lists are in, unnamed here.
+    let frame = window_node(23, Backend::Uia, Role::Window, "", 7000);
     let unselected = [
         State::Focused,
         State::Focusable,
@@ -5979,35 +6193,36 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
     let delta = explorer_item(28, "delta.txt", &unselected[..3], 1, 1);
     let (state, effects) = reduce(
         &SrState::new(),
-        &focus_in(app, window(7000), delta, vec![list(24)]),
+        &focus_in(app, window(7000), delta, vec![frame.clone(), list(24)]),
     );
-    // The first focus in the window cuts off speech.
-    assert_eq!(
-        heard(&effects),
-        vec![
-            Heard::Expire(focus_now(OutpostId(1), 28, &[24], None)),
-            Heard::Stop,
-            queued(vec![
-                UtteranceSegment::label("Items View"),
-                role(Role::List)
-            ]),
-            queued(vec![
-                UtteranceSegment::label("delta.txt"),
-                not(State::Selected),
-                UtteranceSegment::new(SegmentContent::Position {
-                    position: 1,
-                    set_size: Some(1),
-                }),
-            ]),
-        ]
-    );
-
-    let inner = explorer_item(30, "Inner", &unselected, 1, 4);
-    let (state, effects) = reduce(&state, &focus_in(app, window(7000), inner, vec![list(29)]));
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 30, &[29], None),
+            focus_now(OutpostId(1), 28, &[23, 24], None),
+            vec![
+                vec![UtteranceSegment::label("Items View"), role(Role::List)],
+                vec![
+                    UtteranceSegment::label("delta.txt"),
+                    not(State::Selected),
+                    UtteranceSegment::new(SegmentContent::Position {
+                        position: 1,
+                        set_size: Some(1),
+                    }),
+                ],
+            ]
+        ),
+        "the first focus Core takes cuts nothing off"
+    );
+
+    let inner = explorer_item(30, "Inner", &unselected, 1, 4);
+    let (state, effects) = reduce(
+        &state,
+        &focus_in(app, window(7000), inner, vec![frame.clone(), list(29)]),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 30, &[23, 29], None),
             vec![
                 vec![UtteranceSegment::label("Items View"), role(Role::List)],
                 vec![
@@ -6043,7 +6258,12 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
 
     let (_, effects) = reduce(
         &state_after,
-        &focus_in(app, window(7000), inner_selected, vec![list(29)]),
+        &focus_in(
+            app,
+            window(7000),
+            inner_selected,
+            vec![frame.clone(), list(29)],
+        ),
     );
     assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
 }
@@ -6056,6 +6276,8 @@ fn a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows() {
 fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection() {
     let app = Pid(1);
     let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
+    // The folder window both lists are in, unnamed here.
+    let frame = window_node(23, Backend::Uia, Role::Window, "", 7000);
     let selected = [
         State::Focused,
         State::Focusable,
@@ -6065,18 +6287,23 @@ fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection()
     let delta = explorer_item(28, "delta.txt", &selected, 1, 1);
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_in(app, window(7000), delta, vec![list(24)]),
+        &focus_in(app, window(7000), delta, vec![frame.clone(), list(24)]),
     );
 
     let inner = explorer_item(30, "Inner", &selected, 1, 4);
     let (state, effects) = reduce(
         &state,
-        &focus_in(app, window(7000), inner.clone(), vec![list(29)]),
+        &focus_in(
+            app,
+            window(7000),
+            inner.clone(),
+            vec![frame.clone(), list(29)],
+        ),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 30, &[29], None),
+            focus_now(OutpostId(1), 30, &[23, 29], None),
             vec![
                 vec![UtteranceSegment::label("Items View"), role(Role::List)],
                 vec![
@@ -6102,7 +6329,10 @@ fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection()
     );
     assert_eq!(heard(&effects), vec![], "the selection was already heard");
 
-    let (_, effects) = reduce(&state, &focus_in(app, window(7000), inner, vec![list(29)]));
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(app, window(7000), inner, vec![frame.clone(), list(29)]),
+    );
     assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
 }
 
@@ -6424,6 +6654,10 @@ fn a_task_switching_item_reached_with_alt_held_says_only_itself() {
                 &[10, 11],
                 Some((OutpostId(1), 1000))
             )),
+            // The line of the item said alone held only the item, and so
+            // shares nothing with this one below the desktop, as NVDA's,
+            // whose item had the desktop for its container.
+            Heard::Stop,
             window_said,
             list_said,
             task_switching_item_said("Nvda Sw A"),

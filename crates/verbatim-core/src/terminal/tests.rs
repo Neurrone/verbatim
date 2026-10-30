@@ -64,7 +64,6 @@ fn terminal_focus(text: Option<verbatim_model::FocusText>) -> Input {
         },
         foreground: false,
         ancestors: Vec::new(),
-        ancestors_unknown: false,
         selected_child: None,
         text: text.map(Box::new),
     })

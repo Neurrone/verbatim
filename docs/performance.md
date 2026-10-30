@@ -1141,6 +1141,30 @@ window's node carries (`NodeDetails::window`).
   pair of chain entries it compares, and an outpost's for a dialog's text
   the same.
 
+### Core's meeting of chains
+
+Core joins each focus's chain to the previous focus line where they meet
+and cuts speech when they share nothing below the desktop
+(`docs/parity/focus-context.md`, "Focus-ancestry context"); every reader
+completes a chain it could not read by plain windows; each UI Automation
+ancestor carries its class name; and MSAA's invisible state is carried.
+
+- Minimum and today: no call, thread, timer, message or wake-up added. The
+  class name is in the role's cache group every UIA ancestor is already
+  read with (`RoleCore`), so no property is added to any cache request,
+  and `call_counts`' figures are unchanged; the plain windows of a failed
+  walk are local calls, about four per window, as at a walk's bound. In a
+  message a UI Automation ancestor is larger by its class name and about
+  14 bytes of key, 35 bytes for mockapp's window (`VerbatimMockAppWindow`)
+  and up to about 60 for long class names; the focus's own snapshot is
+  unchanged.
+- Core: the meeting compares each entry of the new line with the previous
+  line's, from the focus outward, until one matches, so at most the
+  product of the two lines' lengths, a few dozen comparisons for chains of
+  ten, and allocates nothing beyond the ancestors it keeps, the previous
+  line's to the meeting point cloned into the new line
+  (`a_focus_step_allocates_the_same_whatever_the_ancestor_chain`).
+
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), handled as a

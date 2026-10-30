@@ -432,8 +432,8 @@ pub(super) struct Tracking {
 struct AnsweredFocus {
     /// The control.
     node: NodeSnapshot,
-    /// Its ancestors, outermost first, or `None` when unknown.
-    ancestors: Option<Vec<NodeSnapshot>>,
+    /// Its ancestors, outermost first.
+    ancestors: Vec<NodeSnapshot>,
     /// What its caret read found ([`Worker::read_focus_text`]).
     text: Option<FocusText>,
     /// When the answer began to be read, in microseconds on the run's
@@ -2266,10 +2266,7 @@ impl Worker<'_> {
         read::describe_dialogs(
             self.context,
             (
-                ancestors
-                    .iter_mut()
-                    .flatten()
-                    .chain(std::iter::once(&mut node)),
+                ancestors.iter_mut().chain(std::iter::once(&mut node)),
                 window,
             ),
             (&mut memo, foreground),
@@ -2277,7 +2274,7 @@ impl Worker<'_> {
         self.context.tracking().dialog = memo;
         let role = node.role;
         let node_id = node.id;
-        let reported = self.focus_to_judge(trace, &node, ancestors.as_deref(), window, foreground);
+        let reported = self.focus_to_judge(trace, &node, &ancestors, window, foreground);
         // Recorded before it is sent, so Core's judgement of it, which the
         // outpost's pipe thread takes in, always finds it; a report that is
         // never sent is drained by Core's judgement of a later one.
@@ -2291,21 +2288,18 @@ impl Worker<'_> {
             name = ?node.name,
             foreground,
             ?backend,
-            ancestors_unknown = ancestors.is_none(),
+            ancestors = ancestors.len(),
             "focus reported"
         );
-        let chain = ancestors.as_ref().map(|ancestors| {
-            ancestors
-                .iter()
-                .cloned()
-                .chain(std::iter::once(node.clone()))
-                .collect::<Vec<_>>()
-        });
+        let chain: Vec<NodeSnapshot> = ancestors
+            .iter()
+            .cloned()
+            .chain(std::iter::once(node.clone()))
+            .collect();
         let event = NormalizedEvent::FocusChanged {
             node,
             foreground,
-            ancestors_unknown: ancestors.is_none(),
-            ancestors: ancestors.unwrap_or_default(),
+            ancestors,
             selected_child,
             text: text.clone().map(Box::new),
         };
@@ -2329,12 +2323,11 @@ impl Worker<'_> {
         }
     }
 
-    /// The focus `node`, with `ancestors` (`None` when unknown), reported in
-    /// `window` from the event traced `trace`, as the rules judge events
-    /// against it until Core has judged it ([`super::held`]): with unknown
-    /// ancestors it keeps those of the focus before it, as Core keeps them;
-    /// a foreground change carries its event address, which NVDA's second
-    /// foreground test compares. NVDA makes its foreground object when the
+    /// The focus `node`, with `ancestors`, reported in `window` from the
+    /// event traced `trace`, as the rules judge events against it until
+    /// Core has judged it ([`super::held`]): a foreground change carries
+    /// its event address, which NVDA's second foreground test compares.
+    /// NVDA makes its foreground object when the
     /// focus enters a top-level window, so the window keeps the verdict it
     /// had then while the focus moves within it
     /// ([`is_foreground_window`](Self::is_foreground_window)).
@@ -2342,7 +2335,7 @@ impl Worker<'_> {
         &mut self,
         trace: TraceId,
         node: &NodeSnapshot,
-        ancestors: Option<&[NodeSnapshot]>,
+        ancestors: &[NodeSnapshot],
         window: Option<isize>,
         foreground: bool,
     ) -> held::Focus {
@@ -2382,7 +2375,7 @@ impl Worker<'_> {
         } else {
             None
         };
-        self.adopt_focus((node, role), object, window, Some(chain));
+        self.adopt_focus((node, role), object, window, chain);
         let mut tracking = self.context.tracking();
         tracking.batch = Some(batch);
         tracking.reported += 1;
@@ -2414,9 +2407,8 @@ impl Worker<'_> {
     }
 
     /// Makes `node_id`, of `role`, the focus this outpost follows: the
-    /// object `object` in `window`, with `chain`, its ancestors and itself,
-    /// or `None` when its ancestors are unknown. A caret key's watch on
-    /// another node ends, the intake is told
+    /// object `object` in `window`, with `chain`, its ancestors and itself.
+    /// A caret key's watch on another node ends, the intake is told
     /// ([`note_focused`](Self::note_focused)), and the tracking takes it, so
     /// its caret events, a terminal's output and the menu rules follow it.
     /// A reported focus becomes the focus this way
@@ -2430,7 +2422,7 @@ impl Worker<'_> {
         (node_id, role): (NodeId, Role),
         object: Option<Object>,
         window: Option<isize>,
-        chain: Option<Vec<NodeSnapshot>>,
+        chain: Vec<NodeSnapshot>,
     ) {
         self.end_watch_elsewhere(node_id);
         self.note_focused(object, role, window);
@@ -2439,11 +2431,7 @@ impl Worker<'_> {
         tracking.focus = Some(node_id);
         tracking.focus_role = Some(role);
         tracking.window = window;
-        // Unknown ancestors leave the previous chain, as the reducer keeps
-        // it.
-        if let Some(chain) = chain {
-            tracking.chain = chain;
-        }
+        tracking.chain = chain;
     }
 
     /// Ends a caret key's watch on a node other than `node_id`, the new
@@ -3587,7 +3575,7 @@ impl Worker<'_> {
             node,
             true,
             None,
-            (Some(Vec::new()), None),
+            (Vec::new(), None),
         );
     }
 
@@ -3888,14 +3876,12 @@ impl Worker<'_> {
             .selected_child
             .as_ref()
             .map(|child| Self::uia_node(context, child, None));
-        let ancestors = read.ancestors.as_ref().map(|ancestors| {
-            read::uia_chain_from_read(
-                context,
-                self.client,
-                (ancestors, read.hwnd, read.window, read.ancestors_end),
-                (&previous, observed_at_us.saturating_add(read.bound_us)),
-            )
-        });
+        let ancestors = read::uia_chain_from_read(
+            context,
+            self.client,
+            (&read.ancestors, read.hwnd, read.window, read.ancestors_end),
+            (&previous, observed_at_us.saturating_add(read.bound_us)),
+        );
         *context.focus_path() = Some(FocusPath::of(read));
         tracing::debug!(
             %trace,
@@ -4119,7 +4105,7 @@ impl Worker<'_> {
             node,
             false,
             Some(Object::Msaa(hwnd, id_object, id_child)),
-            (Some(ancestors), None),
+            (ancestors, None),
         );
     }
 
@@ -4307,7 +4293,7 @@ impl Worker<'_> {
             let FocusedControl {
                 node, ancestors, ..
             } = focus;
-            ancestors.iter_mut().flatten().chain(std::iter::once(node))
+            ancestors.iter_mut().chain(std::iter::once(node))
         });
         read::describe_dialogs(context, (windows.chain(focus), window), (&mut None, false));
         let answered = answer.focus.as_mut().map(|control| {
@@ -4328,13 +4314,8 @@ impl Worker<'_> {
         // MSAA event address its report recorded, which NVDA's second
         // foreground test compares with.
         if let Some(answered) = &answered {
-            let reported = self.focus_to_judge(
-                trace,
-                &answered.node,
-                answered.ancestors.as_deref(),
-                window,
-                false,
-            );
+            let reported =
+                self.focus_to_judge(trace, &answered.node, &answered.ancestors, window, false);
             let mut held = context.held();
             let reported = answer_to_judge(held.expected(), reported);
             held.reported(reported);
@@ -4363,12 +4344,10 @@ impl Worker<'_> {
         let same_node = self.context.tracking().focus == Some(node.id);
         if !same_node || !self.is_focus(node.id) {
             let object = object_of(self.context, &node);
-            let chain = ancestors.map(|ancestors| {
-                ancestors
-                    .into_iter()
-                    .chain(std::iter::once(node.clone()))
-                    .collect()
-            });
+            let chain = ancestors
+                .into_iter()
+                .chain(std::iter::once(node.clone()))
+                .collect();
             self.adopt_focus((node.id, node.role), object, window, chain);
         }
         self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_us));
@@ -4405,25 +4384,18 @@ impl Worker<'_> {
 /// ([`Worker::is_foreground_window`]). Local calls.
 fn judged_focus(
     context: &Context,
-    (trace, node, ancestors): (TraceId, &NodeSnapshot, Option<&[NodeSnapshot]>),
+    (trace, node, ancestors): (TraceId, &NodeSnapshot, &[NodeSnapshot]),
     (window, foreground): (Option<isize>, bool),
     msaa_event: Option<((isize, i32, i32), bool)>,
 ) -> held::Focus {
     let top_level = window.map_or(0, top_level_of);
     // What the focus before it gives it, taken under the lock, which
     // is let go before the foreground window is read.
-    let (inherited, ancestors_before) = {
+    let inherited = {
         let held = context.held();
-        let before = held.expected();
-        (
-            before
-                .filter(|before| top_level != 0 && before.top_level == top_level)
-                .map(|before| before.entered_in_front),
-            ancestors
-                .is_none()
-                .then(|| before.map(|before| before.ancestors.clone()))
-                .flatten(),
-        )
+        held.expected()
+            .filter(|before| top_level != 0 && before.top_level == top_level)
+            .map(|before| before.entered_in_front)
     };
     // A foreground change's window was just found in front.
     let entered_in_front = match inherited {
@@ -4431,10 +4403,7 @@ fn judged_focus(
         None if foreground => Some(top_level).filter(|&top| top != 0),
         None => (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
     };
-    let ancestors = match ancestors {
-        Some(ancestors) => ancestors.iter().map(HeldNode::of).collect(),
-        None => ancestors_before.unwrap_or_default(),
-    };
+    let ancestors = ancestors.iter().map(HeldNode::of).collect();
     let (event, simple_child) = match msaa_event {
         Some((event, simple_child)) => (Some(event), simple_child),
         None => (window.filter(|_| foreground).map(foreground_event), false),
@@ -4503,7 +4472,7 @@ fn publish_at_bound(
     let ancestors = bound::chain_at_bound(context, walk);
     let judged = judged_focus(
         context,
-        (focus.trace, &focus.node, Some(&ancestors)),
+        (focus.trace, &focus.node, &ancestors),
         (focus.window, false),
         focus.msaa_event,
     );
@@ -4520,7 +4489,6 @@ fn publish_at_bound(
         NormalizedEvent::FocusChanged {
             node: focus.node.clone(),
             foreground: false,
-            ancestors_unknown: false,
             ancestors,
             selected_child: None,
             text: None,
@@ -4646,7 +4614,6 @@ mod tests {
                 details: verbatim_model::NodeDetails::default(),
             },
             foreground: false,
-            ancestors_unknown: true,
             ancestors: Vec::new(),
             selected_child: None,
             text: None,

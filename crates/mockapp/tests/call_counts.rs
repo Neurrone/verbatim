@@ -1622,8 +1622,6 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         };
         let ancestors: Vec<(Option<&str>, isize)> = read
             .ancestors
-            .as_deref()
-            .expect("the listener read the focus's ancestors")
             .iter()
             .map(|ancestor| (ancestor.snapshot.name.as_deref(), ancestor.hwnd))
             .collect();
@@ -1695,8 +1693,6 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
         assert_eq!(
             now.ancestors
-                .as_ref()
-                .unwrap_or_else(|| panic!("the focus now's ancestors are known ({path})"))
                 .iter()
                 .chain(std::iter::once(&now.node))
                 .map(|node| node.name.as_deref())
@@ -1889,8 +1885,6 @@ fn uia_focus_chains_name_a_parent_with_a_provider_as_a_plain_window() {
             .unwrap_or_else(|| panic!("the focus now has a focused control ({path})"));
         assert_eq!(
             now.ancestors
-                .as_ref()
-                .unwrap_or_else(|| panic!("the focus now's ancestors are known ({path})"))
                 .iter()
                 .chain(std::iter::once(&now.node))
                 .map(|node| node.name.as_deref())
@@ -2188,8 +2182,6 @@ fn a_parent_step_into_another_process_is_not_read_further() {
     };
     assert_eq!(
         read.ancestors
-            .as_deref()
-            .expect("the listener read the focus's ancestors")
             .iter()
             .map(|ancestor| ancestor.snapshot.name.as_deref())
             .collect::<Vec<_>>(),
@@ -2277,12 +2269,12 @@ fn focus_now_onto_a_hung_window_answers_its_plain_window() {
         (
             focus.node.role,
             focus.node.name.as_deref(),
-            focus.ancestors.as_ref().map(Vec::len),
+            focus.ancestors.len(),
         )
     });
     assert_eq!(
         focus,
-        Some((Role::Window, Some(title.as_str()), Some(0))),
+        Some((Role::Window, Some(title.as_str()), 0)),
         "the focus now's focus"
     );
     assert_eq!(outpost_calls, calls(0, 0, 0), "the outpost's calls");
@@ -2532,8 +2524,8 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
 /// would enter any child window another process serves
 /// (`docs/design/cross-process-calls-study.md`, decision 3). The node is a
 /// focus on the button `First`, which has no window of its own, sent by
-/// the listener with its ancestors and nearest window unknown, so the
-/// outpost has no route to its element.
+/// the listener with no ancestor read and no window known, its walk cut, so
+/// the outpost has no route to its element.
 fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
     let title = common::unique_title("mockapp-counts-uia-gone");
     let mut app = common::spawn("counts.json", "uia", &title);
@@ -2546,7 +2538,8 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
         panic!("the listener dropped the focus: {judged:?}");
     };
     assert_eq!(read.hwnd, 0, "the button has no window of its own");
-    read.ancestors = None;
+    read.ancestors.clear();
+    read.ancestors_end = verbatim_outpost::protocol::AncestorsEnd::PlainFrom(0);
     read.window = None;
     outpost.deliver(DeliveredFact::UiaFocusRead {
         marker: 0,
@@ -2555,15 +2548,15 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
     });
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    ancestors_unknown: true,
-                    ..
-                },
+            event: NormalizedEvent::FocusChanged {
+                node, ancestors, ..
+            },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not a focus with its ancestors unknown"),
+        } => {
+            assert_eq!(ancestors, [], "no window to complete its chain from");
+            node
+        }
+        other => panic!("the outpost said {other:?}, not the focus"),
     };
     assert_eq!(node.name.as_deref(), Some("First"));
     outpost.settled();

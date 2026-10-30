@@ -82,7 +82,6 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
                 },
                 foreground: false,
                 ancestors: Vec::new(),
-                ancestors_unknown: false,
                 selected_child: None,
                 text: None,
             },

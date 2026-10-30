@@ -673,7 +673,7 @@ fn read_at_bound(progress: &ReadProgress) -> UiaFocusRead {
     UiaFocusRead {
         hwnd: progress.hwnd,
         snapshot,
-        ancestors: Some(progress.ancestors.clone()),
+        ancestors: progress.ancestors.clone(),
         ancestors_end: AncestorsEnd::PlainFrom(outermost),
         selected_child,
         value_from_selection,
@@ -1416,11 +1416,15 @@ impl FocusReader {
                 // NVDA lets a focus event through when its sender's keyboard
                 // focus cannot be read (`shouldAllowUIAFocusEvent` answers
                 // true on a COM error): reported as the event's cache gives
-                // it, its ancestors unknown, whatever that cache says of its
-                // keyboard focus. Step 6 has already judged that: a live
-                // read that answered true, or failed, lets the focus through
-                // in NVDA too, and a cache that said no has already dropped
-                // it out of time.
+                // it, whatever that cache says of its keyboard focus. Step 6
+                // has already judged that: a live read that answered true,
+                // or failed, lets the focus through in NVDA too, and a cache
+                // that said no has already dropped it out of time. Its chain
+                // is the ancestors read before the failure, completed by
+                // plain windows from the window the outermost of them, or
+                // the focus, is in, as at the walk's bound
+                // (`docs/design/focus-pipeline-rework.md`, "A window's name,
+                // and the one fallback").
                 tracing::debug!(%error, "a UIA focus could not be read; reported from its event");
                 self.last = Some(LastFocus {
                     runtime_id: progress.event.runtime_id.clone(),
@@ -1431,13 +1435,25 @@ impl FocusReader {
                     .accept(self.number, element, (nearest, arrival), &self.window);
                 // Reported as the focus, as `focused` reports one, whatever
                 // the event's cache says of its keyboard focus.
+                // A focus that is a window's own element, with nothing read
+                // above it, is completed from its parent window, so its own
+                // window is not its ancestor too.
+                let plain_from = if progress.ancestors.is_empty() && hwnd != 0 {
+                    verbatim_uia::parent_window(hwnd)
+                } else {
+                    verbatim_uia::outermost_nearest_window(
+                        nearest,
+                        std::iter::once(hwnd)
+                            .chain(progress.ancestors.iter().map(|ancestor| ancestor.hwnd)),
+                    )
+                };
                 let mut snapshot = progress.event;
                 snapshot.states = snapshot.states.with(State::Focused);
                 Judged::Read(Box::new(UiaFocusRead {
                     hwnd,
                     snapshot,
-                    ancestors: None,
-                    ancestors_end: AncestorsEnd::Top,
+                    ancestors: progress.ancestors,
+                    ancestors_end: AncestorsEnd::PlainFrom(plain_from),
                     selected_child: None,
                     value_from_selection: false,
                     window: Some(nearest),
@@ -1589,7 +1605,7 @@ impl FocusReader {
             UiaFocusRead {
                 hwnd,
                 snapshot,
-                ancestors: Some(ancestors),
+                ancestors,
                 ancestors_end,
                 selected_child,
                 value_from_selection,
@@ -1604,9 +1620,7 @@ impl FocusReader {
                 bound_us: duration_us(progress.bound),
             }
         };
-        if let Some(facts) = &read.ancestors {
-            log_ancestor_facts(path, facts);
-        }
+        log_ancestor_facts(path, &read.ancestors);
         if wants_legacy_checked_state(read.snapshot.role, read.snapshot.states)
             && !budget.out_of_time()
         {
@@ -1630,10 +1644,7 @@ impl FocusReader {
         self.last = Some(LastFocus {
             runtime_id: read.snapshot.runtime_id.clone(),
             element: element.clone(),
-            ancestors: read
-                .ancestors
-                .clone()
-                .filter(|_| read.ancestors_end == AncestorsEnd::Top),
+            ancestors: (read.ancestors_end == AncestorsEnd::Top).then(|| read.ancestors.clone()),
         });
         self.held_elements
             .accept(self.number, element, (nearest, arrival), &self.window);
@@ -2004,7 +2015,7 @@ fn ancestor_fact(element: &Cached<Ancestor>) -> UiaAncestorFact {
     UiaAncestorFact {
         hwnd: read.node.role.hwnd,
         content: read.is_control_and_content(),
-        snapshot: fact_of(read.node.parts(element.runtime_id())),
+        snapshot: fact_of(read.parts(element.runtime_id())),
     }
 }
 
@@ -2883,7 +2894,7 @@ fn publish_at_bound<R: Reading>(
     let (meta, top) = (running.meta, running.watched.top_level());
     tracing::info!(
         %pid,
-        ancestors = read.ancestors.as_ref().map_or(0, Vec::len),
+        ancestors = read.ancestors.len(),
         "a UIA focus read's call was still under way at its bound; the focus is published from what it read"
     );
     send_outcome(
@@ -3238,7 +3249,7 @@ mod tests {
                 states: verbatim_model::StateSet::new(),
                 details: NodeDetails::default(),
             },
-            ancestors: None,
+            ancestors: Vec::new(),
             ancestors_end: crate::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,

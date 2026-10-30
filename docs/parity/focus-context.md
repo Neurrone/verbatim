@@ -13,30 +13,72 @@ exclusions, the border and white space roles among the layout ones,
 named or not), and an entered container is spoken as NVDA speaks focus
 entered: as a focus, states and position included, without its value,
 level, or (except a list) keyboard shortcut. Top-level windows are the
-exception, in the next entry. A container is already entered when it is
-the same object as one in the previous focus's chain, which NVDA judges
-for a UI Automation element by its identity alone (`CompareElements`),
-so a container replaced by a new element with the same role and name is
-entered anew: File Explorer's items view list after Enter opens a folder
-or Backspace goes up, where NVDA says "Items View list" before the item
-(10 of 10 captures, alpha-58022). Verbatim compares two UI Automation
-nodes from one outpost by node id alone, the outpost giving one element
-one id; it treats nodes from two outposts, or read through MSAA, in the
-same top-level window as the same when their role and name match, since
-their ids cannot be compared ("A window and its content in two
-processes" in [Windows and processes](windows-and-processes.md)). Two
-nodes that are both windows (a window read from the system's own data,
-a UI Automation element that is its window's own, or an MSAA window or
-client object) are the same exactly when they are the same window,
-whichever outposts read them: the Settings frame its own process reports
-as its focus and the page's process as a plain window above the page is
-entered once, so NVDA's "Settings", then "Settings window" for the page,
-is said without the frame again; and two windows of one role and name are
-two containers.
-An invisible MSAA ancestor is still announced, where NVDA counts it
-unavailable, since the model has no invisible state and the outposts do
-not report it. **partial**: reducer tests, and `explorer_folder_window`
-asserts the Enter and Backspace cases.
+exception, in the next entry; a slider that focuses its thumb is
+another, in "A slider that focuses its thumb".
+
+The containers entered are found as NVDA builds its focus line when the
+focus moves (`api.setFocusObject`): the new focus's chain is walked from
+the focus outward, and at each entry the previous line, the previous
+focus and its ancestors, from its focus outward; the first entry that is
+the same object as one of the previous line is where the two lines meet.
+The new line is the previous one up to that entry, its old objects kept,
+then the new chain's entries below it, and those entries are the
+containers entered. NVDA judges a UI Automation element the same by its
+identity alone (`CompareElements`), so a container replaced by a new
+element with the same role and name is entered anew: File Explorer's
+items view list after Enter opens a folder or Backspace goes up, where
+NVDA says "Items View list" before the item (10 of 10 captures,
+alpha-58022); and two MSAA objects are never the same when their windows
+differ. Verbatim compares two UI Automation nodes from one outpost by
+node id alone, the outpost giving one element one id; it treats nodes
+from two outposts, or read through MSAA, in the same top-level window as
+the same when their role and name match, since their ids cannot be
+compared ("A window and its content in two processes" in
+[Windows and processes](windows-and-processes.md)). Two nodes that are
+both windows (a window read from the system's own data, a UI Automation
+element that is its window's own, or an MSAA window or client object) are
+the same exactly when they are the same window, whichever outposts read
+them: the Settings frame its own process reports as its focus and the
+page's process as a pane above the page is entered once, so NVDA's
+"Settings", then "Settings window" for the page, is said without the
+frame again; and two windows of one role and name are two containers, as
+two Windows Forms panels whose client objects are dialogs named "Remove",
+each said "Remove dialog" as the focus moves into it
+(`experiments/focus-pipeline-rework-measurements/captures/two-same-named-dialogs.txt`).
+A child window's client object reached from its window object is its
+window's, whether or not it has an identity string, so it carries its
+window. Each report's chain is complete to the desktop, windows a walk
+did not reach being plain windows, so a chain cut short in the same
+window meets the previous line at that window, enters nothing, and the
+next focus read in full enters again what the cut chain did not reach.
+A window matched by its handle keeps, in the line, the name it was
+entered with.
+
+Speech is cut when the two lines differ just below the desktop, sharing
+no entry, NVDA's focus difference level of one or less, which runs its
+foreground event and cancels speech (`eventHandler.doPreGainFocus`); not
+when they meet below it. The readers leave out of a chain the entries
+that are not presentable, which NVDA's line holds, among them an unnamed
+UI Automation top-level window and an MSAA window object, so the focus's
+top-level window, which its window facts name, stands for the entry just
+below the desktop: two chains in one top-level window that share no
+entry meet there, and speech is not cut, except for a focus whose
+containers a rule drops, whose container is the desktop, as NVDA's task
+switcher item's is with Alt held. The first focus Verbatim takes cuts nothing, as
+NVDA, starting, makes the focus its focus object before it handles it. A
+combo box's drop-down opened by Alt+Down says "expanded" and cuts
+nothing: the focus stays on the combo box, so no chain is compared.
+
+An invisible ancestor, MSAA's `STATE_SYSTEM_INVISIBLE` or a plain window
+without the `WS_VISIBLE` style, is not presented, as NVDA counts an
+invisible object unavailable (`_get_presentationType`); the state is
+never spoken. UI Automation's `IsOffscreen` is NVDA's offscreen state,
+not invisible, and does not hide an ancestor. **partial**: reducer tests,
+mockapp's `an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`
+and `a_uia_window_in_a_win32_window_has_the_windows_client_as_context`
+(a hidden window's client area, invisible), and `explorer_folder_window`
+asserts the Enter and Backspace cases. The scenarios do not yet show the
+Windows Forms dialogs' speech.
 
 ### Top-level windows in the ancestry
 
@@ -58,7 +100,13 @@ top-level window is spoken by its title and a child window between it
 and the focus's own window is structure; a ghost's or a hung
 application's window there stays a plain window, role window, as NVDA's
 object for it is (`docs/design/focus-pipeline-rework.md`, "The
-foreground wait"). There is no separate foreground announcement.
+foreground wait"). A client object reached through `accParent` with no
+identity string, as a Windows Forms form's, is not marked: NVDA knows a
+client's object id only from its event or its identity string
+(`NVDAObjects/IAccessible/__init__.py` 803 to 808), and presents it by
+its title only then, so it does not say the form's title when the focus
+enters it (the capture above). There is no separate foreground
+announcement.
 **matched (unverified)**: reducer tests for the marked pane and for a
 pane without the mark, and mockapp's
 `a_window_above_the_process_boundary_is_a_plain_window_with_no_call`
@@ -83,16 +131,16 @@ Verbatim: a foreground fact arrives as a focus on the window, and the
 reducer ignores it when its window handle equals the current focus's
 top-level window handle. Window handles are compared rather than node
 ids because one window has different node ids in different outposts (a
-Settings page whose frame belongs to `ApplicationFrameHost.exe`), and an
-ancestor walk that timed out leaves no ancestors to compare. A window
+Settings page whose frame belongs to `ApplicationFrameHost.exe`). A window
 that has no name when focus enters it is not announced later, and a
 foreground change to a nameless window moves attention without speaking
 (a bare "window" says nothing), though it cancels speech, as NVDA's
 foreground event does. The outposts drop a foreground fact whose window
 is not the foreground window when it is handled, and one for a window
-read through UI Automation; the reducer, when the focus's top-level
-window changes, cuts speech off and speaks the entered presentable
-ancestors outermost first, the top-level window among them by the rule
+read through UI Automation; the reducer, when the focus line shares
+nothing with the previous one below the desktop, cuts speech off and
+speaks the entered presentable ancestors outermost first, the top-level
+window among them by the rule
 in "Top-level windows in the ancestry", then the focus
 (`docs/design/focus-pipeline.md`, section 16.4). **matched
 (unverified)**: reducer tests, and `mockapp` tests that an early
@@ -101,6 +149,24 @@ dropped; the Start menu, window-switch, `conhost_` and
 `explorer_folder_window` scenarios do not yet verify it live, and what
 NVDA says when a console window comes in front some 400 ms after its
 text area's focus is not captured.
+
+### A slider that focuses its thumb
+
+NVDA gives a UI Automation element of class `SensitiveSlider`, a slider
+that tends to give the focus to its thumb, its own behaviour: entered as
+an ancestor of the focus, it is spoken as a focus is, its value
+included, whatever its presentability, rather than as an entered
+container; and a change of its value is spoken, the value alone, while
+it is the focus's parent, compared with what it last spoke of it
+(`NVDAObjects/UIA/__init__.py` 1371 and 2708 to 2719). Verbatim: each UI
+Automation ancestor carries its class name, from the walk's cache with no
+further call, and Core speaks an entered `SensitiveSlider` as a focus,
+and a value change of one that is the focus's innermost ancestor when
+its value differs from the one it was entered with. **partial**: reducer
+tests and mockapp's
+`a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value`; the
+outposts follow only the focus's own element, so a slider's value change
+does not reach Core yet while its thumb is the focus.
 
 ### A File Explorer folder window opening
 

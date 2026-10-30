@@ -147,7 +147,10 @@ receives the event's own element, judges and reads a UIA focus
   Each read carries its walk's bound (`UiaFocusRead::bound_us`), which
   the outpost's continuation of the chain ends by. It reuses, from where a later
   read meets it, only a chain that reached the top. A read that fails
-  reports the focus from its event, ancestors unknown. A test can be told
+  reports the focus from its event, with the ancestors read before the
+  failure and plain windows above them (`PlainFrom`), from the parent
+  window of the focus's own window when it is one and nothing was read.
+  A test can be told
   each call the classic walk is about to make
   (`FocusReader::observe_calls`, a `CallObserver`), to change the
   application between two of them. A step that reaches a ghost's or a
@@ -1043,8 +1046,8 @@ unredirected, never unspawned.
 - Focus-now answers the foreground window, when the application holds the
   foreground (the outpost's foreground reader, `GetForegroundWindow`, never
   `hwndFocus`), and the focused control (`hwndFocus`, through its window's
-  backend) with its ancestors or them unknown (`ancestors_unknown` in
-  Core), selected child, and caret (`read_focus_text`; a console's text area
+  backend) with its ancestors, complete to the desktop, selected child,
+  and caret (`read_focus_text`; a console's text area
   reads as a nameless terminal, `read::console_text_area`). A foreground or
   focus window that is a ghost's or a hung application's is answered as a
   plain window, the focus with the plain windows above it, with no call, a
@@ -1169,7 +1172,10 @@ unredirected, never unspawned.
   element's nearest window (`Ancestry::failed_hop`, `AncestorWalk::Failed`,
   `verbatim_ia2::acquire::Walked::Onward`), and one cut by its time or depth
   limit is completed by plain windows (`AncestorWalk::Cut`, `Walked::Cut`);
-  only a remote program that fails reports the ancestors unknown. The
+  a walk that fails before it reads anything, a remote program by UIA's
+  transaction timeout among them, or an MSAA node no longer reachable,
+  is completed by plain windows from the parent window of the focus's own
+  window, or from the window it is in (`read::plain_windows_above`). The
   listener does not stop its next read at a focus whose walk did not reach
   the top. Object navigation's ancestor query reads the whole chain.
 - NVDA's focused-state test of an MSAA focus

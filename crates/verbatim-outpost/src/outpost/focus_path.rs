@@ -60,12 +60,10 @@ impl FocusPath {
             .chain(
                 read.ancestors
                     .iter()
-                    .flatten()
                     .map(|ancestor| (ancestor.snapshot.runtime_id.clone(), ancestor.hwnd)),
             )
             .collect();
-        let cut =
-            read.ancestors.is_none() || read.ancestors_end != crate::protocol::AncestorsEnd::Top;
+        let cut = read.ancestors_end != crate::protocol::AncestorsEnd::Top;
         Self { chain, cut }
     }
 
@@ -201,16 +199,14 @@ mod tests {
         UiaFocusRead {
             hwnd: own,
             snapshot: snapshot(1),
-            ancestors: Some(
-                (2..=4)
-                    .zip(windows)
-                    .map(|(id, hwnd)| UiaAncestorFact {
-                        snapshot: snapshot(id),
-                        hwnd,
-                        content: true,
-                    })
-                    .collect(),
-            ),
+            ancestors: (2..=4)
+                .zip(windows)
+                .map(|(id, hwnd)| UiaAncestorFact {
+                    snapshot: snapshot(id),
+                    hwnd,
+                    content: true,
+                })
+                .collect(),
             ancestors_end: crate::protocol::AncestorsEnd::Top,
             selected_child: None,
             value_from_selection: false,

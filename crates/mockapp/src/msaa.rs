@@ -77,6 +77,29 @@ fn give_client_identity(tree: &SharedTree, hwnd: HWND) {
     });
 }
 
+/// The child window `child-window` made in `hwnd`, of its class, if any.
+fn child_window_of(hwnd: HWND) -> Option<HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetClassNameW};
+    let mut class = [0u16; 256];
+    // SAFETY: `hwnd` is this thread's live window; the buffer outlives the
+    // call, which writes at most its length.
+    let length = unsafe { GetClassNameW(hwnd, &mut class) };
+    if length == 0 {
+        return None;
+    }
+    // SAFETY: a local search of `hwnd`'s children by the class name the
+    // call above wrote, NUL-ended.
+    unsafe {
+        FindWindowExW(
+            Some(hwnd),
+            None,
+            windows::core::PCWSTR(class.as_ptr()),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .ok()
+}
+
 /// `disable-client`: the root gains the unavailable state, and a state
 /// change is raised on `hwnd`'s client area, as disabling a window raises.
 fn disable_client(tree: &SharedTree, hwnd: HWND) {
@@ -187,6 +210,12 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             }
         }
         Command::ClientIdentity => give_client_identity(tree, hwnd),
+        Command::ChildClientIdentity => {
+            give_client_identity(
+                tree,
+                child_window_of(hwnd).ok_or("there is no child window")?,
+            );
+        }
         Command::ChildWindow | Command::WindowFocus => {
             return Err("applied by the window".into());
         }
@@ -468,6 +497,7 @@ const STATE_SYSTEM_READONLY: u32 = 0x0000_0040;
 const STATE_SYSTEM_EXPANDED: u32 = 0x0000_0200;
 const STATE_SYSTEM_COLLAPSED: u32 = 0x0000_0400;
 const STATE_SYSTEM_BUSY: u32 = 0x0000_0800;
+const STATE_SYSTEM_INVISIBLE: u32 = 0x0000_8000;
 const STATE_SYSTEM_OFFSCREEN: u32 = 0x0001_0000;
 const STATE_SYSTEM_FOCUSABLE: u32 = 0x0010_0000;
 const STATE_SYSTEM_SELECTABLE: u32 = 0x0020_0000;
@@ -499,6 +529,7 @@ fn states_to_msaa(states: StateSet) -> u32 {
     set(State::HasPopup, STATE_SYSTEM_HASPOPUP);
     set(State::Protected, STATE_SYSTEM_PROTECTED);
     set(State::Offscreen, STATE_SYSTEM_OFFSCREEN);
+    set(State::Invisible, STATE_SYSTEM_INVISIBLE);
     set(State::Busy, STATE_SYSTEM_BUSY);
     bits
 }

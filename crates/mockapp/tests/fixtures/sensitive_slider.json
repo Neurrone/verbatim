@@ -1,0 +1,17 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Sensitive Slider Fixture",
+  "children": [
+    {
+      "id": "slider",
+      "role": "slider",
+      "name": "Volume",
+      "value": "50",
+      "class_name": "SensitiveSlider",
+      "children": [
+        { "id": "thumb", "role": "button", "name": "Position", "states": ["focusable"] }
+      ]
+    }
+  ]
+}
