@@ -296,12 +296,23 @@ Public API:
   with the same child id in the same window and the same role, else, for
   an object acquired at its address, a kept node acquired at the same
   address with the same role and, when both objects offer one, the same
-  `IAccIdentity` string; anything else is a new node that keeps the
-  object just read. Each snapshot is read with its provenance: objects
+  `IAccIdentity` string; else, for a focus walk, the first of its
+  `equality::Candidates` (the kept nodes of Core's focus line and of the
+  newest unjudged focus, each line innermost first) that NVDA's
+  `IAccessible._isEqual` finds equal: the same child id, event parameters
+  where both are known, window, identity string where both asked, raw
+  role, location (the kept object's read live once per walk; a kept object
+  gone is never equal) and name (the kept object's read live when the kept
+  one differs). A reissue gives the sighting the candidate's id and
+  nothing else, the node keeping its object, address and event parameters
+  and taking the sighting's name, and each candidate gives its id at most
+  once per walk, the lines then scanned only outward of it. Anything else
+  is a new node that keeps the object just read, with the facts the
+  equality compares (`registry::Facts`). Each snapshot is read with its provenance: objects
   acquired at an event or window address, and children by id on them,
   are at their address, and so is a window's own standard object reached
   through `accParent`, at the address its identity string names
-  (`Accessible::address`, `IAccPropServices::DecomposeHwndIdentityString`),
+  (`accessible::decompose`, `IAccPropServices::DecomposeHwndIdentityString`),
   so a window keeps one node even when its title changes; other objects
   reached through `accParent`, through `accNavigate`, or as child objects
   are not, and never claim the address made up for them.

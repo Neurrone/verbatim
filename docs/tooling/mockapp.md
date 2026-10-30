@@ -161,6 +161,15 @@ parses them.
 - `slow-acc-parent <id> <ms>` (MSAA only) does the same for the node's
   `accParent`, from the next call on, printing `slow-acc-parent started
   <us>` and `slow-acc-parent ended <us>`; 0 answers at once again.
+- `move <id> <left> <top> <width> <height>` (MSAA only) makes the node's
+  `accLocation` answer that rectangle, raising no event; a fixture node's
+  `location`, four integers, gives its first one (all 0 otherwise).
+- `fail-acc-location <id>` (MSAA only) makes the node's `accLocation`
+  fail with `E_FAIL` from then on.
+- `recreate <id>` (MSAA only) makes the node's object again, as an
+  application that destroys a container and makes another in its place:
+  the object handed out before answers every call as one whose server has
+  disconnected it.
 - `fail-acc-parent <id>` (MSAA only) makes the node's `accParent` fail
   with `E_FAIL` from then on, every other call on it answering as usual,
   printing `fail-acc-parent started <us>` and `fail-acc-parent ended <us>`

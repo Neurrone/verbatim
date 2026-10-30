@@ -785,29 +785,37 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   the window the walk had reached, included, by local calls, with no
   selected child, dialog text or text of its own. A walk that returns
   still armed past its bound, before the watchdog has published it, is
-  published by its worker through the same `publish_at_bound` from the
-  same progress (`Worker::walk_returned`), so the report does not depend on
-  which thread comes first. The publication records the report for Core's
-  judgement, claims the walk and sends the report, all under the watch
-  lock, only while that walk is armed by the worker in charge; sending
-  never waits for the pipe, and nothing holding the outbound queue's lock
-  takes the watch lock, so this cannot deadlock. The worker is not
-  abandoned for this: when its walk returns it learns of the publication
-  under the same lock (`Watch::walk_returned`), so nothing it sends
-  afterwards reaches Core first, and adopts the focus as if it had
-  reported it (`Worker::adopt_published`): it follows it, its caret, its
-  text and the focus-following subscription, and sends nothing else for
-  it, but for a terminal, whose caret is read and whose first read is
-  sent, as for a reported terminal. The worker adopts the focus right
-  after the check that it is in charge, and reads a terminal's caret only
-  then; abandoned in that read, it follows nothing more. A worker
-  abandoned before it has followed the focus hands it to the worker that
-  replaces it (`WatchState::abandon`, `Watch::handed_over`), which adopts
-  it as its first act, before its next entry, under an entry's deadline
-  (`adopt_handed_over`); the watch keeps the focus until the entry that
-  follows it ends (`Watch::adopting`), so it is handed over again should
-  that worker be abandoned too. A focus whose object is not yet acquired, a
-  focus-now answer and a foreground report are left to the deadline.
+  published by its worker through the same function from the same
+  progress (`Worker::walk_returned`), so the report does not depend on
+  which thread comes first. The publication is a commit (below): it
+  records the report for Core's judgement, claims the walk, sends the
+  report and makes the focus the followed one, with the work it still
+  owes, all under the watch lock, only while that walk is armed by the
+  worker in charge. The watchdog publishes an armed walk before it
+  abandons its worker, in the same hold of the lock, whatever the walk's
+  bound (`wake`). The worker, when its walk returns, learns of the
+  publication under the same lock (`Watch::walk_returned`), sends nothing
+  else for it, and attempts the owed work; nothing is handed over to a
+  replacement, which attempts the owed work as its first act when the
+  abandoned worker was not attempting it. A focus whose object is not yet
+  acquired, a focus-now answer and a foreground report are left to the
+  deadline.
+- The commit point (`outpost/commit.rs`; `docs/design/focus-pipeline-rework.md`,
+  "The outpost's commit point"). The follow state, the followed focus
+  (`Tracking`), the subscription's target, a caret key's watch, the
+  terminals, the caret-read stamp, the focus path and the owed work, lives
+  in the watch's state and changes only in `Watch::commit`, which checks
+  under the watch lock that the committing generation is in charge, then
+  records an `Effects` value's report, sends its messages and applies the
+  rest. The locks a commit takes nest inside the watch lock: the judgement
+  list, the intake, the UI Automation registry, the outbound queue; none is
+  held across a call. Owed work (a terminal's first read, a
+  `SensitiveSlider`'s lookup for a thumb published at its bound) is
+  attempted once per worker under a deadline of its own with no moved-on
+  window (`Watch::take_owed`). A terminal read works on a copy of its
+  entry, put in place only by its result's commit. An entry's result ends
+  its query but not its deadline. The walks stop at their next step once
+  their worker is abandoned (`Watch::advance`).
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
   `TRANSACTION_TIMEOUT` (5 s); the listener's read's bound bounds the
@@ -1226,7 +1234,8 @@ unredirected, never unspawned.
   by the focus's route and stepped from classically, or answered gone.
 - A dialog's own text (`read::describe_dialogs`) is given as the
   description of every newly entered dialog in the chain
-  (`focus_rules::already_entered`), and of a dialog focus, without one,
+  (`focus_rules::already_entered`: below where its line meets that of
+  any focus events are judged against), and of a dialog focus, without one,
   while descriptions are read, so Core speaks it where NVDA does. The
   splice carries it while the focus stays inside, and a foreground report's
   (`Tracking`'s `dialog`) serves the focus that follows.

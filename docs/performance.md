@@ -625,17 +625,37 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   `docs/parity/windows-and-processes.md`, "A control's own focus with a
   focused child"), the read (7), and one ancestor hop (9) that recognizes
   the previous focus's container.
-- Today: 28: the focus 9 (its role and state, read first for NVDA's
-  checks, kept for the read) and a walk to the root, two ancestors at 9
-  each and an `accParent` that finds none. The walk does not stop at the
-  group, because oleacc hands out a new wrapper for every object reached
-  through `accParent`, whose identity matches no kept node. mockapp
-  answered 32 provider calls, 10 of them `accParent`, most from
-  `WindowFromAccessibleObject`'s own walk.
-- Target: 18, by recognizing an ancestor by its address and identity
-  string, as the registry already does for objects acquired at an
-  address.
-- Bound: the depth of the focus below its window's root.
+- Today: 20 (28 before NVDA's equality was ported): the focus 9 (its
+  role and state, read first for NVDA's checks, kept for the read) and one
+  ancestor hop (9), whose new sighting of the group, oleacc's new wrapper,
+  passes the equality's first steps against the group of the focus before
+  it, so its location and the kept group's are read live (2) and it is
+  given the group's id; the walk stops there, the group being in the
+  followed chain. mockapp answered 29 provider calls, 12 of them
+  `accParent`, most from `WindowFromAccessibleObject`'s own walk, and 3
+  `accLocation`: 2 more `accParent` hits than before for one hop fewer,
+  not yet explained.
+- Target: 18, the two location reads being the cost of comparing as NVDA
+  does; an ancestor recognized by its address and identity string, as
+  for objects acquired at an address, costs none.
+- Bound: the depth of the focus below its window's root; with the
+  candidates capped to Core's line and the newest unjudged focus, at most
+  324 calls, the walk's 64 hops each reading a location and each of up to
+  130 candidates read live twice.
+
+### The outpost's commit point
+
+Mutex acquisitions on the worker's path, counted from the code
+(`docs/design/focus-pipeline-rework.md`, "The outpost's commit point"),
+not measured: an MSAA focus whose walk returns before its bound with k
+ancestors told, 25 + k before, 13 + k now; a UIA focus from the listener's
+read, about 24 before, about 9 now; a terminal output read, about 13
+before, 5 now, with no lock held across a call. The terminal read's copy
+adds an `AddRef` and `Release` of where its next read starts and one
+allocation for the sent caret's line per read. Owed work adds one alarm
+set and its cancel per terminal or slider focus. No wake-up is added: the
+watchdog wakes at the same bound, grace and deadline, and an entry's
+alarm is cancelled when it ends rather than when it publishes.
 
 ### A focus change, MSAA, cold
 
@@ -657,8 +677,8 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
 
 ### Arrowing through a list, MSAA
 
-- Minimum: 18 MSAA calls. Today: 28, as for a steady-state focus and for
-  the same reason; mockapp answered 32 provider calls. Target: 18.
+- Minimum: 18 MSAA calls. Today: 20, as for a steady-state focus and for
+  the same reason. Target: 18.
 
 ### A focus on a tree view item, MSAA
 

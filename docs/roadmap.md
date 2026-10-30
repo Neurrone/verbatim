@@ -54,7 +54,16 @@ kind, and every non-deliberate difference from NVDA's focus handling in
 stays (the listener reads every UIA focus, the outposts the rest, Core
 decides). The decisions, the design and the order of work are in
 [the focus pipeline rework](design/focus-pipeline-rework.md), the one
-source for them; its first step is the measurements and captures.
+source for them; its first step is the measurements and captures. Built
+on 2026-10-30, ahead of its later steps: the outpost's commit point, the
+one identity rule for Core and the speech manager, and MSAA object
+equality (Fable, 2026-10-30, pending Dickson's acceptance). The reused
+UIA runtime id keeping its node waits on the rework's open item about
+its "gone" evidence. Follow-ups found: a focus group's older entries are
+lost with an abandoned worker, and the text anchors' locks are held
+across text calls; neither is made direct by the commit point. NVDA's
+speech for the equality's edge cases waits for one capture session
+against mockapp's `object_equality.json` fixture.
 
 ### The caret and selection rework
 

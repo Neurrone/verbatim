@@ -480,6 +480,14 @@ Each file's module comment says exactly what it asserts; in outline:
   reads. A client's first call on a new MSAA object's proxy that is
   `accParent` reaches the provider twice, so the tests read the node's
   name first.
+- `object_equality.rs` reports two MSAA focuses over
+  `object_equality.json` through the outpost and reduces both in Core,
+  asserting the containers entered with the second: NVDA's equality of
+  MSAA objects found by the outpost for a container reached by another
+  path, renamed, moved (`move`), or whose location fails
+  (`fail-acc-location`), and not found for a second unnamed list
+  elsewhere, a container made again (`recreate`), or one focused at an
+  event child id.
 - `arbitration.rs`: the raw probe (`verbatim_uia::raw_probe`) answers
   `0x10000` for a `uia`-backend window and the default window procedure's
   0 for an `msaa`-backend one, `verbatim_outpost::arbitration::Arbitrator`

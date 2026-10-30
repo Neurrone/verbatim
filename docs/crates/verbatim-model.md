@@ -160,11 +160,18 @@ recorder unchanged. What the reducer does with each type is in
 - `FocusValidity` and `FocusNow`: what focus speech is about, for dropping
   it once the focus has moved on (`docs/parity/focus-events.md`, "When
   speech is cut off, and cancellation of expired focus speech").
-  A `FocusValidity` names the node the speech announces and whether it was
-  the focus when the speech was made (`had_focus`); a `FocusNow` names the
-  focus, its ancestors, and the foreground window's node when known.
+  A `FocusValidity` names the node the speech announces, the window that
+  node is when it is one, and whether it was the focus when the speech was
+  made (`had_focus`); a `FocusNow` names the focus, its ancestors, and the
+  foreground object when known, each an `ObjectKey`.
   `FocusValidity::holds(now)` is true when the node never had the focus,
-  or is the focus, an ancestor of it, or the foreground window.
+  or is the same object as the focus, an ancestor of it, or the
+  foreground object.
+- `ObjectKey`: an object's identity as Core and the speech manager compare
+  it, a node id and the window the node is when it is one (`ObjectKey::of`
+  a snapshot). `is_same_object` is the one identity rule
+  (`docs/parity/focus-context.md`, "Focus-ancestry context"): the same
+  node, or both windows and the same window.
 - `UtteranceId` and `UtteranceEnding` (decision D17). An `UtteranceId`
   names one utterance from acceptance to its single ending and is never
   reused within a process, unlike a `TraceId`, which several utterances

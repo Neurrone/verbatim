@@ -48,22 +48,14 @@ guide maps those behaviors onto the crate's types and modules.
   - `same_object(old, new)` with `EnteredKey`: whether an entry of a
     previous focus line and one of a new line are the same object, one
     node id or one window when both are windows.
-    `same_by_role_and_name(old, new, same_window)`: whether two entries
-    are taken as one container by one role and name in the same
-    top-level window, for nodes that are not one outpost's UI Automation
-    elements and not two windows. `same_entry` is either.
     `meeting((previous, previous_focus), (new, new_focus))` gives where a
     new focus line meets the previous one, as NVDA's `api.setFocusObject`
     finds it, by `same_object` alone, the indexes of the two entries, or
     `None` when the lines share no object; the reducer keeps the previous
     line to that entry and enters the new entries below it.
-    `quiet_entered(left, entered, same_window)` counts the entered
-    containers, outermost first, that match the previous line's entries
-    below the same point pair by pair by role and name, which the reducer
-    keeps quiet. Neither allocates. `already_entered(previous,
-    same_window, node)`: whether `node` is the same entry as one of
-    `previous`, by which an outpost gathers a newly entered dialog's own
-    text.
+    `already_entered(previous, new)` counts the new line's entries,
+    outermost first, at or above where it meets `previous`, by which an
+    outpost gathers a newly entered dialog's own text. Neither allocates.
   - `HeldFocus` and `HeldNode`: the focus Core holds as it sends it, the
     trace of the event it came from, its observation time, the focus and
     its ancestors (id, backend, role, name, states, and the window a node
@@ -246,15 +238,13 @@ code is in `reduce.rs` unless named.
   top-level window meet there, empty chains or not, and speech is not
   cut; lines in two top-level windows, or a focus whose containers a rule
   drops, cut speech and enter the whole chain, which is how a window is
-  announced when its foreground event was dropped. Below the meeting
-  point, the outermost entered containers that have the role and name of
-  the previous line's entries at the same places, in the same top-level
-  window, are kept quiet, for nodes whose ids cannot be compared. A
-  duplicate of the focus keeps the line, taking only its newer readings.
-  `HeldNode` carries a window's handle as the snapshot does, so an
-  outpost's own use of the rule, for a dialog's text, judges by
-  `already_entered`, matching a container by role and name anywhere in
-  the previous line.
+  announced when its foreground event was dropped. Everything below the
+  meeting point is entered: nothing is matched by role and name, the
+  outpost giving an MSAA object reached by another path the id NVDA's
+  equality finds it to have. A duplicate of the focus keeps the line,
+  taking only its newer readings. `HeldNode` carries a window's handle as
+  the snapshot does, so an outpost's own use of the rule, for a dialog's
+  text, judges by `already_entered`.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
   listener last reported (`Input::ForegroundWindow`) and published by the
