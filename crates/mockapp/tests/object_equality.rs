@@ -65,7 +65,7 @@ fn spoken(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent>> 
     )
     .into_iter()
     .filter_map(|effect| match effect {
-        Effect::Speak(utterance) => Some(
+        Effect::Speak(utterance, _) => Some(
             utterance
                 .segments
                 .into_iter()

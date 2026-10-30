@@ -10,7 +10,11 @@ guide maps those behaviors onto the crate's types and modules.
 - `reduce(&mut state, &input)`: deterministic, no I/O, no clocks; advances
   the state in place, without copying it, and returns the effects to
   execute. Every `Speak` carries the triggering input's trace id, which
-  is what makes end-to-end latency timelines possible.
+  is what makes end-to-end latency timelines possible, and the number of
+  the user input that caused it, if one did (below, "Key numbers").
+- `SrState::holds_inputs_back` and `SrState::announces_toggle_key`: whether
+  a key or command waits in Core's held-key line, and whether a lock key's
+  announcement is still to come, which the shell's idle conditions read.
 - `SNAP_RESULTS_ACTIVITY`: the activity id of the shell's window-snap
   results notification, the one UIA notification spoken from an
   application without the focus; the supervisor starts an outpost for no
@@ -384,7 +388,22 @@ second press), `ClipboardCopied` (`Phrase::CopiedToClipboard` or
 `Message::UnableToCopy`) and `PreviewSpeech` speak, interrupting;
 `ShellItemGone` and `ShellItemUnclickable` speak queued; `PreviewEarcon`
 plays its event. Each speaks under its input's trace, so a later key press
-fences a copy's confirmation off. `MenuOrSwitchEnded` asks for the
+fences a copy's confirmation off.
+
+The scripts of the gestures that are not review commands
+(`Input::Script`) ask the shell: `Script::ReportTime` emits
+`Effect::ReadClock { repeat }`, answered by `ClockRead` under the
+gesture's trace; `Script::ShowMenu` emits `Effect::Show(GuiRequest::Menu)`
+and `Script::ShellList` `Effect::Show(GuiRequest::ShellList(kind))`, the
+system tray on a first press and the taskbar on a quick second
+(`shell_list_kind`). A lock key's press (`Input::ToggleKeyPressed`) adds
+the key to `SrState::toggle_keys`, the announcements to come in press
+order, and emits `Effect::ReadToggleKey` due 30 ms after the press;
+`LockKeyToggled` takes the front one. Its utterance carries no key
+number, so a key pressed within the 30 ms does not silence it, as NVDA's
+announcement after its timer is heard; it never waits behind a held key,
+since NVDA starts that timer when the key is pressed, outside its script
+queue. `MenuOrSwitchEnded` asks for the
 foreground application's focus (`Effect::ReadForegroundFocus`, NVDA's
 fake focus) unless a focus observed since has been applied
 (`docs/parity/backends.md`). `ForegroundWindow` says nothing; it is kept
@@ -438,6 +457,36 @@ keys are handled as the input they came as (`reduce::key_input`). The
 watch of the key just passed is marked `later_key`, so its answer only
 keeps the caret current and says its selection's change. Each waiting
 key's effects carry its own trace (`Effect::ForKey`).
+
+A review command or a script (`Input::Command`, `Input::Script`) pressed
+while a held key waits waits behind it too (`WaitingKey::Command`), as
+NVDA runs scripts one at a time in the order queued: until the key ahead
+has had its caret read and been passed on, and until that key's watch is
+answered or 100 ms after the pass, whichever is first. It has no press
+time of its own, since it was pressed before that key was passed on, so
+it always waits for the bound; `HeldKeyWaitEnded` with its trace ends the
+wait. The key ahead, its watch marked `later_key`, says nothing, and the
+command reads the line the key moved to. NVDA reads the line before the
+key in that case; the build keeps Verbatim's reading pending a capture
+(`docs/design/ownership-input.md`, "Decisions").
+
+## Key numbers
+
+(`docs/design/ownership-input.md`, "Key numbers in Core, not in a side
+table".) Every user input carries the number the keyboard hook's thread
+gave it (`verbatim_model::KeySeq`): `CaretKey` and `HeldKey` as `seq`,
+`CharacterTyped`, `ClearingKey`, `Command`, `Script` and
+`ToggleKeyPressed` as `key`. `reduce` records the input's trace and
+number in `SrState::key_origins` (`keys.rs`, the newest 1,024 pairs)
+before dispatching it, and as its last step stamps every `Effect::Speak`,
+inside `Effect::ForKey` included, with the number of the trace of the
+innermost `ForKey` around it, or else of the input's trace
+(`Input::trace_id`), failing that of the utterance's own trace. An answer
+to a key's request comes back under the key's trace, so its speech
+carries the key's number; speech of an input no key caused carries none.
+The table is part of the state, so a flight recorder checkpoint carries
+it, and an input from an old dump carries `KeySeq::NONE_YET`, which is
+not recorded.
 
 ### Caret keys
 

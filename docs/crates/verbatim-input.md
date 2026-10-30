@@ -60,12 +60,13 @@ Public API:
   returns gesture-and-action pairs the application adapts itself: build the
   hook's `GestureMap` from the gestures with `gesture_map_for(bindings)`,
   and keep a separate lookup (the same pairs, or a `HashMap` built from
-  them) on the application side to resolve an emitted gesture to its action
-  in the router. `verbatim-app` activates a layout this way, though it
+  them) on the application side to resolve an emitted gesture to its action.
+  `verbatim-app` activates a layout this way, though it
   builds the hook's map itself, with the menu gesture added, rather than
   through `gesture_map_for`: it reads `Settings.keyboard.layout` once at
   startup, maps it to this crate's `KeyboardLayout`, and calls
-  `bindings_for` for both the hook's map and the router's lookup. Rebinding
+  `bindings_for` for both the hook's map and the lookup its hook
+  callbacks make (`key_reports`). Rebinding
   at runtime, for example on a layout change, is not implemented; a new
   layout takes effect on the next start.
 - M4's commands (`docs/parity/review.md`, with NVDA's keys). Every layout: Verbatim+Alt+Home and Verbatim+Alt+End (the
@@ -97,7 +98,7 @@ Public API:
   Arrow and Verbatim+Alt+Down Arrow in every layout, Verbatim's own,
   where NVDA pans its magnifier.
 - `ScriptAction::review_command` — the reducer command an action runs, or
-  `None` for speak time and the tray list, which the router handles; the
+  `None` for speak time and the tray list, which run as Core's scripts; the
   one place the two vocabularies meet.
 - `caret_bindings()` — the caret keys of NVDA's editable-text commands, as
   `(GestureId, CaretKey)` pairs: Left and Right Arrow, Control with them,

@@ -960,6 +960,30 @@ fn skip_says_more_than(
     }
 }
 
+/// The utterance of terminal output `segments`, queued, about the focus,
+/// and dropped once the focus leaves the terminal.
+fn output_utterance(
+    state: &SrState,
+    trace_id: TraceId,
+    segments: Vec<UtteranceSegment>,
+) -> Utterance {
+    Utterance {
+        trace_id,
+        priority: SpeechPriority::Queued,
+        segments,
+        source: state
+            .focus
+            .as_ref()
+            .map(|focus| crate::reduce::source_of(&focus.snapshot)),
+        say_all: false,
+        validity: state.terminal.node.map(|node| FocusValidity {
+            node,
+            had_focus: true,
+            window: focus_window(state, node),
+        }),
+    }
+}
+
 /// Hands waiting output to speech until enough is ahead of playback, as
 /// far as the group being spoken goes. Handing the group's last line to
 /// speech while the outpost holds asks it for what is new.
@@ -1039,23 +1063,8 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         let mut segments = vec![UtteranceSegment::new(SegmentContent::Mark(mark))];
         segments.extend(content);
         segments.push(UtteranceSegment::new(SegmentContent::Mark(end)));
-        let source = state
-            .focus
-            .as_ref()
-            .map(|focus| crate::reduce::source_of(&focus.snapshot));
-        effects.push(Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source,
-            say_all: false,
-            // Dropped once the focus leaves the terminal.
-            validity: state.terminal.node.map(|node| FocusValidity {
-                node,
-                had_focus: true,
-                window: focus_window(state, node),
-            }),
-        }));
+        let utterance = output_utterance(state, trace_id, segments);
+        effects.push(Effect::Speak(utterance, None));
         state.terminal.ahead.push_back((mark, line));
         state.terminal.sounding = Some(end);
     }
@@ -1186,7 +1195,7 @@ pub(crate) fn focus_moved(state: &mut SrState, node: NodeId) {
 pub(crate) fn cuts_speech(effect: &Effect) -> bool {
     match effect {
         Effect::StopSpeech => true,
-        Effect::Speak(utterance) => utterance.priority == SpeechPriority::Interrupt,
+        Effect::Speak(utterance, _) => utterance.priority == SpeechPriority::Interrupt,
         Effect::ForKey(_, effect) => cuts_speech(effect),
         _ => false,
     }

@@ -24,13 +24,16 @@ fn main() {
         .map(|id| GestureId::parse(id).expect("valid gesture identifier"));
     let map = GestureMap::new(bindings).into_shared();
 
+    // The reports are printed on this thread, not the hook's, which must
+    // never block.
     let (tx, rx) = crossbeam_channel::unbounded();
     let _hook = InputHook::start(
         DecisionConfig::default(),
         map,
-        tx,
         Box::new(|_, _| {}),
-        Box::new(|report| println!("{report:?}")),
+        Box::new(move |report| {
+            let _ = tx.send(report);
+        }),
         std::sync::Arc::new(verbatim_input_windows::KeyHolding::new([])),
         std::sync::Arc::new(verbatim_input_windows::ForegroundView::new()),
     )
@@ -40,8 +43,11 @@ fn main() {
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
         match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(verbatim_input_windows::Routed::Gesture(emitted)) => {
-                println!("gesture: {} (trace {})", emitted.gesture, emitted.trace_id);
+            Ok(verbatim_input_windows::KeyReport::Gesture { gesture, key, .. }) => {
+                println!(
+                    "gesture: {} (trace {}, key {key})",
+                    gesture.gesture, gesture.trace_id
+                );
             }
             Ok(other) => println!("{other:?}"),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}

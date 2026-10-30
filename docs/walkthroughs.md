@@ -18,7 +18,6 @@ placed in kill-on-close job objects, so they die with it however it ends
 1. **Core**, `verbatim.exe` ([verbatim-app](crates/verbatim-app.md)). The
    threads that matter here:
    - `verbatim-input-hook`, the low-level keyboard hook;
-   - `verbatim-router`, the gesture router;
    - `verbatim-reducer`, which owns the reducer state, the request table,
      and the set of live outposts (`ReducerThread` in
      `crates/verbatim-app/src/main.rs`);
@@ -226,18 +225,19 @@ while focus is in Notepad's text area.
    Verbatim key's key-down is swallowed and cancels speech; numpad6's
    key-down completes the bound chord `kb:verbatim+numpad6`, so it is
    swallowed too (its key-up will be as well), its `Cancel` speech effect
-   is carried out first, and an `EmittedGesture` with a fresh trace id
-   and a repeat count is sent on the router's unbounded channel. The hook
+   is carried out first with the key's number, and the gesture, with a
+   fresh trace id, a repeat count and that number, is reported. The hook
    never blocks, since Windows silently removes a low-level hook that is
    too slow, and never drops a key.
-2. **The router turns it into a reducer command.** The router thread
-   (`router_loop` in `crates/verbatim-app/src/main.rs`) looks the gesture
-   up in the layout's table (`verbatim_input::bindings_for`), finds
-   `ScriptAction::MoveToNextSibling`, maps it to
-   `ReviewCommand::NextSibling` (`ScriptAction::review_command`), and sends
-   it to the reducer thread as `ShellCommand::Input`. The router speaks the
-   time, the date, and a lock key's new state itself; Verbatim+V and the
-   tray and taskbar lists go to the GUI as `GuiCommand`s.
+2. **The report becomes a reducer command, still on the hook thread.**
+   The report callback (`crates/verbatim-app/src/key_reports.rs`) looks
+   the gesture up in the layout's table (`verbatim_input::bindings_for`),
+   finds `ScriptAction::MoveToNextSibling`, maps it to
+   `ReviewCommand::NextSibling` (`ScriptAction::review_command`), and posts
+   it to the reducer thread's port as `Input::Command`, in line with the
+   keys. Verbatim+V, the time and the tray and taskbar lists become
+   `Input::Script`, and a lock key `Input::ToggleKeyPressed`, which Core
+   turns into effects the reducer thread carries out.
 3. **The reducer asks for the neighbor.** `reduce_command` calls
    `navigate`, which allocates a query id, records it as the latest
    navigation (`SrState::latest_navigation`), and returns `Effect::Fetch`.

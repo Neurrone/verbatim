@@ -156,6 +156,7 @@ fn a_focus_step_allocates_the_same_whatever_the_ancestor_chain() {
 #[test]
 fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
     let command = Input::Command {
+        key: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command: ReviewCommand::Parent,
         repeat: 0,
@@ -252,6 +253,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
     };
 
     let effects = same(&Input::CaretKey {
+        seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion: CaretMotion::NextCharacter,
@@ -282,6 +284,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         })),
     });
     let _ = same(&Input::Command {
+        key: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command: ReviewCommand::ReviewNextWord,
         repeat: 0,

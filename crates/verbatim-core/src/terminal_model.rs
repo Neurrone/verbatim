@@ -525,6 +525,7 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             trace_id,
             key: caret,
             pressed_at_ms,
+            ..
         } => key(
             state,
             crate::terminal::caret_key_kind(*caret),
@@ -535,10 +536,11 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             trace_id,
             text,
             at_ms,
+            ..
         } => key(state, crate::terminal::typed_kind(text), *at_ms, *trace_id),
-        Input::ClearingKey { trace_id, at_ms } => {
-            key(state, TerminalKeyKind::Forget, *at_ms, *trace_id)
-        }
+        Input::ClearingKey {
+            trace_id, at_ms, ..
+        } => key(state, TerminalKeyKind::Forget, *at_ms, *trace_id),
         _ => Vec::new(),
     }
 }

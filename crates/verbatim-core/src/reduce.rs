@@ -48,6 +48,9 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     let focus = state.focus.as_ref().map(|focus| focus.snapshot.id);
+    // A user input's number, recorded by its trace before anything it
+    // causes is spoken (`crate::keys`).
+    crate::keys::record(state, input);
     let mut effects = reduce_input(state, input);
     // The terminals Core reads (`terminal_model`): told when the focus
     // reaches or leaves them, given the settings, and their text answered
@@ -71,6 +74,8 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         let cut = terminal::cut(state, 0);
         effects.extend(cut);
     }
+    // Speech caused by a key carries the key's number, last of all.
+    crate::keys::stamp(state, input, &mut effects);
     effects
 }
 
@@ -99,11 +104,17 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             result,
         } => reduce_navigate_completed(state, *trace_id, *query_id, *kind, result),
         Input::OutpostEnded { outpost } => outpost_ended(state, *outpost),
-        Input::Command {
-            trace_id,
-            command,
-            repeat,
-        } => reduce_command(state, *trace_id, *command, *repeat),
+        // A command or script pressed while a held key waits runs after
+        // it, as NVDA runs scripts one at a time in the order queued
+        // (`docs/design/ownership-input.md`, "Commands behind held keys").
+        Input::Command { .. } | Input::Script { .. } if state.held_keys.busy() => {
+            state
+                .held_keys
+                .waiting
+                .push_back(crate::state::WaitingKey::Command(Box::new(input.clone())));
+            Vec::new()
+        }
+        Input::Command { .. } | Input::Script { .. } => command_input(state, input),
         Input::ActivationCompleted {
             trace_id,
             activated,
@@ -133,6 +144,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             trace_id,
             key,
             pressed_at_ms,
+            ..
         } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
         Input::HeldKeyWaitEnded { trace_id } => editing::held_wait_ended(state, *trace_id),
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
@@ -207,6 +219,20 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     effects
 }
 
+/// Runs a review command or a script. Any other input does nothing here.
+pub(crate) fn command_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    match input {
+        Input::Command {
+            trace_id,
+            command,
+            repeat,
+            ..
+        } => reduce_command(state, *trace_id, *command, *repeat),
+        Input::Script { repeat, script, .. } => shell::script(*script, *repeat),
+        _ => Vec::new(),
+    }
+}
+
 /// The trace of a key's input, minted when the hook saw the key.
 pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
     match input {
@@ -224,27 +250,33 @@ pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
     match input {
         Input::CaretKey {
             trace_id,
+            seq,
             key,
             pressed_at_ms,
         } if pressed_at_ms != 0 => Input::CaretKey {
             trace_id,
+            seq,
             key,
             pressed_at_ms: pressed_at_ms.max(at_ms),
         },
         Input::CharacterTyped {
             trace_id,
+            key,
             text,
             at_ms: typed_at_ms,
         } if typed_at_ms != 0 => Input::CharacterTyped {
             trace_id,
+            key,
             text,
             at_ms: typed_at_ms.max(at_ms),
         },
         Input::ClearingKey {
             trace_id,
+            key,
             at_ms: cleared_at_ms,
         } if cleared_at_ms != 0 => Input::ClearingKey {
             trace_id,
+            key,
             at_ms: cleared_at_ms.max(at_ms),
         },
         input => input,
@@ -610,14 +642,17 @@ fn reduce_activation_completed(
         }
         (true, _) => UtteranceSegment::new(SegmentContent::Message(Message::Activate)),
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: vec![segment],
-        source: None,
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![segment],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// Whether `event` is a focus dropped before anything else judges it: an
@@ -919,14 +954,17 @@ fn reduce_background(
     else {
         return Vec::new();
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::text(text.clone())],
-        source: None,
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::text(text.clone())],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// The parts of a `FocusChanged` event the focus handling reads.
@@ -1217,18 +1255,21 @@ fn focus_speech(
         if segments.is_empty() {
             continue;
         }
-        effects.push(Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source: Some(source_of(container)),
-            say_all: false,
-            validity: Some(FocusValidity {
-                node: container.id,
-                had_focus: false,
-                window: container.details.window,
-            }),
-        }));
+        effects.push(Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Queued,
+                segments,
+                source: Some(source_of(container)),
+                say_all: false,
+                validity: Some(FocusValidity {
+                    node: container.id,
+                    had_focus: false,
+                    window: container.details.window,
+                }),
+            },
+            None,
+        ));
     }
     let mut segments = if reads_text && report.node.value.is_some() {
         let mut node = report.node.clone();
@@ -1242,18 +1283,21 @@ fn focus_speech(
     if let Some(selected) = report.selected_child {
         segments.extend(node_segments(selected, Reason::Focus, last_level));
     }
-    effects.push(Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: Some(source_of(report.node)),
-        say_all: false,
-        validity: Some(FocusValidity {
-            node: report.node.id,
-            had_focus: true,
-            window: report.node.details.window,
-        }),
-    }));
+    effects.push(Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(source_of(report.node)),
+            say_all: false,
+            validity: Some(FocusValidity {
+                node: report.node.id,
+                had_focus: true,
+                window: report.node.details.window,
+            }),
+        },
+        None,
+    ));
     effects
 }
 
@@ -1451,14 +1495,17 @@ fn slider_value_changed(
     let Some(text) = value else {
         return Vec::new();
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::value(text)],
-        source: Some(source),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::value(text)],
+            source: Some(source),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// Handles a name change: when the focused node's name differs from the one
@@ -1487,14 +1534,17 @@ fn reduce_name_changed(
     let Some(text) = name.filter(|name| !name.trim().is_empty()) else {
         return Vec::new();
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::label(text.clone())],
-        source: Some(source_of(&focus.snapshot)),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::label(text.clone())],
+            source: Some(source_of(&focus.snapshot)),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// Speaks a toast: the alerting object announced in full, queued behind
@@ -1503,12 +1553,15 @@ fn reduce_name_changed(
 fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
     // A toast is never a tree or list item, so the level spoken before it
     // plays no part.
-    vec![Effect::Speak(announce_node(
-        trace_id,
-        SpeechPriority::Queued,
-        node,
-        (Reason::Focus, &mut None),
-    ))]
+    vec![Effect::Speak(
+        announce_node(
+            trace_id,
+            SpeechPriority::Queued,
+            node,
+            (Reason::Focus, &mut None),
+        ),
+        None,
+    )]
 }
 
 /// Handles a UIA `AutomationNotification` event (`docs/parity/alerts.md`,
@@ -1534,14 +1587,17 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
         }
         _ => SpeechPriority::Queued,
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority,
-        segments: vec![UtteranceSegment::text(text.clone())],
-        source: None,
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority,
+            segments: vec![UtteranceSegment::text(text.clone())],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// Runs a review or object-navigation command (roadmap M3) against the
@@ -1659,7 +1715,7 @@ fn navigator_command(
     if command == ReviewCommand::ToFocus {
         // NVDA says "Move to focus" before the object.
         let mut effects = navigator_to_focus(state, trace_id);
-        if let Some(Effect::Speak(utterance)) = effects.first_mut() {
+        if let Some(Effect::Speak(utterance, _)) = effects.first_mut() {
             utterance.segments.insert(
                 0,
                 UtteranceSegment::new(SegmentContent::Message(Message::MoveToFocus)),
@@ -1668,16 +1724,19 @@ fn navigator_command(
         return effects;
     }
     let Some(navigator) = state.navigator.as_ref() else {
-        return vec![Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments: vec![UtteranceSegment::new(SegmentContent::Message(
-                Message::NoNavigatorObject,
-            ))],
-            source: None,
-            say_all: false,
-            validity: None,
-        })];
+        return vec![Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Queued,
+                segments: vec![UtteranceSegment::new(SegmentContent::Message(
+                    Message::NoNavigatorObject,
+                ))],
+                source: None,
+                say_all: false,
+                validity: None,
+            },
+            None,
+        )];
     };
 
     match command {
@@ -1735,7 +1794,7 @@ fn announce_navigator(
     } else {
         announce_node(trace_id, SpeechPriority::Queued, object, levels)
     };
-    let mut effects = vec![Effect::Speak(utterance)];
+    let mut effects = vec![Effect::Speak(utterance, None)];
     effects.extend(editing::navigator_text(
         state,
         trace_id,
@@ -1808,14 +1867,17 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
             if segments.is_empty() {
                 return Vec::new();
             }
-            vec![Effect::Speak(Utterance {
-                trace_id,
-                priority: SpeechPriority::Queued,
-                segments,
-                source: Some(source_of(&navigator.object)),
-                say_all: false,
-                validity: None,
-            })]
+            vec![Effect::Speak(
+                Utterance {
+                    trace_id,
+                    priority: SpeechPriority::Queued,
+                    segments,
+                    source: Some(source_of(&navigator.object)),
+                    say_all: false,
+                    validity: None,
+                },
+                None,
+            )]
         }
         _ => {
             // Copy the object's name and value; the shell's clipboard
@@ -1853,14 +1915,17 @@ fn report_focus(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effec
     }
     let segments =
         review_text::spell_or_blank(object.name.as_deref().unwrap_or_default(), repeat > 1, None);
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: Some(source_of(&object)),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(source_of(&object)),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// The text the report-object copy press puts on the clipboard: the
@@ -2051,14 +2116,17 @@ pub(crate) fn flat_review_command(
     } else {
         segments.push(UtteranceSegment::text(slice.to_owned()));
     }
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: None,
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// Handles a `SelectionChanged` event: a node was selected within its
@@ -2100,14 +2168,17 @@ fn reduce_selection_changed(
         _ => return Vec::new(),
     }
     focus.last_selection = Some(node.id);
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: node_segments(node, Reason::Focus, &mut state.last_tree_level),
-        source: Some(source_of(node)),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: node_segments(node, Reason::Focus, &mut state.last_tree_level),
+            source: Some(source_of(node)),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// A node selected inside an element the focus controls ("Selection in a
@@ -2128,12 +2199,15 @@ fn reduce_controlled_selection(
         return Vec::new();
     }
     state.navigator = Some(Navigator::on(node.clone()));
-    vec![Effect::Speak(announce_node(
-        trace_id,
-        SpeechPriority::Interrupt,
-        node,
-        (Reason::Focus, &mut state.last_tree_level),
-    ))]
+    vec![Effect::Speak(
+        announce_node(
+            trace_id,
+            SpeechPriority::Interrupt,
+            node,
+            (Reason::Focus, &mut state.last_tree_level),
+        ),
+        None,
+    )]
 }
 
 /// Shared handling for `ValueChanged` and `PropertyChanged(Value(..))`: both
@@ -2168,14 +2242,17 @@ fn reduce_value_changed(
     let Some(text) = value.filter(|_| speaks_value(role) && !reports_text_itself(role)) else {
         return Vec::new();
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::value(text)],
-        source: Some(source_of(&focus.snapshot)),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::value(text)],
+            source: Some(source_of(&focus.snapshot)),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// The percentage a progress bar's value reads as, as NVDA reads it: a
@@ -2312,14 +2389,17 @@ fn reduce_states_changed(
     .into_iter()
     .flatten()
     .map(|segments| {
-        Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source: Some(utterance_source),
-            say_all: false,
-            validity: None,
-        })
+        Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Queued,
+                segments,
+                source: Some(utterance_source),
+                say_all: false,
+                validity: None,
+            },
+            None,
+        )
     })
     .collect()
 }
@@ -2398,14 +2478,17 @@ fn reduce_ancestor_states_changed(
     if segments.is_empty() {
         return Vec::new();
     }
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: Some(source),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(source),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// A description change on the focus, spoken as NVDA's base handler speaks
@@ -2450,16 +2533,19 @@ fn reduce_description_changed(
     else {
         return Vec::new();
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::new(SegmentContent::Description(
-            text.clone(),
-        ))],
-        source: Some(source_of(&focus.snapshot)),
-        say_all: false,
-        validity: None,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::new(SegmentContent::Description(
+                text.clone(),
+            ))],
+            source: Some(source_of(&focus.snapshot)),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// Completes an object-navigation fetch.
@@ -2523,14 +2609,17 @@ fn reduce_navigate_completed(
             let Some(message) = edge_message_of(kind) else {
                 return Vec::new();
             };
-            vec![Effect::Speak(Utterance {
-                trace_id,
-                priority: SpeechPriority::Queued,
-                segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
-                source: None,
-                say_all: false,
-                validity: None,
-            })]
+            vec![Effect::Speak(
+                Utterance {
+                    trace_id,
+                    priority: SpeechPriority::Queued,
+                    segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
+                    source: None,
+                    say_all: false,
+                    validity: None,
+                },
+                None,
+            )]
         }
     }
 }

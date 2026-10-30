@@ -99,14 +99,17 @@ pub(crate) fn speak_each(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> 
 
 /// Queued speech with no source node.
 pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effect {
-    Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: None,
-        say_all: false,
-        validity: None,
-    })
+    Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )
 }
 
 /// Handles a caret key passed to the application: when the focus has text,
@@ -256,7 +259,11 @@ pub(crate) fn held_key(
 /// before the next key reaches the application, but no longer than
 /// [`KEY_AHEAD_BOUND_MS`] after that key was passed on: the shell is asked
 /// to end the wait then ([`Effect::BoundHeldKeyWait`]), and a key pressed
-/// later than that is read at once. `behind` says the keys wait behind a key just passed on:
+/// later than that is read at once. A review command or script waiting
+/// behind a held key waits for the same watch and the same bound; it was
+/// pressed before that key was passed on, so it always waits for the
+/// bound, and it is run as the input it came as
+/// ([`crate::reduce::command_input`]). `behind` says the keys wait behind a key just passed on:
 /// that key's watch is then marked as having a later key
 /// ([`later_key`]), as the later key's press would have marked it had the
 /// watch existed then, so its answer only keeps the caret current, as
@@ -268,8 +275,11 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
         let Some(front) = state.held_keys.waiting.front() else {
             break;
         };
-        let front_held = match front {
-            WaitingKey::Held(held) => Some(*held),
+        // What waits for the watch of the key ahead: a held key, with its
+        // press time, or a command, pressed before that key was passed on.
+        let front_waits = match front {
+            WaitingKey::Held(held) => Some((held.trace_id, held.pressed_at_ms)),
+            WaitingKey::Command(input) => input.trace_id().map(|trace_id| (trace_id, 0)),
             WaitingKey::Later(_) => None,
         };
         if behind {
@@ -280,16 +290,16 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
         // or once the bound since that key was passed on has run out. This
         // wait is Verbatim's own: NVDA's next caret script runs as soon as
         // it is queued, the first giving up its wait at once.
-        if let Some(held) = front_held
+        if let Some((trace_id, pressed_at_ms)) = front_waits
             && state.held_keys.awaiting_watch.is_some()
         {
             let due = state.held_keys.passed_at_ms + KEY_AHEAD_BOUND_MS;
-            if held.pressed_at_ms < due {
-                if state.held_keys.bounded != Some(held.trace_id) {
-                    state.held_keys.bounded = Some(held.trace_id);
-                    let now = held.pressed_at_ms.max(state.held_keys.passed_at_ms);
+            if pressed_at_ms < due {
+                if state.held_keys.bounded != Some(trace_id) {
+                    state.held_keys.bounded = Some(trace_id);
+                    let now = pressed_at_ms.max(state.held_keys.passed_at_ms);
                     effects.push(Effect::BoundHeldKeyWait {
-                        key: held.trace_id,
+                        key: trace_id,
                         within_ms: due - now,
                     });
                 }
@@ -311,6 +321,10 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
                     crate::reduce::key_input(state, &input),
                 )
             }
+            WaitingKey::Command(input) => (
+                input.trace_id(),
+                crate::reduce::command_input(state, &input),
+            ),
         };
         effects.extend(own.into_iter().map(|effect| match trace_id {
             Some(trace_id) => Effect::ForKey(trace_id, Box::new(effect)),
@@ -371,17 +385,19 @@ pub(crate) fn held_watch_answered(state: &mut SrState) -> Vec<Effect> {
     next_held(state, true)
 }
 
-/// The bound on the wait of the held key `trace_id` for the watch of the
-/// key ahead has run out: if it still waits, its caret is read now, as if
-/// that watch had been answered, and the watch is left to end as it would
-/// ([`next_held`]).
+/// The bound on the wait of the held key or command `trace_id` for the
+/// watch of the key ahead has run out: if it still waits, its caret is
+/// read, or the command run, now, as if that watch had been answered, and
+/// the watch is left to end as it would ([`next_held`]).
 pub(crate) fn held_wait_ended(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    let front = match state.held_keys.waiting.front() {
+        Some(WaitingKey::Held(held)) => Some(held.trace_id),
+        Some(WaitingKey::Command(input)) => input.trace_id(),
+        _ => None,
+    };
     let waits = state.held_keys.reading.is_none()
         && state.held_keys.awaiting_watch.is_some()
-        && matches!(
-            state.held_keys.waiting.front(),
-            Some(WaitingKey::Held(held)) if held.trace_id == trace_id
-        );
+        && front == Some(trace_id);
     if !waits {
         return Vec::new();
     }
@@ -1552,14 +1568,17 @@ fn navigator_line(state: &mut SrState, node: NodeId, read: NavigatorRead) -> Vec
 /// Queued speech about `node`, valid however the focus moves, as the rest
 /// of a navigator announcement is.
 fn speak_about(trace_id: TraceId, node: &NodeSnapshot, segments: Vec<UtteranceSegment>) -> Effect {
-    Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: Some(crate::reduce::source_of(node)),
-        say_all: false,
-        validity: None,
-    })
+    Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(crate::reduce::source_of(node)),
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )
 }
 
 /// The rest of a focus announcement, queued and valid while `node` is the
@@ -1577,18 +1596,21 @@ fn focus_speech(
     else {
         return Vec::new();
     };
-    vec![Effect::Speak(Utterance {
-        trace_id,
-        priority: SpeechPriority::Queued,
-        segments,
-        source: Some(crate::reduce::source_of(&focus.snapshot)),
-        validity: Some(FocusValidity {
-            node,
-            had_focus: true,
-            window: focus.snapshot.details.window,
-        }),
-        say_all: false,
-    })]
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments,
+            source: Some(crate::reduce::source_of(&focus.snapshot)),
+            validity: Some(FocusValidity {
+                node,
+                had_focus: true,
+                window: focus.snapshot.details.window,
+            }),
+            say_all: false,
+        },
+        None,
+    )]
 }
 
 /// Notes a key pressed at `at_ms` (any key that cut speech off, as nearly

@@ -1403,7 +1403,7 @@ fn reduced(
     let spoken = effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Speak(utterance) => Some(
+            Effect::Speak(utterance, _) => Some(
                 utterance
                     .segments
                     .iter()

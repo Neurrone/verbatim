@@ -37,7 +37,9 @@
 //! holds the speech where it is until it is called again or speech is
 //! cancelled.
 
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
+use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -48,7 +50,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use tracing::{info, trace, warn};
 use verbatim_audio::{AudioError, Mixer, PcmFormat, PlaybackEvent, Sound, Source};
 use verbatim_model::{
-    Earcon, FocusNow, FocusValidity, Indication, SpeechPriority, TraceId, Utterance,
+    Earcon, FocusNow, FocusValidity, Indication, KeySeq, SpeechPriority, TraceId, Utterance,
     UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 
@@ -57,6 +59,7 @@ use crate::driver::{
     SynthError, SynthSink, SynthTiming,
 };
 use crate::events::SpeechEvents;
+use crate::inbox::{self, QueueItem, SpeechInbox, SpeechInboxTaker};
 use crate::registry::SynthRegistry;
 use crate::settings::{SettingId, SettingValue, SynthChoice, SynthId};
 use crate::theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
@@ -130,6 +133,21 @@ pub struct SpeechManagerConfig {
     /// what Verbatim uses. A test may present otherwise; events are still
     /// reported with the active theme.
     pub presenter: Option<Box<dyn Presenter>>,
+    /// The speech queue thread's inbox, both ends: a completion port in
+    /// Verbatim, so the keyboard hook's cancel takes no lock, and
+    /// [`channel_inbox`](crate::channel_inbox) in a test.
+    pub inbox: (Arc<dyn SpeechInbox>, Box<dyn SpeechInboxTaker>),
+}
+
+/// The right to speak: [`SpeechManager::new`] makes the only one, and every
+/// function that speaks or plays an event takes it, so only the thread
+/// holding it, the reducer's, speaks ("Only the reducer speaks",
+/// `docs/architecture.md`, section 2). It can be sent to another thread
+/// but not shared or cloned.
+#[derive(Debug)]
+pub struct SpeakToken {
+    /// Sendable, not shareable.
+    _held_by_one_thread: PhantomData<Cell<()>>,
 }
 
 /// Commands the queue thread accepts, from the manager, the settings host, and
@@ -137,7 +155,7 @@ pub struct SpeechManagerConfig {
 pub(crate) enum QueueEvent {
     /// Speak an utterance, caused by the key press numbered as given, if a
     /// key press caused it ([`SpeechManager::speak_for_key`]).
-    Speak(UtteranceId, Box<Utterance>, Option<u64>),
+    Speak(UtteranceId, Box<Utterance>, Option<KeySeq>),
     ApplySetting {
         id: SettingId,
         value: SettingValue,
@@ -151,7 +169,7 @@ pub(crate) enum QueueEvent {
     /// Cancel everything, as a key press does; the key press's number, when
     /// a key press cancels, fences off speech earlier presses cause that
     /// arrives after it ([`SpeechControl::cancel_through`]).
-    Cancel(Option<u64>),
+    Cancel(Option<KeySeq>),
     /// Pause speech, or resume it when paused.
     TogglePause,
     /// The focus moved: drop focus speech that no longer holds.
@@ -164,16 +182,17 @@ pub(crate) enum QueueEvent {
 }
 
 /// A handle for cutting speech off, from any thread, without blocking:
-/// what a key press and a focus change use. Cheap to clone.
+/// what a key press and a focus change use. Cheap to clone. Each call is
+/// one post to the speech queue's inbox, which in Verbatim takes no lock.
 #[derive(Clone)]
 pub struct SpeechControl {
-    queue_tx: Sender<QueueEvent>,
+    inbox: Arc<dyn SpeechInbox>,
 }
 
 impl SpeechControl {
     /// Cancels current and queued speech, and ends a pause.
     pub fn cancel(&self) {
-        let _ = self.queue_tx.send(QueueEvent::Cancel(None));
+        let _ = inbox::post(&*self.inbox, QueueEvent::Cancel(None));
     }
 
     /// Cancels current and queued speech, and ends a pause, for key press
@@ -184,20 +203,20 @@ impl SpeechControl {
     /// way; NVDA runs a key's cancel in order behind the earlier keys'
     /// scripts (`docs/nvda/input.md`, "What a key press does to speech"),
     /// and this keeps that order without making the cancel wait.
-    pub fn cancel_through(&self, key: u64) {
-        let _ = self.queue_tx.send(QueueEvent::Cancel(Some(key)));
+    pub fn cancel_through(&self, key: KeySeq) {
+        let _ = inbox::post(&*self.inbox, QueueEvent::Cancel(Some(key)));
     }
 
     /// Pauses speech where it is, or resumes it when paused.
     pub fn toggle_pause(&self) {
-        let _ = self.queue_tx.send(QueueEvent::TogglePause);
+        let _ = inbox::post(&*self.inbox, QueueEvent::TogglePause);
     }
 
     /// Tells the manager where the focus now is: speech being spoken whose
     /// focus has moved on is stopped, and waiting focus speech is judged
     /// against this when its turn comes.
     pub fn drop_expired(&self, now: FocusNow) {
-        let _ = self.queue_tx.send(QueueEvent::DropExpired(now));
+        let _ = inbox::post(&*self.inbox, QueueEvent::DropExpired(now));
     }
 }
 
@@ -240,7 +259,7 @@ struct Job {
 /// [`settings_host`](SpeechManager::settings_host). Dropping the manager stops
 /// both threads.
 pub struct SpeechManager {
-    queue_tx: Sender<QueueEvent>,
+    inbox: Arc<dyn SpeechInbox>,
     /// Kept so the mixer outlives the threads writing to it.
     _mixer: Arc<Mixer>,
     /// The active theme, which presents speech and events.
@@ -263,7 +282,8 @@ pub struct SpeechManager {
 
 impl SpeechManager {
     /// Builds the pipeline and starts its threads, starting the initial
-    /// synthesizer with its saved settings.
+    /// synthesizer with its saved settings, and returns it with the one
+    /// [`SpeakToken`], for the thread that speaks.
     ///
     /// When the initial synthesizer cannot start, the other registered
     /// synthesizers are tried in registration order and the first that
@@ -273,7 +293,7 @@ impl SpeechManager {
     ///
     /// Returns [`SynthError::Unavailable`] when no registered synthesizer can
     /// start.
-    pub fn new(config: SpeechManagerConfig) -> Result<Self, SynthError> {
+    pub fn new(config: SpeechManagerConfig) -> Result<(Self, SpeakToken), SynthError> {
         let themes = ThemeHandle::new(config.theme);
         let theme = presenter_or_theme(config.presenter, &themes);
         let SpeechManagerConfig {
@@ -282,6 +302,7 @@ impl SpeechManager {
             saved_settings,
             mixer,
             events,
+            inbox: (inbox, mut taker),
             ..
         } = config;
         // Every ending passes through the waiters on its way to the
@@ -291,8 +312,7 @@ impl SpeechManager {
             inner: events,
             waiters: Arc::clone(&waiters),
         }));
-        let (queue_tx, queue_rx) = unbounded::<QueueEvent>();
-        let source = mixer.add_source(playback_listener(events.clone(), queue_tx.clone()));
+        let source = mixer.add_source(playback_listener(events.clone(), Arc::clone(&inbox)));
         let earcons = earcons_source(&mixer, &waiters);
 
         let (synth_tx, synth_rx) = unbounded::<SynthCommand>();
@@ -301,7 +321,7 @@ impl SpeechManager {
         let configured = initial_synth.clone();
         let synth_handle = {
             let source = source.clone();
-            let queue_tx = queue_tx.clone();
+            let queue_tx = Arc::clone(&inbox);
             let events = events.clone();
             std::thread::Builder::new()
                 .name("verbatim-synth".to_owned())
@@ -315,7 +335,7 @@ impl SpeechManager {
                             events: events.as_deref(),
                         },
                         &synth_rx,
-                        &queue_tx,
+                        &*queue_tx,
                         &startup_tx,
                     );
                 })
@@ -351,15 +371,15 @@ impl SpeechManager {
             .name("verbatim-speech-queue".to_owned())
             .spawn(move || {
                 QueueThread::new(synth_tx, source, queue_events, theme, queue_paused)
-                    .run(&queue_rx);
+                    .run(&mut *taker);
             })
             .map_err(|error| {
                 SynthError::Unavailable(format!("failed to start queue thread: {error}"))
             })?;
 
-        Ok(Self {
+        let manager = Self {
             paused,
-            queue_tx,
+            inbox,
             _mixer: mixer,
             themes,
             earcons,
@@ -370,7 +390,11 @@ impl SpeechManager {
             choices,
             queue_handle: Some(queue_handle),
             synth_handle: Some(synth_handle),
-        })
+        };
+        let token = SpeakToken {
+            _held_by_one_thread: PhantomData,
+        };
+        Ok((manager, token))
     }
 
     /// Renders and enqueues one utterance according to its priority lane,
@@ -382,7 +406,7 @@ impl SpeechManager {
         clippy::must_use_candidate,
         reason = "most speech is spoken without following its utterance"
     )]
-    pub fn speak(&self, utterance: Utterance) -> UtteranceId {
+    pub fn speak(&self, _token: &SpeakToken, utterance: Utterance) -> UtteranceId {
         let id = mint_utterance();
         self.speak_as(id, utterance);
         id
@@ -393,7 +417,7 @@ impl SpeechManager {
     /// the speech events: the end-to-end harness's barrier, which then knows
     /// that everything said so far has been announced. Non-blocking.
     pub fn after_queued(&self, done: impl FnOnce() + Send + 'static) {
-        let _ = self.queue_tx.send(QueueEvent::AfterQueued(Box::new(done)));
+        let _ = inbox::post(&*self.inbox, QueueEvent::AfterQueued(Box::new(done)));
     }
 
     /// Speaks `utterance`, as [`SpeechManager::speak`] does, caused by key
@@ -405,19 +429,26 @@ impl SpeechManager {
         clippy::must_use_candidate,
         reason = "most speech is spoken without following its utterance"
     )]
-    pub fn speak_for_key(&self, utterance: Utterance, key: Option<u64>) -> UtteranceId {
+    pub fn speak_for_key(
+        &self,
+        _token: &SpeakToken,
+        utterance: Utterance,
+        key: Option<KeySeq>,
+    ) -> UtteranceId {
         let id = mint_utterance();
-        let _ = self
-            .queue_tx
-            .send(QueueEvent::Speak(id, Box::new(utterance), key));
+        let _ = inbox::post(
+            &*self.inbox,
+            QueueEvent::Speak(id, Box::new(utterance), key),
+        );
         id
     }
 
     /// Enqueues `utterance` under an id already minted.
     fn speak_as(&self, id: UtteranceId, utterance: Utterance) {
-        let _ = self
-            .queue_tx
-            .send(QueueEvent::Speak(id, Box::new(utterance), None));
+        let _ = inbox::post(
+            &*self.inbox,
+            QueueEvent::Speak(id, Box::new(utterance), None),
+        );
     }
 
     /// The handle on the active theme, which the settings dialog switches.
@@ -430,7 +461,7 @@ impl SpeechManager {
     /// (`Effect::PlayEarcon`): its sound plays now on its own mixer source,
     /// mixed over any speech and never cancelled by it, and its words, when
     /// the theme speaks it, are queued as speech. Non-blocking.
-    pub fn play_earcon(&self, earcon: Earcon) {
+    pub fn play_earcon(&self, token: &SpeakToken, earcon: Earcon) {
         let (sound, words) = self.themes.get().earcon(earcon);
         if let Some((sound, gain)) = sound {
             match self.earcons.play(&sound, gain) {
@@ -445,7 +476,7 @@ impl SpeechManager {
             }
         }
         if let Some(words) = words {
-            self.speak(earcon_words(words));
+            self.speak(token, earcon_words(words));
         }
     }
 
@@ -455,9 +486,14 @@ impl SpeechManager {
     /// when `timeout` passed first, which bounds the wait however the audio
     /// device behaves.
     #[must_use]
-    pub fn play_earcon_to_end(&self, earcon: Earcon, timeout: Duration) -> bool {
+    pub fn play_earcon_to_end(
+        &self,
+        token: &SpeakToken,
+        earcon: Earcon,
+        timeout: Duration,
+    ) -> bool {
         let deadline = Instant::now() + timeout;
-        self.play_earcon_heard(earcon).wait_until(deadline)
+        self.play_earcon_heard(token, earcon).wait_until(deadline)
     }
 
     /// Reports an event as [`play_earcon`](Self::play_earcon) does, and
@@ -468,7 +504,7 @@ impl SpeechManager {
     /// sound, which must be heard before Verbatim exits, played by the
     /// thread that executes the reducer's effects while another waits.
     #[must_use]
-    pub fn play_earcon_heard(&self, earcon: Earcon) -> EarconHeard {
+    pub fn play_earcon_heard(&self, _token: &SpeakToken, earcon: Earcon) -> EarconHeard {
         let (sound, words) = self.themes.get().earcon(earcon);
         let (ended_tx, ended_rx) = unbounded::<UtteranceId>();
         let mut waiting = Vec::new();
@@ -536,7 +572,7 @@ impl SpeechManager {
     #[must_use]
     pub fn control(&self) -> SpeechControl {
         SpeechControl {
-            queue_tx: self.queue_tx.clone(),
+            inbox: Arc::clone(&self.inbox),
         }
     }
 
@@ -548,7 +584,7 @@ impl SpeechManager {
     #[must_use]
     pub fn settings_host(&self, persist: crate::host::PersistFn) -> crate::host::SettingsHost {
         crate::host::SettingsHost::new(
-            self.queue_tx.clone(),
+            Arc::clone(&self.inbox),
             &self.initial_state,
             self.choices.clone(),
             self.initial_state.choice.id == self.configured,
@@ -772,7 +808,7 @@ impl SpeechEvents for Observer {
 
 impl Drop for SpeechManager {
     fn drop(&mut self) {
-        let _ = self.queue_tx.send(QueueEvent::Shutdown);
+        let _ = inbox::post(&*self.inbox, QueueEvent::Shutdown);
         if let Some(handle) = self.queue_handle.take() {
             let _ = handle.join();
         }
@@ -786,7 +822,7 @@ impl Drop for SpeechManager {
 /// calls, on the audio thread.
 fn playback_listener(
     events: Option<Arc<dyn SpeechEvents>>,
-    queue_tx: Sender<QueueEvent>,
+    queue_tx: Arc<dyn SpeechInbox>,
 ) -> verbatim_audio::PlaybackListener {
     Arc::new(move |event| {
         let now = Instant::now();
@@ -828,7 +864,7 @@ fn playback_listener(
                 if let Some(events) = &events {
                     events.utterance_ended(utterance, trace_id, &ending, now);
                 }
-                let _ = queue_tx.send(QueueEvent::Ended(utterance, ending));
+                let _ = inbox::post(&*queue_tx, QueueEvent::Ended(utterance, ending));
             }
         }
     })
@@ -858,7 +894,7 @@ struct QueueThread {
     focus_now: Option<FocusNow>,
     /// The number of the latest key press that cancelled speech: speech
     /// an earlier key press caused is dropped when it arrives.
-    cancelled_through: u64,
+    cancelled_through: KeySeq,
     /// Utterances with index marks handed to the synth thread and the
     /// mixer whose ending has not come yet, with their trace and marks, so
     /// a cut one is reported ([`SpeechEvents::marks_cancelled`]).
@@ -887,13 +923,13 @@ impl QueueThread {
             paused: false,
             paused_flag,
             focus_now: None,
-            cancelled_through: 0,
+            cancelled_through: KeySeq::NONE_YET,
             marked: HashMap::new(),
         }
     }
 
-    fn run(mut self, queue_rx: &Receiver<QueueEvent>) {
-        while let Ok(event) = queue_rx.recv() {
+    fn run(mut self, taker: &mut dyn SpeechInboxTaker) {
+        while let Some(QueueItem(event)) = taker.take() {
             match event {
                 QueueEvent::Speak(id, utterance, key)
                     if key.is_some_and(|key| key < self.cancelled_through) =>
@@ -1030,7 +1066,7 @@ impl QueueThread {
             target: "verbatim::speech",
             utterance = %id,
             trace_id = %sequence.trace_id,
-            cancelled_through = self.cancelled_through,
+            cancelled_through = self.cancelled_through.get(),
             "utterance cancelled: a later key press cancelled speech before it arrived"
         );
         if let Some(events) = &self.events {
@@ -1163,7 +1199,7 @@ fn synth_thread(
     saved_settings: &SavedSettingsFn,
     output: Output<'_>,
     synth_rx: &Receiver<SynthCommand>,
-    queue_tx: &Sender<QueueEvent>,
+    queue_tx: &dyn SpeechInbox,
     startup_tx: &Sender<Result<StartupInfo, SynthError>>,
 ) {
     // Start a driver with its saved settings before reporting startup
@@ -1184,7 +1220,7 @@ fn synth_thread(
         match command {
             SynthCommand::Job(job) => {
                 run_job(driver.as_mut(), output, &job);
-                let _ = queue_tx.send(QueueEvent::SynthFinished);
+                let _ = inbox::post(queue_tx, QueueEvent::SynthFinished);
             }
             SynthCommand::SetSetting { id, value } => {
                 if let Err(error) = driver.set_setting(&id, value) {

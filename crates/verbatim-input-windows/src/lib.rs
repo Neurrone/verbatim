@@ -3,11 +3,15 @@
 //! A dedicated thread installs a `WH_KEYBOARD_LL` hook and runs a message
 //! loop; the hook procedure runs on that same thread, feeds each transition to
 //! the pure [`DecisionMachine`], returns `1` to swallow or calls
-//! `CallNextHookEx` to pass, and forwards emitted gestures down a channel.
+//! `CallNextHookEx` to pass, and reports what each key caused through one
+//! callback ([`KeyReport`]). The code that runs on the thread is in the
+//! `hook` module; this one holds what other threads call: [`InputHook`],
+//! [`Injector`], and Core's views the thread reads ([`KeyHolding`],
+//! [`ForegroundView`]).
 //!
 //! # The never-block constraint
 //!
-//! This is the single most important rule in this module. Windows silently
+//! This is the single most important rule in this crate. Windows silently
 //! removes a low-level hook whose procedure takes longer than
 //! `LowLevelHooksTimeout` (a per-user registry value, 300 ms by default) to
 //! return. If that happens the hook stops firing and Verbatim goes deaf to the
@@ -15,67 +19,56 @@
 //!
 //! - It runs the pure decision machine, which does no I/O and takes
 //!   microseconds against a lock-free snapshot of the gesture map.
-//! - It forwards emitted gestures down an unbounded channel, whose send
-//!   never waits, and [`InputHook::start`] refuses a bounded one. Waiting for
-//!   a slow consumer would risk the whole keyboard, and dropping a gesture
-//!   when the consumer is backed up would lose a key the user pressed;
-//!   neither is acceptable, so a backlog waits in memory in front of the
-//!   router instead, as the communication design keeps every backlog in
-//!   front of the reducer (`docs/design/communication.md`, section 4.8). A
-//!   queued gesture costs about 70 bytes (its 48-byte slot and its
-//!   gesture name), and a held key repeats about 30 times a second, so even
-//!   a router stalled for a minute holds about 140 kilobytes.
-//! - It touches no lock that any other thread can hold across a blocking call.
+//! - It reports through callbacks that post to completion ports, the
+//!   reducer's and the speech queue's, whose post never waits and takes no
+//!   lock; a backlog waits in memory in front of the reducer, as the
+//!   communication design keeps every backlog
+//!   (`docs/design/communication.md`, section 4.8).
+//! - It touches no lock, and makes no call that dispatches sent messages,
+//!   which would deliver the next key while this one is half handled.
+//!   `cargo xtask ci` checks the hook thread's modules for both
+//!   (`docs/design/ownership-input.md`, "The ownership check on the hook").
 //!
-//! Nothing that can wait belongs in the hook procedure. Gesture semantics run
-//! elsewhere (the reducer thread), reached only through the channel.
+//! Besides bound gestures the hook reports what a passed key did that the
+//! reducer needs to know: an observed gesture (a caret key) and the text a
+//! key types. Before each key it tells the decision machine whether Num
+//! Lock is on.
 //!
-//! Besides bound gestures the hook reports, through a callback that must not
-//! block either, what a passed key did that the reducer needs to know: an
-//! observed gesture (a caret key) and the text a key types
-//! ([`KeyReport`]). Before each key it tells the decision machine whether
-//! Num Lock is on.
+//! # Key numbers
 //!
-//! # Key sequence numbers
-//!
-//! Every key press gets the next key sequence number ([`next_key`]), and
-//! everything the press causes is recorded under it by its trace id
-//! ([`key_of`]): its gesture, its observed caret key, the text it types. A
-//! press cancels speech at once, from this thread, while the previous
-//! press's gesture may still be on its way to the reducer; the cancel
-//! therefore names its press's number, and the speech manager drops speech
-//! caused by an earlier press that reaches it after the cancel, as NVDA,
-//! which queues a key's cancel in order behind the earlier keys' scripts,
-//! never speaks it (`docs/nvda/input.md`, "What a key press does to
-//! speech").
+//! The hook thread is the one minter of key numbers ([`KeySeq`]): every key
+//! press, and every gesture injected for the user ([`Injector`]), takes the
+//! next number in the order the thread handles it, and every report of
+//! what it caused carries it. A press cancels speech at once, from this
+//! thread, while the previous press's speech may still be on its way; the
+//! cancel therefore names its press's number, and the speech manager drops
+//! speech caused by an earlier press that reaches it after the cancel, as
+//! NVDA, which queues a key's cancel in order behind the earlier keys'
+//! scripts, never speaks it (`docs/nvda/input.md`, "What a key press does
+//! to speech").
 
+mod hook;
 mod typed;
 
-use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::os::windows::io::{AsHandle, OwnedHandle};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
 
 use arc_swap::ArcSwapOption;
-use crossbeam_channel::Sender;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, LPARAM, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-    LLKHF_INJECTED, MSG, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-    WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_QUIT,
 };
 
 use verbatim_input::map::SharedGestureMap;
-use verbatim_input::state::{
-    Decision, DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect,
-};
+use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
+use verbatim_model::{GestureId, HookForeground, KeySeq, TraceId, WindowHandle};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The `dwExtraInfo` Verbatim puts on keys it injects for its own purposes
@@ -106,7 +99,7 @@ pub fn passed_on_info(sequence: u32) -> usize {
 
 /// The place in line a key passed on carries, when `extra_info` is
 /// [`passed_on_info`]'s.
-fn passed_on_sequence(extra_info: usize) -> Option<u32> {
+pub(crate) fn passed_on_sequence(extra_info: usize) -> Option<u32> {
     (extra_info & PASSED_ON_MASK == PASSED_ON_TAG)
         .then(|| u32::try_from(extra_info & !PASSED_ON_MASK).unwrap_or(0))
 }
@@ -200,28 +193,12 @@ pub struct HeldStroke {
     pub sequence: u32,
 }
 
-/// What the hook sends the gesture router, in the order the keys came.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Routed {
-    /// A gesture fired.
-    Gesture(EmittedGesture),
-    /// An end-to-end harness's numbered key stroke has been handled by the
-    /// hook (`verbatim_input::harness`): everything it caused was sent on
-    /// before this. The router passes it on behind whatever the stroke's
-    /// gestures caused, so the reducer can say when it has handled it.
-    Handled(u64),
-    /// A control-plane request waiting for Verbatim to be idle, named by its
-    /// token: it is answered only after everything sent here before it.
-    /// Never sent by the hook itself.
-    Barrier(u64),
-}
-
 /// Carries out a key press's effect on speech, given the press's key
-/// sequence number ([`next_key`]); called on the hook thread, so it must not
-/// block, nor make a call that dispatches sent messages (a cross-apartment
-/// COM call, `SendMessage`), which would deliver the next key to the hook
-/// while this one is still being handled.
-pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect, u64) + Send>;
+/// number; called on the hook thread, so it must not block, nor make a
+/// call that dispatches sent messages (a cross-apartment COM call,
+/// `SendMessage`), which would deliver the next key to the hook while this
+/// one is still being handled.
+pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect, KeySeq) + Send>;
 
 /// What the hook thread is given to act on and report keys through, and
 /// Core's views it reads: the speech effect, the key reports, which keys
@@ -233,54 +210,14 @@ type Effects = (
     Arc<ForegroundView>,
 );
 
-/// The last key sequence number given out.
-static KEY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
-/// How many traces' key sequence numbers are kept: far more than a key's
-/// speech can be in flight behind.
-const KEY_ORIGINS_KEPT: usize = 1024;
-
-/// The key sequence number of what recent key presses caused, by trace id,
-/// oldest first.
-static KEY_ORIGINS: Mutex<VecDeque<(TraceId, u64)>> = Mutex::new(VecDeque::new());
-
-/// Gives out the next key sequence number, for a key press or a gesture
-/// the control plane injects.
-pub fn next_key() -> u64 {
-    KEY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1
-}
-
-/// Records that what carries `trace` was caused by key press `key`.
-pub fn record_key_origin(trace: TraceId, key: u64) {
-    let mut origins = KEY_ORIGINS.lock().unwrap_or_else(PoisonError::into_inner);
-    if origins.len() == KEY_ORIGINS_KEPT {
-        origins.pop_front();
-    }
-    origins.push_back((trace, key));
-}
-
-/// The key sequence number of the key press that caused what carries
-/// `trace`, if a recent key press did.
-#[must_use]
-pub fn key_of(trace: TraceId) -> Option<u64> {
-    KEY_ORIGINS
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .iter()
-        .rev()
-        .find(|(recorded, _)| *recorded == trace)
-        .map(|&(_, key)| key)
-}
-
-/// Receives what a key passed to the application did; called on the hook
-/// thread, so it must not block, nor dispatch sent messages, as
-/// [`SpeechEffectFn`] explains.
+/// Receives what each key and each injected input caused, in the order the
+/// hook thread handled them; called on the hook thread, so it must not
+/// block, nor dispatch sent messages, as [`SpeechEffectFn`] explains.
 pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
-use verbatim_input::{KeyDecision, KeyEvent};
-use verbatim_model::{GestureId, HookForeground, TraceId, WindowHandle};
 
-/// What a key the hook passed to the application did, reported after the
-/// key's effect on speech.
+/// What a key the hook handled, or an input injected for the user, caused,
+/// reported after the key's effect on speech. Every user input's report
+/// carries its key number.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyReport {
     /// The key completed an observed gesture (`Decision::observed`), a
@@ -288,6 +225,8 @@ pub enum KeyReport {
     Observed {
         /// The gesture.
         gesture: EmittedGesture,
+        /// The key's number.
+        key: KeySeq,
         /// Microseconds since the Unix epoch when the hook procedure ran,
         /// the clock outposts stamp what they observe with (`observed_at_us`
         /// and the latency log). The
@@ -306,6 +245,8 @@ pub enum KeyReport {
     Held {
         /// The gesture.
         gesture: EmittedGesture,
+        /// The key's number.
+        key: KeySeq,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
         /// The key to send again.
@@ -329,6 +270,8 @@ pub enum KeyReport {
     Passed {
         /// Minted when the key was observed.
         trace_id: TraceId,
+        /// The key's number.
+        key: KeySeq,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
     },
@@ -338,126 +281,111 @@ pub enum KeyReport {
     Typed {
         /// Minted when the key was observed.
         trace_id: TraceId,
+        /// The key's number.
+        key: KeySeq,
         /// The text typed.
         text: String,
         /// When the key was pressed, in microseconds on the run's shared
         /// clock.
         pressed_at_us: u64,
     },
+    /// A bound gesture fired, a gesture was injected for the user, or a
+    /// lock key reached the operating system (its `kb:` gesture), for the
+    /// reducer to run or announce.
+    Gesture {
+        /// The gesture.
+        gesture: EmittedGesture,
+        /// The key's number, or the injected gesture's.
+        key: KeySeq,
+        /// As [`KeyReport::Observed`]'s.
+        pressed_at_us: u64,
+    },
+    /// An end-to-end harness's numbered key stroke has been handled by the
+    /// hook (`verbatim_input::harness`): everything it caused was reported
+    /// before this.
+    Handled(u64),
+    /// A control-plane request waiting for Verbatim to be idle, named by its
+    /// token, injected ([`Injected::Barrier`]): everything injected or
+    /// decided before it was reported before this.
+    Barrier(u64),
 }
 
-/// Per-hook-thread state reached by the hook procedure.
-///
-/// The hook procedure is a bare `extern "system"` function with no user
-/// pointer, so it reaches its state through this thread-local. The procedure
-/// only ever runs on the thread that installed the hook, so a thread-local is
-/// exactly the right scope and needs no synchronization.
-struct HookState {
-    machine: DecisionMachine,
-    events: Sender<Routed>,
-    speech: SpeechEffectFn,
-    reports: KeyReportFn,
-    typing: typed::Typing,
-    holding: Arc<KeyHolding>,
-    /// The keys whose press was held back, whose release is held back too,
-    /// so the application never sees a release without its press.
-    held_downs: HashSet<(u16, bool)>,
-    /// The key transitions held back or deferred and not yet seen passed
-    /// on, in the order pressed; while any is, every later transition the
-    /// hook would pass is deferred behind them.
-    outstanding: VecDeque<Outstanding>,
-    /// The last place in line given out ([`HeldStroke::sequence`]).
-    sequence: u32,
-    /// Core's view of the foreground window ([`ForegroundView`]).
-    foreground: Arc<ForegroundView>,
-    /// Reads the window in front: `GetForegroundWindow`, a local read, or
-    /// a fixed window in tests.
-    front: fn() -> HWND,
+/// The private message an injected input travels in to the hook thread,
+/// its `LPARAM` the boxed [`Injected`].
+const WM_INJECTED: u32 = WM_APP;
+
+/// An input injected for the user, handled by the hook thread in its turn
+/// among the keys ([`Injector::inject`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Injected {
+    /// A bound gesture, numbered as a key press is: it cancels speech
+    /// through its number and is reported as [`KeyReport::Gesture`].
+    Gesture(GestureId),
+    /// An idle waiter's token, reported as [`KeyReport::Barrier`] behind
+    /// everything handled before it.
+    Barrier(u64),
 }
 
-/// A key transition held back or deferred, not yet seen passed on.
-#[derive(Clone, Copy, Debug)]
-struct Outstanding {
-    sequence: u32,
-    /// A deferred transition's key and whether it is a press, which the
-    /// translation of typed text takes as already made; `None` for a held
-    /// caret key, which is no modifier.
-    transition: Option<(u16, bool)>,
+/// Posts inputs injected for the user to the hook thread, from any thread:
+/// the control plane's gestures and idle waiters today. Cloneable and
+/// sendable. It holds a handle to the hook thread, so the thread's id is
+/// not given to another thread while any `Injector` can post to it.
+#[derive(Clone, Debug)]
+pub struct Injector(Arc<InjectTarget>);
+
+/// The thread an [`Injector`] posts to.
+#[derive(Debug)]
+struct InjectTarget {
+    thread_id: u32,
+    /// Keeps the thread object, and so its id, while this lives; closed
+    /// when the last [`Injector`] goes.
+    _thread: Option<OwnedHandle>,
 }
 
-impl HookState {
-    /// A hook state with nothing held, deciding with `machine`.
-    fn new(
-        machine: DecisionMachine,
-        events: Sender<Routed>,
-        (speech, reports, holding, foreground): Effects,
-        typing: typed::Typing,
-    ) -> Self {
-        Self {
-            machine,
-            events,
-            speech,
-            reports,
-            typing,
-            holding,
-            held_downs: HashSet::new(),
-            outstanding: VecDeque::new(),
-            sequence: 0,
-            foreground,
-            front: || {
-                // SAFETY: a local read with no preconditions.
-                unsafe { GetForegroundWindow() }
-            },
+impl Injector {
+    /// Posts `injected` to the hook thread, behind every key and input the
+    /// thread has not yet taken. Never waits.
+    ///
+    /// # Errors
+    ///
+    /// Gives `injected` back when it could not be posted: the hook thread
+    /// has gone, or its message queue is full. An injection given back
+    /// never runs later.
+    pub fn inject(&self, injected: Injected) -> Result<(), Injected> {
+        let item = Box::into_raw(Box::new(injected));
+        // SAFETY: posting to a thread id is always sound; the pointer is
+        // carried, never read by the system, and taken back below or by
+        // the hook thread, which owns it once the post succeeds.
+        let posted = unsafe {
+            PostThreadMessageW(
+                self.0.thread_id,
+                WM_INJECTED,
+                WPARAM(0),
+                LPARAM(item as isize),
+            )
+        };
+        if posted.is_ok() {
+            return Ok(());
         }
+        // SAFETY: the message was not posted, so the box was never given up.
+        Err(*unsafe { Box::from_raw(item) })
     }
 
-    /// Notes a transition held back or deferred, giving it the next place
-    /// in line.
-    fn queue(&mut self, transition: Option<(u16, bool)>) -> u32 {
-        self.sequence = self.sequence.checked_add(1).unwrap_or(1);
-        self.outstanding.push_back(Outstanding {
-            sequence: self.sequence,
-            transition,
-        });
-        self.sequence
+    /// An injector to `thread_id`, holding no handle: for a test.
+    #[cfg(test)]
+    fn to_thread(thread_id: u32) -> Self {
+        Self(Arc::new(InjectTarget {
+            thread_id,
+            _thread: None,
+        }))
     }
-
-    /// Notes that the key passed on with place `sequence` reached the hook
-    /// on its way to the application, and with it every key ahead of it,
-    /// since keys are passed on in order: one Windows dropped is not waited
-    /// for once a later one arrives.
-    fn passed_on(&mut self, sequence: u32) {
-        if !self
-            .outstanding
-            .iter()
-            .any(|outstanding| outstanding.sequence == sequence)
-        {
-            return;
-        }
-        while let Some(front) = self.outstanding.pop_front() {
-            if front.sequence == sequence {
-                break;
-            }
-        }
-    }
-
-    /// The deferred transitions not yet passed on, in order.
-    fn deferred_transitions(&self) -> Vec<(u16, bool)> {
-        self.outstanding
-            .iter()
-            .filter_map(|outstanding| outstanding.transition)
-            .collect()
-    }
-}
-
-thread_local! {
-    static HOOK_STATE: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
 
 /// A running keyboard hook. Dropping it stops the hook thread and unhooks.
 #[derive(Debug)]
 pub struct InputHook {
     thread_id: u32,
+    injector: Injector,
     join: Option<JoinHandle<()>>,
 }
 
@@ -465,37 +393,28 @@ impl InputHook {
     /// Installs the low-level keyboard hook on a fresh dedicated thread.
     ///
     /// `config` chooses the Verbatim modifier keys and the double-tap timeout,
-    /// `map` is the lock-free bound-gesture snapshot the hook consults, and
-    /// `events` receives gestures as they fire. It must be an unbounded
-    /// channel, whose send neither waits nor fails while the router runs, so
-    /// no key is ever lost (see the module's never-block constraint).
-    /// `speech` carries out each key
-    /// press's effect on speech (cancel, or pause and resume), before the
-    /// press's gesture is sent, so speech the gesture causes is never the
-    /// speech it cancels. `reports` receives, after the speech effect, what
-    /// each passed or held key did ([`KeyReport`]). `holding` says which
+    /// and `map` is the lock-free bound-gesture snapshot the hook consults.
+    /// `speech` carries out each key press's effect on speech (cancel, or
+    /// pause and resume), before anything the press caused is reported, so
+    /// speech it causes is never the speech it cancels. `reports` receives,
+    /// after the speech effect, everything each key and injected input
+    /// caused ([`KeyReport`]). Both run on the hook thread and must never
+    /// block (see the crate's never-block constraint). `holding` says which
     /// caret keys are held back, and when, and `foreground` Core's view of
     /// the window in front ([`ForegroundView`]).
     ///
     /// # Errors
     ///
-    /// Returns an error if `events` is bounded, the hook thread cannot be
-    /// spawned, or `SetWindowsHookExW` fails.
+    /// Returns an error if the hook thread cannot be spawned or its handle
+    /// duplicated, or `SetWindowsHookExW` fails.
     pub fn start(
         config: DecisionConfig,
         map: SharedGestureMap,
-        events: Sender<Routed>,
         speech: SpeechEffectFn,
         reports: KeyReportFn,
         holding: Arc<KeyHolding>,
         foreground: Arc<ForegroundView>,
     ) -> io::Result<Self> {
-        if events.capacity().is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the keyboard hook's channel must be unbounded, so that no key is lost",
-            ));
-        }
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
         let (ready_tx, ready_rx) = mpsc::channel::<io::Result<u32>>();
@@ -506,17 +425,35 @@ impl InputHook {
                 hook_thread(
                     config,
                     map,
-                    events,
                     (speech, reports, holding, foreground),
                     &ready_tx,
                 );
             })?;
 
         match ready_rx.recv() {
-            Ok(Ok(thread_id)) => Ok(Self {
-                thread_id,
-                join: Some(join),
-            }),
+            Ok(Ok(thread_id)) => {
+                let thread = join.as_handle().try_clone_to_owned();
+                let injector = match thread {
+                    Ok(thread) => Injector(Arc::new(InjectTarget {
+                        thread_id,
+                        _thread: Some(thread),
+                    })),
+                    Err(error) => {
+                        let hook = Self {
+                            thread_id,
+                            injector: Injector::detached(),
+                            join: Some(join),
+                        };
+                        drop(hook);
+                        return Err(error);
+                    }
+                };
+                Ok(Self {
+                    thread_id,
+                    injector,
+                    join: Some(join),
+                })
+            }
             Ok(Err(error)) => {
                 let _ = join.join();
                 Err(error)
@@ -528,6 +465,22 @@ impl InputHook {
                 ))
             }
         }
+    }
+
+    /// The handle other threads inject inputs for the user through.
+    #[must_use]
+    pub fn injector(&self) -> Injector {
+        self.injector.clone()
+    }
+}
+
+impl Injector {
+    /// An injector that posts to no thread, every injection given back.
+    fn detached() -> Self {
+        Self(Arc::new(InjectTarget {
+            thread_id: 0,
+            _thread: None,
+        }))
     }
 }
 
@@ -551,11 +504,10 @@ impl Drop for InputHook {
 const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The body of the hook thread: install the hook, publish readiness, pump
-/// messages until `WM_QUIT`, then unhook.
+/// messages until `WM_QUIT`, then unhook and drop the injected inputs left.
 fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
-    events: Sender<Routed>,
     effects: Effects,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
@@ -578,24 +530,32 @@ fn hook_thread(
     // SAFETY: `keyboard_hook` has the required `HOOKPROC` signature and lives
     // for the process lifetime; `hinstance` is this module. On success we own
     // the returned hook and must unhook it before returning.
-    let hook =
-        match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), Some(hinstance), 0) }
-        {
-            Ok(hook) => hook,
-            Err(error) => {
-                let _ = ready_tx.send(Err(io::Error::from_raw_os_error(error.code().0)));
-                return;
-            }
-        };
+    let hook = match unsafe {
+        SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(hook::keyboard_hook),
+            Some(hinstance),
+            0,
+        )
+    } {
+        Ok(hook) => hook,
+        Err(error) => {
+            let _ = ready_tx.send(Err(io::Error::from_raw_os_error(error.code().0)));
+            return;
+        }
+    };
 
+    let (typing, typing_error) = typed::Typing::with_text_services();
+    if let Some(error) = typing_error {
+        tracing::warn!(%error, "the text services' profile manager could not be made");
+    }
     // Install this thread's decision state before announcing readiness, so the
     // procedure never runs against an empty thread-local.
-    HOOK_STATE.with(|state| {
-        *state.borrow_mut() = Some(HookState::new(
+    hook::HOOK_STATE.with(|state| {
+        *state.borrow_mut() = Some(hook::HookState::new(
             DecisionMachine::new(config, map),
-            events,
             effects,
-            typed::Typing::with_text_services(),
+            typing,
         ));
     });
 
@@ -607,17 +567,18 @@ fn hook_thread(
         unsafe {
             let _ = UnhookWindowsHookEx(hook);
         }
-        HOOK_STATE.with(|state| *state.borrow_mut() = None);
+        hook::HOOK_STATE.with(|state| *state.borrow_mut() = None);
         return;
     }
 
-    pump_messages();
+    hook::pump_messages();
 
     // SAFETY: `hook` is the handle installed above and not yet unhooked.
     unsafe {
         let _ = UnhookWindowsHookEx(hook);
     }
-    HOOK_STATE.with(|state| *state.borrow_mut() = None);
+    hook::drop_injected();
+    hook::HOOK_STATE.with(|state| *state.borrow_mut() = None);
 }
 
 /// COM initialized on this thread as a single-threaded apartment, which
@@ -648,826 +609,6 @@ impl Drop for Apartment {
             // SAFETY: balances the successful `CoInitializeEx` on this
             // thread, after every COM object it made was released.
             unsafe { CoUninitialize() };
-        }
-    }
-}
-
-/// Microseconds since the Unix epoch on the run's shared clock, as
-/// outposts stamp their observations ([`verbatim_process::clock`]).
-fn unix_us() -> u64 {
-    verbatim_process::clock::now_us()
-}
-
-/// Runs the message loop until `WM_QUIT` (or a `GetMessageW` error) ends it.
-/// A low-level hook only fires while its installing thread pumps messages.
-fn pump_messages() {
-    let mut msg = MSG::default();
-    loop {
-        // SAFETY: `msg` is a valid, owned message buffer; a null window handle
-        // retrieves messages for this thread, including the posted `WM_QUIT`.
-        let result = unsafe { GetMessageW(&raw mut msg, None, 0, 0) };
-        // `GetMessageW` returns 0 for WM_QUIT and -1 for an error; both end
-        // the loop. There is no window, so no dispatch is needed.
-        if result.0 <= 0 {
-            break;
-        }
-    }
-}
-
-/// The `WH_KEYBOARD_LL` procedure. Runs on the hook thread for every key
-/// transition system-wide; see the module's never-block constraint.
-///
-/// # Safety
-///
-/// Whether `vk` is a modifier key, Shift, Control, Alt, or Windows, which
-/// does nothing alone.
-fn is_modifier(vk: u16) -> bool {
-    matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
-}
-
-/// Whether `vk`, passed to the application without typing text, may edit
-/// the text or move the caret, so the hook reports it
-/// ([`KeyReport::Passed`]) and the reducer watches for its evidence: any
-/// key but a modifier, which does nothing alone, a lock key, whose new
-/// state is announced instead, and a key Windows gives a meaning outside
-/// the text (Pause, Print Screen, Sleep, and the browser, volume, media and
-/// launch keys). NVDA says nothing for any of these; a watch for one would
-/// only wait out its bound.
-fn may_edit(vk: u16) -> bool {
-    !is_modifier(vk)
-        && verbatim_input::ToggleKey::from_vk(vk).is_none()
-        && !matches!(vk, 0x13 | 0x2C | 0x5F | 0xA6..=0xB7)
-}
-
-/// Called by the operating system with `WH_KEYBOARD_LL` conventions: when
-/// `code == HC_ACTION`, `lparam` points to a valid [`KBDLLHOOKSTRUCT`]. The
-/// function only dereferences it in that case.
-unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION.cast_signed() {
-        // SAFETY: for HC_ACTION, `lparam` is a pointer to a KBDLLHOOKSTRUCT
-        // owned by the OS for the duration of this call.
-        let kbd = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        // The message id (a small constant) and the virtual-key code (0..=254)
-        // always fit; a hypothetical out-of-range value degrades to a
-        // pass-through, which is the safe default.
-        let message = u32::try_from(wparam.0).unwrap_or(0);
-        let event = KeyEvent {
-            vk: u16::try_from(kbd.vkCode).unwrap_or(0),
-            scan_code: kbd.scanCode,
-            extended: kbd.flags.contains(LLKHF_EXTENDED),
-            injected: kbd.flags.contains(LLKHF_INJECTED),
-            pressed: message == WM_KEYDOWN || message == WM_SYSKEYDOWN,
-        };
-
-        let decision = HOOK_STATE.with(|state| {
-            // A key delivered while another is still being handled, should a
-            // callback ever dispatch sent messages, passes through untouched
-            // rather than panicking on the borrow, which would abort.
-            let Ok(mut state) = state.try_borrow_mut() else {
-                return KeyDecision::Pass;
-            };
-            let Some(state) = state.as_mut() else {
-                return KeyDecision::Pass;
-            };
-            decide(state, event, kbd.scanCode, kbd.dwExtraInfo)
-        });
-
-        if decision == KeyDecision::Swallow {
-            return LRESULT(1);
-        }
-    }
-
-    // SAFETY: passing the transition to the next hook in the chain with the
-    // parameters we received is always sound; a null handle is accepted.
-    unsafe { CallNextHookEx(None, code, wparam, lparam) }
-}
-
-/// What [`hold`] did with a key transition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Hold {
-    /// Left as decided.
-    No,
-    /// A caret key's press held back for its caret to be read, with its
-    /// place in line.
-    Held(u32),
-    /// A transition that would have passed, deferred behind a held key,
-    /// with its place in line.
-    Deferred(u32),
-}
-
-/// Holds a caret key back while holding is on, and its release with it,
-/// swallowing both in `decision`; the reducer has the key sent again once
-/// the caret has been read. While any key held back has not yet reached
-/// the application, every later transition the hook would pass is
-/// deferred, swallowed and sent again behind it, so that no key overtakes
-/// a held one (`docs/design/key-holding.md`, "Keys behind a held key").
-/// Nothing is held or deferred unless Core's view of the foreground is
-/// about the window in front and lets keys be held there, which it does
-/// not while the window's process has higher integrity than Verbatim's,
-/// since Windows would drop a key sent again to it ([`ForegroundView`]);
-/// Verbatim's own keys are never held, and the
-/// lock keys are never deferred: Windows translates the numpad's keys by
-/// Num Lock's state before the hook sees them, and a lock key's new state
-/// is announced from Windows' own, so a lock key held back would turn a
-/// numpad key behind it into the wrong key and be announced with its old
-/// state.
-fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decision) -> Hold {
-    let stroke = (event.vk, event.extended);
-    if !event.pressed && state.held_downs.remove(&stroke) {
-        // The held press is sent again with its release.
-        decision.decision = KeyDecision::Swallow;
-        return Hold::No;
-    }
-    if own || verbatim_input::ToggleKey::from_vk(event.vk).is_some() {
-        return Hold::No;
-    }
-    let held = event.pressed
-        && decision
-            .observed
-            .as_ref()
-            .is_some_and(|observed| state.holding.holds(&observed.gesture));
-    let deferred = !held && decision.decision == KeyDecision::Pass && !state.outstanding.is_empty();
-    // Read only for a key that would be held or deferred.
-    if (held || deferred)
-        && !may_hold(
-            typed::window_handle((state.front)()),
-            state.foreground.get(),
-        )
-    {
-        return Hold::No;
-    }
-    if held {
-        state.held_downs.insert(stroke);
-        decision.decision = KeyDecision::Swallow;
-        return Hold::Held(state.queue(None));
-    }
-    if deferred {
-        decision.decision = KeyDecision::Swallow;
-        return Hold::Deferred(state.queue(Some((event.vk, event.pressed))));
-    }
-    Hold::No
-}
-
-/// Reports what a key press that reaches the application, now or once
-/// deferred, did: the text it types, or, for a key that types nothing and
-/// completed no observed gesture, that it may have edited the text.
-fn report_passed(
-    state: &mut HookState,
-    event: KeyEvent,
-    scan_code: u32,
-    key_number: u64,
-    was_observed: bool,
-) {
-    let pressed_at_us = unix_us();
-    let trace_id = TraceId::mint();
-    let deferred = state.deferred_transitions();
-    let foreground = (state.front, state.foreground.get());
-    match state
-        .typing
-        .translate((event.vk, scan_code), &deferred, foreground)
-    {
-        Some(text) => {
-            record_key_origin(trace_id, key_number);
-            (state.reports)(KeyReport::Typed {
-                trace_id,
-                text,
-                pressed_at_us,
-            });
-        }
-        None if !was_observed && may_edit(event.vk) => {
-            record_key_origin(trace_id, key_number);
-            (state.reports)(KeyReport::Passed {
-                trace_id,
-                pressed_at_us,
-            });
-        }
-        None => {}
-    }
-}
-
-/// Decides one key transition with the hook thread's state, carries out its
-/// effect on speech, and sends and reports what it caused; `scan_code` and
-/// `extra_info` are the key event's own. Every send is on the router's
-/// unbounded channel, so it neither waits nor drops; it fails only once the
-/// router has exited, at shutdown, when nothing is left to act on a key.
-fn decide(
-    state: &mut HookState,
-    event: KeyEvent,
-    scan_code: u32,
-    extra_info: usize,
-) -> KeyDecision {
-    // A key Verbatim passes on, with the modifiers sent around it, goes
-    // straight to the application: it was decided and reported when it
-    // was pressed.
-    if let Some(sequence) = passed_on_sequence(extra_info) {
-        if sequence != 0 {
-            state.passed_on(sequence);
-        }
-        return KeyDecision::Pass;
-    }
-    // Num Lock decides what the numpad's operator keys are: the
-    // keyboard's own state, read locally before each key.
-    // SAFETY: GetKeyState takes any virtual-key code.
-    let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
-    state.machine.set_num_lock(num_lock);
-    let mut decision = state.machine.on_key(event, Instant::now());
-    let own = extra_info == OWN_INPUT_TAG;
-    // Whether the key reaches the application, now or once deferred.
-    let reaches_application = decision.decision == KeyDecision::Pass;
-    let hold = hold(state, event, own, &mut decision);
-    let stroke = |sequence| HeldStroke {
-        vk: event.vk,
-        scan_code,
-        extended: event.extended,
-        sequence,
-    };
-    let key_number = if event.pressed {
-        next_key()
-    } else {
-        KEY_SEQUENCE.load(Ordering::Relaxed)
-    };
-    if let Some(effect) = decision.speech
-        && !own
-    {
-        (state.speech)(effect, key_number);
-    }
-    if let Some(emitted) = decision.emitted {
-        record_key_origin(emitted.trace_id, key_number);
-        let _ = state.events.send(Routed::Gesture(emitted));
-    }
-    let was_observed = decision.observed.is_some();
-    if let Some(observed) = decision.observed
-        && !own
-    {
-        record_key_origin(observed.trace_id, key_number);
-        let pressed_at_us = unix_us();
-        (state.reports)(if let Hold::Held(sequence) = hold {
-            KeyReport::Held {
-                gesture: observed,
-                pressed_at_us,
-                stroke: stroke(sequence),
-            }
-        } else {
-            KeyReport::Observed {
-                gesture: observed,
-                pressed_at_us,
-            }
-        });
-    }
-    if event.pressed
-        && reaches_application
-        && !matches!(hold, Hold::Held(_))
-        && !decision.shared_modifier
-        && !own
-    {
-        report_passed(state, event, scan_code, key_number, was_observed);
-    }
-    // After what the key did, so that whoever passes it on has been told
-    // of it first.
-    if let Hold::Deferred(sequence) = hold {
-        (state.reports)(KeyReport::Deferred {
-            stroke: stroke(sequence),
-            pressed: event.pressed,
-        });
-    }
-    // A lock key reaching the operating system is reported, for its
-    // new state to be announced, as NVDA announces it. The Verbatim
-    // modifier passed in share mode is not: the screen reader behind
-    // Verbatim decides whether it reaches the operating system, and
-    // announces the state itself if it lets it through.
-    if event.pressed
-        && reaches_application
-        && !decision.shared_modifier
-        && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
-    {
-        let trace_id = TraceId::mint();
-        record_key_origin(trace_id, key_number);
-        let _ = state
-            .events
-            .send(Routed::Gesture(verbatim_input::EmittedGesture {
-                trace_id,
-                gesture: key.gesture(),
-                repeat: 0,
-            }));
-    }
-    // A harness's stroke is complete with its last key event: say
-    // so behind everything the stroke caused.
-    if let Some(numbered) = u64::try_from(extra_info)
-        .ok()
-        .and_then(verbatim_input::harness::decode)
-        && numbered.last
-    {
-        let _ = state.events.send(Routed::Handled(numbered.number));
-    }
-    decision.decision
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn what_a_key_caused_is_found_by_its_trace_until_newer_keys_push_it_out() {
-        let first = TraceId::mint();
-        let key = next_key();
-        record_key_origin(first, key);
-        assert_eq!(key_of(first), Some(key));
-        assert_eq!(key_of(TraceId::mint()), None);
-        for _ in 0..KEY_ORIGINS_KEPT {
-            record_key_origin(TraceId::mint(), next_key());
-        }
-        assert_eq!(key_of(first), None);
-    }
-
-    /// A burst of strokes, each Verbatim+V with a harness number, larger
-    /// than the 64 gestures the router's channel once held, decided while
-    /// nothing reads the channel. It shows that `decide` sends every
-    /// gesture, in order; on an unbounded channel it would pass with
-    /// `try_send` too, so the guarantee that no key is lost rests on
-    /// `a_bounded_channel_is_refused`.
-    #[test]
-    fn a_burst_larger_than_the_old_bound_is_delivered_in_order_with_none_lost() {
-        use verbatim_input::GestureMap;
-        use verbatim_input::state::DecisionConfig;
-        use verbatim_model::GestureId;
-
-        const CAPS: u16 = 0x14;
-        const V: u16 = 0x56;
-        const STROKES: u64 = 1_000;
-        let key = |vk, pressed| KeyEvent {
-            vk,
-            scan_code: 0,
-            extended: false,
-            injected: true,
-            pressed,
-        };
-        let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")]);
-        let (events, routed) = crossbeam_channel::unbounded();
-        let mut state = HookState::new(
-            DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
-            events,
-            (
-                Box::new(|_, _| {}),
-                Box::new(|_| {}),
-                Arc::new(KeyHolding::new([])),
-                Arc::new(ForegroundView::new()),
-            ),
-            typed::Typing::default(),
-        );
-        assert_eq!(
-            decide(&mut state, key(CAPS, true), 0, 0),
-            KeyDecision::Swallow
-        );
-        for number in 1..=STROKES {
-            let last = usize::try_from(verbatim_input::harness::encode(number, true)).unwrap();
-            assert_eq!(decide(&mut state, key(V, true), 0, 0), KeyDecision::Swallow);
-            assert_eq!(
-                decide(&mut state, key(V, false), 0, last),
-                KeyDecision::Swallow
-            );
-        }
-        drop(state);
-
-        let mut received = Vec::new();
-        for routed in routed {
-            received.push(match routed {
-                Routed::Gesture(emitted) => format!("{}", emitted.gesture),
-                Routed::Handled(number) => format!("handled {number}"),
-                Routed::Barrier(token) => format!("barrier {token}"),
-            });
-        }
-        let expected: Vec<String> = (1..=STROKES)
-            .flat_map(|number| ["kb:v+verbatim".to_owned(), format!("handled {number}")])
-            .collect();
-        assert_eq!(received, expected);
-    }
-
-    /// The hook refuses a bounded channel, which once full would make the
-    /// hook wait or drop the key: this is what guarantees no key is lost.
-    #[test]
-    fn a_bounded_channel_is_refused() {
-        let (events, _routed) = crossbeam_channel::bounded(64);
-        let error = InputHook::start(
-            verbatim_input::state::DecisionConfig::default(),
-            verbatim_input::GestureMap::new([]).into_shared(),
-            events,
-            Box::new(|_, _| {}),
-            Box::new(|_| {}),
-            Arc::new(KeyHolding::new([])),
-            Arc::new(ForegroundView::new()),
-        )
-        .expect_err("a bounded channel could drop a key");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
-    }
-
-    /// A hook state observing Right Arrow and Escape, holding Right Arrow,
-    /// whose reports are collected in `reports`.
-    fn holding_state(
-        reports: &Arc<Mutex<Vec<KeyReport>>>,
-    ) -> (
-        HookState,
-        crossbeam_channel::Receiver<Routed>,
-        Arc<KeyHolding>,
-    ) {
-        use verbatim_input::GestureMap;
-        use verbatim_input::state::DecisionConfig;
-
-        let right = GestureId::parse("kb:rightarrow").expect("valid id");
-        let escape = GestureId::parse("kb:escape").expect("valid id");
-        let map = GestureMap::new([]).with_observed([right.clone(), escape]);
-        let holding = Arc::new(KeyHolding::new([right]));
-        let (events, routed) = crossbeam_channel::unbounded();
-        let sink = Arc::clone(reports);
-        let foreground = Arc::new(ForegroundView::new());
-        foreground.set(Some(IN_FRONT));
-        let mut state = HookState::new(
-            DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
-            events,
-            (
-                Box::new(|_, _| {}),
-                Box::new(move |report| sink.lock().unwrap().push(report)),
-                Arc::clone(&holding),
-                foreground,
-            ),
-            typed::Typing::default(),
-        );
-        state.front = window_in_front;
-        (state, routed, holding)
-    }
-
-    /// The window the hook's tests have in front: not a real window, so
-    /// that nothing depends on the desktop the tests run on; its keys are
-    /// translated with the test thread's own keyboard layout.
-    fn window_in_front() -> HWND {
-        HWND(7 as *mut core::ffi::c_void)
-    }
-
-    /// Core's view of [`window_in_front`], whose keys may be held.
-    const IN_FRONT: HookForeground = HookForeground {
-        window: WindowHandle(7),
-        holds_keys: true,
-        keyboard_thread: None,
-    };
-
-    /// The letter X, a key neither held nor observed, pressed or released.
-    fn letter_x(pressed: bool) -> KeyEvent {
-        KeyEvent {
-            vk: 0x58,
-            scan_code: 0x2D,
-            extended: false,
-            injected: false,
-            pressed,
-        }
-    }
-
-    /// What each report says, for comparing a sequence of them.
-    fn described(reports: &[KeyReport]) -> Vec<String> {
-        reports
-            .iter()
-            .map(|report| match report {
-                KeyReport::Held {
-                    gesture, stroke, ..
-                } => format!("held {} #{}", gesture.gesture, stroke.sequence),
-                KeyReport::Deferred { stroke, pressed } => format!(
-                    "deferred {:#04x} {} #{}",
-                    stroke.vk,
-                    if *pressed { "down" } else { "up" },
-                    stroke.sequence
-                ),
-                KeyReport::Observed { gesture, .. } => format!("observed {}", gesture.gesture),
-                KeyReport::Passed { .. } => "passed".to_owned(),
-                KeyReport::Typed { text, .. } => format!("typed {text}"),
-            })
-            .collect()
-    }
-
-    /// While a held key has not reached the application, every later key
-    /// the hook would pass, a typed letter and its release included, is
-    /// deferred behind it in the order pressed, and the letter is still
-    /// reported typed; a later caret key is held in its own turn. Once the
-    /// keys passed on come back through the hook, up to the last one held
-    /// back, keys pass again; one passed on with a later place clears
-    /// those before it, which Windows may have dropped.
-    #[test]
-    fn keys_behind_a_held_key_are_deferred_in_order_until_it_is_passed_on() {
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let (mut state, _routed, holding) = holding_state(&reports);
-        holding.set(true);
-        let swallowed = KeyDecision::Swallow;
-        let pass = KeyDecision::Pass;
-        assert_eq!(decide(&mut state, right_arrow(true), 0x4D, 0), swallowed);
-        assert_eq!(decide(&mut state, right_arrow(false), 0x4D, 0), swallowed);
-        assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
-        assert_eq!(decide(&mut state, right_arrow(true), 0x4D, 0), swallowed);
-        assert_eq!(decide(&mut state, letter_x(false), 0x2D, 0), swallowed);
-        assert_eq!(
-            described(&reports.lock().unwrap()),
-            [
-                "held kb:rightarrow #1",
-                "typed x",
-                "deferred 0x58 down #2",
-                "held kb:rightarrow #3",
-                "deferred 0x58 up #4",
-            ]
-        );
-        // The first Right Arrow and the letter come back passed on: the
-        // keys behind them still wait.
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, passed_on_info(1)),
-            pass
-        );
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, passed_on_info(2)),
-            pass
-        );
-        reports.lock().unwrap().clear();
-        assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
-        assert_eq!(
-            described(&reports.lock().unwrap()),
-            ["typed x", "deferred 0x58 down #5"]
-        );
-        // The last key held back comes back, clearing the second Right
-        // Arrow and the letter's release though they never came: a key
-        // pressed now passes.
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, passed_on_info(5)),
-            pass
-        );
-        assert_eq!(decide(&mut state, letter_x(false), 0x2D, 0), pass);
-        // The modifiers and releases sent around a held key carry no
-        // place, and clear nothing.
-        assert_eq!(decide(&mut state, right_arrow(true), 0x4D, 0), swallowed);
-        assert_eq!(
-            decide(&mut state, right_arrow(false), 0x4D, passed_on_info(0)),
-            pass
-        );
-        assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
-    }
-
-    /// A lock key pressed while a held key has not reached the application
-    /// passes at once, press and release, and is not deferred: its state is
-    /// announced from Windows' own, and Windows translates the numpad's
-    /// keys by Num Lock's state before the hook sees them. Caps Lock, the
-    /// Verbatim key by default, reaches the application on a double press,
-    /// whose first press is the Verbatim key's and swallowed. A letter after
-    /// them is still deferred.
-    #[test]
-    fn a_lock_key_passes_at_once_behind_a_held_key() {
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let (mut state, _routed, holding) = holding_state(&reports);
-        holding.set(true);
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-        let lock = |vk, scan_code, extended, pressed| KeyEvent {
-            vk,
-            scan_code,
-            extended,
-            injected: false,
-            pressed,
-        };
-        let mut decided = Vec::new();
-        for (vk, scan_code, extended, presses) in [
-            (0x14, 0x3A, false, 2),
-            (0x90, 0x45, true, 1),
-            (0x91, 0x46, false, 1),
-        ] {
-            for _ in 0..presses {
-                for pressed in [true, false] {
-                    let event = lock(vk, scan_code, extended, pressed);
-                    decided.push((vk, pressed, decide(&mut state, event, scan_code, 0)));
-                }
-            }
-        }
-        let (swallowed, pass) = (KeyDecision::Swallow, KeyDecision::Pass);
-        assert_eq!(
-            decided,
-            [
-                (0x14, true, swallowed),
-                (0x14, false, swallowed),
-                (0x14, true, pass),
-                (0x14, false, pass),
-                (0x90, true, pass),
-                (0x90, false, pass),
-                (0x91, true, pass),
-                (0x91, false, pass),
-            ]
-        );
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, 0),
-            KeyDecision::Swallow
-        );
-        assert_eq!(
-            described(&reports.lock().unwrap()),
-            ["held kb:rightarrow #1", "typed x", "deferred 0x58 down #2"]
-        );
-    }
-
-    /// While Core's view of the window in front says keys may not be held
-    /// for it, as for a window of higher integrity than Verbatim's, a caret
-    /// key passes unheld and is reported observed, and no key is deferred
-    /// behind a key held before the window came to the front, whose
-    /// release is still held back with it.
-    #[test]
-    fn no_key_is_held_where_core_says_none_may_be() {
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let (mut state, _routed, holding) = holding_state(&reports);
-        holding.set(true);
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-        state.foreground.set(Some(HookForeground {
-            holds_keys: false,
-            ..IN_FRONT
-        }));
-        assert_eq!(
-            decide(&mut state, right_arrow(false), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, 0),
-            KeyDecision::Pass
-        );
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Pass
-        );
-        assert_eq!(
-            described(&reports.lock().unwrap()),
-            ["held kb:rightarrow #1", "typed x", "observed kb:rightarrow"]
-        );
-        // Back at a window where keys may be held, they are held again.
-        state.foreground.set(Some(IN_FRONT));
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-    }
-
-    /// Core's view is applied only to the window it was decided for: while
-    /// another window is in front, before Core has caught up with it, or
-    /// before Core has any view, no key is held.
-    #[test]
-    fn no_key_is_held_until_core_has_a_view_of_the_window_in_front() {
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let (mut state, _routed, holding) = holding_state(&reports);
-        holding.set(true);
-        state.foreground.set(Some(HookForeground {
-            window: WindowHandle(8),
-            ..IN_FRONT
-        }));
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Pass
-        );
-        state.foreground.set(None);
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Pass
-        );
-        assert_eq!(
-            described(&reports.lock().unwrap()),
-            ["observed kb:rightarrow", "observed kb:rightarrow"]
-        );
-        state.foreground.set(Some(IN_FRONT));
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-    }
-
-    /// Right Arrow, an extended key, pressed or released.
-    fn right_arrow(pressed: bool) -> KeyEvent {
-        KeyEvent {
-            vk: 0x27,
-            scan_code: 0x4D,
-            extended: true,
-            injected: false,
-            pressed,
-        }
-    }
-
-    /// While holding is on, a caret key in the holding set is held back,
-    /// press and release, and reported held with the stroke to send again;
-    /// a key observed but not held (Escape) still passes; with holding off
-    /// the caret key passes and is reported observed, as before.
-    #[test]
-    fn a_caret_key_is_held_while_holding_is_on() {
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let (mut state, _routed, holding) = holding_state(&reports);
-        holding.set(true);
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-        assert_eq!(
-            decide(&mut state, right_arrow(false), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-        // Passed on, it reaches the hook again and goes straight through.
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, passed_on_info(1)),
-            KeyDecision::Pass
-        );
-        let escape = |pressed| KeyEvent {
-            vk: 0x1B,
-            scan_code: 0x01,
-            extended: false,
-            injected: false,
-            pressed,
-        };
-        assert_eq!(decide(&mut state, escape(true), 0x01, 0), KeyDecision::Pass);
-        assert_eq!(
-            decide(&mut state, escape(false), 0x01, 0),
-            KeyDecision::Pass
-        );
-        holding.set(false);
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, 0),
-            KeyDecision::Pass
-        );
-        assert_eq!(
-            decide(&mut state, right_arrow(false), 0x4D, 0),
-            KeyDecision::Pass
-        );
-        let reports = reports.lock().unwrap();
-        let KeyReport::Held { stroke, .. } = reports[0] else {
-            panic!("expected Right Arrow held first: {reports:?}");
-        };
-        assert_eq!(
-            stroke,
-            HeldStroke {
-                vk: 0x27,
-                scan_code: 0x4D,
-                extended: true,
-                sequence: 1
-            }
-        );
-        assert_eq!(
-            described(&reports),
-            [
-                "held kb:rightarrow #1",
-                "observed kb:escape",
-                "observed kb:rightarrow",
-            ]
-        );
-    }
-
-    /// A key carrying [`PASSED_ON_TAG`], a held key Verbatim passes on,
-    /// passes straight through, reported to nobody and sent on to no
-    /// router, though holding is on; a key the end-to-end harness injects,
-    /// with its stroke number, is the user's and is held.
-    #[test]
-    fn a_key_passed_on_passes_untouched_and_a_harness_key_is_held() {
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let (mut state, routed, holding) = holding_state(&reports);
-        holding.set(true);
-        assert_eq!(
-            decide(&mut state, right_arrow(true), 0x4D, PASSED_ON_TAG),
-            KeyDecision::Pass
-        );
-        assert_eq!(
-            decide(&mut state, right_arrow(false), 0x4D, PASSED_ON_TAG),
-            KeyDecision::Pass
-        );
-        assert!(reports.lock().unwrap().is_empty());
-        assert!(routed.try_recv().is_err());
-        let numbered = usize::try_from(verbatim_input::harness::encode(7, true)).unwrap();
-        let injected = |pressed| KeyEvent {
-            injected: true,
-            ..right_arrow(pressed)
-        };
-        assert_eq!(
-            decide(&mut state, injected(true), 0x4D, 0),
-            KeyDecision::Swallow
-        );
-        assert_eq!(
-            decide(&mut state, injected(false), 0x4D, numbered),
-            KeyDecision::Swallow
-        );
-        assert!(matches!(
-            reports.lock().unwrap().as_slice(),
-            [KeyReport::Held { .. }]
-        ));
-        assert_eq!(routed.try_recv(), Ok(Routed::Handled(7)));
-    }
-
-    #[test]
-    fn a_key_with_a_meaning_outside_the_text_is_not_watched() {
-        // Pause, Print Screen, Sleep, Volume Up, Play/Pause, Launch Mail.
-        for vk in [0x13, 0x2C, 0x5F, 0xAF, 0xB3, 0xB4] {
-            assert!(!may_edit(vk), "{vk:#04x}");
-        }
-        // Left Control and Caps Lock, as before.
-        for vk in [0xA2, 0x14] {
-            assert!(!may_edit(vk), "{vk:#04x}");
-        }
-        // Keys Verbatim does not know that may move the caret: bash's
-        // Control+A and Alt+F, and F3, Find Next.
-        for vk in [0x41, 0x46, 0x72] {
-            assert!(may_edit(vk), "{vk:#04x}");
         }
     }
 }

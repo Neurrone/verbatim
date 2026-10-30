@@ -675,7 +675,7 @@ impl Scenario {
         &self.timeline
     }
 
-    /// Routes a gesture identifier through Verbatim's gesture router, as if
+    /// Injects a gesture identifier through Verbatim's keyboard hook, as if
     /// the keys had been pressed (`Request::SendGesture`), once every
     /// utterance heard so far has been asserted.
     ///

@@ -592,7 +592,7 @@ impl Session {
         for effect in effects {
             match effect {
                 Effect::ForKey(key, effect) => self.take(vec![*effect], Some(key)),
-                Effect::Speak(utterance) => {
+                Effect::Speak(utterance, _) => {
                     let marks: Vec<SpeechMark> = utterance
                         .segments
                         .iter()

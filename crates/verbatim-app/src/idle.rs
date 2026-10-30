@@ -20,6 +20,8 @@
 //!
 //! [`IdleBarrier`] is that state, pure, so its rules are tested on their
 //! own; the reducer thread drives it and does the asking and the answering.
+//! [`HeldMarks`] is the harness's marks of handled input held behind a lock
+//! key's announcement still to come, which an idle round also waits for.
 
 use std::collections::HashSet;
 
@@ -231,9 +233,49 @@ impl<W> IdleBarrier<W> {
     }
 }
 
+/// The harness's marks of handled input that came while a lock key's
+/// announcement was still to come, which the reducer thread hands on, in
+/// order, once it has been made, so the harness reads no speech before it
+/// (`docs/design/ownership-input.md`, "The router's work as effects").
+#[derive(Debug, Default)]
+pub(crate) struct HeldMarks(Vec<u64>);
+
+impl HeldMarks {
+    /// The mark `mark` was taken: the marks to hand on now, none while an
+    /// announcement is `pending`.
+    pub(crate) fn take(&mut self, mark: u64, pending: bool) -> Vec<u64> {
+        self.0.push(mark);
+        self.release(pending)
+    }
+
+    /// An input was handled: the marks held, to hand on now that no
+    /// announcement is `pending`, or none.
+    pub(crate) fn release(&mut self, pending: bool) -> Vec<u64> {
+        if pending || self.0.is_empty() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.0)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mark_taken_while_an_announcement_is_pending_is_handed_on_after_it() {
+        let mut marks = HeldMarks::default();
+        assert_eq!(marks.take(3, true), Vec::<u64>::new());
+        assert_eq!(marks.take(4, true), Vec::<u64>::new());
+        // An input that leaves the announcement pending hands on nothing.
+        assert_eq!(marks.release(true), Vec::<u64>::new());
+        // The input that made it hands both on, in order.
+        assert_eq!(marks.release(false), [3, 4]);
+        assert_eq!(marks.release(false), Vec::<u64>::new());
+        // With nothing pending, a mark goes at once.
+        assert_eq!(marks.take(5, false), [5]);
+    }
 
     const A: OutpostId = OutpostId(1);
     const B: OutpostId = OutpostId(2);

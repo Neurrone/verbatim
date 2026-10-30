@@ -934,10 +934,22 @@ machine's taskbar, from a separate process running the outpost's walk,
   one lock-free load of Core's `ForegroundView`; every press that reaches
   the application and is not Verbatim's loads the view once more, to
   learn which thread's keyboard layout a console window's keys take.
-  Neither waits or allocates. The hook sends each gesture on an unbounded
-  channel (`docs/crates/verbatim-input-windows.md`), waking the router
-  once; the channel allocates a block of 31 slots about once every 31
-  sends, and a queued gesture holds about 70 bytes.
+  Neither waits or allocates. The hook posts each report, a gesture's
+  included, to the reducer's completion port, one boxed packet each
+  (`docs/crates/verbatim-input-windows.md`), and a key that cancels or
+  pauses speech posts once to the speech queue's port: no lock is taken
+  on the hook thread (`docs/design/ownership-input.md`, "Cost"). A bound
+  gesture wakes the reducer once, where it woke the router and then the
+  reducer; a lock key wakes the reducer for its press and for its
+  deadline, which applies the announcement in the same step, two wakes
+  where there were three. An injected gesture or idle waiter wakes the
+  hook thread once, at `HIGHEST`, in place of the router. Per `Speak` the
+  reducer scans up to 1,024 pairs of trace and key number, as before,
+  inside Core's state and with no lock; each user input adds one pair,
+  16 bytes, at most 16 KiB, cloned with each flight recorder checkpoint.
+  The reducer's and the hook's wakes and processor time per key under
+  `measure_keys_notepad` after this change are still to be measured
+  (`docs/tooling/measuring.md`).
 
 ### An interrupt
 
@@ -961,10 +973,11 @@ that ends unheard.
   speech queue thread a list of its marks and a table insert and remove;
   each one cut off or failed costs one post to the reducer and one
   recorded step, two or three per key that cuts say-all or terminal output.
-  Lock keys, the time, the clipboard's result, a shell item gone, the
-  theme page's previews and the start, exit, error and "not responding"
-  sounds take one thread hop to the reducer and one step; a menu or the
-  task switcher ending is one step.
+  The time, the clipboard's result, a shell item gone, the theme page's
+  previews and the start, exit, error and "not responding" sounds take
+  one thread hop to the reducer and one step; a lock key takes the
+  hook's report and one deadline of the reducer's, a step each; a menu
+  or the task switcher ending is one step.
 - A synthesizer host's audio: each chunk is one frame, a small JSON body
   and its samples as the frame's raw section
   (`docs/design/communication.md`, section 4.2). The synth thread decodes

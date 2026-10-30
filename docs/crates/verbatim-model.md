@@ -112,27 +112,45 @@ recorder unchanged. What the reducer does with each type is in
   - `Notification`: UIA's application-initiated announcement, with its
     kind, processing hint, and optional display string and activity id.
   - The text events, under "The text protocol".
-- `Input` and `Effect`: the reducer's contract.
+- `KeySeq`: the number of a user input, ordered by press, which fences
+  speech (`docs/design/ownership-input.md`). Only the keyboard hook's
+  thread mints one (`KeySeq::after`), a review rule since the type is in
+  this platform-neutral crate; tests construct them with `KeySeq::new`.
+  `KeySeq::NONE_YET` (zero) is the hook's start and what every key field
+  of an input from an old flight dump reads as (`KeySeq::none_yet`, the
+  fields' serde default).
+- `Input` and `Effect`: the reducer's contract. `Input::trace_id` is the
+  trace an input carries, for those that carry one: the trace the shell
+  executes the input's effects under and Core's key stamp looks up.
   - Inputs are events (each with its source pid, backend, optional
     `WindowFacts`, and the observation time on the run's shared clock in
     microseconds, one clock read for every event kind), fetch completions (with
     their `QueryKind`), `OutpostEnded` (a generation ended, so its node
-    ids are dead), timer ticks, `Command` (a `ReviewCommand` and a
-    press-repeat count), and what the shell's threads learn, since only
+    ids are dead), timer ticks, `Command` (a `ReviewCommand`, its key
+    number and a press-repeat count), `Script` (the menu, the time, or the
+    shell's lists, as a `Script`, with its key number and repeat count),
+    `ToggleKeyPressed` (a lock key reached the operating system, with its
+    key number and press time), and what the shell's threads learn, since only
     the reducer speaks: `Started`, `Exiting { replaced }`, `ErrorLogged`,
     `ApplicationNotResponding`, `LockKeyToggled` (a `LockKey` and its
     state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
     `ShellItemUnclickable`, `PreviewSpeech`, `PreviewEarcon`,
     `MenuOrSwitchEnded`, and `ForegroundWindow`. The text inputs are under
     "The text protocol".
-  - Effects are `Speak`; `StopSpeech`; `DropExpiredSpeech` (carrying a
+  - Effects are `Speak` (an utterance and the number of the user input
+    that caused it, which Core stamps as its last step; every
+    construction gives `None`); `StopSpeech`; `DropExpiredSpeech` (carrying a
     `FocusNow`); `Fetch` (a `Query` naming the node and a `QueryKind`:
     parent, next or previous sibling, first child, answered by a
     `FetchResult` that tells a tree edge, `NoNeighbor`, from a node that
     could not be re-acquired, `Gone`); `PlayEarcon`; `Activate`;
     `CopyToClipboard` (routed through the shell's clipboard helper, its
-    result back as `Input::ClipboardCopied`); and `ReadForegroundFocus`
-    (NVDA's fake focus). The text effects are under "The text protocol".
+    result back as `Input::ClipboardCopied`); `ReadForegroundFocus`
+    (NVDA's fake focus); `ReadClock { repeat }` (read the time and date
+    into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
+    a `ShellItemKind`'s items); and `ReadToggleKey { toggle, due_ms }`
+    (read a lock key's state at `due_ms` into `Input::LockKeyToggled`).
+    The text effects are under "The text protocol".
 - `Earcon`: an event reported at once, outside the speech queue: an
   application not responding, start, exit, an error, browse and focus
   mode, suggestions opened and closed, and progress with its percentage.
@@ -399,9 +417,9 @@ exists), or `Unanswered` (no answer in time, or the read failed).
 
 ### Inputs from the shell
 
-- `Input::CaretKey { trace_id, key, pressed_at_ms }`: a caret key the hook
-  passed to the application, with when it saw it, in Unix milliseconds
-  (0 when unknown). A `CaretKey` is a `CaretMotion` (character, word,
+- `Input::CaretKey { trace_id, seq, key, pressed_at_ms }`: a caret key the
+  hook passed to the application, with its key number and when it saw
+  it, in Unix milliseconds (0 when unknown). A `CaretKey` is a `CaretMotion` (character, word,
   line, paragraph, sentence, or page; the line's start or end; top or
   bottom; Backspace and Delete, alone or with Control; Control+A; or
   `Other`, any other key that types no text) and whether Shift extends
@@ -410,10 +428,10 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   these.
 - `Input::HeldKey`, with the same fields: a caret key the hook held back.
   `Input::HeldKeyWaitEnded { trace_id }` ends a held key's wait.
-- `Input::CharacterTyped { trace_id, text, at_ms }`: text typed into the
+- `Input::CharacterTyped { trace_id, key, text, at_ms }`: text typed into the
   focused application, one character or an input method's committed
   composition, a tab as a tab and Enter as a carriage return.
-- `Input::ClearingKey { trace_id, at_ms }`: Escape, Control+C, Control+D,
+- `Input::ClearingKey { trace_id, key, at_ms }`: Escape, Control+C, Control+D,
   or Control+Break passed to the focused application.
 - `Input::MarkReached { mark }`, `Input::UtteranceCancelled { marks,
   at_ms }`, `Input::UtteranceFailed { marks }`: what the speech pipeline

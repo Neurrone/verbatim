@@ -1,20 +1,21 @@
 //! Normalized events, reducer inputs, and reducer effects.
 //!
-//! The reducer is strictly accessibility-shaped: its inputs are normalized
-//! events, fetch completions, and timer ticks; its effects are speech and
-//! fetches. Imperative concerns — showing the menu, quitting — never appear
-//! here; they are routed by the shell's gesture router (architecture
-//! section 2, amended during M1 planning).
+//! The reducer's inputs are normalized events, fetch completions, the
+//! user's keys and gestures, and what the shell's threads learn; its
+//! effects are speech, fetches, and what the shell carries out for it, a
+//! window shown among them. Every user input carries its key number
+//! ([`KeySeq`]), and Core stamps the speech it causes with it.
 
 use serde::{Deserialize, Serialize};
 
 use crate::settings::ReaderSettings;
+use crate::shell::ShellItemKind;
 use crate::speech::{SpeechMark, Utterance};
 use crate::text::{
     CaretKey, CaretReport, FocusText, SelectionChange, TextPosition, TextReply, TextRequest,
 };
 use crate::tree::{Backend, NodeSnapshot, Rect, StateSet};
-use crate::{NodeId, OutpostId, TraceId};
+use crate::{KeySeq, NodeId, OutpostId, TraceId};
 
 /// A Windows process identifier, used to name the application an outpost
 /// watches and to key supervisor state.
@@ -630,6 +631,9 @@ pub enum Input {
         /// Trace ID minted when the triggering key was observed, carried
         /// through so a command's speech joins the latency timeline.
         trace_id: TraceId,
+        /// The gesture's key number, which its speech carries.
+        #[serde(default = "KeySeq::none_yet")]
+        key: KeySeq,
         /// Which command.
         command: ReviewCommand,
         /// How many times the gesture was pressed in quick succession, zero
@@ -639,6 +643,37 @@ pub enum Input {
         /// commands spell on a repeat, and a third press of current
         /// character speaks its character code. Other commands ignore it.
         repeat: u8,
+    },
+    /// A bound gesture whose script is not a review command: the menu, the
+    /// time, or the shell's lists. Run in the order pressed, behind a held
+    /// key as a review command is.
+    Script {
+        /// Trace ID minted when the gesture was observed.
+        trace_id: TraceId,
+        /// The gesture's key number, which its speech carries.
+        #[serde(default = "KeySeq::none_yet")]
+        key: KeySeq,
+        /// How many times the gesture was pressed in quick succession, zero
+        /// for the first press: the time on 0 and the date after; the
+        /// system tray on 0 and the taskbar after.
+        repeat: u8,
+        /// Which script.
+        script: Script,
+    },
+    /// A lock key reached the operating system: its new state is announced
+    /// 30 ms after `pressed_at_ms`, once Windows has changed it
+    /// ([`Effect::ReadToggleKey`], then [`Input::LockKeyToggled`]).
+    ToggleKeyPressed {
+        /// Trace ID minted when the key was observed.
+        trace_id: TraceId,
+        /// The key's number. The announcement does not carry it, so a key
+        /// pressed within the 30 ms does not silence it.
+        #[serde(default = "KeySeq::none_yet")]
+        key: KeySeq,
+        /// Which key.
+        toggle: LockKey,
+        /// Milliseconds on the run's shared clock when the hook saw it.
+        pressed_at_ms: u64,
     },
     /// An activation the reducer asked for finished: `activated` is whether
     /// the navigator object, or one of its ancestors, was activated, and
@@ -673,6 +708,9 @@ pub enum Input {
     CaretKey {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
+        /// The key's number, which its speech carries.
+        #[serde(default = "KeySeq::none_yet")]
+        seq: KeySeq,
         /// Which key.
         key: CaretKey,
         /// Milliseconds since the Unix epoch when the hook saw the key,
@@ -692,6 +730,9 @@ pub enum Input {
         /// Trace ID minted when the key was observed; it also names the
         /// key to pass on.
         trace_id: TraceId,
+        /// The key's number, which its speech carries.
+        #[serde(default = "KeySeq::none_yet")]
+        seq: KeySeq,
         /// Which key.
         key: CaretKey,
         /// As [`Input::CaretKey`]'s: when the hook saw the key, on the
@@ -716,6 +757,9 @@ pub enum Input {
     CharacterTyped {
         /// Trace ID minted when the typing was observed.
         trace_id: TraceId,
+        /// The number of the key that typed it, which its speech carries.
+        #[serde(default = "KeySeq::none_yet")]
+        key: KeySeq,
         /// The text typed, a tab as a tab character and Enter as a carriage
         /// return.
         text: String,
@@ -733,6 +777,9 @@ pub enum Input {
     ClearingKey {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
+        /// The key's number, which its speech carries.
+        #[serde(default = "KeySeq::none_yet")]
+        key: KeySeq,
         /// As [`Input::CharacterTyped`]'s: when the hook saw the key; 0
         /// when unknown.
         #[serde(default)]
@@ -883,6 +930,55 @@ pub enum Input {
     /// (architecture section 5): Core decides from it what the keyboard
     /// hook reads of the foreground ([`HookForeground`]).
     ForegroundWindow(ForegroundWindow),
+}
+
+/// What a [`Input::Script`] runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Script {
+    /// Open the Verbatim menu.
+    ShowMenu,
+    /// Report the time, or the date on a quick second press.
+    ReportTime,
+    /// List the system tray's items, or the taskbar's on a quick second
+    /// press.
+    ShellList,
+}
+
+/// A window the reducer asks the GUI to show ([`Effect::Show`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GuiRequest {
+    /// The Verbatim menu.
+    Menu,
+    /// The list of the shell surface's items.
+    ShellList(ShellItemKind),
+}
+
+impl Input {
+    /// The trace the input carries, for the inputs that carry one: the
+    /// trace the shell executes the input's effects under, and Core's
+    /// stamp looks a key number up by.
+    #[must_use]
+    pub fn trace_id(&self) -> Option<TraceId> {
+        match self {
+            Self::Event { trace_id, .. }
+            | Self::FetchCompleted { trace_id, .. }
+            | Self::Command { trace_id, .. }
+            | Self::Script { trace_id, .. }
+            | Self::ToggleKeyPressed { trace_id, .. }
+            | Self::TextCompleted { trace_id, .. }
+            | Self::CaretKey { trace_id, .. }
+            | Self::HeldKey { trace_id, .. }
+            | Self::CharacterTyped { trace_id, .. }
+            | Self::ClearingKey { trace_id, .. }
+            | Self::LockKeyToggled { trace_id, .. }
+            | Self::ClockRead { trace_id, .. }
+            | Self::ClipboardCopied { trace_id, .. }
+            | Self::ShellItemGone { trace_id, .. }
+            | Self::ShellItemUnclickable { trace_id, .. }
+            | Self::PreviewSpeech { trace_id, .. } => Some(*trace_id),
+            _ => None,
+        }
+    }
 }
 
 /// A lock key whose state Verbatim announces.
@@ -1041,8 +1137,10 @@ pub enum Earcon {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Effect {
-    /// Queue an utterance in the speech pipeline.
-    Speak(Utterance),
+    /// Queue an utterance in the speech pipeline, with the number of the
+    /// user input that caused it, if one did: Core stamps it as its last
+    /// step, and every other construction gives `None`.
+    Speak(Utterance, Option<KeySeq>),
     /// Cancel current and queued speech.
     StopSpeech,
     /// The focus has changed: stop focus speech being spoken that is no
@@ -1112,4 +1210,20 @@ pub enum Effect {
     /// switcher closes; an application whose outpost is not ready is asked
     /// for its focus as at a foreground change.
     ReadForegroundFocus,
+    /// Read the time and date, for the report-time gesture: the shell
+    /// enters [`Input::ClockRead`] with the trace it executed this under.
+    ReadClock {
+        /// The gesture's repeat count, handed back on the input.
+        repeat: u8,
+    },
+    /// Show a window of the GUI.
+    Show(GuiRequest),
+    /// Read a lock key's state at `due_ms`, on the run's shared clock, and
+    /// enter [`Input::LockKeyToggled`] with it.
+    ReadToggleKey {
+        /// Which key.
+        toggle: LockKey,
+        /// When to read it.
+        due_ms: u64,
+    },
 }

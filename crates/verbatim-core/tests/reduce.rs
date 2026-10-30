@@ -242,7 +242,9 @@ fn heard(effects: &[Effect]) -> Vec<Heard> {
                 })
             }
             Effect::StopSpeech => Heard::Stop,
-            Effect::Speak(utterance) => Heard::Say(utterance.priority, utterance.segments.clone()),
+            Effect::Speak(utterance, _) => {
+                Heard::Say(utterance.priority, utterance.segments.clone())
+            }
             other => Heard::Other(other.clone()),
         })
         .collect()
@@ -304,7 +306,7 @@ fn only_speech(effects: &[Effect]) -> Vec<&Utterance> {
     effects
         .iter()
         .map(|effect| match effect {
-            Effect::Speak(utterance) => utterance,
+            Effect::Speak(utterance, _) => utterance,
             other => panic!("expected only Speak effects, got {other:?} in {effects:?}"),
         })
         .collect()
@@ -335,7 +337,7 @@ fn focus_menu_item_with_popup_speaks_name_and_submenu() {
             ]]
         )
     );
-    let Effect::Speak(utterance) = &effects[1] else {
+    let Effect::Speak(utterance, _) = &effects[1] else {
         panic!("the announcement follows the drop of expired speech");
     };
     assert_eq!(utterance.trace_id, trace_id);
@@ -2266,6 +2268,7 @@ use verbatim_model::{FocusNow, FocusValidity, ObjectKey, ReviewCommand};
 
 fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
+        key: verbatim_model::KeySeq::NONE_YET,
         trace_id,
         command: cmd,
         repeat,
@@ -4137,7 +4140,7 @@ fn spoken_by(inputs: &[Input]) -> Vec<Vec<UtteranceSegment>> {
         let (next, effects) = reduce(&state, input);
         state = next;
         spoken.extend(effects.into_iter().filter_map(|effect| match effect {
-            Effect::Speak(utterance) => Some(utterance.segments),
+            Effect::Speak(utterance, _) => Some(utterance.segments),
             _ => None,
         }));
     }

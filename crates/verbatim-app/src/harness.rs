@@ -10,7 +10,7 @@
 //! [`Readiness::notify`].
 //!
 //! Idleness: `AwaitIdle` puts a waiter in line behind every gesture and
-//! numbered key that reached the gesture router before it, and the reducer
+//! numbered key the keyboard hook's thread took before it, and the reducer
 //! answers it once a round through every child has found everything idle
 //! (see [`IdleWaiter`] and [`crate::idle`]).
 
@@ -22,7 +22,7 @@ use std::time::Duration;
 use crossbeam_channel::{Sender, bounded};
 use verbatim_control::protocol::{OutpostState, OutpostStatus};
 use verbatim_gui::GuiHandle;
-use verbatim_input_windows::Routed;
+use verbatim_input_windows::{Injected, Injector};
 use verbatim_model::Pid;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
@@ -150,7 +150,7 @@ pub(crate) struct IdleWaiter {
 }
 
 /// The waiters the control plane has put in line, by token, until the
-/// reducer reaches their place in line ([`Routed::Barrier`]).
+/// reducer reaches their place in line ([`Injected::Barrier`]).
 #[derive(Default)]
 pub(crate) struct IdleLine {
     next: AtomicU64,
@@ -161,12 +161,13 @@ pub(crate) struct IdleLine {
 }
 
 impl IdleLine {
-    /// Puts a waiter in line behind everything sent to the gesture router
-    /// before it, and waits up to `timeout` for its answer. Blocks the
-    /// calling thread, a control-plane connection's own.
+    /// Puts a waiter in line behind every key and gesture the keyboard
+    /// hook's thread takes before it, injected through it, and waits up to
+    /// `timeout` for its answer. Blocks the calling thread, a control-plane
+    /// connection's own.
     pub(crate) fn wait(
         &self,
-        router: &Sender<Routed>,
+        injector: &Injector,
         after_input: Option<u64>,
         timeout: Duration,
     ) -> Result<(), String> {
@@ -176,9 +177,9 @@ impl IdleLine {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(token, IdleWaiter { after_input, reply });
-        if router.send(Routed::Barrier(token)).is_err() {
+        if injector.inject(Injected::Barrier(token)).is_err() {
             self.take(token);
-            return Err("the gesture router is gone".to_owned());
+            return Err("the keyboard hook is gone".to_owned());
         }
         answered.recv_timeout(timeout).map_err(|_| {
             self.take(token);

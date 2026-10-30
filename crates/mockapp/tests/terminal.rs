@@ -259,7 +259,7 @@ impl Session<'_> {
                 op => panic!("Core asked the terminal {op:?}"),
             }
             .into_input(request.query_id),
-            Effect::Speak(utterance) => {
+            Effect::Speak(utterance, _) => {
                 self.spoken.push(
                     utterance
                         .segments
@@ -430,6 +430,7 @@ fn session(uia: &Uia, hwnd: HWND, remote: bool) -> Session<'_> {
 /// A command's first press.
 fn command(command: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
+        key: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command,
         repeat,
@@ -582,6 +583,7 @@ fn session_with_a_command<'a>(
     let mut prompt = "ready>".to_owned();
     for character in ["l", "s", "\r"] {
         session.input(&Input::CharacterTyped {
+            key: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             text: character.to_owned(),
             at_ms: now_us() / 1_000,
@@ -832,6 +834,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
     let mut prompt = "ready>".to_owned();
     for character in ["h", "e", "l", "o"] {
         session.input(&Input::CharacterTyped {
+            key: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             text: character.to_owned(),
             at_ms: now_us() / 1_000,
@@ -841,6 +844,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
         session.live();
     }
     session.input(&Input::CaretKey {
+        seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         key: CaretKey {
             motion: CaretMotion::Backspace,

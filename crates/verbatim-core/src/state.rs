@@ -382,6 +382,13 @@ pub(crate) enum WaitingKey {
     /// text typed, or a key that clears a terminal's line. Handled in its
     /// turn, as the input it came as.
     Later(Box<verbatim_model::Input>),
+    /// A review command or a script (`Input::Command`, `Input::Script`)
+    /// pressed while a held key waited: run once the key ahead of it has
+    /// been passed on and its watch answered, or the bound since the pass
+    /// has run out, as NVDA runs scripts one at a time in the order
+    /// queued (`docs/design/ownership-input.md`, "Commands behind held
+    /// keys").
+    Command(Box<verbatim_model::Input>),
 }
 
 /// The caret keys the hook held back: the one whose caret is being read,
@@ -704,6 +711,14 @@ pub struct SrState {
     /// (`docs/design/key-holding.md`).
     #[serde(default)]
     pub(crate) held_keys: HeldKeys,
+    /// The key numbers of what recent user inputs caused, by trace, which
+    /// Core stamps their speech with (`crate::keys`).
+    #[serde(default)]
+    pub(crate) key_origins: crate::keys::KeyOrigins,
+    /// The lock keys pressed whose new state is still to be announced, in
+    /// the order pressed (`Input::ToggleKeyPressed`).
+    #[serde(default)]
+    pub(crate) toggle_keys: std::collections::VecDeque<verbatim_model::LockKey>,
     /// The review or text command's request in flight.
     #[serde(default)]
     pub(crate) pending_text: Option<PendingText>,
@@ -779,6 +794,21 @@ impl SrState {
     #[must_use]
     pub fn holds_caret_keys(&self) -> bool {
         crate::editing::text_focus(self).is_some()
+    }
+
+    /// Whether a key or command waits in Core's held-key line: Verbatim is
+    /// not idle while one does.
+    #[must_use]
+    pub fn holds_inputs_back(&self) -> bool {
+        self.held_keys.busy()
+    }
+
+    /// Whether a lock key's new state is still to be announced: Verbatim is
+    /// not idle while one is, and the shell holds the harness's marks of
+    /// handled input behind it.
+    #[must_use]
+    pub fn announces_toggle_key(&self) -> bool {
+        !self.toggle_keys.is_empty()
     }
 
     /// What the keyboard hook reads of the foreground window, decided from

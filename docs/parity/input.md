@@ -27,6 +27,22 @@ when an unbound gesture comes between. Verbatim: **matched
 (unverified)**, including the reset on an unbound key. Different,
 deliberately: auto-repeat of a held key is not counted as presses, so
 holding a key never turns into a double press; NVDA counts it.
+### A command pressed while a caret key is held
+
+NVDA runs scripts one at a time in the order queued
+([Keyboard input](../nvda/input.md), "Scripts run one at a time"), and
+its caret script says nothing once another script is queued. Verbatim:
+a review command, or the time, menu or tray-list gesture, pressed while
+a caret key is held for its caret read runs after that key has been
+passed on and its watch answered, or 100 ms after the pass, whichever is
+first; the caret key says nothing, and a reading command reads the line
+the key moved to (`docs/design/ownership-input.md`, "Commands behind held
+keys"; Core's `a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch`).
+Different, by decision (Dickson, 2026-10-30): the wait for the watch is
+Verbatim's own, so the command reads the moved line. NVDA's words for
+Down Arrow on "line one" followed at once by the current-line command
+are not yet captured: the capture, and the expectation taken from it,
+go here, before any scenario expectation for this case is fixed.
 
 ### Gesture map / rebindable input, input help mode
 

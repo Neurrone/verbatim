@@ -84,9 +84,11 @@ pub(crate) struct Typing {
 
 impl Typing {
     /// A translator that also asks the text services which keyboard
-    /// profile is active. COM must be initialized on the calling thread,
-    /// the thread that translates.
-    pub(crate) fn with_text_services() -> Self {
+    /// profile is active, and the error that kept the profile manager from
+    /// being made, for the caller to log: then no layout is taken for a
+    /// text service. COM must be initialized on the calling thread, the
+    /// thread that translates.
+    pub(crate) fn with_text_services() -> (Self, Option<windows::core::Error>) {
         // SAFETY: the class id and interface are the text services' own,
         // and the caller initialized COM on this thread.
         let profiles = unsafe {
@@ -96,13 +98,17 @@ impl Typing {
                 CLSCTX_INPROC_SERVER,
             )
         };
-        if let Err(error) = &profiles {
-            tracing::warn!(%error, "the text services' profile manager could not be made");
-        }
-        Self {
-            high_surrogate: None,
-            profiles: profiles.ok(),
-        }
+        let (profiles, error) = match profiles {
+            Ok(profiles) => (Some(profiles), None),
+            Err(error) => (None, Some(error)),
+        };
+        (
+            Self {
+                high_surrogate: None,
+                profiles,
+            },
+            error,
+        )
     }
 
     /// The active keyboard profile's type and language, or `None` when it

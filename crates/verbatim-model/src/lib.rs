@@ -13,6 +13,7 @@
 mod calls;
 mod event;
 mod gesture;
+mod key_seq;
 mod settings;
 mod shell;
 mod speech;
@@ -24,11 +25,12 @@ mod tree;
 pub use calls::{CallCounts, CallKind};
 pub use event::{
     ActionName, Earcon, EarlierElement, Effect, FetchResult, FocusGroup, ForegroundWindow,
-    HookForeground, Input, LockKey, NormalizedEvent, Notification, NotificationKind,
+    GuiRequest, HookForeground, Input, LockKey, NormalizedEvent, Notification, NotificationKind,
     NotificationProcessing, Pid, ProgressReading, PropertyChange, Query, QueryId, QueryKind,
-    ReviewCommand, WindowFacts, WindowHandle,
+    ReviewCommand, Script, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
+pub use key_seq::KeySeq;
 pub use settings::{
     DEFAULT_TERMINAL_LINES, MAX_TERMINAL_LINES, ReaderSettings, SayAllUnit, TypingEcho,
 };

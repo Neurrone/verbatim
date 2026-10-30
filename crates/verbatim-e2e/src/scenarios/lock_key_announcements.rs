@@ -1,7 +1,7 @@
 //! A lock key's new state is announced: Scroll Lock pressed through real
 //! keyboard input reaches Windows, the keyboard hook reports the lock-key
-//! gesture, and the gesture router speaks "scroll lock on" or "scroll lock
-//! off" once the key's state has changed, as NVDA does. Scroll Lock,
+//! gesture, and the reducer thread reads the key's state 30 ms later and
+//! speaks "scroll lock on" or "scroll lock off", as NVDA does. Scroll Lock,
 //! because Caps Lock is the Verbatim modifier under the suite's settings,
 //! where a single press is swallowed, and Num Lock changes what the numpad
 //! navigation gestures send.

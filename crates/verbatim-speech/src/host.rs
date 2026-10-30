@@ -10,7 +10,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::Sender;
+use crate::inbox::SpeechInbox;
 
 use crate::driver::SynthError;
 use crate::manager::{DriverState, QueueEvent};
@@ -66,13 +66,13 @@ struct Owed {
 #[derive(Clone)]
 pub struct SettingsHost {
     shared: Arc<Mutex<HostState>>,
-    queue_tx: Sender<QueueEvent>,
+    queue_tx: Arc<dyn SpeechInbox>,
     persist: PersistArc,
 }
 
 impl SettingsHost {
     pub(crate) fn new(
-        queue_tx: Sender<QueueEvent>,
+        queue_tx: Arc<dyn SpeechInbox>,
         initial: &DriverState,
         synths: Vec<SynthChoice>,
         chosen: bool,
@@ -206,12 +206,13 @@ impl SpeechSettingsHost for SettingsHost {
             let outcome = host.switch_ended(outcome);
             done(outcome);
         });
-        if let Err(crossbeam_channel::SendError(QueueEvent::SwitchSynth { reply, .. })) =
-            self.queue_tx.send(QueueEvent::SwitchSynth {
+        if let Err(QueueEvent::SwitchSynth { reply, .. }) = crate::inbox::post(
+            &*self.queue_tx,
+            QueueEvent::SwitchSynth {
                 id: id.clone(),
                 reply,
-            })
-        {
+            },
+        ) {
             reply(Err(SynthError::Unavailable(
                 "speech pipeline stopped".to_owned(),
             )));
@@ -239,12 +240,14 @@ impl SpeechSettingsHost for SettingsHost {
             upsert(&mut guard.current, id.clone(), value.clone());
         }
         // Apply to the running driver; it takes effect from the next speak.
-        self.queue_tx
-            .send(QueueEvent::ApplySetting {
+        crate::inbox::post(
+            &*self.queue_tx,
+            QueueEvent::ApplySetting {
                 id: id.clone(),
                 value,
-            })
-            .map_err(|_| SynthError::Unavailable("speech pipeline stopped".to_owned()))?;
+            },
+        )
+        .map_err(|_| SynthError::Unavailable("speech pipeline stopped".to_owned()))?;
         Ok(())
     }
 
@@ -277,6 +280,6 @@ impl SpeechSettingsHost for SettingsHost {
             state.current.clone_from(&state.committed);
             state.current.clone()
         };
-        let _ = self.queue_tx.send(QueueEvent::RestoreSettings(restored));
+        let _ = crate::inbox::post(&*self.queue_tx, QueueEvent::RestoreSettings(restored));
     }
 }

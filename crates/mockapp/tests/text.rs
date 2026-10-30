@@ -1099,7 +1099,7 @@ fn say_all_step<S: TextSource>(
     while let Some(input) = inputs.pop() {
         for effect in reduce(state, &input) {
             match effect {
-                Effect::Speak(utterance) => {
+                Effect::Speak(utterance, _) => {
                     assert!(utterance.say_all, "{utterance:?} is read by say-all");
                     step.utterances.push(
                         utterance
@@ -1204,6 +1204,7 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
         &mut source,
         &mut anchors,
         &Input::Command {
+            key: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             command: ReviewCommand::SayAllFromCaret,
             repeat: 0,

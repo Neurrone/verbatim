@@ -12,8 +12,8 @@ use verbatim_model::{
     UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
-    ActiveTheme, IndexMark, Presenter, SoundCue, SpeechEvents, SpeechItem, SpeechManager,
-    SpeechManagerConfig, SpeechSequence, SynthDriver, SynthId, SynthRegistry,
+    ActiveTheme, IndexMark, Presenter, SoundCue, SpeakToken, SpeechEvents, SpeechItem,
+    SpeechManager, SpeechManagerConfig, SpeechSequence, SynthDriver, SynthId, SynthRegistry,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -156,6 +156,7 @@ impl Presenter for SoundingPresenter {
 
 struct Harness {
     manager: SpeechManager,
+    token: SpeakToken,
     log: CaptureLog,
     recorder: Arc<Recorder>,
     tap: Tap,
@@ -179,7 +180,7 @@ fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
     let mixer = Mixer::start_with_tap(Box::new(SilentDevice::new()), Box::new(tap.clone()))
         .expect("the silent device opens");
     let recorder = Arc::new(Recorder::default());
-    let manager = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("capture"),
         saved_settings: Box::new(|_| Vec::new()),
@@ -187,10 +188,12 @@ fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default()),
         presenter,
+        inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
     Harness {
         manager,
+        token,
         log,
         recorder,
         tap,
@@ -216,17 +219,20 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
     };
     let sound = Arc::new(Sound::from_pcm(format, vec![LOUD; SOUND_FRAMES]).expect("a sound"));
     let harness = harness(Some(Box::new(SoundingPresenter { sound })));
-    let id = harness.manager.speak(Utterance {
-        trace_id: TraceId::mint(),
-        priority: SpeechPriority::Queued,
-        segments: vec![
-            UtteranceSegment::text("the"),
-            UtteranceSegment::text("wrold"),
-        ],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
+    let id = harness.manager.speak(
+        &harness.token,
+        Utterance {
+            trace_id: TraceId::mint(),
+            priority: SpeechPriority::Queued,
+            segments: vec![
+                UtteranceSegment::text("the"),
+                UtteranceSegment::text("wrold"),
+            ],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+    );
 
     // The utterance ends once its own audio has played, and the sound,
     // which may play on past that, plays whole.
@@ -274,7 +280,7 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
 
     // A later utterance is heard to its end, so anything the first left
     // playing, such as the sound placed a second time, has played by then.
-    let after = harness.manager.speak(plain("after"));
+    let after = harness.manager.speak(&harness.token, plain("after"));
     assert_eq!(
         harness.recorder.endings_through(after),
         [
@@ -320,7 +326,9 @@ fn an_event_without_a_sound_to_play_is_spoken_instead() {
     // The harness's theme is the default theme with no sound files found,
     // so browse mode, a sound in the default theme, is spoken.
     let harness = harness(None);
-    harness.manager.play_earcon(Earcon::BrowseMode);
+    harness
+        .manager
+        .play_earcon(&harness.token, Earcon::BrowseMode);
     let endings = harness
         .recorder
         .endings
@@ -371,7 +379,7 @@ fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
     assert!(
         harness
             .manager
-            .play_earcon_to_end(Earcon::Exit, STEP_TIMEOUT),
+            .play_earcon_to_end(&harness.token, Earcon::Exit, STEP_TIMEOUT),
         "the exit sound is heard within the bound"
     );
     assert_eq!(
@@ -400,7 +408,7 @@ fn waiting_for_an_event_without_a_sound_returns_once_its_words_are_heard() {
     assert!(
         harness
             .manager
-            .play_earcon_to_end(Earcon::Exit, STEP_TIMEOUT)
+            .play_earcon_to_end(&harness.token, Earcon::Exit, STEP_TIMEOUT)
     );
     let endings: Vec<UtteranceEnding> = harness
         .recorder

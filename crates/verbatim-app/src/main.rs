@@ -2,8 +2,8 @@
 //!
 //! Startup order: refuse to run outside an interactive session, namespace
 //! trace IDs, load config, start tracing, replace any running instance, load locales, bring up the speech pipeline, the
-//! supervisor and its focus listener (decision D13), the reducer and router
-//! threads, the control plane, and the keyboard hook — then run the wxWidgets
+//! supervisor and its focus listener (decision D13), the reducer thread, the
+//! keyboard hook, and the control plane — then run the wxWidgets
 //! GUI loop on this, the process main thread, until shutdown is requested from
 //! the menu, the control plane, or a replacing instance.
 
@@ -14,6 +14,7 @@ mod flight_dump;
 mod harness;
 mod held_keys;
 mod idle;
+mod key_reports;
 mod latency;
 mod live;
 mod requests;
@@ -32,7 +33,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use verbatim_audio::{AudioDevice, Mixer, SilentDevice, WavRecorder};
 use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::{ConfigStore, ConfigValue};
@@ -40,13 +41,12 @@ use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, Statu
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
-use verbatim_input::{
-    DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
-    SharedGestureMap,
+use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout, SharedGestureMap};
+use verbatim_input_windows::{
+    ForegroundView, Injected, Injector, InputHook, KeyHolding, KeyReport,
 };
-use verbatim_input_windows::{ForegroundView, InputHook, KeyHolding, KeyReport, Routed};
 use verbatim_model::{
-    CaretKey, Earcon, Effect, ForegroundWindow, GestureId, Input, LockKey, OutpostId, Pid,
+    Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
     ReaderSettings, TextRequest, TraceId, WindowHandle,
 };
 use verbatim_outpost::protocol::{
@@ -57,8 +57,8 @@ use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
 use verbatim_process::port_queue::{PortQueue, Poster, Received, port_queue};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
-    SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
-    SynthRegistry,
+    QueueItem, SettingId, SettingValue, SpeakToken, SpeechInbox, SpeechInboxTaker, SpeechManager,
+    SpeechManagerConfig, SpeechSettingsHost, SynthId, SynthRegistry,
 };
 use verbatim_synth_capture::CaptureSynth;
 
@@ -70,7 +70,7 @@ use requests::{Asker, DumpTicket, DumpTreeResult, RequestId, RequestTable};
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
 /// tray-list bindings all come from `verbatim_input::bindings_for` for the
 /// active layout (roadmap M3).
-const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
+pub(crate) const SHOW_MENU_GESTURE: &str = "kb:verbatim+v";
 
 /// How long a `DumpTree` control-plane request waits for the outpost's
 /// answer before giving up.
@@ -220,9 +220,9 @@ fn run(
     let reader_settings = config.settings().reader;
 
     // The reducer thread's port: every outpost's frames and the
-    // supervisor's notices (through the supervisor's sink, below), review
-    // and object-navigation commands from the router, the keys and typing
-    // the keyboard hook reports, the index marks speech reaches, GUI events
+    // supervisor's notices (through the supervisor's sink, below), the
+    // keys, gestures and typing the keyboard hook reports, in the order it
+    // decided them, the index marks speech reaches, GUI events
     // and control-plane commands, each one packet posted to it. The port is
     // first in, first out across all its posters, so the reducer takes its
     // inputs in the order they reached it, as NVDA queues keys with events
@@ -248,7 +248,7 @@ fn run(
         themes::prepare(&loaded, &store.sounds_dir(), options)
     };
     themes::send_fetches(&command_tx, &theme);
-    let manager = build_speech_manager(&store, speech_events, theme)?;
+    let (manager, speak_token) = build_speech_manager(&store, speech_events, theme)?;
     // Errors logged from here on play the error sound, through the reducer
     // thread.
     error_sound::report_to(command_tx.clone());
@@ -323,24 +323,14 @@ fn run(
             store: Arc::clone(&store),
             readiness: Arc::clone(&readiness),
             idle_line: Arc::clone(&idle_line),
+            gui_handle: Arc::clone(&gui_handle),
         };
+        // The only thread that speaks: it holds the speaking token, which
+        // the loop hands back when it ends.
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
-            .spawn(move || reducer_loop(command_rx, &context, reader_settings))?;
-    }
-
-    // The gesture router: bound gestures become GUI commands or reducer
-    // inputs sent over `command_tx`. The GUI handle arrives once the GUI thread is up. The
-    // channel is unbounded, as the keyboard hook requires, so the hook
-    // never waits and never drops a key.
-    let (gesture_tx, gesture_rx) = unbounded::<Routed>();
-    {
-        let gui_handle = Arc::clone(&gui_handle);
-        let command_tx = command_tx.clone();
-        thread::Builder::new()
-            .name("verbatim-router".to_owned())
             .spawn(move || {
-                router_loop(&gesture_rx, &gui_handle, &command_tx, keyboard_layout);
+                let _token = reducer_loop(command_rx, &context, reader_settings, speak_token);
             })?;
     }
 
@@ -357,6 +347,25 @@ fn run(
     // The gesture map shared by the hook and the control plane's validation.
     let bound_gestures = bound_gestures(keyboard_layout);
 
+    // Keyboard hook. Everything it decides goes to the reducer's port, and
+    // a key that cancels speech to the speech queue's, both made before
+    // it, through the callbacks in `key_reports`, in the order the keys
+    // were pressed; a key that cancels speech also tells the reducer,
+    // whose say-all stops. Started before the control plane, whose
+    // injected gestures and idle waiters go through it.
+    let hook = InputHook::start(
+        decision_config(&store),
+        Arc::clone(&bound_gestures),
+        key_reports::speech_effect(manager.control(), command_tx.clone()),
+        key_reports::reports(
+            key_reports::Tables::for_layout(keyboard_layout),
+            Arc::clone(&ledger),
+            command_tx.clone(),
+        ),
+        holding,
+        foreground,
+    )?;
+
     // Control plane.
     let server = ControlServer::start(control_handlers(ControlHandlersConfig {
         own_pid,
@@ -364,8 +373,7 @@ fn run(
         outposts: Arc::clone(&outposts),
         ledger: Arc::clone(&ledger),
         bound_gestures: Arc::clone(&bound_gestures),
-        gesture_tx: gesture_tx.clone(),
-        speech_control: manager.control(),
+        injector: hook.injector(),
         gui_handle: Arc::clone(&gui_handle),
         command_tx: command_tx.clone(),
         recorder: Arc::clone(&recorder),
@@ -376,131 +384,6 @@ fn run(
     server_slot
         .set(server)
         .map_err(|_| "control server slot set twice")?;
-
-    // Keyboard hook, last among the input paths so nothing is swallowed
-    // before there is somewhere to route it. A key that cancels speech also
-    // tells the reducer, whose say-all stops; a caret key the hook passed and
-    // the text a key types go to the reducer as they are, on the same
-    // port and so in the order the keys were pressed.
-    let speech_control = manager.control();
-    let cancelled_tx = command_tx.clone();
-    let reports_tx = command_tx.clone();
-    let caret_keys: HashMap<GestureId, CaretKey> =
-        verbatim_input::caret_bindings().into_iter().collect();
-    let clearing_keys: HashSet<GestureId> = verbatim_input::clearing_keys().into_iter().collect();
-    let key_ledger = Arc::clone(&ledger);
-    let hook = InputHook::start(
-        decision_config(&store),
-        Arc::clone(&bound_gestures),
-        gesture_tx,
-        Box::new(move |effect, key| match effect {
-            KeySpeechEffect::Cancel => {
-                speech_control.cancel_through(key);
-                let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled {
-                    at_ms: latency::now_ms(),
-                })));
-            }
-            KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
-        }),
-        Box::new(move |report| {
-            // Every key the hook saw, for the latency line's time from the
-            // last key to speech.
-            match &report {
-                KeyReport::Typed { pressed_at_us, .. } => key_ledger.key_seen(*pressed_at_us, true),
-                KeyReport::Observed { pressed_at_us, .. }
-                | KeyReport::Held { pressed_at_us, .. }
-                | KeyReport::Passed { pressed_at_us, .. } => {
-                    key_ledger.key_seen(*pressed_at_us, false);
-                }
-                KeyReport::Deferred { .. } => {}
-            }
-            let command = match report {
-                KeyReport::Observed {
-                    gesture,
-                    pressed_at_us,
-                } => match caret_keys.get(&gesture.gesture) {
-                    Some(&key) => ShellCommand::CaretKey {
-                        input: Box::new(Input::CaretKey {
-                            trace_id: gesture.trace_id,
-                            key,
-                            pressed_at_ms: pressed_at_us / 1_000,
-                        }),
-                        pressed_at_us,
-                    },
-                    None if clearing_keys.contains(&gesture.gesture) => {
-                        // The typing held is forgotten first; then the key
-                        // is judged like any other (Escape clearing a line
-                        // speaks what it removed).
-                        let _ =
-                            reports_tx.send(ShellCommand::Input(Box::new(Input::ClearingKey {
-                                trace_id: gesture.trace_id,
-                                at_ms: pressed_at_us / 1_000,
-                            })));
-                        ShellCommand::CaretKey {
-                            input: Box::new(Input::CaretKey {
-                                trace_id: gesture.trace_id,
-                                key: CaretKey {
-                                    motion: verbatim_model::CaretMotion::Other,
-                                    select: false,
-                                },
-                                pressed_at_ms: pressed_at_us / 1_000,
-                            }),
-                            pressed_at_us,
-                        }
-                    }
-                    None => return,
-                },
-                // A held key always reaches the reducer thread, which sends
-                // it on; the hook holds only caret keys, so it is one.
-                KeyReport::Held {
-                    gesture,
-                    pressed_at_us,
-                    stroke,
-                } => ShellCommand::HeldKey {
-                    input: caret_keys.get(&gesture.gesture).map(|&key| {
-                        Box::new(Input::HeldKey {
-                            trace_id: gesture.trace_id,
-                            key,
-                            pressed_at_ms: pressed_at_us / 1_000,
-                        })
-                    }),
-                    trace_id: gesture.trace_id,
-                    gesture: gesture.gesture,
-                    pressed_at_us,
-                    stroke,
-                },
-                KeyReport::Deferred { stroke, pressed } => {
-                    ShellCommand::DeferredKey { stroke, pressed }
-                }
-                KeyReport::Passed {
-                    trace_id,
-                    pressed_at_us,
-                } => ShellCommand::CaretKey {
-                    input: Box::new(Input::CaretKey {
-                        trace_id,
-                        key: CaretKey {
-                            motion: verbatim_model::CaretMotion::Other,
-                            select: false,
-                        },
-                        pressed_at_ms: pressed_at_us / 1_000,
-                    }),
-                    pressed_at_us,
-                },
-                KeyReport::Typed {
-                    trace_id,
-                    text,
-                    pressed_at_us,
-                } => ShellCommand::Input(Box::new(Input::CharacterTyped {
-                    trace_id,
-                    text,
-                    at_ms: pressed_at_us / 1_000,
-                })),
-            };
-            let _ = reports_tx.send(command);
-        }),
-        holding,
-        foreground,
-    )?;
 
     // The start, which the reducer reports with the start sound, and the
     // initial outpost target (the focus listener only reports foreground
@@ -688,13 +571,13 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 ///
 /// # Errors
 ///
-/// Returns an error if no registered synthesizer can start, or the audio
-/// device cannot open.
+/// Returns an error if no registered synthesizer can start, the audio
+/// device cannot open, or the speech queue's port cannot be made.
 fn build_speech_manager(
     store: &Arc<Mutex<ConfigStore>>,
     events: Arc<dyn verbatim_speech::SpeechEvents>,
     theme: verbatim_speech::ActiveTheme,
-) -> Result<Arc<SpeechManager>, verbatim_speech::SynthError> {
+) -> Result<(Arc<SpeechManager>, SpeakToken), verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
     let mut registry = SynthRegistry::new();
     // Every native synthesizer runs in a synthesizer host process next to
@@ -738,7 +621,12 @@ fn build_speech_manager(
         None => Mixer::start(device),
     }
     .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
-    Ok(Arc::new(SpeechManager::new(SpeechManagerConfig {
+    // The speech queue's inbox is a completion port, so the keyboard hook's
+    // cancel takes no lock (`docs/design/ownership-input.md`, "The speech
+    // queue's inbox").
+    let (inbox, taker) = port_queue::<QueueItem>()
+        .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
+    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth,
         saved_settings: saved_settings_fn(Arc::clone(store)),
@@ -746,7 +634,28 @@ fn build_speech_manager(
         events: Some(events),
         theme,
         presenter: None,
-    })?))
+        inbox: (Arc::new(PortInbox(inbox)), Box::new(PortTaker(taker))),
+    })?;
+    Ok((Arc::new(manager), token))
+}
+
+/// The speech queue's inbox as a completion port's posting end: one
+/// `PostQueuedCompletionStatus`, which takes no lock and never waits.
+struct PortInbox(Poster<QueueItem>);
+
+impl SpeechInbox for PortInbox {
+    fn post(&self, item: QueueItem) -> Result<(), QueueItem> {
+        self.0.send(item)
+    }
+}
+
+/// The speech queue thread's end of its completion port.
+struct PortTaker(PortQueue<QueueItem>);
+
+impl SpeechInboxTaker for PortTaker {
+    fn take(&mut self) -> Option<QueueItem> {
+        self.0.recv()
+    }
 }
 
 /// Registers the capture synth from `verbatim-synth-capture` alongside
@@ -1017,6 +926,9 @@ struct ReducerContext {
     readiness: Arc<harness::Readiness>,
     /// The control plane's `AwaitIdle` waiters.
     idle_line: Arc<harness::IdleLine>,
+    /// The GUI's handle, once the GUI thread is up, which the menu and the
+    /// shell's lists are shown through (`Effect::Show`).
+    gui_handle: Arc<OnceLock<GuiHandle>>,
 }
 
 /// Where every thread posts the reducer thread's inputs: its port.
@@ -1025,10 +937,9 @@ pub(crate) type Commands = Poster<ShellCommand>;
 /// Everything handed to the reducer thread, each one packet posted to its
 /// port and so taken in the order it arrived: a message from the
 /// supervisor (an outpost's frame, or an outpost's start or end), a
-/// reducer input (a review or object-navigation command from the router, a
-/// caret key, typed text, or a cancelled speech from the keyboard hook, a
-/// mark speech reached), or a control-plane tree dump, answered on the
-/// given channel.
+/// reducer input (a command, a script, a lock key, a caret key, typed text,
+/// or a cancelled speech from the keyboard hook, a mark speech reached), or
+/// a control-plane tree dump, answered on the given channel.
 pub(crate) enum ShellCommand {
     /// A message from the supervisor, put in line by [`outpost_sink`].
     Outpost(OutpostMessage),
@@ -1075,11 +986,12 @@ pub(crate) enum ShellCommand {
     /// The settings dialog's Terminal page applied a change: merge it into
     /// the reducer's reader settings, give it them, and save them.
     TerminalSettings(verbatim_gui::TerminalChange),
-    /// An end-to-end harness's numbered key, handled by the hook and the
-    /// router: everything it caused is ahead of this in line.
+    /// An end-to-end harness's numbered key, handled by the hook:
+    /// everything it caused is ahead of this in line.
     InputHandled(u64),
-    /// A control-plane `AwaitIdle` waiter reached its place in line, named
-    /// by its token in the [`harness::IdleLine`].
+    /// A control-plane `AwaitIdle` waiter reached its place in line behind
+    /// everything the hook handled before it, named by its token in the
+    /// [`harness::IdleLine`].
     AwaitIdle(u64),
     /// Answer the control plane's `DumpFocus` on the channel.
     DumpFocus(Sender<FocusReport>),
@@ -1147,6 +1059,17 @@ struct ReducerThread<'a> {
     /// thread to wait on until it has been heard ([`ShellCommand::Exiting`]).
     exiting: bool,
     exit_sound: Option<verbatim_speech::EarconHeard>,
+    /// The lock keys whose state is to be read, each with when, in press
+    /// order ([`Effect::ReadToggleKey`]): the reducer thread's deadlines.
+    toggle_reads: VecDeque<(LockKey, Instant)>,
+    /// The harness's marks of handled input held behind a lock key's
+    /// announcement still to come.
+    marks: idle::HeldMarks,
+    /// Inputs an effect produced, applied once the current input's effects
+    /// have all been executed, so one input is reduced at a time.
+    follow_ups: Vec<Input>,
+    /// The right to speak, which only this thread holds.
+    token: SpeakToken,
 }
 
 impl ReducerThread<'_> {
@@ -1529,9 +1452,10 @@ impl ReducerThread<'_> {
             }
             ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
             ShellCommand::InputHandled(input) => {
-                self.handled_input = self.handled_input.max(input);
-                if let Some(server) = self.context.server_slot.get() {
-                    server.broadcast_input_handled(input);
+                // Behind a lock key's announcement still to come, as the
+                // key's stroke caused it.
+                for input in self.marks.take(input, self.state.announces_toggle_key()) {
+                    self.input_handled(input);
                 }
             }
             ShellCommand::AwaitIdle(token) => {
@@ -1547,6 +1471,15 @@ impl ReducerThread<'_> {
                     navigator: navigator.cloned(),
                 });
             }
+        }
+    }
+
+    /// Notes that the harness's numbered input `input` has been handled,
+    /// and tells the control plane.
+    fn input_handled(&mut self, input: u64) {
+        self.handled_input = self.handled_input.max(input);
+        if let Some(server) = self.context.server_slot.get() {
+            server.broadcast_input_handled(input);
         }
     }
 
@@ -1616,11 +1549,15 @@ impl ReducerThread<'_> {
     /// has facts or a focus query waiting for it, as a replacement for a
     /// crashed one does), no application's focus is wanted, no key the
     /// hook held back is still waiting to reach its application
-    /// (`docs/design/key-holding.md`), and no terminal's quiet-period timer
-    /// is armed, since what waits for it is spoken when it ends.
+    /// (`docs/design/key-holding.md`), no key or command waits in Core's
+    /// held-key line, no lock key's announcement is still to come, and no
+    /// terminal's quiet-period timer is armed, since what waits for it is
+    /// spoken when it ends.
     fn idle_conditions_clear(&self) -> bool {
         self.requests.outstanding() == 0
             && self.held_keys.is_empty()
+            && !self.state.holds_inputs_back()
+            && !self.state.announces_toggle_key()
             && self.terminal_timer.is_none()
             && self.live.starting() == 0
             && self.focus_now_wanted.is_empty()
@@ -1659,23 +1596,12 @@ impl ReducerThread<'_> {
     /// Runs one input through the reducer, records it in the flight
     /// recorder, and executes the resulting effects.
     fn apply(&mut self, input: Input) {
-        let trace_id = match &input {
-            Input::Event { trace_id, .. }
-            | Input::FetchCompleted { trace_id, .. }
-            | Input::Command { trace_id, .. }
-            | Input::TextCompleted { trace_id, .. }
-            | Input::CaretKey { trace_id, .. }
-            | Input::HeldKey { trace_id, .. }
-            | Input::CharacterTyped { trace_id, .. }
-            | Input::ClearingKey { trace_id, .. }
-            | Input::LockKeyToggled { trace_id, .. }
-            | Input::ClockRead { trace_id, .. }
-            | Input::ClipboardCopied { trace_id, .. }
-            | Input::ShellItemGone { trace_id, .. }
-            | Input::ShellItemUnclickable { trace_id, .. }
-            | Input::PreviewSpeech { trace_id, .. } => *trace_id,
-            _ => TraceId::mint(),
-        };
+        let trace_id = input.trace_id().unwrap_or_else(TraceId::mint);
+        if let Input::Command { command, .. } = &input {
+            tracing::info!(%trace_id, ?command, "gesture");
+        } else if let Input::Script { script, .. } = &input {
+            tracing::info!(%trace_id, ?script, "gesture");
+        }
         // A focus report, taken or refused, has its outpost told the nodes
         // Core holds there once the message is handled ([`send_views`]).
         if let Input::Event {
@@ -1703,6 +1629,14 @@ impl ReducerThread<'_> {
         }
         for effect in effects {
             self.execute(trace_id, effect);
+        }
+        for input in std::mem::take(&mut self.follow_ups) {
+            self.apply(input);
+        }
+        // The marks held behind a lock key's announcement go once it has
+        // been made.
+        for input in self.marks.release(self.state.announces_toggle_key()) {
+            self.input_handled(input);
         }
     }
 
@@ -1811,13 +1745,14 @@ impl ReducerThread<'_> {
     /// Executes one reducer effect.
     fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
-            Effect::Speak(utterance) => {
+            Effect::Speak(utterance, key) => {
                 self.context.ledger.speech_requested(utterance.trace_id);
-                // Speech a key press caused is fenced off by a later key
-                // press's cancel (`SpeechControl::cancel_through`).
-                let key = verbatim_input_windows::key_of(trace_id)
-                    .or_else(|| verbatim_input_windows::key_of(utterance.trace_id));
-                self.context.manager.speak_for_key(utterance, key);
+                // Speech a key press caused, stamped by Core with its
+                // number, is fenced off by a later key press's cancel
+                // (`SpeechControl::cancel_through`).
+                self.context
+                    .manager
+                    .speak_for_key(&self.token, utterance, key);
             }
             Effect::StopSpeech => self.context.manager.control().cancel(),
             Effect::DropExpiredSpeech(now) => self.context.manager.control().drop_expired(now),
@@ -1863,9 +1798,13 @@ impl ReducerThread<'_> {
             // waits for it ([`ShellCommand::Exiting`]). A preview of it is
             // played as any other earcon.
             Effect::PlayEarcon(Earcon::Exit) if self.exiting => {
-                self.exit_sound = Some(self.context.manager.play_earcon_heard(Earcon::Exit));
+                self.exit_sound = Some(
+                    self.context
+                        .manager
+                        .play_earcon_heard(&self.token, Earcon::Exit),
+                );
             }
-            Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
+            Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&self.token, earcon),
             Effect::ReadForegroundFocus => self.fake_focus(trace_id),
             Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
             Effect::BoundHeldKeyWait { key, within_ms } => {
@@ -1878,6 +1817,21 @@ impl ReducerThread<'_> {
                 });
             }
             Effect::ForKey(key, effect) => self.execute(key, *effect),
+            Effect::ReadClock { repeat } => {
+                self.follow_ups.push(read_clock(trace_id, repeat));
+            }
+            Effect::Show(request) => send_gui_command(
+                &self.context.gui_handle,
+                match request {
+                    GuiRequest::Menu => GuiCommand::ShowMenu,
+                    GuiRequest::ShellList(kind) => GuiCommand::OpenShellItemList(kind),
+                },
+            ),
+            Effect::ReadToggleKey { toggle, due_ms } => {
+                let wait = due_ms.saturating_sub(latency::now_ms());
+                self.toggle_reads
+                    .push_back((toggle, Instant::now() + Duration::from_millis(wait)));
+            }
             _ => {}
         }
     }
@@ -2065,8 +2019,8 @@ impl ReducerThread<'_> {
 
     /// The earliest time a shell items request is answered with nothing
     /// if it has had no outcome by then, a request with a deadline is
-    /// ended, a held key's wait for the key ahead of it ends, or the
-    /// focused terminal's quiet-period timer is due.
+    /// ended, a held key's wait for the key ahead of it ends, the focused
+    /// terminal's quiet-period timer is due, or a lock key's state is read.
     fn next_deadline(&self) -> Option<Instant> {
         self.shell_items_wanted
             .next_deadline()
@@ -2074,6 +2028,7 @@ impl ReducerThread<'_> {
             .chain(self.requests.next_deadline())
             .chain(self.held_wait.map(|(_, due)| due))
             .chain(self.terminal_timer.map(|(_, due)| due))
+            .chain(self.toggle_reads.front().map(|&(_, due)| due))
             .min()
     }
 
@@ -2094,6 +2049,12 @@ impl ReducerThread<'_> {
                 trace_id: TraceId::mint(),
                 at_ms,
             });
+        }
+        while let Some(&(toggle, due)) = self.toggle_reads.front()
+            && due <= now
+        {
+            self.toggle_reads.pop_front();
+            self.apply(read_toggle_key(toggle));
         }
     }
 
@@ -2151,7 +2112,8 @@ fn reducer_loop(
     mut command_rx: PortQueue<ShellCommand>,
     context: &ReducerContext,
     settings: ReaderSettings,
-) {
+    token: SpeakToken,
+) -> SpeakToken {
     let mut thread = ReducerThread {
         context,
         state: SrState::new(),
@@ -2170,6 +2132,10 @@ fn reducer_loop(
         held_keys: held_keys::HeldKeys::default(),
         held_wait: None,
         terminal_timer: None,
+        toggle_reads: VecDeque::new(),
+        marks: idle::HeldMarks::default(),
+        follow_ups: Vec::new(),
+        token,
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
@@ -2191,6 +2157,7 @@ fn reducer_loop(
         thread.send_views();
         thread.advance_idle_barrier(&mut command_rx);
     }
+    thread.token
 }
 
 /// What the reducer thread's wait for its next command came to.
@@ -2228,127 +2195,6 @@ fn next_of(received: Received<ShellCommand>) -> Next {
     }
 }
 
-/// The router thread body: bound gestures become GUI commands or reducer
-/// inputs: [`Input::Command`]s for review and object navigation, and what
-/// the time gesture and the lock keys read, for the reducer to speak.
-///
-/// Multi-press: the double-press variants (Verbatim+F12 twice quickly
-/// speaks the date, Verbatim+F11 twice quickly lists the taskbar) take the
-/// press count `verbatim-input` puts on each emitted gesture.
-fn router_loop(
-    gesture_rx: &Receiver<Routed>,
-    gui_handle: &Arc<OnceLock<GuiHandle>>,
-    command_tx: &Commands,
-    layout: KeyboardLayout,
-) {
-    let show_menu = GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding");
-    // The active layout's gesture-to-script table, looked up per press.
-    let scripts: HashMap<GestureId, ScriptAction> =
-        verbatim_input::bindings_for(layout).into_iter().collect();
-    // Lock keys whose new state is announced once [`TOGGLE_KEY_DELAY`] has
-    // passed, in the order pressed.
-    let mut toggles: VecDeque<(Instant, verbatim_input::ToggleKey)> = VecDeque::new();
-    // Marks of handled input and idle waiters that came behind a lock key
-    // whose announcement is still to come: passed on once it has been.
-    let mut behind_toggles: Vec<ShellCommand> = Vec::new();
-    loop {
-        let received = match toggles.front() {
-            Some(&(due, _)) => gesture_rx.recv_deadline(due),
-            None => gesture_rx
-                .recv()
-                .map_err(|_| RecvTimeoutError::Disconnected),
-        };
-        let now = Instant::now();
-        while let Some(&(due, key)) = toggles.front()
-            && due <= now
-        {
-            toggles.pop_front();
-            report_toggle_key(command_tx, key);
-        }
-        if toggles.is_empty() {
-            for command in behind_toggles.drain(..) {
-                let _ = command_tx.send(command);
-            }
-        }
-        let emitted = match received {
-            Ok(Routed::Gesture(emitted)) => emitted,
-            Ok(Routed::Handled(input)) => {
-                pass_in_line(
-                    &toggles,
-                    &mut behind_toggles,
-                    command_tx,
-                    ShellCommand::InputHandled(input),
-                );
-                continue;
-            }
-            Ok(Routed::Barrier(token)) => {
-                pass_in_line(
-                    &toggles,
-                    &mut behind_toggles,
-                    command_tx,
-                    ShellCommand::AwaitIdle(token),
-                );
-                continue;
-            }
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
-        };
-        tracing::info!(trace_id = %emitted.trace_id, gesture = %emitted.gesture, "gesture");
-        if emitted.gesture == show_menu {
-            send_gui_command(gui_handle, GuiCommand::ShowMenu);
-            continue;
-        }
-        if let Some(key) = verbatim_input::ToggleKey::of_gesture(&emitted.gesture) {
-            toggles.push_back((Instant::now() + TOGGLE_KEY_DELAY, key));
-            continue;
-        }
-        let Some(action) = scripts.get(&emitted.gesture) else {
-            continue;
-        };
-        // The shell list is the GUI's; the time is read here and spoken by
-        // the reducer; everything else is a review or object-navigation
-        // command for the reducer.
-        match action {
-            ScriptAction::SpeakTime => report_time_or_date(command_tx, &emitted),
-            ScriptAction::ShowTrayList => send_gui_command(
-                gui_handle,
-                GuiCommand::OpenShellItemList(shell_list_kind(&emitted)),
-            ),
-            other => {
-                if let Some(command) = other.review_command() {
-                    let input = Input::Command {
-                        trace_id: emitted.trace_id,
-                        command,
-                        repeat: emitted.repeat,
-                    };
-                    if command_tx
-                        .send(ShellCommand::Input(Box::new(input)))
-                        .is_err()
-                    {
-                        tracing::warn!("the reducer thread is gone; dropping gesture");
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Passes a mark of handled input or an idle waiter on to the reducer,
-/// behind the announcements of lock keys still to come, which the router
-/// makes after a delay.
-fn pass_in_line(
-    toggles: &VecDeque<(Instant, verbatim_input::ToggleKey)>,
-    behind_toggles: &mut Vec<ShellCommand>,
-    command_tx: &Commands,
-    command: ShellCommand,
-) {
-    if toggles.is_empty() {
-        let _ = command_tx.send(command);
-    } else {
-        behind_toggles.push(command);
-    }
-}
-
 /// The keyboard bindings this milestone ships, as the shared gesture map the
 /// hook consults and the control plane validates against: the menu gesture
 /// plus every review and object-navigation binding for the active layout
@@ -2375,7 +2221,7 @@ fn bound_gestures(layout: KeyboardLayout) -> SharedGestureMap {
 
 /// Sends one command to the GUI when it is up; during the startup window
 /// before `run_gui`'s ready callback fires, the command is dropped with a
-/// warning (there is no GUI to act on it yet).
+/// warning (there is no GUI to act on it yet). Never waits.
 fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) {
     if let Some(handle) = gui_handle.get() {
         handle.send(command);
@@ -2384,41 +2230,31 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
     }
 }
 
-/// How long after a lock key reached the operating system its new state is
-/// read and announced, as NVDA does: Windows has changed the state by then.
-const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(30);
-
-/// Reads a lock key's new state once [`TOGGLE_KEY_DELAY`] has passed, for
-/// the reducer to announce ("caps lock on"); the router waits for it.
-fn report_toggle_key(command_tx: &Commands, key: verbatim_input::ToggleKey) {
+/// A lock key's state, read once Windows has changed it, for the reducer to
+/// announce ("caps lock on"): its toggle bit, as `GetKeyState` reads it on
+/// this thread, which reads no keyboard messages, as the hook thread reads
+/// Num Lock's before each key.
+fn read_toggle_key(toggle: LockKey) -> Input {
+    let vk = match toggle {
+        LockKey::CapsLock => verbatim_input::ToggleKey::CapsLock,
+        LockKey::NumLock => verbatim_input::ToggleKey::NumLock,
+        LockKey::ScrollLock => verbatim_input::ToggleKey::ScrollLock,
+    }
+    .vk();
     // SAFETY: GetKeyState takes a virtual-key code and reads key state.
     let on =
-        unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(key.vk())) }
-            & 1
-            != 0;
-    let key = match key {
-        verbatim_input::ToggleKey::CapsLock => LockKey::CapsLock,
-        verbatim_input::ToggleKey::NumLock => LockKey::NumLock,
-        verbatim_input::ToggleKey::ScrollLock => LockKey::ScrollLock,
-    };
-    let input = Input::LockKeyToggled {
+        unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(vk)) } & 1 != 0;
+    Input::LockKeyToggled {
         trace_id: TraceId::mint(),
-        key,
+        key: toggle,
         on,
-    };
-    if command_tx
-        .send(ShellCommand::Input(Box::new(input)))
-        .is_err()
-    {
-        tracing::debug!("the reducer thread is gone; a lock key's state is not announced");
     }
 }
 
-/// Reads the localized current time and date for the time gesture, for the
-/// reducer to speak the time on a first press and the date on a quick
-/// second (`emitted.repeat`, the number of extra quick presses, which
-/// `verbatim-input` counts on each emitted gesture; see [`router_loop`]).
-fn report_time_or_date(command_tx: &Commands, emitted: &EmittedGesture) {
+/// The localized current time and date, read for the time gesture, whose
+/// effect ran under `trace_id`, for the reducer to speak the time on a
+/// first press and the date on a quick second (`repeat`).
+fn read_clock(trace_id: TraceId, repeat: u8) -> Input {
     let time = datetime::local_time();
     let date = datetime::local_date();
     if time.is_none() || date.is_none() {
@@ -2428,28 +2264,11 @@ fn report_time_or_date(command_tx: &Commands, emitted: &EmittedGesture) {
             "the system time or date could not be formatted"
         );
     }
-    let input = Input::ClockRead {
-        trace_id: emitted.trace_id,
-        repeat: emitted.repeat,
+    Input::ClockRead {
+        trace_id,
+        repeat,
         time,
         date,
-    };
-    if command_tx
-        .send(ShellCommand::Input(Box::new(input)))
-        .is_err()
-    {
-        tracing::warn!("the reducer thread is gone; dropping gesture");
-    }
-}
-
-/// The shell surface Verbatim+F11 lists for the press the router received:
-/// the system tray on a single press (`repeat` 0), the taskbar on a double
-/// press, counted as for [`report_time_or_date`]. Pure, and unit tested below.
-fn shell_list_kind(emitted: &EmittedGesture) -> ShellItemKind {
-    if emitted.repeat == 0 {
-        ShellItemKind::SystemTray
-    } else {
-        ShellItemKind::Taskbar
     }
 }
 
@@ -2504,9 +2323,9 @@ struct ControlHandlersConfig {
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     ledger: Arc<LatencyLedger>,
     bound_gestures: SharedGestureMap,
-    gesture_tx: crossbeam_channel::Sender<Routed>,
-    /// Cancels speech for an injected gesture, as a key press does.
-    speech_control: verbatim_speech::SpeechControl,
+    /// Injects gestures and idle waiters through the keyboard hook's
+    /// thread, which numbers them in line with the keys.
+    injector: Injector,
     gui_handle: Arc<OnceLock<GuiHandle>>,
     command_tx: Commands,
     recorder: SharedRecorder,
@@ -2523,8 +2342,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         outposts,
         ledger,
         bound_gestures,
-        gesture_tx,
-        speech_control,
+        injector,
         gui_handle,
         command_tx,
         recorder,
@@ -2532,9 +2350,8 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         readiness,
         idle_line,
     } = config;
-    let cancelled_tx = command_tx.clone();
     let focus_tx = command_tx.clone();
-    let idle_router = gesture_tx.clone();
+    let idle_injector = injector.clone();
     ServerHandlers {
         status: Box::new(move || {
             let outposts: Vec<OutpostStatus> = outposts
@@ -2565,27 +2382,13 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
             if !bound_gestures.load().contains(&gesture) {
                 return Err(format!("gesture {gesture} is not bound"));
             }
-            // Its keys never pass the hook, which cancels speech for every
-            // key press; executing a gesture cancels speech in NVDA too, and
-            // stops say-all. It is numbered as a key press is, so speech an
-            // earlier key caused cannot follow its cancel.
-            let key = verbatim_input_windows::next_key();
-            let trace_id = TraceId::mint();
-            verbatim_input_windows::record_key_origin(trace_id, key);
-            speech_control.cancel_through(key);
-            let _ = cancelled_tx.send(ShellCommand::Input(Box::new(Input::SpeechCancelled {
-                at_ms: latency::now_ms(),
-            })));
-            gesture_tx
-                .send(Routed::Gesture(EmittedGesture {
-                    trace_id,
-                    gesture,
-                    // An injected gesture is always a single, first press;
-                    // multi-press counting applies to real key streams in
-                    // the decision machine, not control-plane injection.
-                    repeat: 0,
-                }))
-                .map_err(|_| "the gesture router is gone".to_owned())
+            // Its keys never pass the hook, so the hook's thread is handed
+            // it: it numbers it in line with the keys and cancels speech
+            // through that number, as for a key press; executing a gesture
+            // cancels speech in NVDA too, and stops say-all.
+            injector
+                .inject(Injected::Gesture(gesture))
+                .map_err(|_| "the keyboard hook is gone".to_owned())
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
         dump_tree: Box::new(move |locations| request_dump_tree(&command_tx, locations)),
@@ -2596,7 +2399,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         }),
         quit: Box::new(move || request_shutdown(&gui_handle)),
         await_idle: Box::new(move |after_input, timeout| {
-            idle_line.wait(&idle_router, after_input, timeout)
+            idle_line.wait(&idle_injector, after_input, timeout)
         }),
         dump_focus: Box::new(move || {
             let (reply_tx, reply_rx) = bounded(1);
@@ -2638,28 +2441,6 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The Verbatim+F11 press the router receives, with its repeat count.
-    fn tray_list_press(repeat: u8) -> EmittedGesture {
-        EmittedGesture {
-            trace_id: TraceId::mint(),
-            gesture: GestureId::parse("kb:verbatim+f11").expect("valid binding"),
-            repeat,
-        }
-    }
-
-    #[test]
-    fn a_single_press_lists_the_system_tray() {
-        assert_eq!(
-            shell_list_kind(&tray_list_press(0)),
-            ShellItemKind::SystemTray
-        );
-    }
-
-    #[test]
-    fn a_double_press_lists_the_taskbar() {
-        assert_eq!(shell_list_kind(&tray_list_press(1)), ShellItemKind::Taskbar);
-    }
 
     /// A wait for a deadline that runs out with no command wakes the
     /// reducer thread to check its deadlines rather than ending it, however

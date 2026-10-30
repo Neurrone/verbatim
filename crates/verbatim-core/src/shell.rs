@@ -7,11 +7,14 @@
 //! from which Core decides what the keyboard hook reads of it. The shell
 //! reads each fact (a key's state, the clock, the clipboard) and the
 //! reducer decides what is said and how, so all speech is ordered,
-//! cancellable and recorded in one place.
+//! cancellable and recorded in one place. The scripts of the gestures that
+//! are not review commands, the menu, the time and the shell's lists, are
+//! here too: each asks the shell to read or show something
+//! (`docs/design/ownership-input.md`, "The router's work as effects").
 
 use verbatim_model::{
-    Earcon, Effect, Input, LockKey, Message, Phrase, SegmentContent, SpeechPriority, TraceId,
-    Utterance, UtteranceSegment,
+    Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Script, SegmentContent,
+    ShellItemKind, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
 use crate::state::SrState;
@@ -24,7 +27,17 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::Exiting { replaced } => exiting(*replaced),
         Input::ErrorLogged => error_logged(),
         Input::ApplicationNotResponding { .. } => not_responding(),
-        Input::LockKeyToggled { trace_id, key, on } => lock_key(*trace_id, *key, *on),
+        Input::ToggleKeyPressed {
+            toggle,
+            pressed_at_ms,
+            ..
+        } => toggle_key_pressed(state, *toggle, *pressed_at_ms),
+        Input::LockKeyToggled { trace_id, key, on } => {
+            // The announcement at the front has come; one from a dump made
+            // before announcements were kept has nothing to take.
+            state.toggle_keys.pop_front();
+            lock_key(*trace_id, *key, *on)
+        }
         Input::ClockRead {
             trace_id,
             repeat,
@@ -64,14 +77,54 @@ fn utterance(
     priority: SpeechPriority,
     segments: Vec<UtteranceSegment>,
 ) -> Effect {
-    Effect::Speak(Utterance {
-        trace_id,
-        priority,
-        segments,
-        source: None,
-        say_all: false,
-        validity: None,
-    })
+    Effect::Speak(
+        Utterance {
+            trace_id,
+            priority,
+            segments,
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )
+}
+
+/// Runs a gesture's script, pressed `repeat` extra times in quick
+/// succession: the time is read, or the menu or a shell list shown.
+pub(crate) fn script(script: Script, repeat: u8) -> Vec<Effect> {
+    vec![match script {
+        Script::ReportTime => Effect::ReadClock { repeat },
+        Script::ShowMenu => Effect::Show(GuiRequest::Menu),
+        Script::ShellList => Effect::Show(GuiRequest::ShellList(shell_list_kind(repeat))),
+    }]
+}
+
+/// The shell surface the tray-list gesture lists: the system tray on a
+/// single press (`repeat` 0), the taskbar on a double press.
+pub(crate) fn shell_list_kind(repeat: u8) -> ShellItemKind {
+    if repeat == 0 {
+        ShellItemKind::SystemTray
+    } else {
+        ShellItemKind::Taskbar
+    }
+}
+
+/// How long after a lock key reached the operating system its new state is
+/// read and announced, as NVDA does: Windows has changed the state by then.
+pub(crate) const TOGGLE_KEY_DELAY_MS: u64 = 30;
+
+/// A lock key reached the operating system at `pressed_at_ms`: its
+/// announcement is to come, in press order, once the shell has read the
+/// key's state [`TOGGLE_KEY_DELAY_MS`] later. It never waits behind a held
+/// key, as NVDA starts the announcement's timer when the key is pressed,
+/// outside its script queue.
+fn toggle_key_pressed(state: &mut SrState, toggle: LockKey, pressed_at_ms: u64) -> Vec<Effect> {
+    state.toggle_keys.push_back(toggle);
+    vec![Effect::ReadToggleKey {
+        toggle,
+        due_ms: pressed_at_ms + TOGGLE_KEY_DELAY_MS,
+    }]
 }
 
 /// Verbatim has started: the start sound, as NVDA plays it. No start
@@ -186,5 +239,20 @@ fn menu_or_switch_ended(state: &SrState, ended_at_us: u64) -> Vec<Effect> {
         Vec::new()
     } else {
         vec![Effect::ReadForegroundFocus]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_single_press_lists_the_system_tray() {
+        assert_eq!(shell_list_kind(0), ShellItemKind::SystemTray);
+    }
+
+    #[test]
+    fn a_double_press_lists_the_taskbar() {
+        assert_eq!(shell_list_kind(1), ShellItemKind::Taskbar);
     }
 }

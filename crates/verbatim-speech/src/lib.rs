@@ -15,6 +15,7 @@ mod driver;
 mod events;
 mod host;
 pub mod hosting;
+mod inbox;
 mod manager;
 mod registry;
 mod settings;
@@ -27,8 +28,9 @@ pub use driver::{
 };
 pub use events::SpeechEvents;
 pub use host::{PersistFn, SettingsHost};
+pub use inbox::{QueueItem, SpeechInbox, SpeechInboxTaker, channel_inbox};
 pub use manager::{
-    EarconHeard, SavedSettingsFn, SpeechControl, SpeechManager, SpeechManagerConfig,
+    EarconHeard, SavedSettingsFn, SpeakToken, SpeechControl, SpeechManager, SpeechManagerConfig,
 };
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};

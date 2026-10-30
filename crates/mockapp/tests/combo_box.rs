@@ -310,7 +310,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
     )
     .into_iter()
     .map(|effect| match effect {
-        Effect::Speak(utterance) => Said::Speech(
+        Effect::Speak(utterance, _) => Said::Speech(
             utterance
                 .segments
                 .into_iter()

@@ -62,35 +62,56 @@ Public API:
   controls from. Label fields are Fluent message ids, never display text.
 - `SynthRegistry`, `SynthFactory` — drivers registered by id, built on
   demand, switchable at runtime.
-- `SpeechManager` — `new(SpeechManagerConfig)`, `speak(utterance)`, which
-  returns the `UtteranceId` the utterance's milestones and ending are
-  reported under, and `settings_host(persist)`. The config carries the
+- `SpeechManager` — `new(SpeechManagerConfig)`, which returns the manager
+  with the one `SpeakToken`, `speak(token, utterance)`, which returns the
+  `UtteranceId` the utterance's milestones and ending are reported under,
+  and `settings_host(persist)`. `speak`, `speak_for_key`, `play_earcon`,
+  `play_earcon_heard` and `play_earcon_to_end` take `&SpeakToken`, whose
+  field is private to this crate; it is not `Clone` and holds a
+  `PhantomData<Cell<()>>`, so it is `Send` but not `Sync` and only the
+  thread that owns it, the reducer's in Verbatim, speaks ("Only the
+  reducer speaks", `docs/architecture.md`, section 2). The config carries the
   registry, the initial synth, a `SavedSettingsFn` that reads any
   synthesizer's persisted setting values, the `Arc<Mixer>` speech plays
   through (the manager adds its own source to it, and a second for
   events' sounds), an optional observer,
   the `ActiveTheme` to start with (`theme`: the configured theme, its
-  sounds loaded, so the manager never holds a stand-in), and an optional
-  presenter (`presenter`). `control()` returns a `SpeechControl`.
+  sounds loaded, so the manager never holds a stand-in), an optional
+  presenter (`presenter`), and the queue thread's inbox (`inbox`, below).
+  `control()` returns a `SpeechControl`.
   `themes()` returns the manager's `ThemeHandle`, holding that theme,
   which the default presenter and `play_earcon` read and the settings
   dialog switches.
-  `play_earcon(earcon)` reports an event at once (`Effect::PlayEarcon`)
+  `play_earcon(token, earcon)` reports an event at once (`Effect::PlayEarcon`)
   as the active theme says: its sound plays now on the events' own mixer
   source, mixed over speech and never cancelled by it (a progress tone
   rising with the percentage), and its words, when the theme speaks it or
   its sound is unavailable, are queued as an utterance.
-  `play_earcon_heard(earcon)` does the same and returns at once with an
+  `play_earcon_heard(token, earcon)` does the same and returns at once with an
   `EarconHeard`, whose `wait_until(deadline)` waits until the event has
   been heard: its sound plays over an utterance of silence as long as it
   is on the events' source, whose ending says the sound has played to its
   end, and its words, if any, are spoken to their end. Verbatim plays its
   exit sound this way, on the reducer thread, while the main thread waits
-  before it exits. `play_earcon_to_end(earcon, timeout)` plays and waits
+  before it exits. `play_earcon_to_end(token, earcon, timeout)` plays and waits
   in one call. Every ending passes the manager's own waiters on its way to the
   configured observer.
   `play_sound(sound, gain)` plays any sound at once on the same source,
-  for the settings dialog to let a sound be heard.
+  for the settings dialog to let a sound be heard; it takes no token.
+- `SpeechInbox`, `SpeechInboxTaker` and `QueueItem` — the queue thread's
+  inbox (`docs/design/ownership-input.md`, "The speech queue's inbox"):
+  every event the queue thread takes, from the manager, `SpeechControl`,
+  the settings host, the synth thread and the playback listener, is an
+  opaque `QueueItem` posted to one `Arc<dyn SpeechInbox>`
+  (`post(item) -> Result<(), QueueItem>`, never waiting) and taken in
+  order by the queue thread's `SpeechInboxTaker` (`take`, waiting). The
+  inbox is first in, first out across posters, so a key's cancel and
+  every `Speak` keep the one order the fence depends on. Verbatim gives
+  it a completion port, whose post takes no lock, since the keyboard
+  hook's thread cancels speech through it on every key;
+  `channel_inbox()` makes a crossbeam pair, for this crate's tests and
+  any pipeline no hook posts to, whose post takes the channel's waker
+  lock.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
   any thread without blocking, which the keyboard hook and the reducer's
   effects use: `cancel()` cancels current and queued speech and ends a
@@ -296,10 +317,10 @@ cancellation of expired focus speech"). Besides an `Interrupt` utterance,
 three things end speech early, all carried to the queue thread as events:
 
 - `SpeechControl::cancel_through`, which every key press calls with its
-  key sequence number, cancels everything as above, at once, and fences
+  number (`verbatim_model::KeySeq`), cancels everything as above, at once, and fences
   off speech an earlier key press caused that reaches the queue thread
   after it: `SpeechManager::speak_for_key`, given that earlier press's
-  number, ends such an utterance cancelled, announced as queued and ended
+  number, which Core stamped on it, ends such an utterance cancelled, announced as queued and ended
   together, unspoken, exactly as if it had come before the cancel. A
   press cancels from the hook thread while the press before it may still
   be on its way to the reducer; NVDA runs a key's cancel in order behind

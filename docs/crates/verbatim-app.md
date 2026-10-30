@@ -5,7 +5,11 @@ The composition root: `verbatim.exe`. Only the reducer speaks
 `Effect` of `reduce`, and the shell's threads turn what they learn into
 `Input`s, posted to the reducer thread's port, never calling the speech
 manager to speak; the keyboard hook's cancel, pause and resume are its one
-speech send. Its `clipboard` module is the one
+speech send. The compiler holds this: every speaking function of the
+speech manager takes the `SpeakToken` `SpeechManager::new` makes, which
+`run` moves into `reducer_loop`, which hands it back when the loop ends;
+the settings window's sound preview plays with `play_sound`, which takes
+none. Its `clipboard` module is the one
 shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
 Win32 clipboard interaction and reads the clipboard back, and tells the
 reducer how the copy went (`Input::ClipboardCopied`, with the trace of the
@@ -22,18 +26,24 @@ message-only window made for that one write and destroyed after it
 (`SetClipboardData` fails on a clipboard opened with no owner window, and
 a window kept on a thread that pumps no messages would leave another
 application's `EmptyClipboard` waiting), and frees its global memory
-whenever the clipboard did not take it. The gesture router also
-reads a lock key's new state 30 ms after the keyboard hook reports it
-reached the operating system, waiting for its channel with a deadline
-rather than starting a thread per key, and tells the reducer
-(`Input::LockKeyToggled`), which says it ("caps lock on"). The reducer thread
+whenever the clipboard did not take it. A lock key's press reaches the
+reducer as `Input::ToggleKeyPressed`; Core asks for its state 30 ms later
+(`Effect::ReadToggleKey`), which the reducer thread keeps among its
+deadlines (`toggle_reads`), reads with `GetKeyState` when it passes and
+enters as `Input::LockKeyToggled`, which Core says ("caps lock on"). The
+time gesture's `Effect::ReadClock` is read on the reducer thread, as
+`GetTimeFormatEx` and `GetDateFormatEx` word it, and applied as
+`Input::ClockRead` with the trace the effect ran under, after the current
+input's effects (`follow_ups`), so one input is reduced at a time;
+`Effect::Show` posts the menu or a shell list to the GUI, dropped with a
+warning before the GUI is up. The reducer thread
 waits only on its own I/O completion port
 (`verbatim_process::port_queue`; `docs/design/communication.md`, section
 6.2) and takes everything posted to it, one packet per input, in the
 order it arrived: the supervisor's messages, each outpost's frames among
 them, posted by the relay as it reads them (through an `EventSink` that
-wraps each in `ShellCommand::Outpost`), the router's commands, the
-keyboard hook's keys and typing, speech marks, GUI events and
+wraps each in `ShellCommand::Outpost`), the keyboard hook's keys,
+gestures and typing, speech marks, GUI events and
 control-plane commands, so a key is reduced before an application's
 reaction that reached Core after it, and after one that reached Core
 before it, however busy the reducer was, as NVDA queues keys with events
@@ -43,10 +53,32 @@ path as an accessibility event; `Effect::Activate` is executed there alongside
 `Speak` and `Fetch`, and so are
 `Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
 manager's `SpeechControl` (`cancel` and `drop_expired`), while
-`Effect::CopyToClipboard` is handed to the clipboard thread. The router builds its gesture
-map and its gesture-to-script table from `verbatim_input::bindings_for` for
-the configured keyboard layout, so the active review and navigation bindings
-follow `settings.toml`'s `keyboard.layout`.
+`Effect::CopyToClipboard` is handed to the clipboard thread. The hook's
+gesture map and `key_reports`' gesture-to-script table come from
+`verbatim_input::bindings_for` for the configured keyboard layout, so the
+active review and navigation bindings follow `settings.toml`'s
+`keyboard.layout`.
+
+The keyboard hook's two callbacks are the `key_reports` module, which
+runs on the hook thread and is checked by `cargo xtask ci`'s hook rule
+(`xtask/src/ownership.rs`): the speech effect calls `cancel_through` with
+the key's number and posts `Input::SpeechCancelled`, or toggles the
+pause; the report callback notes the key in the latency ledger and turns
+each `KeyReport` into its `ShellCommand`s, by lookups in tables made when
+the hook starts (`key_reports::Tables`), and posts them to the reducer's
+port in the order the hook decided them. An observed caret key becomes
+`Input::CaretKey`; a clearing key `Input::ClearingKey`, then
+`Input::CaretKey` with `CaretMotion::Other`; Verbatim+V `Input::Script`
+with `Script::ShowMenu`; the time and tray-list bindings `Input::Script`
+with `Script::ReportTime` and `Script::ShellList`; a review or
+object-navigation binding `Input::Command`; a lock key's gesture
+`Input::ToggleKeyPressed`; an unbound gesture nothing; `Handled` the
+harness mark `ShellCommand::InputHandled` and `Barrier` the idle waiter
+`ShellCommand::AwaitIdle`. Every user input carries its key number. The
+reducer thread logs each `Command` and `Script` it applies, since the
+hook thread writes no log. The speech queue's inbox is a completion
+port too (`PortInbox` and `PortTaker` over `port_queue::<QueueItem>`), so
+the hook's cancel takes no lock.
 
 The end-to-end harness's hooks (private `harness` module):
 
@@ -64,11 +96,13 @@ The end-to-end harness's hooks (private `harness` module):
   known), the same condition `StatusInfo::ready` reports, so a test waits
   on the event rather than asking again and again.
 - The idle barrier: the keyboard hook reports each numbered key stroke
-  handled (`Routed::Handled`), and the router passes it to the reducer
-  thread behind whatever the stroke caused (`ShellCommand::InputHandled`),
-  which records it and broadcasts `Frame::InputHandled`. A control-plane
-  `AwaitIdle` travels the same way, as `Routed::Barrier` through the
-  router, so it is answered only after every key before it; on the
+  handled (`KeyReport::Handled`), posted to the reducer thread behind
+  whatever the stroke caused (`ShellCommand::InputHandled`), which records
+  it and broadcasts `Frame::InputHandled`; a mark taken while a lock key's
+  announcement is still to come is held (`idle::HeldMarks`) and handed on
+  after the input that makes it. A control-plane `AwaitIdle` is injected
+  through the hook thread (`Injected::Barrier`), so it is answered only
+  after every key and injected gesture before it; on the
   reducer thread it waits until the input it names has been handled, then
   runs a round through every child (`idle.rs`, `IdleBarrier`;
   `docs/design/communication.md`, section 6.7). The supervisor's relay
@@ -82,7 +116,9 @@ The end-to-end harness's hooks (private `harness` module):
   on its port and checks its own conditions: no outpost request
   outstanding, no outpost still starting, no focus wanted from an outpost
   being started (a crashed outpost's replacement), no key the hook held back still waiting to be
-  passed on, and no terminal's quiet-period timer armed, since what waits
+  passed on, no key or command waiting in Core's held-key line
+  (`SrState::holds_inputs_back`), no lock key's announcement still to come
+  (`SrState::announces_toggle_key`), and no terminal's quiet-period timer armed, since what waits
   for it is spoken when it ends. If they hold, the waiters are answered once
   everything queued so far has reached the speech manager; if not, the
   round runs again once they clear. A wait that runs out answers with
@@ -119,8 +155,8 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   post, so the hook never waits, and in the order the keys were
   pressed. The hook's `DecisionConfig` takes the two speech interrupt
   settings from `keyboard.speech_interrupt_for_characters` and
-  `keyboard.speech_interrupt_for_enter`. The router maps a script action
-  to its reducer command with `ScriptAction::review_command`.
+  `keyboard.speech_interrupt_for_enter`. `key_reports` maps a script
+  action to its reducer command with `ScriptAction::review_command`.
 - Held caret keys (`docs/design/key-holding.md`): the hook holds the
   caret table's keys while a `KeyHolding` switch is on, which the reducer
   thread sets after every input from `SrState::holds_caret_keys`, and
@@ -282,7 +318,7 @@ knowing for review:
   every input from its port (`Commands`, a `port_queue::Poster` of
   `ShellCommand`s, is what every other thread posts through), first in,
   first out across all its posters: the supervisor's messages
-  (`ShellCommand::Outpost`), router inputs, the keyboard hook's keys,
+  (`ShellCommand::Outpost`), the keyboard hook's keys and gestures,
   speech marks, and control-plane requests. It passes every supervisor
   message through the supervisor's `Frames`, which turns each outpost's
   frame into the message it carries, on the reducer's thread whatever its
@@ -486,8 +522,10 @@ knowing for review:
   (`OutpostMessage::ForegroundWindow`) as `Input::ForegroundWindow`, with
   Verbatim's own integrity level read once, from which Core decides the
   keyboard hook's view of the foreground), the reducer thread
-  (`ReducerThread`, described below), the gesture router (bound gestures to
-  `GuiCommand`s or reducer inputs), the control server with its
+  (`ReducerThread`, described below), the keyboard hook (given
+  `key_reports`' callbacks; started before the control plane, whose
+  gestures and idle waiters go through its `Injector`), the control
+  server with its
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
   `DumpTicket`, whether locations are read, and a one-answer reply
   channel to the reducer thread and
@@ -495,29 +533,20 @@ knowing for review:
   `ShellCommand::DumpTreeGivenUp` with the ticket, and the reducer thread
   sends the outpost a `Cancel`, which withdraws the dump if it has not
   started; `dump_recorder` calls `flight_dump::dump_now` directly, no
-  outpost round trip needed; an injected gesture cancels speech before it
-  is sent, as a key press does, since its keys never pass the hook),
-  the keyboard hook last among input paths (given a callback that maps
-  each `KeySpeechEffect` to the speech manager's `SpeechControl`: `Cancel`
-  to `cancel_through` with the press's key sequence number, `TogglePause`
-  to `toggle_pause`; the reducer thread speaks each `Effect::Speak` with
-  `speak_for_key`, under the key press that caused its input or its
-  utterance's trace, if one did, and a gesture the control plane injects
-  is numbered as a key press is), the startup announcement, and
-  finally the GUI loop on the main thread. The gesture router handles
-  Verbatim+V, which pops the menu, the lock keys, whose new state it
-  reads for the reducer, and every gesture in the active layout's bindings table:
-  review and object-navigation scripts become `Input::Command`s for the
-  reducer thread, while Verbatim+F12 reads the time and date, as
-  `GetTimeFormatEx` and `GetDateFormatEx` word them, into
-  `Input::ClockRead`, whose reducer speaks the time on a first press and
-  the date on a quick second, interrupting, and
-  Verbatim+F11 opens the system tray list via
-  `GuiCommand::OpenShellItemList`. A quick second press speaks the date or
-  lists the taskbar instead: `verbatim-input` counts quick presses on each
-  emitted gesture, and the router passes that count to
-  `Input::ClockRead` and to `shell_list_kind`, which maps it to the
-  listed surface. The list dialog's items, and the position of the item
+  outpost round trip needed; `send_gesture` checks the gesture is
+  parsable, bound and no lock key's, then injects it, and the hook thread
+  numbers it and cancels speech through its number, as for a key press,
+  since its keys never pass the hook, or answers "the keyboard hook is
+  gone" once the hook has stopped), the startup announcement, and
+  finally the GUI loop on the main thread. The reducer thread speaks each
+  `Effect::Speak` with `speak_for_key` and the key number Core stamped on
+  it. Verbatim+V's script opens the menu (`Effect::Show`), Verbatim+F12's
+  reads the time and Verbatim+F11's opens the system tray list
+  (`GuiCommand::OpenShellItemList`), each waiting behind a held caret key
+  as a review command does; a quick second press speaks the date or lists
+  the taskbar instead: `verbatim-input` counts quick presses on each
+  emitted gesture, carried on `Input::Script` to Core, whose
+  `shell_list_kind` maps it to the listed surface. The list dialog's items, and the position of the item
   a click button acts on, come through `AppShellItemsHost`, which posts
   `ShellCommand::ShellItems` with the dialog's `ShellAsk` to the reducer
   thread: it finds the taskbar's process (`Shell_TrayWnd`'s owner, a

@@ -8,7 +8,7 @@
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, Earcon, Effect, ForegroundWindow, HookForeground, Input, LockKey, Message,
+    Backend, Earcon, Effect, ForegroundWindow, HookForeground, Input, KeySeq, LockKey, Message,
     NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, Role,
     SegmentContent, SpeechPriority, StateSet, TraceId, Utterance, UtteranceSegment, WindowFacts,
     WindowHandle,
@@ -16,14 +16,17 @@ use verbatim_model::{
 
 /// An utterance of `content` alone, with no source node.
 fn said(trace_id: TraceId, priority: SpeechPriority, content: SegmentContent) -> Effect {
-    Effect::Speak(Utterance {
-        trace_id,
-        priority,
-        segments: vec![UtteranceSegment::new(content)],
-        source: None,
-        say_all: false,
-        validity: None,
-    })
+    Effect::Speak(
+        Utterance {
+            trace_id,
+            priority,
+            segments: vec![UtteranceSegment::new(content)],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )
 }
 
 fn effects_of(input: &Input) -> Vec<Effect> {
@@ -403,4 +406,82 @@ fn the_latest_foreground_report_decides() {
             keyboard_thread: None,
         })
     );
+}
+
+#[test]
+fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
+    let mut state = SrState::new();
+    // A focus whose typing is echoed.
+    let _ = reduce(
+        &mut state,
+        &Input::Settings(verbatim_model::ReaderSettings {
+            speak_typed_characters: verbatim_model::TypingEcho::Always,
+            ..verbatim_model::ReaderSettings::default()
+        }),
+    );
+    let _ = reduce(&mut state, &focus_in_window(5, false, 500_000));
+    let effects = reduce(
+        &mut state,
+        &Input::ToggleKeyPressed {
+            trace_id: TraceId::mint(),
+            key: KeySeq::new(1),
+            toggle: LockKey::ScrollLock,
+            pressed_at_ms: 1_000,
+        },
+    );
+    assert_eq!(
+        effects,
+        [Effect::ReadToggleKey {
+            toggle: LockKey::ScrollLock,
+            due_ms: 1_030
+        }]
+    );
+    assert!(state.announces_toggle_key());
+    // "a", pressed as key 2 within the 30 ms, is spoken with its number.
+    let letter = TraceId::mint();
+    let effects = reduce(
+        &mut state,
+        &Input::CharacterTyped {
+            trace_id: letter,
+            key: KeySeq::new(2),
+            text: "a".to_owned(),
+            at_ms: 1_010,
+        },
+    );
+    let [Effect::Speak(utterance, key)] = effects.as_slice() else {
+        panic!("expected the letter echoed: {effects:?}");
+    };
+    assert_eq!(
+        (utterance.segments.as_slice(), *key),
+        (
+            [UtteranceSegment::new(SegmentContent::Character(
+                "a".to_owned()
+            ))]
+            .as_slice(),
+            Some(KeySeq::new(2))
+        )
+    );
+    assert!(state.announces_toggle_key());
+    // The announcement carries no number, so the letter's cancel does not
+    // fence it off.
+    let toggled = TraceId::mint();
+    assert_eq!(
+        reduce(
+            &mut state,
+            &Input::LockKeyToggled {
+                trace_id: toggled,
+                key: LockKey::ScrollLock,
+                on: true,
+            }
+        ),
+        [said(
+            toggled,
+            SpeechPriority::Interrupt,
+            SegmentContent::Phrase(Phrase::LockKeyState {
+                key: LockKey::ScrollLock,
+                on: true
+            }),
+        )]
+    );
+    assert!(!state.announces_toggle_key());
 }

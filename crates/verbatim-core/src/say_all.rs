@@ -319,14 +319,17 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
         }
         // Read by say-all, so the theme's "play sounds during say all"
         // setting applies to it.
-        effects.push(Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source: None,
-            validity: None,
-            say_all: true,
-        }));
+        effects.push(Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Queued,
+                segments,
+                source: None,
+                validity: None,
+                say_all: true,
+            },
+            None,
+        ));
         if let Some(say_all) = state.say_all.as_mut() {
             say_all.queued.extend(marks);
         }

@@ -116,7 +116,7 @@ fn spoken_in(
     )
     .into_iter()
     .filter_map(|effect| match effect {
-        Effect::Speak(utterance) => Some(
+        Effect::Speak(utterance, _) => Some(
             utterance
                 .segments
                 .into_iter()
@@ -341,7 +341,7 @@ fn said(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
     )
     .into_iter()
     .filter_map(|effect| match effect {
-        Effect::Speak(utterance) => Some(Said::Speech(
+        Effect::Speak(utterance, _) => Some(Said::Speech(
             utterance
                 .segments
                 .into_iter()

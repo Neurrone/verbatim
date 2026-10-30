@@ -5,92 +5,143 @@ never-blocking imperative shell around [verbatim-input](verbatim-input.md)'s
 pure `DecisionMachine`. It is a separate crate so that the machine, the key
 names, and the gesture tables carry no Windows dependency.
 
-Public API: `InputHook::start(config, map, events, speech, reports,
-holding, foreground)`, which installs `WH_KEYBOARD_LL` on a dedicated
-thread; drop uninstalls. The hook thread hooks nothing else and sends
-nowhere else (architecture section 5): what it needs to know of the
-window in front, `foreground`, is Core's.
-`events` is the gesture router's channel of `Routed` values, in the order
-the keys came. It must be unbounded, so that no key is ever lost, and
-`start` refuses a bounded one with `InvalidInput`. The values are
-`Gesture`, a gesture that fired; `Handled(n)`, sent when the last key
-event of an end-to-end harness's numbered key stroke
-(`verbatim_input::harness`, read from `dwExtraInfo`) has been decided, so
-everything the stroke caused was sent before it; and `Barrier(token)`,
-which the hook never sends but the router's other producers do, for a
-control-plane idle request answered only after everything sent before it.
-`speech` is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect, u64) +
+Public API: `InputHook::start(config, map, speech, reports, holding,
+foreground)`, which installs `WH_KEYBOARD_LL` on a dedicated thread; drop
+uninstalls. `InputHook::injector` hands out an `Injector`, by which other
+threads inject inputs for the user. The hook thread hooks nothing else
+and sends nowhere but its two callbacks (architecture section 5): what it
+needs to know of the window in front, `foreground`, is Core's.
+
+The code split follows who calls it (`docs/design/ownership-input.md`,
+"The ownership check on the hook"): the `hook` module holds everything
+that runs on the hook thread (`HookState`, the hook procedure, `decide`,
+`hold`, `report_passed`, `inject` and the message loop), and `lib.rs`
+what other threads call: `InputHook` and its drop, the thread's
+start-up, `KeyHolding`, `ForegroundView` and `Injector`. `cargo xtask
+ci` checks `hook`, `typed` and the app's `key_reports` by the hook rule
+(`xtask/src/ownership.rs`): they may name no lock, wait, log, I/O or
+`SendMessageW`, and `use` only an allow-list.
+
+## Key numbers
+
+The hook thread is the one minter of key numbers
+(`verbatim_model::KeySeq`). `HookState::last_key` is the last one given
+out: a key press takes the next, a release the last, and an injected
+gesture the next, each in the order the thread handles it. Every report
+of a user input carries its number. Speech is fenced by key order: the
+key's cancel names its number (`SpeechControl::cancel_through`), Core
+stamps the speech each input causes with its number, and the speech
+queue drops speech of an earlier number that arrives after a later
+cancel. Only numbers one thread minted in its own handling order agree
+with the order the inputs reach Core.
+
+## The callbacks
+
+`speech` is a `SpeechEffectFn` (a boxed `Fn(KeySpeechEffect, KeySeq) +
 Send`) that carries out each key press's effect on speech, given the
-press's key sequence number. Every key press gets the next number
-(`next_key`), and the hook records under it, by trace id, everything the
-press causes: its gesture, its observed caret key, the text it types
-(`record_key_origin`, looked up with `key_of`, the latest 1,024 kept). The
-app passes the number to `SpeechControl::cancel_through`, and the speech a
-trace causes to `SpeechManager::speak_for_key`, so speech an earlier press
-caused never follows a later press's cancel. `reports` is a
-`KeyReportFn` that receives, after the speech effect, what a key passed to
-the application did, a `KeyReport`: `Observed`, the observed gesture the
-key completed (a caret key, `Decision::observed`) and `pressed_at_us`,
-the Unix time in microseconds when the hook procedure ran, on the clock
-outposts stamp observations with (the latency log starts a caret key's
-line there); the application gets the key only once
-the hook returns, so an outpost's read that finished before that time
-came before the key. The key event's own `time` is not used: it counts
-from startup at the system timer's resolution of about 16 milliseconds,
-and converted to Unix time it could fall after the application handled
-the key. Or `Typed`, the text the
-key types, with a trace id minted when it was observed (the source of
-`Input::CharacterTyped`, milestone M4). Or `Passed`, any other key-down
-passed to the application that types no text and is neither observed, a
-modifier, a lock key, nor a key Windows gives a meaning outside the text
-(Pause, Print Screen, Sleep, and the browser, volume, media and launch
-keys, which never edit and would only leave a caret watch open until its
-bound), with its trace id and `pressed_at_us` (the source of a caret key
-judged by where the caret landed, `CaretMotion::Other`). All are called on the hook thread,
-so they must not block. `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim
-gives keys it injects for its own purposes (the GUI's Control tap that
-unlocks the foreground): the hook still decides them, but leaves speech
-alone and reports nothing, as NVDA ignores the keys it injects itself.
+press's number, before anything the press caused is reported, so speech
+the press causes is never the speech it cancels. `reports` is a
+`KeyReportFn` that receives, after the speech effect, everything a key or
+an injected input caused, as `KeyReport`s, in the order decided:
 
-Implementation notes: the hook thread runs at `THREAD_PRIORITY_HIGHEST`
+- `Observed`, the observed gesture the key completed (a caret key,
+  `Decision::observed`), its number and `pressed_at_us`, the Unix time in
+  microseconds when the hook procedure ran, on the clock outposts stamp
+  observations with (the latency log starts a caret key's line there).
+  The application gets the key only once the hook returns, so an
+  outpost's read that finished before that time came before the key. The
+  key event's own `time` is not used: it counts from startup at the
+  system timer's resolution of about 16 milliseconds, and converted to
+  Unix time it could fall after the application handled the key.
+- `Held` and `Deferred`, below.
+- `Typed`, the text the key types, with a trace id minted when it was
+  observed and its number (the source of `Input::CharacterTyped`).
+- `Passed`, any other key-down passed to the application that types no
+  text and is neither observed, a modifier, a lock key, nor a key Windows
+  gives a meaning outside the text (Pause, Print Screen, Sleep, and the
+  browser, volume, media and launch keys, which never edit and would only
+  leave a caret watch open until its bound), with its trace id, number
+  and `pressed_at_us` (the source of a caret key judged by where the
+  caret landed, `CaretMotion::Other`).
+- `Gesture`, a bound gesture that fired, an injected gesture, or a lock
+  key's gesture (`ToggleKey::gesture`, repeat 0) when a Caps Lock, Num
+  Lock or Scroll Lock press passes to the operating system, so its new
+  state can be announced (not for the Verbatim key passed in share mode,
+  `Decision::shared_modifier`, whose fate the screen reader behind
+  Verbatim decides), with its number.
+- `Handled(n)`, when the last key event of an end-to-end harness's
+  numbered key stroke (`verbatim_input::harness`, read from
+  `dwExtraInfo`) has been decided, so everything the stroke caused was
+  reported before it.
+- `Barrier(token)`, an injected idle waiter, reported behind everything
+  handled before it.
+
+Both callbacks run on the hook thread, so they must not block nor
+dispatch sent messages. The app's callbacks post to the reducer's completion port
+and to the speech queue's, neither of which takes a lock or waits.
+`OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim gives keys it injects for
+its own purposes (the GUI's Control tap that unlocks the foreground): the
+hook still decides them, but leaves speech alone and reports nothing, as
+NVDA ignores the keys it injects itself.
+
+## Injected inputs
+
+`Injector::inject(Injected)` posts an input injected for the user to the
+hook thread, from any thread: `Gesture(GestureId)`, the control plane's
+`SendGesture`, and `Barrier(token)`, an `AwaitIdle` waiter's. The item is
+boxed and posted with `PostThreadMessageW` as a private `WM_APP`
+message whose `LPARAM` is the box; when the post fails (the thread has
+gone, or its queue of 10,000 messages is full), the box is taken back and
+the item returned as the error, so an injection reported failed never
+runs later. An `Injector` holds a handle to the hook thread, duplicated
+by `InputHook::start` from its join handle and closed with the last
+clone, so the thread's id is not given to another thread while any
+`Injector` can post to it.
+
+The hook thread's `GetMessageW` loop (`hook::pump_messages`) takes each
+such message, reclaims the box and calls `inject`: a gesture takes the
+next number, carries out `KeySpeechEffect::Cancel` with it through the
+same speech callback a key uses, and is reported as `Gesture`; a barrier
+is reported as `Barrier`. Windows calls the hook procedure from within
+that loop's waits, so keys and injected inputs are handled one at a
+time, in the one order the thread takes them. The thread runs no other
+loop while the hook is installed; once the loop ends and the hook is
+removed, the injected messages left are taken with `PeekMessageW` and
+dropped.
+
+## Implementation notes
+
+The hook thread runs at `THREAD_PRIORITY_HIGHEST`
 (`verbatim_process::scheduling`; `docs/design/communication.md`, section
-11, step 3). It keeps the machine in a thread-local
-(the hook procedure is a bare callback with no user pointer, and only ever
-runs on the thread that installed it), tells it before each key whether
-Num Lock is on (`DecisionMachine::set_num_lock`, from the keyboard's own
-toggle state, a local read), calls `speech` with the decision's
-speech effect before sending the gesture, so speech the gesture causes is
-never the speech the key press cancels, forwards emitted gestures with a
-`send` on the unbounded channel, which never waits and never drops (it
-fails only once the router has exited, at shutdown), also sends the
-lock-key gesture (`ToggleKey::gesture`, with a repeat of 0) when a Caps
-Lock, Num Lock, or Scroll Lock press passes to the operating system, so
-its new state can be announced (not for the Verbatim key passed in share
-mode, `Decision::shared_modifier`, whose fate the screen reader behind
-Verbatim decides), and returns 1 to
-swallow or calls `CallNextHookEx` to pass. The never-block constraint is
-load-bearing: Windows silently removes low-level hooks whose procedure
-exceeds the system timeout, and the reader would go deaf to the keyboard
-with no error. So is the never-drop rule: a key pressed while Verbatim is
-backed up must still act once the router reaches it. Both hold because
-the backlog waits in memory in front of the router, as every backlog in
-`docs/design/communication.md` waits in front of the reducer (section
-4.8): a queued gesture costs its channel slot, 48 bytes, and its gesture
-name's string, and the channel allocates a block of 31 slots as it
-grows, which in steady state is one allocation per 31 keys. A held key
-repeats about 30 times a second, so even a router stalled for a minute
-holds under 2,000 gestures, about 140 kilobytes.
+11, step 3). It keeps its state in a thread-local (the hook procedure is a
+bare callback with no user pointer, and only ever runs on the thread that
+installed it), tells the machine before each key whether Num Lock is on
+(`DecisionMachine::set_num_lock`, from the keyboard's own toggle state, a
+local read), calls `speech` with the decision's speech effect, reports,
+and returns 1 to swallow or calls `CallNextHookEx` to pass. The
+never-block constraint is load-bearing: Windows silently removes
+low-level hooks whose procedure exceeds the system timeout, and the
+reader would go deaf to the keyboard with no error. So is the never-drop
+rule: a key pressed while Verbatim is backed up must still act once the
+reducer reaches it. Both hold because the reports go to completion
+ports, whose post never waits and whose backlog waits in memory in front
+of the reducer, as every backlog in `docs/design/communication.md` does
+(section 4.8). Each post allocates a box, so the allocator's own
+synchronisation stays on the hook thread; the hook takes no lock of
+Verbatim's. A re-entered hook procedure, should a callback ever dispatch
+sent messages, passes its key untouched rather than panicking on the
+state's borrow.
 
-The decision for each key is `decide`, which the hook procedure calls
-with the thread's state; a unit test drives it directly with a burst of
-a thousand Verbatim+V strokes, more than the 64 the channel once held,
-unread until the end, and checks that every gesture and every stroke's
-handled mark arrives, in order. On an unbounded channel that test would
-pass with `try_send` too, so the guarantee that no key is lost rests on
-`a_bounded_channel_is_refused`, which checks that `InputHook::start`
-refuses a bounded channel. The `hook_echo` example installs the
-real hook with two bound gestures and prints what fires and what each
-key reports; it needs an interactive desktop and is never run in CI.
+`decide` is the decision for each key, which the hook procedure calls
+with the thread's state; unit tests drive it and `inject` directly: a
+burst of a thousand Verbatim+V strokes, every gesture and every stroke's
+handled mark reported in order; a key press, an injected gesture and a
+second press numbered 1, 2 and 3, each cancel naming its own number
+before its report; an injected barrier reported behind the keys before
+it; and an injection posted to thread id 0, which no thread has, coming
+back as the error. The `hook_echo` example installs the real hook with
+two bound gestures and prints what each key reports, on its own thread;
+it needs an interactive desktop and is never run in CI.
 
 ## Holding caret keys
 
@@ -211,7 +262,10 @@ does):
   keyboard profile; when it is a text service
   (`TF_PROFILETYPE_INPUTPROCESSOR`) for the foreground layout's language,
   nothing is translated, so Verbatim stays silent rather than echoing the
-  raw keys. Windows switches input methods for every
+  raw keys. A profile manager that cannot be made leaves that check
+  out: `Typing::with_text_services` returns the error for the thread's
+  start-up to log, since nothing on the hook thread logs. Windows
+  switches input methods for every
   application together unless the user chose otherwise, which is why the
   hook thread's active profile stands for the foreground application's.
   Echoing the composed text needs the injection helper and is on the

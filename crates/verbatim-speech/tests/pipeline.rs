@@ -12,13 +12,15 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
 use verbatim_model::{
-    FocusNow, FocusValidity, NodeId, ObjectKey, Role, SegmentContent, SpeechMark, SpeechPriority,
-    Theme, ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
+    FocusNow, FocusValidity, KeySeq, NodeId, ObjectKey, Role, SegmentContent, SpeechMark,
+    SpeechPriority, Theme, ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId,
+    UtteranceSegment,
 };
 use verbatim_speech::{
-    ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents,
-    SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsHost,
-    SynthChoice, SynthDriver, SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
+    ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeakToken,
+    SpeechEvents, SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence,
+    SpeechSettingsHost, SynthChoice, SynthDriver, SynthError, SynthFactory, SynthId, SynthRegistry,
+    SynthSink,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -296,6 +298,7 @@ fn mixer() -> Arc<Mixer> {
 
 struct ControlHarness {
     manager: SpeechManager,
+    token: SpeakToken,
     recorder: Arc<Recorder>,
     started: Receiver<String>,
     finish: Sender<()>,
@@ -338,7 +341,7 @@ fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
         cut,
         ..Recorder::default()
     });
-    let manager = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("control"),
         saved_settings: Box::new(|_| Vec::new()),
@@ -346,11 +349,13 @@ fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: None,
+        inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
 
     ControlHarness {
         manager,
+        token,
         recorder,
         started: started_rx,
         finish: finish_tx,
@@ -368,7 +373,7 @@ impl ControlHarness {
     /// threads' reports interleave as they run, so the endings before the
     /// marker are compared by utterance rather than in the order reported.
     fn endings_before_a_marker(&self) -> Vec<(UtteranceId, UtteranceEnding)> {
-        let marker = self.manager.speak(queued("marker"));
+        let marker = self.manager.speak(&self.token, queued("marker"));
         assert_eq!(recv_started(&self.started), "marker");
         self.finish.send(()).unwrap();
         let mut endings = self.recorder.endings_through(marker);
@@ -394,7 +399,7 @@ fn recv_started(started: &Receiver<String>) -> String {
 
 fn capture_manager(
     presenter: Option<Box<dyn Presenter>>,
-) -> (SpeechManager, CaptureLog, Arc<Recorder>) {
+) -> (SpeechManager, SpeakToken, CaptureLog, Arc<Recorder>) {
     let log: CaptureLog = CaptureSynth::new().log();
     let log_for_factory = Arc::clone(&log);
     let mut registry = SynthRegistry::new();
@@ -409,7 +414,7 @@ fn capture_manager(
         }),
     );
     let recorder = Arc::new(Recorder::default());
-    let manager = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("capture"),
         saved_settings: Box::new(|_| Vec::new()),
@@ -417,23 +422,27 @@ fn capture_manager(
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter,
+        inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
-    (manager, log, recorder)
+    (manager, token, log, recorder)
 }
 
 #[test]
 fn next_lane_jumps_ahead_of_queued_and_each_completes_once_played() {
     let harness = control_manager();
 
-    let first = harness.manager.speak(queued("first"));
+    let first = harness.manager.speak(&harness.token, queued("first"));
     assert_eq!(recv_started(&harness.started), "first");
 
     // With "first" streaming, enqueue a queued then a next utterance.
-    let second = harness.manager.speak(queued("second-queued"));
-    let third = harness
+    let second = harness
         .manager
-        .speak(utterance("third-next", SpeechPriority::Next));
+        .speak(&harness.token, queued("second-queued"));
+    let third = harness.manager.speak(
+        &harness.token,
+        utterance("third-next", SpeechPriority::Next),
+    );
 
     // Finish each; the pipeline must serve the next-lane utterance first.
     harness.finish.send(()).unwrap();
@@ -456,15 +465,18 @@ fn next_lane_jumps_ahead_of_queued_and_each_completes_once_played() {
 fn interrupt_cancels_current_and_queued_each_exactly_once() {
     let harness = control_manager();
 
-    let current = harness.manager.speak(queued("current"));
+    let current = harness.manager.speak(&harness.token, queued("current"));
     assert_eq!(recv_started(&harness.started), "current");
 
     // Queue a victim, then interrupt: the interrupt cancels "current" and
     // drops "queued-victim" before speaking.
-    let victim = harness.manager.speak(queued("queued-victim"));
-    let urgent = harness
+    let victim = harness
         .manager
-        .speak(utterance("urgent", SpeechPriority::Interrupt));
+        .speak(&harness.token, queued("queued-victim"));
+    let urgent = harness.manager.speak(
+        &harness.token,
+        utterance("urgent", SpeechPriority::Interrupt),
+    );
 
     assert_eq!(recv_started(&harness.started), "urgent");
     harness.finish.send(()).unwrap();
@@ -499,13 +511,18 @@ fn marked(text: &str, marks: [u64; 2]) -> Utterance {
 fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
     let (cut_tx, cut_rx) = unbounded();
     let harness = control_manager_reporting(Some(cut_tx));
-    let current = harness.manager.speak(marked("current", [1, 2]));
-    assert_eq!(recv_started(&harness.started), "current");
-    let waiting = harness.manager.speak(marked("waiting", [3, 4]));
-    let _plain = harness.manager.speak(queued("plain"));
-    let urgent = harness
+    let current = harness
         .manager
-        .speak(utterance("urgent", SpeechPriority::Interrupt));
+        .speak(&harness.token, marked("current", [1, 2]));
+    assert_eq!(recv_started(&harness.started), "current");
+    let waiting = harness
+        .manager
+        .speak(&harness.token, marked("waiting", [3, 4]));
+    let _plain = harness.manager.speak(&harness.token, queued("plain"));
+    let urgent = harness.manager.speak(
+        &harness.token,
+        utterance("urgent", SpeechPriority::Interrupt),
+    );
     let mut reported = vec![
         cut_rx.recv_timeout(STEP_TIMEOUT).expect("a cut reported"),
         cut_rx
@@ -523,7 +540,9 @@ fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
     assert_eq!(recv_started(&harness.started), "urgent");
     harness.finish.send(()).unwrap();
     // One with marks played to its end.
-    let heard = harness.manager.speak(marked("heard", [5, 6]));
+    let heard = harness
+        .manager
+        .speak(&harness.token, marked("heard", [5, 6]));
     assert_eq!(recv_started(&harness.started), "heard");
     harness.finish.send(()).unwrap();
     let endings = harness.recorder.endings_through(heard);
@@ -547,7 +566,9 @@ fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
 fn an_utterance_with_marks_that_fails_is_reported_as_failed() {
     let (cut_tx, cut_rx) = unbounded();
     let harness = control_manager_reporting(Some(cut_tx));
-    let failing = harness.manager.speak(marked("fail", [1, 2]));
+    let failing = harness
+        .manager
+        .speak(&harness.token, marked("fail", [1, 2]));
     assert_eq!(recv_started(&harness.started), "fail");
     assert_eq!(
         cut_rx
@@ -561,9 +582,9 @@ fn an_utterance_with_marks_that_fails_is_reported_as_failed() {
 fn failed_synthesis_ends_the_utterance_as_failed_and_speech_carries_on() {
     let harness = control_manager();
 
-    let failing = harness.manager.speak(queued("fail"));
+    let failing = harness.manager.speak(&harness.token, queued("fail"));
     assert_eq!(recv_started(&harness.started), "fail");
-    let next = harness.manager.speak(queued("next"));
+    let next = harness.manager.speak(&harness.token, queued("next"));
     assert_eq!(recv_started(&harness.started), "next");
     harness.finish.send(()).unwrap();
 
@@ -581,19 +602,22 @@ fn failed_synthesis_ends_the_utterance_as_failed_and_speech_carries_on() {
 
 #[test]
 fn renders_tokens_through_capture_synth() {
-    let (manager, log, recorder) = capture_manager(None);
+    let (manager, token, log, recorder) = capture_manager(None);
 
-    let id = manager.speak(Utterance {
-        trace_id: TraceId::mint(),
-        priority: SpeechPriority::Queued,
-        segments: vec![
-            UtteranceSegment::text("Settings"),
-            UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
-        ],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
+    let id = manager.speak(
+        &token,
+        Utterance {
+            trace_id: TraceId::mint(),
+            priority: SpeechPriority::Queued,
+            segments: vec![
+                UtteranceSegment::text("Settings"),
+                UtteranceSegment::new(SegmentContent::Role(Role::MenuItem)),
+            ],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+    );
 
     assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
     let requests = log.lock().unwrap();
@@ -624,16 +648,19 @@ impl Presenter for MarkingTheme {
 
 #[test]
 fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact() {
-    let (manager, log, recorder) = capture_manager(Some(Box::new(MarkingTheme)));
+    let (manager, token, log, recorder) = capture_manager(Some(Box::new(MarkingTheme)));
 
-    let id = manager.speak(Utterance {
-        trace_id: TraceId::mint(),
-        priority: SpeechPriority::Queued,
-        segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
+    let id = manager.speak(
+        &token,
+        Utterance {
+            trace_id: TraceId::mint(),
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+    );
 
     assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
     let texts: Vec<String> = log
@@ -722,7 +749,7 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
         }),
     );
     let recorder = Arc::new(Recorder::default());
-    let manager = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("marks"),
         saved_settings: Box::new(|_| Vec::new()),
@@ -730,13 +757,17 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: Some(Box::new(MarkingTheme)),
+        inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
 
-    let id = manager.speak(Utterance {
-        segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
-        ..queued("unused")
-    });
+    let id = manager.speak(
+        &token,
+        Utterance {
+            segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
+            ..queued("unused")
+        },
+    );
 
     assert_eq!(recorder.endings(1), vec![(id, UtteranceEnding::Completed)]);
     assert_eq!(
@@ -760,7 +791,7 @@ fn settings_host_get_set_commit_revert() {
     let persisted: Persisted = Arc::new(Mutex::new(Vec::new()));
     let persisted_for_cb = Arc::clone(&persisted);
 
-    let (manager, _log, _recorder) = capture_manager(None);
+    let (manager, _token, _log, _recorder) = capture_manager(None);
 
     let host = manager.settings_host(Box::new(move |id, _chosen, values| {
         persisted_for_cb
@@ -832,9 +863,9 @@ fn about(text: &str, node: u64, had_focus: bool) -> Utterance {
 #[test]
 fn a_cancel_ends_current_and_queued_speech() {
     let harness = control_manager();
-    let current = harness.manager.speak(queued("current"));
+    let current = harness.manager.speak(&harness.token, queued("current"));
     assert_eq!(recv_started(&harness.started), "current");
-    let waiting = harness.manager.speak(queued("waiting"));
+    let waiting = harness.manager.speak(&harness.token, queued("waiting"));
 
     harness.manager.control().cancel();
 
@@ -853,7 +884,7 @@ fn a_cancel_ends_current_and_queued_speech() {
 #[test]
 fn a_cancel_wakes_a_driver_waiting_for_its_synthesizer() {
     let harness = control_manager();
-    let waiting = harness.manager.speak(queued("wait"));
+    let waiting = harness.manager.speak(&harness.token, queued("wait"));
     assert_eq!(recv_started(&harness.started), "wait");
 
     harness.manager.control().cancel();
@@ -872,18 +903,26 @@ fn a_cancel_wakes_a_driver_waiting_for_its_synthesizer() {
 }
 
 /// A key press's cancel fences off speech an earlier key press caused
-/// that reaches the manager after it: key 2's cancel comes before key 1's
-/// speech is queued, as when key 1's gesture is still on its way to the
-/// reducer, and key 1's speech ends cancelled without being spoken, as if
-/// it had come first, while key 2's own speech and speech no key caused
-/// are spoken.
+/// that reaches the manager after it: key 2's cancel is posted to the
+/// queue's inbox before key 1's speech, as when key 1's speech is still on
+/// its way from the reducer, and key 1's speech ends cancelled without
+/// being spoken, as if it had come first, while key 2's own speech and
+/// speech no key caused are spoken.
 #[test]
 fn speech_an_earlier_key_caused_is_dropped_after_a_later_keys_cancel() {
     let harness = control_manager();
-    harness.manager.control().cancel_through(2);
-    let earlier = harness.manager.speak_for_key(queued("key one"), Some(1));
-    let later = harness.manager.speak_for_key(queued("key two"), Some(2));
-    let unkeyed = harness.manager.speak_for_key(queued("a focus"), None);
+    harness.manager.control().cancel_through(KeySeq::new(2));
+    let earlier =
+        harness
+            .manager
+            .speak_for_key(&harness.token, queued("key one"), Some(KeySeq::new(1)));
+    let later =
+        harness
+            .manager
+            .speak_for_key(&harness.token, queued("key two"), Some(KeySeq::new(2)));
+    let unkeyed = harness
+        .manager
+        .speak_for_key(&harness.token, queued("a focus"), None);
     assert_eq!(recv_started(&harness.started), "key two");
     harness.finish.send(()).unwrap();
     assert_eq!(recv_started(&harness.started), "a focus");
@@ -904,10 +943,14 @@ fn speech_an_earlier_key_caused_is_dropped_after_a_later_keys_cancel() {
 #[test]
 fn expired_focus_speech_is_dropped_with_what_came_before_it() {
     let harness = control_manager();
-    let first = harness.manager.speak(about("first control", 1, true));
+    let first = harness
+        .manager
+        .speak(&harness.token, about("first control", 1, true));
     assert_eq!(recv_started(&harness.started), "first control");
-    let second = harness.manager.speak(about("second control", 2, true));
-    let message = harness.manager.speak(queued("a message"));
+    let second = harness
+        .manager
+        .speak(&harness.token, about("second control", 2, true));
+    let message = harness.manager.speak(&harness.token, queued("a message"));
 
     // Focus is now on node 3, inside nothing: both controls have expired.
     harness.manager.control().drop_expired(FocusNow {
@@ -935,7 +978,7 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
 #[test]
 fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     let harness = control_manager();
-    let held = harness.manager.speak(queued("held"));
+    let held = harness.manager.speak(&harness.token, queued("held"));
     assert_eq!(recv_started(&harness.started), "held");
     harness.manager.control().toggle_pause();
     // The pause reaches the mixer through the queue thread, the audio
@@ -961,10 +1004,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
         [(held, UtteranceEnding::Completed)]
     );
 
-    let paused = harness.manager.speak(queued("paused"));
+    let paused = harness.manager.speak(&harness.token, queued("paused"));
     assert_eq!(recv_started(&harness.started), "paused");
     harness.manager.control().toggle_pause();
-    let next = harness.manager.speak(queued("next"));
+    let next = harness.manager.speak(&harness.token, queued("next"));
     assert_eq!(recv_started(&harness.started), "next");
     harness.finish.send(()).unwrap();
     assert_eq!(
@@ -1109,7 +1152,9 @@ fn settings_manager(
         events: None,
         theme: theme_without_sounds(),
         presenter: None,
+        inbox: verbatim_speech::channel_inbox(),
     })
+    .map(|(manager, _token)| manager)
 }
 
 fn voice_and_rate(voice: &str, rate: i32) -> Vec<(SettingId, SettingValue)> {
@@ -1410,7 +1455,7 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         }),
     );
     let recorder = Arc::new(Recorder::default());
-    let manager = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("pitch"),
         saved_settings: Box::new(|_| Vec::new()),
@@ -1418,18 +1463,22 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: None,
+        inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
 
-    let spelled = manager.speak(Utterance {
-        segments: vec![
-            UtteranceSegment::text("a"),
-            UtteranceSegment::new(SegmentContent::SpelledCapital("B".to_owned())),
-            UtteranceSegment::text("c"),
-        ],
-        ..queued("unused")
-    });
-    let after = manager.speak(queued("after"));
+    let spelled = manager.speak(
+        &token,
+        Utterance {
+            segments: vec![
+                UtteranceSegment::text("a"),
+                UtteranceSegment::new(SegmentContent::SpelledCapital("B".to_owned())),
+                UtteranceSegment::text("c"),
+            ],
+            ..queued("unused")
+        },
+    );
+    let after = manager.speak(&token, queued("after"));
     assert_eq!(
         recorder.endings(2),
         vec![
@@ -1453,12 +1502,14 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
 #[test]
 fn waiting_focus_speech_is_judged_when_its_turn_comes() {
     let harness = control_manager();
-    let message = harness.manager.speak(queued("a message"));
+    let message = harness.manager.speak(&harness.token, queued("a message"));
     assert_eq!(recv_started(&harness.started), "a message");
-    let current = harness.manager.speak(about("the new focus", 3, true));
+    let current = harness
+        .manager
+        .speak(&harness.token, about("the new focus", 3, true));
     let left = harness
         .manager
-        .speak(about("a control left behind", 2, true));
+        .speak(&harness.token, about("a control left behind", 2, true));
     harness.manager.control().drop_expired(FocusNow {
         focus: ObjectKey::of_id(NodeId::new(3)),
         ancestors: Vec::new(),
@@ -1487,11 +1538,13 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
     let harness = control_manager();
     let left = harness
         .manager
-        .speak(about("a control left behind", 1, true));
+        .speak(&harness.token, about("a control left behind", 1, true));
     assert_eq!(recv_started(&harness.started), "a control left behind");
     let control = harness.manager.control();
     control.cancel();
-    let dialog = harness.manager.speak(about("a dialog", 2, false));
+    let dialog = harness
+        .manager
+        .speak(&harness.token, about("a dialog", 2, false));
     control.drop_expired(FocusNow {
         focus: ObjectKey::of_id(NodeId::new(3)),
         ancestors: vec![ObjectKey::of_id(NodeId::new(2))],

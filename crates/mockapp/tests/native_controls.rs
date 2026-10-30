@@ -76,7 +76,7 @@ fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent
     effects
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Speak(utterance) => Some(
+            Effect::Speak(utterance, _) => Some(
                 utterance
                     .segments
                     .into_iter()
@@ -435,6 +435,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     let effects = verbatim_core::reduce(
         &mut state,
         &Input::Command {
+            key: verbatim_model::KeySeq::NONE_YET,
             trace_id: TraceId::mint(),
             command: verbatim_model::ReviewCommand::ReviewNextCharacter,
             repeat: 0,
@@ -443,7 +444,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     let spoken: Vec<Vec<SegmentContent>> = effects
         .into_iter()
         .map(|effect| match effect {
-            Effect::Speak(utterance) => utterance
+            Effect::Speak(utterance, _) => utterance
                 .segments
                 .into_iter()
                 .map(|segment| segment.content)
@@ -742,7 +743,7 @@ fn a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus()
     let said: Vec<Vec<SegmentContent>> = effects
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Speak(utterance) => Some(
+            Effect::Speak(utterance, _) => Some(
                 utterance
                     .segments
                     .into_iter()

@@ -90,17 +90,20 @@ fn scripted_inputs() -> Vec<Input> {
 fn expected_effects(traces: &[TraceId]) -> Vec<Vec<Effect>> {
     let slider = NodeId::new(1);
     let speech = |trace_id, segments, validity| {
-        Effect::Speak(Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source: Some(UtteranceSource {
-                role: Role::Slider,
-                rect: None,
-            }),
-            validity,
-            say_all: false,
-        })
+        Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Queued,
+                segments,
+                source: Some(UtteranceSource {
+                    role: Role::Slider,
+                    rect: None,
+                }),
+                validity,
+                say_all: false,
+            },
+            None,
+        )
     };
     vec![
         vec![

@@ -170,6 +170,7 @@ fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
 
 fn typed(text: &str) -> Input {
     Input::CharacterTyped {
+        key: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         text: text.to_owned(),
         at_ms: 1_000,
@@ -238,7 +239,7 @@ impl Playback {
     fn take(&mut self, state: &mut SrState, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::Speak(utterance) => {
+                Effect::Speak(utterance, _) => {
                     assert_eq!(utterance.priority, SpeechPriority::Queued, "{utterance:?}");
                     let marks: Vec<SpeechMark> = utterance
                         .segments
@@ -962,6 +963,7 @@ fn report_new_output_toggles_with_verbatim_5() {
     let mut state = terminal();
     let mut playback = Playback::default();
     let toggle = Input::Command {
+        key: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::mint(),
         command: ReviewCommand::ToggleReportNewOutput,
         repeat: 0,
@@ -1101,7 +1103,7 @@ fn spoken(effects: &[Effect]) -> Vec<String> {
     effects
         .iter()
         .map(|effect| match effect {
-            Effect::Speak(utterance) => words(&utterance.segments),
+            Effect::Speak(utterance, _) => words(&utterance.segments),
             other => format!("{other:?}"),
         })
         .collect()
@@ -1176,6 +1178,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         reduce(
             state,
             &Input::Command {
+                key: verbatim_model::KeySeq::NONE_YET,
                 trace_id: TraceId::mint(),
                 command: ReviewCommand::ReviewCurrentLine,
                 repeat: 0,
