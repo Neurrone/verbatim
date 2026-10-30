@@ -782,11 +782,15 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   reported it (`Worker::adopt_published`): it follows it, its caret, its
   text and the focus-following subscription, and sends nothing else for
   it, but for a terminal, whose caret is read and whose first read is
-  sent, as for a reported terminal. A worker abandoned before it adopts
-  the focus hands it to the worker that replaces it
-  (`WatchState::abandon`, `Watch::take_handed_over`), which adopts it as
-  its first act, before its next entry, under an entry's deadline
-  (`adopt_handed_over`). A focus whose object is not yet acquired, a
+  sent, as for a reported terminal. The worker adopts the focus right
+  after the check that it is in charge, and reads a terminal's caret only
+  then; abandoned in that read, it follows nothing more. A worker
+  abandoned before it has followed the focus hands it to the worker that
+  replaces it (`WatchState::abandon`, `Watch::handed_over`), which adopts
+  it as its first act, before its next entry, under an entry's deadline
+  (`adopt_handed_over`); the watch keeps the focus until the entry that
+  follows it ends (`Watch::adopting`), so it is handed over again should
+  that worker be abandoned too. A focus whose object is not yet acquired, a
   focus-now answer and a foreground report are left to the deadline.
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or

@@ -116,14 +116,19 @@ struct WatchState {
     /// The focus published at its walk's bound for the entry in hand,
     /// which the worker adopts when its walk returns.
     published: Option<Published>,
-    /// The focus published at its walk's bound for the entry of a worker
-    /// abandoned before it adopted it, which the worker that replaced it
-    /// adopts before its first entry ([`Watch::take_handed_over`]).
+    /// The focus published at its walk's bound that no worker has followed
+    /// yet: one its worker is adopting ([`Watch::adopting`]), or one whose
+    /// worker was abandoned before it followed it, which the worker that
+    /// replaced it adopts before its first entry ([`Watch::handed_over`]).
+    /// It stays here until the entry that follows it ends
+    /// ([`Watch::finish`]), so a worker abandoned while it follows it hands
+    /// it over again.
     handed_over: Option<Published>,
 }
 
 /// A focus published at its walk's bound, as the worker follows it
 /// ([`Worker::adopt_published`]).
+#[derive(Clone)]
 struct Published {
     node: NodeId,
     role: Role,
@@ -143,12 +148,13 @@ impl WatchState {
     /// Abandons the worker in charge: the next generation takes over, and
     /// the query it was running, if any, is returned for an "abandoned"
     /// reply. A focus published at its walk's bound that the worker has not
-    /// adopted yet is handed over to the next generation.
+    /// followed yet, whether it had not taken it up or was still following
+    /// it, is handed over to the next generation.
     fn abandon(&mut self) -> Option<(u64, TraceId)> {
         self.generation += 1;
         self.deadline = None;
         self.started = None;
-        self.handed_over = self.published.take();
+        self.handed_over = self.published.take().or_else(|| self.handed_over.take());
         self.end_walk();
         self.running.take()
     }
@@ -284,13 +290,29 @@ impl Watch {
 
     /// The focus published at its walk's bound for the entry of the worker
     /// `generation` replaced, if that worker was abandoned before it
-    /// adopted it.
-    fn take_handed_over(&self, generation: u64) -> Option<Published> {
-        let mut state = self.lock();
+    /// followed it. It stays handed over until `generation` has followed
+    /// it ([`finish`](Self::finish)).
+    fn handed_over(&self, generation: u64) -> Option<Published> {
+        let state = self.lock();
         if state.generation != generation {
             return None;
         }
-        state.handed_over.take()
+        state.handed_over.clone()
+    }
+
+    /// `generation` is about to adopt `published`, if it is still the
+    /// worker in charge, which then adopts it at once, with no call into
+    /// its application between: the focus is kept where an abandonment
+    /// hands it over ([`WatchState::abandon`]) until the entry that
+    /// follows it ends ([`finish`](Self::finish)). False when `generation`
+    /// is no longer in charge.
+    fn adopting(&self, generation: u64, published: &Published) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        state.handed_over = Some(published.clone());
+        true
     }
 
     /// Claims the right to publish an entry's result for `generation`, if
@@ -367,14 +389,17 @@ impl Watch {
     }
 
     /// Ends the deadline, if `generation` is still in charge, returning the
-    /// query still waiting for its reply, if any. `Err` for an abandoned
-    /// worker, which is then no longer counted and must exit.
+    /// query still waiting for its reply, if any; a focus it adopted
+    /// ([`adopting`](Self::adopting)) is followed by then, and no longer
+    /// handed over. `Err` for an abandoned worker, which is then no longer
+    /// counted and must exit.
     fn finish(&self, generation: u64) -> Result<Option<(u64, TraceId)>, ()> {
         let mut state = self.lock();
         if state.generation == generation {
             state.deadline = None;
             state.started = None;
             state.end_walk();
+            state.handed_over = None;
             Ok(state.running.take())
         } else {
             drop(state);
@@ -793,7 +818,7 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
     if warm {
         let _ = client.uia();
     }
-    if let Some(published) = context.watch.take_handed_over(generation)
+    if let Some(published) = context.watch.handed_over(generation)
         && adopt_handed_over(context, &mut client, generation, published).is_err()
     {
         return;
@@ -2357,8 +2382,26 @@ impl Worker<'_> {
     /// has its caret read and its first read sent, as a reported terminal
     /// does ([`follow_text`](Self::follow_text)); the publication carried
     /// no text. The caret of any other focus is not read, since nothing
-    /// would send it.
+    /// would send it. The focus is adopted at once, under the check that
+    /// this worker is in charge, and the terminal's caret read after it; a
+    /// worker abandoned in that read follows nothing more, and the focus,
+    /// kept by the watch until it is followed ([`Watch::adopting`]), is
+    /// handed over to its replacement.
     fn adopt_published(&mut self, published: Published) {
+        self.adopt_published_reading(published, Self::read_focus_text);
+    }
+
+    /// [`adopt_published`](Self::adopt_published), reading a terminal's
+    /// caret with `read`, [`read_focus_text`](Self::read_focus_text) but
+    /// in a test, which stands in for a read its worker is abandoned in.
+    fn adopt_published_reading(
+        &mut self,
+        published: Published,
+        read: impl FnOnce(&Self, NodeId, Role) -> Option<FocusText>,
+    ) {
+        if !self.context.watch.adopting(self.generation, &published) {
+            return;
+        }
         let Published {
             node,
             role,
@@ -2370,16 +2413,22 @@ impl Worker<'_> {
             batch,
         } = published;
         tracing::debug!(%trace, "the walk returned after the focus was published at its bound; its result is discarded");
-        let text = if role == Role::Terminal {
-            self.read_focus_text(node, role)
-        } else {
-            None
-        };
         self.adopt_focus((node, role), object, window, chain);
         let mut tracking = self.context.tracking();
         tracking.batch = Some(batch);
         tracking.reported += 1;
         drop(tracking);
+        let text = if role == Role::Terminal {
+            read(self, node, role)
+        } else {
+            None
+        };
+        // Abandoned in the read, a call into the application: the focus is
+        // handed over, and the replacement follows it.
+        if !self.context.watch.in_charge(self.generation) {
+            tracing::debug!(%trace, "the worker was abandoned reading the adopted terminal; its replacement follows it");
+            return;
+        }
         self.follow_text((node, role), text.as_ref(), (trace, observed_at_us));
     }
 
@@ -5138,6 +5187,75 @@ mod tests {
         assert!(
             matches!(context.watch.walk_returned(0, Instant::now()), Ok(Some(_))),
             "the worker takes it up once it is sent"
+        );
+    }
+
+    /// A terminal published at its walk's bound survives the abandonment
+    /// of the worker that adopts it in its caret read: that worker follows
+    /// nothing once the read returns, so it overwrites nothing its
+    /// replacement has followed since, and the focus is handed over again,
+    /// to the replacement. The test drives the watch as the watchdog would:
+    /// the first worker's walk published the terminal and was abandoned
+    /// before it adopted it, and the second worker, adopting it, is
+    /// abandoned in its caret read, during which a newer focus is followed.
+    #[test]
+    fn a_handed_over_terminal_survives_its_adopters_abandonment_in_its_read() {
+        use verbatim_process::overlapped::{End, Flow, pipe};
+        use verbatim_process::transport::EVENT_PIPE_BUFFER;
+
+        let (_ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        let outpost = super::super::Outpost::new(theirs, std::process::id());
+        // The outpost's own worker and watchdog are stopped, so nothing but
+        // the test touches the watch.
+        let context = &Arc::clone(&outpost.context);
+        outpost.shutdown();
+        let abandon = || {
+            context.watch.lock().abandon();
+            context.watch.abandoned.fetch_add(1, Ordering::Relaxed);
+        };
+        let terminal = NodeId::new(7);
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        context.watch.lock().published = Some(Published {
+            node: terminal,
+            role: Role::Terminal,
+            object: None,
+            window: None,
+            chain: Vec::new(),
+            trace: TraceId::mint(),
+            observed_at_us: 1,
+            batch: 0,
+        });
+        abandon();
+        let handed_over = context
+            .watch
+            .handed_over(1)
+            .expect("the terminal handed over to the second worker");
+        let newer = NodeId::new(9);
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        let mut client = Client::default();
+        let mut second = Worker {
+            context,
+            client: &mut client,
+            generation: 1,
+            batch: 0,
+            timing: EventTiming::default(),
+            msaa_event: None,
+        };
+        second.adopt_published_reading(handed_over, |_, _, _| {
+            abandon();
+            context.tracking().focus = Some(newer);
+            Some(FocusText::NotRead)
+        });
+        assert_eq!(
+            (
+                context.watch.finish(1),
+                context.watch.abandoned(),
+                context.tracking().focus,
+                context.watch.handed_over(2).map(|published| published.node),
+            ),
+            (Err(()), 1, Some(newer), Some(terminal)),
+            "the second worker, abandoned, followed nothing and handed the terminal over again"
         );
     }
 }
