@@ -216,12 +216,14 @@ impl Watch {
         let terminals = std::mem::take(&mut state.follow.terminals);
         let leftover = std::mem::take(&mut state.follow.leftover);
         let followed = state.follow.followed_element.take();
+        let kept = std::mem::take(&mut state.follow.kept_groups);
         state.follow.caret_watch = None;
         drop(state);
         // Outside the lock: they may hold an application's objects.
         drop(terminals);
         drop(leftover);
         drop(followed);
+        drop(kept);
     }
 
     /// How many abandoned workers have not yet returned.
@@ -1770,15 +1772,16 @@ impl Worker<'_> {
         self.context.intake.focused() == Some(object)
     }
 
-    /// Reports the caret of `node_id` as `CaretMoved`, when it is still the
-    /// focus and the worker has not read its caret since the event that
-    /// asked: a caret key's answer, read after the event, already told Core.
+    /// Reports the caret of `node_id` as `CaretMoved`, a node the outpost has
+    /// not released, when the worker has not read its caret since the event
+    /// that asked: a caret key's answer, read after the event, already told
+    /// Core. Core targets which node's caret it takes.
     /// A focus's own caret comes with the focus
     /// ([`read_focus_text`](Self::read_focus_text)). The read is noted as
     /// covering the events observed before it only in the commit of what it
     /// sends, or of nothing when it sends nothing.
     fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
-        if !self.is_focus(node_id)
+        if !self.context.holds(node_id)
             || self
                 .context
                 .caret_read_since(node_id, self.timing.observed_at_us)
@@ -1937,30 +1940,50 @@ impl Worker<'_> {
         }
     }
 
-    /// The focused terminal, when it is the text area of the console window
-    /// `hwnd`, whose console events are its own.
+    /// The terminal that is the text area of the console window `hwnd`,
+    /// whose console events are its own: the followed focus when it is
+    /// that terminal, else the newest report in the window whose node is a
+    /// terminal this outpost has not released
+    /// ([`focused_terminal`](Self::focused_terminal)).
     fn focused_console_terminal(&self, hwnd: isize) -> Option<NodeId> {
         let (focus, window) = self
             .context
             .watch
             .follow(|follow| (follow.tracking.focus, follow.tracking.window));
-        focus
+        if let Some(focus) = focus
             .filter(|_| window == Some(hwnd))
             .filter(|&node_id| self.focused_terminal(node_id))
+        {
+            return Some(focus);
+        }
+        let top_level = top_level_of(hwnd);
+        let reported: Vec<NodeId> = self
+            .context
+            .held()
+            .focuses()
+            .rev()
+            .filter(|focus| top_level != 0 && focus.top_level == top_level)
+            .map(|focus| focus.node.id)
+            .collect();
+        reported
+            .into_iter()
+            .find(|&node_id| self.focused_terminal(node_id))
     }
 
-    /// Whether `node_id` is the focus and a terminal read through UIA, whose
-    /// new output the outpost finds by diffing its text. The focus's own
-    /// role decides (`Tracking::focus_role`), which a foreground report,
-    /// naming a window and not the control focus is in, leaves as it was.
+    /// Whether `node_id` is a terminal read through UIA whose new output
+    /// the outpost finds by diffing its text: one it followed as a focus
+    /// and has not released, which keeps its follow entry until then. Its
+    /// output is read whether or not it is the newest focus, since Core
+    /// speaks output only for its own focus, and Core's focus is among the
+    /// nodes the outpost has not released
+    /// (`docs/design/ownership-one-judge.md`, "Readers that decide what to
+    /// read").
     fn focused_terminal(&self, node_id: NodeId) -> bool {
         self.context.uia_registry.runtime_id_of(node_id).is_some()
-            && self.is_focus(node_id)
             && self
                 .context
                 .watch
-                .follow(|follow| follow.tracking.focus_role)
-                == Some(Role::Terminal)
+                .follow(|follow| follow.terminals.contains_key(&node_id.number()))
     }
 
     /// Takes a focused terminal's on-demand reading through `event`
@@ -2411,7 +2434,7 @@ impl Worker<'_> {
         // should it be abandoned while the objects are dropped, can never
         // report a node that is about to vanish, and no message queued
         // meanwhile can record one.
-        let (objects, released, terminals) = {
+        let (objects, released, (terminals, ungrouped)) = {
             let mut state = self.context.watch.lock();
             if state.generation != self.generation {
                 self.refused.set(true);
@@ -2444,8 +2467,13 @@ impl Worker<'_> {
                 .filter_map(|node| state.follow.terminals.remove(node))
                 .collect();
             // The reports whose focus node is released are no longer read
-            // for, under the same locks as their nodes leave the store.
+            // for, and their elements lose their focus-following groups,
+            // under the same locks as their nodes leave the store.
             self.context.held().release(&nodes);
+            let mut ungrouped = Displaced::default();
+            state
+                .follow
+                .release_groups(self.context, &nodes, &mut ungrouped);
             drop(state);
             tracing::debug!(
                 ?held,
@@ -2455,7 +2483,7 @@ impl Worker<'_> {
                 ?anchors,
                 "releasing the nodes and anchors Core no longer holds"
             );
-            (objects, (nodes, anchors), terminals)
+            (objects, (nodes, anchors), (terminals, ungrouped))
         };
         let (nodes, anchors) = released;
         text_reads::forget_anchors(self.context, &anchors);
@@ -2464,6 +2492,7 @@ impl Worker<'_> {
         // application.
         drop(objects);
         drop(terminals);
+        drop(ungrouped);
     }
 
     /// Emits `event` stamped `observed_at_us`, in microseconds on the run's
@@ -2523,6 +2552,14 @@ impl Worker<'_> {
         object: Option<Object>,
         (ancestors, selected_child): read::Enrichment,
     ) {
+        // A focus in a window of a process Verbatim ignores is not
+        // reported, as Core would drop it (`docs/tooling/e2e.md`).
+        if let Some(hwnd) = window
+            && self.context.in_ignored_window(hwnd)
+        {
+            tracing::info!(hwnd, "a focus in a window of an ignored process is dropped");
+            return;
+        }
         let mut node = node;
         let mut ancestors = ancestors;
         if backend == Backend::Uia {
@@ -3317,8 +3354,10 @@ impl Worker<'_> {
             self.emit(trace, observed_at_us, Backend::Uia, hwnd, change);
             return;
         }
-        // A text focus's caret and text: the subscription follows only the
-        // focus, so these are the focus's.
+        // A caret or text event of an element of the focus-following
+        // subscription, which follows every report's element the outpost
+        // has not released: attributed to its node by its runtime id, with
+        // no comparison, and read for that node, which Core targets.
         match event.kind {
             UiaKind::TextSelection => {
                 if let Some(node_id) = self
@@ -3442,10 +3481,25 @@ impl Worker<'_> {
     /// focus in none of the elements it controls and falls through to its
     /// state change handler (`NVDAObjects/__init__.py` 1314 to 1339).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
-        // The focus Core holds, or will once it has judged this outpost's
-        // reports, as NVDA uses its focus object; found by its path when its
-        // element is not known.
-        let focus_id = self.expected_uia_focus()?;
+        // Every report's focus, newest first, one of which is Core's, as
+        // NVDA uses its focus object; Core speaks the selection only while
+        // its controller is Core's focus.
+        for focus_id in self.uia_report_focuses() {
+            if let Some(selection) = self.controlled_selection_of(&focus_id, runtime_id) {
+                return Some(selection);
+            }
+        }
+        None
+    }
+
+    /// [`controlled_selection`](Self::controlled_selection) against the
+    /// focus `focus_id`, found by its path when its element is not known.
+    fn controlled_selection_of(
+        &mut self,
+        focus_id: &[i32],
+        runtime_id: &[i32],
+    ) -> Option<NormalizedEvent> {
+        let focus_id = focus_id.to_vec();
         let current_instead = runtime_id != focus_id.as_slice();
         let registry = &self.context.uia_registry;
         let known = registry
@@ -3527,15 +3581,14 @@ impl Worker<'_> {
     /// event's cache can hold no name for an item an application names
     /// late.
     fn selection_as_value(&mut self, parts: &UiaSnapshotFact) -> Option<NormalizedEvent> {
-        let focus = self.context.held().expected().map(|focus| focus.node.id)?;
-        if self
+        // The report's focus the listener marked as one whose value is its
+        // first selected item's name, of every report the outpost has not
+        // released.
+        let marked = self
             .context
             .watch
-            .follow(|follow| follow.tracking.value_from_selection)
-            != Some(focus)
-        {
-            return None;
-        }
+            .follow(|follow| follow.tracking.value_from_selection)?;
+        let focus = self.context.held().is_a_focus(marked).then_some(marked)?;
         let registry = &self.context.uia_registry;
         let focused = registry
             .element_of(focus)
@@ -3563,13 +3616,26 @@ impl Worker<'_> {
         })
     }
 
-    /// The runtime id of the focus Core holds, or will hold once it has
-    /// judged what this outpost reported ([`held::Held::expected`]), when it
-    /// is a UIA focus of this outpost's: the focus a selection is read
-    /// against, as NVDA reads it against its focus object.
-    fn expected_uia_focus(&self) -> Option<Vec<i32>> {
-        let node = self.context.held().expected()?.node.id;
-        self.context.uia_registry.runtime_id_of(node)
+    /// The runtime ids of the UIA focuses of the outpost's reports, newest
+    /// first: the focuses a selection is read against, one of which is
+    /// Core's, as NVDA reads it against its focus object.
+    fn uia_report_focuses(&self) -> Vec<Vec<i32>> {
+        let nodes: Vec<NodeId> = self
+            .context
+            .held()
+            .focuses()
+            .rev()
+            .map(|focus| focus.node.id)
+            .collect();
+        let mut focuses: Vec<Vec<i32>> = Vec::new();
+        for node in nodes {
+            if let Some(runtime_id) = self.context.uia_registry.runtime_id_of(node)
+                && !focuses.contains(&runtime_id)
+            {
+                focuses.push(runtime_id);
+            }
+        }
+        focuses
     }
 
     /// A snapshot from a UIA element's cached parts, its id minted by the
@@ -4341,16 +4407,16 @@ impl Worker<'_> {
     ) -> Result<Option<isize>, Dropped> {
         // The event's own window; else the element's nearest, which the
         // listener's read found with its ancestors and sends with every
-        // read; else, for a read without one, which only a test makes, and
-        // for judging Core's hidden frame only, this application's focus
-        // window now, which is never reported.
+        // read; else, for a read without one, which only a test makes, this
+        // application's focus window now, so every focus report carries
+        // window facts. A read with none of them is not reported.
         let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
             remote_window
         };
-        let judged = reported.or_else(|| focus_window_of(context.target_pid()));
-        if judged.is_some_and(window_belongs_to_hidden_frame) {
+        let reported = reported.or_else(|| focus_window_of(context.target_pid()));
+        if reported.is_none_or(window_belongs_to_hidden_frame) {
             return Err(Dropped);
         }
         Ok(reported)
@@ -4807,6 +4873,10 @@ fn event_message(
     (backend, window): (Backend, Option<isize>),
     event: NormalizedEvent,
 ) -> OutpostToSupervisor {
+    debug_assert!(
+        window.is_some() || !matches!(event, NormalizedEvent::FocusChanged { .. }),
+        "every focus report carries window facts"
+    );
     let target = context.target_pid();
     let client = window.and_then(|hwnd| console_client(hwnd, target));
     let name = || context.application_name(client.map_or(target, |client| client.0));
@@ -5483,7 +5553,8 @@ mod tests {
             timing: EventTiming::default(),
             batch: 0,
             backend: Backend::Msaa,
-            window: None,
+            // A focus report always carries a window.
+            window: Some(1),
             node: node(1, Role::Button),
             object: None,
             msaa_event: None,

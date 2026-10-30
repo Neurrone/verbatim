@@ -154,6 +154,12 @@ pub(super) struct FollowState {
     /// agile reference, so a node whose element was replaced is followed
     /// again.
     pub(super) followed_element: Option<Agile<Kept>>,
+    /// The elements of the outpost's older UIA reports, each with its node
+    /// and the group it was given, which keep their groups until the store
+    /// releases their node, so the outpost hears the changes of every node
+    /// it has not released (`docs/design/ownership-one-judge.md`, "UIA: one
+    /// focus-following group per unreleased report").
+    pub(super) kept_groups: Vec<(NodeId, Group, Agile<Kept>)>,
     /// The caret key's watch for evidence the worker keeps open between its
     /// entries, if one is open.
     pub(super) caret_watch: Option<OpenWatch>,
@@ -414,9 +420,13 @@ impl FollowState {
         }
     }
 
-    /// Moves the focus-following subscription to `target`, unless it is
-    /// already there. The subscription keeps references of its own, so
-    /// `target`'s elements are displaced either way.
+    /// Moves the focus-following subscription's newest focus to `target`,
+    /// unless it is already there. The focus it followed before keeps its
+    /// group on its element, among [`kept_groups`](Self::kept_groups),
+    /// until its node is released; a focus that returns to an element
+    /// that kept its group is not given it again. The subscription keeps
+    /// references of its own, so `target`'s elements are displaced either
+    /// way.
     fn retarget(&mut self, context: &Context, target: Target, displaced: &mut Displaced) {
         let same_element = match (&self.followed_element, &target.element) {
             (Some(followed), Some(element)) => followed.same_as(element),
@@ -434,29 +444,100 @@ impl FollowState {
         tracing::debug!(
             from = ?self.followed,
             to = ?target.wanted,
+            kept = self.kept_groups.len(),
             "the focus-following subscription is moved"
         );
-        self.followed = target.wanted;
-        displaced.elements.extend(std::mem::replace(
-            &mut self.followed_element,
-            target.element.clone(),
-        ));
-        if let Some(subscription) = context.focus_events.get() {
-            match (target.wanted, &target.element) {
-                (Some((_, group, _)), Some(element)) => subscription.retarget_with(
-                    verbatim_uia::Scope::Elements(vec![element.reference()]),
-                    group,
-                    target
-                        .slider
-                        .as_ref()
-                        .map(|slider| (slider.reference(), Group::Value))
-                        .into_iter()
-                        .collect(),
-                ),
-                _ => subscription.retarget(verbatim_uia::Scope::Nothing),
+        let before = std::mem::replace(&mut self.followed, target.wanted);
+        let before_element = std::mem::replace(&mut self.followed_element, target.element.clone());
+        if let (Some((node, group, _)), Some(element)) = (before, before_element) {
+            let kept = self
+                .kept_groups
+                .iter()
+                .position(|(kept, _, _)| *kept == node);
+            if let Some(kept) = kept {
+                displaced
+                    .elements
+                    .push(std::mem::replace(&mut self.kept_groups[kept], (node, group, element)).2);
+            } else {
+                self.kept_groups.push((node, group, element));
             }
         }
+        // The newest focus's element is followed as the newest, not kept.
+        if let Some((node, _, _)) = target.wanted {
+            let mut index = 0;
+            while index < self.kept_groups.len() {
+                if self.kept_groups[index].0 == node {
+                    displaced.elements.push(self.kept_groups.remove(index).2);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.subscribe(context, target.slider.as_ref());
         displaced.target(target);
+    }
+
+    /// Asks the subscription to follow the newest focus's element with its
+    /// group, `slider` with the value group, and every kept element with
+    /// its own group.
+    fn subscribe(&self, context: &Context, slider: Option<&Agile<Kept>>) {
+        let Some(subscription) = context.focus_events.get() else {
+            return;
+        };
+        let kept = self
+            .kept_groups
+            .iter()
+            .map(|(_, group, element)| (element.reference(), *group));
+        let slider = slider.map(|slider| (slider.reference(), Group::Value));
+        match (self.followed, &self.followed_element) {
+            (Some((_, group, _)), Some(element)) => subscription.retarget_with(
+                verbatim_uia::Scope::Elements(vec![element.reference()]),
+                group,
+                slider.into_iter().chain(kept).collect(),
+            ),
+            _ if !self.kept_groups.is_empty() => subscription.retarget_with(
+                verbatim_uia::Scope::Elements(Vec::new()),
+                Group::Base,
+                kept.collect(),
+            ),
+            _ => subscription.retarget(verbatim_uia::Scope::Nothing),
+        }
+    }
+
+    /// The store released `released`, by node number: the elements of
+    /// those nodes lose their groups, the newest focus's too when its node
+    /// is released, and the subscription is moved once if anything changed.
+    pub(super) fn release_groups(
+        &mut self,
+        context: &Context,
+        released: &std::collections::HashSet<u64>,
+        displaced: &mut Displaced,
+    ) {
+        let mut changed = false;
+        let mut index = 0;
+        while index < self.kept_groups.len() {
+            if released.contains(&self.kept_groups[index].0.number()) {
+                displaced.elements.push(self.kept_groups.remove(index).2);
+                changed = true;
+            } else {
+                index += 1;
+            }
+        }
+        if self
+            .followed
+            .is_some_and(|(node, _, _)| released.contains(&node.number()))
+        {
+            self.followed = None;
+            displaced.elements.extend(self.followed_element.take());
+            changed = true;
+        }
+        if changed {
+            tracing::debug!(
+                kept = self.kept_groups.len(),
+                "released nodes' elements lose their focus-following groups"
+            );
+            self.subscribe(context, None);
+        }
     }
 
     /// Makes `follow` the followed focus.

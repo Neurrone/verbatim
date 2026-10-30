@@ -201,6 +201,10 @@ pub(crate) struct Context {
     /// How many focus groups this outpost generation has tried: the number
     /// of the last ([`Context::next_focus_group`]).
     focus_groups: std::sync::atomic::AtomicU64,
+    /// The processes Verbatim ignores, which the outpost inherits through
+    /// [`IGNORE_PIDS_ENV`](crate::supervisor::IGNORE_PIDS_ENV): a focus in
+    /// one's window is not reported.
+    ignored: crate::supervisor::IgnoredProcesses,
     /// The client on a thread of its own for the worker's operations with a
     /// deadline of their own: a dialog's text.
     bounded: verbatim_uia::BoundedClient,
@@ -520,6 +524,15 @@ impl Context {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner),
         )
+    }
+
+    /// Whether window `hwnd`'s top-level window belongs to a process
+    /// Verbatim ignores. Local calls, made only while one is ignored.
+    fn in_ignored_window(&self, hwnd: isize) -> bool {
+        !self.ignored.is_empty() && {
+            let (_, pid) = window::window_owner(window::top_level_of(hwnd));
+            self.ignored.contains(verbatim_model::Pid(pid))
+        }
     }
 
     /// Whether the store holds `node`: either registry keeps it.
@@ -1078,6 +1091,7 @@ impl Outpost {
             observation: OnceLock::new(),
             held: Mutex::new(held::Held::default()),
             focus_groups: std::sync::atomic::AtomicU64::new(0),
+            ignored: crate::supervisor::IgnoredProcesses::from_env(),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
