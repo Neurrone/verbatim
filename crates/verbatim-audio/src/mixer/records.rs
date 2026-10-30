@@ -71,6 +71,15 @@ pub(crate) enum Outbound {
         event: PlaybackEvent,
         at: Instant,
     },
+    /// Utterance `utterance` of source `source` failed because its frames
+    /// were converted for a device format no longer in use; the delivery
+    /// thread reports it ended, writing the reason.
+    FormatChanged {
+        source: usize,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        at: Instant,
+    },
     /// The device ran dry in the middle of an utterance; the count so far.
     Underrun(u64),
     /// A voice's frames, done with.

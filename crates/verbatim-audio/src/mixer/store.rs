@@ -47,9 +47,14 @@ const SEGMENTS: usize = 1_024;
 const MAX_CHANNELS: usize = 8;
 const MAX_RATE: usize = 192_000;
 
+/// The margin a format must leave in the reserve beyond a source's
+/// capacity: one device period of 10 ms, so a source at its bound still
+/// has room for the frames a pass takes before it lets played ones go.
+pub(crate) const MARGIN_MS: u32 = 10;
+
 /// The samples a source that takes frames reserves: its capacity, a 40 ms
-/// device queue and 40 ms ahead, at the largest format.
-pub(crate) const SAMPLES: usize = MAX_RATE * 80 / 1_000 * MAX_CHANNELS;
+/// device queue and 40 ms ahead, and the margin, at the largest format.
+pub(crate) const SAMPLES: usize = MAX_RATE * (80 + MARGIN_MS as usize) / 1_000 * MAX_CHANNELS;
 
 /// One frame of one source's pending events.
 pub(crate) struct Pending {
@@ -68,6 +73,10 @@ enum Kind {
     End,
     /// Fires at once: an ending a cancel, a failure or a sound's end made.
     Ended(UtteranceEnding),
+    /// Fires at once: the utterance failed because its frames were
+    /// converted for a device format no longer in use. The delivery thread
+    /// writes the reason, so the audio thread allocates nothing for it.
+    FormatChanged,
 }
 
 /// One utterance registered and not yet ended.
@@ -244,7 +253,10 @@ impl SourceState {
 
     /// Takes `frames` frames of `utterance` from `samples`, or discards
     /// them when the utterance no longer accepts frames or `current` is
-    /// false (they are in a device format no longer in use).
+    /// false (they are in a device format no longer in use). Frames in an
+    /// old format for an utterance still being written fail it: it was
+    /// registered after the device changed format, its audio converted
+    /// before, and none of it can play.
     pub(crate) fn frames(
         &mut self,
         utterance: UtteranceId,
@@ -252,8 +264,19 @@ impl SourceState {
         samples: (&[f32], &[f32]),
         current: bool,
     ) {
+        if !current {
+            self.release_count(frames);
+            if let Some(index) = self
+                .tracked
+                .iter()
+                .position(|tracked| tracked.utterance == utterance && tracked.writing)
+            {
+                self.end_failed(index, Kind::FormatChanged);
+            }
+            return;
+        }
         let write_end = self.write_end;
-        let Some(tracked) = self.writing(utterance).filter(|_| current) else {
+        let Some(tracked) = self.writing(utterance) else {
             self.release_count(frames);
             return;
         };
@@ -374,14 +397,26 @@ impl SourceState {
         else {
             return Some(reason);
         };
+        self.end_failed(index, Kind::Ended(UtteranceEnding::Failed(reason)));
+        None
+    }
+
+    /// Ends the tracked utterance at `index` at once with `ending`, a
+    /// failure, discarding whatever of it has not played.
+    fn end_failed(&mut self, index: usize, ending: Kind) {
         let tracked = self.tracked.remove(index);
+        let utterance = tracked.utterance;
         // The failing utterance is the one being written, so it is the last
         // in the source: everything of it not yet played goes.
         self.truncate(tracked.start.max(self.mixed_end));
         self.events.retain(|pending| pending.utterance != utterance);
         self.retire_voices(|voice| voice.utterance == Some(utterance));
-        self.end_now(utterance, tracked.trace_id, UtteranceEnding::Failed(reason));
-        None
+        self.events.push_front(Pending {
+            position: 0,
+            utterance,
+            trace_id: tracked.trace_id,
+            kind: ending,
+        });
     }
 
     /// Ends every utterance registered under a cancel generation older than
@@ -410,11 +445,13 @@ impl SourceState {
             let cancelled = self.tracked.iter().any(|tracked| {
                 tracked.utterance == pending.utterance && tracked.generation < generation
             });
-            if cancelled && !matches!(pending.kind, Kind::Ended(_)) {
+            if cancelled && !matches!(pending.kind, Kind::Ended(_) | Kind::FormatChanged) {
                 let _ = self.events.remove(index);
                 continue;
             }
-            if pending.position >= spared && !matches!(pending.kind, Kind::Ended(_)) {
+            if pending.position >= spared
+                && !matches!(pending.kind, Kind::Ended(_) | Kind::FormatChanged)
+            {
                 pending.position -= removed;
             }
             index += 1;
@@ -465,7 +502,7 @@ impl SourceState {
         let cut = self.mixed_end;
         self.truncate(cut);
         self.events
-            .retain(|pending| matches!(pending.kind, Kind::Ended(_)));
+            .retain(|pending| matches!(pending.kind, Kind::Ended(_) | Kind::FormatChanged));
         self.retire_voices(|_| true);
         let mut index = self.tracked.len();
         while index > 0 {
@@ -569,7 +606,7 @@ impl SourceState {
             let due = match pending.kind {
                 Kind::Start => self.frame_played(pending.position, played),
                 Kind::Mark(_) | Kind::End => self.played_up_to(pending.position, played),
-                Kind::Ended(_) => true,
+                Kind::Ended(_) | Kind::FormatChanged => true,
             };
             if !due || out.is_full() {
                 break;
@@ -609,6 +646,16 @@ impl SourceState {
                     trace_id: pending.trace_id,
                     ending,
                 },
+                Kind::FormatChanged => {
+                    let _ = out.push(Outbound::FormatChanged {
+                        source,
+                        utterance: pending.utterance,
+                        trace_id: pending.trace_id,
+                        at,
+                    });
+                    sent = true;
+                    continue;
+                }
             };
             let _ = out.push(Outbound::Event { source, event, at });
             sent = true;

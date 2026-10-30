@@ -187,14 +187,13 @@ impl AudioLoop {
 
     /// Takes every record its source has room for from every lane, in each
     /// lane's order. A lane's source gets its room event when the pass took
-    /// at least half the lane's records, or took any from a full lane: a
-    /// producer that found the lane full has filled it since the last pass
-    /// began, so the next pass takes at least that.
+    /// any record and left the lane at most half full: a level, read after
+    /// the drain, so a producer that found the lane full is woken by the
+    /// first pass that leaves it half free, whenever it filled it.
     fn drain(&mut self, device: &mut dyn AudioDevice, queued: &mut u64) {
         for index in 0..self.lanes.len() {
             let source = self.lanes[index].source;
             let capacity = self.lanes[index].records.buffer().capacity();
-            let was_full = self.lanes[index].records.slots() == capacity;
             let mut took = 0;
             while let Ok(record) = self.lanes[index].records.peek() {
                 if !self.admits(source, record) {
@@ -206,7 +205,7 @@ impl AudioLoop {
                 took += 1;
                 self.apply(index, source, record, device, queued);
             }
-            if took >= capacity / 2 || (was_full && took > 0) {
+            if took > 0 && self.lanes[index].records.slots() <= capacity / 2 {
                 self.controls[source].room.set();
             }
         }

@@ -28,8 +28,10 @@ event that the mixer's `Waker` signals: every producer sets it after
 each push to the mixer, one `SetEvent`. `signal` makes another Windows
 auto-reset event for the mixer's other threads (a producer's room, the
 delivery thread, the WAV tap's writer), whose set stays until the next
-wait takes it, so no wake is lost; when Windows cannot make one it
-falls back to the portable `CondvarSignal`. `clock_position` reads the
+wait takes it, so no wake is lost. When Windows cannot make one, the
+portable `CondvarSignal` stands in and the device refuses every open, so
+the mixer plays its silence rather than take a lock on the audio thread
+while playing to the device. `clock_position` reads the
 stream's `IAudioClock` position, converted to frames, and how long ago it
 was taken, from the performance counter's value the position carries.
 

@@ -19,6 +19,7 @@
 //! notification for clearing, also a second later.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tracing::{info, warn};
@@ -281,6 +282,11 @@ pub struct WasapiDevice {
     stream: Option<Stream>,
     notices: DeviceNotices,
     wake: Arc<Event>,
+    /// An event for the mixer could not be made, so a portable signal,
+    /// which takes a lock, stands in for it: the device then never opens,
+    /// and the mixer plays its silence, the one place such a signal is
+    /// expected.
+    signal_failed: AtomicBool,
 }
 
 // SAFETY: the MMDevice and audio client objects are free-threaded objects
@@ -304,6 +310,7 @@ impl WasapiDevice {
             stream: None,
             notices: DeviceNotices::new(waker(&wake)),
             wake,
+            signal_failed: AtomicBool::new(false),
         })
     }
 
@@ -489,6 +496,14 @@ impl AudioDevice for WasapiDevice {
         self.stop();
         self.stream = None;
         self.notices.opening();
+        if self.signal_failed.load(Ordering::Relaxed) {
+            // Nothing Windows reports makes the events, so no reopen is
+            // asked for.
+            self.notices.failed(None);
+            return Err(AudioError::Device(
+                "an event for the mixer could not be made".to_owned(),
+            ));
+        }
         match self.open_stream() {
             Ok((stream, format)) => {
                 info!(
@@ -629,13 +644,16 @@ impl AudioDevice for WasapiDevice {
         waker(&self.wake)
     }
 
-    /// A Windows auto-reset event, or, when Windows cannot make one, the
-    /// portable signal, which works the same with a lock of its own.
+    /// A Windows auto-reset event. When Windows cannot make one, the
+    /// portable signal stands in, which takes a lock, and the device then
+    /// refuses to open, so the mixer plays silence rather than take a lock
+    /// on the audio thread while it plays to a device.
     fn signal(&self) -> Arc<dyn Signal> {
         match Event::new() {
             Ok(event) => Arc::new(event),
             Err(error) => {
-                warn!(target: "verbatim::audio", %error, "an event for the mixer could not be made; using a condition variable");
+                warn!(target: "verbatim::audio", %error, "an event for the mixer could not be made; the audio device will not open");
+                self.signal_failed.store(true, Ordering::Relaxed);
                 Arc::new(CondvarSignal::default())
             }
         }

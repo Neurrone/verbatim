@@ -492,16 +492,16 @@ fn run(
     // thread's commit included, both within one bound
     // (`docs/design/ownership-output.md`, "One saver, one writer per
     // section").
-    let deadline = Instant::now() + EXIT_SOUND_TIMEOUT;
+    let deadline = Instant::now() + EXIT_SAVE_TIMEOUT;
     if !manager.settle(deadline) {
         tracing::warn!(
-            timeout = ?EXIT_SOUND_TIMEOUT,
+            timeout = ?EXIT_SAVE_TIMEOUT,
             "the synthesizer did not answer in time; a settings change made just before exiting may not be saved"
         );
     }
     if !saver.finish(deadline) {
         tracing::warn!(
-            timeout = ?EXIT_SOUND_TIMEOUT,
+            timeout = ?EXIT_SAVE_TIMEOUT,
             "the settings were not all saved in time"
         );
     }
@@ -523,6 +523,11 @@ fn run(
 /// exits on any quit but being replaced: NVDA's exit sound plays for about
 /// half a second.
 const EXIT_SOUND_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The longest Verbatim waits at exit, after the exit sound, for the speech
+/// pipeline to settle and the saver to write the settings, the two sharing
+/// it.
+const EXIT_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Names a WAV file to record everything Verbatim plays into.
 const RECORD_AUDIO_ENV: &str = "VERBATIM_RECORD_AUDIO";

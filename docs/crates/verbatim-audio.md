@@ -179,10 +179,11 @@ playing, and while idle until a producer, a cancel, a pause or the device
 wakes it. A device that will ask to be reopened ends the wait itself, by
 its waker or a deadline of its own, so an idle mixer never wakes to
 look. The pass takes no lock, waits on nothing else, and allocates and
-frees nothing; `cargo xtask ci` holds its module to the audio rule
-(`xtask/src/ownership.rs`), and an allocation test holds the rest. The
-recovery path, which opens the device, logs and may allocate, is its own
-module (`mixer/recover.rs`).
+frees nothing. `cargo xtask ci` holds the pass's module, `mixer/run.rs`,
+to the audio rule (`xtask/src/ownership.rs`); the store it calls,
+`mixer/store.rs`, is held by the allocation test, which counts the audio
+thread's allocations and frees. The recovery path, which opens the
+device, logs and may allocate, is its own module (`mixer/recover.rs`).
 
 Ordering rules, which no test can produce and a reviewer checks. The
 queue thread raises a source's cancel generation before it cancels the
@@ -198,15 +199,20 @@ spared and moved up to where the cancelled audio began.
 Wake rules. A producer sets the audio thread's wake event, the device's
 own event that its `wait` watches, after every push, and the queue thread
 after every cancel and pause; an idle audio thread is woken by it, and a
-running one makes at most one extra pass. The audio thread sets a
-source's room event after a pass that let go of frames of the source and
-left at least half its room free, and after a pass that took at least
-half its lane's records or took from a full lane; the room event is a
-level, set until a wait takes it, so a wait that begins after the room
-was freed returns at once and no wake is lost. It sets the delivery
-thread's event after a pass that sent it anything, and the delivery
-thread wakes it after draining a full ring, so held-back events go out
-without waiting for the next period.
+running one makes at most one extra pass. Every other wake is decided
+by a level read when the decision is made, never by what a ring held
+when a drain began, so no wake is lost to a push or a pop made
+meanwhile. The audio thread sets a source's room event after a pass that
+let go of frames of the source and left at least half its room free, and
+after a pass that took any record from a lane of the source and left the
+lane at most half full; the room event is set until a wait takes it, so
+a wait that begins after the room was freed returns at once. It sets the
+delivery thread's event after a pass that sent it anything. The delivery
+thread wakes it after a drain that took at least half the outbound ring:
+the audio thread holds events back only when it finds the ring full, and
+the drain that empties a full ring takes all of it, so held-back events
+go out without waiting for the next period, and at shutdown the audio
+thread waits for that wake with no time limit.
 
 The store (`mixer/store.rs`). The audio thread takes a record from a lane
 only when its store has room for it: 64 utterances tracked and 1,024
@@ -217,8 +223,10 @@ lane. An event leaves its source's pending list only when the outbound
 ring has room, so none is lost; a full ring delays reports. Every
 per-pass buffer is allocated before the audio thread starts, or when the
 device opens: the stores at build, the mix and the tap's pending frames
-on the recovery path. A device that opens in a format larger than the
-reserve is refused and played as silence.
+on the recovery path. The reserve also holds a 10 ms device period's
+margin beyond a source's capacity. A device that opens in a format
+larger than the reserve is refused, and speech is muted, played as
+silence, until the device reopens.
 
 Positions. Each source numbers its frames from zero as they are written
 (source positions), and the mixer numbers the frames it writes to the
@@ -257,7 +265,11 @@ by `fail` or by the device reopening in a different sample rate or
 channel count (frames already converted for the old format cannot be
 played, and frames, sounds and sounds played to their end that arrive in
 the old format are discarded; a sound played to its end so discarded
-ends at once). Cancel and fail discard the affected audio at once, and
+ends at once, and an utterance still being written whose frames arrive
+in the old format fails, which covers one registered after the reopen
+from a lane that already held its frames). A speech lane's `finish`
+always sends the finish, whether or not the converter's tail could be
+written, so an utterance the audio thread tracks always ends. Cancel and fail discard the affected audio at once, and
 the lane then refuses further writes for those utterances. An utterance
 registered under a generation older than the source's ends cancelled as
 it arrives, with nothing of it heard.
@@ -356,7 +368,9 @@ covers completion only after the last frame plays, marks, utterances
 without audio, cancellation sparing later utterances, an utterance
 registered under a generation before a cancel ending cancelled unheard
 while one registered under the raised generation plays, an empty
-utterance finished after a cancel in one pass ending cancelled, failure,
+utterance finished after a cancel in one pass ending cancelled, an
+utterance whose registration and frames were still in its lane when the
+device came back in another format failing with nothing written, failure,
 write backpressure, a producer waiting for room woken only once half its
 room is free and at shutdown, where its write answers `Break`, replaying
 unplayed audio after a reopen, the tap getting exactly what played and

@@ -159,8 +159,9 @@ Each was checked against the code at 98b0388d.
 
 - A change is on disk a write after it is made, not before the next key; a kill in between loses it.
 - A commit waits on the synth thread, so a host that has stopped answering delays it up to 10 seconds, and past the exit bound loses it.
+- Exit takes at worst 4 seconds after the GUI loop ends: up to 2 seconds for the exit sound to be heard, then up to 2 more, shared by the speech pipeline's settle and the saver's write.
 - Earcons beyond 256 waiting in a lane are dropped.
-- Each source reserves samples for 8 channels at 192 kHz: about 480 KiB for the synth thread's ring and as much for the speech source's store; a device format beyond that is refused by the mixer and played as silence.
+- Each source reserves samples for 8 channels at 192 kHz, with a device period's margin: about 540 KiB for the synth thread's ring and as much for the speech source's store; a device format beyond that is refused by the mixer, and speech is muted, played as silence, until the device reopens.
 - The races of the wakes and of the cancel generation's ordering cannot be produced by a test; the rules are stated in the crate guides of `verbatim-audio` and `verbatim-speech` so that a reviewer checks them.
 - The audio rule reads text, and the delivery thread's listeners still take the ledger's and the control server's locks, now off the audio thread.
 - The `SilentDevice` used by test audio, and its `Signal`, use a `Mutex` and `Condvar` (`crates/verbatim-audio/src/silent.rs` line 28); they are test devices, outside the loop's module. `DeviceNotices` keeps its `retry_at` mutex (`crates/verbatim-audio/src/notices.rs` line 52), taken only by the audio thread, so it never waits.

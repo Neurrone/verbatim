@@ -84,6 +84,10 @@ const SOUND_RECORDS: usize = 256;
 /// Records the outbound ring holds.
 const OUTBOUND: usize = 1_024;
 
+/// Why an utterance fails when the device comes back in another sample
+/// rate or channel count.
+const FORMAT_CHANGED: &str = "the audio device changed format";
+
 /// Something the mixer reports about one utterance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaybackEvent {
@@ -835,7 +839,9 @@ impl SpeechLane {
     }
 
     /// Ends `utterance`'s audio: it completes once the device has played
-    /// its last frame.
+    /// its last frame. The finish is pushed whatever became of the
+    /// converter's tail, so an utterance the audio thread still tracks is
+    /// always ended.
     pub fn finish(&mut self, utterance: UtteranceId) {
         let mut tail = Vec::new();
         let mut format = None;
@@ -849,10 +855,8 @@ impl SpeechLane {
             && !tail.is_empty()
         {
             let (published, device) = self.lane.shared.format();
-            if record_generation(published) != generation
-                || self.append(utterance, generation, device, &tail).is_break()
-            {
-                return;
+            if record_generation(published) == generation {
+                let _ = self.append(utterance, generation, device, &tail);
             }
         }
         let _ = self.lane.push_waiting(Record::Finish { utterance });

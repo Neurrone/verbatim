@@ -12,19 +12,17 @@ use tracing::warn;
 use verbatim_model::UtteranceEnding;
 
 use super::run::AudioLoop;
-use super::store::SAMPLES;
-use super::{pack_format, record_generation, source_capacity};
+use super::store::{MARGIN_MS, SAMPLES};
+use super::{FORMAT_CHANGED, pack_format, record_generation, source_capacity};
 use crate::fallback::Fallback;
 use crate::{AudioDevice, AudioError, DeviceFormat, Signal};
 
-/// How long the audio thread waits for the delivery thread to make room at
-/// shutdown, between tries.
-const SHUTDOWN_WAIT: Duration = Duration::from_millis(10);
-
-/// Whether the mixer can play `format`: a source's capacity of it fits the
-/// samples each source reserves.
+/// Whether the mixer can play `format`: a source's capacity of it, with a
+/// device period's margin, fits the samples each source reserves. A
+/// format that does not is played as silence until the device reopens.
 fn fits(format: DeviceFormat) -> bool {
-    source_capacity(format) * u64::from(format.channels)
+    let margin = u64::from(format.sample_rate) * u64::from(MARGIN_MS) / 1_000;
+    (source_capacity(format) + margin) * u64::from(format.channels)
         <= u64::try_from(SAMPLES).unwrap_or(u64::MAX)
 }
 
@@ -47,7 +45,7 @@ pub(crate) fn open(audio: &mut AudioLoop, device: &mut Fallback, tap_signal: &Ar
             // A device that comes back in a different format cannot play
             // the frames already converted for the old one, so every
             // utterance not yet ended fails.
-            let ending = UtteranceEnding::Failed("the audio device changed format".to_owned());
+            let ending = UtteranceEnding::Failed(FORMAT_CHANGED.to_owned());
             for store in &mut audio.sources {
                 store.end_all(&ending);
             }
@@ -122,7 +120,8 @@ pub(crate) fn shut_down(audio: &mut AudioLoop, device: &mut Fallback) {
         if done {
             break;
         }
-        device.wait(SHUTDOWN_WAIT);
+        // The delivery thread wakes it once it has taken half the ring.
+        device.wait(Duration::MAX);
     }
     for control in &audio.controls {
         control.room.set();

@@ -845,6 +845,36 @@ fn a_device_that_comes_back_in_another_format_fails_the_unheard_utterance() {
     harness.nothing_more();
 }
 
+/// An utterance whose registration and frames are still in the lane when
+/// the device comes back in another format is registered after the
+/// reopen, and its frames, converted for the old format, cannot play: it
+/// fails, rather than completing with nothing heard.
+#[test]
+fn an_utterance_whose_frames_were_converted_for_a_format_the_device_left_fails() {
+    let mut harness = harness();
+    harness.device.settle();
+    harness.device.hold();
+    let trace = harness.register(1);
+    assert!(harness.write(1, 10).is_continue());
+    harness.lane.finish(utterance(1));
+    *harness.device.reopened_format.lock().unwrap() = Some(DeviceFormat {
+        sample_rate: 2_000,
+        ..FORMAT
+    });
+    harness.device.reopen.store(true, Ordering::SeqCst);
+    harness.device.release();
+    assert_eq!(
+        harness.next(),
+        ended(
+            1,
+            trace,
+            UtteranceEnding::Failed("the audio device changed format".to_owned())
+        )
+    );
+    harness.nothing_more();
+    assert_eq!(harness.device.written(), []);
+}
+
 #[test]
 fn a_device_that_fails_to_open_is_replaced_by_silence_until_a_notice_and_then_opened() {
     let device = ManualDevice::default();
