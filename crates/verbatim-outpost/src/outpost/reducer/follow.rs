@@ -189,47 +189,13 @@ impl Poll {
     }
 }
 
-/// When the reducer is to wake for `open`: at its poll's next read, or at
-/// its bound ([`CARET_WATCH_BOUND`]) when it does not poll.
-pub(in crate::outpost) fn wake_for(open: &OpenWatch) -> Duration {
-    let bound = open.opened + CARET_WATCH_BOUND;
-    open.poll.map_or(bound, |poll| poll.next.min(bound))
-}
-
-/// What a poll read that found no evidence leaves of the watch it was made
-/// for ([`after_read`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::outpost) enum AfterRead {
-    /// That watch is no longer open, or no longer polls: answered, ended or
-    /// replaced meanwhile. The watch open now, if any, is left alone.
-    Gone,
-    /// The watch's next read is set.
-    Again,
-    /// The read was the poll's last: the watch is to end.
-    Last,
-}
-
-/// Sets the next read of the watch for request `request_id`, if it is the
-/// one in `open`, after a read of it at `now` found no evidence. The watch
-/// is matched by its request, not its node: a newer watch on the same node
-/// is another key's.
-pub(in crate::outpost) fn after_read(
-    open: &mut Option<OpenWatch>,
-    request_id: u64,
-    now: Duration,
-) -> AfterRead {
-    let Some(open) = open.as_mut().filter(|open| open.request_id == request_id) else {
-        return AfterRead::Gone;
-    };
-    let Some(poll) = open.poll else {
-        return AfterRead::Gone;
-    };
-    open.poll = poll.after_read(now);
-    if open.poll.is_some() {
-        AfterRead::Again
-    } else {
-        AfterRead::Last
-    }
+/// When the reducer is to wake for `open`: at its bound
+/// ([`CARET_WATCH_BOUND`]) when it does not poll, and never when it polls,
+/// since its poll is a program of its own that ends it at its last read.
+pub(in crate::outpost) fn wake_for(open: &OpenWatch) -> Option<Duration> {
+    open.poll
+        .is_none()
+        .then_some(open.opened + CARET_WATCH_BOUND)
 }
 
 /// The raw-view chain of the UIA focus the outpost last reported from the
@@ -357,9 +323,9 @@ pub(in crate::outpost) struct Follow {
 /// A change of the caret key's watch ([`Change::watch`]).
 #[derive(Clone, Debug)]
 pub(in crate::outpost) enum WatchChange {
-    /// A watch opened, the reducer to wake at the time given; the query it
-    /// answers is no longer the program's.
-    Open(OpenWatch, Duration),
+    /// A watch opened, the reducer to wake at the time given, if any; the
+    /// query it answers is no longer the program's.
+    Open(OpenWatch, Option<Duration>),
     /// A watch taken out to be checked, put back with the query no longer
     /// the program's.
     PutBack(OpenWatch),
@@ -369,9 +335,19 @@ pub(in crate::outpost) enum WatchChange {
     /// The open watch ended with no evidence, answered `WatchEnded`; the
     /// reason is logged.
     End(&'static str),
-    /// The open watch for this request had a poll read at the time given
-    /// that found no evidence.
-    Polled(u64, Duration),
+    /// The console poll of the watch for this request yields to another
+    /// program: the watch keeps its poll as it stands and the calls its
+    /// checks have made so far.
+    Yielded {
+        request_id: u64,
+        poll: Poll,
+        calls: CallCounts,
+    },
+    /// The watch for this request was answered by its poll.
+    Answered(u64),
+    /// The watch for this request ended with no evidence, answered
+    /// `WatchEnded`; the reason is logged.
+    Ended(u64, &'static str),
     /// The reducer is to wake at the time given for the open watch, or not
     /// at all.
     Wake(Option<Duration>),
@@ -549,6 +525,24 @@ impl FollowState {
         if let Some(open) = self.caret_watch.take() {
             applied.wake = Some(None);
             applied.ended.push((open, why));
+        }
+    }
+
+    /// Ends the open caret key's watch, as [`end_watch`](Self::end_watch)
+    /// does, if it is the one for request `request_id`: a newer watch,
+    /// another key's, is left alone.
+    pub(in crate::outpost) fn end_watch_of(
+        &mut self,
+        request_id: u64,
+        why: &'static str,
+        applied: &mut Applied,
+    ) {
+        if self
+            .caret_watch
+            .as_ref()
+            .is_some_and(|open| open.request_id == request_id)
+        {
+            self.end_watch(why, applied);
         }
     }
 
@@ -747,27 +741,69 @@ pub(in crate::outpost) fn apply(facts: &mut Facts, generation: u64, change: &Cha
     if let Some((node, states)) = change.states {
         let _ = facts.held.replace_states(node, states);
     }
-    match &change.watch {
-        None => {}
-        Some(WatchChange::Open(open, wake)) => {
-            applied.wake = Some(Some(*wake));
+    if let Some(watch) = &change.watch {
+        apply_watch(follow_state, watch, &mut applied);
+    }
+    applied
+}
+
+/// Applies `watch`, a commit's change of the caret key's watch, to
+/// `follow_state` ([`apply`]).
+fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mut Applied) {
+    match watch {
+        WatchChange::Open(open, wake) => {
+            applied.wake = Some(*wake);
             follow_state.caret_watch = Some(open.clone());
         }
-        Some(WatchChange::PutBack(open)) => follow_state.caret_watch = Some(open.clone()),
-        Some(WatchChange::Take(node)) => {
+        WatchChange::PutBack(open) => follow_state.caret_watch = Some(open.clone()),
+        WatchChange::Take(node) => {
             applied.taken = follow_state
                 .caret_watch
                 .take_if(|open| open.node_id == *node);
         }
-        Some(WatchChange::End(why)) => follow_state.end_watch(why, &mut applied),
-        Some(WatchChange::Polled(request_id, at)) => {
-            if after_read(&mut follow_state.caret_watch, *request_id, *at) == AfterRead::Last {
-                follow_state.end_watch("its poll's bound passed", &mut applied);
+        WatchChange::End(why) => follow_state.end_watch(why, applied),
+        WatchChange::Yielded {
+            request_id,
+            poll,
+            calls,
+        } => {
+            if let Some(open) = follow_state
+                .caret_watch
+                .as_mut()
+                .filter(|open| open.request_id == *request_id)
+            {
+                open.poll = Some(*poll);
+                open.calls = *calls;
             }
         }
-        Some(WatchChange::Wake(at)) => applied.wake = Some(*at),
+        WatchChange::Answered(request_id) => {
+            if follow_state
+                .caret_watch
+                .take_if(|open| open.request_id == *request_id)
+                .is_some()
+            {
+                applied.wake = Some(None);
+            }
+        }
+        WatchChange::Ended(request_id, why) => {
+            follow_state.end_watch_of(*request_id, why, applied);
+        }
+        WatchChange::Wake(at) => applied.wake = Some(*at),
     }
-    applied
+}
+
+/// Applies `change`, a program's commit of `generation`, to a program's
+/// copies `facts`, as the program's own commit does: its report recorded,
+/// then [`apply`].
+pub(in crate::outpost) fn apply_local(
+    facts: &mut Facts,
+    generation: u64,
+    change: &Change,
+) -> Applied {
+    if let Some(report) = &change.report {
+        record(&mut facts.held, report);
+    }
+    apply(facts, generation, change)
 }
 
 /// Records `report` among the reports changes are read for.
@@ -831,46 +867,73 @@ mod tests {
     }
 
     #[test]
-    fn a_polling_watch_wakes_the_reducer_at_its_next_read() {
+    fn only_a_watch_that_does_not_poll_wakes_the_reducer_at_its_bound() {
         let opened = Duration::from_secs(1);
         let poll = Poll::new(opened, 0, 0);
-        assert_eq!(
-            wake_for(&watch(7, opened, Some(poll))),
-            opened + POLL_INTERVAL
-        );
+        assert_eq!(wake_for(&watch(7, opened, Some(poll))), None);
         assert_eq!(
             wake_for(&watch(7, opened, None)),
-            opened + CARET_WATCH_BOUND
+            Some(opened + CARET_WATCH_BOUND)
         );
     }
 
     #[test]
-    fn a_read_for_a_replaced_watch_leaves_the_newer_one_on_its_node_alone() {
+    fn a_polls_change_leaves_a_newer_watch_on_its_node_alone() {
         let opened = Duration::from_secs(1);
         let newer = Poll::new(opened, 0, 0);
-        let mut open = Some(watch(8, opened, Some(newer)));
-        // The read for request 7, the older key's, returns after the newer
-        // key's watch on the same node opened, at that watch's bound.
-        assert_eq!(
-            after_read(&mut open, 7, opened + POLL_BOUND),
-            AfterRead::Gone
-        );
-        let open = open.expect("the newer watch stays open");
-        assert_eq!(open.poll.map(|poll| poll.next), Some(newer.next));
+        let mut facts = Facts::default();
+        facts.follow.caret_watch = Some(watch(8, opened, Some(newer)));
+        // The poll of request 7, the older key's, yields and then ends after
+        // the newer key's watch on the same node opened.
+        let yielded = Change {
+            watch: Some(WatchChange::Yielded {
+                request_id: 7,
+                poll: Poll::new(opened + POLL_BOUND, 0, 0),
+                calls: CallCounts::default(),
+            }),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &yielded);
+        assert_eq!(applied.wake, None);
+        let ended = Change {
+            watch: Some(WatchChange::Ended(7, "its poll's bound passed")),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &ended);
+        assert!(applied.ended.is_empty());
+        let open = facts
+            .follow
+            .caret_watch
+            .expect("the newer watch stays open");
+        assert_eq!(open.request_id, 8);
+        assert_eq!(open.poll, Some(newer));
     }
 
     #[test]
-    fn a_read_at_the_bound_is_the_watchs_last() {
+    fn a_yield_keeps_the_polls_state_in_its_watch() {
         let opened = Duration::from_secs(1);
-        let mut open = Some(watch(7, opened, Some(Poll::new(opened, 0, 0))));
-        assert_eq!(
-            after_read(&mut open, 7, opened + POLL_INTERVAL),
-            AfterRead::Again
-        );
-        assert_eq!(
-            after_read(&mut open, 7, opened + POLL_BOUND),
-            AfterRead::Last
-        );
+        let mut facts = Facts::default();
+        facts.follow.caret_watch = Some(watch(7, opened, Some(Poll::new(opened, 0, 0))));
+        let later = Poll {
+            next: opened + 2 * POLL_INTERVAL,
+            until: opened + POLL_BOUND,
+        };
+        let calls = CallCounts {
+            uia: 3,
+            ..CallCounts::default()
+        };
+        let yielded = Change {
+            watch: Some(WatchChange::Yielded {
+                request_id: 7,
+                poll: later,
+                calls,
+            }),
+            ..Change::default()
+        };
+        apply(&mut facts, 0, &yielded);
+        let open = facts.follow.caret_watch.expect("the watch stays open");
+        assert_eq!(open.poll, Some(later));
+        assert_eq!(open.calls, calls);
     }
 
     #[test]

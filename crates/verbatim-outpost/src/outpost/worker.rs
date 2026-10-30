@@ -6,8 +6,16 @@
 //! program came with, and posts each commit and its end to the mailbox; it
 //! writes no follow state and sends nothing to Core itself. The programs
 //! are the handlers below: an entry's handling, the owed work, a settle,
-//! and a release's drop. Each makes the calls the outpost has always made
-//! for its entry, so the calls each handling makes are unchanged.
+//! a release's drop, and the console poll. Each makes the calls the outpost
+//! has always made for its entry, so the calls each handling makes are
+//! unchanged.
+//!
+//! The inbox is the worker's own ([`super::inbox`]): the console poll waits
+//! on it for its next read and looks into it before each read and at each
+//! wake. A job other than a release's drop makes the poll yield; the jobs
+//! it takes meanwhile are held and run after it, and the pure part of each
+//! of its commits is applied to the copies of the next program the worker
+//! runs, which the reducer may have dispatched before it took them in.
 //!
 //! The worker is also where calls are counted: the backend crates count
 //! each call on the thread that makes it, and the worker takes the count
@@ -32,6 +40,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -65,11 +74,12 @@ use super::acceptance::{self, EventName, SystemWindows};
 use super::bound::{self, BoundFocus, FocusProgress};
 use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
+use super::inbox::{Inbox, Taken};
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, CARET_WATCH_BOUND, Entry, Evidence, FocusPath, GapNote, GapRead, Handling, Item, Object,
-    OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent, UiaKind, WatchChange,
-    WinKind, Work, wake_for,
+    self, CARET_WATCH_BOUND, Change, Entry, Evidence, FocusPath, GapNote, GapRead, Handling, Item,
+    Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent, UiaKind,
+    WatchChange, WinKind, Work, wake_for,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads::{self};
@@ -265,7 +275,7 @@ pub(super) fn spawn(
     context: Arc<Context>,
     generation: u64,
     warm: bool,
-    jobs: mpsc::Receiver<Job>,
+    jobs: Inbox<Job>,
     charge: Arc<Charge>,
 ) -> thread::JoinHandle<()> {
     thread::Builder::new()
@@ -281,7 +291,7 @@ fn run(
     context: &Arc<Context>,
     generation: u64,
     warm: bool,
-    jobs: &mpsc::Receiver<Job>,
+    jobs: &Inbox<Job>,
     charge: &Arc<Charge>,
 ) {
     // Held objects are agile references, resolved in this apartment.
@@ -293,10 +303,27 @@ fn run(
     if warm {
         let _ = client.uia();
     }
+    // The jobs the console poll took in, to run after it, and the pure part
+    // of its commits, for the next program's copies.
+    let mut held = VecDeque::new();
+    let mut carried = Vec::new();
     // Until the shell lets go of this generation's inbox, abandoned or at
     // the outpost's shutdown.
-    while let Ok(job) = jobs.recv() {
-        run_job(context, &mut client, generation, job, charge);
+    while let Some(mut job) = held.pop_front().or_else(|| jobs.take()) {
+        if charge.is_dead() {
+            // Dispatched again to the replacement: an abandoned worker makes
+            // no further call.
+            continue;
+        }
+        carry(&mut job.program.facts, generation, &carried);
+        carried = run_job(
+            context,
+            &mut client,
+            generation,
+            job,
+            charge,
+            (jobs, &mut held),
+        );
     }
     if charge.is_dead() {
         context.mailbox.post(Posted::Returned);
@@ -308,15 +335,49 @@ fn run(
     }
 }
 
+/// Applies `carried`, the pure part of the console poll's commits, in order,
+/// to `facts`, the copies of the program that runs after it: the reducer
+/// may have dispatched that program before it took them in. Each change of
+/// the poll's names its watch by request or sets a value, so one the copies
+/// already hold changes nothing.
+fn carry(facts: &mut reducer::Facts, generation: u64, carried: &[Change]) {
+    for change in carried {
+        let _ = reducer::apply_local(facts, generation, change);
+    }
+}
+
+/// Whether the console poll yields to `work`, a program waiting in its
+/// worker's inbox: to anything but a release's drop, which waits for the
+/// poll's end, at most the poll's bound.
+fn poll_yields_to(work: &Work) -> bool {
+    !matches!(work, Work::Drop)
+}
+
+/// Takes every job waiting in `inbox` into `held`, and answers whether the
+/// console poll is to yield: a job it yields to waits, or the inbox is
+/// closed.
+fn look(inbox: &Inbox<Job>, held: &mut VecDeque<Job>) -> bool {
+    loop {
+        match inbox.try_take() {
+            Taken::Job(job) => held.push_back(job),
+            Taken::Empty => break,
+            Taken::Closed => return true,
+        }
+    }
+    held.iter().any(|job| poll_yields_to(&job.program.work))
+}
+
 /// Runs one program, after dropping what the shell let go of, and posts its
-/// end.
+/// end. The console poll takes the jobs sent meanwhile into `held`; the pure
+/// part of its commits is returned, for the next program's copies.
 fn run_job(
     context: &Arc<Context>,
     client: &mut Client,
     generation: u64,
     job: Job,
     charge: &Arc<Charge>,
-) {
+    (inbox, held): (&Inbox<Job>, &mut VecDeque<Job>),
+) -> Vec<Change> {
     let Job {
         program,
         garbage,
@@ -334,8 +395,11 @@ fn run_job(
     let started = Instant::now();
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let tag = super::shell::tag_of(request);
-    let request_context =
+    let mut request_context =
         RequestContext::for_program(context, tag, (request, facts, waiting), Arc::clone(charge));
+    if matches!(work, Work::Poll(_)) {
+        request_context.keep_commits();
+    }
     let mut reported = false;
     let handled = catch_unwind(AssertUnwindSafe(|| match work {
         Work::Entry {
@@ -378,6 +442,10 @@ fn run_job(
             }
         }
         Work::Drop => {}
+        Work::Poll(watch) => {
+            let mut worker = Worker::new(&request_context, client, 0, EventTiming::default());
+            worker.poll(watch, inbox, held);
+        }
     }));
     // Calls made after the program's last publish, or by a program that
     // published nothing: they belong to no trace.
@@ -396,6 +464,7 @@ fn run_job(
         failed_reads,
         "handled"
     );
+    let carried = request_context.kept_commits();
     // Elements the program's lookups replaced, dropped holding no lock.
     drop(request_context);
     context.mailbox.post(Posted::Finished {
@@ -403,6 +472,7 @@ fn run_job(
         reported,
         panicked: handled.is_err(),
     });
+    carried
 }
 
 /// The observation `entry`'s verdicts are judged at: its event's, for an
@@ -426,6 +496,7 @@ fn describe(work: &Work) -> String {
         Work::Owed(owed) => format!("owed work of {:?}", owed.node),
         Work::Settle(id) => format!("settle {id}"),
         Work::Drop => "drop".to_owned(),
+        Work::Poll(watch) => format!("the console poll of {watch}"),
     }
 }
 
@@ -997,18 +1068,11 @@ impl Worker<'_> {
         });
     }
 
-    /// [`Item::Wake`]: re-reads the console host's caret for the open caret
-    /// key's watch when its poll's read is due, ending the watch when the
-    /// last read finds no evidence, as at its own bound ([`reducer::Poll`]);
-    /// ends the open watch once it has reached [`CARET_WATCH_BOUND`], which
-    /// only frees it and says nothing; and otherwise asks to be woken at the
-    /// open watch's next read or bound. A worker abandoned in the poll's
-    /// read leaves the watch its replacement opened alone.
+    /// [`Item::Wake`]: ends the open caret key's watch once it has reached
+    /// [`CARET_WATCH_BOUND`], which only frees it and says nothing, and
+    /// otherwise asks to be woken at its bound. A watch that polls the
+    /// console host's caret has no wake: its poll ends it.
     fn wake(&mut self) {
-        self.poll_caret();
-        if self.refused() {
-            return;
-        }
         let wake = self.context.follow(|follow| {
             follow
                 .caret_watch
@@ -1019,7 +1083,7 @@ impl Worker<'_> {
             Some((bound, _)) if self.context.now() >= bound => self.end_watch("its bound passed"),
             Some((_, wake)) => {
                 self.commit(Effects {
-                    watch: Some(WatchChange::Wake(Some(wake))),
+                    watch: Some(WatchChange::Wake(wake)),
                     ..Effects::default()
                 });
             }
@@ -1027,36 +1091,107 @@ impl Worker<'_> {
         }
     }
 
-    /// The open caret key's watch's poll read, when one is due: answers the
-    /// key on evidence, reading the terminal then, ends the watch when the
-    /// read was the poll's last, and otherwise sets the poll's next read.
-    fn poll_caret(&mut self) {
-        let now = self.context.now();
-        let due = self.context.follow(|follow| {
+    /// The console poll of the open caret key's watch for request
+    /// `request_id` ([`Work::Poll`], [`reducer::Poll`]): re-reads the
+    /// console host's caret at each of the poll's reads, waiting for the
+    /// next on `inbox`, with the check a caret event makes. It commits
+    /// once: on evidence it answers the key, the watch removed, and reads
+    /// the terminal, as after a first check that answers it; at a last
+    /// read that finds nothing it ends the watch; and when a program other
+    /// than a release's drop waits in `inbox`, which it looks at before
+    /// each read and at each wake, it yields, the watch keeping the poll
+    /// as it stands, and the reducer dispatches it again after that
+    /// program. The jobs it takes in go to `held`.
+    fn poll(&mut self, request_id: u64, inbox: &Inbox<Job>, held: &mut VecDeque<Job>) {
+        let context = self.context;
+        let Some(open) = context.follow(|follow| {
             follow
                 .caret_watch
-                .as_ref()
-                .filter(|open| open.poll.is_some_and(|poll| now >= poll.next))
-                .map(|open| (open.node_id, open.request_id, open.trace))
-        });
-        let Some((node_id, request_id, trace)) = due else {
+                .clone()
+                .filter(|open| open.request_id == request_id)
+        }) else {
             return;
         };
-        if self.check_watch_now(node_id, false) {
-            // Core's reading rules answer the key from a read that shows
-            // what it did, as after a first check that answers it.
-            if self.focused_terminal(node_id) {
-                self.terminal_output(node_id, trace, 0);
+        let Some(mut poll) = open.poll else {
+            return;
+        };
+        let node_id = open.node_id;
+        let mut calls = open.calls;
+        let mut caret_read = None;
+        loop {
+            if look(inbox, held) {
+                self.commit(Effects {
+                    watch: Some(WatchChange::Yielded {
+                        request_id,
+                        poll,
+                        calls,
+                    }),
+                    caret_read,
+                    ..Effects::default()
+                });
+                return;
             }
-            return;
+            if context.now() < poll.next {
+                inbox.wait_until(context.epoch + poll.next);
+                continue;
+            }
+            let awaited_at_us = now_us();
+            let (watched, read_at) = text_reads::check_watch(context, node_id, &open.watch, false);
+            if let Some(at) = read_at {
+                caret_read = Some((node_id, at));
+            }
+            match watched {
+                Watched::Answered(reply) => {
+                    let sent_caret = self.reply_caret(node_id, &reply);
+                    let read_calls = take_calls();
+                    tracing::debug!(
+                        trace = %open.trace,
+                        waited_ms = context.now().saturating_sub(open.opened).as_millis(),
+                        "a caret key's watch is answered"
+                    );
+                    let answer = OutpostToCore::Reply {
+                        trace_id: open.trace,
+                        request_id,
+                        outcome: QueryOutcome::Done(QueryResult::Text(reply)),
+                        timing: EventTiming {
+                            // The watch waited until this read began; the
+                            // read is the answer's.
+                            awaited_at_us,
+                            awaited_calls: calls,
+                            calls: calls + read_calls,
+                            published_at_us: now_us(),
+                            ..open.timing
+                        },
+                    };
+                    let committed = self.commit(Effects {
+                        aside: Some((request_id, answer)),
+                        watch: Some(WatchChange::Answered(request_id)),
+                        sent_caret,
+                        caret_read,
+                        ..Effects::default()
+                    });
+                    // Core's reading rules answer the key from a read that
+                    // shows what it did, as after a first check that
+                    // answers it.
+                    if committed == Committed::Applied && self.focused_terminal(node_id) {
+                        self.terminal_output(node_id, open.trace, 0);
+                    }
+                    return;
+                }
+                Watched::Watching => {
+                    calls += take_calls();
+                    let Some(next) = poll.after_read(context.now()) else {
+                        self.commit(Effects {
+                            watch: Some(WatchChange::Ended(request_id, "its poll's bound passed")),
+                            caret_read,
+                            ..Effects::default()
+                        });
+                        return;
+                    };
+                    poll = next;
+                }
+            }
         }
-        if self.refused() {
-            return;
-        }
-        self.commit(Effects {
-            watch: Some(WatchChange::Polled(request_id, self.context.now())),
-            ..Effects::default()
-        });
     }
 
     /// The gap's read (`docs/design/focus-pipeline-rework.md`, "Who owns
@@ -4428,4 +4563,81 @@ fn event_window_facts(
         facts.class = String::new();
     }
     facts
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::TraceId;
+
+    use super::super::inbox::inbox;
+    use super::super::shell::Garbage;
+    use super::*;
+
+    /// A job for `work`.
+    fn job(work: Work) -> Job {
+        Job {
+            program: Program {
+                request: Request {
+                    generation: 0,
+                    number: 1,
+                },
+                facts: reducer::Facts::default(),
+                work,
+                waiting: Vec::new(),
+            },
+            garbage: Garbage::default(),
+            settle: None,
+        }
+    }
+
+    /// A console caret event's handling, which checks the open watch.
+    fn console_caret() -> Work {
+        Work::Entry {
+            entry: Entry::own(
+                Item::Msaa {
+                    kind: WinKind::ConsoleCaret,
+                    hwnd: 9,
+                    id_object: 0,
+                    id_child: 0,
+                    raiser: 3,
+                },
+                TraceId::mint(),
+                1,
+            ),
+            handling: Handling::Run,
+            batch: 1,
+            group: None,
+        }
+    }
+
+    #[test]
+    fn the_poll_holds_a_drop_and_goes_on_reading() {
+        let (sender, jobs) = inbox();
+        assert!(sender.send(job(Work::Drop)).is_ok());
+        let mut held = VecDeque::new();
+        assert!(!look(&jobs, &mut held));
+        assert_eq!(held.len(), 1);
+        assert!(matches!(held[0].program.work, Work::Drop));
+    }
+
+    #[test]
+    fn the_poll_yields_to_a_caret_read_and_holds_it() {
+        let (sender, jobs) = inbox();
+        assert!(sender.send(job(Work::Drop)).is_ok());
+        assert!(sender.send(job(console_caret())).is_ok());
+        let mut held = VecDeque::new();
+        assert!(look(&jobs, &mut held));
+        assert_eq!(held.len(), 2);
+        assert!(matches!(held[0].program.work, Work::Drop));
+        assert!(matches!(held[1].program.work, Work::Entry { .. }));
+    }
+
+    #[test]
+    fn the_poll_ends_when_its_inbox_is_closed() {
+        let (sender, jobs) = inbox::<Job>();
+        drop(sender);
+        let mut held = VecDeque::new();
+        assert!(look(&jobs, &mut held));
+        assert!(held.is_empty());
+    }
 }

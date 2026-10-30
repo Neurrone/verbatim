@@ -45,6 +45,7 @@ pub(crate) mod alarm;
 mod bound;
 mod commit;
 mod focus_path;
+mod inbox;
 mod narrowing;
 mod outbound;
 mod read;
@@ -355,6 +356,10 @@ struct Program<'a> {
     request: reducer::Request,
     waiting: Vec<WaitingCaret>,
     charge: Arc<Charge>,
+    /// The pure part of each commit made, kept for the console poll, whose
+    /// commits the worker applies to the next program's copies
+    /// ([`RequestContext::keep_commits`]).
+    kept: Option<RefCell<Vec<reducer::Change>>>,
     _context: std::marker::PhantomData<&'a ()>,
 }
 
@@ -387,9 +392,28 @@ impl<'a> RequestContext<'a> {
                 request,
                 waiting,
                 charge,
+                kept: None,
                 _context: std::marker::PhantomData,
             }),
         }
+    }
+
+    /// Keeps the pure part of every commit the program makes from now on,
+    /// for [`kept_commits`](Self::kept_commits).
+    fn keep_commits(&mut self) {
+        if let Some(program) = &mut self.program {
+            program.kept = Some(RefCell::new(Vec::new()));
+        }
+    }
+
+    /// The pure part of each commit made since
+    /// [`keep_commits`](Self::keep_commits), in order.
+    fn kept_commits(&self) -> Vec<reducer::Change> {
+        self.program
+            .as_ref()
+            .and_then(|program| program.kept.as_ref())
+            .map(|kept| std::mem::take(&mut *kept.borrow_mut()))
+            .unwrap_or_default()
     }
 
     /// The program this context runs.
@@ -520,13 +544,14 @@ impl<'a> RequestContext<'a> {
             return (Committed::Refused, None);
         }
         let local = effects.local();
-        let applied = {
-            let mut facts = self.facts.borrow_mut();
-            if let Some(report) = &local.report {
-                reducer::record(&mut facts.held, report);
-            }
-            reducer::apply(&mut facts, program.request.generation, &local)
-        };
+        let applied = reducer::apply_local(
+            &mut self.facts.borrow_mut(),
+            program.request.generation,
+            &local,
+        );
+        if let Some(kept) = &program.kept {
+            kept.borrow_mut().push(local);
+        }
         self.mailbox.post(Posted::Commit {
             request: program.request,
             effects: Box::new(effects),

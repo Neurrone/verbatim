@@ -675,58 +675,237 @@ fn opens(open: &OpenWatch) -> Change {
     }
 }
 
-#[test]
-fn the_console_polls_ticks_come_while_its_watch_is_open() {
+/// The console caret event of window 9.
+fn console_caret() -> Item {
+    Item::Msaa {
+        kind: WinKind::ConsoleCaret,
+        hwnd: 9,
+        id_object: 0,
+        id_child: 0,
+        raiser: 3,
+    }
+}
+
+/// The console poll `effects` dispatch, for the watch of which request.
+fn polls(effects: &[Effect]) -> (Request, u64) {
+    let poll = program(effects);
+    match poll.work {
+        Work::Poll(watch) => (poll.request, watch),
+        ref work => panic!("the console poll, not {work:?}"),
+    }
+}
+
+/// A replay whose caret key, request 7, opened a polling watch at 1 ms,
+/// and whose poll was dispatched at 3 ms; the poll's request.
+fn polling() -> (Replay, Request) {
     let mut replay = Replay::new();
     let effects = replay.push(caret_key(7), Source::Other, 1);
     let key = program(&effects).request;
-    let open = polling_watch(7, 1);
-    let first_read = open.poll.map(|poll| poll.next);
-    replay.commit(key, opens(&open), 2);
-    replay.finish(key, false, 3);
-    assert!(
-        replay.reducer.queries().contains(&7),
-        "the watch answers later"
+    replay.commit(key, opens(&polling_watch(7, 1)), 2);
+    let (poll, watch) = polls(&replay.finish(key, false, 3));
+    assert_eq!(watch, 7);
+    (replay, poll)
+}
+
+/// The change of a poll of the watch for request 7 yielding at 5 ms,
+/// after one read.
+fn yields() -> Change {
+    Change {
+        watch: Some(WatchChange::Yielded {
+            request_id: 7,
+            poll: Poll {
+                next: Duration::from_millis(11),
+                until: Duration::from_millis(51),
+            },
+            calls: CallCounts {
+                uia: 2,
+                ..CallCounts::default()
+            },
+        }),
+        ..Change::default()
+    }
+}
+
+#[test]
+fn the_console_poll_is_dispatched_only_when_nothing_else_is_ready() {
+    let mut replay = Replay::new();
+    let effects = replay.push(caret_key(7), Source::Other, 1);
+    let key = program(&effects).request;
+    assert!(programs(&replay.push(name_change(1), Source::Hook, 2)).is_empty());
+    replay.commit(key, opens(&polling_watch(7, 1)), 3);
+    // The name change waits: it goes first.
+    let effects = replay.finish(key, false, 4);
+    let name = program(&effects);
+    assert_eq!(handles(name), (2, None));
+    let (_, watch) = polls(&replay.finish(name.request, false, 5));
+    assert_eq!(watch, 7);
+    assert_eq!(*replay.reducer.queries(), [7].into_iter().collect());
+}
+
+#[test]
+fn a_program_is_dispatched_beside_the_poll_its_deadline_starting_when_the_poll_ends() {
+    let (mut replay, poll) = polling();
+    // The poll's deadline is the only timer.
+    assert_eq!(
+        replay.reducer.next_timer(now(3)),
+        Some(Duration::from_millis(3 + 10_000))
     );
-    assert_eq!(replay.reducer.next_timer(now(3)), first_read);
-    // A console caret event whose check finds no move leaves the poll
-    // reading (463f2ef9): it puts the watch back as it was.
-    let effects = replay.push(
-        Item::Msaa {
-            kind: WinKind::ConsoleCaret,
-            hwnd: 9,
-            id_object: 0,
-            id_child: 0,
-            raiser: 3,
-        },
-        Source::Hook,
-        4,
-    );
+    let effects = replay.push(console_caret(), Source::Hook, 4);
     let event = program(&effects).request;
+    assert_eq!(replay.reducer.live(), [event, poll]);
+    // The event's program waits behind the poll: its deadline and its
+    // grace have not started.
+    assert_eq!(
+        replay.reducer.next_timer(now(4)),
+        Some(Duration::from_millis(3 + 10_000))
+    );
+    replay.commit(poll, yields(), 5);
+    assert!(programs(&replay.finish(poll, false, 6)).is_empty());
+    // Its grace ends 500 ms after the poll ended.
+    assert_eq!(
+        replay.reducer.next_timer(now(6)),
+        Some(Duration::from_millis(6 + 500))
+    );
+    assert_eq!(replay.reducer.live(), [event]);
+}
+
+#[test]
+fn the_poll_is_dispatched_again_after_it_yields() {
+    let (mut replay, poll) = polling();
+    let effects = replay.push(console_caret(), Source::Hook, 4);
+    let event = program(&effects).request;
+    replay.commit(poll, yields(), 5);
+    let yielded = replay
+        .reducer
+        .facts()
+        .follow
+        .caret_watch
+        .clone()
+        .expect("the watch stays open");
+    assert_eq!(
+        yielded.poll,
+        Some(Poll {
+            next: Duration::from_millis(11),
+            until: Duration::from_millis(51),
+        })
+    );
+    assert_eq!(yielded.calls.uia, 2);
+    replay.finish(poll, false, 5);
+    // The console caret event's check finds no move (463f2ef9): it puts
+    // the watch back as it was, and the poll goes on from where it was.
     replay.commit(
         event,
         Change {
             watch: Some(WatchChange::Take(NodeId::new(1))),
             ..Change::default()
         },
-        5,
+        6,
     );
     replay.commit(
         event,
         Change {
-            watch: Some(WatchChange::PutBack(open)),
+            watch: Some(WatchChange::PutBack(yielded.clone())),
             ..Change::default()
         },
-        5,
+        7,
     );
-    replay.finish(event, false, 5);
-    // The tick is not lost: the poll's read is the next wake.
-    assert_eq!(replay.reducer.next_timer(now(5)), first_read);
-    let effects = replay.tick(6);
-    match &program(&effects).work {
-        Work::Entry { entry, .. } => assert!(matches!(entry.item, Item::Wake)),
-        work => panic!("the poll's read, not {work:?}"),
-    }
+    let effects = replay.finish(event, false, 8);
+    let (again, watch) = polls(&effects);
+    assert_eq!(watch, 7);
+    assert_ne!(again, poll);
+    let copied = program(&effects)
+        .facts
+        .follow
+        .caret_watch
+        .as_ref()
+        .and_then(|open| open.poll);
+    assert_eq!(copied, yielded.poll);
+}
+
+#[test]
+fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
+    let (mut replay, poll) = polling();
+    let effects = replay.push(caret_key(8), Source::Other, 4);
+    let next = program(&effects).request;
+    replay.commit(poll, yields(), 5);
+    replay.finish(poll, false, 5);
+    let effects = replay.commit(
+        next,
+        Change {
+            watch: Some(WatchChange::End("the next caret key replaced it")),
+            ..Change::default()
+        },
+        6,
+    );
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
+    let effects = replay.commit(
+        next,
+        Change {
+            result: Some(done(8)),
+            ..Change::default()
+        },
+        7,
+    );
+    assert_eq!(replies(&effects), [(8, "done")]);
+    assert!(programs(&replay.finish(next, false, 8)).is_empty());
+    assert!(replay.reducer.queries().is_empty());
+}
+
+#[test]
+fn the_poll_ends_its_watch_by_its_answer_or_at_its_last_read() {
+    let (mut replay, poll) = polling();
+    let answer = OutpostToCore::Reply {
+        trace_id: TraceId::mint(),
+        request_id: 7,
+        outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+        timing: EventTiming::default(),
+    };
+    let effects = replay.commit(
+        poll,
+        Change {
+            aside: Some((7, answer)),
+            watch: Some(WatchChange::Answered(7)),
+            ..Change::default()
+        },
+        10,
+    );
+    assert_eq!(replies(&effects), [(7, "done")]);
+    assert!(replay.reducer.facts().follow.caret_watch.is_none());
+    assert!(programs(&replay.finish(poll, false, 11)).is_empty());
+
+    let effects = replay.push(caret_key(9), Source::Other, 20);
+    let key = program(&effects).request;
+    replay.commit(key, opens(&polling_watch(9, 20)), 21);
+    let (poll, _) = polls(&replay.finish(key, false, 22));
+    let effects = replay.commit(
+        poll,
+        Change {
+            watch: Some(WatchChange::Ended(9, "its poll's bound passed")),
+            ..Change::default()
+        },
+        70,
+    );
+    assert_eq!(replies(&effects), [(9, "watch ended")]);
+    assert!(programs(&replay.finish(poll, false, 71)).is_empty());
+    assert!(replay.reducer.queries().is_empty());
+}
+
+#[test]
+fn an_abandoned_poll_ends_its_watch_and_the_program_behind_it_goes_to_the_replacement() {
+    let (mut replay, poll) = polling();
+    let effects = replay.push(console_caret(), Source::Hook, 4);
+    let behind = program(&effects).request;
+    // The poll's read hangs past its deadline.
+    let effects = replay.tick(3 + 10_000);
+    assert!(abandons(&effects));
+    assert_eq!(replies(&effects), [(7, "abandoned")]);
+    assert!(replay.reducer.facts().follow.caret_watch.is_none());
+    let again = program(&effects);
+    assert_eq!(again.request.generation, 1);
+    assert_eq!(handles(again), (4, None));
+    assert!(!replay.reducer.accepts(poll));
+    assert!(!replay.reducer.accepts(behind));
+    assert!(replay.reducer.accepts(again.request));
 }
 
 #[test]
@@ -872,9 +1051,12 @@ fn a_query_is_answered_once_whatever_ends_it() {
     let effects = replay.push(caret_key(5), Source::Other, 10_030);
     let key = program(&effects).request;
     replay.commit(key, opens(&polling_watch(5, 10_030)), 10_031);
-    assert_eq!(replies(&replay.finish(key, false, 10_032)), []);
+    let effects = replay.finish(key, false, 10_032);
+    assert_eq!(replies(&effects), []);
+    let (poll, _) = polls(&effects);
     let effects = replay.push(caret_key(6), Source::Other, 10_040);
     let next = program(&effects).request;
+    assert_eq!(replies(&replay.finish(poll, false, 10_040)), []);
     let effects = replay.commit(
         next,
         Change {

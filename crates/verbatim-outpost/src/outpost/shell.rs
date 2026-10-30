@@ -276,7 +276,8 @@ impl Garbage {
 
 /// A worker generation the shell started.
 struct Generation {
-    jobs: mpsc::Sender<Job>,
+    /// Its inbox: dropping it closes the inbox and rings its doorbell.
+    jobs: super::inbox::Sender<Job>,
     charge: Arc<Charge>,
 }
 
@@ -468,7 +469,7 @@ impl Shell {
 
     /// Starts worker generation `generation`.
     fn spawn_worker(&mut self, generation: u64, warm: bool) {
-        let (jobs, receiver) = mpsc::channel();
+        let (jobs, receiver) = super::inbox::inbox();
         let charge = Arc::new(Charge::default());
         let thread = worker::spawn(
             Arc::clone(&self.context),

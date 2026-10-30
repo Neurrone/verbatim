@@ -159,8 +159,8 @@ pub(in crate::outpost) enum Item {
     /// `behind_noted` once the reducer has put it directly behind the
     /// noted caret, so that reaching it again waits for nothing more.
     IdleQuery { round: u64, behind_noted: bool },
-    /// The open caret key's watch's wake: its poll's next read, or its
-    /// bound.
+    /// The open caret key's watch's wake at its bound, for a watch that
+    /// does not poll.
     Wake,
     /// The gap record's bound has passed: the record, still open, is read.
     GapBound,

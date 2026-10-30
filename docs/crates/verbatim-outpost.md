@@ -711,7 +711,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   release, the store's for a commit's writes, and a worker's charge.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
-  settle, or a release's drop, with copies of what it reads
+  settle, a release's drop, or the console poll, with copies of what it
+  reads
   (`reducer::Facts`: the reports, the follow state, the marks), and posts
   each commit (`commit::Effects`) to the mailbox, applying its pure part
   to its own copies (`reducer::apply`), so what it reads after is what the
@@ -721,7 +722,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   subscription follows (`commit::Writes`), then the reducer's change. A
   program receives too the caret events and edit controls' value changes
   waiting when it was dispatched (`reducer::WaitingCaret`), which a caret
-  key's check and a caret read's comparison ask after.
+  key's check and a caret read's comparison ask after. The inbox
+  (`outpost::inbox`) is a channel of jobs with the worker's own alarm as
+  its doorbell: the shell sends a job and then sets the alarm's event,
+  and lets go of an abandoned generation's sender before a last ring, so
+  the worker sees the inbox closed; the worker takes jobs without waiting
+  and waits on the alarm when none is there, so the console poll waits for
+  its next read and its next job in one high-resolution wait.
 - The focus-following subscription (`docs/design/focus-pipeline.md`, section
   17): one registration with NVDA's two groups. The base group, given every
   UIA focus whose element the outpost has, holds name, value, and state
@@ -1481,7 +1488,8 @@ scripts wait for, without waiting:
   out of the follow state, and an abandonment answers its query.
 - A watch ends with `TextReply::WatchEnded`, which Core does not speak,
   when the next key's watch replaces it, a focus on another node is
-  reported, or at `CARET_WATCH_BOUND` (10 s, `Item::Wake`). So a key that
+  reported, or at `CARET_WATCH_BOUND` (10 s, `Item::Wake`, for a watch
+  that does not poll). So a key that
   moves nothing is silent (`docs/parity/text.md`, "TextInfo-equivalent
   layer").
 - The console host's caret poll (`reducer::Poll`, a documented
@@ -1491,16 +1499,36 @@ scripts wait for, without waiting:
   re-reads the caret every 5 ms until a check finds evidence or 50 ms after
   the key's `pressed_at_ms`, and ends `WatchEnded` when that last re-read
   finds nothing. A watch without `pressed_at_ms` is bounded 50 ms after it
-  opened. Each re-read is a program of its own (`Item::Wake`), dispatched
-  when the reducer's timer for it ends the shell's wait on a
-  high-resolution timer, because a wait at the system's timer resolution,
-  15.6 ms by default, would miss most reads. A
-  console caret event for the watched node does not stop the poll when its
-  check finds no evidence, because a blink tick left over from an earlier
-  cursor set, such as `PSReadLine`'s set that moves nothing, can come after
-  the key and before its move. A re-read is matched to its watch by the
-  request, not the node, so a re-read of a replaced watch leaves the newer
-  one alone.
+  opened. The poll is one program (`Work::Poll`, `Worker::poll`), which
+  the reducer dispatches into a slot of its own when nothing else is ready
+  and no other program is in flight, under `HANDLING_DEADLINE`, its query
+  the watch's. It waits for each re-read on its worker's inbox
+  (`outpost::inbox`), whose high-resolution timer it sets to the next
+  read, because a wait at the system's timer resolution, 15.6 ms by
+  default, would miss most reads; so each re-read wakes only the worker.
+  It commits once: the answer, the watch removed by its request, the caret
+  read and the caret sent, then the terminal's read; or the watch ended at
+  its last read; or a yield. Before each read and at each wake it looks in
+  its inbox, and a program waiting there other than a release's drop makes
+  it yield, committing its next and last reads, its calls so far and its
+  last caret read into the watch; the reducer dispatches it again once no
+  program is in flight and nothing else is ready, while its watch is open.
+  A drop waits for the poll's end, at most its bound. While the poll is in
+  flight the reducer dispatches the next program as usual, which rings
+  the inbox's doorbell, so the poll yields at once and the program, a
+  console caret event's check included, reads at once; that program's
+  deadline starts when the poll ends, and the worker applies the pure part
+  of the poll's commits to its copies, since the reducer may have
+  dispatched it before taking them in. If the poll passes its deadline,
+  its worker is abandoned, its watch ended and answered `Abandoned`, and
+  the program waiting behind it is dispatched again to the replacement,
+  which an abandoned worker never runs. A poll that panics ends its watch.
+  A console caret event for the watched node does not stop the poll when
+  its check finds no evidence, because a blink tick left over from an
+  earlier cursor set, such as `PSReadLine`'s set that moves nothing, can
+  come after the key and before its move. The poll's changes name its
+  watch by the request, not the node, so a poll of a replaced watch leaves
+  the newer one alone.
 - Evidence is the caret away from where it was known to be; the characters
   either side of it changed (only those, since a line can rewrap without a
   key); the text at the caret changed after Delete; the caret's line
