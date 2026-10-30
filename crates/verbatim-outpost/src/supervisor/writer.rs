@@ -90,8 +90,18 @@ pub(crate) trait ToChild: Message + Clone + std::fmt::Debug + Send + 'static {
     fn relay_timing(&mut self) -> Option<&mut EventTiming>;
 }
 
+/// A routed fact for an outpost, as its writer holds it: only ever written
+/// as [`CoreToOutpost::DeliverFact`].
+#[derive(Clone, Debug)]
+pub(crate) struct RoutedFact {
+    trace_id: verbatim_model::TraceId,
+    timing: EventTiming,
+    fact: verbatim_model::protocol::DeliveredFact,
+    win_event: Option<verbatim_model::protocol::WinEventStamp>,
+}
+
 impl ToChild for CoreToOutpost {
-    type Fact = CoreToOutpost;
+    type Fact = RoutedFact;
 
     fn ping(seq: u64) -> Self {
         CoreToOutpost::Ping { seq, sent_at_us: 0 }
@@ -101,8 +111,13 @@ impl ToChild for CoreToOutpost {
         CoreToOutpost::Shutdown
     }
 
-    fn fact(fact: Self::Fact) -> Self {
-        fact
+    fn fact(fact: RoutedFact) -> Self {
+        CoreToOutpost::DeliverFact {
+            trace_id: fact.trace_id,
+            timing: fact.timing,
+            fact: fact.fact,
+            win_event: fact.win_event,
+        }
     }
 
     fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
@@ -189,7 +204,7 @@ impl Outgoing<CoreToOutpost> {
     pub(super) fn delivered(held: super::policy::HeldFact) -> Self {
         let key = held.fact.key(held.win_event);
         let focus_read = held.fact.is_focus_read();
-        let command = CoreToOutpost::DeliverFact {
+        let command = RoutedFact {
             trace_id: held.trace_id,
             timing: held.timing,
             fact: held.fact,
@@ -514,15 +529,16 @@ mod tests {
     use super::*;
 
     impl Outgoing<CoreToOutpost> {
-        fn command(&self) -> &CoreToOutpost {
+        fn command(&self) -> CoreToOutpost {
             match self {
-                Outgoing::Shutdown => &CoreToOutpost::Shutdown,
+                Outgoing::Shutdown => CoreToOutpost::Shutdown,
+                Outgoing::Fact(_, fact, _) | Outgoing::FocusRead(fact, _) => {
+                    CoreToOutpost::fact(fact.clone())
+                }
                 Outgoing::Ping(command)
                 | Outgoing::IdleQuery(command)
-                | Outgoing::Fact(_, command, _)
                 | Outgoing::HandOver(command)
-                | Outgoing::FocusRead(command, _)
-                | Outgoing::Other(command, _) => command,
+                | Outgoing::Other(command, _) => command.clone(),
             }
         }
     }
@@ -548,23 +564,35 @@ mod tests {
         )
     }
 
+    /// A foreground change to window `hwnd`, routed.
     fn fact(hwnd: isize) -> Outgoing<CoreToOutpost> {
         Outgoing::Fact(
             Some(FactKey::Foreground(hwnd, 1)),
-            CoreToOutpost::Ping {
-                seq: hwnd.cast_unsigned() as u64,
-                sent_at_us: 0,
+            RoutedFact {
+                trace_id: TraceId::mint(),
+                timing: EventTiming::default(),
+                fact: DeliveredFact::Foreground { hwnd },
+                win_event: None,
             },
             Received::now(),
         )
     }
 
+    /// The window a routed foreground change names, or a ping's number.
+    fn number(command: &CoreToOutpost) -> Option<u64> {
+        match command {
+            CoreToOutpost::DeliverFact {
+                fact: DeliveredFact::Foreground { hwnd },
+                ..
+            } => Some(hwnd.cast_unsigned() as u64),
+            CoreToOutpost::Ping { seq, .. } => Some(*seq),
+            _ => None,
+        }
+    }
+
     fn seqs(queue: &mut Queue<CoreToOutpost>) -> Vec<u64> {
         std::iter::from_fn(|| queue.pop())
-            .map(|item| match item.command() {
-                CoreToOutpost::Ping { seq, .. } => *seq,
-                _ => 0,
-            })
+            .map(|item| number(&item.command()).unwrap_or(0))
             .collect()
     }
 
@@ -682,6 +710,10 @@ mod tests {
                 CoreToOutpost::NodesHeld { acknowledged, .. } => {
                     format!("held {acknowledged}")
                 }
+                CoreToOutpost::DeliverFact {
+                    fact: DeliveredFact::Foreground { hwnd },
+                    ..
+                } => format!("fact {hwnd}"),
                 other => format!("{other:?}"),
             });
         }
@@ -728,7 +760,7 @@ mod tests {
         queue.push(fact(10), WRITER_CAPACITY).expect("replaces");
         assert_eq!(
             writes(&mut queue),
-            [vec!["query 4", "held 8"], vec!["ping 10"]]
+            [vec!["query 4", "held 8"], vec!["fact 10"]]
         );
     }
 
@@ -959,7 +991,9 @@ mod tests {
         queue.push(ended(), 2).expect("gets through the full queue");
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                CoreToOutpost::Ping { seq, .. } => seq.to_string(),
+                command if number(&command).is_some() => {
+                    number(&command).unwrap_or_default().to_string()
+                }
                 CoreToOutpost::ForwardingEnded { .. } => "ended".to_owned(),
                 other => format!("{other:?}"),
             })
@@ -983,7 +1017,9 @@ mod tests {
             .expect("queued behind it, the waiting fact 1 kept");
         let order: Vec<String> = std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                CoreToOutpost::Ping { seq, .. } => seq.to_string(),
+                command if number(&command).is_some() => {
+                    number(&command).unwrap_or_default().to_string()
+                }
                 CoreToOutpost::IdleQuery { round } => format!("idle {round}"),
                 other => format!("{other:?}"),
             })

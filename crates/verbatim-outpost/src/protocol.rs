@@ -319,56 +319,34 @@ mod tests {
     /// does either.
     #[test]
     fn the_relay_peeks_each_variant_by_name_and_consumes_none_that_carries_nodes() {
-        let event = OutpostToCore::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: 0,
-            backend: Backend::Uia,
-            window: None,
-            application: None,
-            timing: EventTiming::default(),
-            event: NormalizedEvent::TextChanged {
-                node_id: NodeId::new(1),
-            },
+        // What the relay is to do with each variant, by a match with no
+        // wildcard over every sample, so a new variant is given its place.
+        let expected = |message: &OutpostToCore| match message {
+            OutpostToCore::Ready { .. } => Peeked::Ready,
+            OutpostToCore::SpareReady { .. } => Peeked::SpareReady,
+            OutpostToCore::Pong { .. } => Peeked::Pong,
+            OutpostToCore::Fault { .. } => Peeked::Fault,
+            OutpostToCore::TargetExited => Peeked::TargetExited,
+            OutpostToCore::Event { .. }
+            | OutpostToCore::Reply { .. }
+            | OutpostToCore::IdleAnswer { .. } => Peeked::Other,
         };
-        let reply = |outcome| OutpostToCore::Reply {
+        let mut samples = verbatim_model::protocol::samples::outpost_to_core();
+        // A completed reply too, which carries nodes.
+        samples.push(OutpostToCore::Reply {
             trace_id: TraceId::mint(),
             request_id: 1,
-            outcome,
+            outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
             timing: EventTiming::default(),
-        };
-        let pong = OutpostToCore::Pong {
-            seq: 1,
-            parked_count: 0,
-            written_at_us: 0,
-        };
-        let ready = OutpostToCore::Ready {
-            outpost_pid: Pid(1),
-            target_pid: Pid(2),
-        };
-        let cases = [
-            (ready.clone(), Peeked::Ready),
-            (
-                OutpostToCore::SpareReady {
-                    outpost_pid: Pid(1),
-                },
-                Peeked::SpareReady,
-            ),
-            (event, Peeked::Other),
-            (reply(QueryOutcome::Gone), Peeked::Other),
-            (
-                reply(QueryOutcome::Done(QueryResult::Navigated(None))),
-                Peeked::Other,
-            ),
-            (pong.clone(), Peeked::Pong),
-            (
-                OutpostToCore::Fault {
-                    detail: "a fault".to_owned(),
-                },
-                Peeked::Fault,
-            ),
-            (OutpostToCore::TargetExited, Peeked::TargetExited),
-            (OutpostToCore::IdleAnswer { round: 1 }, Peeked::Other),
-        ];
+        });
+        let cases: Vec<(OutpostToCore, Peeked)> = samples
+            .into_iter()
+            .map(|message| {
+                let peek = expected(&message);
+                (message, peek)
+            })
+            .collect();
+        assert_eq!(cases.len(), 9);
         for (message, expected) in &cases {
             assert_eq!(peeked(message), *expected, "{message:?}");
         }

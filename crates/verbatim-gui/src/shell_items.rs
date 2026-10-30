@@ -20,10 +20,13 @@ use verbatim_model::protocol::Responder;
 pub use verbatim_model::{ShellCandidate, ShellCandidates, ShellItem, ShellItemKind};
 
 /// What the GUI asks its [`ShellItemsHost`] about one shell surface. Each
-/// holds the [`Responder`] its outcome goes through, once, on a thread that
-/// is not the GUI's: `Some` on success, or `None` when the request failed,
-/// passed its deadline (already logged), or was dropped anywhere on its
-/// way, which answers it "nothing".
+/// holds the [`Responder`] its outcome goes through, once: `Some` on
+/// success, or `None` when the request failed, passed its deadline (already
+/// logged), or was dropped anywhere on its way, which answers it "nothing".
+/// It answers on whichever thread answers or drops it: the reducer thread
+/// as a rule, but the GUI thread itself, during `request`, when the
+/// reducer thread is gone and the host drops the ask there, so an
+/// answer's handler runs synchronously then.
 pub enum ShellAsk {
     /// The surface's items, for the list, possibly none.
     Items(Responder<Vec<ShellItem>>),

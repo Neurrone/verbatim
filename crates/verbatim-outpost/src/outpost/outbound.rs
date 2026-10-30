@@ -4,7 +4,7 @@
 //! I/O thread then finishes (`docs/crates/verbatim-outpost.md`, "Messages
 //! to Core"; `docs/design/communication.md`, section 4.3).
 //!
-//! - Pongs, `Ready`, and `TargetExited` go ahead of everything else that
+//! - Pongs, `Ready`, `TargetExited` and `SpareReady` go ahead of everything else that
 //!   waits, behind only the write in flight, so heartbeat delivery never
 //!   waits behind event traffic and a busy outpost is never mistaken for a
 //!   dead one.
@@ -51,10 +51,14 @@ pub(crate) enum Carried {
 }
 
 /// What is sent to Core: one item of the outbound queue.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "an item is moved once into the backlog and out, never held in bulk outside it"
+)]
 pub(crate) enum Outgoing {
     /// A message that goes ahead of everything waiting: a pong, `Ready`,
-    /// or `TargetExited`.
-    Urgent(OutpostToCore),
+    /// `TargetExited` or `SpareReady`, none of which carries a node.
+    Urgent(Urgent),
     /// An ordinary message, with the nodes issued or looked up and the
     /// anchors minted or reported since the last one, which it may carry.
     Message(OutpostToCore, Vec<Carried>),
@@ -87,7 +91,7 @@ struct Report {
 /// in the order the messages are written. Pure, so the merging and the
 /// numbering are tested on their own.
 pub(crate) struct Pending {
-    urgent: VecDeque<OutpostToCore>,
+    urgent: VecDeque<Urgent>,
     ordinary: VecDeque<Waiting>,
     /// How many messages that carry node ids have been written: the
     /// position of the last one, as Core counts them.
@@ -213,7 +217,7 @@ impl Backlog for Pending {
 
     fn encode(&mut self, item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
         let mut message = match item {
-            Outgoing::Urgent(message) => message,
+            Outgoing::Urgent(message) => message.into(),
             Outgoing::Message(message, touched) => {
                 self.number(&message, &touched);
                 message
@@ -270,10 +274,10 @@ impl Outbound {
     }
 
     /// Sends a message that must not wait behind others: a pong, `Ready`,
-    /// or `TargetExited`, none of which carries a node, so none skips the
-    /// numbering of those that do.
+    /// `TargetExited` or `SpareReady`, none of which carries a node, so
+    /// none skips the numbering of those that do.
     pub(crate) fn urgent(&self, message: Urgent) {
-        sent(&self.sender.send(Outgoing::Urgent(message.into())));
+        sent(&self.sender.send(Outgoing::Urgent(message)));
     }
 
     /// Sends an ordinary message that reports no node, without waiting.
@@ -657,11 +661,7 @@ mod tests {
     fn urgent_messages_go_first() {
         let mut pending = pending();
         push(&mut pending, text_changed(1), &[]);
-        assert!(
-            pending
-                .push(Outgoing::Urgent(OutpostToCore::TargetExited))
-                .is_ok()
-        );
+        assert!(pending.push(Outgoing::Urgent(Urgent::TargetExited)).is_ok());
         let written = write(&mut pending);
         assert_eq!(written.first(), Some(&OutpostToCore::TargetExited));
     }

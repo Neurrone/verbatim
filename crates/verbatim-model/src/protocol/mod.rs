@@ -12,6 +12,7 @@ use std::time::Duration;
 
 mod merge;
 mod responder;
+pub mod samples;
 
 pub use merge::{Barrier, EventKey, Merge, merge_into};
 pub use responder::Responder;

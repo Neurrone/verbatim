@@ -2217,3 +2217,18 @@ costs within an ordinary read's noise: 58 to 69 µs a read at the median
 against 51 to 69 with every row distinct (release, 31 runs). The caret
 line's check makes six strings of a line's length, only when the caret
 moved forward on a line starting where it did.
+
+### The listener's owed answer per UIA focus event
+
+Each UIA focus event the listener queues for its reading thread carries
+the answer owed for its marker (`MarkerOwed`,
+`docs/design/ownership-messages.md`, "Responders and the endings of a
+query"): one boxed closure and one `Arc<Outgoing>` clone as the callback
+queues it (`MarkerOwed::new` in `crates/verbatim-outpost/src/listener.rs`),
+and one insert into the readers' map of owed markers at `Readers::push`
+and one removal when the event's outcome consumes it
+(`crates/verbatim-outpost/src/focus_read.rs`), both under the readers' lock
+the schedule's step already takes. No wake-up and no call are added.
+
+- The listener's processor time per UIA event, five runs of
+  `measure_focus_explorer` before and after: to be measured.

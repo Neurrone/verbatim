@@ -88,7 +88,7 @@ A unit test in the module holds the list of every variant's name with its kind, 
 
 `carries_nodes` becomes an exhaustive `match` over `OutpostToCore`, with `Reply`'s outcome matched exhaustively over `QueryOutcome`: `Event` and `Reply` with `Done` are true, and every other variant is listed as false. Reason: the outpost and verbatim.exe number positions with this one function, so a variant forgotten here would shift both counts alike and never show, while releasing a node Core still reads from such a message.
 
-The two sites' filters become types too. `Outbound::urgent` (`outbound.rs` line 339) takes an `Urgent` (planned), an enum of `Pong`, `Ready` and `TargetExited` that converts into `OutpostToCore` and carries no node by construction, so no message that carries nodes can skip the outpost's numbering. The owner's consumed kinds are pinned by the peek test above, so a frame verbatim.exe does not number never carries nodes either.
+The two sites' filters become types too. `Outbound::urgent` (`outbound.rs` line 339) takes an `Urgent` (planned), an enum of `Pong`, `Ready`, `TargetExited` and `SpareReady` that converts into `OutpostToCore` and carries no node by construction, so no message that carries nodes can skip the outpost's numbering. The owner's consumed kinds are pinned by the peek test above, so a frame verbatim.exe does not number never carries nodes either.
 
 ### Merging in the outbound queue
 

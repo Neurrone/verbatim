@@ -95,21 +95,6 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
     })
 }
 
-/// An event of node 1.
-fn event() -> OutpostToCore {
-    OutpostToCore::Event {
-        trace_id: TraceId::mint(),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: None,
-        application: None,
-        timing: timing(),
-        event: NormalizedEvent::TextChanged {
-            node_id: NodeId::new(1),
-        },
-    }
-}
-
 /// A reply with `outcome`.
 fn reply(outcome: QueryOutcome) -> OutpostToCore {
     OutpostToCore::Reply {
@@ -118,34 +103,6 @@ fn reply(outcome: QueryOutcome) -> OutpostToCore {
         outcome,
         timing: timing(),
     }
-}
-
-/// One sample of each [`OutpostToCore`] variant, after `previous`.
-fn next_outpost_to_core(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
-    let Some(previous) = previous else {
-        return Some(OutpostToCore::Ready {
-            outpost_pid: Pid(1),
-            target_pid: Pid(2),
-        });
-    };
-    Some(match previous {
-        OutpostToCore::Ready { .. } => OutpostToCore::SpareReady {
-            outpost_pid: Pid(1),
-        },
-        OutpostToCore::SpareReady { .. } => event(),
-        OutpostToCore::Event { .. } => reply(QueryOutcome::Gone),
-        OutpostToCore::Reply { .. } => OutpostToCore::Pong {
-            seq: 1,
-            parked_count: 0,
-            written_at_us: 0,
-        },
-        OutpostToCore::Pong { .. } => OutpostToCore::Fault {
-            detail: "a fault".to_owned(),
-        },
-        OutpostToCore::Fault { .. } => OutpostToCore::TargetExited,
-        OutpostToCore::TargetExited => OutpostToCore::IdleAnswer { round: 1 },
-        OutpostToCore::IdleAnswer { .. } => return None,
-    })
 }
 
 /// One sample of each [`ListenerToCore`] variant, after `previous`.
@@ -244,7 +201,7 @@ fn every_variant_has_its_reviewed_kind() {
     );
     assert_eq!(
         kinds(
-            chain(next_outpost_to_core)
+            super::samples::outpost_to_core()
                 .iter()
                 .map(|message| (name(message), message.kind()))
                 .collect()
@@ -302,7 +259,7 @@ fn core_sends_no_report() {
 /// outpost and verbatim.exe count them.
 #[test]
 fn only_an_event_and_a_completed_reply_carry_nodes() {
-    let carried: Vec<(String, bool)> = chain(next_outpost_to_core)
+    let carried: Vec<(String, bool)> = super::samples::outpost_to_core()
         .iter()
         .map(|message| (name(message), message.carries_nodes()))
         .collect();

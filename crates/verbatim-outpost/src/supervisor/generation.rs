@@ -622,24 +622,19 @@ mod tests {
     }
 
     #[test]
-    fn a_ready_generations_failure_with_a_wait_has_nothing_more_until_its_backoff_ends() {
-        let mut backoff = super::super::policy::Backoff::default();
-        let now = Instant::now();
-        // A first failure is replaced at once; a second, soon after, waits.
-        let _ = backoff.failed(std::time::Duration::ZERO, now, super::super::BACKOFF);
-        let wait = backoff.failed(std::time::Duration::ZERO, now, super::super::BACKOFF);
-        assert!(!wait.is_zero(), "the second failure waits");
+    /// The wait itself is the backoff's, which the supervisor's process
+    /// tests keep (`tests/spares.rs`).
+    fn a_ready_generations_failure_leaves_no_generation_and_removes_its_hook_then_ends_it_with_a_follower()
+     {
         let failure = failed(ready(3), EndReason::Exited);
         assert_eq!(
             named(&failure.notices),
             ["HookRemoved", "Ended 3 exited, follows true"]
         );
-        assert_eq!(failure.next.outpost(), None, "no generation while it waits");
-        assert!(!backoff.ended(now), "the backoff runs");
-        let due = backoff.due().expect("a backoff due");
-        assert!(backoff.ended(due));
-        let (_, notices) = failure.next.given(PID, spare(4), due);
-        assert_eq!(named(&notices), ["Assign 4", "Started 4"]);
+        assert!(
+            matches!(failure.next, Generation::Waiting { unready: None }),
+            "no generation while it waits"
+        );
     }
 
     #[test]
