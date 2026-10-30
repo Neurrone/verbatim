@@ -7,7 +7,9 @@
 //! index, which [`SpeechControls`] turns into setting values.
 
 use verbatim_i18n::messages;
-use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost, SynthChoice, SynthId};
+use verbatim_speech::{
+    SettingId, SettingValue, SettingsAnswer, SpeechSettingsHost, SynthChoice, SynthId,
+};
 
 use crate::bridge::ffi;
 use crate::plan::{ControlPlan, accessible_name, plan_for};
@@ -56,19 +58,40 @@ pub(crate) enum ControlChange {
 }
 
 /// The Speech page's current controls: the plans they were built from, so
-/// a change reported by index becomes a setting value.
+/// a change reported by index becomes a setting value, and each change
+/// sent and not yet answered by the synth thread
+/// (`docs/design/ownership-output.md`, "The mirror follows the synth
+/// thread").
 #[derive(Debug, Default)]
 pub(crate) struct SpeechControls {
     generation: u32,
     plans: Vec<ControlPlan>,
+    /// The number of the last change sent.
+    last_change: u64,
+    /// Each setting changed and not yet answered: its latest change's
+    /// number and the value it sent.
+    outstanding: Vec<(SettingId, u64, SettingValue)>,
+}
+
+/// A control to set to the driver's value: control `control` of the page
+/// built as `generation`, to `value` as [`GuiThread::set_speech_control`]
+/// takes it.
+///
+/// [`GuiThread::set_speech_control`]: crate::bridge::GuiThread::set_speech_control
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Snap {
+    pub(crate) generation: u32,
+    pub(crate) control: usize,
+    pub(crate) value: i32,
 }
 
 impl SpeechControls {
     /// Builds the Speech page from the host, replacing the current
     /// controls: changes reported for the previous set are ignored from
-    /// now on.
+    /// now on, and so are answers to changes made through it.
     pub(crate) fn rebuild(&mut self, host: &dyn SpeechSettingsHost) -> ffi::SpeechPage {
         self.generation = self.generation.wrapping_add(1);
+        self.outstanding.clear();
         self.plans = host
             .setting_descriptors()
             .iter()
@@ -110,6 +133,70 @@ impl SpeechControls {
             _ => return None,
         };
         Some((plan.id().clone(), value))
+    }
+
+    /// Numbers a change of `id` to `value` about to be sent, and keeps it
+    /// as outstanding until answered.
+    pub(crate) fn sent(&mut self, id: &SettingId, value: &SettingValue) -> u64 {
+        self.last_change += 1;
+        let change = self.last_change;
+        self.outstanding.retain(|(pending, _, _)| pending != id);
+        self.outstanding.push((id.clone(), change, value.clone()));
+        change
+    }
+
+    /// Change `change` was not sent after all.
+    pub(crate) fn unsent(&mut self, change: u64) {
+        self.outstanding
+            .retain(|(_, pending, _)| *pending != change);
+    }
+
+    /// Takes the synth thread's answer: every setting whose latest change
+    /// it answered is no longer outstanding, and when the driver's value
+    /// differs from the value sent, its control is to snap back to the
+    /// driver's. A setting changed again since keeps its newer change
+    /// outstanding, so an older answer never overwrites a newer request;
+    /// a setting not changed is left as shown.
+    pub(crate) fn answered(&mut self, answer: &SettingsAnswer) -> Vec<Snap> {
+        let mut snaps = Vec::new();
+        let (answered, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.outstanding)
+            .into_iter()
+            .partition(|(_, change, _)| *change <= answer.change);
+        self.outstanding = waiting;
+        for (id, _, sent) in answered {
+            let Some((_, value)) = answer.values.iter().find(|(answered, _)| *answered == id)
+            else {
+                continue;
+            };
+            if *value == sent {
+                continue;
+            }
+            let Some(control) = self.plans.iter().position(|plan| *plan.id() == id) else {
+                continue;
+            };
+            if let Some(value) = control_value(&self.plans[control], value) {
+                snaps.push(Snap {
+                    generation: self.generation,
+                    control,
+                    value,
+                });
+            }
+        }
+        snaps
+    }
+}
+
+/// `value` as the control `plan` built shows it: a slider's value, a
+/// choice's option index, or a check box's state as 1 or 0.
+fn control_value(plan: &ControlPlan, value: &SettingValue) -> Option<i32> {
+    match (plan, value) {
+        (ControlPlan::Slider { .. }, SettingValue::Number(number)) => Some(*number),
+        (ControlPlan::Choice { options, .. }, SettingValue::Choice(choice)) => options
+            .iter()
+            .position(|(option, _)| option == choice)
+            .and_then(|index| i32::try_from(index).ok()),
+        (ControlPlan::Toggle { .. }, SettingValue::Toggle(checked)) => Some(i32::from(*checked)),
+        _ => None,
     }
 }
 
@@ -292,13 +379,72 @@ mod tests {
                 _ => None,
             }
         }
-        fn set_setting(&self, _id: &SettingId, _value: SettingValue) -> Result<(), SynthError> {
+        fn set_setting(
+            &self,
+            _id: &SettingId,
+            _value: SettingValue,
+            _change: u64,
+        ) -> Result<(), SynthError> {
             Ok(())
         }
         fn commit(&self) -> Result<(), SynthError> {
             Ok(())
         }
         fn revert(&self) {}
+        fn answer_to(&self, _answered: verbatim_speech::SettingsAnswered) {}
+    }
+
+    /// The synth thread's answer to change `change`, with the driver's
+    /// rate at `rate` and the host's other values.
+    fn answer(change: u64, rate: i32) -> SettingsAnswer {
+        SettingsAnswer {
+            change,
+            values: vec![
+                (
+                    SettingId::new("voice"),
+                    SettingValue::Choice("david".into()),
+                ),
+                (SettingId::new("rate"), SettingValue::Number(rate)),
+                (SettingId::new("rate-boost"), SettingValue::Toggle(true)),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_refused_change_snaps_its_control_back_to_the_drivers_value() {
+        let mut controls = SpeechControls::default();
+        let page = controls.rebuild(&Host::new());
+        let rate = SettingId::new("rate");
+        let change = controls.sent(&rate, &SettingValue::Number(60));
+        assert_eq!(
+            controls.answered(&answer(change, 50)),
+            [Snap {
+                generation: page.generation,
+                control: 1,
+                value: 50,
+            }]
+        );
+    }
+
+    #[test]
+    fn an_answer_to_an_older_change_leaves_the_control_to_the_newer_ones_answer() {
+        let mut controls = SpeechControls::default();
+        let page = controls.rebuild(&Host::new());
+        let rate = SettingId::new("rate");
+        let first = controls.sent(&rate, &SettingValue::Number(60));
+        let second = controls.sent(&rate, &SettingValue::Number(70));
+        // The first change was refused; the second is still outstanding,
+        // so the first's answer does not move the control.
+        assert_eq!(controls.answered(&answer(first, 50)), []);
+        // The driver clamped the second to 65: the control takes it.
+        assert_eq!(
+            controls.answered(&answer(second, 65)),
+            [Snap {
+                generation: page.generation,
+                control: 1,
+                value: 65,
+            }]
+        );
     }
 
     #[test]

@@ -2,6 +2,9 @@
 //! advances by hand, so every ending and mark can be checked against
 //! exactly how much audio has played.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
@@ -9,9 +12,58 @@ use std::time::Duration;
 
 use verbatim_audio::{
     AudioDevice, AudioError, AudioTap, ClockReading, DeviceFormat, DeviceNotice, DeviceNotices,
-    Mixer, PcmFormat, PlaybackEvent, Sound, Source, Waker,
+    Lane, Mixer, MixerBuilder, PcmFormat, PlaybackEvent, Sound, SourceControl, SpeechLane, Waker,
+    WavRecorder,
 };
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
+
+/// Counts every allocation and free made on each thread, so the audio
+/// thread's own can be read on it ([`ManualDevice`] copies them at each
+/// write and wait).
+struct Counting;
+
+thread_local! {
+    static ALLOCATIONS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+}
+
+fn count(made: u64, released: u64) {
+    let _ = ALLOCATIONS.try_with(|counts| {
+        let (allocations, frees) = counts.get();
+        counts.set((allocations + made, frees + released));
+    });
+}
+
+// SAFETY: every call is passed on to the system allocator unchanged; the
+// counting touches only a constant-initialized thread-local, which never
+// allocates.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        count(1, 0);
+        // SAFETY: as the caller's contract for `alloc`.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        count(0, 1);
+        // SAFETY: as the caller's contract for `dealloc`.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        count(1, 0);
+        // SAFETY: as the caller's contract for `alloc_zeroed`.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        count(1, 1);
+        // SAFETY: as the caller's contract for `realloc`.
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
 
 /// One frame per millisecond, mono, a ten-frame device queue: small numbers
 /// that make positions easy to follow. A source may then run 50 frames
@@ -36,6 +88,8 @@ struct DeviceState {
     written: Vec<f32>,
     stops: u32,
     woken: bool,
+    /// The mixer's wait ignores wakes until released.
+    held: bool,
     /// How many times the mixer has begun to wait for the device: once at
     /// the end of every pass, when it has done all it could.
     waits: u64,
@@ -56,10 +110,11 @@ struct ManualDevice {
     reopened_format: Arc<Mutex<Option<DeviceFormat>>>,
     /// What the device's clock reads, if it has one.
     clock: Arc<Mutex<Option<ClockReading>>>,
-    /// How many times the mixer's waker has been called.
-    wakes: Arc<AtomicU64>,
     /// How many of the next opens fail.
     open_failures: Arc<AtomicU32>,
+    /// The audio thread's allocations and frees, as counted at its last
+    /// write or wait.
+    allocations: Arc<(AtomicU64, AtomicU64)>,
     /// The production notices, which the test notifies as Windows would.
     notices: DeviceNotices,
 }
@@ -74,8 +129,8 @@ impl Default for ManualDevice {
             fail: Arc::default(),
             reopened_format: Arc::default(),
             clock: Arc::default(),
-            wakes: Arc::default(),
             open_failures: Arc::default(),
+            allocations: Arc::default(),
             notices: DeviceNotices::new(Arc::new(move || {
                 let (state, condvar) = &*woken;
                 state.lock().unwrap().woken = true;
@@ -86,6 +141,18 @@ impl Default for ManualDevice {
 }
 
 impl ManualDevice {
+    /// A device whose records of what it was given have room for `frames`
+    /// frames and as many waits, so recording them allocates nothing.
+    fn reserved(frames: usize) -> Self {
+        let device = Self::default();
+        {
+            let mut state = device.state.0.lock().unwrap();
+            state.written.reserve(frames);
+            state.wait_limits.reserve(frames);
+        }
+        device
+    }
+
     /// Plays `frames` of what is queued and wakes the mixer.
     fn play(&self, frames: u32) {
         let (state, condvar) = &*self.state;
@@ -97,6 +164,38 @@ impl ManualDevice {
 
     fn written(&self) -> Vec<f32> {
         self.state.0.lock().unwrap().written.clone()
+    }
+
+    fn waits(&self) -> u64 {
+        self.state.0.lock().unwrap().waits
+    }
+
+    /// Holds the mixer in its wait, whatever wakes it, until released.
+    fn hold(&self) {
+        self.state.0.lock().unwrap().held = true;
+    }
+
+    fn release(&self) {
+        let (state, condvar) = &*self.state;
+        let mut state = state.lock().unwrap();
+        state.held = false;
+        state.woken = true;
+        condvar.notify_all();
+    }
+
+    /// Records the calling thread's allocations and frees, on the audio
+    /// thread.
+    fn count_allocations(&self) {
+        let (allocations, frees) = ALLOCATIONS.with(Cell::get);
+        self.allocations.0.store(allocations, Ordering::SeqCst);
+        self.allocations.1.store(frees, Ordering::SeqCst);
+    }
+
+    fn allocations(&self) -> (u64, u64) {
+        (
+            self.allocations.0.load(Ordering::SeqCst),
+            self.allocations.1.load(Ordering::SeqCst),
+        )
     }
 
     /// Returns once the mixer has written at least `frames` frames in all,
@@ -123,10 +222,10 @@ impl ManualDevice {
 
     /// Returns once the mixer has made a whole pass that began after this
     /// call, so everything the test did before it is reflected in what the
-    /// mixer has written and reported (it reports during the pass, before
-    /// it waits). The mixer is woken first; if it was in the middle of a
-    /// pass, that pass ends in a wait which the wake-up cuts short, and the
-    /// pass after it is a whole one. Fails at [`WAIT`].
+    /// mixer has written and sent to its delivery thread (it sends during
+    /// the pass, before it waits). The mixer is woken first; if it was in
+    /// the middle of a pass, that pass ends in a wait which the wake-up
+    /// cuts short, and the pass after it is a whole one. Fails at [`WAIT`].
     fn settle(&self) {
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
@@ -175,6 +274,7 @@ impl AudioDevice for ManualDevice {
     }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), AudioError> {
+        self.count_allocations();
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
         state.queued += u32::try_from(samples.len()).unwrap();
@@ -195,6 +295,7 @@ impl AudioDevice for ManualDevice {
     }
 
     fn wait(&mut self, timeout: Duration) {
+        self.count_allocations();
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
         state.waits += 1;
@@ -202,17 +303,14 @@ impl AudioDevice for ManualDevice {
         // For `settle`, which waits on the same condition variable.
         condvar.notify_all();
         let (mut state, _) = condvar
-            .wait_timeout_while(state, timeout, |state| !state.woken)
+            .wait_timeout_while(state, timeout, |state| !state.woken || state.held)
             .unwrap();
         state.woken = false;
     }
 
     fn waker(&self) -> Waker {
         let device = self.clone();
-        Arc::new(move || {
-            device.wakes.fetch_add(1, Ordering::SeqCst);
-            device.play(0);
-        })
+        Arc::new(move || device.play(0))
     }
 
     fn needs_reopen(&self) -> bool {
@@ -224,28 +322,73 @@ impl AudioDevice for ManualDevice {
     }
 }
 
+/// A mixer on a manual device with three sources: speech, with the synth
+/// thread's lane, a lane of sounds and the queue thread's control; events,
+/// with a lane of sounds; and a probe, whose empty utterances show when the
+/// delivery thread has delivered everything sent before them.
 struct Harness {
     device: ManualDevice,
-    source: Source,
+    lane: SpeechLane,
+    sounds: Lane,
+    control: SourceControl,
     events: Receiver<PlaybackEvent>,
+    earcons: Lane,
+    earcon_events: Receiver<PlaybackEvent>,
+    probe: SpeechLane,
+    probed: Receiver<UtteranceId>,
+    probes: u64,
     mixer: Mixer,
 }
 
-fn harness() -> Harness {
-    harness_on(ManualDevice::default())
-}
-
-fn harness_on(device: ManualDevice) -> Harness {
-    let mixer = Mixer::start(Box::new(device.clone())).expect("the mixer starts");
+/// A listener that sends every event to the receiver returned with it.
+fn listener() -> (verbatim_audio::PlaybackListener, Receiver<PlaybackEvent>) {
     let (sender, events) = mpsc::channel();
     let sender = Mutex::new(sender);
-    let source = mixer.add_source(Arc::new(move |event| {
-        let _ = sender.lock().unwrap().send(event);
+    (
+        Arc::new(move |event, _| {
+            let _ = sender.lock().unwrap().send(event);
+        }),
+        events,
+    )
+}
+
+fn harness() -> Harness {
+    harness_on(ManualDevice::default(), None)
+}
+
+fn harness_on(device: ManualDevice, tap: Option<Box<dyn AudioTap>>) -> Harness {
+    let mut builder = MixerBuilder::new(Box::new(device.clone()));
+    let (speech_listener, events) = listener();
+    let speech = builder.source(speech_listener);
+    let control = builder.control(speech);
+    let lane = builder.speech_lane(speech);
+    let sounds = builder.lane(speech);
+    let (earcon_listener, earcon_events) = listener();
+    let earcon_source = builder.source(earcon_listener);
+    let earcons = builder.lane(earcon_source);
+    let (probe_tx, probed) = mpsc::channel();
+    let probe_tx = Mutex::new(probe_tx);
+    let probe_source = builder.source(Arc::new(move |event, _| {
+        if let PlaybackEvent::Ended { utterance, .. } = event {
+            let _ = probe_tx.lock().unwrap().send(utterance);
+        }
     }));
+    let probe = builder.speech_lane(probe_source);
+    if let Some(tap) = tap {
+        builder.tap(tap);
+    }
+    let mixer = builder.start().expect("the mixer starts");
     Harness {
         device,
-        source,
+        lane,
+        sounds,
+        control,
         events,
+        earcons,
+        earcon_events,
+        probe,
+        probed,
+        probes: 0,
         mixer,
     }
 }
@@ -263,20 +406,31 @@ fn samples(count: usize, value: i16) -> Vec<i16> {
 const SPOKEN: f32 = 1_000.0 / 32_768.0;
 
 impl Harness {
-    fn speak(&self, id: u64, frames: usize) -> TraceId {
+    /// Registers utterance `id` under the source's cancel generation now.
+    fn register(&mut self, id: u64) -> TraceId {
+        let trace = TraceId::mint();
+        let generation = self.control.generation();
+        self.lane.register(utterance(id), trace, generation);
+        trace
+    }
+
+    fn write(&mut self, id: u64, frames: usize) -> ControlFlow<()> {
+        self.lane.write(utterance(id), PCM, &samples(frames, 1_000))
+    }
+
+    fn speak(&mut self, id: u64, frames: usize) -> TraceId {
         self.speak_at(id, frames, 1_000)
     }
 
     /// Speaks `frames` frames of the 16-bit sample `value`.
-    fn speak_at(&self, id: u64, frames: usize, value: i16) -> TraceId {
-        let trace = TraceId::mint();
-        self.source.register(utterance(id), trace);
+    fn speak_at(&mut self, id: u64, frames: usize, value: i16) -> TraceId {
+        let trace = self.register(id);
         assert!(
-            self.source
+            self.lane
                 .write(utterance(id), PCM, &samples(frames, value))
                 .is_continue()
         );
-        self.source.finish(utterance(id));
+        self.lane.finish(utterance(id));
         trace
     }
 
@@ -286,10 +440,26 @@ impl Harness {
             .expect("a playback event arrives")
     }
 
+    /// Returns once the delivery thread has delivered everything the mixer
+    /// sent before now: the probe's empty utterance, which ends in the pass
+    /// that takes it, is delivered after all of it.
+    fn delivered(&mut self) {
+        self.probes += 1;
+        let probe = utterance(u64::MAX - self.probes);
+        self.probe.register(probe, TraceId::mint(), 0);
+        self.probe.finish(probe);
+        assert_eq!(
+            self.probed.recv_timeout(WAIT),
+            Ok(probe),
+            "the probe is delivered"
+        );
+    }
+
     /// Asserts that the mixer, having done everything the test asked of it
     /// so far, reported nothing more.
-    fn nothing_more(&self) {
+    fn nothing_more(&mut self) {
         self.device.settle();
+        self.delivered();
         assert_eq!(
             self.events.try_recv().ok(),
             None,
@@ -297,19 +467,23 @@ impl Harness {
         );
     }
 
-    /// Plays `frames` one at a time, each only once the mixer has written
-    /// it (a device cannot play what it has not been given), and stops early
-    /// once the mixer has done all it could and written nothing more.
     fn play(&self, frames: u32) {
-        for _ in 0..frames {
-            if self.device.state.0.lock().unwrap().queued == 0 {
-                self.device.settle();
-                if self.device.state.0.lock().unwrap().queued == 0 {
-                    return;
-                }
+        play(&self.device, frames);
+    }
+}
+
+/// Plays `frames` one at a time, each only once the mixer has written it
+/// (a device cannot play what it has not been given), and stops early once
+/// the mixer has done all it could and written nothing more.
+fn play(device: &ManualDevice, frames: u32) {
+    for _ in 0..frames {
+        if device.state.0.lock().unwrap().queued == 0 {
+            device.settle();
+            if device.state.0.lock().unwrap().queued == 0 {
+                return;
             }
-            self.device.play(1);
         }
+        device.play(1);
     }
 }
 
@@ -330,7 +504,7 @@ fn started(id: u64, trace: TraceId) -> PlaybackEvent {
 
 #[test]
 fn an_utterance_completes_only_when_the_device_has_played_its_last_frame() {
-    let harness = harness();
+    let mut harness = harness();
     let trace = harness.speak(1, 20);
     harness.nothing_more();
 
@@ -344,7 +518,7 @@ fn an_utterance_completes_only_when_the_device_has_played_its_last_frame() {
 
 #[test]
 fn a_start_is_heard_when_the_devices_clock_passes_its_first_frame() {
-    let harness = harness();
+    let mut harness = harness();
     let trace = harness.speak(1, 20);
     harness.play(1);
     assert_eq!(harness.next(), started(1, trace));
@@ -372,50 +546,72 @@ fn a_start_is_heard_when_the_devices_clock_passes_its_first_frame() {
 }
 
 /// A source may hold 50 frames unplayed (the 10-frame queue and 40 ms
-/// beyond it). A writer that fills it waits until at least half of that, 25
-/// frames, is free, and then writes all the room there is, so 200 frames
-/// take one write of 50 and at most six more, each waking the mixer once
-/// (this device's queue is always under the 20 ms that lets a write leave
-/// the mixer asleep), though the frames are played one at a time. Fewer
-/// than six when the test plays on while the woken writer is on its way,
-/// so that it finds more than 25 frames free; never one write per frame
-/// played, as a writer woken for any room at all made.
+/// beyond it). A producer that fills it waits on the source's room event,
+/// which the mixer sets only once at least half of that, 25 frames, is
+/// free: with 24 frames played the producer, which needs only 10 more,
+/// still waits; the 25th wakes it.
 #[test]
-fn a_writer_blocked_on_a_full_source_writes_again_only_once_half_its_room_is_free() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
-    let wakes_before = harness.device.wakes.load(Ordering::SeqCst);
-    let writer = {
-        let source = harness.source.clone();
-        std::thread::spawn(move || {
-            assert!(
-                source
-                    .write(utterance(1), PCM, &samples(200, 1_000))
-                    .is_continue()
-            );
-        })
-    };
-    while !writer.is_finished() {
-        harness.play(1);
-    }
-    writer.join().expect("the writer wrote every frame");
-    let wakes = harness.device.wakes.load(Ordering::SeqCst) - wakes_before;
-    assert!(
-        (2..=7).contains(&wakes),
-        "one write of 50 frames and at most six of 25 or more, not {wakes}"
+fn a_producer_waiting_for_room_is_woken_when_half_its_room_is_free() {
+    let mut harness = harness();
+    harness.register(1);
+    let (done_tx, done_rx) = mpsc::channel();
+    let mut lane = harness.lane;
+    let writer = std::thread::spawn(move || {
+        let flow = lane.write(utterance(1), PCM, &samples(60, 1_000));
+        done_tx.send(flow).unwrap();
+        lane
+    });
+    harness
+        .device
+        .wait_written(10, "the mixer writes the first frames");
+    play(&harness.device, 24);
+    harness.device.settle();
+    assert_eq!(
+        done_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty),
+        "with 24 frames free the producer still waits"
     );
+    play(&harness.device, 1);
+    assert_eq!(
+        done_rx.recv_timeout(WAIT),
+        Ok(ControlFlow::Continue(())),
+        "the producer writes the rest once 25 frames are free"
+    );
+    harness.lane = writer.join().unwrap();
+}
+
+#[test]
+fn a_producer_waiting_for_room_is_woken_at_shutdown_and_its_write_answers_break() {
+    let mut harness = harness();
+    harness.register(1);
+    let (done_tx, done_rx) = mpsc::channel();
+    let mut lane = harness.lane;
+    let writer = std::thread::spawn(move || {
+        let flow = lane.write(utterance(1), PCM, &samples(60, 1_000));
+        done_tx.send(flow).unwrap();
+    });
+    harness
+        .device
+        .wait_written(10, "the mixer writes the first frames");
+    harness.device.settle();
+    assert_eq!(
+        done_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty),
+        "the producer waits for room"
+    );
+    drop(harness.mixer);
+    assert_eq!(done_rx.recv_timeout(WAIT), Ok(ControlFlow::Break(())));
+    writer.join().unwrap();
 }
 
 #[test]
 fn marks_are_reported_when_playback_reaches_them() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
-    let _ = harness.source.write(utterance(1), PCM, &samples(7, 1_000));
-    harness.source.mark(utterance(1), 42);
-    let _ = harness.source.write(utterance(1), PCM, &samples(3, 1_000));
-    harness.source.finish(utterance(1));
+    let mut harness = harness();
+    let trace = harness.register(1);
+    let _ = harness.write(1, 7);
+    harness.lane.mark(utterance(1), 42);
+    let _ = harness.write(1, 3);
+    harness.lane.finish(utterance(1));
 
     harness.play(6);
     assert_eq!(harness.next(), started(1, trace));
@@ -435,11 +631,10 @@ fn marks_are_reported_when_playback_reaches_them() {
 
 #[test]
 fn an_utterance_without_audio_completes_when_the_audio_before_it_has_played() {
-    let harness = harness();
+    let mut harness = harness();
     let first = harness.speak(1, 10);
-    let silent = TraceId::mint();
-    harness.source.register(utterance(2), silent);
-    harness.source.finish(utterance(2));
+    let silent = harness.register(2);
+    harness.lane.finish(utterance(2));
 
     harness.play(1);
     assert_eq!(harness.next(), started(1, first));
@@ -452,10 +647,9 @@ fn an_utterance_without_audio_completes_when_the_audio_before_it_has_played() {
 
 #[test]
 fn cancelling_ends_every_unheard_utterance_and_spares_later_ones() {
-    let harness = harness();
+    let mut harness = harness();
     let first = harness.speak(1, 20);
-    let second = TraceId::mint();
-    harness.source.register(utterance(2), second);
+    let second = harness.register(2);
     harness.play(5);
     assert_eq!(harness.next(), started(1, first));
     // Five frames played, and the mixer filled the device's queue again:
@@ -463,14 +657,11 @@ fn cancelling_ends_every_unheard_utterance_and_spares_later_ones() {
     harness.device.settle();
     assert_eq!(harness.device.written(), [SPOKEN; 15]);
 
-    harness.source.cancel_all();
+    harness.control.cancel();
     assert_eq!(harness.next(), ended(1, first, UtteranceEnding::Cancelled));
     assert_eq!(harness.next(), ended(2, second, UtteranceEnding::Cancelled));
     assert!(
-        harness
-            .source
-            .write(utterance(1), PCM, &samples(5, 1_000))
-            .is_break(),
+        harness.write(2, 5).is_break(),
         "a cancelled utterance accepts no more audio"
     );
 
@@ -487,17 +678,65 @@ fn cancelling_ends_every_unheard_utterance_and_spares_later_ones() {
     assert_eq!(harness.device.written(), expected);
 }
 
+/// An utterance handed on before a cancel and registered after it, under
+/// the generation before the cancel, ends cancelled with nothing of it
+/// written; one handed on after the cancel, under its generation, plays in
+/// full (`docs/design/ownership-output.md`, "Sequences that would break
+/// it").
+#[test]
+fn an_utterance_registered_under_a_generation_before_a_cancel_ends_cancelled_unheard() {
+    let mut harness = harness();
+    harness.control.cancel();
+    harness.control.cancel();
+    let late = TraceId::mint();
+    harness.lane.register(utterance(1), late, 1);
+    let _ = harness.write(1, 20);
+    harness.lane.finish(utterance(1));
+    assert_eq!(harness.next(), ended(1, late, UtteranceEnding::Cancelled));
+
+    let spared = TraceId::mint();
+    harness.lane.register(utterance(2), spared, 2);
+    assert!(harness.write(2, 10).is_continue());
+    harness.lane.finish(utterance(2));
+    harness.play(1);
+    assert_eq!(harness.next(), started(2, spared));
+    harness.play(9);
+    assert_eq!(harness.next(), ended(2, spared, UtteranceEnding::Completed));
+    harness.nothing_more();
+    assert_eq!(harness.device.written(), [SPOKEN; 10]);
+}
+
+/// The sequence of 3ebb7be0: a cancel raises the generation, then the synth
+/// thread, woken, finishes the empty utterance it was writing. The mixer
+/// takes the finish and the raised generation in one pass, reads the
+/// generation after draining the lane and before firing, so the utterance
+/// ends cancelled, never completed.
+#[test]
+fn an_empty_utterance_finished_after_a_cancel_in_one_pass_ends_cancelled() {
+    let mut harness = harness();
+    harness.device.settle();
+    harness.device.hold();
+    let trace = harness.register(1);
+    harness.control.cancel();
+    harness.lane.finish(utterance(1));
+    harness.device.release();
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
+    harness.nothing_more();
+}
+
 #[test]
 fn a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
-    let _ = harness.source.write(utterance(1), PCM, &samples(20, 1_000));
+    let mut harness = harness();
+    let trace = harness.register(1);
+    let _ = harness.write(1, 20);
     // The device's queue holds ten frames of it, none played.
+    harness
+        .device
+        .wait_written(10, "the mixer fills the device's queue");
     harness.device.settle();
     assert_eq!(harness.device.written(), [SPOKEN; 10]);
     harness
-        .source
+        .lane
         .fail(utterance(1), "synthesis failed".to_owned());
     assert_eq!(
         harness.next(),
@@ -517,34 +756,31 @@ fn a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped() {
 
 #[test]
 fn a_write_waits_while_the_source_is_too_far_ahead_of_playback() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
+    let mut harness = harness();
+    harness.register(1);
     let (done_tx, done_rx) = mpsc::channel();
-    let source = harness.source.clone();
+    let mut lane = harness.lane;
     let writer = std::thread::spawn(move || {
         // Fifty frames fit ahead of playback; the sixty-first must wait.
-        let _ = source.write(utterance(1), PCM, &samples(60, 1_000));
+        let _ = lane.write(utterance(1), PCM, &samples(60, 1_000));
         done_tx.send(()).unwrap();
+        lane
     });
-    // The writer adds what fits in one step, under the mixer's lock, and
-    // waits for room before letting go of it; so once the mixer has given
-    // the device anything, the writer is waiting, and with nothing played
-    // it has no room.
     harness
         .device
-        .wait_written(1, "the mixer writes the first frames");
+        .wait_written(10, "the mixer writes the first frames");
+    harness.device.settle();
     assert!(done_rx.try_recv().is_err(), "the write is held back");
-    harness.play(10);
+    play(&harness.device, 30);
     done_rx
         .recv_timeout(WAIT)
         .expect("the write finishes once audio has played");
-    writer.join().unwrap();
+    harness.lane = writer.join().unwrap();
 }
 
 #[test]
 fn a_reopened_device_is_given_again_what_had_not_played() {
-    let harness = harness();
+    let mut harness = harness();
     let trace = harness.speak(1, 10);
     harness.play(4);
     assert_eq!(harness.next(), started(1, trace));
@@ -564,7 +800,7 @@ fn a_reopened_device_is_given_again_what_had_not_played() {
 
 #[test]
 fn a_failed_device_is_reopened_and_the_utterance_completes_only_once_heard() {
-    let harness = harness();
+    let mut harness = harness();
     let trace = harness.speak(1, 10);
     harness.play(4);
     assert_eq!(harness.next(), started(1, trace));
@@ -587,7 +823,7 @@ fn a_failed_device_is_reopened_and_the_utterance_completes_only_once_heard() {
 
 #[test]
 fn a_device_that_comes_back_in_another_format_fails_the_unheard_utterance() {
-    let harness = harness();
+    let mut harness = harness();
     let trace = harness.speak(1, 10);
     harness.play(4);
     assert_eq!(harness.next(), started(1, trace));
@@ -613,7 +849,7 @@ fn a_device_that_comes_back_in_another_format_fails_the_unheard_utterance() {
 fn a_device_that_fails_to_open_is_replaced_by_silence_until_a_notice_and_then_opened() {
     let device = ManualDevice::default();
     device.open_failures.store(1, Ordering::SeqCst);
-    let harness = harness_on(device);
+    let mut harness = harness_on(device, None);
 
     // Real-time silence plays in the device's place, in its own format, so
     // an utterance still takes its time and completes.
@@ -680,28 +916,15 @@ impl AudioTap for Collected {
 
 #[test]
 fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
-    let device = ManualDevice::default();
     let tapped = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
-    let mixer = Mixer::start_with_tap(
-        Box::new(device.clone()),
-        Box::new(Collected(Arc::clone(&tapped))),
-    )
-    .expect("the manual device opens");
-    let (sender, events) = mpsc::channel();
-    let sender = Mutex::new(sender);
-    let source = mixer.add_source(Arc::new(move |event| {
-        let _ = sender.lock().unwrap().send(event);
-    }));
-    let harness = Harness {
-        device,
-        source,
-        events,
-        mixer,
-    };
+    let mut harness = harness_on(
+        ManualDevice::default(),
+        Some(Box::new(Collected(Arc::clone(&tapped)))),
+    );
     let trace = harness.speak(1, 20);
     harness.play(5);
     assert_eq!(harness.next(), started(1, trace));
-    harness.source.cancel_all();
+    harness.control.cancel();
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
 
     // Ten frames had been written to the device; only the five played are
@@ -722,7 +945,7 @@ fn the_tap_gets_exactly_what_played_and_never_what_was_cut_off() {
 /// how far it got is read before it is reopened.
 #[test]
 fn a_device_reopened_between_polls_is_not_given_again_what_it_played() {
-    let harness = harness();
+    let mut harness = harness();
     harness.speak(1, 10);
     harness.device.wait_written(10, "the frames are written");
     {
@@ -767,16 +990,15 @@ fn assert_frames(actual: &[f32], expected: &[f32]) {
 
 #[test]
 fn a_sound_in_an_utterance_starts_at_its_place_and_plays_over_what_follows() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
-    let _ = harness.source.write(utterance(1), PCM, &samples(3, 1_000));
+    let mut harness = harness();
+    let trace = harness.register(1);
+    let _ = harness.write(1, 3);
     harness
-        .source
+        .lane
         .sound(utterance(1), &sound(5, 2_000), 1.0)
         .expect("the sound converts");
-    let _ = harness.source.write(utterance(1), PCM, &samples(4, 1_000));
-    harness.source.finish(utterance(1));
+    let _ = harness.write(1, 4);
+    harness.lane.finish(utterance(1));
 
     harness.play(1);
     assert_eq!(harness.next(), started(1, trace));
@@ -794,14 +1016,13 @@ fn a_sound_in_an_utterance_starts_at_its_place_and_plays_over_what_follows() {
 
 #[test]
 fn a_sound_is_mixed_only_with_its_utterances_audio_until_the_utterance_is_finished() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
+    let mut harness = harness();
+    let trace = harness.register(1);
     // Ten frames, enough to start the device while the utterance is still
     // being written.
-    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    let _ = harness.write(1, 10);
     harness
-        .source
+        .lane
         .sound(utterance(1), &sound(25, 2_000), 1.0)
         .expect("the sound converts");
     harness.play(10);
@@ -816,7 +1037,7 @@ fn a_sound_is_mixed_only_with_its_utterances_audio_until_the_utterance_is_finish
     // Part of the next word, enough to start the device again: the sound
     // starts with it, and goes no further than it while the rest has not
     // been written.
-    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
+    let _ = harness.write(1, 10);
     harness.play(10);
     harness.device.settle();
     let mut expected = vec![speech; 10];
@@ -825,8 +1046,8 @@ fn a_sound_is_mixed_only_with_its_utterances_audio_until_the_utterance_is_finish
 
     // The rest of the word is heard under the sound too, and once the
     // utterance is finished the sound plays on past it.
-    let _ = harness.source.write(utterance(1), PCM, &samples(10, 1_000));
-    harness.source.finish(utterance(1));
+    let _ = harness.write(1, 10);
+    harness.lane.finish(utterance(1));
     harness.play(10);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
     harness.play(5);
@@ -838,21 +1059,21 @@ fn a_sound_is_mixed_only_with_its_utterances_audio_until_the_utterance_is_finish
 
 #[test]
 fn a_sound_is_cancelled_with_its_utterance() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
-    let _ = harness.source.write(utterance(1), PCM, &samples(3, 1_000));
+    let mut harness = harness();
+    let trace = harness.register(1);
+    let _ = harness.write(1, 3);
     harness
-        .source
+        .lane
         .sound(utterance(1), &sound(40, 2_000), 0.5)
         .expect("the sound converts");
-    let _ = harness.source.write(utterance(1), PCM, &samples(30, 1_000));
-    harness.source.finish(utterance(1));
+    let _ = harness.write(1, 30);
+    harness.lane.finish(utterance(1));
     harness.play(5);
     assert_eq!(harness.next(), started(1, trace));
 
-    harness.source.cancel_all();
+    harness.control.cancel();
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
+    harness.device.settle();
     let cut = harness.device.written().len();
 
     // What follows the cut is the next utterance alone: the sound went with
@@ -867,19 +1088,19 @@ fn a_sound_is_cancelled_with_its_utterance() {
 
 #[test]
 fn a_sound_not_yet_reached_is_dropped_when_its_utterance_is_cancelled() {
-    let harness = harness();
-    let trace = TraceId::mint();
-    harness.source.register(utterance(1), trace);
-    let _ = harness.source.write(utterance(1), PCM, &samples(30, 1_000));
+    let mut harness = harness();
+    let trace = harness.register(1);
+    let _ = harness.write(1, 30);
     harness
-        .source
+        .lane
         .sound(utterance(1), &sound(3, 2_000), 1.0)
         .expect("the sound converts");
-    harness.source.finish(utterance(1));
+    harness.lane.finish(utterance(1));
     harness.play(2);
     assert_eq!(harness.next(), started(1, trace));
-    harness.source.cancel_all();
+    harness.control.cancel();
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Cancelled));
+    harness.nothing_more();
     let speech = level(1_000);
     assert!(
         harness
@@ -893,13 +1114,13 @@ fn a_sound_not_yet_reached_is_dropped_when_its_utterance_is_cancelled() {
 
 #[test]
 fn a_sound_played_at_once_is_mixed_over_speech_from_another_source() {
-    let harness = harness();
-    let earcons = harness.mixer.add_source(Arc::new(|_| {}));
+    let mut harness = harness();
     let trace = harness.speak(1, 30);
     harness.play(5);
     assert_eq!(harness.next(), started(1, trace));
 
-    earcons
+    harness
+        .earcons
         .play(&sound(3, 2_000), 1.0)
         .expect("the sound converts");
     harness.play(25);
@@ -918,25 +1139,62 @@ fn a_sound_played_at_once_is_mixed_over_speech_from_another_source() {
     assert_eq!(written.len(), 30);
 }
 
+/// The mixer waits with no time limit while idle, so only the push itself
+/// can wake it: a sound played at once into an idle mixer is mixed at
+/// once, alone.
 #[test]
-fn a_sound_played_at_once_on_a_quiet_device_plays_alone() {
-    let harness = harness();
+fn a_sound_played_into_an_idle_mixer_is_mixed_at_once() {
+    let mut harness = harness();
+    harness.device.settle();
     harness
-        .source
+        .sounds
         .play(&sound(4, 2_000), 2.0)
         .expect("the sound converts");
+    harness
+        .device
+        .wait_written(4, "the sound is written at once");
     harness.play(4);
+    harness.nothing_more();
     assert_frames(&harness.device.written(), &[level(2_000) * 2.0; 4]);
+}
+
+/// A sound played to its end, converted for a device format that the
+/// device left before the mixer took it, cannot play: it is reported ended
+/// at once, and nothing is written, so a wait for it, as for the exit
+/// sound, ends.
+#[test]
+fn a_sound_played_to_its_end_for_an_older_format_ends_at_once_with_nothing_written() {
+    let mut harness = harness();
+    harness.device.settle();
+    *harness.device.reopened_format.lock().unwrap() = Some(DeviceFormat {
+        sample_rate: 2_000,
+        ..FORMAT
+    });
+    // The device asks to be reopened, and the mixer, idle with no time
+    // limit, sees it at the pass the push wakes it for, before it takes
+    // the push.
+    harness.device.reopen.store(true, Ordering::SeqCst);
+    let trace = TraceId::mint();
+    harness
+        .earcons
+        .play_to_end(utterance(1), trace, &sound(4, 2_000), 1.0)
+        .expect("the sound converts");
+    assert_eq!(
+        harness.earcon_events.recv_timeout(WAIT),
+        Ok(ended(1, trace, UtteranceEnding::Cancelled))
+    );
+    harness.nothing_more();
+    assert_eq!(harness.device.written(), []);
 }
 
 #[test]
 fn a_partly_heard_sound_goes_on_where_it_was_after_the_device_reopens() {
-    let harness = harness();
+    let mut harness = harness();
     // Ten frames, the device's whole queue, each a different level.
     let ramp: Vec<i16> = (1..=10).map(|frame| frame * 100).collect();
     let ramp_sound = Sound::from_pcm(PCM, ramp.clone()).expect("a usable sound");
     harness
-        .source
+        .sounds
         .play(&ramp_sound, 1.0)
         .expect("the sound converts");
     harness.play(4);
@@ -953,4 +1211,87 @@ fn a_partly_heard_sound_goes_on_where_it_was_after_the_device_reopens() {
     let written = harness.device.written();
     assert_frames(&written[..10], &expected);
     assert_frames(&written[10..], &expected[4..]);
+}
+
+/// Plays speech with a mark and a sound in it while an earcon plays, then
+/// speech cut by a cancel, then speech paused and resumed, utterances
+/// numbered from `first`.
+fn exercise(harness: &mut Harness, first: u64) {
+    let trace = harness.register(first);
+    let _ = harness.write(first, 10);
+    harness.lane.mark(utterance(first), 1);
+    harness
+        .lane
+        .sound(utterance(first), &sound(5, 2_000), 1.0)
+        .expect("the sound converts");
+    let _ = harness.write(first, 10);
+    harness.lane.finish(utterance(first));
+    harness
+        .earcons
+        .play(&sound(3, 3_000), 1.0)
+        .expect("the earcon converts");
+    harness.play(20);
+    assert_eq!(harness.next(), started(first, trace));
+    assert!(matches!(
+        harness.next(),
+        PlaybackEvent::Mark { mark: 1, .. }
+    ));
+    assert_eq!(
+        harness.next(),
+        ended(first, trace, UtteranceEnding::Completed)
+    );
+
+    let cut = harness.speak(first + 1, 30);
+    harness.play(5);
+    assert_eq!(harness.next(), started(first + 1, cut));
+    harness.control.cancel();
+    assert_eq!(
+        harness.next(),
+        ended(first + 1, cut, UtteranceEnding::Cancelled)
+    );
+
+    let held = harness.speak(first + 2, 20);
+    harness.play(3);
+    assert_eq!(harness.next(), started(first + 2, held));
+    harness.control.pause(true);
+    harness.device.settle();
+    harness.control.pause(false);
+    harness.play(20);
+    assert_eq!(
+        harness.next(),
+        ended(first + 2, held, UtteranceEnding::Completed)
+    );
+}
+
+/// The audio thread allocates and frees nothing once the device is open
+/// (`docs/design/ownership-output.md`, "Real-time audio"): after a warm-up
+/// that plays everything once, 200 more passes that play speech with marks,
+/// a sound in an utterance, an earcon, a cancel, a pause and a resume, all
+/// recorded by the WAV tap, add no allocation and no free on it.
+#[test]
+fn the_audio_thread_allocates_and_frees_nothing_while_it_plays() {
+    let dir = std::env::temp_dir().join(format!(
+        "verbatim-mixer-allocates-nothing-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let recorder = WavRecorder::create(&dir.join("audio.wav")).expect("the recording starts");
+    let mut harness = harness_on(ManualDevice::reserved(1 << 16), Some(Box::new(recorder)));
+
+    exercise(&mut harness, 1);
+    while harness.device.waits() < 20 {
+        harness.device.settle();
+    }
+    harness.device.settle();
+    let before = harness.device.allocations();
+    let from = harness.device.waits();
+
+    exercise(&mut harness, 10);
+    while harness.device.waits() < from + 200 {
+        harness.device.settle();
+    }
+    assert_eq!(harness.device.allocations(), before);
+
+    drop(harness);
+    std::fs::remove_dir_all(dir).unwrap();
 }

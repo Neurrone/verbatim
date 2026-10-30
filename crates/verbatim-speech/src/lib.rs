@@ -27,11 +27,9 @@ pub use driver::{
     SynthError, SynthSink, SynthTiming,
 };
 pub use events::SpeechEvents;
-pub use host::{PersistFn, SettingsHost};
+pub use host::{SettingsHost, SpeechSettingsStore};
 pub use inbox::{QueueItem, SpeechInbox, SpeechInboxTaker, channel_inbox};
-pub use manager::{
-    EarconHeard, SavedSettingsFn, SpeakToken, SpeechControl, SpeechManager, SpeechManagerConfig,
-};
+pub use manager::{EarconHeard, SpeakToken, SpeechControl, SpeechManager, SpeechManagerConfig};
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
 pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
@@ -39,12 +37,32 @@ pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
 /// Takes the outcome of [`SpeechSettingsHost::switch_synthesizer`].
 pub type SwitchDone = Box<dyn FnOnce(Result<(), SynthError>) + Send>;
 
-/// The live handle the settings GUI uses to inspect and adjust speech.
+/// The synth thread's answer to a change or a revert: every value the
+/// driver has, read back from it, and the number of the latest change the
+/// synth thread had applied when it read them
+/// ([`SpeechSettingsHost::set_setting`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingsAnswer {
+    /// The number of the latest change applied, 0 before any.
+    pub change: u64,
+    /// The driver's values, in descriptor order.
+    pub values: Vec<(SettingId, SettingValue)>,
+}
+
+/// Takes each [`SettingsAnswer`], on the synth thread.
+pub type SettingsAnswered = Box<dyn Fn(SettingsAnswer) + Send + Sync>;
+
+/// The live handle the settings GUI uses to inspect and adjust speech
+/// (`docs/design/ownership-output.md`, "The mirror follows the synth
+/// thread").
 ///
-/// Set calls apply immediately to the running synthesizer so slider drags
-/// are audible as they happen (NVDA behavior); `commit` persists the current
-/// values to the base profile, and `revert` restores the last committed
-/// values — the Cancel path.
+/// Set calls apply to the running synthesizer as soon as the synth thread
+/// takes them, so slider drags are audible as they happen (NVDA behavior);
+/// `commit` saves what the driver then has to the base profile, and
+/// `revert` restores the last committed values, the Cancel path. Each is
+/// carried out on the synth thread, in order behind every change and
+/// switch posted before it, and the values the getters return are the ones
+/// the synth thread last read from the driver.
 pub trait SpeechSettingsHost: Send + Sync {
     /// Every installed synthesizer, in display order.
     fn synthesizers(&self) -> Vec<SynthChoice>;
@@ -65,32 +83,46 @@ pub trait SpeechSettingsHost: Send + Sync {
     /// Setting descriptors for the active synthesizer, in display order.
     fn setting_descriptors(&self) -> Vec<SettingDescriptor>;
 
-    /// The current value of one setting of the active synthesizer.
+    /// The value of one setting of the active synthesizer, as the synth
+    /// thread last read it from the driver.
     fn setting(&self, id: &SettingId) -> Option<SettingValue>;
 
-    /// Applies a setting to the running synthesizer immediately, without
-    /// persisting it.
+    /// Applies a setting to the running synthesizer without persisting it,
+    /// as change number `change`, a number the caller raises with each
+    /// change it makes. The synth thread answers it with every value the
+    /// driver then has ([`answer_to`](Self::answer_to)), so a refused or
+    /// clamped value comes back as the driver's own.
     ///
     /// # Errors
     ///
     /// Returns [`SynthError::Setting`] when the value is out of range or
-    /// unknown to the driver.
-    fn set_setting(&self, id: &SettingId, value: SettingValue) -> Result<(), SynthError>;
+    /// unknown to the driver's descriptors, and
+    /// [`SynthError::Unavailable`] when the pipeline has stopped.
+    fn set_setting(
+        &self,
+        id: &SettingId,
+        value: SettingValue,
+        change: u64,
+    ) -> Result<(), SynthError>;
 
-    /// Persists the active synthesizer and its current setting values to the
-    /// base profile. During a switch, the synthesizer still active is
-    /// persisted at once, and the one the switch starts is persisted too
-    /// once it has started, so what is saved is the switch's outcome.
+    /// Saves the active synthesizer and the values its driver has, once the
+    /// synth thread has carried out everything posted before. During a
+    /// switch it is carried out after the switch, so what is saved is the
+    /// synthesizer the switch ended with.
     ///
     /// # Errors
     ///
-    /// Returns [`SynthError::Setting`] when writing the profile fails.
+    /// Returns [`SynthError::Unavailable`] when the pipeline has stopped.
     fn commit(&self) -> Result<(), SynthError>;
 
-    /// Restores the last committed synthesizer and setting values,
-    /// discarding uncommitted live changes. During a switch, nothing is
-    /// restored until it ends: a synthesizer that starts has its own saved
-    /// values, and only when the switch fails are the previous
-    /// synthesizer's committed values restored.
+    /// Restores the active synthesizer's committed values, discarding
+    /// uncommitted live changes, and answers with the driver's values.
+    /// During a switch it is carried out after the switch: a synthesizer
+    /// that started has its own saved values as its committed ones, and
+    /// after a switch that failed the previous synthesizer's committed
+    /// values are restored.
     fn revert(&self);
+
+    /// Gives every answer of the synth thread to `answered`, from now on.
+    fn answer_to(&self, answered: SettingsAnswered);
 }

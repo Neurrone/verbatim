@@ -22,7 +22,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::{info, warn};
-use verbatim_audio::{AudioDevice, AudioError, ClockReading, DeviceFormat, DeviceNotices, Waker};
+use verbatim_audio::{
+    AudioDevice, AudioError, ClockReading, CondvarSignal, DeviceFormat, DeviceNotices, Signal,
+    Waker,
+};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, RPC_E_CHANGED_MODE};
 use windows::Win32::Media::Audio::{
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
@@ -85,6 +88,22 @@ impl Event {
         unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .map(Self)
             .map_err(|error| device_error("create event", &error))
+    }
+}
+
+/// A Windows auto-reset event as the mixer's [`Signal`]: setting it is one
+/// `SetEvent`, and a set made while nobody waits stays until the next wait.
+impl Signal for Event {
+    fn set(&self) {
+        // SAFETY: signalling an event this object owns.
+        unsafe {
+            let _ = SetEvent(self.0);
+        }
+    }
+
+    fn wait(&self) {
+        // SAFETY: waiting on an event this object owns.
+        let _ = unsafe { WaitForSingleObject(self.0, INFINITE) };
     }
 }
 
@@ -608,6 +627,18 @@ impl AudioDevice for WasapiDevice {
 
     fn waker(&self) -> Waker {
         waker(&self.wake)
+    }
+
+    /// A Windows auto-reset event, or, when Windows cannot make one, the
+    /// portable signal, which works the same with a lock of its own.
+    fn signal(&self) -> Arc<dyn Signal> {
+        match Event::new() {
+            Ok(event) => Arc::new(event),
+            Err(error) => {
+                warn!(target: "verbatim::audio", %error, "an event for the mixer could not be made; using a condition variable");
+                Arc::new(CondvarSignal::default())
+            }
+        }
     }
 
     fn needs_reopen(&self) -> bool {

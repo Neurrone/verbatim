@@ -75,6 +75,19 @@ impl SynthRegistry {
             .collect()
     }
 
+    /// The synthesizer registered as `id`, as a choice: the name the
+    /// Select Synthesizer list shows for it.
+    #[must_use]
+    pub fn choice(&self, id: &SynthId) -> Option<SynthChoice> {
+        self.entries
+            .iter()
+            .find(|entry| &entry.id == id)
+            .map(|entry| SynthChoice {
+                id: entry.id.clone(),
+                display_name: entry.display_name.clone(),
+            })
+    }
+
     /// Whether a synthesizer with this id is registered.
     #[must_use]
     pub fn contains(&self, id: &SynthId) -> bool {

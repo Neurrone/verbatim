@@ -1,12 +1,16 @@
 //! Audio output (architecture section 6, decisions D5 and D17).
 //!
 //! Everything Verbatim makes audible goes through one [`Mixer`]: each
-//! producer of audio, today the speech pipeline, is a [`Source`] whose PCM
-//! the mixer converts to the device's format, sums with the other sources,
-//! and writes to an [`AudioDevice`] from its own audio thread. The mixer
-//! keeps a source's audio until the device reports it played, so it knows
-//! when each utterance and index mark is heard and reports that as a
-//! [`PlaybackEvent`], whichever synthesizer produced the audio.
+//! stream of audio is a source, built with the mixer before it starts
+//! ([`MixerBuilder`]), and each thread that plays on a source has a lane of
+//! its own ([`Lane`], [`SpeechLane`]) through which the audio thread takes
+//! its records. The audio thread converts nothing and takes no lock: it
+//! sums the sources and writes them to an [`AudioDevice`]. It keeps a
+//! source's audio until the device reports it played, so it knows when each
+//! utterance and index mark is heard and reports that as a
+//! [`PlaybackEvent`], whichever synthesizer produced the audio, through a
+//! delivery thread of its own (`docs/design/ownership-output.md`, "Real-time
+//! audio").
 //!
 //! The WASAPI device lives in `verbatim-audio-wasapi`, so nothing here
 //! depends on Windows. [`SilentDevice`] plays at real-time speed without a
@@ -25,10 +29,13 @@ mod sound;
 mod wav;
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-pub use mixer::{AudioTap, Mixer, PlaybackEvent, PlaybackListener, Source};
+pub use mixer::{
+    AudioTap, Lane, Mixer, MixerBuilder, PlaybackEvent, PlaybackListener, SourceControl, SourceKey,
+    SpeechLane,
+};
 pub use notices::{DeviceNotice, DeviceNotices};
 pub use silent::SilentDevice;
 pub use sound::Sound;
@@ -90,6 +97,43 @@ pub struct ClockReading {
 /// Wakes a device's [`AudioDevice::wait`] early, from any thread.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
+/// An auto-reset event: set from any thread, waited on by one. A set made
+/// while nobody waits stays set until the next wait takes it, so a wake is
+/// never lost (`docs/design/ownership-output.md`, "Real-time audio"). The
+/// WASAPI device makes Windows events; [`CondvarSignal`] is the portable
+/// one, for test devices.
+pub trait Signal: Send + Sync {
+    /// Sets the event, waking its waiter.
+    fn set(&self);
+
+    /// Waits until the event is set, and resets it.
+    fn wait(&self);
+}
+
+/// A [`Signal`] over a mutex and a condition variable, for devices without
+/// kernel events of their own: the silent device and test devices.
+#[derive(Default)]
+pub struct CondvarSignal {
+    set: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl Signal for CondvarSignal {
+    fn set(&self) {
+        *self.set.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.changed.notify_one();
+    }
+
+    fn wait(&self) {
+        let set = self.set.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut set = self
+            .changed
+            .wait_while(set, |set| !*set)
+            .unwrap_or_else(PoisonError::into_inner);
+        *set = false;
+    }
+}
+
 /// An output device, driven only by the mixer's audio thread.
 ///
 /// The device holds a queue of frames it is playing out. The mixer keeps it
@@ -140,6 +184,13 @@ pub trait AudioDevice: Send {
 
     /// A handle that ends a [`wait`](Self::wait) early.
     fn waker(&self) -> Waker;
+
+    /// A new event of the device's kind, for the mixer's other threads to
+    /// wait on: a producer waiting for room, the delivery thread, a tap's
+    /// writer. A [`CondvarSignal`] by default.
+    fn signal(&self) -> Arc<dyn Signal> {
+        Arc::new(CondvarSignal::default())
+    }
 
     /// Whether the device asks to be reopened, for example because the
     /// system's default output device changed, or because a device became

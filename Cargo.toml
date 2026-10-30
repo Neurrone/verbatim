@@ -27,6 +27,10 @@ i18n-embed-fl = "0.10"
 # does not exist; the first in-guest launch panicked in verbatim-i18n's
 # "embedded English must load" assertion for exactly this reason.
 rust-embed = { version = "8", features = ["debug-embed"] }
+# The audio thread's single-producer, single-consumer rings
+# (docs/design/ownership-output.md, "Real-time audio"), pinned because the
+# design read this release's push and pop.
+rtrb = "=0.4.1"
 # Sample-rate conversion in the audio mixer (decision D17). The FFT
 # resampler is not used, so its default feature stays off.
 rubato = { version = "5", default-features = false }

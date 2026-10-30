@@ -111,7 +111,12 @@ impl SpeechSettingsHost for MockHost {
             .map(|(_, value)| value.clone())
     }
 
-    fn set_setting(&self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
+    fn set_setting(
+        &self,
+        id: &SettingId,
+        value: SettingValue,
+        _change: u64,
+    ) -> Result<(), SynthError> {
         let mut inner = self.inner.lock().unwrap();
         if let Some(entry) = inner
             .values
@@ -137,6 +142,8 @@ impl SpeechSettingsHost for MockHost {
         let snapshot = inner.committed.clone();
         inner.values = snapshot;
     }
+
+    fn answer_to(&self, _answered: verbatim_speech::SettingsAnswered) {}
 }
 
 /// A theme host that keeps its themes in a temporary folder and prints what

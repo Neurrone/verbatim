@@ -2,25 +2,25 @@
 //! cancellation, and each utterance's single ending (decision D17), driven
 //! by a step-controlled synth through the real mixer on a silent real-time
 //! device; token rendering and the mark fallback asserted through the
-//! capture synth; and the settings host round-tripped including its persist
-//! callback.
+//! capture synth; and the settings host round-tripped, its changes answered
+//! and its commits saved on the synth thread.
 
 use std::ops::ControlFlow;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
+use verbatim_audio::{MixerBuilder, PcmFormat, PlaybackEvent, SilentDevice, SpeechLane};
 use verbatim_model::{
     FocusNow, FocusValidity, KeySeq, NodeId, ObjectKey, Role, SegmentContent, SpeechMark,
     SpeechPriority, Theme, ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId,
     UtteranceSegment,
 };
 use verbatim_speech::{
-    ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeakToken,
-    SpeechEvents, SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence,
-    SpeechSettingsHost, SynthChoice, SynthDriver, SynthError, SynthFactory, SynthId, SynthRegistry,
-    SynthSink,
+    ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SettingsAnswer,
+    SettingsHost, SpeakToken, SpeechEvents, SpeechItem, SpeechManager, SpeechManagerConfig,
+    SpeechSequence, SpeechSettingsHost, SpeechSettingsStore, SynthChoice, SynthDriver, SynthError,
+    SynthFactory, SynthId, SynthRegistry, SynthSink,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -292,8 +292,77 @@ fn utterance(text: &str, priority: SpeechPriority) -> Utterance {
     }
 }
 
-fn mixer() -> Arc<Mixer> {
-    Arc::new(Mixer::start(Box::new(SilentDevice::new())).expect("the silent device opens"))
+fn mixer() -> MixerBuilder {
+    MixerBuilder::new(Box::new(SilentDevice::new()))
+}
+
+type SavedStore = Arc<Mutex<Vec<(SynthId, Vec<(SettingId, SettingValue)>)>>>;
+
+/// A synthesizer saved, whether as the user's choice, and its values.
+type Persisted = (SynthId, bool, Vec<(SettingId, SettingValue)>);
+
+/// The speech section as a test keeps it: what a synthesizer starts with,
+/// read live from `saved` as a commit leaves it, and every commit recorded.
+#[derive(Clone, Default)]
+struct TestStore {
+    saved: SavedStore,
+    persisted: Arc<(Mutex<Vec<Persisted>>, Condvar)>,
+}
+
+impl SpeechSettingsStore for TestStore {
+    fn saved(&self, synth: &SynthId) -> Vec<(SettingId, SettingValue)> {
+        self.saved
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == synth)
+            .map(|(_, values)| values.clone())
+            .unwrap_or_default()
+    }
+
+    fn persist(&mut self, synth: &SynthId, chosen: bool, values: &[(SettingId, SettingValue)]) {
+        let (persisted, changed) = &*self.persisted;
+        persisted
+            .lock()
+            .unwrap()
+            .push((synth.clone(), chosen, values.to_vec()));
+        changed.notify_all();
+    }
+}
+
+impl TestStore {
+    /// Waits until at least `count` commits have been saved, then returns
+    /// them all, in order. Fails at [`STEP_TIMEOUT`].
+    fn persisted(&self, count: usize) -> Vec<Persisted> {
+        let (persisted, changed) = &*self.persisted;
+        let (persisted, timeout) = changed
+            .wait_timeout_while(persisted.lock().unwrap(), STEP_TIMEOUT, |persisted| {
+                persisted.len() < count
+            })
+            .unwrap();
+        assert!(
+            !timeout.timed_out(),
+            "waited {STEP_TIMEOUT:?} for {count} commits; saved: {:?}",
+            *persisted
+        );
+        persisted.clone()
+    }
+}
+
+/// Every answer the synth thread gives `host`, as they come.
+fn answers(host: &SettingsHost) -> Receiver<SettingsAnswer> {
+    let (answer_tx, answers) = unbounded();
+    host.answer_to(Box::new(move |answer| {
+        let _ = answer_tx.send(answer);
+    }));
+    answers
+}
+
+/// The next answer. Fails at [`STEP_TIMEOUT`].
+fn answer(answers: &Receiver<SettingsAnswer>) -> SettingsAnswer {
+    answers
+        .recv_timeout(STEP_TIMEOUT)
+        .expect("the synth thread answers")
 }
 
 struct ControlHarness {
@@ -304,9 +373,10 @@ struct ControlHarness {
     finish: Sender<()>,
     /// The text of each utterance the synth has returned from speaking.
     returned: Receiver<String>,
-    /// The mixer the manager plays through, for a test to play other audio
-    /// alongside its speech.
-    mixer: Arc<Mixer>,
+    /// A lane to another source of the mixer the manager plays through, for
+    /// a test to play other audio alongside its speech, and its endings.
+    probe: SpeechLane,
+    probe_ended: Receiver<UtteranceEnding>,
 }
 
 fn control_manager() -> ControlHarness {
@@ -320,7 +390,14 @@ fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
     let (finish_tx, finish_rx) = unbounded::<()>();
     let (returned_tx, returned_rx) = unbounded::<String>();
     let (progress_tx, progress_rx) = unbounded::<Progress>();
-    let mixer = mixer();
+    let mut mixer = mixer();
+    let (ended_tx, probe_ended) = unbounded::<UtteranceEnding>();
+    let probe_source = mixer.source(Arc::new(move |event, _| {
+        if let PlaybackEvent::Ended { ending, .. } = event {
+            let _ = ended_tx.send(ending);
+        }
+    }));
+    let probe = mixer.speech_lane(probe_source);
 
     let mut registry = SynthRegistry::new();
     registry.register(
@@ -341,11 +418,11 @@ fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
         cut,
         ..Recorder::default()
     });
-    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("control"),
-        saved_settings: Box::new(|_| Vec::new()),
-        mixer: Arc::clone(&mixer),
+        settings: Box::new(TestStore::default()),
+        mixer,
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
         presenter: None,
@@ -360,7 +437,8 @@ fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
         started: started_rx,
         finish: finish_tx,
         returned: returned_rx,
-        mixer,
+        probe,
+        probe_ended,
     }
 }
 
@@ -414,10 +492,10 @@ fn capture_manager(
         }),
     );
     let recorder = Arc::new(Recorder::default());
-    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("capture"),
-        saved_settings: Box::new(|_| Vec::new()),
+        settings: Box::new(TestStore::default()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
@@ -749,10 +827,10 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
         }),
     );
     let recorder = Arc::new(Recorder::default());
-    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("marks"),
-        saved_settings: Box::new(|_| Vec::new()),
+        settings: Box::new(TestStore::default()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
@@ -787,19 +865,19 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
 
 #[test]
 fn settings_host_get_set_commit_revert() {
-    type Persisted = Arc<Mutex<Vec<(SynthId, Vec<(SettingId, SettingValue)>)>>>;
-    let persisted: Persisted = Arc::new(Mutex::new(Vec::new()));
-    let persisted_for_cb = Arc::clone(&persisted);
-
-    let (manager, _token, _log, _recorder) = capture_manager(None);
-
-    let host = manager.settings_host(Box::new(move |id, _chosen, values| {
-        persisted_for_cb
-            .lock()
-            .unwrap()
-            .push((id.clone(), values.to_vec()));
-        Ok(())
-    }));
+    let store = TestStore::default();
+    let log: CaptureLog = CaptureSynth::new().log();
+    let mut registry = SynthRegistry::new();
+    registry.register(
+        SynthId::new("capture"),
+        "Capture synth",
+        Box::new(move || {
+            Ok(Box::new(CaptureSynth::with_log(Arc::clone(&log))) as Box<dyn SynthDriver>)
+        }),
+    );
+    let manager = settings_manager(registry, "capture", &store).expect("pipeline starts");
+    let host = manager.settings_host();
+    let answers = answers(&host);
 
     let rate = SettingId::new("rate");
     let voice = SettingId::new("voice");
@@ -815,25 +893,30 @@ fn settings_host_get_set_commit_revert() {
     );
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(50)));
 
-    // Set within range succeeds and is visible immediately.
-    host.set_setting(&rate, SettingValue::Number(75)).unwrap();
+    // A change in range is applied and answered with the driver's values,
+    // which the mirror then has.
+    host.set_setting(&rate, SettingValue::Number(75), 1)
+        .unwrap();
+    assert_eq!(answer(&answers).change, 1);
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(75)));
 
     // Out of range is rejected and does not change the mirror.
     let err = host
-        .set_setting(&rate, SettingValue::Number(500))
+        .set_setting(&rate, SettingValue::Number(500), 2)
         .unwrap_err();
     assert!(matches!(err, SynthError::Setting(_)));
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(75)));
 
-    // A choice change and a commit persist the current values.
-    host.set_setting(&voice, SettingValue::Choice("capture-b".to_owned()))
+    // A choice change and a commit save the driver's values.
+    host.set_setting(&voice, SettingValue::Choice("capture-b".to_owned()), 3)
         .unwrap();
+    assert_eq!(answer(&answers).change, 3);
     host.commit().unwrap();
     assert_eq!(
-        *persisted.lock().unwrap(),
+        store.persisted(1),
         vec![(
             SynthId::new("capture"),
+            true,
             vec![
                 (voice.clone(), SettingValue::Choice("capture-b".to_owned())),
                 (rate.clone(), SettingValue::Number(75)),
@@ -842,9 +925,12 @@ fn settings_host_get_set_commit_revert() {
     );
 
     // An uncommitted change reverts to the committed value.
-    host.set_setting(&rate, SettingValue::Number(10)).unwrap();
+    host.set_setting(&rate, SettingValue::Number(10), 4)
+        .unwrap();
+    assert_eq!(answer(&answers).change, 4);
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(10)));
     host.revert();
+    assert_eq!(answer(&answers).change, 4);
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(75)));
 }
 
@@ -977,7 +1063,7 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
 /// pause. Each pause and resume is reported once applied.
 #[test]
 fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
-    let harness = control_manager();
+    let mut harness = control_manager();
     let held = harness.manager.speak(&harness.token, queued("held"));
     assert_eq!(recv_started(&harness.started), "held");
     harness.manager.control().toggle_pause();
@@ -996,7 +1082,11 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     // The evidence that "held" would have ended by now were it not paused:
     // 100 ms of audio on another source of the same mixer has played to
     // the end, and the mixer mixes every source into the same frames.
-    play_to_the_end(&harness.mixer, Duration::from_millis(100));
+    play_to_the_end(
+        &mut harness.probe,
+        &harness.probe_ended,
+        Duration::from_millis(100),
+    );
     assert_eq!(harness.recorder.ended_so_far(), [], "held while paused");
     harness.manager.control().toggle_pause();
     assert_eq!(
@@ -1023,33 +1113,26 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
 
 /// Plays `length` of quiet tone through a source of its own on `mixer` and
 /// waits until it has all played.
-fn play_to_the_end(mixer: &Mixer, length: Duration) {
-    let (ended_tx, ended_rx) = unbounded::<UtteranceEnding>();
-    let source = mixer.add_source(Arc::new(move |event| {
-        if let PlaybackEvent::Ended { ending, .. } = event {
-            let _ = ended_tx.send(ending);
-        }
-    }));
-    let probe = UtteranceId(u64::MAX);
-    source.register(probe, TraceId::mint());
+fn play_to_the_end(probe: &mut SpeechLane, ended: &Receiver<UtteranceEnding>, length: Duration) {
+    let utterance = UtteranceId(u64::MAX);
+    probe.register(utterance, TraceId::mint(), 0);
     let frames = usize::try_from(length.as_millis()).unwrap() * FORMAT.sample_rate as usize / 1_000;
     assert!(
-        source
-            .write(probe, FORMAT, &vec![1_000i16; frames])
+        probe
+            .write(utterance, FORMAT, &vec![1_000i16; frames])
             .is_continue(),
         "the probe's audio is accepted"
     );
-    source.finish(probe);
+    probe.finish(utterance);
     assert_eq!(
-        ended_rx
-            .recv_timeout(STEP_TIMEOUT)
-            .expect("the probe ended"),
+        ended.recv_timeout(STEP_TIMEOUT).expect("the probe ended"),
         UtteranceEnding::Completed
     );
 }
 
 /// A silent synth with a voice and a rate, under any id, that refuses the
-/// voice "refused" the way eSpeak NG refuses a variant it cannot load.
+/// voice "refused" the way eSpeak NG refuses a variant it cannot load, and
+/// the rate 60.
 struct SettingsSynth {
     id: &'static str,
     voice: String,
@@ -1102,7 +1185,7 @@ impl SynthDriver for SettingsSynth {
     fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
         match (id.0.as_str(), value) {
             ("voice", SettingValue::Choice(voice)) if voice != "refused" => self.voice = voice,
-            ("rate", SettingValue::Number(rate)) => self.rate = rate,
+            ("rate", SettingValue::Number(rate)) if rate != 60 => self.rate = rate,
             (_, value) => return Err(SynthError::Setting(format!("{id} refuses {value:?}"))),
         }
         Ok(())
@@ -1126,35 +1209,31 @@ fn broken_factory() -> SynthFactory {
     })
 }
 
-type SavedStore = Arc<Mutex<Vec<(SynthId, Vec<(SettingId, SettingValue)>)>>>;
-
-/// A manager over `registry` whose saved settings are read live from
-/// `saved`, as the app reads them from its config store.
+/// A manager over `registry` whose speech section is `store`.
 fn settings_manager(
     registry: SynthRegistry,
     initial: &str,
-    saved: &SavedStore,
+    store: &TestStore,
 ) -> Result<SpeechManager, SynthError> {
-    let saved = Arc::clone(saved);
     SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new(initial),
-        saved_settings: Box::new(move |synth| {
-            saved
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(id, _)| id == synth)
-                .map(|(_, values)| values.clone())
-                .unwrap_or_default()
-        }),
+        settings: Box::new(store.clone()),
         mixer: mixer(),
         events: None,
         theme: theme_without_sounds(),
         presenter: None,
         inbox: verbatim_speech::channel_inbox(),
     })
-    .map(|(manager, _token)| manager)
+    .map(|(manager, _token, _sounds)| manager)
+}
+
+/// A store whose synthesizers start with `saved`.
+fn saving(saved: Vec<(SynthId, Vec<(SettingId, SettingValue)>)>) -> TestStore {
+    TestStore {
+        saved: Arc::new(Mutex::new(saved)),
+        ..TestStore::default()
+    }
 }
 
 fn voice_and_rate(voice: &str, rate: i32) -> Vec<(SettingId, SettingValue)> {
@@ -1174,14 +1253,11 @@ fn a_refused_saved_setting_keeps_the_synths_value_and_the_others_apply() {
     // The first voice is not among the options; the driver itself refuses
     // the second.
     for refused in ["not-installed", "refused"] {
-        let saved: SavedStore = Arc::new(Mutex::new(vec![(
-            SynthId::new("one"),
-            voice_and_rate(refused, 70),
-        )]));
+        let store = saving(vec![(SynthId::new("one"), voice_and_rate(refused, 70))]);
         let mut registry = SynthRegistry::new();
         registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
-        let manager = settings_manager(registry, "one", &saved).expect("startup survives");
-        let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+        let manager = settings_manager(registry, "one", &store).expect("startup survives");
+        let host = manager.settings_host();
         assert_eq!(
             host.setting(&voice),
             Some(SettingValue::Choice("default".to_owned()))
@@ -1192,10 +1268,7 @@ fn a_refused_saved_setting_keeps_the_synths_value_and_the_others_apply() {
 
 #[test]
 fn startup_falls_back_in_registration_order_when_the_configured_synth_cannot_start() {
-    let saved: SavedStore = Arc::new(Mutex::new(vec![(
-        SynthId::new("working"),
-        voice_and_rate("other", 30),
-    )]));
+    let store = saving(vec![(SynthId::new("working"), voice_and_rate("other", 30))]);
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("broken"), "Broken", broken_factory());
     registry.register(
@@ -1210,8 +1283,8 @@ fn startup_falls_back_in_registration_order_when_the_configured_synth_cannot_sta
     );
     registry.register(SynthId::new("configured"), "Configured", broken_factory());
 
-    let manager = settings_manager(registry, "configured", &saved).expect("a fallback starts");
-    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+    let manager = settings_manager(registry, "configured", &store).expect("a fallback starts");
+    let host = manager.settings_host();
     // The configured synth failed, then the first registered one; the next
     // one starts, with its own saved settings.
     assert_eq!(host.active_synthesizer().id, SynthId::new("working"));
@@ -1228,7 +1301,7 @@ fn startup_falls_back_in_registration_order_when_the_configured_synth_cannot_sta
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("broken"), "Broken", broken_factory());
     assert!(matches!(
-        settings_manager(registry, "missing", &saved),
+        settings_manager(registry, "missing", &store),
         Err(SynthError::Unavailable(_))
     ));
 }
@@ -1248,12 +1321,12 @@ fn switch(host: &verbatim_speech::SettingsHost, id: &str) -> Result<(), SynthErr
 
 #[test]
 fn a_synth_that_cannot_start_fails_the_switch_and_the_previous_one_stays() {
-    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let store = TestStore::default();
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
     registry.register(SynthId::new("broken"), "Broken", broken_factory());
-    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
-    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
 
     assert!(matches!(
         switch(&host, "broken"),
@@ -1264,15 +1337,16 @@ fn a_synth_that_cannot_start_fails_the_switch_and_the_previous_one_stays() {
 
 #[test]
 fn switching_synth_starts_it_with_its_saved_settings() {
-    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let store = TestStore::default();
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
     registry.register(SynthId::new("two"), "Two", SettingsSynth::factory("two"));
-    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
-    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
 
     // Saved after startup, as a commit would, with a voice that is gone.
-    saved
+    store
+        .saved
         .lock()
         .unwrap()
         .push((SynthId::new("two"), voice_and_rate("not-installed", 20)));
@@ -1299,12 +1373,12 @@ fn gated(inner: SynthFactory, gate: crossbeam_channel::Receiver<()>) -> SynthFac
 }
 
 /// NVDA's switch blocks its GUI, so its settings dialog cannot be closed
-/// during one; Verbatim's does not. A commit made while the switch is under
-/// way saves the synthesizer still active at once, and the one the switch
-/// starts once it has started, so what is saved is the switch's outcome.
+/// during one; Verbatim's does not. A change and a commit made while the
+/// switch is under way are carried out behind it on the synth thread, so
+/// what is saved is the synthesizer the switch started, with the change.
 #[test]
-fn a_commit_during_a_switch_saves_the_synth_the_switch_started() {
-    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+fn a_change_and_a_commit_during_a_switch_save_the_synth_the_switch_started() {
+    let store = TestStore::default();
     let (open, gate) = crossbeam_channel::bounded(0);
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
@@ -1313,13 +1387,8 @@ fn a_commit_during_a_switch_saves_the_synth_the_switch_started() {
         "Two",
         gated(SettingsSynth::factory("two"), gate),
     );
-    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
-    let commits = Arc::new(Mutex::new(Vec::new()));
-    let recorded = Arc::clone(&commits);
-    let host = manager.settings_host(Box::new(move |id, chosen, _| {
-        recorded.lock().unwrap().push((id.clone(), chosen));
-        Ok(())
-    }));
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
 
     let (done_tx, done) = crossbeam_channel::bounded(1);
     host.switch_synthesizer(
@@ -1328,24 +1397,26 @@ fn a_commit_during_a_switch_saves_the_synth_the_switch_started() {
             let _ = done_tx.send(outcome);
         }),
     );
+    host.set_setting(&SettingId::new("rate"), SettingValue::Number(75), 1)
+        .expect("a rate in range");
     host.commit().expect("commits");
     open.send(()).expect("the switch waits at the gate");
     done.recv()
         .expect("the switch reports its outcome")
         .expect("switches");
     assert_eq!(
-        *commits.lock().unwrap(),
-        vec![(SynthId::new("one"), true), (SynthId::new("two"), true)]
+        store.persisted(1),
+        vec![(SynthId::new("two"), true, voice_and_rate("default", 75))]
     );
 }
 
-/// A revert asked for while a switch is under way restores nothing until
-/// the switch ends, so the previous synthesizer's values never reach the
-/// new one; when the switch fails, the previous synthesizer's committed
-/// values are restored.
+/// A revert asked for while a switch is under way is carried out behind
+/// it, so the previous synthesizer's values never reach the new one; when
+/// the switch fails, the previous synthesizer's committed values are
+/// restored.
 #[test]
 fn a_revert_during_a_switch_that_fails_restores_the_committed_values() {
-    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let store = TestStore::default();
     let (open, gate) = crossbeam_channel::bounded(0);
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
@@ -1354,11 +1425,13 @@ fn a_revert_during_a_switch_that_fails_restores_the_committed_values() {
         "Broken",
         gated(broken_factory(), gate),
     );
-    let manager = settings_manager(registry, "one", &saved).expect("pipeline starts");
-    let host = manager.settings_host(Box::new(|_, _, _| Ok(())));
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
+    let answers = answers(&host);
     let rate = SettingId::new("rate");
-    host.set_setting(&rate, SettingValue::Number(75))
+    host.set_setting(&rate, SettingValue::Number(75), 1)
         .expect("a rate in range");
+    assert_eq!(answer(&answers).change, 1);
 
     let (done_tx, done) = crossbeam_channel::bounded(1);
     host.switch_synthesizer(
@@ -1378,8 +1451,99 @@ fn a_revert_during_a_switch_that_fails_restores_the_committed_values() {
         done.recv().expect("the switch reports its outcome"),
         Err(SynthError::Unavailable(_))
     ));
+    assert_eq!(
+        answer(&answers),
+        SettingsAnswer {
+            change: 1,
+            values: voice_and_rate("default", 50),
+        }
+    );
     assert_eq!(host.active_synthesizer().id, SynthId::new("one"));
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(50)));
+}
+
+/// A commit saves what the driver has, read from it on the synth thread
+/// after every change before it, as NVDA saves: a value the driver refused
+/// is never saved, and the mirror has the driver's value.
+#[test]
+fn a_commit_after_a_refused_change_saves_the_drivers_value() {
+    let store = TestStore::default();
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
+    let rate = SettingId::new("rate");
+
+    host.set_setting(&rate, SettingValue::Number(60), 1)
+        .expect("a rate in range");
+    host.commit().expect("commits");
+    assert_eq!(
+        store.persisted(1),
+        vec![(SynthId::new("one"), true, voice_and_rate("default", 50))]
+    );
+    assert_eq!(host.setting(&rate), Some(SettingValue::Number(50)));
+}
+
+/// The synth thread answers a change the driver refused with the driver's
+/// own value, to the settings GUI as well as into the mirror.
+#[test]
+fn a_refused_change_is_answered_with_the_drivers_value() {
+    let store = TestStore::default();
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
+    let answers = answers(&host);
+
+    host.set_setting(&SettingId::new("rate"), SettingValue::Number(60), 7)
+        .expect("a rate in range");
+    assert_eq!(
+        answer(&answers),
+        SettingsAnswer {
+            change: 7,
+            values: voice_and_rate("default", 50),
+        }
+    );
+    assert_eq!(
+        host.setting(&SettingId::new("rate")),
+        Some(SettingValue::Number(50))
+    );
+}
+
+/// The active synthesizer's name is the one the registry, built by
+/// verbatim.exe in the user's language, gives it, not the one its driver
+/// reports from the synthesizer host, at startup and after a switch.
+#[test]
+fn the_active_synthesizer_is_named_as_the_registry_names_it() {
+    let store = TestStore::default();
+    let mut registry = SynthRegistry::new();
+    registry.register(
+        SynthId::new("one"),
+        "Registry One",
+        SettingsSynth::factory("one"),
+    );
+    registry.register(
+        SynthId::new("two"),
+        "Registry Two",
+        SettingsSynth::factory("two"),
+    );
+    let manager = settings_manager(registry, "one", &store).expect("pipeline starts");
+    let host = manager.settings_host();
+    assert_eq!(
+        host.active_synthesizer(),
+        SynthChoice {
+            id: SynthId::new("one"),
+            display_name: "Registry One".to_owned(),
+        }
+    );
+    switch(&host, "two").expect("switches");
+    assert_eq!(
+        host.active_synthesizer(),
+        SynthChoice {
+            id: SynthId::new("two"),
+            display_name: "Registry Two".to_owned(),
+        }
+    );
 }
 
 /// A silent synth with a pitch setting that records the pitch it held for
@@ -1455,10 +1619,10 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         }),
     );
     let recorder = Arc::new(Recorder::default());
-    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("pitch"),
-        saved_settings: Box::new(|_| Vec::new()),
+        settings: Box::new(TestStore::default()),
         mixer: mixer(),
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: theme_without_sounds(),
@@ -1567,7 +1731,7 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
 /// start, as NVDA does; one chosen in the dialog is.
 #[test]
 fn a_fallback_synth_is_not_saved_as_the_users_choice() {
-    let saved: SavedStore = Arc::new(Mutex::new(Vec::new()));
+    let store = TestStore::default();
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("configured"), "Configured", broken_factory());
     registry.register(
@@ -1580,22 +1744,21 @@ fn a_fallback_synth_is_not_saved_as_the_users_choice() {
         "Spare",
         SettingsSynth::factory("spare"),
     );
-    let manager = settings_manager(registry, "configured", &saved).expect("a fallback starts");
-    let commits = Arc::new(Mutex::new(Vec::new()));
-    let recorded = Arc::clone(&commits);
-    let host = manager.settings_host(Box::new(move |id, chosen, _| {
-        recorded.lock().unwrap().push((id.clone(), chosen));
-        Ok(())
-    }));
+    let manager = settings_manager(registry, "configured", &store).expect("a fallback starts");
+    let host = manager.settings_host();
 
     host.commit().expect("commits");
     switch(&host, "spare").expect("switches");
     host.commit().expect("commits");
     assert_eq!(
-        *commits.lock().unwrap(),
+        store.persisted(2),
         vec![
-            (SynthId::new("working"), false),
-            (SynthId::new("spare"), true)
+            (
+                SynthId::new("working"),
+                false,
+                voice_and_rate("default", 50)
+            ),
+            (SynthId::new("spare"), true, voice_and_rate("default", 50))
         ]
     );
 }

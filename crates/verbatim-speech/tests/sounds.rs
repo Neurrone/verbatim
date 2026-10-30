@@ -6,14 +6,15 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use verbatim_audio::{AudioTap, DeviceFormat, Mixer, PcmFormat, SilentDevice, Sound};
+use verbatim_audio::{AudioTap, DeviceFormat, MixerBuilder, PcmFormat, SilentDevice, Sound};
 use verbatim_model::{
     Earcon, Indication, SegmentContent, SpeechPriority, Theme, ThemeOptions, TraceId, Utterance,
     UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
-    ActiveTheme, IndexMark, Presenter, SoundCue, SpeakToken, SpeechEvents, SpeechItem,
-    SpeechManager, SpeechManagerConfig, SpeechSequence, SynthDriver, SynthId, SynthRegistry,
+    ActiveTheme, IndexMark, Presenter, SettingId, SettingValue, SoundCue, SpeakToken, SpeechEvents,
+    SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsStore,
+    SynthDriver, SynthId, SynthRegistry,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -154,6 +155,17 @@ impl Presenter for SoundingPresenter {
     }
 }
 
+/// A speech section with nothing saved, which saves nothing.
+struct NoSettings;
+
+impl SpeechSettingsStore for NoSettings {
+    fn saved(&self, _: &SynthId) -> Vec<(SettingId, SettingValue)> {
+        Vec::new()
+    }
+
+    fn persist(&mut self, _: &SynthId, _: bool, _: &[(SettingId, SettingValue)]) {}
+}
+
 struct Harness {
     manager: SpeechManager,
     token: SpeakToken,
@@ -177,14 +189,14 @@ fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
         }),
     );
     let tap = Tap::default();
-    let mixer = Mixer::start_with_tap(Box::new(SilentDevice::new()), Box::new(tap.clone()))
-        .expect("the silent device opens");
+    let mut mixer = MixerBuilder::new(Box::new(SilentDevice::new()));
+    mixer.tap(Box::new(tap.clone()));
     let recorder = Arc::new(Recorder::default());
-    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("capture"),
-        saved_settings: Box::new(|_| Vec::new()),
-        mixer: Arc::new(mixer),
+        settings: Box::new(NoSettings),
+        mixer,
         events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
         theme: ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default()),
         presenter,
@@ -325,10 +337,10 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
 fn an_event_without_a_sound_to_play_is_spoken_instead() {
     // The harness's theme is the default theme with no sound files found,
     // so browse mode, a sound in the default theme, is spoken.
-    let harness = harness(None);
+    let mut harness = harness(None);
     harness
         .manager
-        .play_earcon(&harness.token, Earcon::BrowseMode);
+        .play_earcon(&mut harness.token, Earcon::BrowseMode);
     let endings = harness
         .recorder
         .endings
@@ -369,7 +381,7 @@ fn loud_wav(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
-    let harness = harness(None);
+    let mut harness = harness(None);
     let wav = loud_wav("exit");
     harness.manager.themes().set(ActiveTheme::new(
         Theme::builtin_default(),
@@ -379,7 +391,7 @@ fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
     assert!(
         harness
             .manager
-            .play_earcon_to_end(&harness.token, Earcon::Exit, STEP_TIMEOUT),
+            .play_earcon_to_end(&mut harness.token, Earcon::Exit, STEP_TIMEOUT),
         "the exit sound is heard within the bound"
     );
     assert_eq!(
@@ -404,11 +416,11 @@ fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
 #[test]
 fn waiting_for_an_event_without_a_sound_returns_once_its_words_are_heard() {
     // No sounds loaded: the exit sound is spoken instead.
-    let harness = harness(None);
+    let mut harness = harness(None);
     assert!(
         harness
             .manager
-            .play_earcon_to_end(&harness.token, Earcon::Exit, STEP_TIMEOUT)
+            .play_earcon_to_end(&mut harness.token, Earcon::Exit, STEP_TIMEOUT)
     );
     let endings: Vec<UtteranceEnding> = harness
         .recorder

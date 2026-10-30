@@ -10,12 +10,13 @@
 //! sends no notification for ([`DeviceNotices`](crate::DeviceNotices)).
 //! Nothing here keeps a timer of its own.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::warn;
 
 use crate::silent::PERIOD as SILENT_PERIOD;
-use crate::{AudioDevice, AudioError, ClockReading, DeviceFormat, SilentDevice, Waker};
+use crate::{AudioDevice, AudioError, ClockReading, DeviceFormat, Signal, SilentDevice, Waker};
 
 /// The real device, with real-time silence in its place while it cannot be
 /// opened.
@@ -35,14 +36,27 @@ impl Fallback {
         }
     }
 
-    /// Opens the real device, or, when it fails, the silent device in its
-    /// place, and returns the format to render.
-    pub(crate) fn open_or_silence(&mut self) -> DeviceFormat {
+    /// Opens the real device, or, when it fails or opens in a format that
+    /// `fits` refuses, the silent device in its place, and returns the
+    /// format to render.
+    pub(crate) fn open_or_silence(&mut self, fits: impl Fn(DeviceFormat) -> bool) -> DeviceFormat {
         self.silent.stop();
         match self.device.open() {
-            Ok(format) => {
+            Ok(format) if fits(format) => {
                 self.failed = false;
                 format
+            }
+            Ok(format) => {
+                warn!(
+                    target: "verbatim::audio",
+                    sample_rate = format.sample_rate,
+                    channels = format.channels,
+                    buffer_frames = format.buffer_frames,
+                    "the audio device's format is larger than the mixer reserves for; playing silently in real time until it asks to be reopened"
+                );
+                self.device.stop();
+                self.failed = true;
+                self.silent.open_silent()
             }
             Err(error) => {
                 warn!(
@@ -58,9 +72,10 @@ impl Fallback {
 }
 
 impl AudioDevice for Fallback {
-    /// As [`Fallback::open_or_silence`]; never fails.
+    /// As [`Fallback::open_or_silence`], with every format accepted; never
+    /// fails.
     fn open(&mut self) -> Result<DeviceFormat, AudioError> {
-        Ok(self.open_or_silence())
+        Ok(self.open_or_silence(|_| true))
     }
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
@@ -109,6 +124,10 @@ impl AudioDevice for Fallback {
 
     fn waker(&self) -> Waker {
         self.device.waker()
+    }
+
+    fn signal(&self) -> Arc<dyn Signal> {
+        self.device.signal()
     }
 
     fn needs_reopen(&self) -> bool {

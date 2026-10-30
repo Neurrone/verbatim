@@ -13,6 +13,13 @@
 //!   skipped. The hook thread's start-up in `lib.rs`, `hook_thread`, is
 //!   read alone by the same rule, but may report on a channel and log once
 //!   before the loop, and may not run a message loop of its own.
+//! - The audio rule (`docs/design/ownership-output.md`, "The ownership
+//!   check on the audio loop"): the module of the audio thread's pass may
+//!   name nothing that takes a lock, waits, allocates, formats or logs, and
+//!   may use only atomics, `Arc`, time, `VecDeque`, `rtrb` and the audio
+//!   crate's own device, record and store types. A method that allocates
+//!   inside an allowed type is a review rule, held by the mixer's
+//!   allocation test.
 //!
 //! Each checked module may `use` only the paths its allow-list names, and
 //! no identifier or path on its rule's forbidden list may appear in its
@@ -39,9 +46,10 @@ struct Checked {
 }
 
 /// The modules checked: the listener's read scheduler, by the pure rule,
-/// the hook thread's modules, by the hook rule, and the hook thread's body
-/// in `lib.rs`, by the hook thread's start-up rule.
-const CHECKED: [Checked; 5] = [
+/// the hook thread's modules, by the hook rule, the hook thread's body
+/// in `lib.rs`, by the hook thread's start-up rule, and the audio thread's
+/// pass, by the audio rule.
+const CHECKED: [Checked; 6] = [
     Checked {
         path: "crates/verbatim-outpost/src/read_schedule.rs",
         allowed: &[
@@ -86,6 +94,66 @@ const CHECKED: [Checked; 5] = [
         skip_tests: true,
         within: Some("hook_thread"),
     },
+    Checked {
+        path: "crates/verbatim-audio/src/mixer/run.rs",
+        allowed: &AUDIO_ALLOWED,
+        forbidden: &AUDIO_FORBIDDEN,
+        skip_tests: false,
+        within: None,
+    },
+];
+
+/// What the audio thread's pass may `use`.
+const AUDIO_ALLOWED: [&str; 15] = [
+    "std::collections::VecDeque",
+    "std::sync::Arc",
+    "std::sync::atomic",
+    "std::time",
+    "rtrb",
+    // The mixer's records and store, and its published state.
+    "super::records",
+    "super::store",
+    "super::Shared",
+    "super::SourceShared",
+    "super::source_capacity",
+    // The device seam.
+    "crate::AudioDevice",
+    "crate::AudioError",
+    "crate::AudioTap",
+    "crate::DeviceFormat",
+    "crate::Signal",
+];
+
+/// What the audio thread's pass may not name: identifiers, matched whole,
+/// macros, matched as the word followed by `!`, and paths, matched as
+/// written.
+const AUDIO_FORBIDDEN: [&str; 26] = [
+    "Mutex",
+    "RwLock",
+    "Condvar",
+    "lock",
+    "mpsc",
+    "crossbeam",
+    "crossbeam_channel",
+    "park",
+    "sleep",
+    "recv",
+    "wait",
+    "Vec::new",
+    "vec!",
+    "Box::new",
+    "to_vec",
+    "to_owned",
+    "collect",
+    "format!",
+    "String",
+    "tracing",
+    "trace!",
+    "debug!",
+    "info!",
+    "warn!",
+    "error!",
+    "std::fs",
 ];
 
 /// What the hook thread's modules may `use`.
@@ -334,11 +402,20 @@ fn keep_only_function(code: &mut [String], function: &str) -> bool {
     start.is_some()
 }
 
-/// Whether `code` names `forbidden`: a path, with `::`, as written; an
+/// Whether `code` names `forbidden`: a path, with `::`, as written; a
+/// macro, ending in `!`, as its name as a whole word followed by `!`; an
 /// identifier as a whole word, or for `Atomic`, as the start of one.
 fn names(code: &str, forbidden: &str) -> bool {
     if forbidden.contains("::") {
         return code.contains(forbidden);
+    }
+    if let Some(name) = forbidden.strip_suffix('!') {
+        return code.match_indices(name).any(|(at, _)| {
+            let before = code[..at].chars().next_back();
+            let after = code[at + name.len()..].chars().next();
+            !before.is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
+                && after == Some('!')
+        });
     }
     code.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
         .any(|word| {
@@ -534,6 +611,24 @@ fn after() { GetMessageW(); }
                 "3: names `Arc`",
                 "4: names `Atomic`"
             ]
+        );
+    }
+
+    /// The audio thread's pass.
+    const AUDIO: Checked = Checked {
+        path: "run.rs",
+        allowed: &AUDIO_ALLOWED,
+        forbidden: &AUDIO_FORBIDDEN,
+        skip_tests: false,
+        within: None,
+    };
+
+    #[test]
+    fn a_lock_an_allocation_and_a_format_in_the_audio_pass_are_found_and_a_field_is_not() {
+        let source = "fn pass(state: &Mutex<u8>) {\n    let mix = vec![0.0; 8];\n    let line = format!(\"{}\", 1);\n    let rate = state.format.sample_rate;\n}\n";
+        assert_eq!(
+            findings(source, &AUDIO),
+            ["1: names `Mutex`", "2: names `vec!`", "3: names `format!`"]
         );
     }
 

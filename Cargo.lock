@@ -1301,6 +1301,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
 
 [[package]]
+name = "rtrb"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5974e397833d890f2f74963408e0d4a6cd8eda2f6a445ae06750291b5d7a997e"
+
+[[package]]
 name = "rubato"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1888,6 +1894,7 @@ name = "verbatim-audio"
 version = "0.1.0"
 dependencies = [
  "hound",
+ "rtrb",
  "rubato",
  "tracing",
  "verbatim-model",

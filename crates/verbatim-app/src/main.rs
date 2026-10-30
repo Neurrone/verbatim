@@ -18,9 +18,11 @@ mod key_reports;
 mod latency;
 mod live;
 mod requests;
+mod saver;
 mod screen_reader_flag;
 mod single_instance;
 mod speech_events;
+mod speech_settings;
 mod terminal_settings;
 mod themes;
 mod wanted;
@@ -34,9 +36,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use verbatim_audio::{AudioDevice, Mixer, SilentDevice, WavRecorder};
+use verbatim_audio::{AudioDevice, Lane, MixerBuilder, SilentDevice, WavRecorder};
 use verbatim_audio_wasapi::WasapiDevice;
-use verbatim_config::{ConfigStore, ConfigValue};
+use verbatim_config::ConfigStore;
 use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
@@ -53,8 +55,8 @@ use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
 use verbatim_process::port_queue::{PortQueue, Poster, Received, port_queue};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
-    QueueItem, SettingId, SettingValue, SpeakToken, SpeechInbox, SpeechInboxTaker, SpeechManager,
-    SpeechManagerConfig, SpeechSettingsHost, SynthId, SynthRegistry,
+    QueueItem, SpeakToken, SpeechInbox, SpeechInboxTaker, SpeechManager, SpeechManagerConfig,
+    SpeechSettingsHost, SynthId, SynthRegistry,
 };
 use verbatim_synth_capture::CaptureSynth;
 
@@ -214,6 +216,8 @@ fn run(
 
     // The reader settings the reducer reads, handed to it first.
     let reader_settings = config.settings().reader;
+    // The hook's configuration, read before the saver owns the file.
+    let decision_config = decision_config(&config);
 
     // The reducer thread's port: every outpost's frames and the
     // supervisor's notices (through the supervisor's sink, below), the
@@ -225,33 +229,50 @@ fn run(
     // (`docs/design/communication.md`, section 4.5). A post never waits.
     let (command_tx, command_rx) = port_queue::<ShellCommand>()?;
 
-    // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
-    // latency ledger and reporting the marks it reaches to the reducer;
-    // VERBATIM_TEST_AUDIO=null swaps in device-free test audio (see
-    // build_speech_manager). It reads each synthesizer's saved settings from
-    // the store whenever it starts one.
-    let store = Arc::new(Mutex::new(config));
-    let speech_events = Arc::new(speech_events::ShellSpeechEvents {
-        ledger: Arc::clone(&ledger),
-        commands: command_tx.clone(),
-    });
     // The theme the configuration names, with its sounds, presents speech
     // from the first word and decides what the reducer fetches; the theme
     // panel switches it.
     let theme = {
-        let store = store.lock().unwrap_or_else(PoisonError::into_inner);
-        let (loaded, options) = themes::configured(&store);
-        themes::prepare(&loaded, &store.sounds_dir(), options)
+        let (loaded, options) = themes::configured(&config);
+        themes::prepare(&loaded, &config.sounds_dir(), options)
     };
     themes::send_fetches(&command_tx, &theme);
-    let (manager, speak_token) = build_speech_manager(&store, speech_events, theme)?;
+    let initial_synth = initial_synth(&config);
+    let (themes_dir, sounds_dir) = (config.themes_dir(), config.sounds_dir());
+
+    // The saver owns `settings.toml` from here on, and each section of it
+    // moves to its one owner (`docs/design/ownership-output.md`, "One
+    // saver, one writer per section"): the speech section to the synth
+    // thread, the reader section to the reducer thread, the theme section
+    // to the GUI thread.
+    let (saver, speech_writer, reader_writer, theme_writer) =
+        saver::Saver::start(saver::DiskFile(exe_dir()), config.settings().clone())?;
+    let theme_section = config.settings().theme.clone();
+    let speech_settings =
+        speech_settings::SpeechSettings::new(config.settings().speech.clone(), speech_writer);
+    drop(config);
+
+    // Speech pipeline: eSpeak NG through WASAPI by default, observed by the
+    // latency ledger and reporting the marks it reaches to the reducer;
+    // VERBATIM_TEST_AUDIO=null swaps in device-free test audio (see
+    // build_speech_manager). The synth thread reads each synthesizer's
+    // saved settings from its speech section whenever it starts one.
+    let speech_events = Arc::new(speech_events::ShellSpeechEvents {
+        ledger: Arc::clone(&ledger),
+        commands: command_tx.clone(),
+    });
+    let (manager, speak_token, gui_sounds) =
+        build_speech_manager(speech_settings, initial_synth, speech_events, theme)?;
     // Errors logged from here on play the error sound, through the reducer
     // thread.
     error_sound::report_to(command_tx.clone());
 
-    // Settings host: the GUI's live handle; commit persists to the base
-    // profile through the config store.
-    let settings_host = manager.settings_host(persist_fn(Arc::clone(&store)));
+    // Settings host: the GUI's live handle; a commit saves on the synth
+    // thread, through the speech section's writer.
+    let settings_host = manager.settings_host();
+    // The reducer's reader settings, as it publishes them for the Terminal
+    // page.
+    let reader_view = Arc::new(terminal_settings::ReaderView::new(reader_settings));
 
     // Supervisor (one outpost process per application, decision D9) plus its
     // dedicated focus listener (decision D13), which detects focus and
@@ -316,7 +337,10 @@ fn run(
             recorder: Arc::clone(&recorder),
             listener_ready: Arc::clone(&listener_ready),
             focus_known: Arc::clone(&focus_known),
-            store: Arc::clone(&store),
+            reader: terminal_settings::ReaderSection {
+                writer: reader_writer,
+                view: Arc::clone(&reader_view),
+            },
             readiness: Arc::clone(&readiness),
             idle_line: Arc::clone(&idle_line),
             gui_handle: Arc::clone(&gui_handle),
@@ -349,7 +373,7 @@ fn run(
     // were pressed; a key that cancels speech also tells the reducer,
     // whose say-all stops.
     let hook = InputHook::start(
-        decision_config(&store),
+        decision_config,
         Arc::clone(&bound_gestures),
         key_reports::speech_effect(manager.control(), command_tx.clone()),
         key_reports::reports(
@@ -395,13 +419,16 @@ fn run(
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
     let theme_host: Arc<dyn verbatim_gui::ThemeHost> = Arc::new(themes::AppThemeHost {
-        store: Arc::clone(&store),
+        themes_dir,
+        sounds_dir,
+        section: Mutex::new((theme_section, theme_writer)),
+        sounds: Mutex::new(gui_sounds),
         manager: Arc::clone(&manager),
         commands: command_tx.clone(),
     });
     let terminal_host: Arc<dyn verbatim_gui::TerminalHost> =
         Arc::new(terminal_settings::AppTerminalHost {
-            store: Arc::clone(&store),
+            view: reader_view,
             commands: command_tx.clone(),
         });
     let shell_host: Arc<dyn verbatim_gui::ShellItemsHost> = Arc::new(AppShellItemsHost {
@@ -457,6 +484,25 @@ fn run(
         tracing::warn!(
             timeout = ?EXIT_SOUND_TIMEOUT,
             "the exit sound was not heard in time; exiting anyway"
+        );
+    }
+    // Every save made before Exit reaches the file: the speech pipeline
+    // settles first, speech cancelled so a commit does not wait behind an
+    // utterance, then the saver writes what it was given, the synth
+    // thread's commit included, both within one bound
+    // (`docs/design/ownership-output.md`, "One saver, one writer per
+    // section").
+    let deadline = Instant::now() + EXIT_SOUND_TIMEOUT;
+    if !manager.settle(deadline) {
+        tracing::warn!(
+            timeout = ?EXIT_SOUND_TIMEOUT,
+            "the synthesizer did not answer in time; a settings change made just before exiting may not be saved"
+        );
+    }
+    if !saver.finish(deadline) {
+        tracing::warn!(
+            timeout = ?EXIT_SOUND_TIMEOUT,
+            "the settings were not all saved in time"
         );
     }
     if let Ok(summary) = shutdown.join() {
@@ -567,10 +613,11 @@ fn load_locales(exe_dir: &std::path::Path, config: &ConfigStore) {
 /// Returns an error if no registered synthesizer can start, the audio
 /// device cannot open, or the speech queue's port cannot be made.
 fn build_speech_manager(
-    store: &Arc<Mutex<ConfigStore>>,
+    settings: speech_settings::SpeechSettings,
+    initial_synth: SynthId,
     events: Arc<dyn verbatim_speech::SpeechEvents>,
     theme: verbatim_speech::ActiveTheme,
-) -> Result<(Arc<SpeechManager>, SpeakToken), verbatim_speech::SynthError> {
+) -> Result<(Arc<SpeechManager>, SpeakToken, Lane), verbatim_speech::SynthError> {
     let test_audio = std::env::var("VERBATIM_TEST_AUDIO").is_ok_and(|value| value == "null");
     let mut registry = SynthRegistry::new();
     // Every native synthesizer runs in a synthesizer host process next to
@@ -593,7 +640,6 @@ fn build_speech_manager(
         );
         register_test_audio(&mut registry);
     }
-    let initial_synth = initial_synth(&store.lock().unwrap_or_else(PoisonError::into_inner));
     let device: Box<dyn AudioDevice> = if test_audio {
         Box::new(SilentDevice::new())
     } else {
@@ -609,27 +655,34 @@ fn build_speech_manager(
             .inspect_err(|error| tracing::warn!(%error, "cannot record audio"))
             .ok()
     });
-    let mixer = match recorder {
-        Some(recorder) => Mixer::start_with_tap(device, Box::new(recorder)),
-        None => Mixer::start(device),
+    let mut mixer = MixerBuilder::new(device);
+    if let Some(recorder) = recorder {
+        mixer.tap(Box::new(recorder));
     }
-    .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
+    // The mixer's delivery thread only moves messages, so it runs raised
+    // (`docs/design/communication.md`, section 6.1).
+    mixer.on_delivery_thread(Box::new(|| {
+        verbatim_process::scheduling::prioritize_role(
+            "the audio events delivery",
+            verbatim_process::scheduling::ThreadPriority::Highest,
+        );
+    }));
     // The speech queue's inbox is a completion port, so the keyboard hook's
     // cancel takes no lock (`docs/design/ownership-input.md`, "The speech
     // queue's inbox").
     let (inbox, taker) = port_queue::<QueueItem>()
         .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
-    let (manager, token) = SpeechManager::new(SpeechManagerConfig {
+    let (manager, token, gui_sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth,
-        saved_settings: saved_settings_fn(Arc::clone(store)),
-        mixer: Arc::new(mixer),
+        settings: Box::new(settings),
+        mixer,
         events: Some(events),
         theme,
         presenter: None,
         inbox: (Arc::new(PortInbox(inbox)), Box::new(PortTaker(taker))),
     })?;
-    Ok((Arc::new(manager), token))
+    Ok((Arc::new(manager), token, gui_sounds))
 }
 
 /// The speech queue's inbox as a completion port's posting end: one
@@ -672,63 +725,9 @@ fn initial_synth(config: &ConfigStore) -> SynthId {
         .map_or_else(|| SynthId::new(synth_ids::ESPEAK), SynthId::new)
 }
 
-/// The callback the speech manager reads each synthesizer's saved settings
-/// through whenever it starts one, at startup or on a switch, so a switch
-/// sees values committed since startup.
-fn saved_settings_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::SavedSettingsFn {
-    Box::new(move |synth| {
-        saved_settings(&store.lock().unwrap_or_else(PoisonError::into_inner), synth)
-    })
-}
-
-/// Persisted setting values for a synthesizer, mapped from config values to
-/// driver values.
-fn saved_settings(config: &ConfigStore, synth: &SynthId) -> Vec<(SettingId, SettingValue)> {
-    config
-        .active()
-        .synth_settings(&synth.0)
-        .into_iter()
-        .filter_map(|(id, value)| {
-            let value = match value {
-                ConfigValue::Integer(number) => SettingValue::Number(i32::try_from(number).ok()?),
-                ConfigValue::Text(option) => SettingValue::Choice(option),
-                ConfigValue::Flag(flag) => SettingValue::Toggle(flag),
-            };
-            Some((SettingId::new(id), value))
-        })
-        .collect()
-}
-
-/// The persist callback the settings host commits through: write the active
-/// synth's values into the base profile, and the synth itself as the
-/// configured one when it is the user's choice rather than a fallback, and
-/// save it.
-fn persist_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::PersistFn {
-    Box::new(move |synth_id, chosen, values| {
-        let mut store = store
-            .lock()
-            .map_err(|_| "config store poisoned".to_owned())?;
-        let speech = &mut store.settings_mut().speech;
-        if chosen {
-            speech.synthesizer = Some(synth_id.0.clone());
-        }
-        let settings = speech.synth_settings.entry(synth_id.0.clone()).or_default();
-        for (id, value) in values {
-            let config_value = match value {
-                SettingValue::Number(number) => ConfigValue::Integer(i64::from(*number)),
-                SettingValue::Choice(option) => ConfigValue::Text(option.clone()),
-                SettingValue::Toggle(flag) => ConfigValue::Flag(*flag),
-            };
-            settings.insert(id.0.clone(), config_value);
-        }
-        store.save_settings().map_err(|error| error.to_string())
-    })
-}
-
 /// The hook configuration from global settings: the Verbatim modifier keys
 /// and NVDA's two speech interrupt settings.
-fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
-    let store = store.lock().expect("config store lock");
+fn decision_config(store: &ConfigStore) -> DecisionConfig {
     let keys = store.settings().verbatim_keys;
     let keyboard = &store.settings().keyboard;
     DecisionConfig {
@@ -739,17 +738,6 @@ fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
         interrupt_for_characters: keyboard.speech_interrupt_for_characters,
         interrupt_for_enter: keyboard.speech_interrupt_for_enter,
         ..DecisionConfig::default()
-    }
-}
-
-/// Saves reader settings the reducer changed with a toggle key
-/// (`Effect::SettingsChanged`), or the settings dialog's Terminal page
-/// changed, into the base profile.
-fn save_reader_settings(store: &Mutex<ConfigStore>, settings: ReaderSettings) {
-    let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
-    store.settings_mut().reader = settings;
-    if let Err(error) = store.save_settings() {
-        tracing::warn!(%error, "the reader settings could not be saved");
     }
 }
 
@@ -912,9 +900,10 @@ struct ReducerContext {
     listener_ready: Arc<AtomicBool>,
     /// Set once Core knows a focus, for the control plane's readiness.
     focus_known: Arc<AtomicBool>,
-    /// The configuration, where reader settings changed by a toggle key are
-    /// saved.
-    store: Arc<Mutex<ConfigStore>>,
+    /// The reader section of the settings, which this thread owns: reader
+    /// settings changed by a toggle key or the Terminal page are published
+    /// for the page and handed to the saver.
+    reader: terminal_settings::ReaderSection,
     /// What the control plane reports as readiness, and the harness's
     /// readiness event.
     readiness: Arc<harness::Readiness>,
@@ -1557,7 +1546,7 @@ impl ReducerThread<'_> {
         let mut settings = self.state.settings();
         change.apply_to(&mut settings);
         self.apply(Input::Settings(settings));
-        save_reader_settings(&self.context.store, settings);
+        self.context.reader.changed(settings);
     }
 
     /// Delivers a query's outcome through the request table, applying the
@@ -1778,9 +1767,7 @@ impl ReducerThread<'_> {
             Effect::CopyToClipboard(text) => self.context.clipboard.copy(trace_id, text),
             Effect::Text(request) => self.text_request(trace_id, request),
             Effect::KeepDisplayOn(on) => keep_display_on(on),
-            Effect::SettingsChanged(settings) => {
-                save_reader_settings(&self.context.store, settings);
-            }
+            Effect::SettingsChanged(settings) => self.context.reader.changed(settings),
             // The exit sound is heard before Verbatim exits: the main thread
             // waits for it ([`ShellCommand::Exiting`]). A preview of it is
             // played as any other earcon.
@@ -1788,10 +1775,10 @@ impl ReducerThread<'_> {
                 self.exit_sound = Some(
                     self.context
                         .manager
-                        .play_earcon_heard(&self.token, Earcon::Exit),
+                        .play_earcon_heard(&mut self.token, Earcon::Exit),
                 );
             }
-            Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&self.token, earcon),
+            Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&mut self.token, earcon),
             Effect::ReadForegroundFocus => self.fake_focus(trace_id),
             Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
             Effect::BoundHeldKeyWait { key, within_ms } => {

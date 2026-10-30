@@ -187,11 +187,30 @@ public:
         Layout();
     }
 
+    // Sets control `index` of the controls built as `generation` to the
+    // driver's value, after the driver refused or clamped a change. Setting
+    // a value from code reports no change, so nothing is sent back.
+    void SetControl(std::uint32_t generation, std::size_t index, std::int32_t value) {
+        if (generation != generation_ || index >= controls_by_index_.size()) {
+            return;
+        }
+        wxWindow* control = controls_by_index_[index];
+        if (auto* slider = wxDynamicCast(control, wxSlider)) {
+            slider->SetValue(value);
+        } else if (auto* choice = wxDynamicCast(control, wxChoice)) {
+            choice->SetSelection(value);
+        } else if (auto* check = wxDynamicCast(control, wxCheckBox)) {
+            check->SetValue(value != 0);
+        }
+    }
+
 private:
     wxPanel* BuildControls(const SpeechPage& page) {
         auto* panel = new wxPanel(this);
         auto* sizer = new wxBoxSizer(wxVERTICAL);
         const std::uint32_t generation = page.generation;
+        generation_ = generation;
+        controls_by_index_.assign(page.controls.size(), nullptr);
         for (std::size_t index = 0; index < page.controls.size(); ++index) {
             const SettingControl& control = page.controls[index];
             if (control.kind == ControlKind::Slider) {
@@ -202,6 +221,7 @@ private:
                 slider->SetPageSize(control.page_size);
                 sizer->Add(label, 0, wxLEFT | wxTOP, 3);
                 sizer->Add(slider, 0, wxEXPAND | wxALL, 3);
+                controls_by_index_[index] = slider;
                 slider->Bind(wxEVT_SLIDER, [generation, index, slider](wxCommandEvent&) {
                     g_shell->core.slider_changed(generation, index, slider->GetValue());
                 });
@@ -223,6 +243,7 @@ private:
                 }
                 sizer->Add(label, 0, wxLEFT | wxTOP, 3);
                 sizer->Add(choice, 0, wxEXPAND | wxALL, 3);
+                controls_by_index_[index] = choice;
                 choice->Bind(wxEVT_CHOICE, [generation, index, choice](wxCommandEvent&) {
                     const int selection = choice->GetSelection();
                     if (selection != wxNOT_FOUND) {
@@ -237,6 +258,7 @@ private:
                 // a name it is announced by wxWidgets' default, "check".
                 check->SetName(Text(control.name));
                 sizer->Add(check, 0, wxALL, 3);
+                controls_by_index_[index] = check;
                 check->Bind(wxEVT_CHECKBOX, [generation, index](wxCommandEvent& event) {
                     g_shell->core.toggle_changed(generation, index, event.IsChecked());
                 });
@@ -323,6 +345,10 @@ private:
     wxTextCtrl* name_ = nullptr;
     wxButton* change_ = nullptr;
     wxPanel* controls_ = nullptr;
+    // The generation the controls were built for, and each control by its
+    // index in the page, for setting one to the driver's value.
+    std::uint32_t generation_ = 0;
+    std::vector<wxWindow*> controls_by_index_;
 };
 
 // Puts `items` in `choice` and selects `selection` (-1 for none), touching
@@ -1117,6 +1143,13 @@ public:
             speech_->Rebuild();
         }
     }
+
+    // A Speech page control snaps back to the driver's value.
+    void SetSpeechControl(std::uint32_t generation, std::size_t index, std::int32_t value) {
+        if (speech_ != nullptr) {
+            speech_->SetControl(generation, index, value);
+        }
+    }
 };
 
 // A list dialog: a label over a single-selection list, a row of buttons,
@@ -1428,6 +1461,13 @@ void synthesizer_switched(const SynthesizerSwitch& outcome) {
                                               : static_cast<wxWindow*>(g_shell->frame);
     }
     wxMessageBox(Text(outcome.error), Text(outcome.error_title), wxOK | wxICON_WARNING, parent);
+}
+
+void set_speech_control(std::uint32_t generation, std::size_t control, std::int32_t value) {
+    if (g_shell == nullptr || g_shell->shutting_down || g_shell->settings == nullptr) {
+        return;
+    }
+    g_shell->settings->SetSpeechControl(generation, control, value);
 }
 
 void shut_down() {

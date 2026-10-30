@@ -1,6 +1,6 @@
 //! The settings dialog's Terminal page's view of Verbatim: the reader
-//! settings as the configuration has them, and Core's reducer, which a
-//! change is sent to.
+//! settings as the reducer thread publishes them, and Core's reducer, which
+//! a change is sent to.
 //!
 //! A change is merged on the reducer thread into the settings the reducer
 //! holds, then given to it as `Input::Settings` and saved, so a toggle key
@@ -10,28 +10,59 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::Commands;
-use verbatim_config::ConfigStore;
+use crate::saver::ReaderWriter;
 use verbatim_gui::{TerminalChange, TerminalHost};
 use verbatim_model::ReaderSettings;
 
 use crate::ShellCommand;
 
-/// The Terminal page's host, over the configuration store and the
-/// reducer thread's port.
+/// The reader settings as the reducer thread last set them, which it alone
+/// writes and the Terminal page reads (`docs/design/ownership-output.md`,
+/// "One saver, one writer per section"): each a copy under a lock never
+/// held across a call.
+pub(crate) struct ReaderView(Mutex<ReaderSettings>);
+
+impl ReaderView {
+    pub(crate) fn new(settings: ReaderSettings) -> Self {
+        Self(Mutex::new(settings))
+    }
+
+    fn get(&self) -> ReaderSettings {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set(&self, settings: ReaderSettings) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = settings;
+    }
+}
+
+/// The reader section of the settings, which the reducer thread owns: its
+/// writer, and the view it publishes.
+pub(crate) struct ReaderSection {
+    pub(crate) writer: ReaderWriter,
+    pub(crate) view: Arc<ReaderView>,
+}
+
+impl ReaderSection {
+    /// The reducer's reader settings changed: published for the Terminal
+    /// page and handed to the saver.
+    pub(crate) fn changed(&self, settings: ReaderSettings) {
+        self.view.set(settings);
+        self.writer.save(settings);
+    }
+}
+
+/// The Terminal page's host, over the reducer thread's view of its reader
+/// settings and its port.
 pub(crate) struct AppTerminalHost {
-    pub(crate) store: Arc<Mutex<ConfigStore>>,
+    pub(crate) view: Arc<ReaderView>,
     pub(crate) commands: Commands,
 }
 
 impl TerminalHost for AppTerminalHost {
-    /// The configuration's reader settings, which the reducer thread saves
-    /// whenever the reducer changes them, so they are the reducer's own.
+    /// The reducer's own reader settings, as it last published them.
     fn reader_settings(&self) -> ReaderSettings {
-        self.store
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .settings()
-            .reader
+        self.view.get()
     }
 
     fn change(&self, change: TerminalChange) {

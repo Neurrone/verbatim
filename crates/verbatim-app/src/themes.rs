@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::Commands;
-use verbatim_audio::Sound;
+use verbatim_audio::{Lane, Sound};
 use verbatim_config::themes::{self, LoadedTheme};
 use verbatim_config::{ConfigStore, ThemeConfig};
 use verbatim_gui::ThemeHost;
@@ -22,35 +22,38 @@ use verbatim_model::{Earcon, Input, ThemeOptions, Utterance};
 use verbatim_speech::{ActiveTheme, SpeechManager};
 
 use crate::ShellCommand;
+use crate::saver::ThemeWriter;
 
-/// The settings dialog's Theme page's view of Verbatim: the configuration
-/// for where themes are and which one is chosen, and the speech manager and
-/// reducer for making one active.
+/// The settings dialog's Theme page's view of Verbatim: where themes are,
+/// the theme section of the settings, which the GUI thread owns
+/// (`docs/design/ownership-output.md`, "One saver, one writer per
+/// section"), the GUI's lane to the mixer for the sounds the page plays,
+/// and the speech manager and reducer for making a theme active.
 pub(crate) struct AppThemeHost {
-    pub(crate) store: Arc<Mutex<ConfigStore>>,
+    pub(crate) themes_dir: PathBuf,
+    pub(crate) sounds_dir: PathBuf,
+    /// The theme section as last saved, and its writer.
+    pub(crate) section: Mutex<(ThemeConfig, ThemeWriter)>,
+    /// The GUI thread's lane to the events' source.
+    pub(crate) sounds: Mutex<Lane>,
     pub(crate) manager: Arc<SpeechManager>,
     pub(crate) commands: Commands,
 }
 
-impl AppThemeHost {
-    fn store(&self) -> std::sync::MutexGuard<'_, ConfigStore> {
-        self.store.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
 impl ThemeHost for AppThemeHost {
     fn themes_dir(&self) -> PathBuf {
-        self.store().themes_dir()
+        self.themes_dir.clone()
     }
 
     fn sounds_dir(&self) -> PathBuf {
-        self.store().sounds_dir()
+        self.sounds_dir.clone()
     }
 
+    /// The theme section as last saved: the profile the dialog edits until
+    /// M8 activates profiles.
     fn configured(&self) -> (String, ThemeOptions) {
-        let store = self.store();
-        let active = store.active();
-        (active.theme_id().to_owned(), active.theme_options())
+        let section = self.section.lock().unwrap_or_else(PoisonError::into_inner);
+        (section.0.id.clone(), section.0.options)
     }
 
     fn activate(&self, theme: &LoadedTheme, options: ThemeOptions) {
@@ -63,18 +66,25 @@ impl ThemeHost for AppThemeHost {
     }
 
     /// Saves the choice in the base settings, the profile the dialog edits
-    /// until M8 activates profiles.
+    /// until M8 activates profiles, through the saver: a failed write is
+    /// logged there.
     fn persist(&self, id: &str, options: ThemeOptions) -> Result<(), String> {
-        let mut store = self.store();
-        store.settings_mut().theme = ThemeConfig {
+        let mut section = self.section.lock().unwrap_or_else(PoisonError::into_inner);
+        section.0 = ThemeConfig {
             id: id.to_owned(),
             options,
         };
-        store.save_settings().map_err(|error| error.to_string())
+        section.1.save(section.0.clone());
+        Ok(())
     }
 
     fn play(&self, sound: &Sound, gain: f32) {
-        if let Err(error) = self.manager.play_sound(sound, gain) {
+        let played = self
+            .sounds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .play(sound, gain);
+        if let Err(error) = played {
             tracing::warn!(%error, "a sound from the theme page cannot be played");
         }
     }

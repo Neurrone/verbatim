@@ -100,6 +100,9 @@ enum GuiMessage {
     /// The switch to the synthesizer with this display name, started from
     /// the Select Synthesizer dialog, has ended.
     SynthesizerSwitched(String, Result<(), verbatim_speech::SynthError>),
+    /// The synth thread answered a setting change or a revert with the
+    /// driver's values.
+    SettingsAnswered(verbatim_speech::SettingsAnswer),
 }
 
 /// A thread-safe handle for posting [`GuiCommand`]s to the GUI thread.
@@ -177,6 +180,14 @@ pub fn run_gui(
     // thread, and the check above makes it the only one.
     let gui = unsafe { GuiThread::new() };
     let (sender, receiver) = unbounded();
+    // The synth thread's answers come to this thread, which snaps a
+    // control the driver refused or clamped back to the driver's value.
+    let answers = GuiHandle {
+        sender: sender.clone(),
+    };
+    settings_host.answer_to(Box::new(move |answer| {
+        answers.post(GuiMessage::SettingsAnswered(answer));
+    }));
     let core = GuiCore {
         gui,
         host: settings_host,
@@ -275,6 +286,7 @@ impl GuiCore {
                 GuiMessage::SynthesizerSwitched(name, outcome) => {
                     self.synthesizer_switched(&name, &outcome);
                 }
+                GuiMessage::SettingsAnswered(answer) => self.settings_answered(&answer),
             }
         }
     }
@@ -481,9 +493,25 @@ impl GuiCore {
         }
     }
 
+    /// Sends a change, numbered, and keeps it as outstanding until the
+    /// synth thread answers it.
     fn set_setting(&self, id: &SettingId, value: SettingValue) {
-        if let Err(error) = self.host.set_setting(id, value) {
+        let change = self.speech.borrow_mut().sent(id, &value);
+        if let Err(error) = self.host.set_setting(id, value, change) {
+            self.speech.borrow_mut().unsent(change);
             tracing::warn!(%error, setting = %id, "could not apply a setting");
+        }
+    }
+
+    /// The synth thread answered: each control whose change it answered
+    /// and whose value the driver refused or clamped snaps back to the
+    /// driver's value (`docs/design/ownership-output.md`, "The mirror
+    /// follows the synth thread").
+    fn settings_answered(&self, answer: &verbatim_speech::SettingsAnswer) {
+        let snaps = self.speech.borrow_mut().answered(answer);
+        for snap in snaps {
+            self.gui
+                .set_speech_control(snap.generation, snap.control, snap.value);
         }
     }
 

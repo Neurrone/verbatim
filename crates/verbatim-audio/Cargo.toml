@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 hound.workspace = true
+rtrb.workspace = true
 rubato.workspace = true
 tracing.workspace = true
 verbatim-model.workspace = true

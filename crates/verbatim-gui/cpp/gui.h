@@ -33,6 +33,7 @@ std::size_t dialog_handle(DialogKind dialog);
 void raise_dialog(DialogKind dialog);
 void focus_dialog(DialogKind dialog);
 void synthesizer_switched(const SynthesizerSwitch& outcome);
+void set_speech_control(std::uint32_t generation, std::size_t control, std::int32_t value);
 
 void shut_down();
 

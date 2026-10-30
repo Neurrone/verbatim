@@ -13,17 +13,29 @@
 //! valid even when Verbatim is ended without warning, as the end-to-end
 //! harness ends it. The file is written on a thread of the recorder's own:
 //! the tap runs on the audio thread, which a slow disk must never stall.
+//! The tap pushes each block into a ring of samples and a ring of block
+//! headers, allocated when the device first opens and holding a second of
+//! its audio; a block that finds them full is dropped and counted, its time
+//! becomes silence in the file as any gap does, and the writer logs the
+//! count (`docs/design/ownership-output.md`, "Real-time audio").
 
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
 
-use crate::{AudioTap, DeviceFormat};
+use crate::{AudioTap, DeviceFormat, Signal};
+
+/// Block headers the rings hold: a block is a device period or so of
+/// audio, so this is more than a second's.
+const BLOCKS: usize = 256;
 
 /// How far a block may be off its place on the clock before silence is
 /// inserted: one device period and some, so ordinary scheduling jitter
@@ -32,7 +44,27 @@ const SLACK_MS: u64 = 20;
 
 /// Writes played audio to a WAV file, in step with real time.
 pub struct WavRecorder {
-    blocks: Sender<(Vec<f32>, DeviceFormat, Instant)>,
+    /// Hands the writer thread its ends of the rings once the device opens.
+    start: Option<Sender<Rings>>,
+    /// The tap's ends of the rings, once the device has opened.
+    rings: Option<(Producer<f32>, Producer<Block>)>,
+    wake: Option<Arc<dyn Signal>>,
+    /// Blocks dropped because the rings were full.
+    dropped: Arc<AtomicU64>,
+}
+
+/// One played block's header: its samples follow in the sample ring.
+struct Block {
+    samples: usize,
+    format: DeviceFormat,
+    played_at: Instant,
+}
+
+/// The writer thread's ends of the rings, and the event the tap sets.
+struct Rings {
+    samples: Consumer<f32>,
+    blocks: Consumer<Block>,
+    wake: Arc<dyn Signal>,
 }
 
 /// The writing thread's state.
@@ -56,15 +88,55 @@ impl WavRecorder {
     /// Returns the error creating either file.
     pub fn create(path: &Path) -> io::Result<Self> {
         let mut writer = Writer::create(path)?;
-        let (blocks, received) = mpsc::channel::<(Vec<f32>, DeviceFormat, Instant)>();
+        let (start, started) = mpsc::channel::<Rings>();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&dropped);
         thread::Builder::new()
             .name("verbatim-wav-recorder".to_owned())
-            .spawn(move || {
-                for (samples, format, played_at) in received {
-                    writer.played(&samples, format, played_at);
-                }
-            })?;
-        Ok(Self { blocks })
+            .spawn(move || write_blocks(&mut writer, &started, &counted))?;
+        Ok(Self {
+            start: Some(start),
+            rings: None,
+            wake: None,
+            dropped,
+        })
+    }
+}
+
+/// The writer thread: once the device has opened, writes each block the
+/// tap pushes, woken by the tap, until the tap has gone and every block is
+/// written; logs the count of blocks dropped whenever it grows.
+fn write_blocks(writer: &mut Writer, started: &Receiver<Rings>, dropped: &AtomicU64) {
+    let Ok(Rings {
+        mut samples,
+        mut blocks,
+        wake,
+    }) = started.recv()
+    else {
+        return;
+    };
+    let mut logged = 0;
+    loop {
+        while let Ok(block) = blocks.pop() {
+            let Ok(chunk) = samples.read_chunk(block.samples) else {
+                break;
+            };
+            let (first, second) = chunk.as_slices();
+            let mut played = Vec::with_capacity(block.samples);
+            played.extend_from_slice(first);
+            played.extend_from_slice(second);
+            chunk.commit_all();
+            writer.played(&played, block.format, block.played_at);
+        }
+        let count = dropped.load(Ordering::Acquire);
+        if count > logged {
+            logged = count;
+            warn!(target: "verbatim::audio", path = %writer.path.display(), dropped = count, "the recording fell behind; blocks were dropped and their time is silence in the file");
+        }
+        if blocks.is_abandoned() && blocks.is_empty() {
+            return;
+        }
+        wake.wait();
     }
 }
 
@@ -160,11 +232,56 @@ impl Writer {
 }
 
 impl AudioTap for WavRecorder {
+    /// Makes the rings the first time the device opens, a second of its
+    /// audio, and hands the writer thread its ends.
+    fn opened(&mut self, format: DeviceFormat, wake: &Arc<dyn Signal>) {
+        let Some(start) = self.start.take() else {
+            return;
+        };
+        let second = usize::try_from(format.sample_rate).unwrap_or(usize::MAX)
+            * usize::from(format.channels.max(1));
+        let (sample_tap, samples) = RingBuffer::new(second);
+        let (block_tap, blocks) = RingBuffer::new(BLOCKS);
+        if start
+            .send(Rings {
+                samples,
+                blocks,
+                wake: Arc::clone(wake),
+            })
+            .is_ok()
+        {
+            self.rings = Some((sample_tap, block_tap));
+            self.wake = Some(Arc::clone(wake));
+        }
+    }
+
     fn played(&mut self, samples: &[f32], format: DeviceFormat) {
-        if !samples.is_empty() {
-            // The writer only ends with the recorder, so this cannot fail
-            // while it matters.
-            let _ = self.blocks.send((samples.to_vec(), format, Instant::now()));
+        let (Some((sample_tap, block_tap)), Some(wake)) = (self.rings.as_mut(), &self.wake) else {
+            return;
+        };
+        if samples.is_empty() {
+            return;
+        }
+        if block_tap.is_full() || sample_tap.push_entire_slice(samples).is_err() {
+            self.dropped.fetch_add(1, Ordering::AcqRel);
+            return;
+        }
+        let _ = block_tap.push(Block {
+            samples: samples.len(),
+            format,
+            played_at: Instant::now(),
+        });
+        wake.set();
+    }
+}
+
+impl Drop for WavRecorder {
+    /// Lets go of the rings, then wakes the writer, which finds them
+    /// abandoned once it has written what they hold.
+    fn drop(&mut self) {
+        self.rings = None;
+        if let Some(wake) = &self.wake {
+            wake.set();
         }
     }
 }
