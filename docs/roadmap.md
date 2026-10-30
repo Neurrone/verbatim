@@ -76,6 +76,26 @@ report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
 `reduce_focus_changed`) with no check that the focus is alive, so a window
 handle Windows reused could have a new window refused as the dead focus's.
 
+Follow-ups from the one judge build:
+
+- A window whose client area has the role "window" has its client filed
+  under OBJID_WINDOW by the IA2 reader's window-object rename
+  (`acquire.rs`), so a name change at OBJID_CLIENT never matches it and
+  is not spoken.
+- `entered_in_front` is not updated by a foreground change for older
+  reports in the window (`judged_focus` in the outpost's worker); the
+  one judge design asks for the update.
+- Selection-as-value uses the one mark the listener sets, checked against
+  every report; it should be a mark per held focus. Today only Explorer's
+  switcher rule reaches it.
+- Entering a top-level window without a system menu through an ancestor
+  walk does not say the window, where NVDA's objectInForeground does; and
+  a top-level client reached through accParent from a windowless object
+  inside the window is read as reached, so the window is not said either.
+- Log the published message's calls on the outpost worker's `handled`
+  line, so the uncounted UIA costs in the performance ledger can be
+  measured.
+
 ### The ownership refactor
 
 Every fact has one owner, logic is a pure reducer with calls as its

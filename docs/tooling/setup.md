@@ -12,6 +12,10 @@ builds:
 git submodule update --init third_party/espeak-ng
 ```
 
+A new git worktree lacks the `third_party/espeak-ng` submodule, so run
+`git -C <worktree> submodule update --init third_party/espeak-ng` before
+building there.
+
 The `nvda` submodule is reference material and stays optional; the
 command above fetches only eSpeak NG. Building eSpeak NG also needs CMake
 on `PATH` (Visual Studio's own copy, or a standalone install); the

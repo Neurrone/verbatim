@@ -1159,12 +1159,22 @@ carries Core's focus to the listener or the outposts.
   every UIA report the outpost has not released: one more element with a
   group for one round trip after each focus, removed at release with one
   `RemoveEventHandlerGroup`, and none re-added for an element the focus
-  returns to within that round trip. Not yet counted, for the scenarios
-  to measure (`text_box_editing`, `settings_system_page`): the normalize
-  call for an event of a XAML element with no cached window that is not
-  the newest focus, `caret_of`'s text calls for a `TextSelection` event of
-  an older element, and the refresh for a `HelpText` or `ControllerFor`
-  change of an older element.
+  returns to within that round trip. Measured in debug end-to-end runs on
+  2026-10-30 from the outposts' `nodes held (N)` lines, Core's held set
+  reached at most 2 nodes in the Windows Forms text box outpost
+  (`text_box_editing`), 4 in the Settings outpost (`settings_system_page`)
+  and 4 in Explorer's. In `settings_system_page` `AddEventHandlerGroup`
+  took 0 to 4 ms, and the second focus-following group was held for under
+  10 ms before `RemoveEventHandlerGroup` (0 ms). Not yet measurable: the
+  normalize call for an event of a XAML element with no cached window that
+  is not the newest focus, `caret_of`'s text calls for a `TextSelection`
+  event of an older element, and the refresh for a `HelpText` or
+  `ControllerFor` change of an older element, because a published
+  message's calls reach the latency log only when Core speaks; the
+  missing log line is the published message's calls on the worker's
+  `handled` line.
+- `Outbound::waiting_nodes` takes the outbound queue's lock and allocates
+  on every accepted MSAA state change.
 - `NodesHeld` is written on its own after each focus report and each
   change of the node set Core holds in an outpost: one pipe write and the
   outpost's reader wake, about what the `CoreFocus` notice to the focus's
