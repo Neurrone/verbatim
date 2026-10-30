@@ -3798,19 +3798,20 @@ fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
     app.quit();
 }
 
-/// A focus published at its walk's bound passes to the worker that
-/// replaces its own, when its own is abandoned before it adopts it: the OK
-/// button of mockapp's MSAA tree, as in
+/// A focus published at its walk's bound is followed from its
+/// publication, whatever becomes of its worker: the OK button of mockapp's
+/// MSAA tree, as in
 /// [`an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound`], has its
 /// walk's step to its parent answer 12 seconds late, past the worker's
-/// 10-second deadline. The watchdog publishes the focus at the bound, then
-/// abandons the worker at the deadline, and the worker that replaces it
-/// adopts the focus before anything else. Once the step has returned, the
+/// 10-second deadline. The watchdog's publication makes the focus the
+/// followed one, then the watchdog abandons the worker at the deadline,
+/// and the worker that replaces it has nothing handed over to it. Once
+/// the step has returned, the
 /// button's rename, raised before ten renames of other objects of the
 /// same thread and planned in one batch with them, is kept beyond NVDA's
 /// limit of ten events a thread, as the focused object's events are
 /// (`EVENTS_PER_THREAD`), and reported.
-fn a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own() {
+fn a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned() {
     let title = common::unique_title("mockapp-msaa-bound-abandoned");
     let mut app = common::spawn("tree.json", "msaa", &title);
     let hwnd = common::find_window(&title);
@@ -3877,8 +3878,8 @@ fn a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own
     app.quit();
 }
 
-/// A terminal published at its walk's bound and adopted once the walk
-/// returns is followed as a reported terminal is: the gap's read of the
+/// A terminal published at its walk's bound owes its first read, which
+/// its worker attempts once the walk returns: the gap's read of the
 /// terminal of mockapp's terminal reading fixture, as in
 /// [`a_gap_read_whose_walk_is_stuck_is_published_at_its_bound`], is
 /// published with no text, and once its stuck step returns the outpost
@@ -4321,8 +4322,8 @@ fn main() {
             a_gap_read_whose_walk_is_stuck_is_published_at_its_bound,
         ),
         (
-            "a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own",
-            a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own,
+            "a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned",
+            a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned,
         ),
         (
             "an_adopted_terminal_gets_its_first_read",

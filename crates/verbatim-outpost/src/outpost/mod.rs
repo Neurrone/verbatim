@@ -37,6 +37,7 @@ pub(crate) mod acceptance;
 pub(crate) mod alarm;
 mod bound;
 mod caret_poll;
+mod commit;
 mod focus_path;
 mod gap_record;
 mod gap_timer;
@@ -73,8 +74,8 @@ use verbatim_process::transport::{
     BlockingReader, ChildIo, EVENT_PIPE_BUFFER, Sender, Served, Serving,
 };
 use verbatim_uia::{
-    Ancestor, Cached, FOCUS_PROPERTIES, Group, Node, NodeIdRegistry as UiaRegistry, Part,
-    PropertyEvent, Registration, Request, Scope, Subscription, TextEvent, Uia,
+    Ancestor, Cached, FOCUS_PROPERTIES, Node, NodeIdRegistry as UiaRegistry, Part, PropertyEvent,
+    Registration, Request, Scope, Subscription, TextEvent, Uia,
 };
 
 use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
@@ -91,30 +92,9 @@ use gap_record::{CopyDropped, GapRead};
 pub use gap_timer::GapTimer;
 use intake::{Entry, EventElement, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
-use worker::{Tracking, Watch};
+use worker::Watch;
 
 pub(crate) use window::now_ms;
-
-/// The node whose caret the worker last read, and when that read began, in
-/// microseconds: a caret event observed before then changes nothing the
-/// read did not see, and one observed later (while the read was in flight
-/// included) may.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct CaretRead(Option<(u64, u64)>);
-
-impl CaretRead {
-    /// Notes a read of node `node`'s caret that began at `started_us`.
-    fn note(&mut self, node: u64, started_us: u64) {
-        self.0 = Some((node, started_us));
-    }
-
-    /// Whether the last read of node `node`'s caret began at or after
-    /// `observed_us`, so it saw what an event observed then reports.
-    fn covers(self, node: u64, observed_us: u64) -> bool {
-        self.0
-            .is_some_and(|(read, at)| read == node && at >= observed_us)
-    }
-}
 
 #[cfg(test)]
 mod application_names_tests {
@@ -143,7 +123,7 @@ mod application_names_tests {
 
 #[cfg(test)]
 mod caret_read_tests {
-    use super::CaretRead;
+    use super::commit::CaretRead;
 
     #[test]
     fn an_event_observed_while_a_read_was_in_flight_is_not_covered() {
@@ -215,7 +195,6 @@ pub(crate) struct Context {
     /// by: the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
     observation: OnceLock<crate::arbitration::ObservationClock>,
-    tracking: Mutex<Tracking>,
     /// The focus Core holds, and the focuses this outpost reported that
     /// Core has not judged, which events are judged against before they are
     /// read (decision D14, "Where the rules run"; [`held`]).
@@ -227,11 +206,6 @@ pub(crate) struct Context {
     /// two forms, which the worker moves with the focus
     /// ([`register_focus_events`]).
     focus_events: OnceLock<Registration>,
-    /// The focus's node and group the focus-following subscription was
-    /// last moved to, with the focus's parent followed for its value
-    /// changes, if one is: `None` for nothing. A move to the same node,
-    /// group and parent is not asked of the subscription at all.
-    followed: Mutex<Option<(NodeId, Group, Option<NodeId>)>>,
     /// Whether UIA reads may use remote operations ([`OutpostOptions`]).
     remote_operations: bool,
     /// Windows whose UIA elements could not be imported into a remote
@@ -240,9 +214,6 @@ pub(crate) struct Context {
     /// is kept with the thread that owned it, so a reused handle, whose
     /// destroy event was lost, is not read the classic way by mistake.
     classic_windows: Mutex<HashMap<isize, u32>>,
-    /// The caret key's watch for evidence the worker keeps open between its
-    /// entries, if one is open.
-    caret_watch: Mutex<Option<text_reads::OpenWatch>>,
     /// The idle barrier's round the worker has reached and not yet
     /// answered, kept while deferred work is pending
     /// (`worker::answer_idle`).
@@ -261,20 +232,12 @@ pub(crate) struct Context {
     /// attributes, learned from its answers and kept, like its patterns,
     /// until the node is released.
     text_support: Mutex<HashMap<u64, crate::text::uia::TextSupport>>,
-    /// The node whose caret the worker last read, and when that read began,
-    /// in microseconds: a caret event observed before it changes nothing
-    /// the read did not see.
-    caret_read: Mutex<CaretRead>,
     /// The details the active theme wants read for each node
     /// ([`SupervisorToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
     /// their cache requests; MSAA reads skip their calls, through the MSAA
     /// registry, which holds the same.
     fetches: Mutex<Fetches>,
-    /// What the outpost keeps of each focused terminal between its reads,
-    /// by node, kept while the node is (`docs/design/terminal-model.md`,
-    /// "Where it runs").
-    terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
     /// How the worker reads the element that has the keyboard focus, for a
     /// focus-now query: a UIA focus event's element comes from the focus
     /// listener's read instead.
@@ -299,10 +262,6 @@ pub(crate) struct Context {
     /// application's `WinEvent`s and the outpost's own hook's
     /// ([`handover`]).
     handover: Mutex<handover::Handover>,
-    /// The raw-view chain the focus listener read for the UIA focus this
-    /// outpost last reported, by which it finds its own copies of that
-    /// focus's elements ([`focus_path`]).
-    focus_path: Mutex<Option<focus_path::FocusPath>>,
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
@@ -545,10 +504,6 @@ impl Context {
         reader()
     }
 
-    fn tracking(&self) -> MutexGuard<'_, Tracking> {
-        self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     fn held(&self) -> MutexGuard<'_, held::Held> {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -586,12 +541,6 @@ impl Context {
         *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn terminals(&self) -> MutexGuard<'_, HashMap<u64, crate::terminal::Terminal>> {
-        self.terminals
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// The request a node is fetched with, for the details the active
     /// theme wants.
     fn node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
@@ -625,36 +574,16 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The caret key's watch the worker keeps open, if any.
-    fn caret_watch(&self) -> MutexGuard<'_, Option<text_reads::OpenWatch>> {
-        self.caret_watch
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Records that the worker is reading `node`'s caret now.
-    fn caret_read(&self, node: NodeId) {
-        self.caret_read_from(node, self.observed_now());
-    }
-
-    /// Notes that a read of `node`'s caret began at `started_us`, for a
-    /// read stamped once it has returned: the time it began, never the
-    /// time it ended, since a caret event observed while it was in flight
-    /// may come from a move the read did not see.
-    fn caret_read_from(&self, node: NodeId, started_us: u64) {
-        self.caret_read
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .note(node.number(), started_us);
-    }
-
-    /// Whether the worker has read `node`'s caret since `observed_us`, so
-    /// a caret event observed then needs no report of its own.
+    /// Whether a read of `node`'s caret committed since `observed_us`
+    /// covers an event observed then, which needs no report of its own.
     fn caret_read_since(&self, node: NodeId, observed_us: u64) -> bool {
-        self.caret_read
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .covers(node.number(), observed_us)
+        self.watch
+            .follow(|follow| follow.caret_read.covers(node.number(), observed_us))
+    }
+
+    /// The window of the last focus this outpost reported.
+    fn tracked_window(&self) -> Option<isize> {
+        self.watch.follow(|follow| follow.tracking.window)
     }
 
     /// Whether a UIA read for an element of `hwnd` should try a remote
@@ -698,8 +627,7 @@ impl Context {
         text_reads::forget(self, nodes.iter().copied());
         self.patterns().clear();
         self.text_support().clear();
-        self.terminals().clear();
-        *self.caret_watch() = None;
+        self.watch.reset_follow();
         drop(objects);
         nodes.len()
     }
@@ -929,21 +857,30 @@ impl Context {
         self.handover.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The chain the focus listener read for the UIA focus this outpost
-    /// last reported ([`focus_path`]).
-    fn focus_path(&self) -> MutexGuard<'_, Option<focus_path::FocusPath>> {
-        self.focus_path
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// The route to the element `runtime_id` names, when it is in the chain
     /// the focus listener read for the UIA focus this outpost last reported,
     /// and its window is one the outpost's application serves: the outpost
     /// looks up no window of another process by its handle
     /// (`docs/design/listener-without-connections.md`, section 4.3).
     fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
-        let route = self.focus_path().as_ref()?.route_to(runtime_id)?;
+        let route = self.watch.follow(|follow| {
+            follow
+                .focus_path
+                .as_ref()
+                .and_then(|path| path.route_to(runtime_id))
+        })?;
+        read::serves(self, route.window).then_some(route)
+    }
+
+    /// The route to the element `runtime_id` names in `path`, the focus
+    /// path of a focus not yet committed, as [`focus_route`](Self::focus_route)
+    /// finds it in the committed one.
+    fn route_in(
+        &self,
+        path: &focus_path::FocusPath,
+        runtime_id: &[i32],
+    ) -> Option<focus_path::Route> {
+        let route = path.route_to(runtime_id)?;
         read::serves(self, route.window).then_some(route)
     }
 }
@@ -1104,14 +1041,11 @@ impl Outpost {
             msaa_registry: MsaaRegistry::new(id_counter),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
-            tracking: Mutex::new(Tracking::default()),
             held: Mutex::new(held::Held::default()),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
-            followed: Mutex::new(None),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
-            caret_watch: Mutex::new(None),
             idle_query: Mutex::new(None),
             held_anchors: Arc::clone(&held_anchors),
             uia_anchors: Mutex::new(Anchors::sharing(
@@ -1121,9 +1055,7 @@ impl Outpost {
             edit_anchors: Mutex::new(Anchors::sharing(Arc::clone(&anchor_counter), held_anchors)),
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
-            caret_read: Mutex::new(CaretRead::default()),
             fetches: Mutex::new(Fetches::default()),
-            terminals: Mutex::new(HashMap::new()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             focus_window: Mutex::new(Arc::new(window::focus_window)),
@@ -1132,7 +1064,6 @@ impl Outpost {
             heard: OnceLock::new(),
             // Read again as the hook is installed ([`Outpost::assign`]).
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
-            focus_path: Mutex::new(None),
             failed_reads: AtomicU32::new(0),
             override_changes: AtomicU64::new(0),
             first_uia_focus_us: AtomicU64::new(0),

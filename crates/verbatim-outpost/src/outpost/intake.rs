@@ -109,7 +109,7 @@
 //!   before it. A read whose marker the intake never saw, as when the
 //!   outpost started after it, is taken in where it arrives.
 //! - When a UIA focus's read takes its marker's place and the focus last
-//!   reported ([`Intake::set_focused`]) is among the read's ancestors, the
+//!   reported ([`Intake::note_focus`]) is among the read's ancestors, the
 //!   old focus's own UIA state changes that the outpost's subscriptions
 //!   queued after the marker, up to the next marker or idle query, are
 //!   planned ahead of the read, in their order (`old_focus_events_first`).
@@ -1123,7 +1123,7 @@ impl Intake {
     /// would do nothing for an update; it clears the mark before it handles
     /// anything that changes that, so an update observed after the read
     /// that ends the hold begins is never dropped. A new focus clears it
-    /// too ([`set_focused`](Self::set_focused)).
+    /// too ([`note_focus`](Self::note_focus)).
     pub(super) fn absorb_console_updates(&self, window: Option<isize>) {
         self.lock().absorbed = window;
     }
@@ -1134,7 +1134,7 @@ impl Intake {
     }
 
     /// Drops the system caret's events as they are pushed, until the next
-    /// focus is reported ([`set_focused`](Self::set_focused)), so they wake
+    /// focus is reported ([`note_focus`](Self::note_focus)), so they wake
     /// nobody: the worker marks a UIA focus once it has raised a UIA caret
     /// event of its own, and a focused console terminal as it is reported,
     /// whose moves those events would only read a second time. An event
@@ -1150,40 +1150,42 @@ impl Intake {
         self.lock().system_caret_unused
     }
 
-    /// Records the object the worker last reported as the focus: its MSAA
-    /// events other than focus events are always kept.
-    pub(super) fn set_focused(&self, object: Option<Object>) {
+    /// Records the object the worker last reported as the focus, in one
+    /// acquisition, as the commit that makes it followed does: its MSAA
+    /// events other than focus events are always kept; a terminal read
+    /// through UIA, in window `terminal` (0 when not known), has its caret
+    /// event planned after its text changes; with `drop_system_caret`, the
+    /// system caret's events are dropped, as for a console host's terminal,
+    /// whose console caret event is its caret event; and `redirected` says
+    /// it was reached by redirecting a control's own focus event to its
+    /// focused child.
+    pub(super) fn note_focus(
+        &self,
+        object: Option<Object>,
+        terminal: Option<isize>,
+        drop_system_caret: bool,
+        redirected: bool,
+    ) {
         let mut state = self.lock();
         state.focused = object;
-        state.terminal = None;
-        state.focus_redirected = false;
+        state.terminal = terminal;
+        state.focus_redirected = redirected;
         state.absorbed = None;
-        state.system_caret_unused = false;
-    }
-
-    /// Records that the focus last reported ([`set_focused`](Self::set_focused))
-    /// is a terminal read through UIA, in window `window` (0 when not
-    /// known), whose caret event is planned after its text changes.
-    pub(super) fn set_focus_is_terminal(&self, window: isize) {
-        self.lock().terminal = Some(window);
-    }
-
-    /// Records that the focus last reported was reached by redirecting a
-    /// control's own focus event to its focused child.
-    pub(super) fn set_focus_redirected(&self) {
-        self.lock().focus_redirected = true;
+        state.system_caret_unused = drop_system_caret;
     }
 
     /// Whether a focus event on `object` is the redirected-to child's own,
     /// arriving after its control's: `object` is the focus, reached by a
-    /// redirect, and no other focus came between. Answers once.
-    pub(super) fn take_redirected_focus(&self, object: &Object) -> bool {
-        let mut state = self.lock();
-        let repeated = state.focus_redirected && state.focused.as_ref() == Some(object);
-        if repeated {
-            state.focus_redirected = false;
-        }
-        repeated
+    /// redirect, and no other focus came between. The mark is left set; the
+    /// commit that drops the event clears it ([`clear_redirected`](Self::clear_redirected)).
+    pub(super) fn is_redirected_focus(&self, object: &Object) -> bool {
+        let state = self.lock();
+        state.focus_redirected && state.focused.as_ref() == Some(object)
+    }
+
+    /// Clears the mark that the focus was reached by a redirect.
+    pub(super) fn clear_redirected(&self) {
+        self.lock().focus_redirected = false;
     }
 
     /// The object the worker last reported as the focus.
@@ -3161,8 +3163,7 @@ mod tests {
     fn a_focused_terminals_caret_event_is_planned_after_its_text_change() {
         let terminal = [42, 7];
         let intake = Intake::default();
-        intake.set_focused(Some(Object::Uia(terminal.to_vec())));
-        intake.set_focus_is_terminal(7);
+        intake.note_focus(Some(Object::Uia(terminal.to_vec())), Some(7), false, false);
         // The console host's text area, whose caret its console's caret
         // event tells of, and its output its console updates.
         push_item(
@@ -3234,7 +3235,7 @@ mod tests {
         push_console_update(&intake, 7, 4);
         assert_eq!(handed_out(&intake), [4], "the next update comes through");
         intake.absorb_console_updates(Some(7));
-        intake.set_focused(None);
+        intake.note_focus(None, None, false, false);
         push_console_update(&intake, 7, 5);
         assert_eq!(handed_out(&intake), [5], "a new focus clears the mark");
     }
@@ -3319,7 +3320,7 @@ mod tests {
     #[test]
     fn the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first() {
         let intake = Intake::default();
-        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
         push_item(&intake, marker(7), 1);
         push_item(&intake, property_change(30070, &[42, 1]), 2);
         push_item(&intake, property_change(30005, &[42, 5]), 3);
@@ -3340,7 +3341,7 @@ mod tests {
     #[test]
     fn the_old_focus_state_change_behind_the_next_marker_keeps_its_place() {
         let intake = Intake::default();
-        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
         push_item(&intake, marker(7), 1);
         push_item(&intake, property_change(30070, &[42, 1]), 2);
         push_item(&intake, marker(8), 3);
@@ -3361,7 +3362,7 @@ mod tests {
     #[test]
     fn the_listener_facts_on_the_old_focus_keep_their_places_behind_a_focus_inside_it() {
         let intake = Intake::default();
-        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
         push_item(&intake, marker(7), 1);
         push_item(
             &intake,
@@ -3406,7 +3407,7 @@ mod tests {
     #[test]
     fn a_focus_outside_the_old_focus_keeps_its_place_before_its_events() {
         let intake = Intake::default();
-        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
         push_item(&intake, marker(7), 1);
         push_item(&intake, property_change(30070, &[42, 1]), 2);
         push_item(&intake, uia_focus_inside(7, vec![42, 2], &[&[42, 3]]), 3);

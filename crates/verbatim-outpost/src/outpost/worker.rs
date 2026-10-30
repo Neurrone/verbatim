@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretWatch, FocusText, NodeId, NodeSnapshot, NormalizedEvent,
+    Backend, CallCounts, CaretReport, CaretWatch, FocusText, NodeId, NodeSnapshot, NormalizedEvent,
     PropertyChange, Role, State, StateSet, TextOp, TextPoint, TextReply, TraceId, WindowFacts,
 };
 use verbatim_uia::{
@@ -58,7 +58,10 @@ use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
 use super::bound::{self, BoundFocus, FocusProgress};
-use super::caret_poll::{self, AfterRead, Poll};
+use super::caret_poll::{self, Poll};
+use super::commit::{
+    self, Committed, Effects, Follow, FollowState, Owed, OwedWork, Report, Target, WatchChange,
+};
 use super::focus_path::{self, FocusPath};
 use super::gap_record::{CopyDropped, GapRead};
 use super::held;
@@ -93,9 +96,10 @@ const STEP_DEADLINE: Duration = Duration::from_millis(400);
 /// outside it.
 const TEXT_DEADLINE: Duration = Duration::from_secs(2);
 
-/// The worker incarnation in charge, its deadline, and the abandoned count.
+/// The worker incarnation in charge, its deadline, the walk the watchdog
+/// may publish, and the follow state every commit changes.
 #[derive(Default)]
-struct WatchState {
+pub(super) struct WatchState {
     generation: u64,
     deadline: Option<Instant>,
     /// The query the worker is running, so an abandonment can answer it.
@@ -108,62 +112,42 @@ struct WatchState {
     /// progress to finish, and it ends.
     stopping: bool,
     /// The focus walk of the entry in hand, once armed: the watchdog
-    /// publishes its focus at its bound should it still be under way then
-    /// ([`publish_at_bound`]).
+    /// publishes its focus at its bound should it still be under way then,
+    /// or before it abandons the walk's worker ([`publication`]).
     walk: Option<FocusProgress>,
     /// How many walks have been armed, which numbers each.
     arms: u64,
-    /// The focus published at its walk's bound for the entry in hand,
-    /// which the worker adopts when its walk returns.
-    published: Option<Published>,
-    /// The focus published at its walk's bound that no worker has followed
-    /// yet: one its worker is adopting ([`Watch::adopting`]), or one whose
-    /// worker was abandoned before it followed it, which the worker that
-    /// replaced it adopts before its first entry ([`Watch::handed_over`]).
-    /// It stays here until the entry that follows it ends
-    /// ([`Watch::finish`]), so a worker abandoned while it follows it hands
-    /// it over again.
-    handed_over: Option<Published>,
-}
-
-/// A focus published at its walk's bound, as the worker follows it
-/// ([`Worker::adopt_published`]).
-#[derive(Clone)]
-struct Published {
-    node: NodeId,
-    role: Role,
-    object: Option<Object>,
-    window: Option<isize>,
-    /// Its ancestors, outermost first, and itself.
-    chain: Vec<NodeSnapshot>,
-    /// The trace of the event it came from, and the observation it is
-    /// stamped with.
-    trace: TraceId,
-    observed_at_us: u64,
-    /// The batch its entry belongs to.
-    batch: u64,
+    /// The number of the walk of the entry in hand published at its bound.
+    bound_published: Option<u64>,
+    /// What the outpost follows, changed only in a commit.
+    pub(super) follow: FollowState,
 }
 
 impl WatchState {
-    /// Abandons the worker in charge: the next generation takes over, and
-    /// the query it was running, if any, is returned for an "abandoned"
-    /// reply. A focus published at its walk's bound that the worker has not
-    /// followed yet, whether it had not taken it up or was still following
-    /// it, is handed over to the next generation.
+    /// Abandons the worker in charge: the next generation takes over, owed
+    /// work the abandoned worker was attempting is no longer owed, and the
+    /// query it was running, if any, is returned for an "abandoned" reply.
     fn abandon(&mut self) -> Option<(u64, TraceId)> {
+        let abandoned = self.generation;
         self.generation += 1;
         self.deadline = None;
         self.started = None;
-        self.handed_over = self.published.take().or_else(|| self.handed_over.take());
         self.end_walk();
+        if self
+            .follow
+            .owed
+            .as_ref()
+            .is_some_and(|owed| owed.attempting == Some(abandoned))
+        {
+            self.follow.owed = None;
+        }
         self.running.take()
     }
 
-    /// The entry in hand has ended: no walk of it is watched, and no
-    /// publication of it is to be adopted.
+    /// The entry in hand has ended: no walk of it is watched.
     fn end_walk(&mut self) {
         self.walk = None;
-        self.published = None;
+        self.bound_published = None;
     }
 
     /// When the watchdog next checks the entry in hand, if it has one: its
@@ -179,13 +163,27 @@ impl WatchState {
     }
 }
 
+/// How a focus walk that its worker armed returned
+/// ([`Watch::walk_returned`]).
+pub(super) enum Returned {
+    /// Before its bound, or never armed: its worker reports it.
+    Disarmed,
+    /// Published at its bound: its worker sends nothing else for it.
+    Published,
+    /// Past its bound and still armed: its worker publishes it from this
+    /// copy of its progress, as the watchdog would.
+    PastBound(Box<FocusProgress>),
+    /// Its worker was abandoned.
+    Abandoned,
+}
+
 /// Shared between the worker, its watchdog, and anything that publishes.
 #[derive(Default)]
 pub(super) struct Watch {
     state: Mutex<WatchState>,
     /// The watchdog's wake: set for each entry's next check, cancelled when
-    /// the entry is published, and woken for a foreground fact or the
-    /// shutdown, so the watchdog wakes only when there is something to judge.
+    /// the entry ends, and woken for a foreground fact or the shutdown, so
+    /// the watchdog wakes only when there is something to judge.
     alarm: Alarm,
     /// Abandoned workers that have not yet returned. An atomic, so the reader
     /// answers a ping without waiting on the watch lock.
@@ -200,6 +198,21 @@ pub(super) struct Watch {
 impl Watch {
     fn lock(&self) -> std::sync::MutexGuard<'_, WatchState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Reads the follow state with `read`, under the watch lock: never
+    /// called with the watch lock held, nor with any lock a commit takes
+    /// after it (`super::commit`).
+    pub(super) fn follow<T>(&self, read: impl FnOnce(&FollowState) -> T) -> T {
+        read(&self.lock().follow)
+    }
+
+    /// Forgets the terminals and the caret key's watch with no generation
+    /// check: only for the outpost's shutdown, once no worker runs.
+    pub(super) fn reset_follow(&self) {
+        let mut state = self.lock();
+        state.follow.terminals.clear();
+        state.follow.caret_watch = None;
     }
 
     /// How many abandoned workers have not yet returned.
@@ -221,185 +234,223 @@ impl Watch {
     /// thread: the watchdog wakes only if the entry is still running then.
     fn start(&self, deadline: Duration, running: Option<(u64, TraceId)>, window: isize) {
         let mut state = self.lock();
+        Self::start_locked(&mut state, &self.alarm, deadline, running, window);
+    }
+
+    fn start_locked(
+        state: &mut WatchState,
+        alarm: &Alarm,
+        deadline: Duration,
+        running: Option<(u64, TraceId)>,
+        window: isize,
+    ) {
         let now = Instant::now();
         state.deadline = Some(now + deadline);
         state.started = Some((now, window));
         state.running = running;
         state.end_walk();
-        self.alarm.set(next_check(now, now + deadline, now, window));
+        alarm.set(next_check(now, now + deadline, now, window));
+    }
+
+    /// Takes up the owed work of the followed focus for `generation`, if it
+    /// is in charge and no worker has attempted it: the attempt is marked
+    /// as `generation`'s, and its own deadline is started, with no window,
+    /// so only the deadline abandons it, never the moved-on rule
+    /// (`docs/design/focus-pipeline-rework.md`, "The outpost's commit
+    /// point").
+    fn take_owed(&self, generation: u64) -> Option<Owed> {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return None;
+        }
+        let owed = state
+            .follow
+            .owed
+            .as_mut()
+            .filter(|owed| owed.attempting.is_none())?;
+        owed.attempting = Some(generation);
+        let owed = owed.clone();
+        Self::start_locked(&mut state, &self.alarm, HANDLING_DEADLINE, None, 0);
+        Some(owed)
     }
 
     /// Arms the focus walk `walk` of its worker's entry, if that worker is
     /// still in charge: the watchdog publishes its focus at its bound should
     /// the walk still be under way then, and its alarm is set for the
     /// bound when that comes before the entry's next check, which wakes no
-    /// thread.
-    fn arm(&self, mut walk: FocusProgress) {
+    /// thread. Returns the walk's number.
+    fn arm(&self, mut walk: FocusProgress) -> Option<u64> {
         let mut state = self.lock();
         if state.generation != walk.generation {
-            return;
+            return None;
         }
         state.arms += 1;
         walk.armed = state.arms;
         state.walk = Some(walk);
-        state.published = None;
+        state.bound_published = None;
         if let Some(wake) = state.next_wake(Instant::now()) {
             self.alarm.set(wake);
         }
+        Some(state.arms)
     }
 
-    /// The walk `generation` armed has read `step`.
-    fn advance(&self, generation: u64, step: &read::WalkStep<'_>) {
-        if let Some(walk) = self
-            .lock()
+    /// The walk `generation` armed has read `step`. Answers whether
+    /// `generation` is still in charge: an abandoned walk stops at its next
+    /// step.
+    fn advance(&self, generation: u64, step: &read::WalkStep<'_>) -> bool {
+        let mut state = self.lock();
+        if state.generation != generation {
+            return false;
+        }
+        if let Some(walk) = state
             .walk
             .as_mut()
             .filter(|walk| walk.generation == generation)
         {
             walk.take_in(step);
         }
+        true
     }
 
-    /// The walk `generation` armed has returned at `now`. A walk still
-    /// armed past its bound is answered as `Err`, a copy of its progress,
-    /// and stays armed, for its worker to publish it from that progress as
-    /// the watchdog would ([`Worker::walk_returned`]). Otherwise the walk is
-    /// disarmed: the watchdog no longer publishes it, and its alarm goes
-    /// back to the entry's next check. Answers the focus published at the
-    /// walk's bound, if it was, which the worker adopts and reports no
-    /// other way.
-    fn walk_returned(
-        &self,
-        generation: u64,
-        now: Instant,
-    ) -> Result<Option<Published>, Box<FocusProgress>> {
+    /// The walk `generation` armed has returned at `now` ([`Returned`]). A
+    /// walk still armed past its bound stays armed, for its worker to
+    /// publish; one returned before it is disarmed, and its alarm goes
+    /// back to the entry's next check.
+    fn walk_returned(&self, generation: u64, now: Instant) -> Returned {
         let mut state = self.lock();
         if state.generation != generation {
-            return Ok(None);
+            return Returned::Abandoned;
         }
         if let Some(walk) = state.walk.as_ref().filter(|walk| now >= walk.bound_at) {
-            return Err(Box::new(walk.clone()));
+            return Returned::PastBound(Box::new(walk.clone()));
         }
-        if state.walk.take().is_some()
-            && let Some(wake) = state.next_wake(now)
-        {
-            self.alarm.set(wake);
+        if state.walk.take().is_some() {
+            if let Some(wake) = state.next_wake(now) {
+                self.alarm.set(wake);
+            }
+            return Returned::Disarmed;
         }
-        Ok(state.published.take())
+        if state.bound_published.take().is_some() {
+            Returned::Published
+        } else {
+            Returned::Disarmed
+        }
     }
 
-    /// The focus published at its walk's bound for the entry of the worker
-    /// `generation` replaced, if that worker was abandoned before it
-    /// followed it. It stays handed over until `generation` has followed
-    /// it ([`finish`](Self::finish)).
-    fn handed_over(&self, generation: u64) -> Option<Published> {
-        let state = self.lock();
-        if state.generation != generation {
-            return None;
-        }
-        state.handed_over.clone()
-    }
-
-    /// `generation` is about to adopt `published`, if it is still the
-    /// worker in charge, which then adopts it at once, with no call into
-    /// its application between: the focus is kept where an abandonment
-    /// hands it over ([`WatchState::abandon`]) until the entry that
-    /// follows it ends ([`finish`](Self::finish)). False when `generation`
-    /// is no longer in charge.
-    fn adopting(&self, generation: u64, published: &Published) -> bool {
-        let mut state = self.lock();
-        if state.generation != generation {
-            return false;
-        }
-        state.handed_over = Some(published.clone());
-        true
-    }
-
-    /// Claims the right to publish an entry's result for `generation`, if
-    /// it is still the worker in charge, ending its entry and running
-    /// `claim` under the watch lock; `None` if it is not. The watchdog
-    /// abandons under the same lock, so an entry is either published or
-    /// abandoned, never both. What is claimed is sent after the lock is
-    /// released, and the entry has no deadline left to pass meanwhile.
-    fn publish<T>(&self, generation: u64, claim: impl FnOnce() -> T) -> Option<T> {
-        let mut state = self.lock();
-        if state.generation != generation {
-            return None;
-        }
-        state.deadline = None;
-        state.started = None;
-        state.running = None;
-        self.alarm.cancel();
-        Some(claim())
-    }
-
-    /// Claims the right to publish the answer to query `request_id` given
-    /// outside that query's own entry (a caret key's watch), as
-    /// [`publish`](Self::publish) does, but without ending the entry in
-    /// hand. The query is no longer the one an abandonment answers, if it
-    /// was, so it gets this answer and no other.
-    fn publish_aside<T>(
+    /// The one commit (`super::commit`): if `generation` is in charge,
+    /// records `effects`' report for Core's judgement, sends its messages,
+    /// and applies the rest, all under the watch lock; otherwise does
+    /// nothing. A report covering a walk already published at its bound is
+    /// dropped with its message and its follow. An entry's result ends its
+    /// query, so the query never gets a second reply, but not its deadline:
+    /// a call that hangs after it is abandoned as one before it is. Returns
+    /// what was done, and the caret key's watch taken out by
+    /// [`WatchChange::Take`], whose query is then the one an abandonment
+    /// answers.
+    pub(super) fn commit(
         &self,
+        context: &Context,
         generation: u64,
-        request_id: u64,
-        claim: impl FnOnce() -> T,
-    ) -> Option<T> {
+        effects: Effects,
+    ) -> (Committed, Option<OpenWatch>) {
         let mut state = self.lock();
         if state.generation != generation {
-            return None;
+            return (Committed::Refused, None);
         }
-        if state
-            .running
-            .is_some_and(|(running, _)| running == request_id)
-        {
+        Self::commit_locked(&mut state, context, effects)
+    }
+
+    fn commit_locked(
+        state: &mut WatchState,
+        context: &Context,
+        mut effects: Effects,
+    ) -> (Committed, Option<OpenWatch>) {
+        let published = effects
+            .covers_walk
+            .is_some_and(|armed| state.bound_published == Some(armed));
+        if published {
+            effects.report = None;
+            effects.result = None;
+        }
+        match effects.report.take() {
+            Some(Report::Reported(focus)) => context.held().reported(focus),
+            Some(Report::Answered(focus)) => {
+                let mut held = context.held();
+                let focus = answer_to_judge(held.expected(), focus);
+                held.reported(focus);
+            }
+            None => {}
+        }
+        if let Some(message) = effects.result.take() {
+            state.running = None;
+            commit::send(context, message);
+        }
+        if let Some((request_id, message)) = effects.aside.take() {
+            if state
+                .running
+                .is_some_and(|(running, _)| running == request_id)
+            {
+                state.running = None;
+            }
+            commit::send(context, message);
+        }
+        if matches!(
+            effects.watch,
+            Some(WatchChange::Open(..) | WatchChange::PutBack(_))
+        ) {
             state.running = None;
         }
-        Some(claim())
+        let generation = state.generation;
+        let taken = state.follow.apply(context, generation, effects, !published);
+        if let Some(open) = &taken {
+            state.running = Some((open.request_id, open.trace));
+        }
+        let committed = if published {
+            Committed::PublishedAtBound
+        } else {
+            Committed::Applied
+        };
+        (committed, taken)
     }
 
-    /// Makes `query` the one an abandonment of `generation` answers, while
-    /// the entry in hand, an event, reads for it (a caret key's watch).
-    /// False when `generation` is no longer in charge.
-    fn adopt(&self, generation: u64, query: (u64, TraceId)) -> bool {
-        let mut state = self.lock();
-        if state.generation != generation {
+    /// Commits `effects`, a publication of the walk `walk` at its bound, if
+    /// that walk is still armed by the worker in charge: the walk is
+    /// claimed, so its worker's late result is discarded, and the report
+    /// recorded, sent, and made the followed focus. Returns whether it was.
+    fn commit_publication(
+        state: &mut WatchState,
+        context: &Context,
+        alarm: &Alarm,
+        walk: &FocusProgress,
+        effects: Effects,
+    ) -> bool {
+        let open = state.generation == walk.generation
+            && state
+                .walk
+                .as_ref()
+                .is_some_and(|armed| armed.armed == walk.armed);
+        if !open {
             return false;
         }
-        state.running = Some(query);
-        true
-    }
-
-    /// The query `generation` is handling will be answered later, outside
-    /// its entry (a caret key's watch kept open), so an abandonment no
-    /// longer answers it and the entry's end does not either. False when
-    /// `generation` is no longer in charge: an abandonment has answered it.
-    fn release_query(&self, generation: u64) -> bool {
-        let mut state = self.lock();
-        if state.generation != generation {
-            return false;
+        state.walk = None;
+        let _ = Self::commit_locked(state, context, effects);
+        state.bound_published = Some(walk.armed);
+        if let Some(wake) = state.next_wake(Instant::now()) {
+            alarm.set(wake);
         }
-        state.running = None;
         true
-    }
-
-    /// Whether `generation` is still the worker in charge: false once the
-    /// watchdog has abandoned it.
-    fn in_charge(&self, generation: u64) -> bool {
-        self.lock().generation == generation
     }
 
     /// Ends the deadline, if `generation` is still in charge, returning the
-    /// query still waiting for its reply, if any; a focus it adopted
-    /// ([`adopting`](Self::adopting)) is followed by then, and no longer
-    /// handed over. `Err` for an abandoned worker, which is then no longer
-    /// counted and must exit.
+    /// query still waiting for its reply, if any. `Err` for an abandoned
+    /// worker, which is then no longer counted and must exit.
     fn finish(&self, generation: u64) -> Result<Option<(u64, TraceId)>, ()> {
         let mut state = self.lock();
         if state.generation == generation {
             state.deadline = None;
             state.started = None;
             state.end_walk();
-            state.handed_over = None;
+            self.alarm.cancel();
             Ok(state.running.take())
         } else {
             drop(state);
@@ -413,45 +464,6 @@ impl Watch {
     }
 }
 
-/// What the worker remembers between entries, across worker replacements.
-#[derive(Default)]
-pub(super) struct Tracking {
-    /// The role of the focus or foreground window this outpost last
-    /// reported, which the menu rules compare with; the focus's own role is
-    /// `focus_role`.
-    role: Option<Role>,
-    /// The batch in which a focus was last reported.
-    batch: Option<u64>,
-    /// The last focus this outpost reported and its ancestors, outermost
-    /// first: where the next focus's ancestor walk can stop and reuse the
-    /// rest, as NVDA's does. A cache of reads, which judges nothing.
-    chain: Vec<NodeSnapshot>,
-    /// The window of the last focus this outpost reported, for events on
-    /// that focus, which then need no call to find their window.
-    window: Option<isize>,
-    /// How many focuses and foreground changes this outpost has reported,
-    /// or focuses it recognized as the focus already, so the worker can tell
-    /// when an entry of a focus group was settled.
-    reported: u64,
-    /// The node of the last focus this outpost reported, which it follows:
-    /// its caret, text and terminal output are read, and the
-    /// focus-following subscription is on it. The rules that judge events
-    /// before they are read judge them against the focus Core holds
-    /// instead ([`super::held`]).
-    focus: Option<NodeId>,
-    /// That focus's role, as last read, which decides how its text is
-    /// read.
-    focus_role: Option<Role>,
-    /// The dialog the last foreground report gathered text for, which the
-    /// focus that follows it reuses.
-    dialog: read::DialogMemo,
-    /// The UIA focus whose value is its first selected item's name, as
-    /// the listener read it (`UiaFocusRead::value_from_selection`): the
-    /// selection of one of its items is a change of its value
-    /// ([`Worker::selection_as_value`]).
-    value_from_selection: Option<NodeId>,
-}
-
 /// A focus-now answer's control, which the outpost adopts as its focus and
 /// follows once the answer is sent ([`Worker::follow_answer`]).
 struct AnsweredFocus {
@@ -459,8 +471,10 @@ struct AnsweredFocus {
     node: NodeSnapshot,
     /// Its ancestors, outermost first.
     ancestors: Vec<NodeSnapshot>,
-    /// What its caret read found ([`Worker::read_focus_text`]).
+    /// What its caret read found ([`Worker::read_focus_text`]), and when
+    /// that read began.
     text: Option<FocusText>,
+    read_at: Option<u64>,
     /// When the answer began to be read, in microseconds on the run's
     /// shared clock.
     observed_at_us: u64,
@@ -494,13 +508,6 @@ fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
             .msaa_registry
             .key_of(node.id)
             .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child)),
-    }
-}
-
-impl Tracking {
-    /// The window of the last focus this outpost reported.
-    pub(super) fn window(&self) -> Option<isize> {
-        self.window
     }
 }
 
@@ -559,49 +566,8 @@ fn foreground_repeats(
     reason
 }
 
-/// Publishes `message`, an entry's one result, if `generation` is still the
-/// worker in charge. The check and the end of the entry's deadline happen
-/// under the watch lock, so an abandoned worker can never publish after its
-/// abandonment, and a published entry can no longer be abandoned: a query
-/// never gets a second reply. The message is sent after the lock is
-/// released, written at once unless a write is in flight, and sending
-/// never waits (`outbound`).
-///
-/// Every node issued or looked up since the last publish is taken under the
-/// same lock, while no other worker can be touching nodes, and recorded as
-/// reported at the position the message takes when it is written. That
-/// may include nodes the message does not carry, which are then only kept
-/// a little longer.
-fn publish(context: &Context, generation: u64, message: OutpostToSupervisor) -> bool {
-    let Some(touched) = context.watch.publish(generation, || take_touched(context)) else {
-        return false;
-    };
-    context.outbound.publish(message, touched);
-    true
-}
-
-/// Publishes `message`, the answer to query `request_id` given outside
-/// that query's own entry, as [`publish`] does, but without ending the entry
-/// in hand: a caret key's watch, answered or ended while the worker handles
-/// an event, a focus, or the next key.
-fn publish_aside(
-    context: &Context,
-    generation: u64,
-    request_id: u64,
-    message: OutpostToSupervisor,
-) -> bool {
-    let Some(touched) = context
-        .watch
-        .publish_aside(generation, request_id, || take_touched(context))
-    else {
-        return false;
-    };
-    context.outbound.publish(message, touched);
-    true
-}
-
 /// The numbers of the nodes issued or looked up since the last take.
-fn take_touched(context: &Context) -> Vec<u64> {
+pub(super) fn take_touched(context: &Context) -> Vec<u64> {
     context
         .uia_registry
         .take_touched()
@@ -731,56 +697,34 @@ fn next_check(now: Instant, deadline: Instant, started: Instant, window: isize) 
 /// The watchdog: waits for the worker's deadline and abandons a worker that
 /// passes it, or that has waited [`MOVED_ON_GRACE`] on a window the user has
 /// left for one of the same application on another UI thread, judged when
-/// the grace ends and whenever a foreground fact reaches the outpost.
+/// the grace ends and whenever a foreground fact reaches the outpost. A
+/// focus walk armed when its bound passes, or when an abandonment is due,
+/// is published first, in the same hold of the watch lock as the
+/// abandonment, so no commit of the worker's falls between them
+/// (`docs/design/focus-pipeline-rework.md`, "The outpost's commit point").
 fn watchdog(context: &Arc<Context>) {
     loop {
         context.watch.alarm.wait();
-        let mut state = context.watch.lock();
-        if state.stopping {
-            return;
-        }
-        // An entry published since its alarm went off leaves no deadline.
-        let Some(deadline) = state.deadline else {
-            continue;
-        };
-        let now = Instant::now();
-        let (started, window) = state.started.unwrap_or((now, 0));
-        let reason = abandon_reason(
-            now,
-            deadline,
-            started,
-            window,
+        let abandoned = match wake(
+            context,
+            Instant::now(),
             front_is_another_thread_of_its_application,
-        );
-        let Some(reason) = reason else {
-            // A walk past its bound with a call still under way is
-            // published from its progress.
-            let due = state
-                .walk
-                .as_ref()
-                .filter(|walk| now >= walk.bound_at)
-                .cloned();
-            if let Some(walk) = due {
-                drop(state);
-                publish_at_bound(context, &walk, |message, touched| {
-                    context.outbound.publish(message, touched);
-                });
-            } else if let Some(wake) = state.next_wake(now) {
-                context.watch.alarm.set(wake);
-            }
-            continue;
+        ) {
+            Wake::Stop => return,
+            Wake::Nothing => continue,
+            Wake::Abandoned(abandoned) => abandoned,
         };
-        let running = state.abandon();
-        let abandoned = context.watch.abandoned.fetch_add(1, Ordering::Relaxed) + 1;
-        let generation = state.generation;
-        // Under the watch lock, as the abandonment: from now on only the
-        // new worker records a verdict.
-        context.arbitrator().set_in_charge(generation);
-        // Nothing is sent while the lock is held. The abandoned worker can
-        // no longer publish, and its replacement is not started yet, so the
-        // answer still comes before anything the replacement says.
-        drop(state);
-        tracing::warn!(abandoned, reason, "the worker is abandoned and replaced");
+        let Abandoned {
+            reason,
+            running,
+            generation,
+            count,
+        } = abandoned;
+        tracing::warn!(
+            abandoned = count,
+            reason,
+            "the worker is abandoned and replaced"
+        );
         if let Some((request_id, trace_id)) = running {
             context.outbound.send(OutpostToSupervisor::Reply {
                 trace_id,
@@ -791,6 +735,96 @@ fn watchdog(context: &Arc<Context>) {
         }
         spawn_worker(Arc::clone(context), generation, false);
     }
+}
+
+/// What one wake of the watchdog did ([`wake`]).
+enum Wake {
+    /// The outpost is shutting down.
+    Stop,
+    /// Nothing more than a publication, if one was due.
+    Nothing,
+    /// The worker in charge was abandoned.
+    Abandoned(Abandoned),
+}
+
+/// A worker abandoned ([`Wake::Abandoned`]): why, the query it was running,
+/// for an "abandoned" reply sent once the lock is let go, and the
+/// generation that replaces it.
+struct Abandoned {
+    reason: &'static str,
+    running: Option<(u64, TraceId)>,
+    generation: u64,
+    /// How many abandoned workers have not yet returned.
+    count: usize,
+}
+
+/// One wake of the watchdog at `now`, with `moved_on` telling whether the
+/// user has left a window for another thread of its application: a walk
+/// armed past its bound, or whose worker is due to be abandoned, is
+/// published first, and the abandonment, judged again from the same `now`,
+/// made in the same hold of the watch lock, so no commit of the worker's
+/// falls between them. Nothing is sent of the abandonment while the lock is
+/// held: the abandoned worker can no longer commit, and its replacement is
+/// not started yet, so its query's answer still comes before anything the
+/// replacement says.
+fn wake(context: &Context, now: Instant, moved_on: impl Fn(isize) -> bool) -> Wake {
+    let mut state = context.watch.lock();
+    if state.stopping {
+        return Wake::Stop;
+    }
+    // An entry ended since its alarm went off leaves no deadline.
+    if state.deadline.is_none() {
+        return Wake::Nothing;
+    }
+    let judge = |state: &WatchState| {
+        let deadline = state.deadline?;
+        let (started, window) = state.started.unwrap_or((now, 0));
+        abandon_reason(now, deadline, started, window, &moved_on)
+    };
+    let mut reason = judge(&state);
+    let due = state
+        .walk
+        .as_ref()
+        .filter(|walk| reason.is_some() || now >= walk.bound_at)
+        .cloned();
+    if let Some(walk) = due {
+        drop(state);
+        // Local calls only, outside the lock.
+        let effects = publication(context, &walk);
+        state = context.watch.lock();
+        if state.stopping {
+            return Wake::Stop;
+        }
+        if Watch::commit_publication(&mut state, context, &context.watch.alarm, &walk, effects) {
+            tracing::info!(
+                trace = %walk.focus.trace,
+                name = ?walk.focus.node.name,
+                abandoning = reason.is_some(),
+                "a focus walk was under way at its bound or its worker's abandonment; the focus is published as read so far"
+            );
+        }
+        reason = judge(&state);
+    }
+    let Some(reason) = reason else {
+        if let Some(wake) = state.next_wake(now) {
+            context.watch.alarm.set(wake);
+        }
+        return Wake::Nothing;
+    };
+    let running = state.abandon();
+    // Counted under the lock, before the abandoned worker can return and
+    // lower the count.
+    let count = context.watch.abandoned.fetch_add(1, Ordering::Relaxed) + 1;
+    let generation = state.generation;
+    // Under the watch lock, as the abandonment: from now on only the new
+    // worker records a verdict.
+    context.arbitrator().set_in_charge(generation);
+    Wake::Abandoned(Abandoned {
+        reason,
+        running,
+        generation,
+        count,
+    })
 }
 
 /// The worker's thread: its loop, then the release of the UIA objects
@@ -812,15 +846,15 @@ fn run(context: &Context, generation: u64, warm: bool) {
 /// The worker's loop, until the intake closes or this worker is abandoned.
 /// With `warm`, the UIA client is created before the first entry: a spare's
 /// worker makes it while the spare waits for its application
-/// (`docs/design/focus-pipeline.md`, section 19.2).
+/// (`docs/design/focus-pipeline.md`, section 19.2). A worker that replaces
+/// an abandoned one first attempts the work the followed focus still owes,
+/// when the abandoned worker was not attempting it.
 fn run_loop(context: &Context, generation: u64, warm: bool) {
     let mut client = Client::default();
     if warm {
         let _ = client.uia();
     }
-    if let Some(published) = context.watch.handed_over(generation)
-        && adopt_handed_over(context, &mut client, generation, published).is_err()
-    {
+    if generation != 0 && owed_first(context, &mut client, generation).is_err() {
         return;
     }
     while let Some((planned, batch)) = context.intake.next() {
@@ -829,15 +863,11 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         };
         // A focus group's entry counts as reported when the worker reported
         // a focus or foreground change for it, or found it the focus
-        // already; no other entry takes the tracking lock for it.
+        // already, which the entry's worker-local flag says.
         let outcome = planned.handle(|entry, handling| match handling {
-            Handling::Run => run(entry, false).map(|()| false),
-            Handling::Menu => run(entry, true).map(|()| false),
-            Handling::Tried => {
-                let reported = context.tracking().reported;
-                run(entry, false)?;
-                Ok(context.tracking().reported != reported)
-            }
+            Handling::Run => run(entry, false).map(|_| false),
+            Handling::Menu => run(entry, true).map(|_| false),
+            Handling::Tried => run(entry, false),
         });
         if outcome.is_err() {
             return;
@@ -848,19 +878,18 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
 
 /// Answers the idle barrier's query the worker has reached
 /// ([`Item::IdleQuery`]) once no deferred work is pending: no caret key's
-/// watch is open, no terminal owes Core a read, and the gap record is
-/// closed, so the gap's read, if one is made, goes ahead of the answer.
-/// Called by the worker in charge after each entry, so the answer goes as
-/// soon as the entry that ends the watch or closes the record is handled,
-/// behind what that entry published.
+/// watch is open and the gap record is closed, so the gap's read, if one
+/// is made, goes ahead of the answer. Called by the worker in charge after
+/// each entry, so the answer goes as soon as the entry that ends the watch
+/// or closes the record is handled, behind what that entry published.
 pub(super) fn answer_idle(context: &Context) {
     if context.idle_query().is_none() {
         return;
     }
-    // Neither lock is held across a call into the application, so a worker
-    // abandoned in a terminal's read, which holds the terminals' lock,
-    // cannot hold the answer back.
-    if context.caret_watch().is_some() || context.intake.gap_open() {
+    // Neither the watch lock nor the intake's is held across a call into
+    // the application, so a worker abandoned in a read cannot hold the
+    // answer back.
+    if context.watch.follow(|follow| follow.caret_watch.is_some()) || context.intake.gap_open() {
         return;
     }
     let answered = context.idle_query().take();
@@ -873,7 +902,8 @@ pub(super) fn answer_idle(context: &Context) {
 }
 
 /// Handles one entry of `batch` under its deadline. `Err` when this worker
-/// was abandoned meanwhile and must exit.
+/// was abandoned meanwhile and must exit; otherwise whether the entry
+/// reported a focus or foreground change, or found it the focus already.
 fn run_entry(
     context: &Context,
     client: &mut Client,
@@ -881,7 +911,7 @@ fn run_entry(
     batch: u64,
     entry: Entry,
     menu: bool,
-) -> Result<(), ()> {
+) -> Result<bool, ()> {
     let timing = EventTiming {
         dequeued_at_us: now_us(),
         ..entry.timing
@@ -901,20 +931,15 @@ fn run_entry(
     // fact", the verdicts).
     let judged_at = judged_at(context, &entry);
     context.arbitrator().begin_entry(judged_at, generation);
+    let mut reported = false;
     let handled = catch_unwind(AssertUnwindSafe(|| {
-        let mut worker = Worker {
-            context,
-            client,
-            generation,
-            batch,
-            timing,
-            msaa_event: None,
-        };
+        let mut worker = Worker::new(context, client, generation, batch, timing);
         if menu {
             worker.menu_opened(&entry);
         } else {
             worker.handle(entry);
         }
+        reported = worker.reported;
     }));
     context.arbitrator().end_entry();
     // Calls made after the entry's last publish, or by an entry that
@@ -960,44 +985,21 @@ fn run_entry(
             }
         }
     }
-    Ok(())
+    Ok(reported)
 }
 
-/// Adopts `published`, the focus published at its walk's bound for the
-/// entry of the worker this one, `generation`, replaced, which was
-/// abandoned before it adopted it ([`WatchState::abandon`]): the first act
-/// of the worker that replaces it, before its next entry, under the
-/// deadline of an entry concerning the focus's window, so the outpost
-/// follows the focus Core was sent ([`Worker::adopt_published`]). `Err`
-/// when this worker was abandoned meanwhile and must exit.
-fn adopt_handed_over(
-    context: &Context,
-    client: &mut Client,
-    generation: u64,
-    published: Published,
-) -> Result<(), ()> {
-    context
-        .watch
-        .start(HANDLING_DEADLINE, None, published.window.unwrap_or(0));
-    context
-        .arbitrator()
-        .begin_entry(published.observed_at_us, generation);
+/// The first act of the worker `generation`, which replaces an abandoned
+/// one: the work the followed focus still owes, when the abandoned worker
+/// was not attempting it ([`Worker::attempt_owed`]). `Err` when this
+/// worker was abandoned meanwhile and must exit.
+fn owed_first(context: &Context, client: &mut Client, generation: u64) -> Result<(), ()> {
     let handled = catch_unwind(AssertUnwindSafe(|| {
-        let mut worker = Worker {
-            context,
-            client,
-            generation,
-            batch: published.batch,
-            timing: EventTiming::default(),
-            msaa_event: None,
-        };
-        worker.adopt_published(published);
+        Worker::new(context, client, generation, 0, EventTiming::default()).attempt_owed();
     }));
-    context.arbitrator().end_entry();
-    // The adoption sends nothing of its own but a terminal's first read.
+    // What the attempt sends carries its own calls.
     let _ = take_calls();
     if handled.is_err() {
-        tracing::error!("the worker failed adopting the focus handed over to it");
+        tracing::error!("the worker failed attempting the followed focus's owed work");
     }
     context.watch.finish(generation).map(|_| ())
 }
@@ -1231,9 +1233,77 @@ struct Worker<'a> {
     /// whether its object was acquired as a simple child, which the focus
     /// is recorded with for Core's judgement ([`Worker::focus_to_judge`]).
     msaa_event: Option<((isize, i32, i32), bool)>,
+    /// Whether the entry reported a focus or foreground change, or found it
+    /// the focus already: a focus group's older entries are then not tried.
+    reported: bool,
+    /// Whether one of this worker's commits was refused: it was abandoned,
+    /// and makes no further call.
+    refused: std::cell::Cell<bool>,
+    /// While the worker attempts a terminal's owed first read, its node:
+    /// the commit of the read's result marks it done.
+    owed_attempt: Option<NodeId>,
+    /// A caret read made for owed work, committed with what follows it.
+    pending_caret_read: Option<(NodeId, u64)>,
+    /// Whether the focus about to be reported was reached by redirecting
+    /// a control's own focus event to its focused child.
+    redirected: bool,
+    /// The listener's mark, for the UIA focus about to be reported, that
+    /// its value is its first selected item's name: `None` leaves the mark
+    /// as it was, as every report but a UIA focus's does.
+    #[expect(
+        clippy::option_option,
+        reason = "a mark to set, to clear, or to leave as it was"
+    )]
+    value_from_selection: Option<Option<NodeId>>,
+    /// The focus path of the UIA focus about to be reported, which its
+    /// entry finds its element by before it is committed.
+    focus_path: Option<FocusPath>,
+}
+
+impl<'a> Worker<'a> {
+    fn new(
+        context: &'a Context,
+        client: &'a mut Client,
+        generation: u64,
+        batch: u64,
+        timing: EventTiming,
+    ) -> Self {
+        Self {
+            context,
+            client,
+            generation,
+            batch,
+            timing,
+            msaa_event: None,
+            reported: false,
+            refused: std::cell::Cell::new(false),
+            owed_attempt: None,
+            pending_caret_read: None,
+            redirected: false,
+            value_from_selection: None,
+            focus_path: None,
+        }
+    }
 }
 
 impl Worker<'_> {
+    /// Commits `effects` for this worker ([`Watch::commit`]).
+    fn commit(&self, effects: Effects) -> Committed {
+        let (committed, _) = self
+            .context
+            .watch
+            .commit(self.context, self.generation, effects);
+        if committed == Committed::Refused {
+            self.refused.set(true);
+        }
+        committed
+    }
+
+    /// Whether this worker was abandoned, as a refused commit told it.
+    fn refused(&self) -> bool {
+        self.refused.get()
+    }
+
     fn handle(&mut self, entry: Entry) {
         let Entry {
             item,
@@ -1287,28 +1357,33 @@ impl Worker<'_> {
         // Every update from now on is evidence the watch may need.
         self.context.intake.absorb_console_updates(None);
         self.end_watch("the next caret key replaced it");
-        let watched = text_reads::check_watch(self.context, node_id, watch, false);
+        if self.refused() {
+            return;
+        }
+        let (watched, read_at) = text_reads::check_watch(self.context, node_id, watch, false);
+        let caret_read = read_at.map(|at| (node_id, at));
         match watched {
             Watched::Answered(reply) => {
-                self.sent_reply_caret(node_id, &reply);
-                self.reply(
+                let sent_caret = self.reply_caret(node_id, &reply);
+                let result = self.reply_message(
                     request_id,
                     trace,
                     QueryOutcome::Done(QueryResult::Text(reply)),
                 );
+                self.commit(Effects {
+                    result: Some(result),
+                    sent_caret,
+                    caret_read,
+                    ..Effects::default()
+                });
                 // Core's reading rules answer the key from a read that shows
                 // what it did, taken now whatever read came before.
-                if self.focused_terminal(node_id) {
+                if !self.refused() && self.focused_terminal(node_id) {
                     self.terminal_output(node_id, trace, 0);
                 }
             }
             Watched::Watching => {
                 let calls = take_calls();
-                // Under the watch lock: an abandonment has either answered
-                // the request already or can no longer answer it.
-                if !self.context.watch.release_query(self.generation) {
-                    return;
-                }
                 let opened = Instant::now();
                 // The console host raises its caret event only on its
                 // cursor's blink timer, so its caret is re-read meanwhile
@@ -1325,11 +1400,17 @@ impl Worker<'_> {
                     calls,
                     poll,
                 };
-                self.context
-                    .intake
-                    .wake_at(Some(caret_poll::wake_for(&open)));
-                *self.context.caret_watch() = Some(open);
-                tracing::debug!(%trace, ?calls, polled = poll.is_some(), "a caret key's watch is open");
+                let wake = caret_poll::wake_for(&open);
+                // The query is answered later, outside its entry, so an
+                // abandonment no longer answers it.
+                self.commit(Effects {
+                    watch: Some(WatchChange::Open(open, wake)),
+                    caret_read,
+                    ..Effects::default()
+                });
+                if !self.refused() {
+                    tracing::debug!(%trace, ?calls, polled = poll.is_some(), "a caret key's watch is open");
+                }
             }
         }
     }
@@ -1355,62 +1436,68 @@ impl Worker<'_> {
     /// was last read: after a terminal's screen read, which reads its caret
     /// too, so the change that caused it has nothing more to show the watch,
     /// and a terminal that moves its caret after its text raises no event
-    /// for it (Windows Terminal, `PSReadLine`'s menu).
+    /// for it (Windows Terminal, `PSReadLine`'s menu). The watch is taken
+    /// out, its query made the one an abandonment answers, in one commit,
+    /// and put back or answered in another.
     fn check_watch_now(&mut self, node_id: NodeId, caret_event: bool) -> bool {
         let context = self.context;
-        let Some(mut open) = context
-            .caret_watch()
-            .take_if(|open| open.node_id == node_id)
-        else {
+        let (committed, taken) = context.watch.commit(
+            context,
+            self.generation,
+            Effects {
+                watch: Some(WatchChange::Take(node_id)),
+                ..Effects::default()
+            },
+        );
+        if committed == Committed::Refused {
+            self.refused.set(true);
+        }
+        let Some(mut open) = taken else {
             return false;
         };
-        // While the caret is read, an abandonment answers the key.
-        if !context
-            .watch
-            .adopt(self.generation, (open.request_id, open.trace))
-        {
-            *context.caret_watch() = Some(open);
-            return false;
-        }
-        let watched = text_reads::check_watch(context, node_id, &open.watch, caret_event);
+        let (watched, read_at) =
+            text_reads::check_watch(context, node_id, &open.watch, caret_event);
+        let caret_read = read_at.map(|at| (node_id, at));
         match watched {
             Watched::Watching => {
                 open.calls += take_calls();
-                if context.watch.release_query(self.generation) {
-                    *context.caret_watch() = Some(open);
-                }
+                self.commit(Effects {
+                    watch: Some(WatchChange::PutBack(open)),
+                    caret_read,
+                    ..Effects::default()
+                });
                 false
             }
             Watched::Answered(reply) => {
-                context.intake.wake_at(None);
-                self.sent_reply_caret(node_id, &reply);
+                let sent_caret = self.reply_caret(node_id, &reply);
                 let calls = take_calls();
                 tracing::debug!(
                     trace = %open.trace,
                     waited_ms = open.opened.elapsed().as_millis(),
                     "a caret key's watch is answered"
                 );
-                publish_aside(
-                    context,
-                    self.generation,
-                    open.request_id,
-                    OutpostToSupervisor::Reply {
-                        trace_id: open.trace,
-                        request_id: open.request_id,
-                        outcome: QueryOutcome::Done(QueryResult::Text(reply)),
-                        timing: EventTiming {
-                            // The watch waited until the evidence was taken
-                            // from the queue; the read after it is the
-                            // answer's.
-                            awaited_at_us: self.timing.dequeued_at_us,
-                            awaited_calls: open.calls,
-                            calls: open.calls + calls,
-                            published_at_us: now_us(),
-                            ..open.timing
-                        },
+                let answer = OutpostToSupervisor::Reply {
+                    trace_id: open.trace,
+                    request_id: open.request_id,
+                    outcome: QueryOutcome::Done(QueryResult::Text(reply)),
+                    timing: EventTiming {
+                        // The watch waited until the evidence was taken
+                        // from the queue; the read after it is the
+                        // answer's.
+                        awaited_at_us: self.timing.dequeued_at_us,
+                        awaited_calls: open.calls,
+                        calls: open.calls + calls,
+                        published_at_us: now_us(),
+                        ..open.timing
                     },
-                );
-                true
+                };
+                self.commit(Effects {
+                    aside: Some((open.request_id, answer)),
+                    watch: Some(WatchChange::Wake(None)),
+                    sent_caret,
+                    caret_read,
+                    ..Effects::default()
+                }) == Committed::Applied
             }
         }
     }
@@ -1418,44 +1505,23 @@ impl Worker<'_> {
     /// The node of the open caret key's watch, when it is the client area
     /// of the edit control `hwnd`.
     fn watched_edit(&self, hwnd: isize) -> Option<NodeId> {
-        let node_id = self.context.caret_watch().as_ref()?.node_id;
+        let node_id = self
+            .context
+            .watch
+            .follow(|follow| follow.caret_watch.as_ref().map(|open| open.node_id))?;
         (self.context.msaa_registry.key_of(node_id) == Some((hwnd, OBJID_CLIENT.0, CHILDID_SELF)))
             .then_some(node_id)
     }
 
     /// Ends the open caret key's watch, if there is one, without evidence:
     /// answered `WatchEnded`, for which Core says nothing. `why` is logged.
-    fn end_watch(&mut self, why: &str) {
-        let Some(open) = self.context.caret_watch().take() else {
-            return;
-        };
-        self.context.intake.wake_at(None);
-        let published = publish_aside(
-            self.context,
-            self.generation,
-            open.request_id,
-            OutpostToSupervisor::Reply {
-                trace_id: open.trace,
-                request_id: open.request_id,
-                outcome: QueryOutcome::Done(QueryResult::Text(TextReply::WatchEnded)),
-                timing: EventTiming {
-                    calls: open.calls,
-                    published_at_us: now_us(),
-                    ..open.timing
-                },
-            },
-        );
-        if published {
-            tracing::debug!(
-                trace = %open.trace,
-                why,
-                waited_ms = open.opened.elapsed().as_millis(),
-                "a caret key's watch ended without evidence"
-            );
-        } else {
-            // Abandoned: the worker that replaces this one ends it.
-            *self.context.caret_watch() = Some(open);
-        }
+    /// A worker abandoned meanwhile leaves it to the worker that replaces
+    /// it.
+    fn end_watch(&mut self, why: &'static str) {
+        self.commit(Effects {
+            watch: Some(WatchChange::End(why)),
+            ..Effects::default()
+        });
     }
 
     /// [`Item::Wake`]: re-reads the console host's caret for the open caret
@@ -1467,17 +1533,23 @@ impl Worker<'_> {
     /// read leaves the watch its replacement opened alone.
     fn wake(&mut self) {
         self.poll_caret();
-        if !self.context.watch.in_charge(self.generation) {
+        if self.refused() {
             return;
         }
-        let wake = self
-            .context
-            .caret_watch()
-            .as_ref()
-            .map(|open| (open.opened + CARET_WATCH_BOUND, caret_poll::wake_for(open)));
+        let wake = self.context.watch.follow(|follow| {
+            follow
+                .caret_watch
+                .as_ref()
+                .map(|open| (open.opened + CARET_WATCH_BOUND, caret_poll::wake_for(open)))
+        });
         match wake {
             Some((bound, _)) if Instant::now() >= bound => self.end_watch("its bound passed"),
-            Some((_, wake)) => self.context.intake.wake_at(Some(wake)),
+            Some((_, wake)) => {
+                self.commit(Effects {
+                    watch: Some(WatchChange::Wake(Some(wake))),
+                    ..Effects::default()
+                });
+            }
             None => {}
         }
     }
@@ -1487,13 +1559,14 @@ impl Worker<'_> {
     /// read was the poll's last, and otherwise sets the poll's next read.
     fn poll_caret(&mut self) {
         let now = Instant::now();
-        let Some((node_id, request_id, trace)) = self
-            .context
-            .caret_watch()
-            .as_ref()
-            .filter(|open| open.poll.is_some_and(|poll| now >= poll.next))
-            .map(|open| (open.node_id, open.request_id, open.trace))
-        else {
+        let due = self.context.watch.follow(|follow| {
+            follow
+                .caret_watch
+                .as_ref()
+                .filter(|open| open.poll.is_some_and(|poll| now >= poll.next))
+                .map(|open| (open.node_id, open.request_id, open.trace))
+        });
+        let Some((node_id, request_id, trace)) = due else {
             return;
         };
         if self.check_watch_now(node_id, false) {
@@ -1504,16 +1577,13 @@ impl Worker<'_> {
             }
             return;
         }
-        // Abandoned in the read: the watch open now, if any, is the
-        // replacement's to poll.
-        if !self.context.watch.in_charge(self.generation) {
+        if self.refused() {
             return;
         }
-        let after = Instant::now();
-        let read = caret_poll::after_read(&mut self.context.caret_watch(), request_id, after);
-        if read == AfterRead::Last {
-            self.end_watch("its poll's bound passed");
-        }
+        self.commit(Effects {
+            watch: Some(WatchChange::Polled(request_id, Instant::now())),
+            ..Effects::default()
+        });
     }
 
     /// The gap record's bound's entry ([`Item::GapBound`]): the record, still
@@ -1573,8 +1643,7 @@ impl Worker<'_> {
             (context.observed_now(), Some(&watched)),
         );
         let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        if let Some(published) = self.walk_returned() {
-            self.adopt_published(published);
+        if self.walk_returned() {
             return;
         }
         let Ok((hwnd, control)) = found else {
@@ -1616,7 +1685,7 @@ impl Worker<'_> {
             "no UIA focus answered a WinEvent focus in a UIA window; the focus is read and reported"
         );
         let object = object_of(context, &node);
-        let (node_id, role, backend) = (node.id, node.role, node.backend);
+        let backend = node.backend;
         self.emit_focus(
             trace,
             stamp_us,
@@ -1627,7 +1696,6 @@ impl Worker<'_> {
             object,
             (ancestors, selected_child),
         );
-        self.follow_focus((node_id, role));
     }
 
     /// Answers [`Outpost::settle`](super::Outpost::settle) once nothing
@@ -1705,7 +1773,9 @@ impl Worker<'_> {
     /// focus and the worker has not read its caret since the event that
     /// asked: a caret key's answer, read after the event, already told Core.
     /// A focus's own caret comes with the focus
-    /// ([`read_focus_text`](Self::read_focus_text)).
+    /// ([`read_focus_text`](Self::read_focus_text)). The read is noted as
+    /// covering the events observed before it only in the commit of what it
+    /// sends, or of nothing when it sends nothing.
     fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         if !self.is_focus(node_id)
             || self
@@ -1721,39 +1791,51 @@ impl Worker<'_> {
         } else {
             text_reads::CaretFor::Event
         };
-        let report = text_reads::report_caret(self.context, node_id, purpose);
+        let (report, read_at) = text_reads::report_caret(self.context, node_id, purpose);
+        let caret_read = read_at.map(|at| (node_id, at));
         // A caret event's read, which a terminal's output causes too, as
         // its cursor moves.
         tracing::debug!(
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
             "caret read timing"
         );
-        let event = match report {
-            Ok((_, true, _)) => {
-                tracing::debug!("the terminal's caret is the one last sent; it is not sent again");
-                return;
-            }
-            Ok((caret, false, selection)) => {
-                if terminal {
-                    self.sent_caret(node_id, &caret);
-                }
+        let (event, sent_caret) = match report {
+            Ok((caret, false, selection)) => (
                 NormalizedEvent::CaretMoved {
                     node_id,
-                    caret,
+                    caret: caret.clone(),
                     selection_changes: selection.changes,
                     content_changed: selection.content_changed,
                     new_selection: selection.new_selection,
+                },
+                terminal.then_some((node_id, caret)),
+            ),
+            unsent => {
+                if matches!(unsent, Ok((_, true, _))) {
+                    tracing::debug!(
+                        "the terminal's caret is the one last sent; it is not sent again"
+                    );
                 }
+                self.commit(Effects {
+                    caret_read,
+                    ..Effects::default()
+                });
+                return;
             }
-            Err(_) => return,
         };
         let backend = if self.context.uia_registry.runtime_id_of(node_id).is_some() {
             Backend::Uia
         } else {
             Backend::Msaa
         };
-        let window = self.context.tracking().window;
-        self.emit(trace, observed_at_us, backend, window, event);
+        let window = self.context.tracked_window();
+        let message = self.event_message(trace, observed_at_us, backend, window, event);
+        self.commit(Effects {
+            result: Some(message),
+            sent_caret,
+            caret_read,
+            ..Effects::default()
+        });
     }
 
     /// Whether `node_id` is the focused terminal and its reading is held
@@ -1762,11 +1844,12 @@ impl Worker<'_> {
     /// that nobody reads until Core asks, and the caret moves with it.
     fn held_with_changes(&self, node_id: NodeId) -> bool {
         self.focused_terminal(node_id)
-            && self
-                .context
-                .terminals()
-                .get(&node_id.number())
-                .is_some_and(|terminal| terminal.reading == Reading::Held { changed: true })
+            && self.context.watch.follow(|follow| {
+                follow
+                    .terminals
+                    .get(&node_id.number())
+                    .is_some_and(|terminal| terminal.reading == Reading::Held { changed: true })
+            })
     }
 
     /// After a console update of the focused console terminal `node_id`
@@ -1779,8 +1862,16 @@ impl Worker<'_> {
     ///
     /// [`Intake::absorb_console_updates`]: super::intake::Intake::absorb_console_updates
     fn absorb_while_held(&self, node_id: NodeId, hwnd: isize) {
-        if self.held_with_changes(node_id) && self.context.caret_watch().is_none() {
-            self.context.intake.absorb_console_updates(Some(hwnd));
+        if self.held_with_changes(node_id)
+            && self
+                .context
+                .watch
+                .follow(|follow| follow.caret_watch.is_none())
+        {
+            self.commit(Effects {
+                absorb: Some(hwnd),
+                ..Effects::default()
+            });
         }
     }
 
@@ -1822,6 +1913,9 @@ impl Worker<'_> {
             }
             return;
         }
+        if self.refused() {
+            return;
+        }
         if self.held_with_changes(node_id) {
             self.note_caret(node_id, trace, observed_at_us);
         } else if self.focused_terminal(node_id) {
@@ -1831,33 +1925,24 @@ impl Worker<'_> {
         }
     }
 
-    /// Notes `caret` as the caret last sent to Core for the focused
-    /// terminal `node_id` ([`crate::terminal::Terminal::sent_caret`]).
-    fn sent_caret(&self, node_id: NodeId, caret: &verbatim_model::CaretReport) {
-        if self.focused_terminal(node_id) {
-            self.context
-                .terminals()
-                .entry(node_id.number())
-                .or_default()
-                .sent_caret = Some(caret.clone());
-        }
-    }
-
-    /// Notes the caret a caret key's answer, `reply`, carries as the caret
-    /// last sent to Core for the focused terminal `node_id`.
-    fn sent_reply_caret(&self, node_id: NodeId, reply: &TextReply) {
-        if let TextReply::Caret(reply) = reply {
-            self.sent_caret(node_id, &reply.caret);
+    /// The caret a caret key's answer, `reply`, carries, to note as the
+    /// caret last sent to Core when `node_id` is the focused terminal.
+    fn reply_caret(&self, node_id: NodeId, reply: &TextReply) -> Option<(NodeId, CaretReport)> {
+        match reply {
+            TextReply::Caret(reply) if self.focused_terminal(node_id) => {
+                Some((node_id, reply.caret.clone()))
+            }
+            _ => None,
         }
     }
 
     /// The focused terminal, when it is the text area of the console window
     /// `hwnd`, whose console events are its own.
     fn focused_console_terminal(&self, hwnd: isize) -> Option<NodeId> {
-        let (focus, window) = {
-            let tracking = self.context.tracking();
-            (tracking.focus, tracking.window)
-        };
+        let (focus, window) = self
+            .context
+            .watch
+            .follow(|follow| (follow.tracking.focus, follow.tracking.window));
         focus
             .filter(|_| window == Some(hwnd))
             .filter(|&node_id| self.focused_terminal(node_id))
@@ -1870,89 +1955,149 @@ impl Worker<'_> {
     fn focused_terminal(&self, node_id: NodeId) -> bool {
         self.context.uia_registry.runtime_id_of(node_id).is_some()
             && self.is_focus(node_id)
-            && self.context.tracking().focus_role == Some(Role::Terminal)
+            && self
+                .context
+                .watch
+                .follow(|follow| follow.tracking.focus_role)
+                == Some(Role::Terminal)
     }
 
     /// Takes a focused terminal's on-demand reading through `event`
     /// ([`crate::terminal::reading`]) and does what the transition says:
     /// reads and sends the read, answers Core's request (`request`, its id
     /// and trace) with it, or only notes the change. A request the
-    /// transition reads nothing for is answered that nothing changed.
+    /// transition reads nothing for is answered that nothing changed. The
+    /// transition is made on a copy of the terminal's entry, `sent_caret`
+    /// noted on it as the caret last sent when given, and only the commit of
+    /// what follows puts the copy in place.
     fn terminal_event(
         &mut self,
         node_id: NodeId,
         event: Event,
         request: Option<(u64, TraceId)>,
         (trace, _): (TraceId, u64),
+        sent_caret: Option<CaretReport>,
     ) {
         if event != Event::TextChanged {
             // Anything else may end the hold, and its read must see every
             // update observed after it begins.
             self.context.intake.absorb_console_updates(None);
         }
-        let action = {
-            let mut terminals = self.context.terminals();
-            let terminal = terminals.entry(node_id.number()).or_default();
-            if event == Event::Focused {
-                terminal.focused();
-            }
-            let (reading, action) = terminal.reading.next(event);
-            terminal.reading = reading;
-            action
-        };
+        let mut terminal = self.terminal_copy(node_id);
+        if sent_caret.is_some() {
+            terminal.sent_caret = sent_caret;
+        }
+        if event == Event::Focused {
+            terminal.focused();
+        }
+        let (reading, action) = terminal.reading.next(event);
+        terminal.reading = reading;
         match action {
             Action::Nothing | Action::ReplyEmpty => {
-                if let Some(request) = request {
-                    self.reply_text(request, TextReply::TerminalUnchanged);
-                }
+                let result = request
+                    .map(|request| self.reply_text_message(request, TextReply::TerminalUnchanged));
+                let owed_done = self.owed_attempt.take();
+                self.commit(Effects {
+                    result,
+                    terminal: Some((node_id, terminal)),
+                    owed_done,
+                    ..Effects::default()
+                });
                 return;
             }
             Action::Report | Action::Reply | Action::ReplySilently | Action::Baseline => {}
         }
         let owed = request.filter(|_| matches!(action, Action::Reply | Action::ReplySilently));
-        self.read_terminal(node_id, owed, (None, action == Action::Reply), trace);
+        self.read_terminal(
+            node_id,
+            terminal,
+            owed,
+            (None, action == Action::Reply),
+            trace,
+        );
     }
 
-    /// Reads the focused terminal `node_id`, the read of `scope` (a live
-    /// read for `None`), and sends it to Core with the caret read with it:
-    /// as the answer to Core's request `owed`, or as an event unless it is
-    /// identical to the last read sent ([`crate::terminal::Terminal::sends`]).
-    /// `waited` says whether the read waited for Core's speech queue. A
-    /// read that failed answers `owed` as unanswered.
+    /// A copy of terminal `node_id`'s entry, as committed, for a read to
+    /// work on; a new terminal's when it has none.
+    fn terminal_copy(&self, node_id: NodeId) -> crate::terminal::Terminal {
+        self.context.watch.follow(|follow| {
+            follow
+                .terminals
+                .get(&node_id.number())
+                .cloned()
+                .unwrap_or_default()
+        })
+    }
+
+    /// A copy of terminal `node_id`'s entry, as committed, when it has one,
+    /// for a read of its history or a search, made with no lock held.
+    fn terminal_seen(&self, node_id: NodeId) -> Option<crate::terminal::Terminal> {
+        self.context
+            .watch
+            .follow(|follow| follow.terminals.get(&node_id.number()).cloned())
+    }
+
+    /// Reads the focused terminal `node_id` into `terminal`, a copy of its
+    /// entry, the read of `scope` (a live read for `None`), and sends it to
+    /// Core with the caret read with it: as the answer to Core's request
+    /// `owed`, or as an event unless it is identical to the last read sent
+    /// ([`crate::terminal::Terminal::sends`]). `waited` says whether the
+    /// read waited for Core's speech queue. A read that failed answers
+    /// `owed` as unanswered. Whatever the read found, its commit puts the
+    /// copy in place of the entry; an abandoned worker's copy is dropped.
     fn read_terminal(
         &mut self,
         node_id: NodeId,
+        mut terminal: crate::terminal::Terminal,
         owed: Option<(u64, TraceId)>,
         (scope, waited): (Option<verbatim_model::TerminalScope>, bool),
         trace: TraceId,
     ) {
-        let Some(uia) = self.client.uia() else {
-            if let Some(request) = owed {
-                self.reply_text(request, TextReply::Unanswered);
+        let read = match self.client.uia() {
+            Some(uia) => {
+                let started = std::time::Instant::now();
+                let read = text_reads::terminal_read(
+                    self.context,
+                    uia,
+                    node_id,
+                    &mut terminal,
+                    (scope, waited),
+                );
+                // Each read, end to end, and how long its event waited in
+                // the queue: during a flood the reads follow one another, so
+                // these say how much of the time the outpost spends in the
+                // terminal.
+                tracing::debug!(
+                    queued_us = self
+                        .timing
+                        .dequeued_at_us
+                        .saturating_sub(self.timing.observed_at_us),
+                    elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                    "terminal read timing"
+                );
+                read
             }
-            return;
+            None => None,
         };
-        let started = std::time::Instant::now();
-        let read = text_reads::terminal_read(self.context, uia, node_id, (scope, waited));
-        // Each read, end to end, and how long its event waited in the
-        // queue: during a flood the reads follow one another, so these say
-        // how much of the time the outpost spends in the terminal.
-        tracing::debug!(
-            queued_us = self
-                .timing
-                .dequeued_at_us
-                .saturating_sub(self.timing.observed_at_us),
-            elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            "terminal read timing"
-        );
-        let Some((answer, caret)) = read else {
+        let Some((answer, caret, read_at)) = read else {
             // Gone or failed: nothing to send, and Core's request is
             // answered as unanswered.
-            if let Some(request) = owed {
-                self.reply_text(request, TextReply::Unanswered);
-            }
+            let result =
+                owed.map(|request| self.reply_text_message(request, TextReply::Unanswered));
+            let owed_done = self.owed_attempt.take();
+            let caret_read = self.pending_caret_read.take();
+            self.commit(Effects {
+                result,
+                terminal: Some((node_id, terminal)),
+                owed_done,
+                caret_read,
+                ..Effects::default()
+            });
             return;
         };
+        let caret_read = read_at
+            .map(|at| (node_id, at))
+            .or_else(|| self.pending_caret_read.take());
         let mut snapshot = answer.snapshot;
         // The caret read with the text goes with it: the console host
         // raises no caret event for every character typed, so this keeps
@@ -1961,31 +2106,42 @@ impl Worker<'_> {
         // the read.
         if let Some(caret) = caret {
             self.check_watch_now(node_id, false);
-            self.sent_caret(node_id, &caret.report);
+            if self.refused() {
+                return;
+            }
+            terminal.sent_caret = Some(caret.report.clone());
             snapshot.caret = Some(caret.report);
         }
         let read_at_us = answer.started_us;
+        let owed_done = self.owed_attempt.take();
         if let Some(request) = owed {
-            if let Some(terminal) = self.context.terminals().get_mut(&node_id.number()) {
-                terminal.answered(&snapshot);
-            }
-            self.reply_text(request, TextReply::TerminalSnapshot(Box::new(snapshot)));
+            terminal.answered(&snapshot);
+            let result =
+                self.reply_text_message(request, TextReply::TerminalSnapshot(Box::new(snapshot)));
+            self.commit(Effects {
+                result: Some(result),
+                terminal: Some((node_id, terminal)),
+                owed_done,
+                caret_read,
+                ..Effects::default()
+            });
             return;
         }
-        let sends = self
-            .context
-            .terminals()
-            .get_mut(&node_id.number())
-            .is_none_or(|terminal| terminal.sends(&snapshot));
-        if !sends {
+        if !terminal.sends(&snapshot) {
             tracing::debug!("the terminal's read is the one last sent; it is not sent again");
+            self.commit(Effects {
+                terminal: Some((node_id, terminal)),
+                owed_done,
+                caret_read,
+                ..Effects::default()
+            });
             return;
         }
-        let window = self.context.tracking().window;
+        let window = self.context.tracked_window();
         // What the read found is stamped with when the read began, not with
         // when the change that caused it was observed: a read that began
         // after a key may show what the key did.
-        self.emit(
+        let message = self.event_message(
             trace,
             read_at_us,
             Backend::Uia,
@@ -1995,15 +2151,35 @@ impl Worker<'_> {
                 snapshot: Box::new(snapshot),
             },
         );
+        self.commit(Effects {
+            result: Some(message),
+            terminal: Some((node_id, terminal)),
+            owed_done,
+            caret_read,
+            ..Effects::default()
+        });
     }
 
-    /// Answers Core's request `request` with `reply`.
-    fn reply_text(&self, (request_id, trace): (u64, TraceId), reply: TextReply) {
-        self.reply(
+    /// The answer `reply` to Core's request `request`.
+    fn reply_text_message(
+        &self,
+        (request_id, trace): (u64, TraceId),
+        reply: TextReply,
+    ) -> OutpostToSupervisor {
+        self.reply_message(
             request_id,
             trace,
             QueryOutcome::Done(QueryResult::Text(reply)),
-        );
+        )
+    }
+
+    /// Answers Core's request `request` with `reply`.
+    fn reply_text(&self, request: (u64, TraceId), reply: TextReply) {
+        let result = self.reply_text_message(request, reply);
+        self.commit(Effects {
+            result: Some(result),
+            ..Effects::default()
+        });
     }
 
     /// Answers Core's request of the focused terminal `node_id` for a read
@@ -2017,13 +2193,19 @@ impl Worker<'_> {
         node_id: NodeId,
         scope: verbatim_model::TerminalScope,
     ) {
+        let mut terminal = self.terminal_copy(node_id);
         if scope == verbatim_model::TerminalScope::Fresh
-            && let Some(terminal) = self.context.terminals().get_mut(&node_id.number())
             && terminal.reading == (Reading::Held { changed: true })
         {
             terminal.reading = Reading::Held { changed: false };
         }
-        self.read_terminal(node_id, Some(request), (Some(scope), false), request.1);
+        self.read_terminal(
+            node_id,
+            terminal,
+            Some(request),
+            (Some(scope), false),
+            request.1,
+        );
     }
 
     /// A focused terminal's text changed, or another event asks for a read:
@@ -2034,42 +2216,46 @@ impl Worker<'_> {
     /// nothing.
     fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_us: u64) {
         let covered = observed_at_us != 0
-            && self
-                .context
-                .terminals()
-                .get(&node_id.number())
-                .is_some_and(|terminal| terminal.covers(observed_at_us));
+            && self.context.watch.follow(|follow| {
+                follow
+                    .terminals
+                    .get(&node_id.number())
+                    .is_some_and(|terminal| terminal.covers(observed_at_us))
+            });
         if covered {
             return;
         }
-        self.terminal_event(node_id, Event::TextChanged, None, (trace, observed_at_us));
+        self.terminal_event(
+            node_id,
+            Event::TextChanged,
+            None,
+            (trace, observed_at_us),
+            None,
+        );
     }
 
     /// What the caret read of a focus about to be reported finds, for a
     /// focus that may have text or whose role says it may, `None` for any
-    /// other: read while the worker handles the focus, so the line comes
-    /// with the focus and nothing is reported between them, as NVDA's
-    /// object announcement reads an object's text within it
-    /// (`docs/nvda/speech.md`, "What an object with text says"). When
-    /// something is selected, the selected text is read too, which Core
-    /// speaks in place of the line, a protected (password) field's too,
-    /// masked as the control gives it. A focus with no text to read is
+    /// other, with when the read began: read while the worker handles the
+    /// focus, so the line comes with the focus and nothing is reported
+    /// between them, as NVDA's object announcement reads an object's text
+    /// within it (`docs/nvda/speech.md`, "What an object with text says").
+    /// When something is selected, the selected text is read too, which
+    /// Core speaks in place of the line, a protected (password) field's
+    /// too, masked as the control gives it. A focus with no text to read is
     /// [`FocusText::NoText`], and Core speaks its value; one whose text
     /// could not be read now is [`FocusText::NotRead`], and Core speaks
     /// neither, never the value, which for a document is all of its text.
-    fn read_focus_text(&self, node_id: NodeId, role: Role) -> Option<FocusText> {
+    fn read_focus_text(&self, node_id: NodeId, role: Role) -> (Option<FocusText>, Option<u64>) {
         let context = self.context;
         text_reads::forget_no_text(context, node_id);
-        // A terminal gaining the focus has its caret reported afresh.
-        if let Some(terminal) = context.terminals().get_mut(&node_id.number()) {
-            terminal.sent_caret = None;
-        }
         let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
         if !role_has_text && !text_reads::may_have_text(context, node_id, role) {
-            return None;
+            return (None, None);
         }
         let started = Instant::now();
-        let read = text_reads::report_caret(context, node_id, text_reads::CaretFor::Focus);
+        let (read, read_at) =
+            text_reads::report_caret(context, node_id, text_reads::CaretFor::Focus);
         let text = match read {
             Ok((caret, _, _)) => {
                 let selected_text = caret.selection.and_then(|selection| {
@@ -2098,140 +2284,95 @@ impl Worker<'_> {
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
             "the focus's caret read"
         );
-        Some(text)
+        (Some(text), read_at)
     }
 
-    /// Follows the focus `node_id` of `role` just reported with `text`
-    /// ([`read_focus_text`](Self::read_focus_text)): moves the
-    /// focus-following subscription to it ([`follow_focus`](Self::follow_focus)),
-    /// and, for a terminal whose caret was read, notes that caret as the one
-    /// sent to Core and takes the terminal's first read, which speaks
-    /// nothing, since what it held before the focus arrived is not new
-    /// output. That read waits until the subscription has moved to the
-    /// terminal, so output written after the read began raises a change
-    /// that reads it (`docs/design/terminal-model.md`, "Reading rules", rule 15), where
-    /// output written before the handlers were registered raised nothing
-    /// and went unspoken.
-    fn follow_text(
-        &mut self,
-        (node_id, role): (NodeId, Role),
-        text: Option<&FocusText>,
-        (trace, observed_at_us): (TraceId, u64),
-    ) {
-        self.follow_focus((node_id, role));
-        if let Some(FocusText::Caret { caret, .. }) = text
-            && self.focused_terminal(node_id)
-        {
-            if let Some(subscription) = self.context.focus_events.get() {
-                subscription.settle();
-            }
-            self.sent_caret(node_id, caret);
-            self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_us));
+    /// Attempts the work the followed focus still owes, if this worker is in
+    /// charge and no worker has attempted it, once, under a deadline of its
+    /// own with no moved-on window (`super::commit::Owed`): a terminal's
+    /// first read, which speaks nothing, since what it held before the focus
+    /// arrived is not new output, taken once the subscription has moved to
+    /// the terminal, so output written after the read began raises a change
+    /// that reads it (`docs/design/terminal-model.md`, "Reading rules", rule
+    /// 15), its caret read first for a terminal published at its bound; or
+    /// a `SensitiveSlider`'s lookup for a thumb published at its bound. The
+    /// commit of the attempt's result clears it, read or failed.
+    fn attempt_owed(&mut self) {
+        if self.refused() {
+            return;
         }
-    }
-
-    /// Moves the focus-following subscription to the focus `node`, as NVDA
-    /// moves its local group with the focus (`UIAHandler/__init__.py` 642 to
-    /// 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630;
-    /// `docs/design/focus-pipeline.md`, section 17): to the node's own
-    /// element when the outpost has it, with the extended group when the
-    /// node may have text, and the base group otherwise; the console host's
-    /// text area takes the extended group without its text and caret
-    /// events, since its console's updates and caret events tell the
-    /// outpost of its output and its cursor ([`text_reads::console_focus`]);
-    /// and to nothing for
-    /// a focus whose element the outpost does not have, or one read through
-    /// MSAA, whose changes and caret events come from the hooks. The element
-    /// alone, not its descendants, as the reducer acts on the focus's own
-    /// changes. NVDA registers its group with `TreeScope_Ancestors` as well,
-    /// but UIA delivers no ancestor's event to such a registration: one on
-    /// the Windows 11 taskbar clock's child with that scope did not hear the
-    /// clock's own name change each minute, which one on the clock and one
-    /// on the taskbar's subtree did (`docs/parity/backends.md`, "UIA event
-    /// registration"). A move to the node and group already followed is not
-    /// asked of the subscription, so it makes no call; one to the same
-    /// element under another node makes none either, as the subscription
-    /// compares the elements. A focus whose parent, its innermost ancestor
-    /// as last reported, is a UIA slider of class `SensitiveSlider` has that
-    /// parent followed too, for its value changes alone
-    /// ([`verbatim_uia::Group::Value`]), since Core speaks them while the
-    /// focus is in it (`docs/parity/focus-context.md`, "A slider that
-    /// focuses its thumb"): one more registration call for such a focus,
-    /// and its removal when the focus leaves. Returns whether the node may
-    /// have text.
-    fn follow_focus(&mut self, (node_id, role): (NodeId, Role)) -> bool {
-        let has_text = text_reads::may_have_text(self.context, node_id, role);
-        let element = self.context.uia_registry.element_of(node_id);
-        let group = if !has_text {
-            verbatim_uia::Group::Base
-        } else if role == Role::Terminal && text_reads::console_focus(self.context, node_id) {
-            verbatim_uia::Group::ExtendedWithoutTextEvents
-        } else {
-            verbatim_uia::Group::Extended
+        let Some(owed) = self.context.watch.take_owed(self.generation) else {
+            return;
         };
-        let slider = self.sensitive_slider_parent(node_id);
-        let wanted = element
-            .as_ref()
-            .map(|_| (node_id, group, slider.as_ref().map(|(id, _)| *id)));
-        let mut followed = self
-            .context
-            .followed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *followed == wanted {
-            tracing::debug!(
-                ?wanted,
-                "the focus-following subscription already follows this focus; it is not moved"
-            );
-            return has_text;
-        }
-        tracing::debug!(
-            from = ?*followed,
-            to = ?wanted,
-            runtime_id = ?self.context.uia_registry.runtime_id_of(node_id),
-            "the focus-following subscription is moved"
-        );
-        *followed = wanted;
-        drop(followed);
-        if let Some(subscription) = self.context.focus_events.get() {
-            match element {
-                Some(element) => {
-                    subscription.retarget_with(
-                        verbatim_uia::Scope::Elements(vec![element.reference()]),
-                        group,
-                        slider
-                            .map(|(_, slider)| (slider.reference(), verbatim_uia::Group::Value))
-                            .into_iter()
-                            .collect(),
-                    );
+        let node_id = owed.node;
+        match owed.work {
+            OwedWork::FirstRead(caret) => {
+                // A terminal published at its bound has its caret read
+                // first.
+                let caret = caret.or_else(|| {
+                    let (text, read_at) = self.read_focus_text(node_id, Role::Terminal);
+                    self.pending_caret_read = read_at.map(|at| (node_id, at));
+                    if let Some(FocusText::Caret { caret, .. }) = text {
+                        Some(caret)
+                    } else {
+                        None
+                    }
+                });
+                let Some(caret) = caret.filter(|_| self.focused_terminal(node_id)) else {
+                    let caret_read = self.pending_caret_read.take();
+                    self.commit(Effects {
+                        owed_done: Some(node_id),
+                        caret_read,
+                        ..Effects::default()
+                    });
+                    return;
+                };
+                if let Some(subscription) = self.context.focus_events.get() {
+                    subscription.settle();
                 }
-                None => subscription.retarget(verbatim_uia::Scope::Nothing),
+                self.owed_attempt = Some(node_id);
+                self.terminal_event(
+                    node_id,
+                    Event::Focused,
+                    None,
+                    (owed.trace, owed.observed_at_us),
+                    Some(caret),
+                );
+                self.owed_attempt = None;
+                self.pending_caret_read = None;
+            }
+            OwedWork::Slider => {
+                let (chain, role) = self.context.watch.follow(|follow| {
+                    let tracking = &follow.tracking;
+                    (
+                        tracking.chain.clone(),
+                        tracking.focus_role.unwrap_or(Role::Unknown),
+                    )
+                });
+                let element = self.slider_target(node_id, role, &chain);
+                self.commit(Effects {
+                    element,
+                    owed_done: Some(node_id),
+                    ..Effects::default()
+                });
             }
         }
-        has_text
     }
 
-    /// The parent of the focus `node_id`, its innermost ancestor as last
-    /// reported, with its element, when it is a UIA slider of class
-    /// `SensitiveSlider` whose element this outpost keeps
-    /// (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
-    /// No call for any other parent, or for a slider whose element is kept;
-    /// otherwise one connection call and one remote operation find it.
-    fn sensitive_slider_parent(
+    /// The subscription's target for the focus `node_id` of `role`, with
+    /// `chain`, its ancestors and itself, once its parent, a UIA slider of
+    /// class `SensitiveSlider` whose element this outpost does not keep,
+    /// is found by its path (`docs/parity/focus-context.md`, "A slider that
+    /// focuses its thumb"): one connection call and one remote operation,
+    /// and the slider kept under the node its runtime id names, the
+    /// parent's. `None` when the parent is no such slider or is not found.
+    fn slider_target(
         &mut self,
         node_id: NodeId,
-    ) -> Option<(NodeId, verbatim_uia::Agile<verbatim_uia::Kept>)> {
-        let parent = {
-            let tracking = self.context.tracking();
-            let [.., parent, focus] = tracking.chain.as_slice() else {
-                return None;
-            };
-            (focus.id == node_id && verbatim_core::focus_rules::is_sensitive_slider(parent))
-                .then_some(parent.id)?
-        };
-        if let Some(element) = self.context.uia_registry.element_of(parent) {
-            return Some((parent, element));
-        }
+        role: Role,
+        chain: &[NodeSnapshot],
+    ) -> Option<(NodeId, Target)> {
+        let parent = sensitive_slider_of(node_id, chain)?;
         // The listener's read keeps no ancestor's element: the slider is
         // found by its path, one connection call and one remote operation,
         // and kept under the node its runtime id names, the parent's.
@@ -2241,7 +2382,13 @@ impl Worker<'_> {
             .context
             .uia_registry
             .id_for_element(&runtime_id, &found);
-        Some((kept, self.context.uia_registry.element_of(kept)?))
+        let slider = self.context.uia_registry.element_of(kept)?;
+        let (mut target, _) = target_for(self.context, (node_id, role), chain, false);
+        target.wanted = target
+            .wanted
+            .map(|(node, group, _)| (node, group, Some(kept)));
+        target.slider = Some(slider);
+        Some((node_id, target))
     }
 
     /// Releases every node Core does not hold that was reported at or before
@@ -2249,14 +2396,16 @@ impl Worker<'_> {
     /// reported, is kept, since Core may not have seen it yet.
     fn release(&self, held: &[u64], acknowledged: u64) {
         let held: HashSet<u64> = held.iter().copied().collect();
-        // Only the worker in charge releases, and the nodes leave both
-        // registries under the watch lock and the queue's, so a worker that
-        // replaces this one, should it be abandoned while the objects are
-        // dropped, can never report a node that is about to vanish, and no
-        // message queued meanwhile can record one.
-        let (objects, released) = {
-            let state = self.context.watch.lock();
+        // A commit: only the worker in charge releases, and the nodes leave
+        // both registries, and their terminals the follow state, under the
+        // watch lock and the queue's, so a worker that replaces this one,
+        // should it be abandoned while the objects are dropped, can never
+        // report a node that is about to vanish, and no message queued
+        // meanwhile can record one.
+        let (objects, released, terminals) = {
+            let mut state = self.context.watch.lock();
             if state.generation != self.generation {
+                self.refused.set(true);
                 return;
             }
             let (position, released) =
@@ -2269,6 +2418,11 @@ impl Worker<'_> {
                             self.context.msaa_registry.retain(keep),
                         )
                     });
+            let terminals: Vec<crate::terminal::Terminal> = released
+                .iter()
+                .flat_map(|(released, _)| released)
+                .filter_map(|node| state.follow.terminals.remove(node))
+                .collect();
             drop(state);
             tracing::debug!(
                 ?held,
@@ -2280,16 +2434,17 @@ impl Worker<'_> {
             let Some((released, objects)) = released else {
                 return;
             };
-            (objects, released)
+            (objects, released, terminals)
         };
         text_reads::forget(self.context, released);
         // Outside the lock: releasing an object can call into the
         // application.
         drop(objects);
+        drop(terminals);
     }
 
     /// Emits `event` stamped `observed_at_us`, in microseconds on the run's
-    /// shared clock (0 when not known).
+    /// shared clock (0 when not known), as the entry's result.
     fn emit(
         &self,
         trace: TraceId,
@@ -2298,11 +2453,11 @@ impl Worker<'_> {
         window: Option<isize>,
         event: NormalizedEvent,
     ) -> bool {
-        publish(
-            self.context,
-            self.generation,
-            self.event_message(trace, observed_at_us, backend, window, event),
-        )
+        let message = self.event_message(trace, observed_at_us, backend, window, event);
+        self.commit(Effects {
+            result: Some(message),
+            ..Effects::default()
+        }) == Committed::Applied
     }
 
     /// `event` as the message that reports it ([`event_message`]).
@@ -2323,8 +2478,13 @@ impl Worker<'_> {
         )
     }
 
-    /// Reports a focus and remembers it, so the limiter keeps its events and
-    /// the menu rules know where focus is.
+    /// Reports a focus, or a foreground change, and makes it the focus this
+    /// outpost follows, in one commit: the report recorded for Core's
+    /// judgement, sent, and a focus followed, its caret, text and the
+    /// focus-following subscription following it, so the limiter keeps its
+    /// events and the menu rules know where focus is. Then, once committed,
+    /// the slider a `SensitiveSlider`'s thumb is in is looked up, and the
+    /// work a terminal owes is attempted.
     #[expect(
         clippy::too_many_arguments,
         reason = "a focus report has this many parts"
@@ -2347,7 +2507,10 @@ impl Worker<'_> {
         }
         // A dialog the focus has newly entered, or one in front, says its
         // own text as its description.
-        let mut memo = self.context.tracking().dialog.take();
+        let mut memo = self
+            .context
+            .watch
+            .follow(|follow| follow.tracking.dialog.clone());
         read::describe_dialogs(
             self.context,
             (
@@ -2356,18 +2519,14 @@ impl Worker<'_> {
             ),
             (&mut memo, foreground),
         );
-        self.context.tracking().dialog = memo;
         let role = node.role;
         let node_id = node.id;
         let reported = self.focus_to_judge(trace, &node, &ancestors, window, foreground);
-        // Recorded before it is sent, so Core's judgement of it, which the
-        // outpost's pipe thread takes in, always finds it; a report that is
-        // never sent is drained by Core's judgement of a later one.
-        self.context.held().reported(reported);
-        let text_node = (!foreground).then(|| node.clone());
-        let text = text_node
-            .as_ref()
-            .and_then(|node| self.read_focus_text(node.id, node.role));
+        let (text, read_at) = if foreground {
+            (None, None)
+        } else {
+            self.read_focus_text(node.id, node.role)
+        };
         tracing::debug!(
             ?role,
             name = ?node.name,
@@ -2381,31 +2540,76 @@ impl Worker<'_> {
             .cloned()
             .chain(std::iter::once(node.clone()))
             .collect();
+        let caret = match &text {
+            Some(FocusText::Caret { caret, .. }) => Some(caret.clone()),
+            _ => None,
+        };
         let event = NormalizedEvent::FocusChanged {
             node,
             foreground,
             ancestors,
             selected_child,
-            text: text.clone().map(Box::new),
+            text: text.map(Box::new),
         };
-        if self.emit(trace, observed_at_us, backend, window, event) {
-            if foreground {
-                self.end_watch_elsewhere(node_id);
-                self.context.tracking().role = Some(role);
-            } else {
-                self.adopt_focus((node_id, role), object, window, chain);
-            }
-            let mut tracking = self.context.tracking();
-            tracking.batch = Some(self.batch);
-            tracking.reported += 1;
-            drop(tracking);
-            // Move the focus-following subscription to the new focus,
-            // without waiting. A foreground report is a window, not the
-            // control focus is in.
-            if let Some(node) = text_node {
-                self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_us));
+        let message = self.event_message(trace, observed_at_us, backend, window, event);
+        let mut effects = Effects {
+            result: Some(message),
+            report: Some(Report::Reported(reported)),
+            dialog: Some(memo),
+            caret_read: read_at.map(|at| (node_id, at)),
+            value_from_selection: self.value_from_selection.take(),
+            focus_path: self.focus_path.take(),
+            ..Effects::default()
+        };
+        // A foreground report is a window, not the control focus is in: it
+        // is not followed.
+        let mut slider = None;
+        if foreground {
+            effects.foreground = Some((node_id, role, self.batch));
+        } else {
+            let (follow, to_find) = follow_of(
+                self.context,
+                FocusMade {
+                    node: (node_id, role),
+                    object,
+                    window,
+                    chain,
+                    batch: self.batch,
+                    event: (trace, observed_at_us),
+                    redirected: std::mem::take(&mut self.redirected),
+                    caret,
+                    at_bound: false,
+                },
+            );
+            effects.follow = Some(follow);
+            slider = to_find;
+        }
+        if self.commit(effects) != Committed::Applied {
+            return;
+        }
+        self.reported = true;
+        self.after_follow(node_id, role, slider);
+    }
+
+    /// What follows the commit that made `node_id`, of `role`, the followed
+    /// focus: the lookup of the slider a `SensitiveSlider`'s thumb is in,
+    /// when `slider` names one whose element is not kept, and a second
+    /// commit adding it while the focus is still followed; then the work
+    /// the focus owes.
+    fn after_follow(&mut self, node_id: NodeId, role: Role, slider: Option<NodeId>) {
+        if slider.is_some() {
+            let chain = self
+                .context
+                .watch
+                .follow(|follow| follow.tracking.chain.clone());
+            if let Some(element) = self.slider_target(node_id, role, &chain) {
+                self.commit(Effects {
+                    element: Some(element),
+                    ..Effects::default()
+                });
             }
         }
+        self.attempt_owed();
     }
 
     /// The focus `node`, with `ancestors`, reported in `window` from the
@@ -2432,154 +2636,66 @@ impl Worker<'_> {
         )
     }
 
-    /// Follows `published`, the focus published at its walk's bound while
-    /// the walk was still under way ([`publish_at_bound`]), once the walk
-    /// has returned, or, for a worker abandoned before it adopted it, by the
-    /// worker that replaced it ([`adopt_handed_over`]): the outpost adopts
-    /// it as if it had reported it itself, its caret, text and the
-    /// focus-following subscription following it, and sends nothing else
-    /// for it, its own late result discarded, but for a terminal, which
-    /// has its caret read and its first read sent, as a reported terminal
-    /// does ([`follow_text`](Self::follow_text)); the publication carried
-    /// no text. The caret of any other focus is not read, since nothing
-    /// would send it. The focus is adopted at once, under the check that
-    /// this worker is in charge, and the terminal's caret read after it; a
-    /// worker abandoned in that read follows nothing more, and the focus,
-    /// kept by the watch until it is followed ([`Watch::adopting`]), is
-    /// handed over to its replacement.
-    fn adopt_published(&mut self, published: Published) {
-        self.adopt_published_reading(published, Self::read_focus_text);
-    }
-
-    /// [`adopt_published`](Self::adopt_published), reading a terminal's
-    /// caret with `read`, [`read_focus_text`](Self::read_focus_text) but
-    /// in a test, which stands in for a read its worker is abandoned in.
-    fn adopt_published_reading(
-        &mut self,
-        published: Published,
-        read: impl FnOnce(&Self, NodeId, Role) -> Option<FocusText>,
-    ) {
-        if !self.context.watch.adopting(self.generation, &published) {
-            return;
-        }
-        let Published {
-            node,
-            role,
-            object,
-            window,
-            chain,
-            trace,
-            observed_at_us,
-            batch,
-        } = published;
-        tracing::debug!(%trace, "the walk returned after the focus was published at its bound; its result is discarded");
-        self.adopt_focus((node, role), object, window, chain);
-        let mut tracking = self.context.tracking();
-        tracking.batch = Some(batch);
-        tracking.reported += 1;
-        drop(tracking);
-        let text = if role == Role::Terminal {
-            read(self, node, role)
-        } else {
-            None
-        };
-        // Abandoned in the read, a call into the application: the focus is
-        // handed over, and the replacement follows it.
-        if !self.context.watch.in_charge(self.generation) {
-            tracing::debug!(%trace, "the worker was abandoned reading the adopted terminal; its replacement follows it");
-            return;
-        }
-        self.follow_text((node, role), text.as_ref(), (trace, observed_at_us));
-    }
-
-    /// The focus walk this worker armed has returned: answers the focus
-    /// published at the walk's bound, if it was, which the worker adopts
-    /// ([`adopt_published`](Self::adopt_published)). A walk that returns
-    /// still armed past its bound, before the watchdog has published it,
-    /// is published here by the same function from the same progress
-    /// ([`publish_at_bound`]), so whichever thread publishes a walk that
-    /// ends at its bound, the report is the same.
-    fn walk_returned(&self) -> Option<Published> {
-        let watch = &self.context.watch;
-        match watch.walk_returned(self.generation, Instant::now()) {
-            Ok(published) => published,
-            Err(due) => {
-                publish_at_bound(self.context, &due, |message, touched| {
-                    self.context.outbound.publish(message, touched);
-                });
-                // Published by this worker or, just before, by the watchdog.
-                watch
-                    .walk_returned(self.generation, Instant::now())
-                    .unwrap_or(None)
+    /// The focus walk this worker armed has returned: whether it was
+    /// published at its bound, so the worker sends nothing else for it. A
+    /// walk that returns still armed past its bound, before the watchdog
+    /// has published it, is published here by the same commit from the
+    /// same progress ([`publication`]), so whichever thread publishes a
+    /// walk that ends at its bound, the report is the same. A published
+    /// walk counts its entry as reported, and the worker then attempts the
+    /// work its focus owes. An abandoned worker's walk counts as published:
+    /// it sends nothing more.
+    fn walk_returned(&mut self) -> bool {
+        let context = self.context;
+        match context.watch.walk_returned(self.generation, Instant::now()) {
+            Returned::Disarmed => return false,
+            Returned::Abandoned => {
+                self.refused.set(true);
+                return true;
+            }
+            Returned::Published => {}
+            Returned::PastBound(walk) => {
+                let effects = publication(context, &walk);
+                let mut state = context.watch.lock();
+                let published = Watch::commit_publication(
+                    &mut state,
+                    context,
+                    &context.watch.alarm,
+                    &walk,
+                    effects,
+                );
+                drop(state);
+                if published {
+                    tracing::info!(
+                        trace = %walk.focus.trace,
+                        name = ?walk.focus.node.name,
+                        "a focus walk returned past its bound; the focus is published as read so far"
+                    );
+                }
+                // Published by this worker or, just before, by the watchdog,
+                // unless this worker was abandoned meanwhile.
+                if matches!(
+                    context.watch.walk_returned(self.generation, Instant::now()),
+                    Returned::Abandoned
+                ) {
+                    self.refused.set(true);
+                    return true;
+                }
             }
         }
-    }
-
-    /// Makes `node_id`, of `role`, the focus this outpost follows: the
-    /// object `object` in `window`, with `chain`, its ancestors and itself.
-    /// A caret key's watch on another node ends, the intake is told
-    /// ([`note_focused`](Self::note_focused)), and the tracking takes it, so
-    /// its caret events, a terminal's output and the menu rules follow it.
-    /// A reported focus becomes the focus this way
-    /// ([`emit_focus`](Self::emit_focus)), and so does a focus-now answer's
-    /// control, which Core takes as its focus
-    /// ([`follow_answer`](Self::follow_answer)). What the rules judge
-    /// events against is the focus Core holds and those reported that Core
-    /// has not judged yet, which the callers record ([`super::held`]).
-    fn adopt_focus(
-        &mut self,
-        (node_id, role): (NodeId, Role),
-        object: Option<Object>,
-        window: Option<isize>,
-        chain: Vec<NodeSnapshot>,
-    ) {
-        self.end_watch_elsewhere(node_id);
-        self.note_focused(object, role, window);
-        let mut tracking = self.context.tracking();
-        tracking.role = Some(role);
-        tracking.focus = Some(node_id);
-        tracking.focus_role = Some(role);
-        tracking.window = window;
-        tracking.chain = chain;
-    }
-
-    /// Ends a caret key's watch on a node other than `node_id`, the new
-    /// focus, saying nothing, as NVDA's wait gives way to a focus change.
-    fn end_watch_elsewhere(&mut self, node_id: NodeId) {
-        if self
-            .context
-            .caret_watch()
-            .as_ref()
-            .is_some_and(|open| open.node_id != node_id)
-        {
-            self.end_watch("the focus moved");
-        }
-    }
-
-    /// Tells the intake of the focus just reported, `object` of `role` in
-    /// `window`: a terminal read through UIA has its caret event planned
-    /// after its text changes, and a console host's terminal, whose
-    /// console caret event is its caret event, has the system caret's
-    /// events, which tell of the same caret at the same tick, dropped
-    /// (`docs/parity/text.md`).
-    fn note_focused(&self, object: Option<Object>, role: Role, window: Option<isize>) {
-        let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
-        self.context.intake.set_focused(object);
-        if terminal {
-            self.context
-                .intake
-                .set_focus_is_terminal(window.unwrap_or(0));
-            if window
-                .is_some_and(|hwnd| window_class_name(hwnd) == text_reads::CONSOLE_WINDOW_CLASS)
-            {
-                self.context.intake.drop_system_caret();
-            }
-        }
+        tracing::debug!(
+            "the walk returned after the focus was published at its bound; its result is discarded"
+        );
+        self.reported = true;
+        self.attempt_owed();
+        true
     }
 
     /// The last focus this outpost reported, with its ancestors.
     fn focus_chain(&self) -> Vec<NodeSnapshot> {
-        self.context.tracking().chain.clone()
+        self.context
+            .watch
+            .follow(|follow| follow.tracking.chain.clone())
     }
 
     /// Whether an event named `event` from `hwnd` is accepted by NVDA's
@@ -2721,7 +2837,9 @@ impl Worker<'_> {
             return;
         };
         // Only the property the event names is read, as NVDA reads only
-        // that property of its focus or ancestor object.
+        // that property of its focus or ancestor object. A state change's
+        // states are recorded for the held focus in its commit.
+        let mut states_read = None;
         let event = match kind {
             WinEventKind::NameChange => NormalizedEvent::PropertyChanged {
                 node_id,
@@ -2735,6 +2853,7 @@ impl Worker<'_> {
             },
             WinEventKind::StateChange => {
                 let states = object.states(role);
+                states_read = Some((node_id, states));
                 NormalizedEvent::PropertyChanged {
                     node_id,
                     child_count: self
@@ -2744,7 +2863,12 @@ impl Worker<'_> {
             }
             _ => return,
         };
-        self.emit(trace, observed_at_us, Backend::Msaa, Some(hwnd), event);
+        let message = self.event_message(trace, observed_at_us, Backend::Msaa, Some(hwnd), event);
+        self.commit(Effects {
+            result: Some(message),
+            states: states_read,
+            ..Effects::default()
+        });
     }
 
     /// The system caret's location change or show, accepted from any
@@ -2914,7 +3038,7 @@ impl Worker<'_> {
         (node, role, states): (NodeId, Role, StateSet),
         (hwnd, id_child): (isize, i32),
     ) -> Option<u32> {
-        let was_expanded = self.context.held().replace_states(node, states)?;
+        let was_expanded = self.context.held().expanded_before(node)?;
         (role == Role::TreeItem && states.contains(State::Expanded) && !was_expanded)
             .then(|| verbatim_ia2::acquire::tree_view_child_count(hwnd, id_child))
             .flatten()
@@ -3109,7 +3233,7 @@ impl Worker<'_> {
         let hwnd = if event.hwnd != 0 {
             Some(event.hwnd)
         } else if of_focus {
-            self.context.tracking().window
+            self.context.tracked_window()
         } else if event.focus_window != 0 && element.is_none() {
             // A windowless selection's nearest window, which the listener's
             // reading thread walked up to (`FocusReader::check_fact`).
@@ -3294,7 +3418,7 @@ impl Worker<'_> {
         // NVDA reads the relation live for each selection event; the
         // relation and the search under what it names are one remote
         // operation where the focus's window allows one.
-        let window = self.context.tracking().window;
+        let window = self.context.tracked_window();
         let uia = self.client.uia()?;
         let nodes = self.context.node_request(uia).ok()?;
         let fill = Fill::new(&nodes);
@@ -3363,7 +3487,12 @@ impl Worker<'_> {
     /// late.
     fn selection_as_value(&mut self, parts: &UiaSnapshotFact) -> Option<NormalizedEvent> {
         let focus = self.context.held().expected().map(|focus| focus.node.id)?;
-        if self.context.tracking().value_from_selection != Some(focus) {
+        if self
+            .context
+            .watch
+            .follow(|follow| follow.tracking.value_from_selection)
+            != Some(focus)
+        {
             return None;
         }
         let registry = &self.context.uia_registry;
@@ -3728,7 +3857,7 @@ impl Worker<'_> {
         if self
             .context
             .intake
-            .take_redirected_focus(&Object::Msaa(hwnd, id_object, id_child))
+            .is_redirected_focus(&Object::Msaa(hwnd, id_object, id_child))
         {
             tracing::debug!(
                 hwnd,
@@ -3736,6 +3865,10 @@ impl Worker<'_> {
                 id_child,
                 "MSAA focus dropped: already reported from its control's focus"
             );
+            self.commit(Effects {
+                clear_redirect: true,
+                ..Effects::default()
+            });
             return;
         }
         let Some(mut candidate) = verbatim_ia2::acquire::focus_candidate(hwnd, id_object, id_child)
@@ -3762,7 +3895,7 @@ impl Worker<'_> {
                 id_child,
                 "MSAA focus dropped: the focus already"
             );
-            self.context.tracking().reported += 1;
+            self.reported = true;
             return;
         }
         // NVDA accepts an MSAA focus only when the object or one of its
@@ -3839,36 +3972,36 @@ impl Worker<'_> {
             Some(Object::Msaa(window, _, _)) => window,
             _ => hwnd,
         };
-        watched(read::WalkStep::Focus {
+        if !watched(read::WalkStep::Focus {
             node: &node,
             window: hwnd,
             from,
             left,
-        });
+        }) {
+            self.refused.set(true);
+            return;
+        }
         let enrichment = read::msaa_enrichment(
             context,
             self.client,
             (&node, &previous),
             (left, Some(&watched)),
         );
-        if let Some(published) = self.walk_returned() {
-            self.adopt_published(published);
-        } else {
-            self.msaa_event = Some(msaa_event);
-            self.emit_focus(
-                trace,
-                observed_at_us,
-                Backend::Msaa,
-                Some(hwnd),
-                node,
-                false,
-                object.clone(),
-                enrichment,
-            );
+        if self.walk_returned() {
+            return;
         }
-        if self.context.intake.focused() == object && redirected {
-            self.context.intake.set_focus_redirected();
-        }
+        self.msaa_event = Some(msaa_event);
+        self.redirected = redirected;
+        self.emit_focus(
+            trace,
+            observed_at_us,
+            Backend::Msaa,
+            Some(hwnd),
+            node,
+            false,
+            object.clone(),
+            enrichment,
+        );
     }
 
     /// A focus copy in `window`, of top-level window `top_level`, observed
@@ -3991,7 +4124,9 @@ impl Worker<'_> {
             (&read.ancestors, read.hwnd, read.window, read.ancestors_end),
             (&previous, observed_at_us.saturating_add(read.bound_us)),
         );
-        *context.focus_path() = Some(FocusPath::of(read));
+        // Committed with the focus; the entry finds the focus's element by
+        // it before then.
+        self.focus_path = Some(FocusPath::of(read));
         tracing::debug!(
             %trace,
             enrichment_us = reading.elapsed().as_micros(),
@@ -4016,7 +4151,10 @@ impl Worker<'_> {
         if text_first {
             self.find_focus_element(runtime_id, true);
         }
-        context.tracking().value_from_selection = read.value_from_selection.then_some(node.id);
+        if self.refused() {
+            return;
+        }
+        self.value_from_selection = Some(read.value_from_selection.then_some(node.id));
         self.emit_focus(
             trace,
             observed_at_us,
@@ -4029,11 +4167,29 @@ impl Worker<'_> {
         );
         if !found
             && !text_first
+            && !self.refused()
             && context.intake.focused() == Some(Object::Uia(runtime_id.clone()))
             && let Some(id) = self.find_focus_element(runtime_id, false)
         {
-            let role = context.tracking().focus_role.unwrap_or(Role::Unknown);
-            self.follow_focus((id, role));
+            // The subscription follows the element, and the slider a thumb
+            // is in, in a commit made only while the node is the followed
+            // focus.
+            let (role, chain) = context.watch.follow(|follow| {
+                (
+                    follow.tracking.focus_role.unwrap_or(Role::Unknown),
+                    follow.tracking.chain.clone(),
+                )
+            });
+            let element = match target_for(context, (id, role), &chain, false) {
+                (_, Some(_)) => self.slider_target(id, role, &chain),
+                (target, None) => Some((id, target)),
+            };
+            if element.is_some() {
+                self.commit(Effects {
+                    element,
+                    ..Effects::default()
+                });
+            }
         }
     }
 
@@ -4077,7 +4233,12 @@ impl Worker<'_> {
     /// path does not lead to it, or the walk failed.
     fn element_by_focus_path(&mut self, runtime_id: &[i32]) -> Option<Cached<Kept>> {
         let context = self.context;
-        let route = context.focus_route(runtime_id)?;
+        let route = match &self.focus_path {
+            // The focus about to be reported, whose path is not committed
+            // yet.
+            Some(path) => context.route_in(path, runtime_id),
+            None => context.focus_route(runtime_id),
+        }?;
         let uia = self.client.uia()?;
         let nodes = context.node_request(uia).ok()?;
         let remote = context.tries_remote(Some(route.window));
@@ -4101,10 +4262,15 @@ impl Worker<'_> {
     /// element still has the keyboard focus, a limit.
     fn element_after_cut_walk(&mut self, runtime_id: &[i32]) -> Option<Cached<Kept>> {
         let context = self.context;
-        let cut = context
-            .focus_path()
-            .as_ref()
-            .is_some_and(|path| path.is_cut_at(runtime_id));
+        let cut = match &self.focus_path {
+            Some(path) => path.is_cut_at(runtime_id),
+            None => context.watch.follow(|follow| {
+                follow
+                    .focus_path
+                    .as_ref()
+                    .is_some_and(|path| path.is_cut_at(runtime_id))
+            }),
+        };
         if !cut {
             return None;
         }
@@ -4164,13 +4330,12 @@ impl Worker<'_> {
         else {
             return;
         };
-        {
-            let tracking = self.context.tracking();
-            if tracking.batch == Some(self.batch)
-                && matches!(tracking.role, Some(Role::Menu | Role::MenuItem))
-            {
-                return;
-            }
+        let (batch, role) = self
+            .context
+            .watch
+            .follow(|follow| (follow.tracking.batch, follow.tracking.role));
+        if batch == Some(self.batch) && matches!(role, Some(Role::Menu | Role::MenuItem)) {
+            return;
         }
         if !self.accepts(EventName::MenuStart, hwnd) || !Self::readable(hwnd) {
             return;
@@ -4235,7 +4400,8 @@ impl Worker<'_> {
             // The read before a held key is a read of the terminal, whose
             // caret answers the request (`docs/design/key-holding.md`).
             TextOp::ReadCaret if focused => {
-                self.read_terminal(node_id, Some(request), (None, false), trace);
+                let terminal = self.terminal_copy(node_id);
+                self.read_terminal(node_id, terminal, Some(request), (None, false), trace);
                 return true;
             }
             TextOp::TerminalReadNow(scope) => {
@@ -4247,21 +4413,26 @@ impl Worker<'_> {
                 return true;
             }
             TextOp::TerminalHistory { above, whole } => {
+                let seen = self.terminal_seen(node_id);
                 let reply = match self.client.uia() {
-                    Some(uia) if focused => {
-                        text_reads::terminal_history(self.context, uia, node_id, (*above, *whole))
-                    }
+                    Some(uia) if focused => text_reads::terminal_history(
+                        self.context,
+                        uia,
+                        (node_id, seen),
+                        (*above, *whole),
+                    ),
                     _ => TextReply::Unanswered,
                 };
                 self.reply_text(request, reply);
                 return true;
             }
             TextOp::TerminalFind { needle, from, rows } => {
+                let seen = self.terminal_seen(node_id);
                 let reply = match self.client.uia() {
                     Some(uia) if focused => text_reads::terminal_find(
                         self.context,
                         uia,
-                        node_id,
+                        (node_id, seen),
                         (needle, *from, *rows),
                     ),
                     _ => TextReply::Unanswered,
@@ -4270,29 +4441,34 @@ impl Worker<'_> {
                 return true;
             }
             TextOp::TerminalColours { from_ms, until_ms } => {
-                let now = focused
-                    && self
-                        .context
-                        .terminals()
-                        .entry(node_id.number())
-                        .or_default()
-                        .colours((*from_ms, *until_ms));
-                if now {
-                    // The last read ended at or after the key without the
-                    // colours: one is taken at once with them, sent as a
-                    // live read ("Colours").
-                    self.read_terminal(node_id, None, (None, false), trace);
+                if focused {
+                    let mut terminal = self.terminal_copy(node_id);
+                    if terminal.colours((*from_ms, *until_ms)) {
+                        // The last read ended at or after the key without
+                        // the colours: one is taken at once with them, sent
+                        // as a live read ("Colours").
+                        self.read_terminal(node_id, terminal, None, (None, false), trace);
+                    } else {
+                        self.commit(Effects {
+                            terminal: Some((node_id, terminal)),
+                            ..Effects::default()
+                        });
+                    }
                 }
-                self.reply_text(request, TextReply::Done);
+                if !self.refused() {
+                    self.reply_text(request, TextReply::Done);
+                }
                 return true;
             }
             TextOp::TerminalShape { height, width } => {
-                self.context
-                    .terminals()
-                    .entry(node_id.number())
-                    .or_default()
-                    .shape(*height, *width);
-                self.reply_text(request, TextReply::Done);
+                let mut terminal = self.terminal_copy(node_id);
+                terminal.shape(*height, *width);
+                let result = self.reply_text_message(request, TextReply::Done);
+                self.commit(Effects {
+                    result: Some(result),
+                    terminal: Some((node_id, terminal)),
+                    ..Effects::default()
+                });
                 return true;
             }
             _ => {}
@@ -4311,10 +4487,12 @@ impl Worker<'_> {
             }
             let observed_at_us = now_us();
             if event == Event::Hold {
-                self.terminal_event(node_id, event, None, (trace, observed_at_us));
-                self.reply_text(request, TextReply::Done);
+                self.terminal_event(node_id, event, None, (trace, observed_at_us), None);
+                if !self.refused() {
+                    self.reply_text(request, TextReply::Done);
+                }
             } else {
-                self.terminal_event(node_id, event, Some(request), (trace, observed_at_us));
+                self.terminal_event(node_id, event, Some(request), (trace, observed_at_us), None);
             }
             return true;
         }
@@ -4383,18 +4561,24 @@ impl Worker<'_> {
             elapsed_ms = started.elapsed().as_millis(),
             "query answered"
         );
-        self.reply(request_id, trace, outcome);
-        if let Some(answered) = follow {
-            self.follow_answer(answered, trace);
+        let result = self.reply_message(request_id, trace, outcome);
+        match follow {
+            Some((answered, judged)) => self.follow_answer(result, answered, judged, trace),
+            None => {
+                self.commit(Effects {
+                    result: Some(result),
+                    ..Effects::default()
+                });
+            }
         }
     }
 
     /// The answer to a focus-now query, with its control, when it has one,
-    /// to adopt and follow once the answer is sent
-    /// ([`follow_answer`](Self::follow_answer)). Core takes the control as
-    /// its focus, so its text is read as a reported focus's is: a text
-    /// field's line is spoken and Core has its caret.
-    fn focus_now(&mut self, trace: TraceId) -> (FocusNow, Option<AnsweredFocus>) {
+    /// and the control as events are judged against it, to commit with the
+    /// answer and follow ([`follow_answer`](Self::follow_answer)). Core
+    /// takes the control as its focus, so its text is read as a reported
+    /// focus's is: a text field's line is spoken and Core has its caret.
+    fn focus_now(&mut self, trace: TraceId) -> (FocusNow, Option<(AnsweredFocus, held::Focus)>) {
         let context = self.context;
         let (mut answer, window) = read::focus_now(context, self.client);
         let windows = answer.window.iter_mut().map(|(window, _)| window);
@@ -4407,77 +4591,110 @@ impl Worker<'_> {
         read::describe_dialogs(context, (windows.chain(focus), window), (&mut None, false));
         let answered = answer.focus.as_mut().map(|control| {
             let node = &control.node;
-            let text = self.read_focus_text(node.id, node.role);
+            let (text, read_at) = self.read_focus_text(node.id, node.role);
             control.text = text.clone().map(Box::new);
             AnsweredFocus {
                 node: node.clone(),
                 ancestors: control.ancestors.clone(),
                 text,
+                read_at,
                 observed_at_us: answer.observed_at_us,
                 window,
             }
         });
         // Core takes the answer's control as its focus, as NVDA queues its
         // fake focus: until Core has judged it, events are judged against it
-        // too. An answer for the focus already judged against keeps the
-        // MSAA event address its report recorded, which NVDA's second
-        // foreground test compares with.
-        if let Some(answered) = &answered {
-            let reported =
+        // too, recorded with the answer's commit.
+        let answered = answered.map(|answered| {
+            let judged =
                 self.focus_to_judge(trace, &answered.node, &answered.ancestors, window, false);
-            let mut held = context.held();
-            let reported = answer_to_judge(held.expected(), reported);
-            held.reported(reported);
-        }
+            (answered, judged)
+        });
         (answer, answered)
     }
 
-    /// Makes a focus-now answer's control the outpost's focus and follows
-    /// it, once the answer is sent, as a reported focus is once its event
-    /// is ([`emit_focus`](Self::emit_focus)), so what the follow-up sends,
-    /// such as a terminal's empty answer to a read owed to Core, reaches
-    /// Core after the focus it follows. A control this outpost already has
-    /// as its focus, under the same node, is not adopted again; one whose
-    /// element it has under another node, as File Explorer's reused runtime
-    /// ids give (`docs/uia-bugs.md`), is, so the tracking names the
-    /// answer's node. Either way the answer becomes the last focus queued,
-    /// as NVDA's fake focus does ([`queue_answer`]).
-    fn follow_answer(&mut self, answered: AnsweredFocus, trace: TraceId) {
+    /// Commits `result`, a focus-now answer, with its control, `answered`,
+    /// made the outpost's focus and followed, as a reported focus is
+    /// ([`emit_focus`](Self::emit_focus)), and `judged` recorded for Core's
+    /// judgement, keeping the MSAA event address of the same focus judged
+    /// against before it, which NVDA's second foreground test compares
+    /// with ([`answer_to_judge`]): so what the follow-up sends, such as a
+    /// terminal's first read, reaches Core after the focus it follows. A
+    /// control whose element this outpost has under another node, as File
+    /// Explorer's reused runtime ids give (`docs/uia-bugs.md`), is followed
+    /// under the answer's node. Either way the answer becomes the last
+    /// focus queued, as NVDA's fake focus does.
+    fn follow_answer(
+        &mut self,
+        result: OutpostToSupervisor,
+        answered: AnsweredFocus,
+        judged: held::Focus,
+        trace: TraceId,
+    ) {
         let AnsweredFocus {
             node,
             ancestors,
             text,
+            read_at,
             observed_at_us,
             window,
         } = answered;
-        let same_node = self.context.tracking().focus == Some(node.id);
-        if !same_node || !self.is_focus(node.id) {
-            let object = object_of(self.context, &node);
-            let chain = ancestors
-                .into_iter()
-                .chain(std::iter::once(node.clone()))
-                .collect();
-            self.adopt_focus((node.id, node.role), object, window, chain);
-        }
-        self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_us));
-    }
-
-    /// Publishes the reply to the query in hand, ending its entry.
-    fn reply(&self, request_id: u64, trace: TraceId, outcome: QueryOutcome) {
-        publish(
+        let (node_id, role) = (node.id, node.role);
+        let object = object_of(self.context, &node);
+        // A control this outpost already has as its focus, under the same
+        // node, is not adopted again, only followed.
+        let adopt = self.context.watch.follow(|follow| follow.tracking.focus) != Some(node_id)
+            || !self.is_focus(node_id);
+        let chain = ancestors.into_iter().chain(std::iter::once(node)).collect();
+        let caret = match text {
+            Some(FocusText::Caret { caret, .. }) => Some(caret),
+            _ => None,
+        };
+        let (mut follow, slider) = follow_of(
             self.context,
-            self.generation,
-            OutpostToSupervisor::Reply {
-                trace_id: trace,
-                request_id,
-                outcome,
-                timing: EventTiming {
-                    published_at_us: now_us(),
-                    calls: take_calls(),
-                    ..self.timing
-                },
+            FocusMade {
+                node: (node_id, role),
+                object,
+                window,
+                chain,
+                batch: self.batch,
+                event: (trace, observed_at_us),
+                redirected: false,
+                caret,
+                at_bound: false,
             },
         );
+        follow.adopt = adopt;
+        let committed = self.commit(Effects {
+            result: Some(result),
+            report: Some(Report::Answered(judged)),
+            follow: Some(follow),
+            caret_read: read_at.map(|at| (node_id, at)),
+            ..Effects::default()
+        });
+        if committed == Committed::Applied {
+            self.after_follow(node_id, role, slider);
+        }
+    }
+
+    /// The reply to the query in hand, carrying the calls made since the
+    /// last message.
+    fn reply_message(
+        &self,
+        request_id: u64,
+        trace: TraceId,
+        outcome: QueryOutcome,
+    ) -> OutpostToSupervisor {
+        OutpostToSupervisor::Reply {
+            trace_id: trace,
+            request_id,
+            outcome,
+            timing: EventTiming {
+                published_at_us: now_us(),
+                calls: take_calls(),
+                ..self.timing
+            },
+        }
     }
 }
 
@@ -4556,27 +4773,164 @@ fn event_message(
     }
 }
 
-/// Publishes the focus of a walk still under way at its bound, or
-/// returned past it, from `walk`, a copy of its progress
-/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"): the focus as read, its chain as [`bound::chain_at_bound`]
-/// makes it, completed by plain windows, with no selected child, no dialog
-/// text and no text of its own. The one function both publishers call,
-/// the watchdog at the bound and the worker whose walk returns past it
-/// ([`Worker::walk_returned`]), so the report does not depend on which
-/// comes first. The report is recorded for Core's judgement, the walk
-/// claimed, and the report sent with `send`, all under the watch lock, only
-/// while that walk is still armed by the worker in charge: the worker
-/// learns of the publication under the same lock
-/// ([`Watch::walk_returned`]), so nothing it sends once it has adopted the
-/// focus can reach Core before the focus. Sending never waits for the pipe,
-/// and nothing that holds the outbound queue's lock takes the watch lock,
-/// so sending under it cannot deadlock. Local calls only.
-fn publish_at_bound(
+/// A focus about to be committed as the followed one ([`follow_of`]).
+struct FocusMade {
+    /// The focus and its role.
+    node: (NodeId, Role),
+    /// The object it is, as the intake records the focus.
+    object: Option<Object>,
+    /// The window it was reported in.
+    window: Option<isize>,
+    /// Its ancestors, outermost first, and itself.
+    chain: Vec<NodeSnapshot>,
+    /// Its entry's batch.
+    batch: u64,
+    /// The trace and observation of the event it came from.
+    event: (TraceId, u64),
+    /// Whether it was reached by redirecting a control's own focus event.
+    redirected: bool,
+    /// The caret read with its report, if any.
+    caret: Option<CaretReport>,
+    /// Whether it was published at its walk's bound, with nothing read
+    /// after its walk.
+    at_bound: bool,
+}
+
+/// `made` as the follow its commit applies, computed before the commit
+/// with local calls only: the subscription's target, whether the focus is
+/// a terminal, and what it owes. A terminal owes its first read, its caret
+/// read first when it was published at its bound; a thumb published at
+/// its bound owes its slider's lookup. Also the slider to look up after
+/// the commit, for a thumb the worker reports itself, whose slider's
+/// element is not kept.
+fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
+    let FocusMade {
+        node: (node_id, role),
+        object,
+        window,
+        chain,
+        batch,
+        event: (trace, observed_at_us),
+        redirected,
+        caret,
+        at_bound,
+    } = made;
+    let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
+    let console =
+        window.is_some_and(|hwnd| window_class_name(hwnd) == text_reads::CONSOLE_WINDOW_CLASS);
+    let (target, to_find) = target_for(context, (node_id, role), &chain, terminal && console);
+    // A focus whose own element is not kept yet has the slider found with
+    // it, once it is.
+    let to_find = to_find.filter(|_| target.element.is_some());
+    let owed = if terminal {
+        match (at_bound, &caret) {
+            (true, _) => Some(OwedWork::FirstRead(None)),
+            (false, Some(caret)) => Some(OwedWork::FirstRead(Some(caret.clone()))),
+            (false, None) => None,
+        }
+    } else {
+        to_find.filter(|_| at_bound).map(|_| OwedWork::Slider)
+    };
+    let follow = Follow {
+        node: node_id,
+        role,
+        object,
+        window,
+        chain,
+        batch,
+        redirected,
+        terminal,
+        console,
+        sent_caret: caret.filter(|_| terminal),
+        target,
+        owed,
+        trace,
+        observed_at_us,
+        adopt: true,
+    };
+    (follow, to_find.filter(|_| !at_bound))
+}
+
+/// Where the focus-following subscription is moved for the focus
+/// `node_id` of `role`, with `chain`, its ancestors and itself, as NVDA
+/// moves its local group with the focus (`UIAHandler/__init__.py` 642 to
+/// 756; `NVDAObjects/UIA/__init__.py` 1623 to 1630;
+/// `docs/design/focus-pipeline.md`, section 17): to the node's own element
+/// when the outpost has it, with the extended group when the node may have
+/// text, and the base group otherwise; the console host's text area
+/// (`console`) takes the extended group without its text and caret
+/// events, since its console's updates and caret events tell the outpost
+/// of its output and its cursor; and to nothing for a focus whose element
+/// the outpost does not have, or one read through MSAA, whose changes and
+/// caret events come from the hooks. The element alone, not its
+/// descendants, as the reducer acts on the focus's own changes. NVDA
+/// registers its group with `TreeScope_Ancestors` as well, but UIA
+/// delivers no ancestor's event to such a registration
+/// (`docs/parity/backends.md`, "UIA event registration"). A focus whose
+/// parent is a UIA slider of class `SensitiveSlider` has that parent
+/// followed too, for its value changes alone ([`verbatim_uia::Group::Value`]),
+/// since Core speaks them while the focus is in it
+/// (`docs/parity/focus-context.md`, "A slider that focuses its thumb"),
+/// when its element is kept; the slider is returned to look up when it is
+/// not. Registry lookups only.
+fn target_for(
     context: &Context,
-    walk: &FocusProgress,
-    send: impl FnOnce(OutpostToSupervisor, Vec<u64>),
-) {
+    (node_id, role): (NodeId, Role),
+    chain: &[NodeSnapshot],
+    console: bool,
+) -> (Target, Option<NodeId>) {
+    let has_text = text_reads::may_have_text(context, node_id, role);
+    let group = if !has_text {
+        verbatim_uia::Group::Base
+    } else if role == Role::Terminal && console {
+        verbatim_uia::Group::ExtendedWithoutTextEvents
+    } else {
+        verbatim_uia::Group::Extended
+    };
+    let element = context.uia_registry.element_of(node_id);
+    let parent = sensitive_slider_of(node_id, chain);
+    let slider = parent.and_then(|parent| {
+        context
+            .uia_registry
+            .element_of(parent)
+            .map(|element| (parent, element))
+    });
+    let to_find = parent.filter(|_| slider.is_none());
+    let wanted = element
+        .as_ref()
+        .map(|_| (node_id, group, slider.as_ref().map(|(id, _)| *id)));
+    (
+        Target {
+            wanted,
+            element,
+            slider: slider.map(|(_, element)| element),
+        },
+        to_find,
+    )
+}
+
+/// The parent of the focus `node_id` in `chain`, its ancestors and itself,
+/// when it is a UIA slider of class `SensitiveSlider`.
+fn sensitive_slider_of(node_id: NodeId, chain: &[NodeSnapshot]) -> Option<NodeId> {
+    let [.., parent, focus] = chain else {
+        return None;
+    };
+    (focus.id == node_id && focus_rules::is_sensitive_slider(parent)).then_some(parent.id)
+}
+
+/// The publication of a walk still under way at its bound, or returned
+/// past it, or whose worker is about to be abandoned, from `walk`, a copy
+/// of its progress (`docs/design/focus-pipeline-rework.md`, "A window's
+/// name, and the one fallback" and "The outpost's commit point"): the
+/// focus as read, its chain as [`bound::chain_at_bound`] makes it,
+/// completed by plain windows, with no selected child, no dialog text and
+/// no text of its own, recorded for Core's judgement, sent, and made the
+/// followed focus, with what it owes. The one function both publishers
+/// call, the watchdog and the worker whose walk returns past its bound
+/// ([`Worker::walk_returned`]), so the report does not depend on which
+/// comes first; its commit ([`Watch::commit_publication`]) claims the walk.
+/// Local calls only.
+fn publication(context: &Context, walk: &FocusProgress) -> Effects {
     let focus = &walk.focus;
     let ancestors = bound::chain_at_bound(context, walk);
     let judged = judged_focus(
@@ -4603,38 +4957,31 @@ fn publish_at_bound(
             text: None,
         },
     );
-    let claimed = {
-        let mut state = context.watch.lock();
-        let open = state.generation == walk.generation
-            && state
-                .walk
-                .as_ref()
-                .is_some_and(|armed| armed.armed == walk.armed);
-        open.then(|| {
-            state.walk = None;
-            state.published = Some(Published {
-                node: focus.node.id,
-                role: focus.node.role,
-                object: focus.object.clone(),
-                window: focus.window,
-                chain,
-                trace: focus.trace,
-                observed_at_us: focus.observed_at_us,
-                batch: focus.batch,
-            });
-            context.held().reported(judged);
-            if let Some(wake) = state.next_wake(Instant::now()) {
-                context.watch.alarm.set(wake);
-            }
-            send(message, take_touched(context));
-        })
-    };
-    if claimed.is_some() {
-        tracing::info!(
-            trace = %focus.trace,
-            name = ?focus.node.name,
-            "a focus walk was under way at its bound; the focus is published as read so far"
-        );
+    let (follow, _) = follow_of(
+        context,
+        FocusMade {
+            node: (focus.node.id, focus.node.role),
+            object: focus.object.clone(),
+            window: focus.window,
+            chain,
+            batch: focus.batch,
+            event: (focus.trace, focus.observed_at_us),
+            // An MSAA focus reached by redirecting its control's own focus
+            // event to the control's focused child.
+            redirected: matches!(
+                (&focus.object, focus.msaa_event),
+                (Some(Object::Msaa(hwnd, object, child)), Some((event, _)))
+                    if (*hwnd, *object, *child) != event
+            ),
+            caret: None,
+            at_bound: true,
+        },
+    );
+    Effects {
+        result: Some(message),
+        report: Some(Report::Reported(judged)),
+        follow: Some(follow),
+        ..Effects::default()
     }
 }
 
@@ -4642,12 +4989,14 @@ fn publish_at_bound(
 /// `generation`: arming it with the focus `focus` makes of the node and
 /// window read ([`read::WalkStep::Focus`]), and taking in each step after.
 /// A walk already past its bound when it begins is not armed: it cuts
-/// itself at its first check, and its worker reports it alone.
+/// itself at its first check, and its worker reports it alone. Answers
+/// whether `generation` is still in charge, so an abandoned walk stops at
+/// its next step.
 fn walk_watcher<'a>(
     context: &'a Context,
     generation: u64,
     focus: impl Fn(&NodeSnapshot, isize) -> BoundFocus + 'a,
-) -> impl Fn(read::WalkStep<'_>) + 'a {
+) -> impl Fn(read::WalkStep<'_>) -> bool + 'a {
     move |step: read::WalkStep<'_>| match step {
         read::WalkStep::Focus {
             node,
@@ -4655,14 +5004,16 @@ fn walk_watcher<'a>(
             from,
             left,
         } => {
-            if !left.is_zero() {
-                context.watch.arm(FocusProgress::new(
-                    generation,
-                    focus(node, window),
-                    from,
-                    left,
-                ));
-            }
+            left.is_zero()
+                || context
+                    .watch
+                    .arm(FocusProgress::new(
+                        generation,
+                        focus(node, window),
+                        from,
+                        left,
+                    ))
+                    .is_some()
         }
         step => context.watch.advance(generation, &step),
     }
@@ -4889,13 +5240,15 @@ mod tests {
         assert_eq!((replaced.event, replaced.simple_child), (None, false));
     }
 
-    /// The idle barrier's answer never waits on the terminals' lock, which
-    /// a terminal's read holds across its calls into the application: a
-    /// worker abandoned in such a read keeps the lock, and the worker that
+    /// The idle barrier's answer never waits on a lock a text read holds
+    /// across its calls into the application, the anchors': a worker
+    /// abandoned in such a read keeps the lock, and the worker that
     /// replaced it, waiting on that lock with no deadline, would never be
-    /// abandoned in turn. The test holds the lock as that read does.
+    /// abandoned in turn. The answer takes the watch lock alone, which no
+    /// read holds across a call. The test holds the anchors' lock as that
+    /// read does.
     #[test]
-    fn the_idle_answer_does_not_wait_on_the_terminals_lock() {
+    fn the_idle_answer_does_not_wait_on_a_text_reads_lock() {
         use std::io::BufReader;
         use std::sync::mpsc;
 
@@ -4921,7 +5274,7 @@ mod tests {
             messages.recv_timeout(wait),
             Ok(OutpostToSupervisor::Ready { .. })
         ));
-        let read_in_progress = outpost.context.terminals();
+        let read_in_progress = outpost.context.uia_anchors();
         outpost.handle_command(&SupervisorToOutpost::IdleQuery { round: 4 });
         let answer = messages.recv_timeout(wait);
         drop(read_in_progress);
@@ -5056,31 +5409,37 @@ mod tests {
 
     #[test]
     fn an_abandoned_query_gets_only_the_abandoned_reply() {
-        let watch = Watch::default();
+        let context = &quiet_context();
         let trace = TraceId::mint();
         let mut replies = Vec::new();
-        watch.start(STEP_DEADLINE, Some((7, trace)), 0);
+        context.watch.start(STEP_DEADLINE, Some((7, trace)), 0);
 
         // The watchdog abandons the worker and answers its query.
-        if let Some((request_id, _)) = watch.lock().abandon() {
+        if let Some((request_id, _)) = context.watch.lock().abandon() {
             replies.push((request_id, "abandoned"));
         }
-        // The old worker's call returns and it tries to publish its answer.
-        let published = watch.publish(0, || replies.push((7, "done"))).is_some();
+        // The old worker's call returns and it commits its answer.
+        let (committed, _) = context.watch.commit(context, 0, reply_effects(7, trace));
+        if committed == Committed::Applied {
+            replies.push((7, "done"));
+        }
 
-        assert!(!published, "an abandoned worker publishes nothing");
         assert_eq!(replies, [(7, "abandoned")]);
     }
 
     #[test]
     fn a_published_query_can_no_longer_be_abandoned() {
-        let watch = Watch::default();
+        let context = &quiet_context();
+        let trace = TraceId::mint();
         let mut replies = Vec::new();
-        watch.start(STEP_DEADLINE, Some((7, TraceId::mint())), 0);
+        context.watch.start(STEP_DEADLINE, Some((7, trace)), 0);
 
-        assert!(watch.publish(0, || replies.push((7, "done"))).is_some());
+        let (committed, _) = context.watch.commit(context, 0, reply_effects(7, trace));
+        if committed == Committed::Applied {
+            replies.push((7, "done"));
+        }
         // A watchdog that wakes just after finds no query to answer.
-        if let Some((request_id, _)) = watch.lock().abandon() {
+        if let Some((request_id, _)) = context.watch.lock().abandon() {
             replies.push((request_id, "abandoned"));
         }
 
@@ -5146,7 +5505,7 @@ mod tests {
         );
     }
 
-    /// A button in no window, as a focus walk's progress holds it.
+    /// A button in no window, node 1, as a focus walk's progress holds it.
     fn bound_focus() -> BoundFocus {
         BoundFocus {
             trace: TraceId::mint(),
@@ -5155,18 +5514,109 @@ mod tests {
             batch: 0,
             backend: Backend::Msaa,
             window: None,
-            node: NodeSnapshot {
-                id: NodeId::new(1),
-                backend: Backend::Msaa,
-                role: Role::Button,
-                name: None,
-                value: None,
-                states: StateSet::new(),
-                details: verbatim_model::NodeDetails::default(),
-            },
+            node: node(1, Role::Button),
             object: None,
             msaa_event: None,
         }
+    }
+
+    /// A node `id` of `role`, read through MSAA.
+    fn node(id: u64, role: Role) -> NodeSnapshot {
+        NodeSnapshot {
+            id: NodeId::new(id),
+            backend: Backend::Msaa,
+            role,
+            name: None,
+            value: None,
+            states: StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        }
+    }
+
+    /// An outpost's context whose worker and watchdog are stopped, so that
+    /// nothing but the test touches the watch: the first worker,
+    /// generation 0, is in charge. Its outbound queue is closed, so what a
+    /// commit sends goes nowhere; what it records and follows is kept.
+    fn quiet_context() -> Arc<Context> {
+        use verbatim_process::overlapped::{End, Flow, pipe};
+        use verbatim_process::transport::EVENT_PIPE_BUFFER;
+
+        let (_ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        let outpost = super::super::Outpost::new(theirs, std::process::id());
+        let context = Arc::clone(&outpost.context);
+        outpost.shutdown();
+        context.watch.lock().stopping = false;
+        context
+    }
+
+    /// The effects of the answer to query `request_id`, traced `trace`.
+    fn reply_effects(request_id: u64, trace: TraceId) -> Effects {
+        Effects {
+            result: Some(OutpostToSupervisor::Reply {
+                trace_id: trace,
+                request_id,
+                outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+                timing: EventTiming::default(),
+            }),
+            ..Effects::default()
+        }
+    }
+
+    /// The effects of reporting `node` as the focus and following it, with
+    /// `owed` owed.
+    fn focus_effects(context: &Context, node: &NodeSnapshot, owed: Option<OwedWork>) -> Effects {
+        let (mut follow, _) = follow_of(
+            context,
+            FocusMade {
+                node: (node.id, node.role),
+                object: None,
+                window: None,
+                chain: vec![node.clone()],
+                batch: 0,
+                event: (TraceId::mint(), 1),
+                redirected: false,
+                caret: None,
+                at_bound: false,
+            },
+        );
+        follow.owed = owed;
+        Effects {
+            result: Some(OutpostToSupervisor::IdleAnswer { round: 1 }),
+            report: Some(Report::Reported(judged_focus(
+                context,
+                (TraceId::mint(), node, &[]),
+                (None, false),
+                None,
+            ))),
+            follow: Some(follow),
+            ..Effects::default()
+        }
+    }
+
+    /// The node the outpost follows, and how many focuses wait for Core's
+    /// judgement.
+    fn followed(context: &Context) -> (Option<NodeId>, usize) {
+        (
+            context.watch.follow(|follow| follow.tracking.focus),
+            context.held().focuses().count(),
+        )
+    }
+
+    /// Arms a walk of `bound_focus` for generation 0 under a fresh entry
+    /// concerning `window`, `left` from its bound, returning when the entry
+    /// started and the walk's bound.
+    fn armed(context: &Context, window: isize, left: Duration) -> (Instant, Instant) {
+        context.watch.start(HANDLING_DEADLINE, None, window);
+        context
+            .watch
+            .arm(FocusProgress::new(0, bound_focus(), 0, left))
+            .expect("the walk armed");
+        let state = context.watch.lock();
+        (
+            state.started.expect("started").0,
+            state.walk.as_ref().expect("armed").bound_at,
+        )
     }
 
     /// A walk that returns before its bound is disarmed, and one that
@@ -5186,136 +5636,220 @@ mod tests {
             watch.lock().walk.as_ref().expect("the walk armed").bound_at
         };
         let bound = arm();
-        assert!(watch.walk_returned(0, bound).is_err());
+        assert!(matches!(
+            watch.walk_returned(0, bound),
+            Returned::PastBound(_)
+        ));
         assert!(watch.lock().walk.is_some(), "still armed");
         let before = arm()
             .checked_sub(Duration::from_millis(1))
             .expect("a time before the bound");
-        assert!(matches!(watch.walk_returned(0, before), Ok(None)));
+        assert!(matches!(watch.walk_returned(0, before), Returned::Disarmed));
         assert!(watch.lock().walk.is_none(), "disarmed");
     }
 
-    /// A focus published at its walk's bound is sent before its worker can
-    /// take it up, so nothing the worker sends once it has adopted the
-    /// focus, a settle's flush or the next entry's event, reaches Core
-    /// before it: the publication is sent under the watch lock, which the
-    /// worker takes to learn of it. The test holds the publication's send
-    /// and finds the watch lock held meanwhile.
+    /// One wake past both a walk's bound and its worker's deadline
+    /// publishes the walk, once, and makes it the followed focus, before
+    /// the worker is abandoned.
     #[test]
-    fn a_focus_published_at_its_bound_is_sent_before_its_worker_can_adopt_it() {
-        use std::sync::mpsc;
-
-        use verbatim_process::overlapped::{End, Flow, pipe};
-        use verbatim_process::transport::EVENT_PIPE_BUFFER;
-
-        let (_ours, theirs) =
-            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
-        let outpost = super::super::Outpost::new(theirs, std::process::id());
-        // The outpost's own worker and watchdog are stopped, so nothing but
-        // the test touches the watch: the first worker, in charge, has an
-        // entry whose walk is armed.
-        let context = &Arc::clone(&outpost.context);
-        outpost.shutdown();
-        context.watch.start(HANDLING_DEADLINE, None, 0);
-        context.watch.arm(FocusProgress::new(
-            0,
-            bound_focus(),
-            0,
-            Duration::from_secs(3600),
+    fn a_walk_past_its_bound_is_published_before_its_worker_is_abandoned() {
+        let context = &quiet_context();
+        let (_, bound) = armed(context, 0, Duration::from_millis(500));
+        let woken = wake(context, bound + HANDLING_DEADLINE, |_| false);
+        assert!(matches!(
+            woken,
+            Wake::Abandoned(Abandoned { generation: 1, .. })
         ));
-        let walk = context.watch.lock().walk.clone().expect("the walk armed");
-        let (sending_tx, sending) = mpsc::channel();
-        let (go, go_rx) = mpsc::channel::<()>();
-        let adoptable = std::thread::scope(|scope| {
-            let walk = &walk;
-            scope.spawn(move || {
-                publish_at_bound(context, walk, |message, touched| {
-                    sending_tx.send(()).expect("the test waits for the send");
-                    go_rx.recv().expect("the test lets the send go on");
-                    context.outbound.publish(message, touched);
-                });
-            });
-            sending.recv().expect("the publication is sent");
-            let adoptable = context.watch.state.try_lock().is_ok();
-            go.send(()).expect("the publication waits");
-            adoptable
-        });
-        assert!(
-            !adoptable,
-            "the worker could take up the focus before it was sent"
+        assert_eq!(followed(context), (Some(NodeId::new(1)), 1));
+    }
+
+    /// A walk with a 2-second bound whose worker the moved-on rule abandons
+    /// at the end of the grace is published before the abandonment.
+    #[test]
+    fn a_walk_is_published_when_the_user_moves_on_before_its_bound() {
+        const WINDOW: isize = 0x1234;
+        let context = &quiet_context();
+        let (started, bound) = armed(context, WINDOW, Duration::from_secs(2));
+        assert!(started + MOVED_ON_GRACE < bound);
+        let woken = wake(context, started + MOVED_ON_GRACE, |window| window == WINDOW);
+        assert!(matches!(
+            woken,
+            Wake::Abandoned(Abandoned { generation: 1, .. })
+        ));
+        assert_eq!(followed(context), (Some(NodeId::new(1)), 1));
+    }
+
+    /// A focus published at its walk's bound is the followed focus from
+    /// that commit, before its worker learns of it: the tracking and the
+    /// intake's focused object are its own.
+    #[test]
+    fn a_focus_published_at_its_bound_is_followed_at_once() {
+        let context = &quiet_context();
+        let (_, bound) = armed(context, 0, Duration::from_millis(500));
+        context
+            .watch
+            .lock()
+            .walk
+            .as_mut()
+            .expect("armed")
+            .focus
+            .object = Some(Object::Msaa(5, OBJID_CLIENT.0, CHILDID_SELF));
+        assert!(matches!(wake(context, bound, |_| false), Wake::Nothing));
+        assert_eq!(
+            (
+                context.watch.follow(|follow| follow.tracking.focus),
+                context.intake.focused(),
+            ),
+            (
+                Some(NodeId::new(1)),
+                Some(Object::Msaa(5, OBJID_CLIENT.0, CHILDID_SELF))
+            )
         );
+        assert!(matches!(
+            context.watch.walk_returned(0, Instant::now()),
+            Returned::Published
+        ));
+    }
+
+    /// An abandoned worker's commit changes nothing: not the judgement
+    /// list, the followed focus, the subscription's target, nor what is
+    /// owed.
+    #[test]
+    fn an_abandoned_workers_commit_changes_nothing() {
+        let context = &quiet_context();
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        let _ = context.watch.lock().abandon();
+        let effects = focus_effects(
+            context,
+            &node(3, Role::Terminal),
+            Some(OwedWork::FirstRead(None)),
+        );
+        let (committed, _) = context.watch.commit(context, 0, effects);
+        assert_eq!(committed, Committed::Refused);
+        assert_eq!(followed(context), (None, 0));
+        assert!(context.watch.follow(|follow| follow.owed.is_none()));
+        assert_eq!(context.intake.focused(), None);
+    }
+
+    /// Owed work is taken up once, by the worker in charge, under a
+    /// deadline only the deadline ends: its next check is the deadline,
+    /// even with the user moved on. Abandoning the worker attempting it
+    /// clears it, so the worker that replaces it starts with nothing owed.
+    #[test]
+    fn owed_work_is_attempted_once_and_only_its_deadline_abandons_it() {
+        let context = &quiet_context();
+        let terminal = node(3, Role::Terminal);
+        context.watch.start(HANDLING_DEADLINE, None, 0x1234);
+        let effects = focus_effects(context, &terminal, Some(OwedWork::FirstRead(None)));
+        assert_eq!(
+            context.watch.commit(context, 0, effects).0,
+            Committed::Applied
+        );
+        let _ = context.watch.lock().abandon();
+        // The replacement is in an entry concerning a window when it takes
+        // the owed work up.
+        context.watch.start(HANDLING_DEADLINE, None, 0x1234);
         assert!(
-            matches!(context.watch.walk_returned(0, Instant::now()), Ok(Some(_))),
-            "the worker takes it up once it is sent"
+            context.watch.take_owed(1).is_some(),
+            "the replacement takes it"
+        );
+        assert!(context.watch.take_owed(1).is_none(), "once");
+        let (deadline, started) = {
+            let state = context.watch.lock();
+            (
+                state.deadline.expect("the attempt's deadline"),
+                state.started.expect("started"),
+            )
+        };
+        let after_grace = started.0 + MOVED_ON_GRACE;
+        assert_eq!(
+            (
+                started.1,
+                abandon_reason(after_grace, deadline, started.0, started.1, |_| true),
+            ),
+            (0, None),
+            "the moved-on rule does not abandon the attempt"
+        );
+        let _ = context.watch.lock().abandon();
+        assert!(context.watch.follow(|follow| follow.owed.is_none()));
+        assert!(context.watch.take_owed(2).is_none());
+    }
+
+    /// A newer focus's commit replaces the work the focus before it owed.
+    #[test]
+    fn a_newer_focus_replaces_the_owed_work_of_the_one_before() {
+        let context = &quiet_context();
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        let first = focus_effects(
+            context,
+            &node(3, Role::Terminal),
+            Some(OwedWork::FirstRead(None)),
+        );
+        let _ = context.watch.commit(context, 0, first);
+        let second = focus_effects(context, &node(4, Role::Button), None);
+        let _ = context.watch.commit(context, 0, second);
+        assert!(context.watch.follow(|follow| follow.owed.is_none()));
+    }
+
+    /// A terminal read by a worker abandoned during it leaves the
+    /// terminal's entry as it was: the read worked on a copy, and its
+    /// commit is refused.
+    #[test]
+    fn a_terminal_read_by_an_abandoned_worker_leaves_its_entry_as_it_was() {
+        let context = &quiet_context();
+        let terminal = NodeId::new(3);
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        let mut copy = context.watch.follow(|follow| {
+            follow
+                .terminals
+                .get(&terminal.number())
+                .cloned()
+                .unwrap_or_default()
+        });
+        copy.reading = Reading::Held { changed: true };
+        let _ = context.watch.lock().abandon();
+        let (committed, _) = context.watch.commit(
+            context,
+            0,
+            Effects {
+                terminal: Some((terminal, copy)),
+                ..Effects::default()
+            },
+        );
+        assert_eq!(committed, Committed::Refused);
+        assert!(
+            context
+                .watch
+                .follow(|follow| !follow.terminals.contains_key(&terminal.number()))
         );
     }
 
-    /// A terminal published at its walk's bound survives the abandonment
-    /// of the worker that adopts it in its caret read: that worker follows
-    /// nothing once the read returns, so it overwrites nothing its
-    /// replacement has followed since, and the focus is handed over again,
-    /// to the replacement. The test drives the watch as the watchdog would:
-    /// the first worker's walk published the terminal and was abandoned
-    /// before it adopted it, and the second worker, adopting it, is
-    /// abandoned in its caret read, during which a newer focus is followed.
+    /// The subscription is moved to a focus's element, found after its
+    /// report, only while that focus is still the followed one.
     #[test]
-    fn a_handed_over_terminal_survives_its_adopters_abandonment_in_its_read() {
-        use verbatim_process::overlapped::{End, Flow, pipe};
-        use verbatim_process::transport::EVENT_PIPE_BUFFER;
-
-        let (_ours, theirs) =
-            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
-        let outpost = super::super::Outpost::new(theirs, std::process::id());
-        // The outpost's own worker and watchdog are stopped, so nothing but
-        // the test touches the watch.
-        let context = &Arc::clone(&outpost.context);
-        outpost.shutdown();
-        let abandon = || {
-            context.watch.lock().abandon();
-            context.watch.abandoned.fetch_add(1, Ordering::Relaxed);
+    fn a_slider_is_added_only_while_its_focus_is_followed() {
+        let context = &quiet_context();
+        context.watch.start(HANDLING_DEADLINE, None, 0);
+        let followed_now = focus_effects(context, &node(4, Role::Button), None);
+        let _ = context.watch.commit(context, 0, followed_now);
+        let before = context.watch.follow(|follow| follow.followed);
+        let late = Target {
+            wanted: Some((
+                NodeId::new(3),
+                verbatim_uia::Group::Base,
+                Some(NodeId::new(2)),
+            )),
+            element: None,
+            slider: None,
         };
-        let terminal = NodeId::new(7);
-        context.watch.start(HANDLING_DEADLINE, None, 0);
-        context.watch.lock().published = Some(Published {
-            node: terminal,
-            role: Role::Terminal,
-            object: None,
-            window: None,
-            chain: Vec::new(),
-            trace: TraceId::mint(),
-            observed_at_us: 1,
-            batch: 0,
-        });
-        abandon();
-        let handed_over = context
-            .watch
-            .handed_over(1)
-            .expect("the terminal handed over to the second worker");
-        let newer = NodeId::new(9);
-        context.watch.start(HANDLING_DEADLINE, None, 0);
-        let mut client = Client::default();
-        let mut second = Worker {
+        let _ = context.watch.commit(
             context,
-            client: &mut client,
-            generation: 1,
-            batch: 0,
-            timing: EventTiming::default(),
-            msaa_event: None,
-        };
-        second.adopt_published_reading(handed_over, |_, _, _| {
-            abandon();
-            context.tracking().focus = Some(newer);
-            Some(FocusText::NotRead)
-        });
-        assert_eq!(
-            (
-                context.watch.finish(1),
-                context.watch.abandoned(),
-                context.tracking().focus,
-                context.watch.handed_over(2).map(|published| published.node),
-            ),
-            (Err(()), 1, Some(newer), Some(terminal)),
-            "the second worker, abandoned, followed nothing and handed the terminal over again"
+            0,
+            Effects {
+                element: Some((NodeId::new(3), late)),
+                ..Effects::default()
+            },
         );
+        assert_eq!(context.watch.follow(|follow| follow.followed), before);
     }
 }

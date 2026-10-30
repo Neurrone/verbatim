@@ -178,6 +178,21 @@ impl Held {
         Some(before.contains(verbatim_model::State::Expanded))
     }
 
+    /// Whether `node` was expanded when its states were last read, as
+    /// [`replace_states`](Self::replace_states) answers it, without
+    /// recording anything: read before a state change's call, whose commit
+    /// records the states then.
+    pub(super) fn expanded_before(&self, node: NodeId) -> Option<bool> {
+        if !self.is_a_focus(node) {
+            return None;
+        }
+        let before = match self.states_read {
+            Some((read, before)) if read == node => before,
+            _ => self.role_states(node)?,
+        };
+        Some(before.contains(verbatim_model::State::Expanded))
+    }
+
     /// The states `node`, a focus, was reported or taken with, the newest
     /// first.
     fn role_states(&self, node: NodeId) -> Option<StateSet> {

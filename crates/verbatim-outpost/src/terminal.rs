@@ -35,8 +35,10 @@ use crate::text::TextError;
 use reading::Reading;
 
 /// What the outpost keeps of a focused terminal between its reads, while
-/// the terminal exists, across focus changes.
-#[derive(Default)]
+/// the terminal exists, across focus changes. A read works on a copy,
+/// which costs an `AddRef` of where the next read starts and the caret last
+/// sent's line.
+#[derive(Clone, Default)]
 pub struct Terminal {
     /// Where the next read starts ([`Snapshot::next_start`]).
     start: Option<AgileReference<IUIAutomationTextRange>>,

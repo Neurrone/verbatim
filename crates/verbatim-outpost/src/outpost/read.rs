@@ -83,8 +83,11 @@ pub(super) enum WalkStep<'a> {
     Chain(&'a [NodeSnapshot], Option<isize>),
 }
 
-/// What a focus's walk tells what it reads ([`WalkStep`]).
-pub(super) type WalkTold<'a> = &'a dyn Fn(WalkStep<'_>);
+/// What a focus's walk tells what it reads ([`WalkStep`]), which answers
+/// whether the walk goes on: an abandoned worker's walk stops at its next
+/// step (`docs/design/focus-pipeline-rework.md`, "The outpost's commit
+/// point"), as one out of time does.
+pub(super) type WalkTold<'a> = &'a dyn Fn(WalkStep<'_>) -> bool;
 
 /// Where a focus's walk tells what it reads; `None` for a walk no watchdog
 /// publishes.
@@ -930,7 +933,10 @@ fn uia_remote_enrichment(
         return None;
     }
     let clock = context.clock();
-    let out_of_time = time_limit(&clock, left);
+    let timed = time_limit(&clock, left);
+    // A walk told to stop is out of time at its next step.
+    let stopped = std::cell::Cell::new(false);
+    let out_of_time = || timed() || stopped.get();
     // The classic walk tells each ancestor it keeps, shaped as the chain
     // reports it, with the window plain windows would complete the chain
     // from; a remote program tells nothing until it returns.
@@ -950,7 +956,9 @@ fn uia_remote_enrichment(
             },
         );
         let from = outermost.step(ancestor.read().node.role.hwnd);
-        progress(WalkStep::Ancestor(shaped.pop().as_ref(), from));
+        if !progress(WalkStep::Ancestor(shaped.pop().as_ref(), from)) {
+            stopped.set(true);
+        }
     };
     let (known_ids, known) = known_uia_nodes(context, previous);
     // The query reads the focus's control type and window; its ancestors
@@ -1167,7 +1175,7 @@ fn msaa_ancestors(
     // reached its window.
     let told = progress.map(|progress| {
         move |ancestor: &NodeSnapshot, hwnd: isize| {
-            progress(WalkStep::Ancestor(
+            let _ = progress(WalkStep::Ancestor(
                 Some(ancestor).filter(|ancestor| ancestor.role != Role::Window),
                 hwnd,
             ));
@@ -1213,10 +1221,10 @@ fn msaa_ancestors(
         return complete(context, uia, (chain, above), previous, out_of_time);
     };
     if let Above::Plain(hwnd) | Above::From(hwnd) = above {
-        progress(WalkStep::Chain(&chain, Some(hwnd)));
+        let _ = progress(WalkStep::Chain(&chain, Some(hwnd)));
     }
     let chain = complete(context, uia, (chain, above), previous, out_of_time);
-    progress(WalkStep::Chain(&chain, None));
+    let _ = progress(WalkStep::Chain(&chain, None));
     chain
 }
 
@@ -1239,13 +1247,26 @@ pub(super) fn msaa_enrichment(
     // ancestor. A dialog is still announced, by its client area's dialog
     // role.
     let clock = context.clock();
-    let out_of_time = time_limit(&clock, left);
+    let timed = time_limit(&clock, left);
+    // A walk told to stop is out of time at its next step.
+    let stopped = std::cell::Cell::new(false);
+    let out_of_time = || timed() || stopped.get();
+    let told = progress.map(|progress| {
+        let stopped = &stopped;
+        move |step: WalkStep<'_>| {
+            let on = progress(step);
+            if !on {
+                stopped.set(true);
+            }
+            on
+        }
+    });
     let request = client.uia_with(context, Context::ancestor_request).ok();
     let ancestors = msaa_ancestors(
         context,
         request.as_ref().map(|(uia, request)| (*uia, request)),
         node,
-        (previous, progress),
+        (previous, told.as_ref().map(|told| told as WalkTold<'_>)),
         Some(&out_of_time),
     );
     let selected = if wants_selected_child(node.role) {
@@ -1573,7 +1594,7 @@ fn uia_focused_control(
         // window's own element, should nothing more be read.
         let outermost = Outermost::new(hwnd);
         if let Some(progress) = progress {
-            progress(WalkStep::Focus {
+            let _ = progress(WalkStep::Focus {
                 node: &node,
                 window: hwnd,
                 from: outermost.step(fields.role.hwnd),

@@ -90,6 +90,9 @@ struct Signal<'a> {
     /// (`Context::caret_read_since`), and the read is evidence as the
     /// event would have been.
     covered: bool,
+    /// When the caret read began, once it has, on the observation clock:
+    /// committed with what the check sends.
+    read_at: Option<u64>,
 }
 
 impl CaretSignal for Signal<'_> {
@@ -105,7 +108,7 @@ impl CaretSignal for Signal<'_> {
         if !self.caret_event {
             self.covered = caret_event_waiting(self.context, self.node_id, self.pressed_at_ms);
         }
-        self.context.caret_read(self.node_id);
+        self.read_at = Some(self.context.observed_now());
     }
 
     /// An edit control's value change waiting, as a caret event's report
@@ -136,7 +139,7 @@ fn caret_event_waiting(context: &Context, node_id: NodeId, since_ms: u64) -> boo
     let (console, edit) = match &runtime_id {
         Some(_) => (
             console_focus(context, node_id)
-                .then(|| context.tracking().window())
+                .then(|| context.tracked_window())
                 .flatten(),
             None,
         ),
@@ -247,7 +250,7 @@ fn uia_source(context: &Context, node_id: NodeId) -> Result<UiaText, TextReply> 
     let caret_pattern = caret_pattern.and_then(|caret| caret.resolve().ok());
     let class = element.read().class_name;
     let terminal = is_terminal_class(class.as_deref()) || console_focus(context, node_id);
-    let remote = context.tries_remote(context.tracking().window());
+    let remote = context.tries_remote(context.tracked_window());
     let support = context
         .text_support()
         .get(&node_id.number())
@@ -331,7 +334,7 @@ fn note_fallback(context: &Context, source: &mut UiaText) {
     let Some(error) = source.take_fallback() else {
         return;
     };
-    let window = context.tracking().window();
+    let window = context.tracked_window();
     tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
     if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (&error, window) {
         context.read_classically(window);
@@ -349,8 +352,7 @@ pub(super) fn console_focus(context: &Context, node_id: NodeId) -> bool {
         });
     focus_is_node
         && context
-            .tracking()
-            .window()
+            .tracked_window()
             .is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS)
 }
 
@@ -472,13 +474,14 @@ fn before_reply<P>(read: Result<text::ReportedCaret<P>, TextError>, read_at_ms: 
 /// ([`text::check_caret`]): the answer once there is evidence, or the reply
 /// that ends the request when the node has no text or is gone; otherwise
 /// the watch stays open. `caret_event` says whether a caret event prompted
-/// the check.
+/// the check. Also when the caret read began, if it was read, for the
+/// commit of what the check sends.
 pub(super) fn check_watch(
     context: &Context,
     node_id: NodeId,
     watch: &CaretWatch,
     caret_event: bool,
-) -> Watched {
+) -> (Watched, Option<u64>) {
     let source = match source(context, node_id) {
         Ok(source) => source,
         // A UIA element that answered no text pattern, or did not answer:
@@ -488,9 +491,9 @@ pub(super) fn check_watch(
         Err(TextReply::NoText | TextReply::Unanswered)
             if context.uia_registry.runtime_id_of(node_id).is_some() =>
         {
-            return Watched::Watching;
+            return (Watched::Watching, None);
         }
-        Err(reply) => return Watched::Answered(reply),
+        Err(reply) => return (Watched::Answered(reply), None),
     };
     let mut signal = Signal {
         context,
@@ -498,8 +501,9 @@ pub(super) fn check_watch(
         caret_event,
         pressed_at_ms: watch.pressed_at_ms,
         covered: false,
+        read_at: None,
     };
-    match source {
+    let watched = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
             let watched = text::check_caret(
@@ -522,7 +526,8 @@ pub(super) fn check_watch(
                 &mut signal,
             )
         }
-    }
+    };
+    (watched, signal.read_at)
 }
 
 /// Why there is no caret to report.
@@ -549,6 +554,12 @@ pub(super) struct SelectionReport {
     pub(super) new_selection: Option<SelectionChange>,
 }
 
+/// What [`report_caret`] found, and when its read began, if it was made.
+pub(super) type CaretReading = (
+    Result<(CaretReport, bool, SelectionReport), NoCaret>,
+    Option<u64>,
+);
+
 /// What a caret report is for ([`report_caret`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum CaretFor {
@@ -573,12 +584,10 @@ pub(super) enum CaretFor {
 /// says, with how the selection changed for [`CaretFor::Event`];
 /// otherwise why there is none. For [`CaretFor::Terminal`], also whether
 /// the caret is the one last sent to Core for the terminal: at the same
-/// place, the read says, with the same line.
-pub(super) fn report_caret(
-    context: &Context,
-    node_id: NodeId,
-    purpose: CaretFor,
-) -> Result<(CaretReport, bool, SelectionReport), NoCaret> {
+/// place, the read says, with the same line. Also when the read began, on
+/// the observation clock, when it was made: it covers the caret events
+/// observed before then only once its commit notes it.
+pub(super) fn report_caret(context: &Context, node_id: NodeId, purpose: CaretFor) -> CaretReading {
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(reply) => {
@@ -588,15 +597,22 @@ pub(super) fn report_caret(
                 forget_selection(context, node_id, Backend::Uia);
                 forget_selection(context, node_id, Backend::Msaa);
             }
-            return Err(if reply == TextReply::NoText {
+            let missed = if reply == TextReply::NoText {
                 NoCaret::NoText
             } else {
                 NoCaret::NotRead
-            });
+            };
+            return (Err(missed), None);
         }
     };
     let sent = if purpose == CaretFor::Terminal {
-        sent_caret_point(context, node_id)
+        let sent = context.watch.follow(|follow| {
+            follow
+                .terminals
+                .get(&node_id.number())
+                .and_then(|terminal| terminal.sent_caret.clone())
+        });
+        sent.and_then(|sent| sent_caret_point(context, node_id, sent))
     } else {
         None
     };
@@ -606,7 +622,7 @@ pub(super) fn report_caret(
         CaretFor::Event => LastSelection::Compare,
     };
     let formats = purpose == CaretFor::Focus;
-    context.caret_read(node_id);
+    let read_at = Some(context.observed_now());
     let report = match source {
         Source::Uia(mut source) => {
             let mut anchors = context.uia_anchors();
@@ -660,14 +676,15 @@ pub(super) fn report_caret(
             })
         }
     };
-    match report {
+    let report = match report {
         Ok(report) => Ok(report),
         Err(TextError::Gone) => Err(NoCaret::NotRead),
         Err(TextError::Failed(reason)) => {
             tracing::debug!(reason, "the caret could not be read");
             Err(NoCaret::NotRead)
         }
-    }
+    };
+    (report, read_at)
 }
 
 /// A caret read's report, and its selection changes as a caret event's
@@ -756,17 +773,14 @@ pub(super) struct TerminalCaret {
     pub(super) report: CaretReport,
 }
 
-/// The caret last sent to Core for terminal `node_id`, with where it was,
-/// when the outpost still knows that without a call: what a caret read
-/// compares with.
+/// `sent`, the caret last sent to Core for terminal `node_id`, with where
+/// it was, when the outpost still knows that without a call: what a caret
+/// read compares with.
 fn sent_caret_point(
     context: &Context,
     node_id: NodeId,
+    sent: CaretReport,
 ) -> Option<(CaretReport, crate::text::uia::UiaPos)> {
-    let sent = context
-        .terminals()
-        .get(&node_id.number())
-        .and_then(|terminal| terminal.sent_caret.clone())?;
     let point = context
         .uia_anchors()
         .node(node_id.number())
@@ -783,20 +797,31 @@ fn sent_caret_point(
 /// character typed (the console host's come on a schedule of their own), so
 /// Core's copy of the caret would lag behind typing. The same round trip
 /// says whether the caret is still where the caret last sent to Core was.
-/// `waited` says whether the read waited for Core's speech queue. `None`
-/// when the terminal has no text pattern, is gone, or could not be read.
+/// `waited` says whether the read waited for Core's speech queue. The read
+/// works on `terminal`, a copy of the terminal's entry, which its commit
+/// puts in place, with no lock held across it. `None` when the terminal has
+/// no text pattern, is gone, or could not be read; otherwise also when the
+/// caret was read, for the commit to note.
 pub(super) fn terminal_read(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
+    terminal: &mut crate::terminal::Terminal,
     (scope, waited): (Option<verbatim_model::TerminalScope>, bool),
-) -> Option<(crate::terminal::ReadAnswer, Option<TerminalCaret>)> {
+) -> Option<(
+    crate::terminal::ReadAnswer,
+    Option<TerminalCaret>,
+    Option<u64>,
+)> {
     let Ok(mut source) = uia_source(context, node_id) else {
         return None;
     };
-    let window = context.tracking().window();
+    let window = context.tracked_window();
     let remote = context.tries_remote(window);
-    let sent = sent_caret_point(context, node_id);
+    let sent = terminal
+        .sent_caret
+        .clone()
+        .and_then(|sent| sent_caret_point(context, node_id, sent));
     let since = match &sent {
         Some((_, point)) => point.range_end().ok(),
         None => None,
@@ -813,8 +838,6 @@ pub(super) fn terminal_read(
                 endpoint: *endpoint,
             }),
     };
-    let mut terminals = context.terminals();
-    let terminal = terminals.entry(node_id.number()).or_default();
     // The caret is stamped as read when the round trip began: a caret event
     // observed while it was in flight may report a move it did not see.
     let started_us = crate::protocol::now_us();
@@ -825,7 +848,6 @@ pub(super) fn terminal_read(
         terminal,
         (scope, remote, waited),
     );
-    drop(terminals);
     match read {
         Ok(mut answer) => {
             if let Path::Fallback(error) = &answer.path {
@@ -834,8 +856,8 @@ pub(super) fn terminal_read(
                     context.read_classically(window);
                 }
             }
+            let caret_read = answer.caret.is_some().then_some(started_us);
             let caret = answer.caret.take().and_then(|answer| {
-                context.caret_read_from(node_id, started_us);
                 let read_at_ms = super::now_ms();
                 let read = source.caret_read_from(answer).ok()?;
                 let mut anchors = context.uia_anchors();
@@ -848,7 +870,7 @@ pub(super) fn terminal_read(
                 .ok()?;
                 Some(TerminalCaret { report })
             });
-            Some((answer, caret))
+            Some((answer, caret, caret_read))
         }
         Err(TextError::Gone) => None,
         Err(TextError::Failed(reason)) => {
@@ -865,21 +887,21 @@ pub(super) fn terminal_read(
 pub(super) fn terminal_history(
     context: &Context,
     uia: &verbatim_uia::Uia,
-    node_id: NodeId,
+    (node_id, terminal): (NodeId, Option<crate::terminal::Terminal>),
     (above, whole): (u32, bool),
 ) -> TextReply {
     let Ok(source) = uia_source(context, node_id) else {
         return TextReply::Unanswered;
     };
-    let remote = context.tries_remote(context.tracking().window());
-    let terminals = context.terminals();
-    let Some(terminal) = terminals.get(&node_id.number()) else {
+    let remote = context.tries_remote(context.tracked_window());
+    // A copy of the terminal's entry, so no lock is held across the read.
+    let Some(terminal) = terminal else {
         return TextReply::Unanswered;
     };
     match crate::terminal::history(
         uia,
         (source.element(), source.pattern()),
-        terminal,
+        &terminal,
         (above, whole, remote),
     ) {
         Ok(history) => TextReply::TerminalHistory {
@@ -900,21 +922,21 @@ pub(super) fn terminal_history(
 pub(super) fn terminal_find(
     context: &Context,
     uia: &verbatim_uia::Uia,
-    node_id: NodeId,
+    (node_id, terminal): (NodeId, Option<crate::terminal::Terminal>),
     (needle, from, rows): (&str, i32, u32),
 ) -> TextReply {
     let Ok(source) = uia_source(context, node_id) else {
         return TextReply::Unanswered;
     };
-    let remote = context.tries_remote(context.tracking().window());
-    let terminals = context.terminals();
-    let Some(terminal) = terminals.get(&node_id.number()) else {
+    let remote = context.tries_remote(context.tracked_window());
+    // A copy of the terminal's entry, so no lock is held across the read.
+    let Some(terminal) = terminal else {
         return TextReply::Unanswered;
     };
     match crate::terminal::find(
         uia,
         (source.element(), source.pattern()),
-        terminal,
+        &terminal,
         (needle, from, rows),
         remote,
     ) {
@@ -948,19 +970,18 @@ pub(super) fn active_position(
     )
 }
 
-/// Forgets what was kept for released nodes.
+/// Forgets the text caches kept for released nodes; their terminals leave
+/// the follow state in release's commit.
 pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>) {
     let released: Vec<u64> = released.into_iter().collect();
     let mut patterns = context.patterns();
     let mut support = context.text_support();
     let mut uia = context.uia_anchors();
     let mut edit = context.edit_anchors();
-    let mut terminals = context.terminals();
     for node in released {
         patterns.remove(&node);
         support.remove(&node);
         uia.forget_node(node);
         edit.forget_node(node);
-        terminals.remove(&node);
     }
 }
