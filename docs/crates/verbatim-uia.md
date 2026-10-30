@@ -162,8 +162,11 @@ over the raw view, capped by the caller and stopped by `AncestorStops`:
 at a window read through the other API, at an ancestor the caller
 already knows (`AncestorWalk::MetKnown`), or at the caller's
 `out_of_time` check, a hop the transaction timeout ended, or a parent
-found past `max_hops` ancestors (`AncestorWalk::Cut`, with the outermost element's nearest window, from
-which the caller completes the chain by plain windows). The root has no
+found past `max_hops` ancestors (`AncestorWalk::Cut`, with the window
+from which the caller completes the chain by plain windows, it included:
+`plain_windows_start(nearest, hwnds)`, the outermost element's nearest
+window, or that window's parent window when the outermost element is the
+window's own, which the walk has read). The root has no
 parent, which ends the walk as complete; any other failed hop, or one that
 finds no parent, below the root ends it as `AncestorWalk::Failed`, carrying
 a `FailedHop` (`Error` with the code, or `NoParent`) and the window the

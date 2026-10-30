@@ -20,8 +20,8 @@ until the top-level window, and the outpost reads the frame through its
 own API, so the frame is an entered ancestor of the page's focus and is
 announced with it whichever outpost is quicker; a foreground report for
 the frame that comes before the focus is announced, and the page's
-focus does not announce the frame again, since it is the same top-level
-window with the same role and name. **matched (unverified)** (a reducer
+focus does not announce the frame again, since both nodes carry the same
+window. **matched (unverified)** (a reducer
 test feeding both orders). A console window is one application, as
 "Console windows" says.
 

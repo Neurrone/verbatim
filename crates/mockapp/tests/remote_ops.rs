@@ -776,9 +776,9 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
 /// so that filling an element's cache outlasts UIA's transaction timeout
 /// while the walk to its nearest window and the live read of its keyboard
 /// focus, which request no pattern, do not, the focus is reported from its
-/// event, as NVDA lets a focus through whose read fails, with its
-/// containers unknown, never as having none, whether remote operations are
-/// on or off. (With every provider call slow, the walk to the nearest
+/// event, as NVDA lets a focus through whose read fails, with its chain
+/// completed by the windows above it, whether remote operations are on or
+/// off. (With every provider call slow, the walk to the nearest
 /// window times out first, and the focus is dropped, as
 /// `a_timed_out_nearest_window_lookup_reads_nothing_into_the_application`
 /// shows.)
@@ -851,13 +851,13 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
                         .map(|node| (node.role, node.name.clone(), node.details.window))
                         .collect::<Vec<_>>(),
                     [(
-                        Role::Window,
+                        Role::Pane,
                         Some(fixture.title.clone()),
                         Some(verbatim_model::WindowHandle(u64::from_ne_bytes(
                             fixture.hwnd.to_ne_bytes()
                         )))
                     )],
-                    "{path}: mockapp's window, a plain window named by its title"
+                    "{path}: mockapp's window, its client pane named by its title"
                 );
             }
             other => panic!("{path}: the outpost said {other:?}, not the focus"),

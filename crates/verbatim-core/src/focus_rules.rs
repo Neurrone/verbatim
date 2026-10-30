@@ -350,28 +350,51 @@ impl EnteredKey for verbatim_model::NodeSnapshot {
 }
 
 /// Whether `old`, an entry of a previous focus line, and `new`, an entry of
-/// a new one, are the same object (`docs/parity/focus-context.md`,
-/// "Focus-ancestry context"): the same node; or both are windows, and they
-/// are the same window, so that one window two outposts read is one
-/// entry; or, when either is not a window and the new focus is in the same
-/// top-level window as the previous one (`same_window`), they have one
-/// role and name and are not two elements one outpost read through UI
-/// Automation, which its node ids alone tell apart. Two windows with the
-/// same role and name are two objects.
-pub fn same_entry(old: &impl EnteredKey, new: &impl EnteredKey, same_window: bool) -> bool {
+/// a new one, are the same object by what identifies one
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context"): the same
+/// node; or both are windows, and they are the same window, so that one
+/// window two outposts read is one entry. Two windows with the same role
+/// and name are two objects. Where two lines meet is chosen by this alone
+/// ([`meeting`]).
+pub fn same_object(old: &impl EnteredKey, new: &impl EnteredKey) -> bool {
+    old.key_id() == new.key_id()
+        || matches!(
+            (old.key_window(), new.key_window()),
+            (Some(old), Some(new)) if old == new
+        )
+}
+
+/// Whether `old` and `new`, entries of two focus lines that are not the
+/// same object by their ids ([`same_object`]), are taken as one container
+/// by their role and name: when the new focus is in the same top-level
+/// window as the previous one (`same_window`), neither is a window both
+/// carry, they have one role and name, and they are not two elements one
+/// outpost read through UI Automation, which its node ids alone tell apart
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context"). An MSAA
+/// object reached by another path, or a node from another outpost, can
+/// have another id. It keeps a matched container quiet and never chooses
+/// where two lines meet.
+pub fn same_by_role_and_name(
+    old: &impl EnteredKey,
+    new: &impl EnteredKey,
+    same_window: bool,
+) -> bool {
     let one_identity = old.key_id().outpost() == new.key_id().outpost()
         && old.key_backend() == Backend::Uia
         && new.key_backend() == Backend::Uia;
-    old.key_id() == new.key_id()
-        || match (old.key_window(), new.key_window()) {
-            (Some(old), Some(new)) => old == new,
-            _ => {
-                same_window
-                    && !one_identity
-                    && old.key_role() == new.key_role()
-                    && old.key_name() == new.key_name()
-            }
-        }
+    let both_windows = old.key_window().is_some() && new.key_window().is_some();
+    same_window
+        && !both_windows
+        && !one_identity
+        && old.key_role() == new.key_role()
+        && old.key_name() == new.key_name()
+}
+
+/// Whether `old`, an entry of a previous focus line, and `new`, an entry of
+/// a new one, are the same entry: the same object ([`same_object`]), or
+/// taken as one by their role and name ([`same_by_role_and_name`]).
+pub fn same_entry(old: &impl EnteredKey, new: &impl EnteredKey, same_window: bool) -> bool {
+    same_object(old, new) || same_by_role_and_name(old, new, same_window)
 }
 
 /// Whether the focus had already entered `node`, a container of a new
@@ -393,27 +416,45 @@ pub fn already_entered<'a, P: EnteredKey + 'a>(
 /// context"): each line is a focus's ancestors, outermost first, the
 /// desktop left out, and then the focus, given as the two. The new line is
 /// walked from its focus outward, and at each entry the previous line from
-/// its focus outward, and the first pair that is the same entry
-/// ([`same_entry`]) is the meeting: `Some((old, new))`, their indexes in
+/// its focus outward, and the first pair that is the same object
+/// ([`same_object`]) is the meeting: `Some((old, new))`, their indexes in
 /// the two lines, the focus's being its ancestors' count. The focus line
 /// that results is the previous line up to and including `old`, then the
 /// new line's entries after `new`; those entries below the meeting point
 /// are the ones the focus has newly entered. `None` when the lines share
-/// no entry, that is, when they differ just below the desktop. Nothing is
-/// allocated.
+/// no object. Nothing is allocated.
 pub fn meeting<O: EnteredKey, N: EnteredKey>(
     (previous, previous_focus): (&[O], &O),
     (new, new_focus): (&[N], &N),
-    same_window: bool,
 ) -> Option<(usize, usize)> {
     let old_at = |index: usize| previous.get(index).unwrap_or(previous_focus);
     let new_at = |index: usize| new.get(index).unwrap_or(new_focus);
     (0..=new.len()).rev().find_map(|at_new| {
         (0..=previous.len())
             .rev()
-            .find(|&at_old| same_entry(old_at(at_old), new_at(at_new), same_window))
+            .find(|&at_old| same_object(old_at(at_old), new_at(at_new)))
             .map(|at_old| (at_old, at_new))
     })
+}
+
+/// How many of `entered`, the containers a new focus has entered below
+/// where its line meets the previous one, outermost first, are kept quiet
+/// as the containers `left`, the previous line's entries below that point,
+/// outermost first, taken by their role and name
+/// ([`same_by_role_and_name`]): the first entered is matched with the
+/// first left, the second with the second, and so on while each pair
+/// matches, since a container is the same as one left only when the
+/// container above it is too (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context"). Nothing is allocated.
+pub fn quiet_entered<'a, O: EnteredKey + 'a>(
+    left: impl IntoIterator<Item = &'a O>,
+    entered: &[impl EnteredKey],
+    same_window: bool,
+) -> usize {
+    left.into_iter()
+        .zip(entered)
+        .take_while(|(old, new)| same_by_role_and_name(*old, *new, same_window))
+        .count()
 }
 
 #[cfg(test)]

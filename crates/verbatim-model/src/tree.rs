@@ -308,8 +308,9 @@ pub enum State {
     Visited,
     /// Linked to other objects (MSAA `STATE_SYSTEM_LINKED`).
     Linked,
-    /// Not visible: MSAA `STATE_SYSTEM_INVISIBLE`, or a window without the
-    /// `WS_VISIBLE` style. Never spoken; an invisible ancestor is not
+    /// Not visible: MSAA `STATE_SYSTEM_INVISIBLE` on an object read
+    /// through MSAA; a window read from Windows' own state never carries
+    /// it. Never spoken; an invisible ancestor is not
     /// presented as an entered container (`docs/parity/focus-context.md`,
     /// "Focus-ancestry context"). UI Automation's `IsOffscreen` is
     /// [`State::Offscreen`], not this.

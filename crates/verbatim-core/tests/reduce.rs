@@ -3659,17 +3659,14 @@ fn a_foreground_change_to_another_window_announces_the_window_as_the_focus() {
 fn a_window_spoken_as_the_focus_is_not_repeated_when_its_control_takes_focus() {
     let source = Pid(1);
     // A foreground report is read through MSAA.
-    let mut window_node = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
-    window_node.backend = Backend::Msaa;
-    let (state, _) = reduce(
-        &SrState::new(),
-        &foreground_in(source, window(10), window_node),
-    );
+    let mut notepad = node(1, Role::Window, Some("Notepad"), None, StateSet::new());
+    notepad.backend = Backend::Msaa;
+    let (state, _) = reduce(&SrState::new(), &foreground_in(source, window(10), notepad));
 
     // The control's ancestry reaches the same window through another path,
-    // so its node id differs; the same top-level window with the same role
-    // and name is where the two lines meet, and the line keeps its entry.
-    let same_window = node(5, Role::Window, Some("Notepad"), None, StateSet::new());
+    // so its node id differs; the window's handle is where the two lines
+    // meet, and the line keeps its entry.
+    let same_window = window_node(5, Backend::Uia, Role::Window, "Notepad", 10);
     let edit = node(2, Role::EditableText, Some("Text"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
@@ -3741,7 +3738,7 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
         &foreground_in(frame_host, window(10), frame),
     );
 
-    let frame_seen_from_page = node(1, Role::Window, Some("Settings"), None, StateSet::new());
+    let frame_seen_from_page = window_node(1, Backend::Uia, Role::Window, "Settings", 10);
     let group = node(2, Role::Group, Some("Display"), None, StateSet::new());
     let toggle = node(
         3,
@@ -4409,7 +4406,7 @@ fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
     let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
     let (state, _) = reduce_from(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, button),
+        &focus_in(source, window(10), button, Vec::new()),
         OutpostId(1),
     );
     let (state, _) = reduce(&state, &ended(OutpostId(1)));
@@ -4417,13 +4414,14 @@ fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
     let other = node(1, Role::Button, Some("Cancel"), None, StateSet::new());
     let (_, effects) = reduce_from(
         &state,
-        &focus_event(TraceId::mint(), source, other),
+        &focus_in(source, window(10), other, Vec::new()),
         OutpostId(2),
     );
-    // Neither focus has a chain, so the lines share nothing.
+    // Neither focus has a chain the readers kept, and both are in one
+    // top-level window, where the lines meet.
     assert_eq!(
         heard(&effects),
-        cut_focus_heard(
+        focus_heard(
             focus_now(OutpostId(2), 1, &[], None),
             vec![vec![UtteranceSegment::label("Cancel"), role(Role::Button)]]
         )
@@ -4475,7 +4473,7 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
         let control = node(number, Role::Button, Some("Old"), None, StateSet::new());
         state = reduce_from(
             &state,
-            &focus_event(TraceId::mint(), source, control),
+            &focus_in(source, window(10), control, Vec::new()),
             OutpostId(1),
         )
         .0;
@@ -4485,12 +4483,12 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
     let slider = node(1, Role::Slider, Some("Volume"), Some("50"), StateSet::new());
     let (state, effects) = reduce_from(
         &state,
-        &focus_event(TraceId::mint(), source, slider),
+        &focus_in(source, window(10), slider, Vec::new()),
         OutpostId(2),
     );
     assert_eq!(
         heard(&effects),
-        cut_focus_heard(
+        focus_heard(
             focus_now(OutpostId(2), 1, &[], None),
             vec![vec![
                 UtteranceSegment::label("Volume"),
@@ -5473,6 +5471,180 @@ fn a_top_level_window_left_out_of_both_chains_is_where_they_meet() {
                 vec![UtteranceSegment::label("Right"), role(Role::Group)],
                 vec![UtteranceSegment::label("Apply"), role(Role::Button)],
             ]
+        )
+    );
+}
+
+/// A reader leaves layout ancestors out of a chain, so a focus can come
+/// with no ancestors at all: focuses whose window facts name one top-level
+/// window meet at that window, empty chains or not, and speech is not cut
+/// as the focus moves among them (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context").
+#[test]
+fn focuses_with_empty_chains_in_one_top_level_window_meet_there() {
+    let button = |id, name: &str| node(id, Role::Button, Some(name), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(Pid(1), window(10), button(1, "One"), Vec::new()),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &focus_in(Pid(1), window(10), button(2, "Two"), Vec::new()),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            plain_focus(2),
+            vec![vec![UtteranceSegment::label("Two"), role(Role::Button)]]
+        ),
+        "the second button"
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(1), window(10), button(3, "Three"), Vec::new()),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            plain_focus(3),
+            vec![vec![UtteranceSegment::label("Three"), role(Role::Button)]]
+        ),
+        "the third button"
+    );
+}
+
+/// Two chains read through MSAA in one web page, whose document carries
+/// its window: the new chain meets the previous line only at the
+/// document, by its window handle, and an unnamed list below it with the
+/// role and name of the list the previous focus was in is a new container,
+/// since the group above it is new, so NVDA's "Search grouping", "list",
+/// "b link" is said (`docs/parity/focus-context.md`, "Focus-ancestry
+/// context").
+#[test]
+fn a_container_matched_by_role_and_name_does_not_end_the_walk_to_the_meeting() {
+    let msaa = |id, role, name: Option<&str>| {
+        let mut node = node(id, role, name, None, StateSet::new());
+        node.backend = Backend::Msaa;
+        node
+    };
+    let document = window_node(1, Backend::Msaa, Role::Document, "Page", 20);
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(
+            Pid(1),
+            window(20),
+            msaa(4, Role::Link, Some("a")),
+            vec![
+                document.clone(),
+                msaa(2, Role::List, None),
+                msaa(3, Role::ListItem, None),
+            ],
+        ),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(1),
+            window(20),
+            msaa(8, Role::Link, Some("b")),
+            vec![
+                document,
+                msaa(5, Role::Group, Some("Search")),
+                msaa(6, Role::List, None),
+                msaa(7, Role::ListItem, None),
+            ],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 8, &[1, 5, 6, 7], None),
+            vec![
+                vec![UtteranceSegment::label("Search"), role(Role::Group)],
+                vec![role(Role::List)],
+                vec![UtteranceSegment::label("b"), role(Role::Link)],
+            ]
+        )
+    );
+}
+
+/// A container an MSAA walk reached by another path, with another id, the
+/// role and name of the one the previous focus was in, at the same place
+/// below where the lines meet, is entered but kept quiet
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+#[test]
+fn a_container_reached_by_another_path_is_kept_quiet() {
+    let msaa = |id, role, name: &str| {
+        let mut node = node(id, role, Some(name), None, StateSet::new());
+        node.backend = Backend::Msaa;
+        node
+    };
+    let app = window_node(1, Backend::Msaa, Role::Window, "App", 10);
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(
+            Pid(1),
+            window(10),
+            msaa(3, Role::Button, "OK"),
+            vec![app.clone(), msaa(2, Role::Dialog, "Options")],
+        ),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(1),
+            window(10),
+            msaa(6, Role::Button, "Apply"),
+            vec![app, msaa(5, Role::Dialog, "Options")],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 6, &[1, 5], None),
+            vec![vec![UtteranceSegment::label("Apply"), role(Role::Button)]]
+        )
+    );
+}
+
+/// A duplicate of the focus does not replace the focus line, as NVDA keeps
+/// its line when the focus matches itself: a duplicate whose chain was
+/// cut at its bound, holding only the application's window, leaves the
+/// dialog in the line, so the next focus in the dialog says only itself
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+#[test]
+fn a_duplicate_focus_does_not_replace_the_focus_line() {
+    let app = window_node(1, Backend::Uia, Role::Window, "App", 10);
+    let dialog = node(2, Role::Dialog, Some("Options"), None, StateSet::new());
+    let ok = node(3, Role::Button, Some("OK"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(
+            Pid(1),
+            window(10),
+            ok.clone(),
+            vec![app.clone(), dialog.clone()],
+        ),
+    );
+    // The duplicate's chain, cut at its bound, completed by the plain
+    // window of the application's window.
+    let plain = window_node(5, Backend::Msaa, Role::Pane, "App", 10);
+    let (state, effects) = reduce(&state, &focus_in(Pid(1), window(10), ok, vec![plain]));
+    assert_eq!(heard(&effects), Vec::new(), "the duplicate is silent");
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(1),
+            window(10),
+            node(4, Role::Button, Some("Apply"), None, StateSet::new()),
+            vec![app, dialog],
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 4, &[1, 2], None),
+            vec![vec![UtteranceSegment::label("Apply"), role(Role::Button)]]
         )
     );
 }

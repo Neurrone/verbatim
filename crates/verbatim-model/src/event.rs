@@ -190,8 +190,11 @@ pub enum NormalizedEvent {
         /// emitting, and where a walk was cut by its bound, failed or met a
         /// window it does not call into, completed by plain windows read
         /// from Windows' own state (`docs/design/focus-pipeline-rework.md`,
-        /// "A window's name, and the one fallback"). Empty only for a
-        /// top-level window's own focus. Carried on the event rather than
+        /// "A window's name, and the one fallback"). The readers leave out
+        /// the ancestors that are not presentable, layout containers among
+        /// them, so it is empty for a top-level window's own focus and can
+        /// be for any focus whose ancestors are all such; the focus's
+        /// window facts name its top-level window. Carried on the event rather than
         /// fetched afterward so the reducer can speak entered containers
         /// *before* the control, in NVDA's order, joining this chain to
         /// the previous focus's where they meet. `#[serde(default)]` keeps

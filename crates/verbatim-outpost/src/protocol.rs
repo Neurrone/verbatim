@@ -180,8 +180,10 @@ pub enum AncestorsEnd {
     /// outpost reads as a plain window, as NVDA does after that one step.
     ContinueFrom(isize),
     /// The walk was cut by the read's budget or its depth limit: the chain
-    /// is completed by plain windows from this window, the outermost
-    /// ancestor's nearest window, included.
+    /// is completed by plain windows from this window, included: the
+    /// outermost ancestor's nearest window, or its parent window when that
+    /// ancestor is the window's own element
+    /// ([`verbatim_uia::plain_windows_start`]).
     PlainFrom(isize),
 }
 

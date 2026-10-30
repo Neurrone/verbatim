@@ -29,22 +29,37 @@ element with the same role and name is entered anew: File Explorer's
 items view list after Enter opens a folder or Backspace goes up, where
 NVDA says "Items View list" before the item (10 of 10 captures,
 alpha-58022); and two MSAA objects are never the same when their windows
-differ. Verbatim compares two UI Automation nodes from one outpost by
-node id alone, the outpost giving one element one id; it treats nodes
-from two outposts, or read through MSAA, in the same top-level window as
-the same when their role and name match, since their ids cannot be
-compared ("A window and its content in two processes" in
-[Windows and processes](windows-and-processes.md)). Two nodes that are
-both windows (a window read from the system's own data, a UI Automation
+differ. Verbatim chooses the meeting point by node id and by window
+alone: it compares two UI Automation nodes from one outpost by node id,
+the outpost giving one element one id, and two nodes that are both
+windows (a window read from the system's own data, a UI Automation
 element that is its window's own, or an MSAA window or client object) are
 the same exactly when they are the same window, whichever outposts read
-them: the Settings frame its own process reports as its focus and the
+them. Nodes from two outposts, or read through MSAA, whose ids cannot be
+compared ("A window and its content in two processes" in
+[Windows and processes](windows-and-processes.md)), are matched by role
+and name only to keep a container quiet: of the containers entered below
+the meeting point, outermost first, each that has the role and name of
+the previous line's entry at the same place below that point, in the same
+top-level window, is not spoken, as long as every one above it matched
+too, since an object is the same as an old one only when its container
+is (Fable, 2026-10-30, pending Dickson's acceptance). The match never chooses where the lines meet:
+in a web page whose document carries its window, a link in a "Search"
+group's unnamed list, after a link in another unnamed list of the same
+document, says "Search grouping", "list", "b link", as NVDA does, where
+stopping at the first list matched by role and name said only "b link".
+The Settings frame its own process reports as its focus and the
 page's process as a pane above the page is entered once, so NVDA's
 "Settings", then "Settings window" for the page, is said without the
 frame again; and two windows of one role and name are two containers, as
 two Windows Forms panels whose client objects are dialogs named "Remove",
 each said "Remove dialog" as the focus moves into it
 (`experiments/focus-pipeline-rework-measurements/captures/two-same-named-dialogs.txt`).
+A focus reported again, the same as the focus, does not replace the
+line: NVDA keeps its line when the focus matches itself, so a repeat
+whose chain was cut at its bound leaves the containers the focus is in,
+and the next focus in them says only itself; the repeat's newer reading
+of the focus and of the line's nodes it holds is kept (Fable, 2026-10-30, pending Dickson's acceptance).
 A child window's client object reached from its window object is its
 window's, whether or not it has an identity string, so it carries its
 window. Each report's chain is complete to the desktop, windows a walk
@@ -59,21 +74,26 @@ no entry, NVDA's focus difference level of one or less, which runs its
 foreground event and cancels speech (`eventHandler.doPreGainFocus`); not
 when they meet below it. The readers leave out of a chain the entries
 that are not presentable, which NVDA's line holds, among them an unnamed
-UI Automation top-level window and an MSAA window object, so the focus's
-top-level window, which its window facts name, stands for the entry just
-below the desktop: two chains in one top-level window that share no
-entry meet there, and speech is not cut, except for a focus whose
+UI Automation top-level window, an MSAA window object and every layout
+container, so a chain can be empty, and the focus's top-level window,
+which its window facts name, stands for the entry just below the
+desktop: two chains in one top-level window that share no entry meet
+there, empty chains or not, and speech is not cut, except for a focus whose
 containers a rule drops, whose container is the desktop, as NVDA's task
 switcher item's is with Alt held. The first focus Verbatim takes cuts nothing, as
 NVDA, starting, makes the focus its focus object before it handles it. A
 combo box's drop-down opened by Alt+Down says "expanded" and cuts
 nothing: the focus stays on the combo box, so no chain is compared.
 
-An invisible ancestor, MSAA's `STATE_SYSTEM_INVISIBLE` or a plain window
-without the `WS_VISIBLE` style, is not presented, as NVDA counts an
-invisible object unavailable (`_get_presentationType`); the state is
-never spoken. UI Automation's `IsOffscreen` is NVDA's offscreen state,
-not invisible, and does not hide an ancestor. **partial**: reducer tests,
+An invisible ancestor, MSAA's `STATE_SYSTEM_INVISIBLE` on an object read
+through MSAA, is not presented, as NVDA counts an invisible object
+unavailable (`_get_presentationType`); the state is never spoken. A
+window read from Windows' own state carries no invisible state from its
+style (Fable, 2026-10-30, pending Dickson's acceptance): a Windows Terminal window not yet shown when
+its focus is published at its bound would lose its title for good, where
+NVDA reads it through UI Automation and says it. UI Automation's
+`IsOffscreen` is NVDA's offscreen state, not invisible, and does not
+hide an ancestor. **partial**: reducer tests,
 mockapp's `an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`
 and `a_uia_window_in_a_win32_window_has_the_windows_client_as_context`
 (a hidden window's client area, invisible), and `explorer_folder_window`
@@ -93,14 +113,18 @@ as in NVDA; a UI Automation ancestor is reported only when it is a
 control and content; and the outposts mark the MSAA client area of a
 window with a system menu (`NodeDetails::top_level_client`), which the
 reducer presents although it is a pane, so it is spoken by its title.
-A window above the process boundary, which the outpost reads with no
-call into its process, is described as NVDA's MSAA client for it: a
-pane, marked the same way when its style has a system menu, so a host's
-top-level window is spoken by its title and a child window between it
-and the focus's own window is structure; a ghost's or a hung
-application's window there stays a plain window, role window, as NVDA's
-object for it is (`docs/design/focus-pipeline-rework.md`, "The
-foreground wait"). A client object reached through `accParent` with no
+A window the outpost reads with no call into its process, above the
+process boundary or past a walk's bound, is described as NVDA's MSAA
+client for it: a pane, marked the same way when its style has a system
+menu, so a top-level window is spoken by its title and a child window
+between it and the focus's own window is structure; a ghost's or a hung
+application's window stays a plain window, role window, as NVDA's object
+for it is (`docs/design/focus-pipeline-rework.md`, "The foreground
+wait"). Past a walk's bound this is (Fable, 2026-10-30, pending Dickson's acceptance): File Explorer's
+folder window published at its bound said its title with "window",
+another "window" and "ShellView window", where the walk read in full
+says the title once. A window whose element the cut walk had already
+read is not added again: plain windows start from its parent window. A client object reached through `accParent` with no
 identity string, as a Windows Forms form's, is not marked: NVDA knows a
 client's object id only from its event or its identity string
 (`NVDAObjects/IAccessible/__init__.py` 803 to 808), and presents it by

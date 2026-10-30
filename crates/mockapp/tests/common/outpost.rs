@@ -92,7 +92,7 @@ use std::time::{Duration, Instant};
 
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
-    WindowHandle,
+    WindowFacts, WindowHandle,
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, HeldElements, Judged};
 use verbatim_outpost::protocol::{
@@ -302,6 +302,8 @@ pub struct Reported {
     pub text: Option<FocusText>,
     /// The top-level window of the event's window.
     pub window: Option<WindowHandle>,
+    /// The event's window facts, as Core takes them.
+    pub facts: Option<WindowFacts>,
     pub calls: CallCounts,
     /// The failed cached reads the outpost made for it, and the listener's
     /// reader on this thread for a UIA focus.
@@ -1289,7 +1291,8 @@ impl OutpostUnderTest {
                 ancestors,
                 selected_child,
                 text: text.map(|text| *text),
-                window: window.map(|window| window.top_level),
+                window: window.as_ref().map(|window| window.top_level),
+                facts: window,
                 calls: timing.calls,
                 failed_reads: 0,
             },

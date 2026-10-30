@@ -658,14 +658,16 @@ fn focus_of(progress: &ReadProgress) -> (UiaSnapshotFact, Option<UiaSnapshotFact
 /// same read. The read as it stood once its walk ended, if it has; else
 /// the focus as read so far ([`focus_of`]) with the ancestors read, and
 /// the chain completed by plain windows from the outermost ancestor's
-/// nearest window, included ([`AncestorsEnd::PlainFrom`]), which the
-/// outpost reads as plain windows, named by their text. Local calls only.
+/// nearest window, included, or from its parent window when that ancestor
+/// is the window's own element ([`verbatim_uia::plain_windows_start`],
+/// [`AncestorsEnd::PlainFrom`]), which the outpost reads as plain windows,
+/// named by their text. Local calls only.
 fn read_at_bound(progress: &ReadProgress) -> UiaFocusRead {
     if let Some(read) = &progress.finished {
         return read.clone();
     }
     let (snapshot, selected_child, value_from_selection) = focus_of(progress);
-    let outermost = verbatim_uia::outermost_nearest_window(
+    let plain_from = verbatim_uia::plain_windows_start(
         progress.nearest,
         std::iter::once(progress.hwnd)
             .chain(progress.ancestors.iter().map(|ancestor| ancestor.hwnd)),
@@ -674,7 +676,7 @@ fn read_at_bound(progress: &ReadProgress) -> UiaFocusRead {
         hwnd: progress.hwnd,
         snapshot,
         ancestors: progress.ancestors.clone(),
-        ancestors_end: AncestorsEnd::PlainFrom(outermost),
+        ancestors_end: AncestorsEnd::PlainFrom(plain_from),
         selected_child,
         value_from_selection,
         window: Some(progress.nearest),
@@ -1435,18 +1437,14 @@ impl FocusReader {
                     .accept(self.number, element, (nearest, arrival), &self.window);
                 // Reported as the focus, as `focused` reports one, whatever
                 // the event's cache says of its keyboard focus.
-                // A focus that is a window's own element, with nothing read
-                // above it, is completed from its parent window, so its own
-                // window is not its ancestor too.
-                let plain_from = if progress.ancestors.is_empty() && hwnd != 0 {
-                    verbatim_uia::parent_window(hwnd)
-                } else {
-                    verbatim_uia::outermost_nearest_window(
-                        nearest,
-                        std::iter::once(hwnd)
-                            .chain(progress.ancestors.iter().map(|ancestor| ancestor.hwnd)),
-                    )
-                };
+                // An outermost element, the focus or an ancestor, that is
+                // a window's own is completed from its parent window, so
+                // its own window is not in the chain twice.
+                let plain_from = verbatim_uia::plain_windows_start(
+                    nearest,
+                    std::iter::once(hwnd)
+                        .chain(progress.ancestors.iter().map(|ancestor| ancestor.hwnd)),
+                );
                 let mut snapshot = progress.event;
                 snapshot.states = snapshot.states.with(State::Focused);
                 Judged::Read(Box::new(UiaFocusRead {
@@ -1549,7 +1547,8 @@ impl FocusReader {
         // goes on from the parent window of its outermost element's nearest
         // window, as NVDA's failed parent read falls back to the window
         // hierarchy rather than ending the chain; one cut at the depth limit
-        // is completed by plain windows from that nearest window, and one
+        // is completed by plain windows from that nearest window, or from
+        // its parent window when the outermost element is its own, and one
         // cut by its bound is read as the watchdog publishes one at the
         // bound. The listener connects to neither: it names the window, and
         // the outpost goes on from it.
@@ -1570,7 +1569,11 @@ impl FocusReader {
         } else if ancestry.failed_hop.is_some() {
             AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(outermost()))
         } else if ancestry.depth_limited {
-            AncestorsEnd::PlainFrom(outermost())
+            AncestorsEnd::PlainFrom(verbatim_uia::plain_windows_start(
+                nearest,
+                std::iter::once(hwnd)
+                    .chain(progress.ancestors.iter().map(|ancestor| ancestor.hwnd)),
+            ))
         } else {
             AncestorsEnd::Top
         };

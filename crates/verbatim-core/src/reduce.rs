@@ -23,7 +23,7 @@ use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity, WindowHandle};
 
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
-    meeting, repeats_focus, selection_target,
+    meeting, quiet_entered, repeats_focus, selection_target,
 };
 use crate::state::{
     Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation,
@@ -411,10 +411,15 @@ fn is_duplicate_focus(state: &SrState, node: &NodeSnapshot) -> bool {
 }
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
-/// which an earlier report can have read mid-change, and its ancestors.
-/// What was last spoken of the focus stays as it was ([`SpokenRecord`]), so
-/// a change the repeat carried in is still spoken when its own event comes.
-/// The selected item already announced is kept, so a selection event for a
+/// which an earlier report can have read mid-change, and those of the
+/// entries of its chain, `ancestors`, that are nodes of the focus line.
+/// Its chain does not replace the focus line, as NVDA keeps its line when
+/// the focus matches itself (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context"), so a duplicate whose chain was cut at its
+/// bound leaves the containers the focus is in where they were. What was
+/// last spoken of the focus stays as it was ([`SpokenRecord`]), so a change
+/// the repeat carried in is still spoken when its own event comes. The
+/// selected item already announced is kept, so a selection event for a
 /// new one is still spoken; a navigator the user moved away stays where it
 /// is.
 fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) {
@@ -423,7 +428,18 @@ fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[Nod
     };
     focus.reported_focused |= node.states.contains(State::Focused);
     focus.snapshot = node.clone();
-    focus.ancestors = Arc::from(ancestors);
+    let newer = |old: &NodeSnapshot| ancestors.iter().find(|new| new.id == old.id);
+    if focus
+        .ancestors
+        .iter()
+        .any(|old| newer(old).is_some_and(|new| new != old))
+    {
+        focus.ancestors = focus
+            .ancestors
+            .iter()
+            .map(|old| newer(old).unwrap_or(old).clone())
+            .collect();
+    }
 }
 
 /// Whether an event from elsewhere, observed at `observed_at_us`, was
@@ -944,7 +960,7 @@ fn reduce_focus_changed(
     if report.foreground {
         state.foreground = Some(report.node.id);
     }
-    let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
+    let entered: Vec<&NodeSnapshot> = line.entered[line.quiet..].iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: report.node.id,
         ancestors: new_focus
@@ -2424,6 +2440,10 @@ struct FocusLine<'a> {
     /// The new chain's entries below the meeting point, outermost first:
     /// the containers the focus has newly entered.
     entered: &'a [NodeSnapshot],
+    /// How many of `entered`, outermost first, are kept quiet as the
+    /// containers the previous focus was in, taken by their role and name
+    /// ([`quiet_entered`]).
+    quiet: usize,
     /// The two lines differ just below the desktop, sharing no entry: the
     /// focus is in a new foreground window, and speech is cut.
     cut: bool,
@@ -2434,60 +2454,72 @@ struct FocusLine<'a> {
 /// ([`meeting`]), as NVDA builds its focus line when the focus moves
 /// (`docs/parity/focus-context.md`, "Focus-ancestry context"). The new
 /// chain is walked from the focus outward and stops at the first entry that
-/// is the same as one in the previous line: by node id; by window handle
-/// when both are windows, so that one window two outposts read is one
-/// entry, such as the Settings frame its own process reports as its focus
-/// and the page's process as a pane above the page; and otherwise by role
-/// and name in the same top-level window (`window`), for nodes that are not
-/// one outpost's UI Automation elements, whose ids alone tell them apart,
-/// since an MSAA object reached by another path can have another id. The
-/// previous line's entries are kept to that point, as NVDA keeps its old
-/// objects, so a window matched by its handle keeps the name it was
-/// entered with; the new entries below it are the containers newly
-/// entered, an element replaced by a new one with the same role and name,
-/// such as File Explorer's items view list after a folder is opened, among
-/// them. The readers leave out of a chain the entries that are not
-/// presentable, among them an unnamed UI Automation top-level window and
-/// an MSAA window object, which NVDA's line holds, so the focus's
-/// top-level window, which its window facts name, stands for the entry
-/// just below the desktop ([`line_top`]): with no entry of the chains
-/// shared, two lines in one top-level window meet there, the whole chain
-/// is entered and speech is not cut, and lines in two top-level windows
-/// differ just below the desktop: the whole chain is entered and speech is
-/// cut. With
-/// no previous focus, the first focus Core takes, the whole chain is
-/// entered and speech is not cut, as NVDA, starting, makes the focus its
-/// focus object before it handles the focus, so the two lines meet at the
-/// focus itself.
+/// is the same object as one in the previous line: by node id, or by window
+/// handle when both are windows, so that one window two outposts read is
+/// one entry, such as the Settings frame its own process reports as its
+/// focus and the page's process as a pane above the page. The previous
+/// line's entries are kept to that point, as NVDA keeps its old objects,
+/// so a window matched by its handle keeps the name it was entered with;
+/// the new entries below it are the containers newly entered, an element
+/// replaced by a new one with the same role and name, such as File
+/// Explorer's items view list after a folder is opened, among them. Of
+/// those, the outermost ones that have the role and name of the previous
+/// line's entries below the same point, pair by pair, are kept quiet when
+/// the focus stays in its top-level window (`window`), since an MSAA
+/// object reached by another path, or a node from another outpost, can
+/// have another id ([`quiet_entered`]); they are entered all the same.
+/// The readers leave out of a chain the entries that are not presentable,
+/// among them an unnamed UI Automation top-level window, an MSAA window
+/// object and every layout container, which NVDA's line holds, so the
+/// focus's top-level window, which its window facts name, stands for the
+/// entry just below the desktop ([`line_top`]): with no object of the
+/// chains shared, two lines in one top-level window meet there, empty
+/// chains or not, the whole chain is entered and speech is not cut, and
+/// lines in two top-level windows differ just below the desktop: the whole
+/// chain is entered and speech is cut. With no previous focus, the first
+/// focus Core takes, the whole chain is entered and speech is not cut, as
+/// NVDA, starting, makes the focus its focus object before it handles the
+/// focus, so the two lines meet at the focus itself.
 fn focus_line<'a>(
     previous: Option<&FocusContext>,
     window: Option<&WindowFacts>,
     report: &FocusReport<'a>,
 ) -> FocusLine<'a> {
-    let whole = |cut| FocusLine {
-        ancestors: Arc::from(report.ancestors),
-        entered: report.ancestors,
-        cut,
-    };
     let Some(previous) = previous else {
-        return whole(false);
+        return FocusLine {
+            ancestors: Arc::from(report.ancestors),
+            entered: report.ancestors,
+            quiet: 0,
+            cut: false,
+        };
     };
     let same_window = matches!(
         (previous.window.as_ref(), window),
         (Some(old), Some(new)) if old.top_level == new.top_level
     );
+    let old_line = || {
+        previous
+            .ancestors
+            .iter()
+            .chain(std::iter::once(&previous.snapshot))
+    };
     let Some((at_old, at_new)) = meeting(
         (&previous.ancestors, &previous.snapshot),
         (report.ancestors, report.node),
-        same_window,
     ) else {
-        let old_top = line_top(
-            &previous.ancestors,
-            &previous.snapshot,
-            previous.window.as_ref(),
-        );
-        let new_top = line_top(report.ancestors, report.node, window);
-        return whole(old_top.is_none() || old_top != new_top);
+        let old_top = line_top(&previous.snapshot, previous.window.as_ref());
+        let new_top = line_top(report.node, window);
+        let cut = old_top.is_none() || old_top != new_top;
+        return FocusLine {
+            ancestors: Arc::from(report.ancestors),
+            entered: report.ancestors,
+            quiet: if cut {
+                0
+            } else {
+                quiet_entered(old_line(), report.ancestors, same_window)
+            },
+            cut,
+        };
     };
     // The previous line is kept through the meeting entry, the previous
     // focus among them when they meet there, unless the meeting entry
@@ -2499,33 +2531,22 @@ fn focus_line<'a>(
     };
     let entered = report.ancestors.get(at_new + 1..).unwrap_or_default();
     FocusLine {
-        ancestors: previous
-            .ancestors
-            .iter()
-            .chain(std::iter::once(&previous.snapshot))
-            .take(kept)
-            .chain(entered)
-            .cloned()
-            .collect(),
+        ancestors: old_line().take(kept).chain(entered).cloned().collect(),
         entered,
+        quiet: quiet_entered(old_line().skip(at_old + 1), entered, same_window),
         cut: false,
     }
 }
 
-/// The top-level window a focus line, `ancestors` then `focus`, holds just
-/// below the desktop, as its window facts `window` name it, the entry a
-/// reader can leave out of the chain as not presentable ([`focus_line`]):
-/// `None` with no facts, and for a line with no ancestors whose focus is
-/// not that window itself, whose focus has the desktop for its container,
-/// as an application's rule makes it for the task switcher's item
+/// The top-level window just below the desktop in the focus line of
+/// `focus`, as its window facts `window` name it, the entry a reader can
+/// leave out of the chain as not presentable ([`focus_line`]): `None` with
+/// no facts, and for a focus whose containers an application's rule drops,
+/// whose container is the desktop, as the task switcher's item's is
 /// ([`crate::applications::drops_ancestry`]).
-fn line_top(
-    ancestors: &[NodeSnapshot],
-    focus: &NodeSnapshot,
-    window: Option<&WindowFacts>,
-) -> Option<WindowHandle> {
-    let top = window?.top_level;
-    (!ancestors.is_empty() || focus.details.window == Some(top)).then_some(top)
+fn line_top(focus: &NodeSnapshot, window: Option<&WindowFacts>) -> Option<WindowHandle> {
+    let window = window?;
+    (!crate::applications::drops_ancestry(Some(window), focus)).then_some(window.top_level)
 }
 
 /// Whether a focus ancestor adds context worth speaking when focus first

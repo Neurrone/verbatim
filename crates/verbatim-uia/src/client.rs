@@ -61,10 +61,11 @@ pub enum AncestorWalk {
     /// It ran out of time, a step found the provider did not answer within
     /// UIA's transaction timeout, or it reached its hop limit with
     /// ancestors left: the chain is completed by plain windows from this
-    /// window, the outermost element's nearest window, included
-    /// ([`outermost_nearest_window`](crate::outermost_nearest_window)), 0
-    /// when not known (`docs/design/focus-pipeline-rework.md`, "A window's
-    /// name, and the one fallback").
+    /// window, included: the outermost element's nearest window, or its
+    /// parent window when that element is the window's own
+    /// ([`plain_windows_start`](crate::plain_windows_start)), 0 when not
+    /// known (`docs/design/focus-pipeline-rework.md`, "A window's name, and
+    /// the one fallback").
     Cut(isize),
     /// A step to a parent failed this way from an element below the root:
     /// in the raw view a top-level window's parent is the root, so a
@@ -677,6 +678,7 @@ impl Uia {
         let mut trail = vec![element_window];
         let outermost =
             |trail: &[isize]| crate::outermost_nearest_window(nearest, trail.iter().copied());
+        let cut_from = |trail: &[isize]| crate::plain_windows_start(nearest, trail.iter().copied());
         let started = std::time::Instant::now();
         let mut hops = 0u32;
         let log = |hops: u32, ending: &str| {
@@ -692,7 +694,7 @@ impl Uia {
             if out_of_time() {
                 chain.reverse();
                 log(hops, "out of time");
-                return Ok((chain, None, AncestorWalk::Cut(outermost(&trail))));
+                return Ok((chain, None, AncestorWalk::Cut(cut_from(&trail))));
             }
             if let Some(across) = (current_window != 0)
                 .then(|| crate::parent_across_process_boundary(current_window))
@@ -716,7 +718,7 @@ impl Uia {
                     chain.reverse();
                     if crate::timed_out(&error) || out_of_time() {
                         log(hops, "out of time");
-                        return Ok((chain, None, AncestorWalk::Cut(outermost(&trail))));
+                        return Ok((chain, None, AncestorWalk::Cut(cut_from(&trail))));
                     }
                     let at_root = self
                         .root_element()
@@ -741,7 +743,7 @@ impl Uia {
             if hops > max_hops {
                 chain.reverse();
                 log(hops, "hop limit");
-                return Ok((chain, None, AncestorWalk::Cut(outermost(&trail))));
+                return Ok((chain, None, AncestorWalk::Cut(cut_from(&trail))));
             }
             let read = parent.read();
             current_window = read.node.role.hwnd;

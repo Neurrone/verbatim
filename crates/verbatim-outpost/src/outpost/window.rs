@@ -15,7 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId,
     InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_DISABLED,
-    WS_SYSMENU, WS_VISIBLE,
+    WS_SYSMENU,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
@@ -257,9 +257,6 @@ pub(super) struct WindowStyle {
     /// The style disables the window (`WS_DISABLED`), unavailable as a
     /// plain window (`NVDAObjects/window/__init__.py`, `Window._get_states`).
     pub(super) disabled: bool,
-    /// The style shows the window (`WS_VISIBLE`); a plain window without it
-    /// is invisible, as `Window._get_states` makes it.
-    pub(super) visible: bool,
     /// The window has a system menu (`WS_SYSMENU`), which makes its MSAA
     /// client a top-level window's, presented by its title
     /// (`NVDAObjects/IAccessible/__init__.py` 2095 to 2106).
@@ -274,7 +271,6 @@ pub(super) fn window_style(handle: isize) -> WindowStyle {
     let has = |bit: u32| style & usize::try_from(bit).unwrap_or(0) != 0;
     WindowStyle {
         disabled: has(WS_DISABLED.0),
-        visible: has(WS_VISIBLE.0),
         system_menu: has(WS_SYSMENU.0),
     }
 }

@@ -209,18 +209,40 @@ pub fn parent_window(hwnd: isize) -> isize {
 
 /// The nearest window of the outermost element of a walk up the raw view,
 /// by local calls (`docs/design/focus-pipeline-rework.md`, "A window's name,
-/// and the one fallback"): a walk cut short is completed by plain windows
-/// from it, and one whose step to a parent failed goes on from its parent
-/// window, as NVDA's parent read falls back to the window hierarchy
-/// (`NVDAObjects/UIA/__init__.py` 2142 to 2145, `Window._get_parent`).
-/// `nearest` is the first element's nearest window, and `hwnds` each
-/// element's own native window handle, from the first outward, 0 for one
-/// that is not a window: an element that is a window's own has that
-/// window; one with none above one that had its own is hosted, in the raw
-/// view, by that window's parent window; and one with none above one with
-/// none has the same window as it. 0 when not known.
+/// and the one fallback"): a walk whose step to a parent failed goes on
+/// from its parent window, as NVDA's parent read falls back to the window
+/// hierarchy (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
+/// `Window._get_parent`). `nearest` is the first element's nearest window,
+/// and `hwnds` each element's own native window handle, from the first
+/// outward, 0 for one that is not a window: an element that is a window's
+/// own has that window; one with none above one that had its own is
+/// hosted, in the raw view, by that window's parent window; and one with
+/// none above one with none has the same window as it. 0 when not known.
 #[must_use]
 pub fn outermost_nearest_window(nearest: isize, hwnds: impl IntoIterator<Item = isize>) -> isize {
+    outermost_window(nearest, hwnds).0
+}
+
+/// The window plain windows, it included, complete a walk up the raw view
+/// from when the walk is cut short, by its bound or its depth limit, by
+/// local calls (`docs/design/focus-pipeline-rework.md`, "A window's name,
+/// and the one fallback"): the outermost element's nearest window
+/// ([`outermost_nearest_window`]), or that window's parent window when the
+/// outermost element is the window's own element, which the walk has
+/// already read, so that the window is not in the chain twice. `nearest`
+/// and `hwnds` as for [`outermost_nearest_window`].
+#[must_use]
+pub fn plain_windows_start(nearest: isize, hwnds: impl IntoIterator<Item = isize>) -> isize {
+    match outermost_window(nearest, hwnds) {
+        (window, true) => parent_window(window),
+        (window, false) => window,
+    }
+}
+
+/// The outermost element's nearest window, and whether the element is
+/// that window's own, for [`outermost_nearest_window`] and
+/// [`plain_windows_start`].
+fn outermost_window(nearest: isize, hwnds: impl IntoIterator<Item = isize>) -> (isize, bool) {
     let mut window = nearest;
     let mut own = false;
     for hwnd in hwnds {
@@ -232,7 +254,7 @@ pub fn outermost_nearest_window(nearest: isize, hwnds: impl IntoIterator<Item = 
             own = false;
         }
     }
-    window
+    (window, own)
 }
 
 /// Whether `hwnd` is a top-level window, its own root window (`GetAncestor`
@@ -293,7 +315,7 @@ pub fn console_host_of(client: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_OVERLAPPED,
+        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_CHILD, WS_OVERLAPPED,
     };
     use windows::core::w;
 
@@ -361,5 +383,64 @@ mod tests {
         // SAFETY: the window this thread created.
         let _ = unsafe { DestroyWindow(window) };
         assert_eq!(served_by, Some(std::process::id()));
+    }
+
+    /// A walk cut short whose outermost element is its window's own has
+    /// read that window, so plain windows complete it from the window's
+    /// parent; one whose outermost element has no window of its own, from
+    /// its nearest window, which the walk has not read.
+    #[test]
+    fn plain_windows_start_above_a_window_the_walk_read() {
+        // SAFETY: a predefined class, no parent, menu, or creation data.
+        let parent = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!("the parent"),
+                WS_OVERLAPPED,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("a window of the test's own");
+        // SAFETY: a predefined class under the window just created.
+        let child = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!("the child"),
+                WS_CHILD,
+                0,
+                0,
+                5,
+                5,
+                Some(parent),
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("a child window");
+        let (parent_hwnd, child_hwnd) = (parent.0 as isize, child.0 as isize);
+        let starts = [
+            plain_windows_start(child_hwnd, [0, 0]),
+            plain_windows_start(child_hwnd, [0, child_hwnd]),
+            plain_windows_start(child_hwnd, [child_hwnd, 0]),
+        ];
+        let outermost = outermost_nearest_window(child_hwnd, [0, child_hwnd]);
+        // SAFETY: the window this thread created, its child with it.
+        let _ = unsafe { DestroyWindow(parent) };
+        assert_eq!(
+            starts,
+            [child_hwnd, parent_hwnd, parent_hwnd],
+            "windowless elements; an ancestor that is the child's own; a windowless one above it"
+        );
+        assert_eq!(outermost, child_hwnd);
     }
 }

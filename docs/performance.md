@@ -1163,7 +1163,12 @@ ancestor carries its class name; and MSAA's invisible state is carried.
   product of the two lines' lengths, a few dozen comparisons for chains of
   ten, and allocates nothing beyond the ancestors it keeps, the previous
   line's to the meeting point cloned into the new line
-  (`a_focus_step_allocates_the_same_whatever_the_ancestor_chain`).
+  (`a_focus_step_allocates_the_same_whatever_the_ancestor_chain`). The
+  role-and-name match of the entered containers compares at most as many
+  pairs as there are entered containers and allocates nothing. A
+  duplicate of the focus allocates a new line only when it carries a newer
+  reading of a node of the line, compared by id, at most the line's
+  length times the duplicate chain's.
 
 ### The system caret's events
 

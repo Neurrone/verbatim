@@ -372,17 +372,17 @@ read from Windows' own state with no call into the other process
 fallback" and "The foreground wait"; the decision of 2026-10-29). A plain
 window (`read::plain_window`) is read from Windows' own state alone: role
 window, named by `InternalGetWindowText`, unavailable when its style
-disables it, never focused, as NVDA's `Window` states hold only invisible
-and unavailable, kept under its window object's address. A window above
-the process boundary that is not a ghost's or a hung application's is
-read the same way but described as NVDA's MSAA client for it
-(`read::boundary_client`): role pane, marked `top_level_client` when its
-style has `WS_SYSMENU`, so Core speaks the Settings frame by its title
-and takes a child window between as structure. `read::plain_windows_from`
-decides per window, from the first window another process serves upward;
-below the boundary, past a walk's bound, every window stays plain. The
-ghost and hung checks it adds are three local calls per window above the
-boundary, and the style is read once (`window::window_style`). The outpost connects to, probes, and walks up into only its
+disables it, never focused and never invisible, kept under its window
+object's address. A window `read::plain_windows_from` reads, above the
+process boundary or past a walk's bound or failure, that is not a
+ghost's or a hung application's is read the same way but described as
+NVDA's MSAA client for it (`read::client_pane`): role pane, marked
+`top_level_client` when its style has `WS_SYSMENU`, so Core speaks the
+Settings frame, or a top-level window published at its bound, by its
+title, and takes a child window between as structure; a ghost's or a
+hung application's stays a plain window. The ghost and hung checks are
+three local calls per window, and the style is read once
+(`window::window_style`). The outpost connects to, probes, and walks up into only its
 application's windows (`read::serves`): its UIA walk
 (`read::uia_ancestors`) stops below the boundary, a step that reaches
 another process's window anyway is not read further, the MSAA walk does
@@ -1041,8 +1041,8 @@ unredirected, never unspawned.
 - An MSAA client object of a `WS_SYSMENU` window is marked
   `NodeDetails::top_level_client`, read as a pane and presented by its
   title, as NVDA's `isPresentableFocusAncestor` presents it.
-- A plain window (`read::plain_window`), a window above the process
-  boundary (`read::boundary_client`), and a foreground window reported
+- A plain window (`read::plain_window`), a window's pane read from local
+  state (`read::client_pane`), and a foreground window reported
   from local data, carries its handle in `NodeDetails::window`, as the
   readers' UIA window elements and MSAA window and client objects do, so
   Core takes the frame one outpost reports as its focus and another as a
@@ -1175,7 +1175,10 @@ unredirected, never unspawned.
   `Uia::ancestors`) goes on from the parent window of its outermost
   element's nearest window (`Ancestry::failed_hop`, `AncestorWalk::Failed`,
   `verbatim_ia2::acquire::Walked::Onward`), and one cut by its time or depth
-  limit is completed by plain windows (`AncestorWalk::Cut`, `Walked::Cut`);
+  limit is completed by plain windows (`AncestorWalk::Cut`, `Walked::Cut`),
+  for a UIA walk from the parent window of its outermost element's window
+  when that element is the window's own, so the window is not in the
+  chain twice (`verbatim_uia::plain_windows_start`);
   a walk that fails before it reads anything, a remote program by UIA's
   transaction timeout among them, or an MSAA node no longer reachable,
   is completed by plain windows from the parent window of the focus's own

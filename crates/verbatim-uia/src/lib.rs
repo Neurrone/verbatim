@@ -94,7 +94,7 @@ pub use nearest::{nearest_window_handle, nearest_window_lookup};
 pub use probe::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe, raw_probe_verdict};
 pub use provider::{
     console_host_of, is_top_level_window, outermost_nearest_window, parent_across_process_boundary,
-    parent_window, provider_process, raw_view_parent_window, served_by,
+    parent_window, plain_windows_start, provider_process, raw_view_parent_window, served_by,
 };
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{

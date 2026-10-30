@@ -27,7 +27,7 @@ use verbatim_core::SrState;
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{
     Backend, CallCounts, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent,
-    State, TraceId,
+    State, TraceId, WindowFacts,
 };
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, WinEventStamp};
 
@@ -76,15 +76,21 @@ const FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS: CallCounts = CallCounts {
     connections: 0,
 };
 
-/// Gives Core `event` from mockapp, its node ids stamped with outpost 1,
-/// and returns the content of each utterance spoken, in order. A focus's
-/// drop of expired speech is the only other effect allowed, and, for a
-/// focus whose chain shares no entry with the one before, its cut of
-/// speech: these events carry no window facts, by which Core would find
-/// the two in one top-level window, mockapp's root, which the MSAA walk
-/// leaves out of the chain as a window object.
-fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentContent>> {
-    let focus = matches!(event, NormalizedEvent::FocusChanged { .. });
+/// Gives Core `event` from mockapp with no window facts, as
+/// [`spoken_in`] does.
+fn spoken(state: &mut SrState, event: NormalizedEvent) -> Vec<Vec<SegmentContent>> {
+    spoken_in(state, event, None)
+}
+
+/// Gives Core `event` from mockapp, in the window `window` describes, its
+/// node ids stamped with outpost 1, and returns the content of each
+/// utterance spoken, in order. A focus's drop of expired speech is the
+/// only other effect allowed: speech is never cut.
+fn spoken_in(
+    state: &mut SrState,
+    mut event: NormalizedEvent,
+    window: Option<WindowFacts>,
+) -> Vec<Vec<SegmentContent>> {
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
@@ -93,7 +99,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentCon
             observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Msaa,
-            window: None,
+            window,
             event,
         },
     )
@@ -107,7 +113,6 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentCon
                 .collect(),
         ),
         Effect::DropExpiredSpeech(_) => None,
-        Effect::StopSpeech if focus => None,
         other => panic!("an event makes no {other:?}"),
     })
     .collect()
@@ -126,8 +131,14 @@ fn focus_event(reported: &Reported) -> NormalizedEvent {
 
 /// The outpost's next message, which must be an event, as its event.
 fn next_event(outpost: &OutpostUnderTest) -> NormalizedEvent {
+    next_event_in(outpost).0
+}
+
+/// The outpost's next message, which must be an event, as its event and
+/// its window facts.
+fn next_event_in(outpost: &OutpostUnderTest) -> (NormalizedEvent, Option<WindowFacts>) {
     match outpost.next() {
-        OutpostToSupervisor::Event { event, .. } => event,
+        OutpostToSupervisor::Event { event, window, .. } => (event, window),
         other => panic!("the outpost said {other:?}, not an event"),
     }
 }
@@ -466,12 +477,13 @@ fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
     let mut state = SrState::new();
 
     let reported = common::tree_view::focus_item(&outpost, tree, "Disks");
-    let _ = spoken(&mut state, focus_event(&reported));
+    let _ = spoken_in(&mut state, focus_event(&reported), reported.facts.clone());
     let hardware = common::tree_view::item(tree, "Hardware");
     common::tree_view::send(tree, TVM_EXPAND, TVE_COLLAPSE.0 as usize, hardware);
     // The control's focus on the parent is the first thing the outpost
-    // says, and the parent's state change the last.
-    let focus = next_event(&outpost);
+    // says, and the parent's state change the last; the focus, in the
+    // same top-level window, does not cut speech.
+    let (focus, facts) = next_event_in(&outpost);
     let change = next_event(&outpost);
     outpost.settled();
     assert!(
@@ -479,7 +491,7 @@ fn collapsing_a_tree_items_parent_says_nothing_until_its_focus() {
         "{change:?}"
     );
     assert_eq!(
-        spoken(&mut state, focus),
+        spoken_in(&mut state, focus, facts),
         [vec![
             SegmentContent::Level(0),
             SegmentContent::Label("Hardware".to_owned()),
@@ -562,7 +574,7 @@ fn a_selection_is_read_in_full_only_inside_a_focused_list() {
 
     app.send("set-focus first");
     let reported = outpost.msaa_focus(hwnd, FIRST);
-    let _ = spoken(&mut state, focus_event(&reported));
+    let _ = spoken_in(&mut state, focus_event(&reported), reported.facts.clone());
     common::reset_hits(hwnd);
     app.send("select item1");
     outpost.heard(&[Heard::Msaa(WinEventKind::Selection)]);
@@ -575,7 +587,7 @@ fn a_selection_is_read_in_full_only_inside_a_focused_list() {
 
     app.send("set-focus list");
     let reported = outpost.msaa_focus(hwnd, LIST);
-    let _ = spoken(&mut state, focus_event(&reported));
+    let _ = spoken_in(&mut state, focus_event(&reported), reported.facts.clone());
     app.send("select item2");
     let event = next_event(&outpost);
     outpost.settled();

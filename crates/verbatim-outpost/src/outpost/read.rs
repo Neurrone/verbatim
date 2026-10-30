@@ -114,8 +114,8 @@ pub(super) fn walk_left(
 }
 
 /// The window from which plain windows, included, complete a UIA chain read
-/// upward one element at a time, as
-/// [`verbatim_uia::outermost_nearest_window`] finds it for a whole chain.
+/// upward one element at a time, as [`verbatim_uia::plain_windows_start`]
+/// finds it for a whole chain.
 struct Outermost {
     window: std::cell::Cell<isize>,
     own: std::cell::Cell<bool>,
@@ -131,7 +131,9 @@ impl Outermost {
     }
 
     /// The next element up, of window `hwnd` (0 for none of its own): the
-    /// window plain windows now complete the chain from. Local calls.
+    /// window plain windows now complete the chain from, the parent window
+    /// of the element's window when the element is that window's own, so
+    /// that the window is not in the chain twice. Local calls.
     fn step(&self, hwnd: isize) -> isize {
         if hwnd != 0 {
             self.window.set(hwnd);
@@ -140,7 +142,11 @@ impl Outermost {
             self.window.set(parent_window(self.window.get()));
             self.own.set(false);
         }
-        self.window.get()
+        if self.own.get() {
+            parent_window(self.window.get())
+        } else {
+            self.window.get()
+        }
     }
 }
 
@@ -547,38 +553,38 @@ pub(super) fn reads_as_plain(context: &Context, hwnd: isize) -> bool {
 
 /// Window `hwnd` as a plain window (the design's Terms): role window,
 /// named by `InternalGetWindowText`, unavailable when its style disables
-/// it and invisible when its style does not show it, read from Windows' own
-/// state with no call into any application. It is never focused, as NVDA's
-/// `Window` states hold only invisible and unavailable
-/// (`NVDAObjects/window/__init__.py`, `Window._get_states`). It is kept at
-/// its window object's address, so a node read from it acquires the
-/// window's own object.
+/// it, read from Windows' own state with no call into any application. It
+/// is never focused, as NVDA's `Window` states hold only invisible and
+/// unavailable (`NVDAObjects/window/__init__.py`, `Window._get_states`),
+/// and never invisible either (Fable, 2026-10-30, pending Dickson's
+/// acceptance): a window not yet shown when it is read, as a Windows
+/// Terminal window at its bound, would lose its title for good, where
+/// NVDA reads it through UIA and says it. It is kept at its window
+/// object's address, so a node read from it acquires the window's own
+/// object.
 pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
     window_from_local_state(context, hwnd, false)
 }
 
-/// Window `hwnd`, above the process boundary and neither a ghost's nor a
-/// hung application's, as NVDA's MSAA client object for it
+/// Window `hwnd`, neither a ghost's nor a hung application's, read with no
+/// call into its process, as NVDA's MSAA client object for it
 /// (`docs/design/focus-pipeline-rework.md`, "The foreground wait"): a
 /// pane, marked `top_level_client` when its style has a system menu, as
-/// `verbatim_ia2`'s reader marks an MSAA client, and in all else a
-/// [`plain_window`], read from Windows' own state with no call into the
-/// other process.
-fn boundary_client(context: &Context, hwnd: isize) -> NodeSnapshot {
+/// `verbatim_ia2`'s reader marks an MSAA client, so a top-level window is
+/// spoken by its title and a child window is structure, and in all else a
+/// [`plain_window`], read from Windows' own state.
+fn client_pane(context: &Context, hwnd: isize) -> NodeSnapshot {
     window_from_local_state(context, hwnd, true)
 }
 
 /// Window `hwnd` read from Windows' own state alone, one style read and its
 /// text: a [`plain_window`], or, as `client`, the pane of
-/// [`boundary_client`].
+/// [`client_pane`].
 fn window_from_local_state(context: &Context, hwnd: isize, client: bool) -> NodeSnapshot {
     let style = window_style(hwnd);
     let mut states = StateSet::new();
     if style.disabled {
         states = states.with(State::Disabled);
-    }
-    if !style.visible {
-        states = states.with(State::Invisible);
     }
     NodeSnapshot {
         id: context
@@ -648,25 +654,22 @@ fn plain_windows_above(context: &Context, own: isize, nearest: isize) -> Vec<Nod
 }
 
 /// The windows from `hwnd` up to the desktop, which is none of them,
-/// outermost first, read with local calls only: from the first window
-/// another process serves upward, every window is above the process
-/// boundary and, unless a ghost's or a hung application's, is NVDA's MSAA
-/// client for it ([`boundary_client`]); every other window is a
-/// [`plain_window`].
+/// outermost first, read with local calls only, for a chain a walk did not
+/// complete, whether cut at its bound, failed or stopped at the process
+/// boundary: each is NVDA's MSAA client for it ([`client_pane`]), but a
+/// ghost's or a hung application's window, which is a [`plain_window`], as
+/// NVDA's object for it is (Fable, 2026-10-30, pending Dickson's
+/// acceptance).
 pub(super) fn plain_windows_from(context: &Context, hwnd: isize) -> Vec<NodeSnapshot> {
     let desktop = desktop_window();
     let mut windows = Vec::new();
     let mut current = hwnd;
-    let mut above_boundary = false;
     while current != 0 && current != desktop && windows.len() < MAX_ANCESTOR_HOPS as usize {
-        above_boundary = above_boundary || !serves(context, current);
-        windows.push(
-            if above_boundary && context.window_unreadable(current).is_none() {
-                boundary_client(context, current)
-            } else {
-                plain_window(context, current)
-            },
-        );
+        windows.push(if context.window_unreadable(current).is_none() {
+            client_pane(context, current)
+        } else {
+            plain_window(context, current)
+        });
         current = parent_window(current);
     }
     windows.reverse();
@@ -1065,19 +1068,25 @@ fn uia_remote_enrichment(
         && crossed.is_none()
         && (ancestry.failed_hop.is_some() || ancestry.depth_limited || ancestry.out_of_time)
     {
-        let nearest = verbatim_uia::outermost_nearest_window(
-            ancestry.window.or(window).unwrap_or(0),
+        let hwnds = || {
             std::iter::once(focus_window).chain(
                 ancestry
                     .ancestors
                     .iter()
                     .map(|ancestor| ancestor.read().node.role.hwnd),
-            ),
-        );
+            )
+        };
+        let nearest = ancestry.window.or(window).unwrap_or(0);
         if let Some(hop) = ancestry.failed_hop {
-            walked = AncestorWalk::Failed(hop, verbatim_uia::parent_window(nearest));
+            walked = AncestorWalk::Failed(
+                hop,
+                verbatim_uia::parent_window(verbatim_uia::outermost_nearest_window(
+                    nearest,
+                    hwnds(),
+                )),
+            );
         } else if ancestry.depth_limited || ancestry.out_of_time {
-            walked = AncestorWalk::Cut(nearest);
+            walked = AncestorWalk::Cut(verbatim_uia::plain_windows_start(nearest, hwnds()));
         }
     }
     let above = uia_above(crossed, walked, Some(outermost));
@@ -1560,7 +1569,8 @@ fn uia_focused_control(
         node.details.class_name.clone_from(&fields.role.class_name);
         console_text_area(&mut node, Some(hwnd));
         // Its walk begins, the chain completed by plain windows from its
-        // nearest window should nothing more be read.
+        // nearest window, or that window's parent when the focus is the
+        // window's own element, should nothing more be read.
         let outermost = Outermost::new(hwnd);
         if let Some(progress) = progress {
             progress(WalkStep::Focus {

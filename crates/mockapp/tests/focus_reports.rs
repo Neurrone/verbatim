@@ -666,7 +666,7 @@ fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
                 (
                     Some("Notes"),
                     vec![
-                        (Role::Window, Some(title.as_str())),
+                        (Role::Pane, Some(title.as_str())),
                         (Role::Group, Some("Inner group"))
                     ],
                     Some(&FocusText::NoText)
@@ -2501,7 +2501,7 @@ fn a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped(
 /// timeout is let through, as NVDA lets any COM error of that read through
 /// (`shouldAllowUIAFocusEvent`), though its event's cache says it lacked the
 /// keyboard focus, and is reported from its event, as the focus with its
-/// ancestors unknown, once its read, still held, fails too. The sender is
+/// chain completed by plain windows, once its read, still held, fails too. The sender is
 /// mockapp's window element, whose window's verdict an earlier focus kept,
 /// so that the live read is the read's first provider call, which mockapp
 /// holds past the timeout.
@@ -3487,7 +3487,7 @@ fn a_chain_cut_at_the_depth_limit_is_completed_by_its_windows() {
         (chain.len(), chain[0], chain[1], chain[64], chain[65]),
         (
             66,
-            (Role::Window, Some(title.as_str())),
+            (Role::Pane, Some(title.as_str())),
             (Role::Group, Some("Nest 3")),
             (Role::Group, Some("Nest 66")),
             (Role::Button, Some("Far"))
@@ -3533,7 +3533,7 @@ fn a_window_not_reached_by_the_bound_is_named_by_its_text() {
             .map(|(role, name)| (role, name.map(str::to_owned)))
             .collect::<Vec<_>>()
     };
-    let window = (Role::Window, Some(title.clone()));
+    let window = (Role::Pane, Some(title.clone()));
     let first = (Role::ListItem, Some("First".to_owned()));
     let uia_window = (Role::Window, Some("Mockapp Tree Fixture".to_owned()));
     assert_eq!(
@@ -3720,7 +3720,7 @@ fn an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound() {
     assert_eq!(
         chain_of(&published),
         [
-            (Role::Window, Some(title.clone())),
+            (Role::Pane, Some(title.clone())),
             (Role::Button, Some("OK".to_owned()))
         ],
         "the focus as read before its stuck step, below its window"
@@ -3784,7 +3784,7 @@ fn a_gap_read_whose_walk_is_stuck_is_published_at_its_bound() {
     assert_eq!(
         chain_of(&published),
         [
-            (Role::Window, Some(title.clone())),
+            (Role::Pane, Some(title.clone())),
             (Role::ListItem, Some("First".to_owned()))
         ],
         "the focus as read before its stuck step, below its window"
@@ -3832,7 +3832,7 @@ fn a_focus_published_at_its_bound_is_adopted_by_the_worker_that_replaces_its_own
     assert_eq!(
         chain_of(&published),
         [
-            (Role::Window, Some(title.clone())),
+            (Role::Pane, Some(title.clone())),
             (Role::Button, Some("OK".to_owned()))
         ],
         "the focus as read before its stuck step, below its window"
@@ -3909,7 +3909,7 @@ fn an_adopted_terminal_gets_its_first_read() {
         (chain_of(&published), text),
         (
             vec![
-                (Role::Window, Some(title.clone())),
+                (Role::Pane, Some(title.clone())),
                 (Role::Terminal, Some("Terminal".to_owned()))
             ],
             &None
@@ -3997,7 +3997,7 @@ fn the_continuation_of_a_listeners_chain_ends_at_the_reads_bound() {
     let first = (Role::ListItem, Some("First".to_owned()));
     assert_eq!(
         report(outpost.observed_now() - read.bound_us),
-        [(Role::Window, Some(title.clone())), first.clone()],
+        [(Role::Pane, Some(title.clone())), first.clone()],
         "observed its bound before"
     );
     assert_eq!(

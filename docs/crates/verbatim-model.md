@@ -49,8 +49,8 @@ recorder unchanged. What the reducer does with each type is in
   every role both backends' NVDA tables map that Verbatim speaks
   (`Role::ALL` lists them; `Role::Terminal` is NVDA's terminal role), the
   states (no "default", which NVDA does not have; `Invisible`, an MSAA
-  object's or a plain window's, never spoken, makes an ancestor
-  unpresentable), and a bitmask state set
+  object's, never spoken, makes an ancestor unpresentable), and a bitmask
+  state set
   with `contains`, `insert`, `remove`, `with`, and ordered `iter`. Both
   enums are non-exhaustive and ordered.
 - `NodeSnapshot`, `NodeDetails`, `Rect`: everything needed to announce one
