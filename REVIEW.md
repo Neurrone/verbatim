@@ -37,8 +37,8 @@ The unit is a completed step, not a commit: the whole implementation of a milest
 
 1. The completed step is reviewed once, in full, by a separate read-only subagent with this file, the targets list, the step's brief and design, and the evidence of its runs.
 2. Important findings are reproduced, then fixed in one commit. Nits from the review are fixed in the same commit only when they touch lines the fix already changes; the rest wait.
-3. The fix commit is re-reviewed on its diff only, against the counterexamples of the first review. New findings outside that diff are recorded, not pursued.
-4. After the second review the loop stops. What remains at Nit or Pre-existing goes into one documents-and-nits commit for the step, which needs no review, or into the roadmap. If the second review still finds an Important defect, the parent asks whether the design is wrong rather than opening a third round.
+3. When the fix is large, the fix commit is re-reviewed on its diff only, against the counterexamples of the first review; a small fix gets no re-review. New findings outside that diff are recorded, not pursued, except a defect in the mechanism the step builds, which is fixed in the step rather than deferred.
+4. After the re-review, or after the fix when there is none, the loop stops. What remains at Nit or Pre-existing goes into one documents-and-nits commit for the step, which needs no review, or into the roadmap. If the re-review still finds an Important defect, the parent asks whether the design is wrong rather than opening a third round.
 
 Trivial changes need no review: a title string, a format fix, a log line, a doc correction, a nits commit. A change is not made trivial by being small; a one-line change to a key, a bound or a drop reason is nontrivial and is reviewed with its step.
 
