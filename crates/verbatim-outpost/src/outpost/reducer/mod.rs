@@ -275,6 +275,9 @@ struct Current {
     running: Option<(u64, TraceId)>,
     /// The bound of its walk, while armed.
     walk: Option<Duration>,
+    /// Whether the moved-on rule was judged as the grace ended: from then
+    /// on only a foreground fact judges it again.
+    grace_judged: bool,
     /// Whether its walk was published at its bound: nothing more of its
     /// is applied.
     claimed: bool,
@@ -485,7 +488,14 @@ impl Reducer {
             if current.walk.is_some_and(|bound| now.at >= bound) {
                 self.publish(request, now, locals, &mut effects);
             }
-            self.judge_abandonment(now, locals, &mut effects);
+            // The moved-on rule is judged once as the grace ends, and then
+            // at each foreground fact, never at every wake.
+            let grace_ended = self.current.as_mut().is_some_and(|current| {
+                let ended = !current.grace_judged && now.at >= current.started + MOVED_ON_GRACE;
+                current.grace_judged |= ended;
+                ended
+            });
+            self.judge_abandonment(now, locals, grace_ended, &mut effects);
         }
         if !self.gap_timer_given && self.gap_due.is_some_and(|due_us| now.observed_us >= due_us) {
             self.gap_due = None;
@@ -556,7 +566,7 @@ impl Reducer {
         // A foreground fact judges again whether the user has moved on
         // from the program's window.
         if foreground {
-            self.judge_abandonment(now, locals, effects);
+            self.judge_abandonment(now, locals, true, effects);
         }
     }
 
@@ -779,10 +789,17 @@ impl Reducer {
     }
 
     /// Abandons the worker in charge if its program has passed its
-    /// deadline, or has waited [`MOVED_ON_GRACE`] on a window the user has
-    /// left for another thread of its application: a walk armed is
-    /// published first, in the same transition.
-    fn judge_abandonment(&mut self, now: Now, locals: &mut dyn Locals, effects: &mut Vec<Effect>) {
+    /// deadline, or, judged when `moved_on` says, has waited
+    /// [`MOVED_ON_GRACE`] on a window the user has left for another thread
+    /// of its application: a walk armed is published first, in the same
+    /// transition.
+    fn judge_abandonment(
+        &mut self,
+        now: Now,
+        locals: &mut dyn Locals,
+        moved_on: bool,
+        effects: &mut Vec<Effect>,
+    ) {
         if self.stopping {
             return;
         }
@@ -791,7 +808,8 @@ impl Reducer {
         };
         let reason = if now.at >= current.deadline {
             Some("a call passed its deadline")
-        } else if current.window != 0
+        } else if moved_on
+            && current.window != 0
             && now.at >= current.started + MOVED_ON_GRACE
             && locals.moved_on(current.window)
         {
@@ -1139,6 +1157,7 @@ impl Reducer {
             window,
             running,
             walk: None,
+            grace_judged: false,
             claimed: false,
             group,
         });

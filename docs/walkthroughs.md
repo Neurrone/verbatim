@@ -117,8 +117,9 @@ releases Alt. Notepad has no outpost yet.
    `CoreToOutpost::DeliverFact`.
 5. **The outpost's intake queues the facts.** The reader
    (`Outpost::handle_command` in `crates/verbatim-outpost/src/outpost/mod.rs`)
-   only pushes each fact onto the intake queue (`Intake::push` in
-   `outpost/intake.rs`). The queue applies NVDA's limiter rules to MSAA
+   only appends each fact to the outpost's mailbox, which the reducer
+   drains into its intake queue (`Intake::push` in
+   `outpost/reducer/intake.rs`). The queue applies NVDA's limiter rules to MSAA
    events, drops events from a window the system reports hung, and holds
    everything behind a UIA focus marker until its read or drop takes the
    marker's place. When planning a batch (`plan`), each consecutive run of
@@ -144,7 +145,7 @@ releases Alt. Notepad has no outpost yet.
    `Worker::msaa_focus`. A WinEvent focus the worker dropped because it
    judges its window UIA, and that no UIA focus answers within a second, is
    read by the outpost itself through UIA at its gap record's bound
-   (`crates/verbatim-outpost/src/outpost/gap_record.rs`).
+   (`crates/verbatim-outpost/src/outpost/reducer/gap_record.rs`).
 8. **The worker publishes, and keeps what it reported.** `emit_focus`
    publishes an `OutpostToCore::Event` carrying the trace id, the
    observation time, the backend, the window's `WindowFacts` (top-level

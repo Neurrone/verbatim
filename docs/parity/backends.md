@@ -293,8 +293,7 @@ the next other event comes; the menu event is tried last.
 Verbatim: **matched (unverified)**, in each outpost's intake
 (`docs/design/focus-pipeline.md`, sections 5.1 and 5.2, which own the
 ordering; [verbatim-outpost](../crates/verbatim-outpost.md), the queue
-under `Outpost`; `outpost/handover.rs` for the hand-over's ordering and
-its one limit). Every MSAA event is counted by the thread it carries,
+under `Outpost`; `outpost/reducer/hold.rs` for the hand-over's hold). Every MSAA event is counted by the thread it carries,
 whichever hook took it in. Every foreground change of a batch is tried
 with the focus events of the run it is in (Dickson, 2026-10-20), and a
 newer change of the same window from the same thread replaces one

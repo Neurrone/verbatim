@@ -511,39 +511,36 @@ walk's first step to its parent answers 3 seconds late (`slow-parent`;
 ### A focus whose walk is stuck at its bound, the outpost
 
 An MSAA focus past NVDA's checks, and the gap's read once its focused
-element is read, share their walk's progress with the outpost's watchdog
-(`docs/crates/verbatim-outpost.md`, the worker and its watchdog). Measured
-by `focus_reports.rs`'s
+element is read, keep their walk's progress in their worker's charge,
+from which the reducer publishes it (`docs/crates/verbatim-outpost.md`,
+"The bound met when a call is stuck"). Measured by `focus_reports.rs`'s
 `an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound` and
 `a_gap_read_whose_walk_is_stuck_is_published_at_its_bound`, whose step to
 a parent answers 3 seconds late.
 
-- Per focus, on the steady path: the watch lock, uncontended, taken when
-  the walk is armed (`Watch::arm`), once for each ancestor the walk tells
-  (`Watch::advance`), for an MSAA walk once more for its chain as it stops
-  below the top and once as it is complete, and once when the walk returns
-  (`Watch::walk_returned`); two timer calls, which wake no thread. No walk
-  is armed for a focus already past its bound, which costs none of this.
+- Per focus, on the steady path: the charge's lock, uncontended, taken
+  when the walk is armed, once for each ancestor the walk tells, for an
+  MSAA walk once more for its chain as it stops below the top and once as
+  it is complete, and once when the walk returns; one message to the
+  mailbox as it is armed, telling the reducer its bound, which sets the
+  shell's timer and wakes no thread on its own. No walk is armed for a
+  focus already past its bound, which costs none of this.
 - Copies per focus: the focus's `NodeSnapshot` into the progress
   (`bound::BoundFocus`), each ancestor's `NodeSnapshot` as it is told,
   for an MSAA walk that stops below the top its chain so far reversed, and
   for an MSAA walk its whole chain once it is complete. None is avoided:
-  the watchdog's thread must own what it may publish while the worker
-  goes on with its own, and handing the classic UIA walk's ancestors over
-  rather than copying them needs each boxed, an allocation in place of the
-  copy.
-- At the bound, with a call still under way: the watchdog wakes once,
-  copies the progress, completes the chain by local calls, about four per
-  plain window, and sends the report under the watch lock; a walk that
-  returns past its bound before the watchdog has published it is published
-  the same way by its worker, with no wake-up. When the walk returns, the
-  worker adopts the focus, and for a terminal reads its caret and its first
-  read, which a reported terminal reads too. No thread is abandoned or
-  started, and no second message is sent.
+  the reducer's thread must own what it may publish while the worker goes
+  on with its own.
+- At the bound, with a call still under way: the reducer's thread wakes
+  once, copies the progress under the charge's lock, completes the chain
+  by local calls, about four per plain window, and sends the report; a
+  walk that returns past its bound before the bound's timer is published
+  the same way when its return reaches the reducer. When the walk
+  returns, its program sends nothing more, and the reducer dispatches the
+  work the focus owes, for a terminal its caret and its first read. No
+  thread is abandoned or started, and no second message is sent.
 - Bound: an MSAA call has no bound of its own, so a walk stuck in one
-  stays there until the entry's deadline abandons its worker; the focus
-  then passes to the worker that replaces it, which adopts it before its
-  next entry.
+  stays there until the program's deadline abandons its worker.
 
 ### A focus change into a list, UIA
 
@@ -656,24 +653,40 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   hits a read, about 12,600 in all, inferred from the two depths measured
   and not measured at depth.
 
-### The outpost's commit point
+### The outpost's reducer
 
-Mutex acquisitions on the worker's path, counted from the code
-(`docs/design/focus-pipeline-rework.md`, "The outpost's commit point"),
-not measured: an MSAA focus whose walk returns before its bound with k
-ancestors told, 25 + k before, 13 + k now; a UIA focus from the listener's
-read, about 24 before, about 9 now; a terminal output read, about 13
-before, 5 now, with no lock held across a call. The terminal read's copy
-adds an `AddRef` and `Release` of where its next read starts and one
-allocation for the sent caret's line per read. Owed work adds one alarm
-set and its cancel per terminal or slider focus. No wake-up is added: the
-watchdog wakes at the same bound, grace and deadline, and an entry's
-alarm is cancelled when it ends rather than when it publishes. A
-watchdog's publication is built under the watch lock, with local calls
-only (window text, styles and the registries' lookups), so on the rare
-wake that publishes, a walk's next step waits that long for the lock;
-values a commit displaces cost one small vector each only when there
-are any.
+Counted from the code (`docs/design/ownership-outpost-reducer.md`,
+"Cost"), not yet measured: `measure_focus_explorer`,
+`measure_focus_text_box`, `measure_keys_windows_terminal` and
+`measure_keys_conhost` before and after give the hop's latency and the
+wake-ups and processor time per event.
+
+- Wake-ups: an event a program handles wakes the reducer's thread for
+  the event, the worker for its program, and the reducer's thread for the
+  program's commits and end, which arrive together when the shell is
+  already awake; where the worker alone woke once, three. An event the
+  push drops wakes nobody; one the reducer drops wakes only its thread.
+  Each further program of one entry, a run's next try, the gap's read a
+  dropped copy asks for, or the owed work, adds two. Each timer, a
+  deadline, a grace, a walk's bound or the gap record's bound, costs one
+  wake where the watchdog took two (its own, then a post), and the gap
+  record's threadpool timer is gone. The console host's caret poll makes
+  each 5 ms re-read a program of its own, two wakes more per re-read than
+  the worker's own wait made.
+- Latency: two thread hand-offs per program, each an `SetEvent` and a
+  wait's return, expected at tens of microseconds.
+- Processor time: per program, a copy of the facts it reads: the reports'
+  lines, the follow state's chain and the marks, and the caret events
+  and value changes waiting, a scan of the intake when a caret key's
+  watch is open or a caret key is dispatched.
+- Locks: the watch lock and the commit's nested locks are gone. The
+  reducer's thread takes the mailbox's lock to drain it, the store's for
+  a commit's writes, a worker's charge for a publication, and the
+  backlog's with the store's inside it for a release; a worker takes its
+  charge's lock for each step of a walk and for each text write, with the
+  store's inside it.
+- Memory: one more thread's stack, the parked event objects, each held
+  until its entry is handled, and the reducer's copies.
 
 ### The outpost's object store
 
@@ -695,8 +708,8 @@ added: every walk makes the calls it made before.
   operation names, at most two, and those of the kept carets, with the
   kept selection: one `AddRef` per UIA position copied, the same however
   many anchors the node has, so a long say-all costs no more per call. It
-  puts the copy back under the watch lock and the store's, its displaced
-  positions released after both. The text locks are no longer held across
+  puts the copy back under its worker's charge and the store's lock, its
+  displaced positions released after both. The text locks are no longer held across
   the call.
 - A release reads every kept node's and anchor's tags, where it read only
   the carried ones, and also frees nodes and anchors no message carried

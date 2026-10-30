@@ -183,7 +183,7 @@ The app's `Live` becomes `Starting` or `Ready`, and `mark_ready` consumes `Start
 - Verbatim+F11 while File Explorer's outpost is starting normally. The request waits for `Ready` and the list opens, as today.
 - File Explorer's outpost retires while a Verbatim+F11 request waits for it. The request is answered "nothing" at `NotWatched`, as `no_outpost_follows` answers it today, and the next press starts an outpost and lists the items.
 - A given spare fails before its `Ready`. `Regenerated`, then the failed one's `Ended` if the app heard it started, then the next generation's `Started`, as today (df4c15d9). The held facts go to the next generation and are spoken once.
-- A replacement listener starts while an outpost is ready. Its `ForwardingEnded` for that outpost is relayed, and the outpost's hand-over keeps the earlier tick (`crates/verbatim-outpost/src/outpost/handover.rs` lines 207 to 220), as today.
+- A replacement listener starts while an outpost is ready. Its `ForwardingEnded` for that outpost is relayed, and the outpost's hand-over keeps the earlier tick (the hand-over's `forwarding_ended`, which the reducer's hold replaces, `crates/verbatim-outpost/src/outpost/reducer/hold.rs`), as today.
 - A burst of value changes of the focused slider while the outpost's write is in flight. Only the newest is spoken, as today.
 - A caret report with selection changes waiting while a caret key's reply is written. The newer report is not merged across the reply, as today (dd363ecc).
 

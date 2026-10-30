@@ -54,8 +54,8 @@ reach it by one route in the order Windows raised them
 those events only until the outpost's hook is in, so that an application's
 first events start its outpost:
 
-- An outpost reads the `WinEvent` clock (`verbatim_ia2::event_clock`)
-  before it installs its hook, and says `Ready` once it is in.
+- An outpost tells its reducer the hook goes in, installs its hook, and
+  says `Ready` once it is in.
 - On `Ready` the supervisor sends the listener `HookInstalled` (application
   and generation). The listener reads the clock, forwards none of that
   application's facts raised after that tick, still forwards those raised
@@ -63,13 +63,20 @@ first events start its outpost:
   every fact queued; the supervisor relays it to that generation, or drops
   it if the generation has gone.
 - Every `WinEvent` fact carries its raising thread and time
-  (`WinEventStamp`). The outpost matches the two hooks' copies by counting
-  (`outpost::handover`): a copy whose kind, address, thread, and time the
-  other source has an unmatched copy of is dropped, any other is handled
-  and counted, so nothing from one source alone is dropped. Copies are
-  queued under the hand-over's lock, in the order judged. Only copies
-  raised between the two clock readings are counted after
-  `ForwardingEnded`, and only for `handover::TWIN_BOUND` (15 seconds).
+  (`WinEventStamp`). The reducer holds the hook's whole stream from the
+  hook's install until `ForwardingEnded`, and handles the listener's
+  copies as they come (`reducer::hold`;
+  `docs/design/ownership-outpost-reducer.md`, "The hand-over's hold"). At
+  `ForwardingEnded` it drops the held copies of the kinds the listener
+  forwards raised at or before the named tick, which the listener
+  forwarded, and releases the rest in the hook's order, as one batch,
+  ahead of anything the hook delivers later; a later `ForwardingEnded`,
+  from a replacement listener, finds the hold released. If the listener's
+  reads end first (`UiaFocusReadsEnded`), the hold is released, dropping
+  the held copies raised at or before the newest listener copy handled. An
+  outpost no listener forwards to (`run_attach`, or a test's,
+  `Outpost::without_listener`) holds nothing. The hold costs only an
+  outpost's start: a median of 20.6 ms, at most 591.3 ms over 126 starts.
 - When a ready outpost ends, the supervisor sends the listener
   `HookRemoved`, and the listener forwards that application's events again.
   A replacement listener gets `--hooks-in`, forwards none of those
@@ -242,7 +249,7 @@ receives the event's own element, judges and reads a UIA focus
   events wait, and the first that returns reads them; `READ_DEADLINE` after
   that every waiting and later event is dropped until a thread returns.
   The watchdog sleeps on an alarm (`outpost::alarm::Alarm`, as an
-  outpost's watchdog does): a read sets its timer as it starts, to its
+  outpost's reducer does): a read sets its timer as it starts, to its
   deadline, or to the end of its grace when a foreground event came while
   it waited, and again to its bound once it has passed its checks, each
   only when no sooner time is set (`alarm_by`); a read that returns with
@@ -284,7 +291,7 @@ responder out of it.
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
-The gap record (`outpost::gap_record`, in the intake's shared state;
+The gap record (`reducer::gap_record`, in the reducer's intake;
 `docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
 the gap's evidence; `docs/design/listener-without-connections.md`,
 decision 11). UI Automation sometimes delivers an application's focus late
@@ -295,13 +302,14 @@ because it judged the window UIA, with its window, top-level window
 
 - Opening. The worker opens it when it drops a focus copy, its own hook's
   or the listener's forwarded before the hook is in, because its verdict
-  on the copy's window is UIA (`Worker::copy_dropped_for_uia`,
+  on the copy's window is UIA (`Worker::copy_dropped_for_uia`, its
+  program's commit carrying a `GapNote`, applied by
   `Intake::gap_copy_dropped`). It looks back first: an answer kept for the
   copy's top-level window or for any window, observed up to 100 ms before
   the copy or after it (`gap_record::ANSWERED_BEFORE_US`), stands for it,
   and nothing opens; otherwise a drop for no window above the sender
   observed so has the focus read at once in the copy's place, stamped with
-  the copy's observation. A copy handled through MSAA opens nothing.
+  the copy's observation, the reducer's next program. A copy handled through MSAA opens nothing.
 - Restamps. While it is open, a later copy the worker drops for UIA in its
   top-level window, or a foreground change into that window the worker
   accepts (after its acceptance, front, repeat and readability tests and
@@ -310,7 +318,7 @@ because it judged the window UIA, with its window, top-level window
   `GapRecord::accepted`). The stamp only moves forward: an older event, as
   in a focus run tried newest first, neither restamps nor answers it.
 - Answers. Each UIA focus's outcome is applied as it resolves its marker
-  (`Intake::push`, with no wake of the worker): a focus's read placed in
+  (`Intake::push`, with no program dispatched): a focus's read placed in
   its own window's top-level window, or its nearest window's, one local
   `GetAncestor`, and a drop by the answer it carries. An answer for the
   record's top-level window, or for any window, observed up to 100 ms
@@ -325,18 +333,16 @@ because it judged the window UIA, with its window, top-level window
   through either backend, or an accepted foreground change into one,
   answers it. Every answer is final.
 - The bound (`gap_record::BOUND_US`, one second from the first copy) is
-  timed by one one-shot threadpool timer per outpost
-  (`gap_timer::ThreadpoolGapTimer`, behind the `GapTimer` trait), set when
-  the record opens and cancelled when it is answered (`TimerAction`), under
-  the intake's lock, so that the pipe thread and the worker set and cancel
-  it in the order they change the record; no thread waits on it, and its
-  callback never sets or cancels it. Its callback pushes `Item::GapBound` into the
-  intake, behind every marker queued before it. Handled with the record
-  open and its bound passed by the observation clock
-  (`Intake::gap_bound_reached`), the record closes and is read; a timer
-  that fired early is set again for the rest. A test sets its own timer
-  (`Outpost::set_gap_timer`) and reaches the bound itself
-  (`Outpost::gap_bound_reacher`), never on the thread that sets the timer.
+  one of the reducer's timers, set when the record opens and cancelled
+  when it is answered (`TimerAction`), in the order the record changes,
+  since one thread changes it; the shell's timed wait ends at it. When it
+  passes, `Item::GapBound` is pushed into the intake, behind every marker
+  queued before it. Handled with the record open and its bound passed by
+  the observation clock (`Intake::gap_bound_reached`), the record closes
+  and is read; a bound reached early is set again for the rest. A test
+  sets a timer of its own (`Outpost::set_gap_timer`, behind the
+  `GapTimer` trait) in place of the reducer's, and reaches the bound
+  itself (`Outpost::gap_bound_reacher`).
 - The read (`Worker::gap_read`, `read::gap_focus_read`, trigger
   `read::FocusRead::Gap`) is the focus-now read through UIA only, made
   once: refused with local calls when the foreground thread's focus window
@@ -616,7 +622,7 @@ the class lists alone, from the same tables and code.
   verdict for those (`kept_at`), one being enough behind the intake's
   marker barrier.
 - Only the worker in charge records a verdict (`Arbitrator::set_in_charge`,
-  set by the watchdog under the watch lock as it abandons a worker): a
+  set by the reducer's shell as it abandons a worker): a
   probe returning on an abandoned worker records nothing, but a timed-out
   probe is kept as unknown whichever worker made it.
 - `lasting_verdict` answers only a verdict that lasts the window's
@@ -660,7 +666,8 @@ the class lists alone, from the same tables and code.
   gap's read); `set_observation_clock` (an `arbitration::ObservationClock`
   for the outpost's own events' stamps and its verdicts' keeps); and
   `set_gap_timer` (a `GapTimer` for the gap record's bound, which
-  `gap_bound_reacher` reaches).
+  `gap_bound_reacher` reaches); and `without_listener`, for an outpost
+  no focus listener forwards to, whose hook's copies are never held.
 - `Outpost::settle` waits until everything queued is handled, follow-ups
   included, the subscription has made every move asked, every published
   message is written, and the event thread has taken every nudge. It covers
@@ -670,12 +677,51 @@ the class lists alone, from the same tables and code.
 - `Outpost::observe_heard` hands a `HeardObserver` each event the outpost's
   own handlers and hook take in, as a `Heard`, once queued.
 
-Inside an outpost (`docs/design/communication.md`, section 6.4):
+Inside an outpost (`docs/design/communication.md`, section 6.4;
+`docs/design/ownership-outpost-reducer.md`):
 
-- The intake (`outpost::intake`): the hook callbacks (`APP_SUBSCRIPTIONS`),
-  the subscription's callbacks, routed facts (each matched first by
-  `outpost::handover`), and queries only add an entry and return. A UIA
-  callback keeps the cached parts, window handle, and an agile reference.
+- The mailbox (`outpost::shell::Mailbox`): the hook callbacks
+  (`APP_SUBSCRIPTIONS`), the subscription's callbacks, routed facts,
+  Core's commands, and the workers' commits and ends only append to it,
+  under its one lock, and return. Two kinds of entry are dropped as they
+  are pushed, judged on copies of the reducer's marks that only the shell
+  writes, from the reducer's effects (`Marks::drops_on_arrival`): a held
+  console's updates and the system caret's events while the focus has
+  caret events of its own. A UIA callback keeps the cached parts and
+  window handle, and parks its element, and an active text position's
+  range, in the store (`store::Parked`), the entry carrying the key.
+- The reducer (`outpost::reducer`), a pure state machine on a thread of
+  its own, run by its shell (`outpost::shell`): it holds the intake's
+  order (`reducer::intake`), the gap record, the reports Core may hold
+  (`reducer::held`), the follow state (`reducer::follow`), the hand-over's
+  hold, the worker generation in charge with its deadline, the moved-on
+  grace and the walk's bound, and the queries not yet answered. Inputs
+  come in mailbox order; effects go out: dispatch a program, send a
+  message, release, move the subscription, abandon a worker, set a timer.
+  It names no Windows type and holds no application object; its local
+  reads (a hung window, whether the user moved on, a publication at a
+  walk's bound) reach it through `reducer::Locals`. `cargo xtask ci`
+  reads every file of its directory by the pure rule
+  (`xtask/src/ownership.rs`). The shell waits on the mailbox's alarm
+  (`outpost/alarm.rs`): an event set by an append while it waits, and a
+  high-resolution timer set to the reducer's next timer, so the watchdog
+  thread and the gap record's threadpool timer are gone, and each timer
+  costs one wake. Every lock its thread takes is a short hold with no
+  call: the mailbox's, the backlog's with the store's inside it for a
+  release, the store's for a commit's writes, and a worker's charge.
+- Programs (`outpost::worker`): the worker generation in charge takes one
+  program at a time from its inbox, an entry's handling, the owed work, a
+  settle, or a release's drop, with copies of what it reads
+  (`reducer::Facts`: the reports, the follow state, the marks), and posts
+  each commit (`commit::Effects`) to the mailbox, applying its pure part
+  to its own copies (`reducer::apply`), so what it reads after is what the
+  reducer will hold. The shell applies a commit only while its request is
+  live, its generation in charge and its walk not published: first the
+  writes only it makes, to the store and its table of the elements the
+  subscription follows (`commit::Writes`), then the reducer's change. A
+  program receives too the caret events and edit controls' value changes
+  waiting when it was dispatched (`reducer::WaitingCaret`), which a caret
+  key's check and a caret read's comparison ask after.
 - The focus-following subscription (`docs/design/focus-pipeline.md`, section
   17): one registration with NVDA's two groups. The base group, given every
   UIA focus whose element the outpost has, holds name, value, and state
@@ -702,10 +748,12 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   ancestor's element, so the worker finds the slider by the focus's path
   (`sensitive_slider_parent`, `element_by_focus_path`) and keeps it under
   the parent's node. Elements
-  arrive as `Cached<PropertyEvent>` or `Cached<TextEvent>`, carried as
-  `intake::EventElement` and resolved as `Kept`. The worker moves the
-  subscription with each focus it reports (`follow_focus`): add the group to
-  the new focus, then `RemoveEventHandlerGroup` from the old;
+  arrive as `Cached<PropertyEvent>` or `Cached<TextEvent>`, parked in the
+  store (`store::Parked`) and resolved as `Kept` by the program that takes
+  them. The shell moves the subscription as the reducer's follow state
+  asks (`reducer::Subscription`), by its tokens for the elements it keeps:
+  add the group to the new focus, then `RemoveEventHandlerGroup` from the
+  old;
   `RemoveAllEventHandlers` only at shutdown. A move to what is already
   followed makes no call; a focus read through MSAA is followed by nothing.
 - The queue (`docs/design/focus-pipeline.md`, section 5; the rules are in
@@ -720,12 +768,15 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   limit, a foreground change by either); events from a hung window are
   dropped.
 - Runs: each run of MSAA focus and foreground events is tried newest first,
-  each under its own deadline, until one is reported, at the run's newest
-  place, as NVDA's `pumpAll` does (`ends_a_run`, `Planned::handle`); three
+  each try a program under its own deadline, until one is reported, at the
+  run's newest place, as NVDA's `pumpAll` does (`ends_a_run`); the reducer
+  dispatches the next try when a try's program ends unreported, and the
+  replacement of a worker abandoned in a try that was not published tries
+  the next. Three
   focus candidates per backend are kept (`Planned::Focus`). A foreground
   change removes a waiting focus on its client object from the same thread
   not raised after it. A run whose events all carry raise times is tried in
-  that order (`in_raised_order`), ties by the hand-over's `Arrival`. UIA
+  that order (`in_raised_order`), ties in the order they arrived. UIA
   focus events are handled at their own places, the newest menu opening
   per backend last.
 - Markers: nothing that arrives after a UIA focus's marker is planned until
@@ -735,110 +786,77 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
   marker are planned ahead of the read (`old_focus_events_first`), since a
   provider moving the focus into a child raises the old focus's change
   first but it comes by another route. The check compares runtime ids.
-- The worker (`outpost::worker`), one thread, the only one calling into the
-  application, handles entries in order, so events and replies leave in
+- The worker generation in charge is the only one calling into the
+  application, one program at a time, so events and replies leave in
   planned order but for menu openings, a run's older focuses, and a caret
-  key's answer. Before any call it applies NVDA's acceptance test
+  key's answer. Before any call a program applies NVDA's acceptance test
   (`outpost::acceptance`; `docs/parity/focus-events.md`, "Event
   acceptance"): `accepts_event`, a pure function of the event, its window,
   `WindowQueries` (local calls in `SystemWindows`), and `RequestedEvents`;
   its `foreground_relation` goes in the window facts
   (`verbatim_core::focus_rules::ForegroundRelation`). It takes the backend
-  crates' per-thread call counts into each published `EventTiming`; an
-  entry that publishes nothing logs its calls (`docs/performance.md`,
+  crates' per-thread call counts into each published `EventTiming`; a
+  program that publishes nothing logs its calls (`docs/performance.md`,
   "Cancelled traces").
-- The worker waits on the intake's alarm (`outpost/alarm.rs`): an event set
-  by a push while it waits, and a high-resolution timer set to its
-  requested wake (`Intake::wake_at`). Only the worker sets a wake.
-- The watchdog waits on an alarm the worker sets per entry and cancels as it
-  publishes, waking only when a deadline or grace passes
-  (`docs/design/wake-ups.md`, item 3). Deadlines: an event, a focus, or a
+- Deadlines and abandonment are the reducer's: an event, a focus, or a
   focus-now 10 s, NVDA's watchdog timeout; a navigation or activation
-  400 ms; an ancestor walk or tree dump 5 s. After half a second it also
-  abandons a worker once the user has moved to another UI thread of the
-  same provider process (`abandon_reason`, `next_check`,
-  `is_another_thread_of_its_application`). It answers the query
-  `Abandoned` and starts a replacement worker. A returning abandoned worker
-  publishes nothing, since publishing checks under the watchdog's lock that
-  it is in charge; nothing is sent while that lock is held but a focus
-  published at its walk's bound, below.
+  400 ms; an ancestor walk, a tree dump or a release 5 s; a text request
+  2 s. After half a second on a window it also abandons a worker once the
+  user has moved to another UI thread of the same provider process,
+  judged when the grace ends and at each foreground fact
+  (`window::front_is_another_thread_of_its_application`). It publishes an
+  armed walk first, marks the generation dead in the worker's charge
+  (`worker::Charge`), answers the query the program was running
+  `Abandoned`, and starts a replacement. A returning abandoned worker has
+  its commits refused, posts that it returned, and exits; the count of
+  those that have not returned is published to an atomic the I/O thread
+  answers pings with.
 - The bound met when a call is stuck (`outpost::bound`;
   `docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-  fallback"). An MSAA focus that has passed NVDA's checks, its focused-state
-  test among them, and been read, and the gap's read once its focused
-  element is read, arm their walk with the watchdog (`Watch::arm`, a
-  `bound::FocusProgress`): the focus, its event's trace, stamp and MSAA
-  address, and the walk's bound, by the design's Terms
-  (`read::walk_left`): `MOVED_ON_GRACE` when the focus's top-level window
-  is not that of the focus the outpost expects Core to hold
-  (`held::Held::expected`), `ENRICHMENT_BUDGET` otherwise, measured from
-  the event's observation for an MSAA focus and from the read's start for
-  the gap's read, which begins only once the gap's own bound has passed.
-  The walk tells what it reads as it reads it (`read::WalkStep`): the MSAA
-  walk each ancestor (`verbatim_ia2::acquire::AncestorLimits::progress`)
-  and its chain once it stops and once it is complete, the classic UIA
-  walk each ancestor it keeps (`verbatim_uia_rops::FocusQuery::progress`),
-  a remote program nothing until it returns. A walk already past its
-  bound when it begins is not armed: it cuts itself at its first check,
-  and its worker reports it alone. The alarm is set to the bound when it
-  comes before the entry's next check. Should the walk still be under way
-  at the bound, the watchdog publishes the focus from that progress
-  (`publish_at_bound`), its chain as `bound::chain_at_bound` makes it: the
-  chain once the walk ended, else the ancestors read and plain windows from
-  the window the walk had reached, included, by local calls, with no
-  selected child, dialog text or text of its own. A walk that returns
-  still armed past its bound, before the watchdog has published it, is
-  published by its worker through the same function from the same
-  progress (`Worker::walk_returned`), so the report does not depend on
-  which thread comes first. The publication is a commit (below): it
-  records the report for Core's judgement, claims the walk, sends the
-  report and makes the focus the followed one, with the work it still
-  owes, all under the watch lock, only while that walk is armed by the
-  worker in charge. The watchdog publishes an armed walk before it
-  abandons its worker, in the same hold of the lock, whatever the walk's
-  bound (`wake`). The worker, when its walk returns, learns of the
-  publication under the same lock (`Watch::walk_returned`), sends nothing
-  else for it, and attempts the owed work; nothing is handed over to a
-  replacement, which attempts the owed work as its first act when the
-  abandoned worker was not attempting it. A focus whose object is not yet
-  acquired, a focus-now answer and a foreground report are left to the
-  deadline.
-- The commit point (`outpost/commit.rs`; `docs/design/focus-pipeline-rework.md`,
-  "The outpost's commit point"). The follow state, the followed focus
-  (`Tracking`), the subscription's target, a caret key's watch, the
-  caret-read stamp, the focus path and the owed work, lives in the watch's
-  state and changes only in `Watch::commit`, which checks under the watch
-  lock that the committing generation is in charge, then records an
-  `Effects` value's report, sends its messages and applies the rest,
-  terminal entries among them, which the object store keeps. The locks a
-  commit takes nest inside the watch lock: the judgement list, the intake,
-  the outbound queue, the object store; none is held across a call. What a
-  commit displaces that may hold an application's object
-  (`commit::Displaced`: what the store let go of, an element the
-  subscription is not moved to) is dropped once the lock is let go; what a
-  watchdog's publication displaces waits in the follow state for the
-  worker's next commit. The watchdog builds a publication under the lock,
-  from the walk's progress as it stands, with local calls only, minting
-  plain windows under the walk's request, which the publication claims.
-  The release of nodes no live request can still name (`Worker::release`)
-  is the one change of follow state outside a commit: it makes the same
-  in-charge check under the watch lock and calls `Store::release`, which
-  takes the outbound queue's lock with the store's inside it. Owed work (a terminal's first read, a
-  `SensitiveSlider`'s lookup for a thumb published at its bound) is
-  attempted once per worker under a deadline of its own with no moved-on
-  window (`Watch::take_owed`). A terminal read works on a copy of its
-  entry, put in place only by its result's commit. Each entry, and each
-  attempt at owed work, is a request with a mint tag of its own
-  (`store::Tag`, the generation and a request number), which the worker
-  carries in its `RequestContext`, the shared context with the store's
-  handle for the request, and passes when it starts the entry's or the
-  attempt's deadline (`Watch::start`, `Watch::take_owed`, which retags the
-  handle); the watch's state keeps it as the live request until the entry
-  ends, its worker is abandoned, or its walk's publication claims it
-  (`WatchState::live_tags`). The watchdog's publication runs under the
-  claimed request's tag. An entry's result ends
-  its query but not its deadline. The walks stop at their next step once
-  their worker is abandoned (`Watch::advance`).
+  fallback"). An MSAA focus that has passed NVDA's checks, its
+  focused-state test among them, and been read, and the gap's read once
+  its focused element is read, arm their walk in the worker's charge
+  (`Charge::arm`, a `bound::FocusProgress`) and tell the reducer its bound,
+  by the design's Terms (`read::walk_left`): `MOVED_ON_GRACE` when the
+  focus's top-level window is not that of the focus the outpost expects
+  Core to hold (`Held::expected`), `ENRICHMENT_BUDGET` otherwise, measured
+  from the event's observation for an MSAA focus and from the read's start
+  for the gap's read. The walk tells what it reads as it reads it
+  (`read::WalkStep`), each step taken into the charge under its lock: the
+  MSAA walk each ancestor and its chain, the classic UIA walk each
+  ancestor it keeps, a remote program nothing until it returns. A walk
+  already past its bound when it begins is not armed. Should the walk
+  still be under way at the bound, the reducer publishes the focus from
+  that progress (`Locals::publication`, `worker::publication`), its chain
+  as `bound::chain_at_bound` makes it, by local calls on the reducer's
+  thread, with no selected child, dialog text or text of its own. A walk
+  that returns past its bound is marked so in the charge, and the reducer
+  publishes it from the same progress, so the report does not depend on
+  which comes first; one that returns before is disarmed there, and its
+  program reports it. The publication records the report, sends it,
+  makes the focus the followed one with the work it owes, and claims the
+  walk's request: nothing more of its program is applied. The reducer
+  publishes an armed walk before it abandons its worker, in the same
+  transition. The owed work, a terminal's first read or a
+  `SensitiveSlider`'s lookup for a thumb published at its bound, is a
+  program the reducer dispatches before anything else, once per worker
+  generation, under a deadline of its own with no moved-on window.
+- Requests and their tags: each program is a request with a mint tag of
+  its own (`store::Tag`, the generation and a request number the reducer
+  gives), which its `RequestContext` carries with the store's handle; the
+  program in flight's request is live until it ends, its worker is
+  abandoned, or its walk's publication claims it. A program's text writes
+  to the store are made while its charge says it is live, under the
+  charge's lock (`RequestContext::while_live`). A terminal read works on a
+  copy of its entry, put in place only by its commit.
+- Queries: each query the outpost takes has a reply token
+  (`verbatim_model::protocol::Responder`) in the shell, keyed by request
+  id, consumed by the one answer the reducer sends: the reply, `Abandoned`
+  at the deadline, `Failed` for a program that ended without answering,
+  `NotStarted` for a `Cancel` before dispatch, `WatchEnded` for a caret
+  key's watch. A token dropped unanswered answers `Failed`. In debug builds
+  the shell asserts after each transition that its tokens are the queries
+  the reducer records.
 - Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
   calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
   `TRANSACTION_TIMEOUT` (5 s); the listener's read's bound bounds the
@@ -851,10 +869,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4):
 - The I/O thread, the main thread (`verbatim_process::transport::ChildIo`,
   at `THREAD_PRIORITY_HIGHEST`), waits only on its completion port, hands
   each command to `Outpost::handle_command` (which answers pings itself and
-  withdraws an unstarted cancelled query with `NotStarted`), and finishes
-  pending writes.
+  appends everything else, a `Cancel` among them, to the mailbox), and
+  finishes pending writes.
 
-The worker, its reads, the intake, the writer, the protocol, and the
+The workers, their reads, the reducer, the shell, the writer, the protocol, and the
 supervisor's owner, policy, and writer modules forbid `unsafe`; what remains
 is window-manager calls, the event thread's message loop, process creation,
 and the inherited pipe handles.
@@ -1244,10 +1262,10 @@ unredirected, never unspawned.
   reported, and every focus report carries window facts.
   A child's own focus event from the same `SetFocus` as its control's
   redirected one is dropped (`Intake::take_redirected_focus`).
-- The reports (`outpost::held`;
+- The reports (`reducer::held`;
   `docs/design/ownership-one-judge.md`, "The reports, from the store"):
   every focus or foreground report whose focus node the outpost has not
-  released, added at the worker's commit and removed by its release, one
+  released, added at a program's commit and removed by a release, one
   per node and line. Core's focus line is always among them. With each
   the outpost keeps its MSAA address, whether a simple child, the window in
   front as it was entered (inherited from the newest report in its
@@ -1331,8 +1349,8 @@ foreground application for its focus unless a newer focus was applied.
 ### Window destruction and held objects
 
 - Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
-  the gap record's answer kept for it, its classic mark, and its MSAA
-  nodes.
+  the gap record's answer kept for it (through its program's commit), its
+  classic mark, and its MSAA nodes.
 - Held objects: the object store (`outpost::store`;
   `docs/design/ownership-outpost-reducer.md`, "The store") owns both
   registries, each node's text patterns and anchors, the terminals' kept
@@ -1344,7 +1362,7 @@ foreground application for its focus unless a newer focus was applied.
   interning traits of `verbatim-uia` and `verbatim-ia2` and tags each node
   with the request's tag in the same hold of the store's lock, keeping an
   element a lookup replaced for its holder to drop (`take_removed`, which
-  the watchdog's publication puts in what its commit displaces); a plain
+  a publication hands to the next program's worker); a plain
   window and a foreground's client object read from local data are minted
   by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
   The lines a walk copies are tagged too: the previous focus's chain it may
@@ -1360,21 +1378,24 @@ foreground application for its focus unless a newer focus was applied.
   that outpost and the last position handled) when the node set changed
   or after a focus report (`Supervisor::send_nodes_held`); any other
   change waits in the writer's slot (`Supervisor::leave_nodes_held`) for
-  the next command, a request or a ping within three seconds. The worker
-  in charge then calls `Store::release` with the live requests' tags: under
+  the next command, a request or a ping within three seconds. When the
+  reducer reaches it, between programs, its shell calls `Store::release`
+  with the live requests' tags: under
   the sender's lock and then the store's, it frees a node or anchor only
   when none of its tags is live and either no message carried it or one
   was written at or before that position, none waits that carries it, and
-  Core does not hold it; with it go the node's text, terminal entry,
-  reports and focus-following groups, under the watch lock, the objects
-  dropped after, so a replacement worker never reports a vanishing node. A
+  Core does not hold it; with it go the node's text and terminal entry,
+  and the reducer is given the released nodes before it dispatches any
+  program, dropping their reports and focus-following groups, so no
+  program is given a vanishing node; the objects are dropped by a release
+  program on a worker, under a deadline, never on the reducer's thread. A
   never-carried node of an ended request or an abandoned generation goes
   at the next release. A released node answers `Gone`, a forgotten anchor
   `AnchorLost`. Only the newest list is kept.
 - Text on copies: a text call takes a copy of its node's anchors from the
   store (`Store::uia_text`, `Store::edit_text`), works on it with no lock
   held, and puts it back (`text_reads::put_uia`, `put_edit`) only while
-  its request is live, judged and written under the watch lock
+  its request is live, judged and written under its worker's charge
   (`text_reads::while_live`), the anchors it minted or reported tagged; a
   copy of an abandoned or claimed request, or of a node released, is
   dropped once the locks are let go. The other text writes, the patterns
@@ -1450,35 +1471,36 @@ scripts wait for, without waiting:
 - The worker ends the watch it replaces, then checks the new one with one
   read (`text_reads::check_watch`, `text::check_caret`): on evidence it
   answers at once with the caret's line, the unit, and the selection's
-  changes; otherwise the watch stays open (`text_reads::OpenWatch`, at most
-  one) and the worker returns to its queue. Each later caret event, text
+  changes; otherwise the watch stays open (`reducer::OpenWatch`, at most
+  one, in the follow state) and the program ends. Each later caret event, text
   change, or text selection change of the node checks it again, unless
   observed before the caret was last read; the answering event's own report
   is not sent. A read that covers a waiting caret event observed after the
-  key's press counts it (`text_reads::Signal`). While a check reads, the
-  watchdog treats the request as running.
+  key's press counts it (`text_reads::Signal`), as the program's copy of
+  the waiting caret events says. While a check reads, the watch is taken
+  out of the follow state, and an abandonment answers its query.
 - A watch ends with `TextReply::WatchEnded`, which Core does not speak,
   when the next key's watch replaces it, a focus on another node is
   reported, or at `CARET_WATCH_BOUND` (10 s, `Item::Wake`). So a key that
   moves nothing is silent (`docs/parity/text.md`, "TextInfo-equivalent
   layer").
-- The console host's caret poll (`outpost/caret_poll.rs`, a documented
+- The console host's caret poll (`reducer::Poll`, a documented
   workaround; `docs/design/key-holding.md`, "The console host's caret
   poll"): the console host raises caret events only on its cursor's blink
   timer, so in its focused text area a watch the first check leaves open
   re-reads the caret every 5 ms until a check finds evidence or 50 ms after
   the key's `pressed_at_ms`, and ends `WatchEnded` when that last re-read
   finds nothing. A watch without `pressed_at_ms` is bounded 50 ms after it
-  opened. The worker makes each re-read itself, woken by its intake's wait
-  on a high-resolution timer, because a wait at the system's timer
-  resolution, 15.6 ms by default, would miss most reads, and because a wake
-  time only the worker sets cannot be overwritten by another thread's. A
+  opened. Each re-read is a program of its own (`Item::Wake`), dispatched
+  when the reducer's timer for it ends the shell's wait on a
+  high-resolution timer, because a wait at the system's timer resolution,
+  15.6 ms by default, would miss most reads. A
   console caret event for the watched node does not stop the poll when its
   check finds no evidence, because a blink tick left over from an earlier
   cursor set, such as `PSReadLine`'s set that moves nothing, can come after
   the key and before its move. A re-read is matched to its watch by the
-  request, not the node, so a worker the watchdog abandoned during a
-  re-read leaves its replacement's watch alone.
+  request, not the node, so a re-read of a replaced watch leaves the newer
+  one alone.
 - Evidence is the caret away from where it was known to be; the characters
   either side of it changed (only those, since a line can rewrap without a
   key); the text at the caret changed after Delete; the caret's line
@@ -1576,7 +1598,7 @@ Caret and text events:
   (`Intake::absorb_console_updates`) while no watch is open, the mark
   cleared before a terminal request, a caret key, or a new focus.
 - A focus-now answer's control has its caret read with it, is recorded
-  among the reports (`outpost::held`), as NVDA's fake focus is, and then
+  among the reports (`reducer::held`), as NVDA's fake focus is, and then
   becomes the followed focus (`adopt_focus`, as `emit_focus` does): another
   node's watch ends, the intake is told (`note_focused`), and the tracking
   takes it, unless it is already followed under the same node. It is
@@ -1629,7 +1651,7 @@ The thread that sends a message writes it itself (`outpost::outbound`,
 through the transport's `Sender`; `docs/design/communication.md`, section
 4.3): at once with one `WriteFile` when no write is in flight, otherwise
 into the sender's backlog, which the I/O thread writes as writes complete.
-Nothing that sends ever waits, so the watchdog can always abandon a worker.
+Nothing that sends ever waits, so the reducer can always abandon a worker.
 
 - Pongs, `Ready`, `TargetExited` and `SpareReady` go ahead of everything
   waiting: `Outbound::urgent` takes only an `Urgent`, which carries no
@@ -1692,13 +1714,15 @@ a kill too, logged as an error and counted `killed_on_failure`.
 
 The outpost's side (`Outpost::shutdown`), in order:
 
-1. The intake closes and drops what waits.
+1. The mailbox closes, and the reducer drops what waits and dispatches
+   nothing more.
 2. The `WinEvent` hook and its thread go.
 3. The subscription's groups are removed (`RemoveEventHandlerGroup`), each
    waiting for callbacks in progress.
-4. The watchdog ends, then the worker finishes its entry and every
-   abandoned worker and bounded-client thread returns; no call is cut off,
-   since UIA's timeouts end it.
+4. The reducer's thread ends once the program in flight has ended, with no
+   worker abandoned meanwhile, then every worker, abandoned or not, and
+   every bounded-client thread returns; no call is cut off, since UIA's
+   timeouts end it.
 5. Every node leaves the store, with its text patterns, anchors, and
    a terminal's kept start (`Store::release_everything`).
 6. What waits is written, every write in flight completes

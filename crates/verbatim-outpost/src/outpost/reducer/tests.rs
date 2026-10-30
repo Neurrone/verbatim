@@ -886,3 +886,36 @@ fn a_query_is_answered_once_whatever_ends_it() {
     assert_eq!(replies(&effects), [(5, "watch ended")]);
     assert_eq!(*replay.reducer.queries(), [6].into_iter().collect());
 }
+
+#[test]
+fn a_program_waiting_on_a_window_the_user_left_is_abandoned_once_its_grace_ends() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    assert_eq!(program(&effects).request.generation, 0);
+    replay.locals.moved_on = true;
+    // Before the grace ends nothing is judged.
+    assert!(!abandons(&replay.tick(400)));
+    assert_eq!(
+        replay.reducer.next_timer(now(400)),
+        Some(Duration::from_millis(501))
+    );
+    assert!(abandons(&replay.tick(501)));
+}
+
+#[test]
+fn a_foreground_fact_after_the_grace_judges_the_moved_on_rule_again() {
+    let mut replay = Replay::new();
+    replay.push(name_change(1), Source::Hook, 1);
+    // At the grace's end the user has not moved on.
+    assert!(!abandons(&replay.tick(501)));
+    // A wake for anything else judges nothing.
+    replay.locals.moved_on = true;
+    assert!(!abandons(&replay.push(name_change(2), Source::Hook, 600)));
+    // A foreground fact does.
+    let effects = replay.push(
+        Item::Fact(DeliveredFact::Foreground { hwnd: 8 }, None),
+        Source::Listener,
+        700,
+    );
+    assert!(abandons(&effects));
+}

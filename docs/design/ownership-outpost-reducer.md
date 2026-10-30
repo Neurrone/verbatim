@@ -1,6 +1,6 @@
 # The outpost's reducer build
 
-Status: design, written on 2026-10-31 against main at 98b0388d, with its adversarial review's findings folded in the same day (verdict: achievable with fixes). It applies [the ownership model](ownership.md)'s rules "Pure reducers, with calls as effects", "No state lent across a call into an application", "Nodes are released by message position" and "Queries have exactly one answer" to the outposts; its brief, mechanism draft and known traps are "The outpost's reducer build" in [the ownership builds](ownership-builds.md). The refactor preserves what is heard: this build changes no speech. It undoes recently finished work in two places, both by design: the commit point and its lock order (`docs/design/focus-pipeline-rework.md`, "The outpost's commit point"), and the hand-over's counting (`outpost/handover.rs`), which the hold Dickson decided on 2026-10-25 replaces. The output build runs beside it and shares no code.
+Status: built in two builds, the store build and the reducer build, with the departures and open parts listed below; designed on 2026-10-31 against main at 98b0388d, with its adversarial review's findings folded in the same day (verdict: achievable with fixes). It applies [the ownership model](ownership.md)'s rules "Pure reducers, with calls as effects", "No state lent across a call into an application", "Nodes are released by message position" and "Queries have exactly one answer" to the outposts; its brief, mechanism draft and known traps are "The outpost's reducer build" in [the ownership builds](ownership-builds.md). The refactor preserves what is heard: this build changes no speech. It undoes recently finished work in two places, both by design: the commit point and its lock order (`docs/design/focus-pipeline-rework.md`, "The outpost's commit point"), and the hand-over's counting (`outpost/handover.rs`), which the hold Dickson decided on 2026-10-25 replaces. The output build runs beside it and shares no code.
 
 Paths below are under `crates/verbatim-outpost/src/outpost/` unless named in full.
 
@@ -222,6 +222,25 @@ The builder updates `docs/crates/verbatim-outpost.md`, `docs/crates/verbatim-uia
 
 - The parked event objects are not built in the store build: their lifecycle, parked after the push-time drops and dropped by a release program, needs the reducer build's mailbox, so they come with it.
 - There is no separate map from window handle to node: plain windows and a foreground's client object mint by handle through their MSAA keys (`Nodes::window`, `Nodes::client`), which the MSAA registry's key map already resolves, so ids do not change.
+
+## Departures in the reducer build, pending Dickson's acceptance
+
+The mechanism as built is described in [the crate guide](../crates/verbatim-outpost.md), "Inside an outpost".
+
+- A program posts each commit as it makes it, applying its pure part to its own copies with the reducer's own function, rather than one result at its end, so a focus's report is sent as soon as it is read, as before; the reducer applies each only while the program's request is live.
+- The owed work and the gap's read a dropped copy asks for are programs of their own, which the reducer dispatches before anything else, rather than calls at the end of the program that owed them: the reducer then decides between them and the next entry, and each costs two more wakes.
+- A worker generation's charge (`worker::Charge`) holds the walk's progress slot and whether the generation was abandoned, under one lock: a walk's step, a publication's copy and a program's text write to the store, made under it with the store's lock inside, judge liveness in the same hold, as the watch lock did.
+- What the shell lets go of, an element no longer followed, a parked object never taken, what a publication's lookups replaced, is dropped by the worker before its next program, under that program's deadline; a `NodesHeld`'s release is a drop program of its own.
+- A caret key's check counts a waiting caret event from a copy of the waiting caret events made as its program is dispatched.
+- A focus walk's object (`BoundFocus::object`) is its event address or runtime id, no application object, so nothing is parked for it.
+
+Not built in this build, and open:
+
+- The value change check's cut into two programs. A caret read's comparison asks, after the `WinEvent` thread's sync, the program's copy of the waiting value changes and the mailbox's record of those it took or holds since the program was dispatched, which is exact and adds no hop.
+- The console poll as one yielding program: each re-read is a program of its own, two wakes more per re-read than the worker's own wait.
+- The division of `NodeText` and `KeptSelection` between reducer and store: the text records stay in the store, written while a program's request is live.
+- The verdicts as reducer state: the arbitrator keeps its lock, read by programs mid-walk and by the event thread.
+- The removal of the five mockapp tests the brief names, which wait for their replay tests' review.
 
 ## Open questions for Dickson
 
