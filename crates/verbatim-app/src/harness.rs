@@ -9,20 +9,19 @@
 //! for the status over and over. Every change readiness depends on calls
 //! [`Readiness::notify`].
 //!
-//! Idleness: `AwaitIdle` puts a waiter in line behind every gesture and
-//! numbered key the keyboard hook's thread took before it, and the reducer
-//! answers it once a round through every child has found everything idle
-//! (see [`IdleWaiter`] and [`crate::idle`]).
+//! Idleness: `AwaitIdle` posts a waiter to the reducer's port, where it
+//! waits until the harness's numbered input it names has been handled, and
+//! the reducer answers it once a round through every child has found
+//! everything idle (see [`IdleWaiter`] and [`crate::idle`]).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use crossbeam_channel::{Sender, bounded};
 use verbatim_control::protocol::{OutpostState, OutpostStatus};
 use verbatim_gui::GuiHandle;
-use verbatim_input_windows::{Injected, Injector};
 use verbatim_model::Pid;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
@@ -149,40 +148,38 @@ pub(crate) struct IdleWaiter {
     pub(crate) reply: Sender<()>,
 }
 
-/// The waiters the control plane has put in line, by token, until the
-/// reducer reaches their place in line ([`Injected::Barrier`]).
+/// What the control plane's `AwaitIdle` waiters share with the reducer.
 #[derive(Default)]
 pub(crate) struct IdleLine {
-    next: AtomicU64,
-    waiting: Mutex<HashMap<u64, IdleWaiter>>,
     /// What the reducer last found outstanding, for the error a waiter that
     /// timed out reports.
     pub(crate) outstanding: Mutex<String>,
 }
 
 impl IdleLine {
-    /// Puts a waiter in line behind every key and gesture the keyboard
-    /// hook's thread takes before it, injected through it, and waits up to
-    /// `timeout` for its answer. Blocks the calling thread, a control-plane
-    /// connection's own.
+    /// Posts a waiter to the reducer's port and waits up to `timeout` for
+    /// its answer. Blocks the calling thread, a control-plane connection's
+    /// own. Every harness input is a numbered key, whose end the hook posts
+    /// to the same port ([`ShellCommand::InputHandled`](crate::ShellCommand)),
+    /// so a waiter that reaches the reducer before input `after_input` has
+    /// been handled waits for it there (`crate::idle`); one with no
+    /// `after_input` follows no harness input and has nothing to wait
+    /// behind. A requester that gives up drops the receiver, and the
+    /// reducer's answer goes nowhere.
     pub(crate) fn wait(
         &self,
-        injector: &Injector,
+        commands: &crate::Commands,
         after_input: Option<u64>,
         timeout: Duration,
     ) -> Result<(), String> {
-        let token = self.next.fetch_add(1, Ordering::Relaxed);
         let (reply, answered) = bounded(1);
-        self.waiting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(token, IdleWaiter { after_input, reply });
-        if injector.inject(Injected::Barrier(token)).is_err() {
-            self.take(token);
-            return Err("the keyboard hook is gone".to_owned());
-        }
+        commands
+            .send(crate::ShellCommand::AwaitIdle(IdleWaiter {
+                after_input,
+                reply,
+            }))
+            .map_err(|_| "the reducer is gone".to_owned())?;
         answered.recv_timeout(timeout).map_err(|_| {
-            self.take(token);
             format!(
                 "Verbatim was not idle within {timeout:?}{}: {}",
                 after_input.map_or_else(String::new, |input| format!(" after input {input}")),
@@ -191,14 +188,5 @@ impl IdleLine {
                     .unwrap_or_else(PoisonError::into_inner)
             )
         })
-    }
-
-    /// The waiter `token` names, taken out of line: the reducer takes it
-    /// when it reaches its place.
-    pub(crate) fn take(&self, token: u64) -> Option<IdleWaiter> {
-        self.waiting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&token)
     }
 }

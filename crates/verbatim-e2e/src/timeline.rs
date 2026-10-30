@@ -16,11 +16,11 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use verbatim_model::{TraceId, UtteranceEnding};
 
-/// One thing that happened during a scenario: an injected gesture, an
+/// One thing that happened during a scenario: a gesture pressed, an
 /// injected key combination, typed text, or a heard utterance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TimelineKind {
-    /// A gesture identifier routed through `Request::SendGesture` (for
+    /// A gesture identifier whose keys were pressed through the agent (for
     /// example `kb:verbatim+v`).
     Gesture(String),
     /// A key combination sent through `Request::SendKeys`, in the order

@@ -675,20 +675,21 @@ impl Scenario {
         &self.timeline
     }
 
-    /// Injects a gesture identifier through Verbatim's keyboard hook, as if
-    /// the keys had been pressed (`Request::SendGesture`), once every
-    /// utterance heard so far has been asserted.
-    ///
-    /// In compare mode a keyboard gesture is pressed through the agent as
-    /// [`Scenario::send_keys`] presses keys, the Verbatim modifier as
-    /// Insert, NVDA's modifier: `kb:verbatim+v` as `insert+v`, and
-    /// `kb:numpad8` as `numpad8`. Whatever NVDA does with the keys is what
+    /// Presses a keyboard gesture's keys through the agent, as
+    /// [`Scenario::send_keys`] presses keys, once every utterance heard so
+    /// far has been asserted: the Verbatim modifier as Insert, a Verbatim
+    /// modifier by default and NVDA's, so `kb:verbatim+v` as `insert+v`,
+    /// and `kb:numpad8` as `numpad8`
+    /// ([`verbatim_control::send_keys::gesture_keys`]). The keyboard hook
+    /// decides and numbers them as a person's keys, so the same gesture
+    /// pressed twice within the multi-press timeout (500 ms) is a double
+    /// press; in compare mode, whatever NVDA does with the keys is what
     /// the step records.
     ///
     /// # Errors
     ///
-    /// Returns an error if the request fails, or, in compare mode, if the
-    /// gesture is not a keyboard gesture.
+    /// Returns an error if the request fails, or if the gesture is not a
+    /// keyboard gesture.
     ///
     /// # Panics
     ///
@@ -697,25 +698,8 @@ impl Scenario {
         self.speech
             .require_all_asserted(&format!("before the gesture {identifier}"));
         self.timeline.push_gesture(identifier);
-        if self.is_comparing() {
-            return self.press_gesture_for_nvda(identifier);
-        }
-        let control = self.control_client("send a gesture to")?;
-        ok_or_error(control.request(Request::SendGesture {
-            identifier: identifier.to_owned(),
-        })?)?;
-        Ok(())
-    }
-
-    /// [`Scenario::send_gesture`] in compare mode, once the gesture is on
-    /// the timeline.
-    fn press_gesture_for_nvda(&mut self, identifier: &str) -> io::Result<()> {
-        let keys = identifier.strip_prefix("kb:").ok_or_else(|| {
-            io::Error::other(format!(
-                "compare mode presses keyboard gestures only, not {identifier}"
-            ))
-        })?;
-        let keys = nvda_keys(keys);
+        let keys =
+            verbatim_control::send_keys::gesture_keys(identifier).map_err(io::Error::other)?;
         self.last_input = Some(self.agent.send_keys(&[keys])?);
         Ok(())
     }
@@ -2638,15 +2622,6 @@ fn launch_action(command: &str, title: &str) -> String {
     format!("launch {program}, its window titled {title:?} brought forward")
 }
 
-/// The keys a gesture's plus-joined `keys` press for NVDA in compare mode:
-/// the same keys, with the Verbatim modifier pressed as Insert.
-fn nvda_keys(keys: &str) -> String {
-    keys.split('+')
-        .map(|key| if key == "verbatim" { "insert" } else { key })
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
 /// The error compare mode gives for what needs Verbatim: there is no
 /// Verbatim to `what`.
 fn no_verbatim(what: &str) -> io::Error {
@@ -3365,13 +3340,6 @@ mod tests {
             "a spare, waiting for its application\n",
             29864
         ));
-    }
-
-    #[test]
-    fn compare_mode_presses_the_verbatim_modifier_as_insert() {
-        assert_eq!(nvda_keys("verbatim+v"), "insert+v");
-        assert_eq!(nvda_keys("verbatim+shift+f9"), "insert+shift+f9");
-        assert_eq!(nvda_keys("numpad8"), "numpad8");
     }
 
     fn temp_dir(name: &str) -> PathBuf {

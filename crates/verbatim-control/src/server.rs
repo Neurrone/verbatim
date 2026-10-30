@@ -86,10 +86,6 @@ use crate::send_keys;
 /// dropped by application logic (only if the connection is already gone).
 const OUTBOUND_QUEUE_DEPTH: usize = 256;
 
-/// Answers [`Request::SendGesture`]; `Err` carries a human-readable reason
-/// reported to the client as [`Frame::Error`].
-type SendGestureHandler = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
-
 /// Answers [`Request::DumpTree`], given whether locations are read: the
 /// tree, and whether it is incomplete; `Err` carries a human-readable
 /// reason reported to the client as [`Frame::Error`].
@@ -104,8 +100,9 @@ type DumpTreeHandler =
 pub struct ServerHandlers {
     /// Answers [`Request::Status`].
     pub status: Box<dyn Fn() -> StatusInfo + Send + Sync>,
-    /// Answers [`Request::SendGesture`].
-    pub send_gesture: SendGestureHandler,
+    /// Answers [`Request::OpenMenu`]; `Err` carries a human-readable
+    /// reason reported to the client as [`Frame::Error`].
+    pub open_menu: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
     /// Answers [`Request::Latency`], given `last_n`.
     pub latency: Box<dyn Fn(u32) -> Vec<LatencyRecord> + Send + Sync>,
     /// Answers [`Request::DumpTree`].
@@ -280,9 +277,11 @@ fn subscribe_speech(
 }
 
 /// Negotiates the protocol version for a connection: the lower of what the
-/// client offers and what this build speaks. Every version so far only adds
-/// fields, which an older peer ignores and a newer one reads as empty, so
-/// the server speaks the same vocabulary whatever the client offers.
+/// client offers and what this build speaks. Every version but the third
+/// only adds fields, which an older peer ignores and a newer one reads as
+/// empty, so the server speaks the same vocabulary whatever the client
+/// offers; the third removed a request, and an older client that sends
+/// it has its connection closed, as for any malformed request.
 fn negotiate_protocol_version(client_version: u32) -> u32 {
     client_version.min(PROTOCOL_VERSION)
 }
@@ -317,7 +316,7 @@ fn dispatch_request(
             to: id,
             message: "a speech subscription is answered by its session".to_owned(),
         },
-        Request::SendGesture { identifier } => match (handlers.send_gesture)(&identifier) {
+        Request::OpenMenu => match (handlers.open_menu)() {
             Ok(()) => Frame::Reply {
                 to: id,
                 payload: ReplyPayload::Ok,
@@ -1288,13 +1287,7 @@ mod tests {
                 outposts: Vec::new(),
                 ready: true,
             }),
-            send_gesture: Box::new(|identifier| {
-                if identifier == "kb:verbatim+v" {
-                    Ok(())
-                } else {
-                    Err(format!("unbound gesture: {identifier}"))
-                }
-            }),
+            open_menu: Box::new(|| Err("the GUI is not up".to_owned())),
             latency: Box::new(|_last_n| Vec::new()),
             dump_tree: Box::new(|_| Err("dump_tree not exercised by this test".to_owned())),
             dump_recorder: Box::new(|| Err("dump_recorder not exercised by this test".to_owned())),
@@ -1429,15 +1422,13 @@ mod tests {
             &mut writer,
             &RequestEnvelope {
                 id: 4,
-                request: Request::SendGesture {
-                    identifier: "kb:unbound".to_owned(),
-                },
+                request: Request::OpenMenu,
             },
         )
-        .expect("writes SendGesture");
+        .expect("writes OpenMenu");
         match recv_frame(&outbound_rx) {
-            Frame::Error { to: 4, .. } => {}
-            other => panic!("expected an error reply for an unbound gesture: {other:?}"),
+            Frame::Error { to: 4, message } => assert_eq!(message, "the GUI is not up"),
+            other => panic!("expected the handler's error for OpenMenu: {other:?}"),
         }
 
         drop(writer);

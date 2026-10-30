@@ -1,9 +1,11 @@
 //! The harness's idle barrier on the reducer's side: a round through every
 //! child (`docs/design/communication.md`, section 6.7).
 //!
-//! The control plane's `AwaitIdle` waiters reach the reducer in line
-//! behind every key and gesture before them. Once a waiter's input has
-//! been handled, the reducer starts a round: the supervisor's relay asks
+//! The control plane's `AwaitIdle` waiters are posted straight to the
+//! reducer's port, each naming the harness's last numbered input, whose
+//! end the keyboard hook posts to the same port behind everything the
+//! input caused. Once a waiter's input has been handled, the reducer
+//! starts a round: the supervisor's relay asks
 //! the listener, then every outpost, whether anything that came before the
 //! question is still in progress, each child answering behind every
 //! message it sent before. The relay says which outposts it asked

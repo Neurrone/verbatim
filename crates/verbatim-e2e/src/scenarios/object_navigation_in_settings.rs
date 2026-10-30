@@ -3,9 +3,8 @@
 //! target the M1 exit regression uses, so it needs no external application.
 //!
 //! The walk opens the Speech settings dialog (focus lands in the category
-//! list), then exercises the object-navigation gestures through the control
-//! plane's `SendGesture`, which routes them exactly as a physical keypress
-//! would: report the current object, move to the list's first child (the
+//! list), then exercises the object-navigation gestures, pressed as their
+//! keys through the agent: report the current object, move to the list's first child (the
 //! "Speech" category item), report again to confirm the navigator moved,
 //! then snap the navigator back to focus. Last, it tabs to the rate slider,
 //! whose MSAA object answers next and previous with itself, and checks that

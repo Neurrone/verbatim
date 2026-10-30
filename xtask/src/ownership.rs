@@ -7,8 +7,10 @@
 //! - The hook rule (`docs/design/ownership-input.md`, "The ownership check
 //!   on the hook"): the modules whose code runs on the keyboard hook's
 //!   thread may name nothing that takes a lock, waits, logs, does I/O or
-//!   dispatches sent messages. Their test modules, which collect reports
-//!   under a lock, are skipped.
+//!   dispatches sent messages, and nothing that would have the thread take
+//!   work from another thread as a message: the hook thread takes only
+//!   keys. Their test modules, which collect reports under a lock, are
+//!   skipped.
 //!
 //! Each checked module may `use` only the paths its allow-list names, and
 //! no identifier or path on its rule's forbidden list may appear in its
@@ -91,8 +93,12 @@ const HOOK_ALLOWED: [&str; 14] = [
 ];
 
 /// What the hook thread's modules may not name: identifiers, matched whole,
-/// and paths, matched as written.
-const HOOK_FORBIDDEN: [&str; 16] = [
+/// and paths, matched as written. The private message ranges and the
+/// loops that take or dispatch messages one at a time are forbidden
+/// because the thread's one `GetMessageW` loop handles no message but
+/// `WM_QUIT`: another thread hands it no work, so every number it mints is
+/// a key's.
+const HOOK_FORBIDDEN: [&str; 20] = [
     "Mutex",
     "RwLock",
     "Condvar",
@@ -109,6 +115,10 @@ const HOOK_FORBIDDEN: [&str; 16] = [
     "tracing",
     "SendMessageW",
     "SendMessageTimeoutW",
+    "PeekMessageW",
+    "DispatchMessageW",
+    "WM_APP",
+    "WM_USER",
 ];
 
 /// What a pure module may not name: identifiers, matched whole, and paths,
@@ -344,6 +354,12 @@ mod tests {
             findings(source, &HOOK),
             ["1: names `Mutex`", "2: names `lock`"]
         );
+    }
+
+    #[test]
+    fn a_private_message_in_a_hook_module_is_found() {
+        let source = "fn pump(msg: &MSG) {\n    if msg.message == WM_APP {}\n}\n";
+        assert_eq!(findings(source, &HOOK), ["2: names `WM_APP`"]);
     }
 
     #[test]

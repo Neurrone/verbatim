@@ -1,13 +1,13 @@
 //! The code that runs on the hook thread: the hook procedure, the decision
-//! of each key, the holding of caret keys, the inputs injected for the
-//! user, and the thread's one message loop
+//! of each key, the holding of caret keys, and the thread's one message
+//! loop
 //! (`docs/design/ownership-input.md`, "The ownership check on the hook").
 //!
 //! Nothing here blocks or takes a lock: `cargo xtask ci` checks that this
 //! module names nothing that does (`xtask/src/ownership.rs`, the hook
-//! rule). Everything a key or an injected input causes leaves through the
-//! one report callback, in the order the thread handled it, and the
-//! thread numbers every user input ([`KeySeq`]) in that same order.
+//! rule). Everything a key causes leaves through the one report callback,
+//! in the order the thread handled it, and the thread numbers every key
+//! press ([`KeySeq`]) in that same order.
 
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
@@ -21,13 +21,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LLKHF_INJECTED, MSG, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 
-use verbatim_input::state::{Decision, DecisionMachine, EmittedGesture, KeySpeechEffect};
+use verbatim_input::state::{Decision, DecisionMachine, EmittedGesture};
 use verbatim_input::{KeyDecision, KeyEvent};
 use verbatim_model::{KeySeq, TraceId};
 
 use crate::{
-    Effects, ForegroundView, HeldStroke, Inbox, Injected, KeyHolding, KeyReport, KeyReportFn,
-    OWN_INPUT_TAG, SpeechEffectFn, WM_INJECTED, may_hold, passed_on_sequence, typed,
+    Effects, ForegroundView, HeldStroke, KeyHolding, KeyReport, KeyReportFn, OWN_INPUT_TAG,
+    SpeechEffectFn, may_hold, passed_on_sequence, typed,
 };
 
 /// Per-hook-thread state reached by the hook procedure.
@@ -51,13 +51,11 @@ pub(crate) struct HookState {
     outstanding: VecDeque<Outstanding>,
     /// The last place in line given out ([`HeldStroke::sequence`]).
     sequence: u32,
-    /// The last key number given out, to a key press or an injected
-    /// gesture: this thread is the one minter of key numbers.
+    /// The last key number given out, to a key press: this thread is the
+    /// one minter of key numbers.
     last_key: KeySeq,
     /// Core's view of the foreground window ([`ForegroundView`]).
     foreground: Arc<ForegroundView>,
-    /// Where the inputs injected for the user wait ([`WM_INJECTED`]).
-    inbox: Arc<Inbox>,
     /// Reads the window in front: `GetForegroundWindow`, a local read, or
     /// a fixed window in tests.
     front: fn() -> HWND,
@@ -79,7 +77,6 @@ impl HookState {
         machine: DecisionMachine,
         (speech, reports, holding, foreground): Effects,
         typing: typed::Typing,
-        inbox: Arc<Inbox>,
     ) -> Self {
         Self {
             machine,
@@ -92,7 +89,6 @@ impl HookState {
             sequence: 0,
             last_key: KeySeq::NONE_YET,
             foreground,
-            inbox,
             front: || {
                 // SAFETY: a local read with no preconditions.
                 unsafe { GetForegroundWindow() }
@@ -156,12 +152,11 @@ fn unix_us() -> u64 {
 }
 
 /// Runs the hook thread's message loop until `WM_QUIT` (or a `GetMessageW`
-/// error) ends it, handling the inputs injected for the user ([`Injected`])
-/// whenever it is woken for them. A low-level hook only fires while its
-/// installing thread pumps messages, and Windows calls the hook procedure
-/// from within this loop's waits, so keys and injected inputs are handled
-/// one at a time, in the one order the thread takes them. The thread runs
-/// no other loop while the hook is installed.
+/// error) ends it. A low-level hook only fires while its installing thread
+/// pumps messages, and Windows calls the hook procedure from within this
+/// loop's waits, so keys are handled one at a time, in the one order the
+/// thread takes them. The thread takes no other message: any posted to it
+/// is left alone. It runs no other loop while the hook is installed.
 pub(crate) fn pump_messages() {
     let mut msg = MSG::default();
     loop {
@@ -173,56 +168,6 @@ pub(crate) fn pump_messages() {
         if result.0 <= 0 {
             break;
         }
-        HOOK_STATE.with(|state| {
-            // Never already borrowed: this runs from the loop itself,
-            // between the hook procedure's calls, which borrow the state
-            // only for their own length.
-            if let Ok(mut state) = state.try_borrow_mut()
-                && let Some(state) = state.as_mut()
-            {
-                on_message(state, &msg);
-            }
-        });
-    }
-}
-
-/// Handles one message the loop took: a thread message (no window) of
-/// [`WM_INJECTED`], whoever posted it, has every input waiting in the inbox
-/// handled, in the order injected. The message carries nothing, so one
-/// from another process, or one whose inputs an earlier wake already took,
-/// handles only what is waiting, which may be nothing. Every other message
-/// is left alone.
-fn on_message(state: &mut HookState, msg: &MSG) {
-    if msg.message != WM_INJECTED || !msg.hwnd.is_invalid() {
-        return;
-    }
-    for injected in state.inbox.take_all() {
-        inject(state, injected);
-    }
-}
-
-/// Handles one input injected for the user: a gesture is numbered as a key
-/// press is, cancels speech through its number as a key does, and is
-/// reported with it; a barrier is reported behind everything handled
-/// before it.
-pub(crate) fn inject(state: &mut HookState, injected: Injected) {
-    match injected {
-        Injected::Gesture(gesture) => {
-            let key_seq = state.next_key();
-            (state.speech)(KeySpeechEffect::Cancel, key_seq);
-            (state.reports)(KeyReport::Gesture {
-                gesture: EmittedGesture {
-                    trace_id: TraceId::mint(),
-                    gesture,
-                    // An injected gesture is always a single, first press;
-                    // multi-press counting applies to real key streams.
-                    repeat: 0,
-                },
-                key_seq,
-                pressed_at_us: unix_us(),
-            });
-        }
-        Injected::Barrier(token) => (state.reports)(KeyReport::Barrier(token)),
     }
 }
 
@@ -525,7 +470,7 @@ mod tests {
     use verbatim_model::{GestureId, HookForeground, WindowHandle};
 
     use super::*;
-    use crate::{Injector, PASSED_ON_TAG, passed_on_info};
+    use crate::{PASSED_ON_TAG, passed_on_info};
 
     /// A burst of strokes, each Verbatim+V with a harness number, decided
     /// while nothing takes the reports: `decide` reports every gesture and
@@ -554,7 +499,6 @@ mod tests {
                 Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
-            Arc::new(Inbox::new()),
         );
         assert_eq!(
             decide(&mut state, key_seq(CAPS, true), 0, 0),
@@ -601,7 +545,6 @@ mod tests {
                 foreground,
             ),
             typed::Typing::default(),
-            Arc::new(Inbox::new()),
         );
         state.front = window_in_front;
         (state, holding)
@@ -651,7 +594,6 @@ mod tests {
                 KeyReport::Typed { text, .. } => format!("typed {text}"),
                 KeyReport::Gesture { gesture, .. } => format!("gesture {}", gesture.gesture),
                 KeyReport::Handled(number) => format!("handled {number}"),
-                KeyReport::Barrier(token) => format!("barrier {token}"),
             })
             .collect()
     }
@@ -989,146 +931,5 @@ mod tests {
         for vk in [0x41, 0x46, 0x72] {
             assert!(may_edit(vk), "{vk:#04x}");
         }
-    }
-
-    /// A hook state binding nothing, whose speech effects and reports are
-    /// written in `log` in the order made, each with its key number.
-    fn logging_state(log: &Arc<Mutex<Vec<String>>>) -> HookState {
-        let (speech, reports) = (Arc::clone(log), Arc::clone(log));
-        HookState::new(
-            DecisionMachine::new(DecisionConfig::default(), GestureMap::new([]).into_shared()),
-            (
-                Box::new(move |effect, key_seq| {
-                    speech.lock().unwrap().push(format!("{effect:?} {key_seq}"));
-                }),
-                Box::new(move |report| {
-                    let key_seq = match &report {
-                        KeyReport::Typed { key_seq, .. } | KeyReport::Gesture { key_seq, .. } => {
-                            key_seq.to_string()
-                        }
-                        _ => String::new(),
-                    };
-                    let described = described(std::slice::from_ref(&report));
-                    reports
-                        .lock()
-                        .unwrap()
-                        .push(format!("{} {key_seq}", described[0]));
-                }),
-                Arc::new(KeyHolding::new([])),
-                Arc::new(ForegroundView::new()),
-            ),
-            typed::Typing::default(),
-            Arc::new(Inbox::new()),
-        )
-    }
-
-    /// A key press, an injected gesture and a second key press are numbered
-    /// 1, 2 and 3 in the order handled: the gesture cancels speech through
-    /// its own number before it is reported, as a key does, so the key
-    /// after it cancels through a higher one and fences off the gesture's
-    /// speech, and the reports leave in that order.
-    #[test]
-    fn an_injected_gesture_is_numbered_between_the_keys_around_it_and_fences_speech_as_a_key_does()
-    {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let mut state = logging_state(&log);
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, 0),
-            KeyDecision::Pass
-        );
-        inject(
-            &mut state,
-            Injected::Gesture(GestureId::parse("kb:verbatim+numpad8").expect("valid id")),
-        );
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, 0),
-            KeyDecision::Pass
-        );
-        assert_eq!(
-            *log.lock().unwrap(),
-            [
-                "Cancel 1",
-                "typed x 1",
-                "Cancel 2",
-                "gesture kb:numpad8+verbatim 2",
-                "Cancel 3",
-                "typed x 3",
-            ]
-        );
-    }
-
-    /// An injected barrier is reported behind the reports of every key
-    /// decided before it.
-    #[test]
-    fn an_injected_barrier_is_reported_behind_the_keys_before_it() {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let mut state = logging_state(&log);
-        assert_eq!(
-            decide(&mut state, letter_x(true), 0x2D, 0),
-            KeyDecision::Pass
-        );
-        inject(&mut state, Injected::Barrier(4));
-        assert_eq!(
-            *log.lock().unwrap(),
-            ["Cancel 1", "typed x 1", "barrier 4 "]
-        );
-    }
-
-    /// A `WM_APP` woken with nothing in the inbox, whatever it carries,
-    /// handles nothing.
-    #[test]
-    fn a_stray_wake_with_an_empty_inbox_handles_nothing() {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let mut state = logging_state(&log);
-        let stray = MSG {
-            message: WM_INJECTED,
-            wParam: WPARAM(0x5eed),
-            lParam: LPARAM(0x1234),
-            ..MSG::default()
-        };
-        on_message(&mut state, &stray);
-        assert!(log.lock().unwrap().is_empty());
-    }
-
-    /// The inputs waiting in the inbox are handled on one wake in the
-    /// order pushed, and a second wake handles nothing more.
-    #[test]
-    fn the_inputs_waiting_are_handled_in_the_order_pushed() {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let mut state = logging_state(&log);
-        let gesture = |id| Injected::Gesture(GestureId::parse(id).expect("valid id"));
-        for injected in [
-            gesture("kb:verbatim+numpad8"),
-            Injected::Barrier(5),
-            gesture("kb:verbatim+numpad2"),
-        ] {
-            state.inbox.push(&injected);
-        }
-        let wake = MSG {
-            message: WM_INJECTED,
-            ..MSG::default()
-        };
-        on_message(&mut state, &wake);
-        on_message(&mut state, &wake);
-        assert_eq!(
-            *log.lock().unwrap(),
-            [
-                "Cancel 1",
-                "gesture kb:numpad8+verbatim 1",
-                "barrier 5 ",
-                "Cancel 2",
-                "gesture kb:numpad2+verbatim 2",
-            ]
-        );
-    }
-
-    /// An injection posted to thread id 0, which no thread has, fails and
-    /// comes back as the error, so it can never run later.
-    #[test]
-    fn an_injection_that_cannot_be_posted_comes_back() {
-        assert_eq!(
-            Injector::to_thread(0).inject(Injected::Barrier(9)),
-            Err(Injected::Barrier(9))
-        );
     }
 }

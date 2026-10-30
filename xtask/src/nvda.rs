@@ -78,8 +78,8 @@ pub fn run(args: &[String]) -> ExitCode {
                  --wait-file <path>, --front \
                  <image>[=<title>] (* for any image), --type <text>, --hold <key> or \
                  --release <key> (a key held down across the steps between them, released \
-                 when the capture ends or fails), or --gesture <id> (sent to the local \
-                 Verbatim)"
+                 when the capture ends or fails), or --open-menu (opens the local \
+                 Verbatim's menu, as a click on its tray icon does)"
             );
             eprintln!(
                 "  compare  [--agent <address>] [--quiet-ms <ms>] <scenario>: run an end-to-end \
@@ -263,10 +263,10 @@ enum Step {
         image: String,
         title: Option<String>,
     },
-    /// Send a gesture, such as `kb:verbatim+v`, to the Verbatim running on
-    /// this machine through its control pipe, so Verbatim's own commands
-    /// can be used without pressing a modifier key NVDA also uses.
-    Gesture(String),
+    /// Open the menu of the Verbatim running on this machine through its
+    /// control pipe, as a click on its tray icon does, so that no key NVDA
+    /// also uses is pressed.
+    OpenMenu,
     /// Type text through the agent, each character mapped with the
     /// foreground window's keyboard layout.
     Type(String),
@@ -281,7 +281,7 @@ impl Step {
     fn label(&self) -> String {
         match self {
             Self::Key(key) => key.clone(),
-            Self::Gesture(identifier) => format!("gesture {identifier}"),
+            Self::OpenMenu => "open Verbatim's menu".to_owned(),
             Self::Type(text) => format!("type {text:?}"),
             Self::Hold(key) => format!("hold {key}"),
             Self::Release(key) => format!("release {key}"),
@@ -368,7 +368,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
                     }
                 }
             }
-            "--gesture" => options.steps.push(Step::Gesture(value()?.clone())),
+            "--open-menu" => options.steps.push(Step::OpenMenu),
             "--type" => options.steps.push(Step::Type(value()?.clone())),
             "--hold" => options.steps.push(Step::Hold(value()?.clone())),
             "--release" => options.steps.push(Step::Release(value()?.clone())),
@@ -728,7 +728,7 @@ fn capture(args: &[String]) -> io::Result<()> {
 }
 
 /// Does what `step` says through the agent: presses its keys, types its
-/// text, launches, brings a window forward, sends a gesture, or holds or
+/// text, launches, brings a window forward, opens Verbatim's menu, or holds or
 /// releases a key, recording a held key in `held`; `target` is the window
 /// the keys go to, by its handle, which a launch or a --front changes.
 fn run_step(
@@ -801,7 +801,7 @@ fn run_step(
                 )));
             }
         }
-        Step::Gesture(identifier) => send_gesture(identifier)?,
+        Step::OpenMenu => open_menu()?,
         Step::Type(text) => {
             // One character at a time, each checked just before it.
             for character in text.chars() {
@@ -860,14 +860,12 @@ fn in_front(target: Option<u64>, foreground: Option<&WindowInfo>) -> Result<(), 
     }
 }
 
-/// Sends one gesture to the local Verbatim's control pipe.
-fn send_gesture(identifier: &str) -> io::Result<()> {
+/// Opens the local Verbatim's menu through its control pipe.
+fn open_menu() -> io::Result<()> {
     let mut control = ControlClient::connect_pipe()?;
-    match control.request(Request::SendGesture {
-        identifier: identifier.to_owned(),
-    })? {
+    match control.request(Request::OpenMenu)? {
         Frame::Error { message, .. } => Err(io::Error::other(format!(
-            "Verbatim refused the gesture {identifier}: {message}"
+            "Verbatim did not open its menu: {message}"
         ))),
         _ => Ok(()),
     }

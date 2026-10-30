@@ -6,8 +6,9 @@
 //! `CallNextHookEx` to pass, and reports what each key caused through one
 //! callback ([`KeyReport`]). The code that runs on the thread is in the
 //! `hook` module; this one holds what other threads call: [`InputHook`],
-//! [`Injector`], and Core's views the thread reads ([`KeyHolding`],
-//! [`ForegroundView`]).
+//! and Core's views the thread reads ([`KeyHolding`], [`ForegroundView`]).
+//! The thread takes nothing else from another thread but the `WM_QUIT`
+//! that stops it: every input it numbers is a key.
 //!
 //! # The never-block constraint
 //!
@@ -37,9 +38,8 @@
 //! # Key numbers
 //!
 //! The hook thread is the one minter of key numbers ([`KeySeq`]): every key
-//! press, and every gesture injected for the user ([`Injector`]), takes the
-//! next number in the order the thread handles it, and every report of
-//! what it caused carries it. A press cancels speech at once, from this
+//! press takes the next number in the order the thread handles it, and
+//! every report of what it caused carries it. A press cancels speech at once, from this
 //! thread, while the previous press's speech may still be on its way; the
 //! cancel therefore names its press's number, and the speech manager drops
 //! speech caused by an earlier press that reaches it after the cancel, as
@@ -52,7 +52,6 @@ mod typed;
 
 use std::collections::HashSet;
 use std::io;
-use std::os::windows::io::{AsHandle, OwnedHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
@@ -63,7 +62,7 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_QUIT,
+    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_QUIT,
 };
 
 use verbatim_input::map::SharedGestureMap;
@@ -210,14 +209,13 @@ type Effects = (
     Arc<ForegroundView>,
 );
 
-/// Receives what each key and each injected input caused, in the order the
-/// hook thread handled them; called on the hook thread, so it must not
+/// Receives what each key caused, in the order the hook thread handled
+/// them; called on the hook thread, so it must not
 /// block, nor dispatch sent messages, as [`SpeechEffectFn`] explains.
 pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
 
-/// What a key the hook handled, or an input injected for the user, caused,
-/// reported after the key's effect on speech. Every user input's report
-/// carries its key number.
+/// What a key the hook handled caused, reported after the key's effect on
+/// speech. Every report of a press carries its key number.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyReport {
     /// The key completed an observed gesture (`Decision::observed`), a
@@ -289,13 +287,12 @@ pub enum KeyReport {
         /// clock.
         pressed_at_us: u64,
     },
-    /// A bound gesture fired, a gesture was injected for the user, or a
-    /// lock key reached the operating system (its `kb:` gesture), for the
-    /// reducer to run or announce.
+    /// A bound gesture fired, or a lock key reached the operating system
+    /// (its `kb:` gesture), for the reducer to run or announce.
     Gesture {
         /// The gesture.
         gesture: EmittedGesture,
-        /// The key's number, or the injected gesture's.
+        /// The key's number.
         key_seq: KeySeq,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
@@ -304,193 +301,12 @@ pub enum KeyReport {
     /// hook (`verbatim_input::harness`): everything it caused was reported
     /// before this.
     Handled(u64),
-    /// A control-plane request waiting for Verbatim to be idle, named by its
-    /// token, injected ([`Injected::Barrier`]): everything injected or
-    /// decided before it was reported before this.
-    Barrier(u64),
-}
-
-/// The private message that wakes the hook thread to take the inputs
-/// injected for it from its [`Inbox`]. It carries nothing: any other
-/// process at Verbatim's integrity can post a `WM_APP` to the thread, and
-/// one from elsewhere only has the thread take what is already waiting,
-/// which its own message would have had it take a moment later.
-const WM_INJECTED: u32 = WM_APP;
-
-/// The inputs injected for the hook thread and not yet taken, newest first,
-/// each linking to the one pushed before it.
-///
-/// Injectors push with a compare-and-swap of the newest entry and the hook
-/// thread takes them all with one swap, both lock-free ([`ArcSwapOption`]),
-/// so the hook takes no lock and never waits for an injector part way
-/// through a push. The order of the swaps that pushed them is the order
-/// the hook handles them in.
-#[derive(Debug)]
-pub(crate) struct Inbox {
-    newest: ArcSwapOption<Pending>,
-    /// Cleared once the hook thread has stopped taking inputs: nothing
-    /// injected after that is accepted.
-    open: AtomicBool,
-}
-
-/// One input in the [`Inbox`].
-#[derive(Debug)]
-struct Pending {
-    injected: Injected,
-    /// Set by whichever takes the input first: the hook thread, to handle
-    /// it, or its injector, to give it back as refused.
-    taken: AtomicBool,
-    /// The input pushed before this one.
-    older: Option<Arc<Pending>>,
-}
-
-impl Pending {
-    /// Whether this call took the input, which nothing had yet.
-    fn take(&self) -> bool {
-        !self.taken.swap(true, Ordering::AcqRel)
-    }
-}
-
-impl Inbox {
-    /// An inbox accepting inputs.
-    pub(crate) fn new() -> Self {
-        Self {
-            newest: ArcSwapOption::empty(),
-            open: AtomicBool::new(true),
-        }
-    }
-
-    /// An inbox that accepts nothing.
-    fn closed() -> Self {
-        let inbox = Self::new();
-        inbox.open.store(false, Ordering::SeqCst);
-        inbox
-    }
-
-    /// Whether the hook thread still takes inputs.
-    fn is_open(&self) -> bool {
-        self.open.load(Ordering::SeqCst)
-    }
-
-    /// Pushes `injected` behind every input pushed before it, returning
-    /// its entry.
-    fn push(&self, injected: &Injected) -> Arc<Pending> {
-        let mut pushed = None;
-        self.newest.rcu(|newest| {
-            let entry = Arc::new(Pending {
-                injected: injected.clone(),
-                taken: AtomicBool::new(false),
-                older: newest.clone(),
-            });
-            pushed = Some(Arc::clone(&entry));
-            Some(entry)
-        });
-        // `rcu` calls the closure at least once.
-        pushed.unwrap_or_else(|| unreachable!())
-    }
-
-    /// Takes every input waiting, in the order pushed, skipping any its
-    /// injector has given back. Called on the hook thread.
-    pub(crate) fn take_all(&self) -> Vec<Injected> {
-        let mut entries = Vec::new();
-        let mut next = self.newest.swap(None);
-        while let Some(entry) = next.take() {
-            next.clone_from(&entry.older);
-            entries.push(entry);
-        }
-        entries
-            .iter()
-            .rev()
-            .filter(|entry| entry.take())
-            .map(|entry| entry.injected.clone())
-            .collect()
-    }
-
-    /// Stops accepting inputs and drops those still waiting, untaken, so
-    /// that an injector that finds the inbox closed after its push gives
-    /// its input back as refused. Called on the hook thread once it has
-    /// stopped taking inputs.
-    fn close(&self) {
-        self.open.store(false, Ordering::SeqCst);
-        drop(self.newest.swap(None));
-    }
-}
-
-/// An input injected for the user, handled by the hook thread in its turn
-/// among the keys ([`Injector::inject`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Injected {
-    /// A bound gesture, numbered as a key press is: it cancels speech
-    /// through its number and is reported as [`KeyReport::Gesture`].
-    Gesture(GestureId),
-    /// An idle waiter's token, reported as [`KeyReport::Barrier`] behind
-    /// everything handled before it.
-    Barrier(u64),
-}
-
-/// Injects inputs for the user into the hook thread's [`Inbox`] and wakes
-/// the thread to take them, from any thread: the control plane's gestures
-/// and idle waiters today. Cloneable and sendable. It holds a handle to the
-/// hook thread, so the thread's id is not given to another thread while any
-/// `Injector` can post to it.
-#[derive(Clone, Debug)]
-pub struct Injector(Arc<InjectTarget>);
-
-/// The thread an [`Injector`] injects into.
-#[derive(Debug)]
-struct InjectTarget {
-    thread_id: u32,
-    /// Where the thread takes its injected inputs from.
-    inbox: Arc<Inbox>,
-    /// Keeps the thread object, and so its id, while this lives; closed
-    /// when the last [`Injector`] goes.
-    _thread: Option<OwnedHandle>,
-}
-
-impl Injector {
-    /// Puts `injected` in the hook thread's inbox, behind every input
-    /// injected before it, and wakes the thread to take it in its turn
-    /// among the keys. Never waits.
-    ///
-    /// # Errors
-    ///
-    /// Gives `injected` back when it is refused: the hook thread has
-    /// stopped taking inputs, or could not be woken (it has gone, or its
-    /// message queue is full). An injection given back never runs later.
-    pub fn inject(&self, injected: Injected) -> Result<(), Injected> {
-        let inbox = &self.0.inbox;
-        if !inbox.is_open() {
-            return Err(injected);
-        }
-        let pending = inbox.push(&injected);
-        // SAFETY: posting a message that carries no data to a thread id is
-        // always sound.
-        let posted =
-            unsafe { PostThreadMessageW(self.0.thread_id, WM_INJECTED, WPARAM(0), LPARAM(0)) };
-        // Not woken, or the thread stopped taking inputs meanwhile: the
-        // input is refused unless the thread took it first.
-        if (posted.is_err() || !inbox.is_open()) && pending.take() {
-            return Err(injected);
-        }
-        Ok(())
-    }
-
-    /// An injector to `thread_id`, holding no handle: for a test.
-    #[cfg(test)]
-    fn to_thread(thread_id: u32) -> Self {
-        Self(Arc::new(InjectTarget {
-            thread_id,
-            inbox: Arc::new(Inbox::new()),
-            _thread: None,
-        }))
-    }
 }
 
 /// A running keyboard hook. Dropping it stops the hook thread and unhooks.
 #[derive(Debug)]
 pub struct InputHook {
     thread_id: u32,
-    injector: Injector,
     join: Option<JoinHandle<()>>,
 }
 
@@ -502,16 +318,15 @@ impl InputHook {
     /// `speech` carries out each key press's effect on speech (cancel, or
     /// pause and resume), before anything the press caused is reported, so
     /// speech it causes is never the speech it cancels. `reports` receives,
-    /// after the speech effect, everything each key and injected input
-    /// caused ([`KeyReport`]). Both run on the hook thread and must never
+    /// after the speech effect, everything each key caused ([`KeyReport`]). Both run on the hook thread and must never
     /// block (see the crate's never-block constraint). `holding` says which
     /// caret keys are held back, and when, and `foreground` Core's view of
     /// the window in front ([`ForegroundView`]).
     ///
     /// # Errors
     ///
-    /// Returns an error if the hook thread cannot be spawned or its handle
-    /// duplicated, or `SetWindowsHookExW` fails.
+    /// Returns an error if the hook thread cannot be spawned, or
+    /// `SetWindowsHookExW` fails.
     pub fn start(
         config: DecisionConfig,
         map: SharedGestureMap,
@@ -523,8 +338,6 @@ impl InputHook {
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
         let (ready_tx, ready_rx) = mpsc::channel::<io::Result<u32>>();
-        let inbox = Arc::new(Inbox::new());
-        let thread_inbox = Arc::clone(&inbox);
 
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
@@ -533,36 +346,15 @@ impl InputHook {
                     config,
                     map,
                     (speech, reports, holding, foreground),
-                    &thread_inbox,
                     &ready_tx,
                 );
             })?;
 
         match ready_rx.recv() {
-            Ok(Ok(thread_id)) => {
-                let thread = join.as_handle().try_clone_to_owned();
-                let injector = match thread {
-                    Ok(thread) => Injector(Arc::new(InjectTarget {
-                        thread_id,
-                        inbox,
-                        _thread: Some(thread),
-                    })),
-                    Err(error) => {
-                        let hook = Self {
-                            thread_id,
-                            injector: Injector::detached(),
-                            join: Some(join),
-                        };
-                        drop(hook);
-                        return Err(error);
-                    }
-                };
-                Ok(Self {
-                    thread_id,
-                    injector,
-                    join: Some(join),
-                })
-            }
+            Ok(Ok(thread_id)) => Ok(Self {
+                thread_id,
+                join: Some(join),
+            }),
             Ok(Err(error)) => {
                 let _ = join.join();
                 Err(error)
@@ -574,23 +366,6 @@ impl InputHook {
                 ))
             }
         }
-    }
-
-    /// The handle other threads inject inputs for the user through.
-    #[must_use]
-    pub fn injector(&self) -> Injector {
-        self.injector.clone()
-    }
-}
-
-impl Injector {
-    /// An injector to no thread, every injection given back.
-    fn detached() -> Self {
-        Self(Arc::new(InjectTarget {
-            thread_id: 0,
-            inbox: Arc::new(Inbox::closed()),
-            _thread: None,
-        }))
     }
 }
 
@@ -614,13 +389,11 @@ impl Drop for InputHook {
 const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The body of the hook thread: install the hook, publish readiness, pump
-/// messages until `WM_QUIT`, then close the inbox, refusing the injected
-/// inputs left, and unhook.
+/// messages until `WM_QUIT`, then unhook.
 fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     effects: Effects,
-    inbox: &Arc<Inbox>,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     prioritize_role("keyboard hook", HOOK_PRIORITY);
@@ -668,7 +441,6 @@ fn hook_thread(
             DecisionMachine::new(config, map),
             effects,
             typing,
-            Arc::clone(inbox),
         ));
     });
 
@@ -685,7 +457,6 @@ fn hook_thread(
     }
 
     hook::pump_messages();
-    inbox.close();
 
     // SAFETY: `hook` is the handle installed above and not yet unhooked.
     unsafe {

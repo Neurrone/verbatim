@@ -1107,7 +1107,7 @@ mod tests {
                 outposts: Vec::new(),
                 ready: true,
             }),
-            send_gesture: Box::new(|_| Ok(())),
+            open_menu: Box::new(|| Ok(())),
             latency: Box::new(|_| Vec::new()),
             dump_tree: Box::new(|_| Err("not exercised".to_owned())),
             dump_recorder: Box::new(|| Err("not exercised".to_owned())),

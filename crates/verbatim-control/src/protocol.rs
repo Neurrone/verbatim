@@ -1,4 +1,6 @@
-//! Control-plane protocol v2: v1 with the end-to-end harness's barrier
+//! Control-plane protocol v3: v2 without the injected gesture, whose keys
+//! a client now presses with [`Request::SendKeys`], and with
+//! [`Request::OpenMenu`]; v2 added the end-to-end harness's barrier
 //! ([`Request::AwaitIdle`], [`Frame::InputHandled`]) and Core's focus
 //! report ([`Request::DumpFocus`]); v1 added each latency timeline's stages
 //! and cross-process call counts ([`LatencyRecord::stages`]).
@@ -23,8 +25,10 @@ use verbatim_model::{
 /// The protocol version this vocabulary defines. Version 1 added
 /// [`LatencyRecord::stages`]; a v0 peer's records read with no stages.
 /// Version 2 added [`Request::AwaitIdle`], [`Request::DumpFocus`], and
-/// [`Frame::InputHandled`].
-pub const PROTOCOL_VERSION: u32 = 2;
+/// [`Frame::InputHandled`]. Version 3 removed the request that injected a
+/// gesture into the keyboard hook's thread, and added
+/// [`Request::OpenMenu`].
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The pipe name clients connect to.
 pub const PIPE_NAME: &str = r"\\.\pipe\verbatim-control";
@@ -56,16 +60,11 @@ pub enum Request {
     /// [`Frame::SpeechEnded`], [`Frame::Sound`], and [`Frame::SpeechPaused`]
     /// frames on this connection.
     SubscribeSpeech,
-    /// Routes a gesture identifier through the gesture router as if the
-    /// keys had been pressed. Which identifiers are accepted is up to the
-    /// server's handler; Verbatim accepts only bound gestures and answers
-    /// any other with an error. A lock key's gesture is refused too: it
-    /// reports the key's state after the real key changed it, so a lock key
-    /// is sent with [`Request::SendKeys`].
-    SendGesture {
-        /// Identifier such as `kb:verbatim+v`.
-        identifier: String,
-    },
+    /// Opens Verbatim's menu as a click on its tray icon does: no key is
+    /// pressed, so no other screen reader sees one, and the menu carries
+    /// no key number, as a mouse click carries none. Answered by
+    /// [`Frame::Error`] before the GUI is up.
+    OpenMenu,
     /// Synthesizes real OS keyboard input via `SendInput`, so unbound keys
     /// reach the focused application — `tab`, `shift+tab`, `enter`,
     /// `downarrow`. Uses the same key-name vocabulary as gesture

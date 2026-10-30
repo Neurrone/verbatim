@@ -52,8 +52,8 @@ enum Command {
     /// interleaved in arrival order; lines are prefixed `event` or `speech`
     /// and share trace ids for correlation.
     Watch,
-    /// Route a gesture identifier through the gesture router, e.g.
-    /// `kb:verbatim+v`.
+    /// Press a keyboard gesture's keys through `SendKeys`, the Verbatim
+    /// modifier as Insert, e.g. `kb:verbatim+v` as `insert+v`.
     SendGesture {
         /// The gesture identifier.
         identifier: String,
@@ -119,7 +119,7 @@ fn run(command: Command, connect: Option<&str>) -> io::Result<()> {
         Command::WatchEvents => watch_events(&mut client),
         Command::WatchSpeech => watch_speech(&mut client),
         Command::Watch => watch_both(&mut client),
-        Command::SendGesture { identifier } => send_gesture(&mut client, identifier),
+        Command::SendGesture { identifier } => send_gesture(&mut client, &identifier),
         Command::SendKeys { keys } => send_keys(&mut client, keys),
         Command::Latency { last } => latency(&mut client, last),
         Command::DumpTree { locations } => dump_tree(&mut client, locations),
@@ -295,8 +295,9 @@ fn speech_line(frame: &Frame) -> Option<String> {
     }
 }
 
-fn send_gesture(client: &mut Client, identifier: String) -> io::Result<()> {
-    ok_or_error(client.request(Request::SendGesture { identifier })?)?;
+fn send_gesture(client: &mut Client, identifier: &str) -> io::Result<()> {
+    let keys = verbatim_control::send_keys::gesture_keys(identifier).map_err(io::Error::other)?;
+    ok_or_error(client.request(Request::SendKeys { keys: vec![keys] })?)?;
     println!("gesture sent");
     Ok(())
 }

@@ -41,6 +41,26 @@ pub struct ParsedCombo {
     pub key: KeyName,
 }
 
+/// The `SendKeys` entry that presses the keyboard gesture `identifier`:
+/// its keys, with the Verbatim modifier pressed as Insert, a Verbatim
+/// modifier by default and NVDA's: `kb:verbatim+v` as `insert+v`, and
+/// `kb:numpad8` as `numpad8`.
+///
+/// # Errors
+///
+/// Returns a human-readable message when `identifier` is not a keyboard
+/// gesture.
+pub fn gesture_keys(identifier: &str) -> Result<String, String> {
+    let keys = identifier
+        .strip_prefix("kb:")
+        .ok_or_else(|| format!("only a keyboard gesture can be pressed, not {identifier}"))?;
+    Ok(keys
+        .split('+')
+        .map(|key| if key == "verbatim" { "insert" } else { key })
+        .collect::<Vec<_>>()
+        .join("+"))
+}
+
 /// Parses one plus-joined entry such as `shift+tab` or a bare `enter`.
 ///
 /// # Errors
@@ -223,6 +243,20 @@ fn inject_inputs(inputs: &[INPUT]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gesture_is_pressed_with_the_verbatim_modifier_as_insert() {
+        assert_eq!(gesture_keys("kb:verbatim+v").as_deref(), Ok("insert+v"));
+        assert_eq!(
+            gesture_keys("kb:verbatim+shift+f9").as_deref(),
+            Ok("insert+shift+f9")
+        );
+        assert_eq!(gesture_keys("kb:numpad8").as_deref(), Ok("numpad8"));
+        assert_eq!(
+            gesture_keys("br:routing"),
+            Err("only a keyboard gesture can be pressed, not br:routing".to_owned())
+        );
+    }
 
     #[test]
     fn bare_key_has_no_modifiers() {

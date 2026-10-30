@@ -1,6 +1,6 @@
 //! The keyboard hook's two callbacks, which run on the hook thread
 //! (`docs/design/ownership-input.md`, "One route, to the reducer's port"):
-//! the speech effect of a key or injected gesture, and the reports of what
+//! the speech effect of a key, and the reports of what
 //! each caused, each turned into its commands for the reducer and posted
 //! to the reducer's port, in the order the hook decided them, with nothing
 //! between the hook and the port to reorder them.
@@ -188,7 +188,6 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             }
         }
         KeyReport::Handled(number) => post(ShellCommand::InputHandled(number)),
-        KeyReport::Barrier(token) => post(ShellCommand::AwaitIdle(token)),
     }
 }
 
@@ -259,7 +258,6 @@ mod tests {
                 ShellCommand::HeldKey { input, .. } => format!("held {input:?}"),
                 ShellCommand::DeferredKey { pressed, .. } => format!("deferred {pressed}"),
                 ShellCommand::InputHandled(number) => format!("handled {number}"),
-                ShellCommand::AwaitIdle(token) => format!("await idle {token}"),
                 _ => "something else".to_owned(),
             })
             .collect()
@@ -320,7 +318,6 @@ mod tests {
             ]
         );
         assert_eq!(mapped(KeyReport::Handled(3)), ["handled 3"]);
-        assert_eq!(mapped(KeyReport::Barrier(5)), ["await idle 5"]);
         assert_eq!(
             mapped(KeyReport::Typed {
                 trace_id,

@@ -42,7 +42,7 @@ use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout, SharedGestureMap};
-use verbatim_input_windows::{ForegroundView, Injected, Injector, InputHook, KeyHolding};
+use verbatim_input_windows::{ForegroundView, InputHook, KeyHolding};
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
@@ -340,15 +340,14 @@ fn run(
             .spawn(move || gui_event_loop(&gui_event_rx, &gui_handle, &command_tx))?;
     }
 
-    // The gesture map shared by the hook and the control plane's validation.
+    // The gesture map the hook decides keys against.
     let bound_gestures = bound_gestures(keyboard_layout);
 
     // Keyboard hook. Everything it decides goes to the reducer's port, and
     // a key that cancels speech to the speech queue's, both made before
     // it, through the callbacks in `key_reports`, in the order the keys
     // were pressed; a key that cancels speech also tells the reducer,
-    // whose say-all stops. Started before the control plane, whose
-    // injected gestures and idle waiters go through it.
+    // whose say-all stops.
     let hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
@@ -368,8 +367,6 @@ fn run(
         settings_host: settings_host.clone(),
         outposts: Arc::clone(&outposts),
         ledger: Arc::clone(&ledger),
-        bound_gestures: Arc::clone(&bound_gestures),
-        injector: hook.injector(),
         gui_handle: Arc::clone(&gui_handle),
         command_tx: command_tx.clone(),
         recorder: Arc::clone(&recorder),
@@ -986,10 +983,10 @@ pub(crate) enum ShellCommand {
     /// An end-to-end harness's numbered key, handled by the hook:
     /// everything it caused is ahead of this in line.
     InputHandled(u64),
-    /// A control-plane `AwaitIdle` waiter reached its place in line behind
-    /// everything the hook handled before it, named by its token in the
-    /// [`harness::IdleLine`].
-    AwaitIdle(u64),
+    /// A control-plane `AwaitIdle` waiter, held by the idle barrier until
+    /// the harness input it names has been handled
+    /// ([`ShellCommand::InputHandled`]) and a round finds everything idle.
+    AwaitIdle(harness::IdleWaiter),
     /// Answer the control plane's `DumpFocus` on the channel.
     DumpFocus(Sender<FocusReport>),
     /// The tray or taskbar list dialog wants the shell's items, or where a
@@ -1450,10 +1447,8 @@ impl ReducerThread<'_> {
                     self.input_handled(input);
                 }
             }
-            ShellCommand::AwaitIdle(token) => {
-                if let Some(waiter) = self.context.idle_line.take(token) {
-                    self.barrier.push(waiter.after_input, waiter.reply);
-                }
+            ShellCommand::AwaitIdle(waiter) => {
+                self.barrier.push(waiter.after_input, waiter.reply);
             }
             ShellCommand::DumpFocus(reply) => {
                 let (focus, ancestors, navigator) = self.state.focus_report();
@@ -2301,10 +2296,6 @@ struct ControlHandlersConfig {
     settings_host: verbatim_speech::SettingsHost,
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     ledger: Arc<LatencyLedger>,
-    bound_gestures: SharedGestureMap,
-    /// Injects gestures and idle waiters through the keyboard hook's
-    /// thread, which numbers them in line with the keys.
-    injector: Injector,
     gui_handle: Arc<OnceLock<GuiHandle>>,
     command_tx: Commands,
     recorder: SharedRecorder,
@@ -2320,8 +2311,6 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         settings_host,
         outposts,
         ledger,
-        bound_gestures,
-        injector,
         gui_handle,
         command_tx,
         recorder,
@@ -2330,7 +2319,8 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         idle_line,
     } = config;
     let focus_tx = command_tx.clone();
-    let idle_injector = injector.clone();
+    let idle_tx = command_tx.clone();
+    let menu_gui = Arc::clone(&gui_handle);
     ServerHandlers {
         status: Box::new(move || {
             let outposts: Vec<OutpostStatus> = outposts
@@ -2348,27 +2338,6 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 ready,
             }
         }),
-        send_gesture: Box::new(move |identifier| {
-            let gesture = GestureId::parse(identifier).map_err(|error| error.to_string())?;
-            if verbatim_input::ToggleKey::of_gesture(&gesture).is_some() {
-                // Its announcement reports the key's state after the key
-                // reached Windows; injecting the gesture alone would report
-                // the state unchanged.
-                return Err(format!(
-                    "gesture {gesture} follows a real lock key; send the key with SendKeys"
-                ));
-            }
-            if !bound_gestures.load().contains(&gesture) {
-                return Err(format!("gesture {gesture} is not bound"));
-            }
-            // Its keys never pass the hook, so the hook's thread is handed
-            // it: it numbers it in line with the keys and cancels speech
-            // through that number, as for a key press; executing a gesture
-            // cancels speech in NVDA too, and stops say-all.
-            injector
-                .inject(Injected::Gesture(gesture))
-                .map_err(|_| "the keyboard hook is gone".to_owned())
-        }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
         dump_tree: Box::new(move |locations| request_dump_tree(&command_tx, locations)),
         dump_recorder: Box::new(move || {
@@ -2376,9 +2345,17 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .map(|path| path.display().to_string())
                 .map_err(|error| error.to_string())
         }),
+        open_menu: Box::new(move || {
+            // As a click on the tray icon opens it: no key, so no key
+            // number.
+            menu_gui
+                .get()
+                .ok_or_else(|| "the GUI is not up".to_owned())
+                .map(|gui| gui.send(GuiCommand::ShowMenu))
+        }),
         quit: Box::new(move || request_shutdown(&gui_handle)),
         await_idle: Box::new(move |after_input, timeout| {
-            idle_line.wait(&idle_injector, after_input, timeout)
+            idle_line.wait(&idle_tx, after_input, timeout)
         }),
         dump_focus: Box::new(move || {
             let (reply_tx, reply_rx) = bounded(1);
