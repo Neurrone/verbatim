@@ -147,248 +147,52 @@ So no obstacle is known in today's code. Whether `verbatim-text`'s and `verbatim
 
 ## The outpost's program bookkeeping (a build of its own)
 
-Status: proposed on 2026-10-31, and revised after its adversarial review (`experiments/logic-tests-study/bookkeeping-design-review.md`). The console poll's rule waits on a measurement, a capture and a question for Dickson. The rest does not depend on the answer except where said.
+Status: built on 2026-10-31, after its adversarial review (`experiments/logic-tests-study/bookkeeping-design-review.md`); its measurements on the desktop are pending.
 
-The build removes lifecycle states from the outpost's programs ([logic tests](logic-tests.md), "The outpost's program bookkeeping simplified"). It comes after the crate split: the reducer's changes land in `verbatim-outpost-logic` (`crates/verbatim-outpost-logic/src/`, the outpost's `reducer` module when this section was written), and the shell, worker, inbox, commit and request context stay in `verbatim-outpost`. Paths and lines below are those of the code when this section was written, before the crate split.
+The problem: the outpost's programs carried lifecycle states the logic-tests design asks to remove ([logic tests](logic-tests.md), "The outpost's program bookkeeping simplified"). The console poll was a long program in a slot of its own beside the program in flight, yielding to whatever was dispatched behind it, dispatched again afterwards, and carrying its commits to the next program's copies; a test's settle was a program of its own with a waiter slot and a cleanup for an abandoned worker, dispatched again behind an abandoned poll, where its waiters were lost twice; a refused commit still gave the reducer its verdicts; and the worker decided `entered_in_front`, a fact of the reducer's. The mechanism of each part is in [verbatim-outpost](../crates/verbatim-outpost.md) ("Text and caret", "The arbitrator", "The outpost" and the idle barrier) and [verbatim-outpost-logic](../crates/verbatim-outpost-logic.md).
 
-### Where the code contradicts the logic-tests design
+### What was built
 
-- Programs already get fresh copies at dispatch: `Reducer::dispatch` (`reducer/mod.rs` line 1438), `dispatch_finish` (1488) and `dispatch_poll` (1507) each clone `self.facts`. The worker keeps nothing between programs but the console poll's carry (`worker.rs` lines 289 to 300, `carry` at 319, `RequestContext::take_program_text` in `outpost/mod.rs` at 570). `judged_focus` (`worker.rs` 4386) reads the program's dispatch-time copy of the reports, not a copy the worker holds. So that part is mostly a consequence of the console poll's rule, plus moving one judgement into the reducer.
-- Verdicts already travel alone: `RequestContext::record` (`outpost/mod.rs` 619) posts each verdict as a commit holding nothing else. The exception is in the types: `Effects::verdicts` (`commit.rs` 187), `Change::verdicts` (`reducer/follow.rs` 450), the verdicts branch of `admit` (`shell.rs` 391), and the reducer recording verdicts before it checks whether the commit is accepted (`reducer/mod.rs` 529). The change splits the type and changes no behaviour.
-- A program commits more than once, so only its last commit could travel with its end. That part is dropped (part five).
-- A test settle and the idle query differ in four ways:
-  - A settle waits for the whole intake to empty, later arrivals included (`reducer/mod.rs` 1357 requeues it while `Intake::busy`); the idle query waits only for what came before it.
-  - The idle answer waits for an open caret watch and an open gap record; a settle does not.
-  - A settle's program waits for the subscription's moves and the outbound writes.
-  - The idle query ends its batch; a settle does not.
+- The console poll: each re-read is a program of its own, timed by the reducer's wake for the watch (its poll's next read), dispatched only when nothing else is ready, under the text deadline, committing the answer, the end, or the next read. Removed: the poll's slot, the program held behind it and its re-dispatch, the yield, the worker's held queue, the carry of the poll's commits and text, and the inbox's alarm; the inbox is a plain channel and the worker keeps nothing between programs. Two rules moved to every program: one abandoned while its query is the open watch's takes the watch out and answers it `Abandoned` once, and one that panics or ends without committing ends the watch, which answers it, with no `Failed`.
+- Verdicts are a message of their own (`Input::Verdict`), recorded under the same rule as before, taken after the mailbox closes as a commit is; a commit the reducer does not accept is refused whole.
+- A test's settle is the idle barrier's item (`Item::Barrier` with `Asker::Settle`), reached as Core's round is and answered as soon as it is reached. `Outpost::settle` then waits for the subscription's moves and the outbound queue on the caller's thread. The shell keeps only the waiters, checked after every transition against the settles waiting in the intake, so the reducer keeps no set of its own.
+- `entered_in_front` is decided by the reducer's rule as a report is recorded (`Held::entered_in_front`): a foreground change sets it to its window, any other focus inherits it from the newest report in its top-level window, and otherwise it is the window when read in front. The program reports the evidence (`InFront`), naming a foreground change by its variant, since its event address is that of an MSAA focus on the window's client object.
 
-  The merge keeps one item and one way of reaching it, and answers a test's settle as soon as it is reached (part one).
+Posting a program's last commit with its end was dropped: the hop has not been shown to cost, and posting the end before the program's drops would put a blocked release under the next program's deadline and let a settle or the round be answered while the worker still calls into the application.
 
-### Part one: test settles merged into the idle barrier
+### The console poll's rule: the options weighed
 
-Today: `Outpost::settle` (`outpost/mod.rs` 1314) posts `Posted::Settle(Sender)`. The shell numbers it in `Settles` (`shell.rs` 247: a `waiting` map and the `in_flight` slot) and pushes `Item::Settle(id)`. The reducer reaches it in `run` (`reducer/mod.rs` 1357), requeues it while the intake is busy, and dispatches `Work::Settle(id)` (137). The shell gives the job the waiter (`Job::settle`, `worker.rs` 101). The program calls `Registration::settle` and `Outbound::flush`, then sends on the waiter (`worker.rs` 416). The shell lets go of the waiter on the program's `Finished`. It also lets go through `Settles::in_charge` (`shell.rs` 791) when the program's generation is dead and the settle was not dispatched again. A settle dispatched behind the console poll is dispatched again if the poll is abandoned, and gets the same waiter; that re-dispatch is where the waiters were lost twice.
+NVDA's caret loop runs on the main thread until its timeout, 100 ms by default, returning early only for a queued script or a pending focus event; in consoles caret and text change events neither end it nor are handled during it (`nvda/source/editableText.py`, `_hasCaretMoved`).
 
-Proposed:
+- Today's yield kept every state above.
+- The poll waiting for nothing, an ordinary program in the one slot, would have made whatever arrives wait up to its 50 ms bound, and changed what Core receives: a character typed during an unanswered poll would first reach Core as the key's result rather than its own echo, with no capture of the speech that order gives.
+- Each read a program, chosen, keeps today's latency and what Core receives, at three or four wake-ups per re-read.
 
-- One intake item, `Item::Barrier { asker, behind_noted }`, where `asker` is `Asker::Round(u64)` (Core's idle query) or `Asker::Settle(u64)` (a test's). The item ends a batch, and a noted caret goes just ahead of it (`Intake::push_ahead`), as the idle query does today. Reason: one way of reaching the barrier, one ordering rule.
-- A test's settle is answered when the reducer reaches it, with no program in flight: `Effect::Settled(id)`. A round is answered as it is today (`answer_idle`, `reducer/mod.rs` 1188). Reason: `crates/mockapp/tests/caret_watch.rs` settles 58 times, many with a watch open, and expects the settle to return while the watch stays open. With the round's conditions each such settle would wait 10 seconds (`CARET_WATCH_BOUND`) and then hear the watch end.
-- The shell keeps the waiters in a map under the settles' numbers. After each transition it asserts that the map's keys are the `Asker::Settle` items waiting in the intake, which the reducer lists from the intake, as the shell already checks its reply tokens. The reducer keeps no set of its own. Under the second and third poll options (part four), a settle is answered in the same transition that reaches it, so the intake's items are exactly the pending settles. Under today's yield a settle reached while the poll is in flight would wait for the poll's end, which needs a list of reached settles in the reducer. Reason: a second record of the same fact would be one more thing to keep equal.
-- `Outpost::settle` waits for the answer, then calls `Registration::settle`, `Outbound::flush` and the event thread's `sync` on the caller's thread. Every subscription move and message before the answer was handed to its thread before the shell applied `Settled`, so these calls come after them in their channels. Reason: waiting is the test thread's job, and a reducer thread that waited would stall the outpost.
-- Removed: `Work::Settle`, `Item::Settle`, the `Settles` slot and its `in_charge` cleanup, `Job::settle`, the requeue while busy, and the re-dispatch behind the poll. Added: none.
+Measured on the code before the build, release build, test audio mode, on 2026-10-31 (9 of 10 runs of a temporary `measure_keys_conhost_unmoved` workload and 8 of 10 of `measure_keys_conhost`; the others failed in setup, as `docs/flaky-tests.md` records under "A new console host not responding at its outpost's first call"):
 
-Each request gets one answer:
-
-- Settle `s` is pushed while program `p` is in flight. `p` posts `Finished`, the pump plans the intake, and the reducer reaches `s` and emits `Settled(s)`. The shell removes `s`'s waiter and sends on it. No program runs for the settle, so nothing can strand it.
-- `p` is abandoned while `s` waits. `judge_abandonment` starts the replacement and the pump goes on, so `s` is reached and answered as above. A generation's death touches no settle.
-- A noted caret is pending when `s` is reached. The caret and `s` are put ahead (`behind_noted`), the caret's program runs, and `s` is reached again and answered. A caret noted by that program is not waited for, as with the round today. Today's settle took noted carets each time it was reached.
-- `Close` comes before `s` is reached. `Intake::close` drops the item, and the shell drops every waiter as it takes `Close`, so `Outpost::settle`'s receive fails and it returns, as it does today at shutdown. Dropping the waiter is its answer. A `Posted::Settle` after the mailbox has closed is dropped with its waiter (`shell.rs` 139 to 152).
-
-Behaviour: Core's round is unchanged, so production is unchanged. In tests a settle:
-
-- no longer waits for entries that arrive after it;
-- no longer returns early when a worker is abandoned;
-- divides batches, so events on either side of it are not merged or reordered across it;
-- leaves the objects the shell let go of to be dropped with the next program rather than with the settle's.
-
-Wake-ups and processor time: no change in production, since Core asks idle questions only of the harness. In tests each settle costs one shell wake and no worker wake. Today it costs a shell wake, a worker wake, and a shell wake for its `Finished`.
-
-Guarded by:
-
-- the replay tests `the_idle_answer_waits_for_nothing_that_arrived_after_its_query`, `a_noted_caret_is_read_with_its_events_timing`, `the_idle_answer_waits_for_the_hooks_copies_held_at_the_start`, and `a_gap_read_dispatched_again_after_an_abandoned_poll_still_holds_the_idle_answer`, which becomes "a gap read in flight holds the idle answer";
-- a new replay test, "a settle is answered as it is reached, and a close drops it".
-
-The shell tests `a_settle_dispatched_again_keeps_its_waiter` and `an_abandoned_settle_replaced_by_another_lets_its_waiter_go` go with the table. The settle's real path runs in the mockapp suites that settle: `caret_watch.rs`, `call_counts.rs`, `focus_reports.rs`, `msaa_events.rs`, `terminal_reading.rs`, `combo_box.rs`, `remote_ops.rs` and `idle_barrier.rs` under `crates/mockapp/tests/`. The end-to-end scenarios run only the round's path.
-
-### Part two: verdicts posted as a message of their own
-
-Today: a verdict is a `Change::verdicts` entry, posted alone by `RequestContext::record`. `admit` keeps it out of a refused commit, and `Input::Commit` records it before checking `accepts`. A dead generation's verdict is recorded only when it is a timed-out probe or a window's forgetting (`VerdictChange::kept_from_any_generation`).
-
-Proposed:
-
-- `Posted::Verdict { generation, change }` becomes `Input::Verdict { generation, change }`, recorded by `record_verdicts` under the same rule. `Effects` and `Change` lose `verdicts`.
-- `Posted::Verdict` is taken after the mailbox closes, as `Commit` is (`Mailbox::post`, `shell.rs` 137 to 156). Reason: a probe that timed out during shutdown is still a fact.
-- `admit` refuses whole any commit that is not accepted, and the reducer is given no `Input::Commit` for it. Reason: a refused commit is refused with no exception, so M4.6's model of commits needs no carve-out.
-- The program's copy still takes the verdict at once. A publication's context, which runs no program, still keeps the verdict in its copy only.
-- Removed: `admit`'s verdicts branch and the verdicts field. Added: one message kind and no state.
-
-Each verdict gets one answer. Worker generation `g` probes window `h`, times out, and posts `Verdict { g, change }`. If `g` is in charge, or the change is kept from any generation, the reducer records it, and `Effect::Verdicts` replaces the mailbox's copy. The program's next commit, request `r`, is applied if `accepts(r)`; if not, it is dropped whole and its objects go to the garbage. A probe committed before its worker's death keeps its mailbox order ahead of the abandonment's effects, as today.
-
-Wake-ups and processor time: unchanged, since the post is the same.
-
-Guarded by: `a_probe_is_recorded_when_committed_and_reaches_the_event_thread_then_the_next_program`, `a_dead_generations_probe_is_not_recorded`, `a_dead_generations_timed_out_probe_is_recorded`, `a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded`, and the shell test `a_refused_commits_text_writes_are_not_made`.
-
-### Part three: the worker keeps nothing between programs
-
-Today the worker keeps the carry described above. A program dispatched behind the console poll was copied before the poll's commits were applied. So the worker applies the poll's kept commits (`RequestContext::keep_commits`, `kept_commits`) to the next program's copies, and hands on the store text the poll held (`ProgramText`). Separately, `judged_focus` decides `entered_in_front` on the worker:
-
-- a foreground change sets it to its window;
-- any other focus inherits it from `Held::newest_in(top_level)` on the program's copy;
-- with nothing to inherit, it is set when the top-level window is the foreground window as read.
-
-That is a judgement written into the reducer's fact, made on the worker.
-
-Proposed:
-
-- The carry goes with the console poll's slot. Under the second and third options of part four, nothing is dispatched while a poll is in flight; today's yield keeps the carry. Removed: `carry`, `keep_commits`, `kept_commits`, `Program::kept`, `take_program_text`, and `for_program`'s text argument.
-- The program reports evidence, not the decision. `reducer::Focus` carries `in_front: InFront`, where `InFront::Foreground(isize)` is a foreground change's window, and `InFront::Read(Option<isize>)` is any other focus's top-level window when it was the foreground window as read. The reducer's rule, in `held.reported` (`follow::record`, `reducer/follow.rs` 841):
-  - a foreground change sets `entered_in_front` to its window;
-  - any other focus inherits it from the newest report in the same top-level window;
-  - otherwise it is set from the read.
-
-  These are today's three cases in today's order. A foreground change is named by its variant, not by its event address, since its address is the same as that of an MSAA focus on the window's client object (`foreground_event`, `worker.rs` 609). The same applies to the publication at a walk's bound (`worker.rs` 4630) and to `Report::Answered`. Reason: the decision becomes a pure function in the logic crate, where replay tests and M4.6's model check it.
-- The program's local apply runs the same pure function on its copy, so its later reads agree. It is still judged in two places, from the same evidence and the same function. The two agree at each commit, because the program's copy of the reports equals the reducer's then. The reports are written only by:
-  - the program in flight's own commits;
-  - the publication at its walk's bound, which claims the program, so none of its later commits is applied;
-  - `Input::Released`, which comes only while no program is in flight: `NodesHeld` is reached only with none in flight, and `releasing` holds dispatch until it is done.
-
-  The console poll writes no report.
-- What is heard does not change: each of today's three cases gives the same value. The roadmap's follow-up, a foreground change updating older reports in the window, stays an item of its own.
-- Cost: the foreground window is read on every non-foreground focus report whose top-level window is known, rather than only when nothing is inherited. This includes the shell thread's publication at a walk's bound. It is a local read with no wake. Its time is not measured; the build's before and after figures cover it.
-- Removed: the worker's state between programs. Added: none.
-
-Guarded by:
-
-- `a_programs_text_change_reaches_the_next_programs_copy`;
-- `a_walk_under_way_at_its_bound_is_published_and_its_programs_report_refused`;
-- `a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live`;
-- two new replay tests: "a focus inherits its window's entered-in-front at commit", and "a foreground change after a background focus in the same window sets it".
-
-### Part four: the console poll (a question for Dickson)
-
-Today (`reducer/mod.rs`): the poll is a long program (`Work::Poll`, line 143) in a slot of its own, `Reducer::poll` (398), dispatched when nothing else is ready.
-
-- A program dispatched meanwhile goes into the same worker's inbox behind the poll, its deadline held back (`Current::behind_poll`, 365).
-- The poll looks at its inbox before each read (`look`, `worker.rs` 335). It yields to anything but a release's drop (`poll_yields_to`, 328), commits `WatchChange::Yielded`, and is dispatched again afterwards.
-- When the poll is abandoned, its watch is taken, its query is answered `Abandoned`, and the program behind it is dispatched again to the replacement (`abandon_poll`, 1042). `poll_finished` (1152) starts that program's deadline.
-
-The states are the second slot, `behind_poll`, the re-dispatch after abandonment, the yield, the worker's held queue and the carry.
-
-NVDA, from the pinned source (`nvda/source/editableText.py`, `_hasCaretMoved`): the caret loop runs on the main thread until its timeout, 100 ms by default. It returns early only for a queued script or a pending focus event. In consoles, caret and text change events neither end it nor are handled during it, since `caretMovementDetectionUsesEvents` is false there.
-
-#### What is known
-
-- `docs/design/key-holding.md` ("The console host's caret poll", Costs) measured, under today's yield, that every watch the first check left open was answered within 8 ms. The answer came from one re-read, or from the check of a console update that ran because the poll yielded. The workload, `measure_keys_conhost`, presses only keys that move the caret: Left and Right over a typed line, Backspace, Escape and typing (`crates/verbatim-e2e/src/scenarios/measure.rs`, `terminal_keys`). So nothing is known of keys that move nothing, which pay the poll's whole 50 ms bound.
-- The blink-timer experiment saw the cursor move up to 54 ms after the key, past the bound. A slow move also pays the whole bound, then waits for the blink-timer caret event, 257 to 540 ms after the key.
-- How often a program arrives during a poll, and how long it would wait without the yield, is not measured.
-
-#### The order of reads when a character is typed during a poll
-
-Take this sequence in the console host:
-
-1. Left Arrow is pressed at the start of the line. Its first check finds nothing, and the watch `q` opens with a poll.
-2. At about 10 ms, "a" is typed. A key that is not held is not made to wait for the watch (`crates/verbatim-core/src/editing.rs`, `WaitingKey::Later`).
-3. The console inserts "a", and its caret moves one place right. The console update `U` arrives.
-
-What Core receives depends on the option:
-
-- Today's yield: `U`'s program checks the watch, finds the caret moved, and answers `q` as moved, with the caret after "a", under the key's trace. `U`'s read of the terminal, which holds the "a", is sent as an event under `U`'s own trace. One exception: when a poll read in flight at `U`'s arrival finds the move first, the terminal read goes under the key's trace.
-- The poll waits for nothing: `U` waits. The poll's next re-read finds the move and answers `q` the same way. The poll then reads the terminal under the key's trace (`terminal_output(node_id, open.trace, 0)`, `worker.rs` 1235 to 1237), so the "a" first reaches Core as part of the key's result. `U`'s read then finds nothing new. The order changes in every such case, not only in the exception.
-- Each read a program: `U` is planned before the next re-read, since a re-read is dispatched only when nothing else is ready. Core receives what it does today, the same exception included.
-
-How Core's terminal reading rules speak the "a" in either order is not established, and the expected speech must come from a capture. The capture needed is NVDA in the console host running cmd at an empty prompt: Left Arrow, then "a" 10 ms later, ten times, and the same after a Left Arrow that moves over typed text. No scenario types within the poll's bound after a key: `conhost_up_typing` types only after the recalled line is heard, and `conhost_typing` is recorded as flaky. A scenario of its own, `conhost_unmoved_key_typing`, would assert that capture's speech. It is built only if the poll waits for nothing is chosen, since under the other options Core receives what it does today.
-
-#### The options
-
-For each: the longest wait for a program that arrives during a poll (a focus, a console update's read, a release), the wake-ups, and what is removed.
-
-- Today's yield.
-  - Longest wait: one read in progress, then the program.
-  - Wake-ups: the worker once per re-read, plus one or two shell wakes per yield, and the re-dispatch.
-  - Removed: nothing. It keeps every state listed above, and part three's carry with it.
-- The poll waits for nothing: the poll is an ordinary program in the one slot, and whatever arrives waits for its end.
-  - Longest wait: until 50 ms after the key was passed on (`POLL_BOUND`), plus one read. That is paid in full after a key that moves nothing or moves later than the bound, and is otherwise unmeasured.
-  - Wake-ups: the worker once per re-read, and none for yields.
-  - What Core receives changes, as above.
-  - Removed: `Reducer::poll`, `behind_poll`, `abandon_poll`, `poll_finished`, `WatchChange::Yielded`, `look`, `poll_yields_to`, the worker's held queue and the carry.
-  - The poll still waits on its inbox's high-resolution timer, and needs a `try_take` after each wait to see that its inbox closed.
-- Each read a program: the watch's next read becomes its wake (`wake_for` returns `poll.next` for a polling watch). `Item::Wake` on a polling watch makes one read and commits the answer, the end, or `WatchChange::Read` with the next read's time. A wake taken before that time only sets the wake again, as `Worker::wake` does today. The re-read runs under the text deadline.
-  - Longest wait: one read in flight.
-  - Wake-ups: three or four per re-read, for the shell's timer, the worker, and the shell for the commit and the end, against one today. A key that moves nothing makes ten re-reads, so 30 to 40 more wakes.
-  - Processor time: one more copy of the facts per re-read.
-  - What Core receives does not change.
-  - Removed: everything the previous option removes, plus the long program and the inbox's timer, so the inbox becomes a plain channel and the worker waits on it with `recv`.
-
-With any option, a read can last until the program's deadline, 10 seconds, since the poll names no window for the moved-on rule. Today a program behind the poll waits the same way.
-
-Each request gets one answer: watch query `q` is opened by a check, and the poll's program `P`, or each re-read program under the third option, runs with `running = q`.
-
-- `P` finds evidence. Its commit carries `q`'s reply and `Answered(q)`, the reducer's `send` clears `running`, and `P` ends.
-- `P`'s last read finds nothing. `Ended(q)` ends the watch, and `subscription_effects` sends `q`'s `WatchEnded`.
-- Under the third option, a read that finds nothing before the bound commits `Read(q, next)`. That sets the watch's poll and wake, and `q` stays unanswered with the watch open. The idle round waits for it as for any open watch.
-- `P` is abandoned at its deadline. A new rule for every program, moved from `abandon_poll`: when the running query is the open watch's, the watch is taken out without a word and the query is answered `Abandoned`, once. `P`'s later commits are refused, since its slot is empty. An ordinary program that took the watch has already removed it from the reducer's facts, so the rule does not fire for it.
-- `P` panics. A rule in `finished`, moved from `poll_finished`: when the running query is the open watch's, the watch is ended, which answers `q`, and no `Failed` is sent. Otherwise the query is answered `Failed`, as today. Ending the watch and then sending `Failed` would answer `q` twice, so the order is fixed by this rule.
-- A newer key's query arrives. It is planned ahead of any wake, and its check ends a watch still open, as today. A wake left for the ended watch finds no polling watch and does nothing.
-- `Close` arrives. The shell lets go of the generation's inbox and `P` returns. Its end is taken as any program's.
-
-Guarded by:
-
-- kept: `the_console_poll_is_dispatched_only_when_nothing_else_is_ready`, `a_newer_keys_request_ends_the_old_watch_and_its_poll`, `the_poll_ends_its_watch_by_its_answer_or_at_its_last_read`, `a_query_is_answered_once_whatever_ends_it`, and `the_poll_ends_when_its_inbox_is_closed` under the second option;
-- rewritten: `a_program_is_dispatched_beside_the_poll_its_deadline_starting_when_the_poll_ends` becomes "a program waits for the poll's end" under the second option and "a program goes before the next read" under the third; `an_abandoned_poll_ends_its_watch_and_the_program_behind_it_goes_to_the_replacement` becomes "an abandoned poll answers its watch's query once";
-- deleted with their states: `the_poll_is_dispatched_again_after_it_yields`, `the_poll_holds_a_drop_and_goes_on_reading`, `the_poll_yields_to_a_caret_read_and_holds_it`, and `the_polls_text_changes_are_committed_with_its_yield`;
-- new: a replay test for a panicked poll, and under the third option "a read before the bound sets the next read's wake".
-
-#### The measurement that settles it
-
-Run it on today's code, in release builds and test audio mode, on the desktop. A builder makes two temporary changes, not committed:
-
-- A debug log line in the reducer for each poll. It gives the time the key was passed on and the poll's `until`. For each program dispatched behind the poll, it gives the program's kind, its offset from the key, and its offset to the poll's yield. For the watch, it gives the time it was answered or ended, and whether a poll re-read or another program's check did it. It also gives the number of re-reads.
-- A temporary workload, `measure_keys_conhost_unmoved`, in `crates/verbatim-e2e/src/scenarios/measure.rs`, against Windows PowerShell in the console host as `measure_keys_conhost` uses. Each round presses, each key 150 ms after the speech of the one before:
-  - Left Arrow 20 times at the start of an empty line;
-  - Home 20 times at the start of the line;
-  - Up Arrow 20 times in a fresh shell with no history;
-  - Left Arrow at the start of an empty line, then "a" 10 ms later and Backspace, 20 times;
-  - as a control, Left and Right Arrow 10 times each over a typed line.
-
-Run `measure_keys_conhost_unmoved` 10 times and `measure_keys_conhost` 10 times, and record each run's time from its log.
-
-From each run, take:
-
-- for each program that arrived during a poll: the time from its arrival to the poll's `until` (its wait if the poll waits for nothing, at most) and to the watch's answer (its wait if the answer comes first), as P50, P99 and maximum, by program kind;
-- the share of polls that end at the bound, split into keys that move nothing and keys whose caret moved later. The caret moved when the console's next caret event or the next key's before read shows a new caret position;
-- re-reads per poll, as P50, P99 and maximum, which gives the third option's added wake-ups at three or four each;
-- the reducer's and the worker's wake-ups per key from a trace, as `docs/tooling/measuring.md` says, in one run of each workload.
-
-#### What it measured
-
-Today's code with the temporary log lines (branch `measure`, ac497e82, not merged), release build, test audio mode, on 2026-10-31: 9 of 10 runs of `measure_keys_conhost_unmoved` and 8 of 10 of `measure_keys_conhost` passed and were read; the three others failed in setup, before any measured key (`docs/flaky-tests.md`, "A new console host not responding at its outpost's first call"). The split of polls ending at the bound into keys that moved nothing and keys that moved late is not in the log lines; the unmoved workload's first three groups move nothing by construction. The wake-ups were not traced; the third option's are estimated at three or four per re-read and are measured in the build.
-
-- Ordinary console keys (`measure_keys_conhost`, 261 polls): 0.4% end at the bound; re-reads per poll P50 0, P99 2, maximum 7. 64 console update reads, the typed character's echo among them, arrived during a poll: today each ran in P50 1.0 ms, maximum 1.5 ms, through the yield; if the poll waited for nothing, each would wait for the poll's bound, P50 49 ms, maximum 50 ms.
-- Keys that move nothing (`measure_keys_conhost_unmoved`, 716 polls): 66.5% end at the bound, with re-reads per poll P50 9, maximum 10, so the third option adds about 27 to 40 wake-ups to each such key. 152 console update reads and 160 text queries arrived during a poll: today they ran within 0.5 ms and 1.2 ms; waiting for nothing, up to 50 ms and 43 ms.
-
-So the poll waiting for nothing would add about 50 ms to a typed character's echo in ordinary console typing, while each read as a program keeps today's latency and pays its wake-ups only on keys that move nothing.
-
-### Part five: dropped
-
-Posting a program's last commit with its end is dropped. The hop has not been shown to cost. Posting the end before the program's drops would put a blocked release under the next program's deadline, and would let a settle or the idle round be answered while the worker still calls into the application. If a later wake-up measurement shows the hop costs, the end would carry the last commit and still be posted after the drops.
+- Ordinary console keys, 261 polls: 0.4% ended at the bound; re-reads per poll P50 0, P99 2, maximum 7. 64 console update reads, the typed character's echo among them, arrived during a poll and ran in P50 1.0 ms, maximum 1.5 ms; waiting for the poll's end they would have waited P50 49 ms, maximum 50 ms.
+- Keys that move nothing, 716 polls: 66.5% ended at the bound, with re-reads per poll P50 9, maximum 10, so about 27 to 40 added wake-ups per such key. 152 console update reads and 160 text queries arrived during a poll and ran within 0.5 ms and 1.2 ms.
 
 ### Facts with an owner in two places
 
-- The reducer's verdicts and marks, and the mailbox's push-time copies of them: unchanged, each still written only from the reducer's effects.
-- Pending settles: the barrier items in the intake, and the shell's waiters, checked against those items after every transition. The waiter is only the means of answering, as a reply token is.
-- The console poll's progress, under the second option: the watch in the reducer keeps the poll as it was at dispatch, while the program holds the live one. Nothing reads the reducer's copy while the poll is in flight, since `wake_for` gives no wake for a polling watch, and the program's end replaces the watch. Under the third option the progress lives only in the reducer.
-- `entered_in_front`: judged by the same pure function on the program's copy and in the reducer, from the same evidence, and equal at each commit by the argument in part three.
+- The reducer's verdicts and marks, and the mailbox's push-time copies of them: each written only from the reducer's effects.
+- Pending settles: the barrier items in the intake, and the shell's waiters, checked against them after every transition. The waiter is only the means of answering, as a reply token is.
+- `entered_in_front`: judged by the same pure function on the program's copy and in the reducer, from the same evidence. The two agree at each commit, because the reports are written only by the program in flight's own commits, by the publication at its walk's bound, which claims the program so none of its later commits is applied, and by a release, which comes only with no program in flight.
+
+### Limitations
+
+- A console poll's read, like any program behind it before, can last until the text deadline, since it names no window for the moved-on rule.
+- In tests, a settle no longer waits for entries that arrive after it or returns early when a worker is abandoned, divides batches, and leaves the objects the shell let go of to be dropped with the next program.
+- A foreground change still does not update the entered window of older reports in its window; that is the roadmap's item of its own.
+- The foreground window is read on every non-foreground focus report whose top-level window is known, rather than only when nothing is inherited, the shell's publication at a walk's bound included: a local read with no wake, not measured alone.
 
 ### Measured before and after
 
-Wake-ups and processor time per thread, in release builds and test audio mode, at most 20 runs each:
-
-- the console poll's option on `measure_keys_conhost` and `measure_keys_conhost_unmoved`;
-- part three and the build as a whole on `measure_focus_text_box` and `measure_keys_notepad`.
-
-### End-to-end runs and the order of work
-
-The commits, in order, each with its unit and replay tests, and the crate guide updated where an API changes:
-
-- Verdicts as a message of their own. Scenarios: `quick_link_menu`, `menu_and_settings_dialog`.
-- The console poll by Dickson's answer, with the worker's carry removed and the one-answer rules for an abandoned or panicked poll. The ownership design's limit on a release waiting behind the poll is updated. Scenarios: `conhost_up_typing`, `conhost_editing`, `conhost_commands`, and `conhost_unmoved_key_typing` if the poll waits for nothing is chosen.
-- Test settles merged into the idle barrier. Its gate is the mockapp suites that settle, named in part one, which `cargo xtask ci` runs. Scenarios: `notepad_caret_keys`, `text_box_caret_keys`, for the round's path.
-- `entered_in_front` decided by the reducer. Scenarios: `second_application_and_verbatim_menu`, `rapid_tabbing_in_settings`.
-
-Each scenario runs three times at the end of the build. `conhost_typing` is left out, since `docs/flaky-tests.md` records its failure.
+Pending, on the desktop: wake-ups and processor time per thread, in release builds and test audio mode, of `measure_keys_conhost` and the temporary `measure_keys_conhost_unmoved` workload (branch `measure`) for the console poll's rule, and of `measure_focus_text_box` and `measure_keys_notepad` for the build as a whole.
 
 ### Decisions
 
-- The console poll: each read is a program of its own, timed by the reducer, which removes the poll's slot, the yield, the re-dispatch and the worker's carry, and keeps what Core receives and today's latency; its added wake-ups, on console keys that move nothing, are measured in the build (Dickson, 2026-10-31, on the figures in "What it measured").
+- The console poll: each read is a program of its own, timed by the reducer, which removes the poll's slot, the yield, the re-dispatch and the worker's carry, and keeps what Core receives and today's latency; its added wake-ups, on console keys that move nothing, are measured in the build (Dickson, 2026-10-31).
 - A test's settle is answered as soon as it is reached, without the idle round's waits for an open caret watch, an open gap record or the hook's held copies, and divides batches as the round does (Dickson, 2026-10-31).
 
 ## Determinism (a build of its own)
