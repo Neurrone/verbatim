@@ -5,7 +5,8 @@ its read scheduler and its foreground watch decide, with no Windows type,
 no call and no clock, so every ordering of inputs is a replay test. It is
 a logic crate: in the GPL tier, with no Windows dependency, so it builds
 and is tested on any host. It depends on `verbatim-model`, on
-[verbatim-reader-rules](verbatim-reader-rules.md) for the UIA focus wait,
+[verbatim-reader-rules](verbatim-reader-rules.md) for the UIA focus wait
+and the work in flight,
 and on `tracing`, which the scheduler logs through. The listener
 ([verbatim-listener](verbatim-listener.md)) runs it on its threads and
 makes every call; that guide's "How a UIA focus is judged and read"
@@ -35,7 +36,23 @@ Public API:
   read is abandoned or published at its bound, when an event waiting behind
   abandoned reads is dropped, which idle waiters may run, and whether a
   menu opening's thread may compare it with its own last read
-  (`QueuePlace`). `GraceState::step` is the menu end's grace, which the
+  (`QueuePlace`). Each application's read under way is its work in
+  flight (`InFlight`, re-exported `Request`): the schedule starts it at a
+  thread's `Next`, steps it with what the read learns (`Learned`), its
+  bound (`Armed`), the watchdog's `Tick` and the answers to its asks
+  (`MovedOn`, `Published`), and ends it at the thread's `Returned`. Its
+  two asks are effects (`AskMovedOn`, `Publish` with `then_abandon`), at
+  most one per application in a step, which the shell answers once the
+  step's other effects are applied. An application's `threaded` says a
+  thread is in charge, as the generation its work in flight has in
+  charge; every start of a thread, new or reused, takes a new generation
+  (`InFlight::succeed`). An abandonment has the shell stop watching the
+  read (`Unwatch`). The schedule owns the watchdog's alarm: after every
+  step it computes the soonest of each read's next wake and each
+  application's end of its wait at the abandoned limit, and emits
+  `Alarm(Set(due))` only when that changed; `Alarm(Now)` is the
+  shutdown's. A foreground event only moves applications away for menu
+  currentness. `GraceState::step` is the menu end's grace, which the
   listener's threadpool timer and its callers drive.
 - `foreground` — what the listener learns of the window in the foreground
   for the keyboard hook: `ForegroundWatch` takes the window in front at

@@ -272,14 +272,21 @@ Rules that hold for every UIA focus:
   lookup of the route's window caches for the proxy rule
   (`docs/design/listener-without-connections.md`, section 5).
 - Beside the calls, local work only and no wake-up: the reading thread
-  judges once whether the user moved on from the read's window
-  (`GetGUIThreadInfo`, `GetWindowThreadProcessId`, class and process
-  reads), as the read starts or learns its window; it finds the focus's
-  top-level window (`GetAncestor`) for its walk's bound, shares each fact
-  it reads with the watchdog under an uncontended lock, and sets the
-  watchdog's alarm as it starts and as it passes its checks and cancels
-  it as it ends, three timer calls that wake no thread, where the read's
-  start woke the watchdog before; and when the new
+  finds the focus's top-level window (`GetAncestor`) for its walk's bound,
+  shares each fact it reads under an uncontended lock, and tells the
+  schedule the window it learns and its bound under the readers' lock;
+  the schedule sets the watchdog's alarm to the read's grace end as it
+  starts, sets it again only when the bound comes sooner, and moves it
+  back to whatever else is due, or cancels it, as it ends: two or three
+  timer calls that wake no thread. A read that returns within its grace
+  makes no moved-on call (`GetGUIThreadInfo`, `GetWindowThreadProcessId`,
+  class and process reads), where each read with a window made one as it
+  started or learned its window before the work in flight; one still
+  under way past its grace costs one watchdog wake-up and one moved-on
+  call every half second, at most 15 before `READ_DEADLINE` (stand-in
+  reads held 3 seconds, debug: 5 wake-ups and 5 calls, where before it
+  took none with no foreground event and 2 wake-ups and 3 calls with two;
+  20 quick reads: no wake-up, and 0 calls where before 20); and when the new
   focus is inside the old, the intake moves the old focus's queued state
   changes ahead of the read (`docs/design/focus-pipeline.md`, section
   12.4), delaying the report by their handling, 0.2 to 1.8 ms per property
@@ -495,11 +502,13 @@ walk's first step to its parent answers 3 seconds late (`slow-parent`;
 `a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded`).
 
 - Today: the read makes the calls a focus change makes up to the stuck
-  step; the watchdog wakes once, at the bound, 500 ms after the event's
+  step; the watchdog wakes at the bound, 500 ms after the event's
   observation for a focus in a new top-level window and 2 seconds
-  otherwise, and publishes the focus with the ancestors read and the
-  outermost one's nearest window to complete from, by local calls on its
-  own thread; the outpost then reads the windows not reached as plain
+  otherwise, and the read's work in flight asks for its publication,
+  which the shell makes with the ancestors read and the outermost one's
+  nearest window to complete from, by local calls on the watchdog's
+  thread; past the read's grace it also wakes every half second to judge
+  whether the user has moved on; the outpost then reads the windows not reached as plain
   windows, about four local calls each. When the step returns, the thread
   finishes its walk, its result discarded, and reads the application's
   next event; no thread is abandoned or started, and no second message is

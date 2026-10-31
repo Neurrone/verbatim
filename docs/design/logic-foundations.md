@@ -311,9 +311,9 @@ The outpost's reducer called three functions of a `Locals` trait during a transi
 
 **A walk published at its bound: (d).** The reducer emits `Effect::Publish { request, facts, then_abandon }`, clears the walk's bound, and the shell answers `Input::Published { request, change, then_abandon }`. The shell claims the walk's progress from the charge of `request`'s own generation, completes it with local calls, and writes it into the store, so none of that happens inside a transition. `then_abandon` carries an abandonment that asked for the publication and comes back in the answer, so the reducer keeps nothing between the two and today's order holds: the publication is committed, then the program abandoned. Rejected: (a), since the worker is inside the slow call its bound exists for, and a timer of the shell's would make it a second owner of the bound; (b), several messages and shell wake-ups per focus for a rare case; (c), since a bound has no event.
 
-**The rule for asks.** The shell answers each ask exactly once, as the reducer's next input, before it takes another message, and the reducer applies an answer only while its request is the program in flight. Reasons: each ask has one answer path; nothing comes between an ask and its answer, so effects keep their order; and an answer out of turn is dropped rather than applied to another program. A transition makes at most one ask: a tick judges the deadline first (abandoning, by one `Publish` carrying the abandonment when a walk is armed), then the walk's bound (`Publish`), then the grace's end (`AskMovedOn`), the first that applies deciding, and a judgment left over is made by the publication's answer against its own `Now`. Judged the other way round, a late tick past both the bound and the deadline published and then abandoned before the answer, losing the published focus and trying the group's older entries in its place (the second review's first finding). A `MovedOn` answer applies whether or not its program is claimed, so a published program still stuck is abandoned at once.
+**The rule for asks.** The shell answers each ask exactly once, as the reducer's next input, before it takes another message, and the reducer applies an answer only while its request is the program in flight. Reasons: each ask has one answer path; nothing comes between an ask and its answer, so effects keep their order; and an answer out of turn is dropped rather than applied to another program. A transition makes at most one ask: a tick judges the deadline first (abandoning, by one `Publish` carrying the abandonment when a walk is armed), then the walk's bound (`Publish`), then the moved-on rule's next judgment (`AskMovedOn`, "The work in flight, shared by both readers"), the first that applies deciding, and a judgment left over is made by the publication's answer against its own `Now`. Judged the other way round, a late tick past both the bound and the deadline published and then abandoned before the answer, losing the published focus and trying the group's older entries in its place (the second review's first finding). A `MovedOn` answer applies whether or not its program is claimed, so a published program still stuck is abandoned at once.
 
-The reducer's inputs and effects went from 15 each to 17 each, with no lifecycle state added: `grace_judged`, `claimed`, `deferred`, `to_drop`, `releasing` and `stopping` are each still needed, and the `abandoning` flag an earlier revision proposed is replaced by `then_abandon`. The reducer's tests answer its asks as the shell does; reducer tests cover the late tick and moving on during a walk with answers out of turn, and a shell test (`an_ask_is_answered_before_the_shell_takes_another_message`) shows a publication's answer, and the abandonment it completes, carried out within the one step of the shell's.
+The reducer's inputs and effects went from 15 each to 17 each, with no lifecycle state added, and the `abandoning` flag an earlier revision proposed is replaced by `then_abandon`. The reducer's tests answer its asks as the shell does; reducer tests cover the late tick and moving on during a walk with answers out of turn, and a shell test (`an_ask_is_answered_before_the_shell_takes_another_message`) shows a publication's answer, and the abandonment it completes, carried out within the one step of the shell's.
 
 ### The other owners
 
@@ -437,7 +437,7 @@ Below are each owner's candidates, with the invalid state, copy or checks each r
 
 **The outpost's reducer.**
 
-- **Moved out, so nothing is built twice:** the walk as one state (`Current`'s `walk` and `claimed` as `Unarmed`, `Armed(bound)` or `Published`) and the count of abandoned workers kept by the shell alone go to "The work in flight, shared by both readers", whose one `InFlight` holds the walk's bound and replaces the reducer's `abandoned` (the simplification study's second candidate).
+- **Built by "The work in flight, shared by both readers":** the walk as one state (`Unarmed`, `Armed(bound)` or `Published`) and the count of abandoned workers kept by the shell alone (the simplification study's second candidate).
 - **The gap timer derived from the gap record (recommended).** It replaces the `GapTimer { Own(Option<due_us>), Given }` enum this section first proposed, which kept a copy of the due time.
   - `Reducer::gap_due` (`src/lib.rs` 470) repeats the open record's `due_us`, and `TimerAction` (`src/intake.rs` 187) threads each change of the record out to it through `Pushed::timer` (390) and `gap_timer` (`src/lib.rs` 767). `next_timer` (553) and `tick` (670) read the record's due time instead, and the record notes that its bound's entry is queued, which `tick` today notes by clearing `gap_due` (671). `next_timer` skips a record whose bound's entry is queued, so that while the entry waits behind a marker the reducer is not woken again for a time already past.
   - Benefit: the copy goes, and with it the invalid "given, with a due time the reducer will never use" (`gap_due` is set at 771 whatever the flag says). `Effect::GapTimer`, the tests' seam, is given when the record's due time differs after a transition from before it. That also gives `GapTimer(None)` when the bound's read closes the record, where today nothing is given; harmless, but the tests that assert exact effect lists change with it.
@@ -453,13 +453,12 @@ Below are each owner's candidates, with the invalid state, copy or checks each r
   - `to_drop`: the reducer's knowledge that a release left objects to drop, which decides when a `Work::Drop` program runs. The alternative, attaching the shell's garbage to the next program, would hold released objects until the next event when the application is idle.
   - `releasing` and `stopping`: each changes by its own input, and every combination is valid.
   - `deferred`, `running` and `group`: independent of each other.
-  - `grace_judged`: used only with a window, but an enum for it would only move one check.
 
 **The listener's scheduler.**
 
-- **The running read's place with the read (recommended).** `App::running_place` (`src/schedule.rs` 298) is set when a read starts (629) and read only while one runs (735). It moves into `Running`, so a stale place with no read cannot exist. `App` goes from 9 fields to 8.
+- **Built by "The work in flight, shared by both readers":** the running read's place is kept in the read's item, so a stale place with no read cannot exist, and `App` has 8 fields.
 - **Kept as they are:**
-  - `live`, `limit_reached` and `ending` are changed by different inputs, and their combinations are valid: an application at its limit with no thread, or an ending one with a thread still answering.
+  - `threaded`, `limit_reached` and `ending` are changed by different inputs, and their combinations are valid: an application at its limit with no thread, or an ending one with a thread still answering.
   - `GraceState` is already small and explicit.
 
 **`verbatim-reader-rules`.** Its functions are pure and hold no state. The only candidate is the window type above.
@@ -485,13 +484,12 @@ Below are each owner's candidates, with the invalid state, copy or checks each r
 
 Counts before and after, for the owners that change:
 
-- **The outpost's reducer**, against its state after the first build, in this build alone:
-  - fields: 16 to 15 (`gap_due`);
+- **The outpost's reducer**, against its state after the work in flight, in this build alone:
+  - fields: 13 to 12 (`gap_due`);
   - flags: 4, unchanged;
-  - inputs and effects: 17 each, unchanged;
+  - inputs and effects: 16 each, unchanged;
   - the intake's fields: one fewer (`marks`);
   - removed: `TimerAction`, `Pushed::timer`, `sync_marks`, the intake's 2 mark setters and `Applied::adopted`, about 110 lines net, plus 13 "0 is none" comparisons across the logic crates.
-- **The listener's scheduler:** `App`'s fields from 9 to 8.
 - **The request table and the keyboard decision machine:** no change in this build; their items moved above.
 - **The rest:** no change.
 
@@ -600,7 +598,7 @@ Each commit has its unit tests, and the crate guides are updated where an API ch
 
 **The third build, simpler types:**
 
-- One commit per owner, as recommended in "Simpler owners": the outpost's gap timer from its record and one copy of the marks, the window type across the logic crates, and the scheduler's running place.
+- One commit per owner, as recommended in "Simpler owners": the outpost's gap timer from its record and one copy of the marks, and the window type across the logic crates.
 - Scenarios: `notepad_editing` and `rapid_tabbing_in_settings`.
 
 ### Limitations
@@ -1114,7 +1112,15 @@ This build replaces one piece of the caret watch build, which is being built now
 
 ## The work in flight, shared by both readers (a build of its own)
 
-Status: proposed on 2026-11-01, written against main 39dce0b2, and revised after its adversarial review (`experiments/logic-tests-study/worker-charge-design-review.md`). It is candidate two of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`), "one pure worker charge". It follows the first determinism build ("Determinism") and takes over that build's asks: `AskMovedOn` and `MovedOn`, and `Publish` and `Published` with `then_abandon`. It replaces three items of "Simpler owners": the outpost's walk as one state, its abandoned count kept by the shell alone, and the listener's running place kept with the read.
+Status: built on 2026-11-01 on branch `inflight`, from main 28eb672d, after its adversarial review (`experiments/logic-tests-study/worker-charge-design-review.md`); the line numbers below are main's at 39dce0b2, where it was written. The mechanisms are described in the crate guides: [verbatim-reader-rules](../crates/verbatim-reader-rules.md) for `InFlight`, [verbatim-outpost-logic](../crates/verbatim-outpost-logic.md) and [verbatim-outpost](../crates/verbatim-outpost.md) for the outpost, and [verbatim-listener-logic](../crates/verbatim-listener-logic.md) and [verbatim-listener](../crates/verbatim-listener.md) for the listener. Where the build differs from the text below, pending Dickson's acceptance:
+
+- Every start of a listener thread, a reused abandoned thread's included, takes `succeed()`, as every start took a fresh number before; the generation an abandonment made may already have been taken by a thread started since, so reusing it was not safe.
+- The listener's `Publish` and `Published` carry `then_abandon`, as the outpost's do, so the schedule keeps nothing between an ask and its answer.
+- `InFlight::start` takes the item's window as `Option<isize>`, `None` for an item never judged and `Some(0)` for one whose window is to be learned, as the listener's events already say it; `walk_returned` and `moved_on` take no time, which they do not use; and two queries are added, `deadline()`, for the outpost's generated test, and `item_mut()`, for what each reader keeps in its item.
+- The outpost's drop program at its shutdown, which runs with nothing in flight, is numbered by a start and an end at once.
+- The listener's shell tests whose rule this build removes, the front judged as a read starts and a read with no foreground event since its event, are replaced by a read taken by a new thread being judged at its own grace's end; the test of a read left alone within its grace holds the readers' lock until the grace ends, the grace no longer being the test's to set.
+
+Measured, debug build, stand-in reads in the listener's shell test process: 20 quick reads cost the watchdog no wake-up before and after, and 20 moved-on calls before against none after; a read held 3 seconds with no foreground event cost no wake-up and one call before, and 5 wake-ups and 5 calls after; held 3 seconds with two foreground events, 2 wake-ups and 3 calls before, and 5 and 5 after. It is candidate two of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`), "one pure worker charge". It follows the first determinism build ("Determinism") and takes over that build's asks: `AskMovedOn` and `MovedOn`, and `Publish` and `Published` with `then_abandon`. It replaces three items of "Simpler owners": the outpost's walk as one state, its abandoned count kept by the shell alone, and the listener's running place kept with the read.
 
 The work in flight is a reader's record of the one slow-call item a worker is running. A worker is the outpost's worker thread, or one of the listener's reading threads. The outpost calls this record "the program in flight", and the listener its running read. The record holds:
 

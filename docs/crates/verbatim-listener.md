@@ -136,74 +136,81 @@ receives the event's own element, judges and reads a UIA focus
   one's nearest window. A call over a second is logged at info
   (`FocusQuery::before_call`).
 - Publication at the bound. Once a read has passed every check, its
-  thread shares its progress with the watchdog (`ReadProgress` in
-  `WatchedRead`: the event's cached facts, the facts read so far through
+  thread shares its progress (`ReadProgress` in `WatchedRead`: the
+  event's cached facts, the facts read so far through
   `FocusQuery::progress`, the ancestors read, the nearest window and the
-  bound) and sets the watchdog's alarm to the bound (`on_arm`). A read
-  whose call is still under way at the bound is published by the watchdog
-  from that progress through the same `read_at_bound`, its chain
-  completed by plain windows by local calls on the watchdog's thread
-  (`WatchedRead::prepare_publish`), and claimed (`WatchedRead::claim`) as
-  the schedule decides, so its thread's late result is discarded when it
-  returns. The thread is not abandoned for this: it
-  reads its application's next event when its call returns, is abandoned
-  only at `READ_DEADLINE` or by the moved-on rule, and so counts against
-  `ABANDONED_LIMIT` only then, when no second outcome is sent. A read
-  still in its checks at the bound is left to those rules. A menu item's
-  legacy MSAA state, read after the walk, is published as the walk ended
-  should it be the call under way (`ReadProgress::finished`). A published
-  read is no longer a pending focus for menu openings, nor in progress for
-  the idle barrier. `ReadingThreads` runs the reading threads and their
-  watchdog in a test's process, outcomes sent to a channel, so a mockapp
-  test can watch the watchdog meet the bound.
+  bound) and tells the schedule its bound (`on_arm`, the schedule's
+  `Armed`), which sets the watchdog's alarm by it. A read whose call is
+  still under way at the bound is published as the schedule asks
+  (`ScheduleEffect::Publish`): the shell finds the read by its request,
+  reads its progress without taking it, through the same `read_at_bound`,
+  its chain completed by plain windows by local calls
+  (`WatchedRead::prepare_publish`), and answers `Published`; the schedule
+  sends it as the event's outcome, and its work in flight refuses the
+  thread's late result when it returns. The thread is not abandoned for
+  this: it reads its application's next event when its call returns, is
+  abandoned only at `READ_DEADLINE` or by the moved-on rule, and so
+  counts against `ABANDONED_LIMIT` only then, when no second outcome is
+  sent. A read still in its checks at the bound is left to those rules.
+  A menu item's legacy MSAA state, read after the walk, is published as
+  the walk ended should it be the call under way
+  (`ReadProgress::finished`). A published read is no longer a pending
+  focus for menu openings, nor in progress for the idle barrier.
+  `ReadingThreads` runs the reading threads and their watchdog in a
+  test's process, outcomes sent to a channel, so a mockapp test can watch
+  the watchdog meet the bound.
 - Watchdog. A read past `READ_DEADLINE`, 8 seconds (the budget, the
   5-second transaction timeout, and a second), is abandoned;
   the timeout bounds each provider call, not an operation
   (`docs/uia-bugs.md`). A focus's or menu opening's read is also abandoned
-  after `MOVED_ON_GRACE` (half a second) once the window in front belongs
-  to its application on another UI thread
-  (`verbatim_win32::window::front_is_another_thread_of_its_application`,
-  by provider process, `verbatim_win32::provider::provider_process`), as NVDA's watchdog
-  cancels a slow call. The window watched (`focus_read::WatchedRead`) is the
-  cached handle or the nearest window once found (`WatchedRead::learn`), and
-  the front is judged only with evidence: a foreground event from the
-  listener's hook (`Readers::foreground_changed`) or the front already
-  elsewhere when the window became known (`WatchedRead::judge_front`). An
-  abandoned read is claimed, the event is reported dropped, and a new
-  thread takes later events; when its thread returns, the schedule answers
-  `ForgetLast` and the thread forgets its last read
+  once the window in front belongs to its application on another UI
+  thread (`verbatim_win32::window::front_is_another_thread_of_its_application`,
+  by provider process, `verbatim_win32::provider::provider_process`),
+  judged at `MOVED_ON_GRACE` (half a second) after the read's start and
+  every half second after until its deadline, as NVDA's watchdog judges,
+  with no foreground event as evidence: so a move to the taskbar or the
+  desktop, which no reader is told of, ends a stuck read too. The window
+  judged is the cached handle or the nearest window once found
+  (`WatchedRead::learn`, the schedule's `Learned`, judged at once when
+  the grace has passed). An armed walk is published before its read is
+  abandoned, for either reason. An abandoned read is no longer watched
+  (`Unwatch`), the event is reported dropped unless it was published, and
+  a new thread takes later events; when its thread returns, the schedule
+  answers `ForgetLast` and the thread forgets its last read
   (`Reading::forget_last`, `FocusReader::forget_last`), a focus Core never
   got, which no later read compares with or reuses. With `ABANDONED_LIMIT`
   (two) threads still in calls the application gets no new thread and its
   events wait, and the first that returns reads them; `READ_DEADLINE` after
   that every waiting and later event is dropped until a thread returns.
   The watchdog sleeps on an alarm (`verbatim_process::alarm::Alarm`, as an
-  outpost's reducer does): a read sets its timer as it starts, to its
-  deadline, or to the end of its grace when a foreground event came while
-  it waited, and again to its bound once it has passed its checks, each
-  only when no sooner time is set (`alarm_by`); a read that returns with
-  none other under way cancels it. A read whose window is known from the
-  event's cache has the window in front judged as it starts, on its own
-  thread (`WatchedRead::known`). So a read that returns before its bound
-  wakes the watchdog not at all.
+  outpost's reducer does), which the schedule sets after every step to
+  the soonest time anything is due: a read's grace end as it starts, its
+  next half second, its bound or its deadline, and an application's end
+  of its wait at the limit. A read's end moves the alarm back to whatever
+  else is due, or cancels it, so a read that returns within its grace
+  wakes the watchdog not at all and makes no moved-on call; a read still
+  under way past its grace costs one wake and one moved-on call every half
+  second.
 - The schedule (`read_schedule`). Every decision above of which thread
   reads which event, when a read is abandoned or published, which waiting
   events are dropped, which idle waiters run, and where each application
   was last moved away from, is the pure `Schedule::step`, an input in
-  (`ScheduleInput`: `Push`, `Next`, `Returned`, `Tick`, `Foreground`,
-  `MsaaFocus`, `OutpostEnded`, `WhenIdle`, `SpawnFailed`, `Stop`) and its
-  effects out, in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`,
-  `Claim`, `ForgetLast`, `Alarm`, `RunIdle`, `Job`), with time as
-  microseconds from the shell's start and no clock, lock or call of its
-  own. `focus_read::Readers` is its shell: it keeps the readers' lock, the
-  threads and the condition variable each waits on, the watchdog's alarm,
-  the idle waiters' closures and the reads under way (`WatchedRead`), and
-  applies each step's effects under the lock. A tick (`TickRead`) carries
-  what the shell found of each read: its window, the front's judgement,
-  whether the user moved on, asked only when `Schedule::moved_on_wanted`
-  says so, and the read as it would be published once its bound has
-  passed; an answer for a read whose window changed since judges nothing
-  and has the watchdog look again at once. Each event's marker gets
+  (`ScheduleInput`: `Push`, `Next`, `Returned`, `Tick`, `Learned`,
+  `Armed`, `MovedOn`, `Published`, `Foreground`, `MsaaFocus`,
+  `OutpostEnded`, `WhenIdle`, `SpawnFailed`, `Stop`) and its effects out,
+  in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`, `Unwatch`,
+  `ForgetLast`, `Alarm`, `RunIdle`, `Job`, and the asks `AskMovedOn` and
+  `Publish`), with time as microseconds from the shell's start and no
+  clock, lock or call of its own; each application's read under way is
+  its work in flight (`verbatim_reader_rules::in_flight`).
+  `focus_read::Readers` is its shell: it keeps the readers' lock, the
+  threads and the condition variable each waits on, the alarm's timer,
+  the idle waiters' closures and the reads under way (`WatchedRead`, each
+  with its `Request`), and applies each step's effects under the lock.
+  The asks are set aside and, once the step's other effects are applied,
+  each is answered as a step of its own, before the lock is let go
+  (`focus_read::step`), so every outcome of a step is sent before an
+  answer's step runs. Each event's marker gets
   exactly one answer: `Readers::push` takes the answer owed for it
   (`Reading::Owed`, the listener's `MarkerOwed`, a
   `verbatim_model::protocol::Responder`), which the shell keeps by marker

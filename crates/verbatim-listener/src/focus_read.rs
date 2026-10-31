@@ -66,34 +66,36 @@
 //! and the focus is reported with what it has read, as the event's cache
 //! gives what it has not, and the windows it has not reached as plain
 //! windows ([`read_at_bound`]). A read whose call is still under way at
-//! its bound, once it has passed every check, is published then by the
-//! watchdog from the progress its thread shares ([`ReadProgress`]), the
-//! same read through the same function, and its thread's late result is
-//! discarded; the thread is not abandoned for this, and reads its
+//! its bound, once it has passed every check, is published then from the
+//! progress its thread shares ([`ReadProgress`]), as the schedule asks,
+//! the same read through the same function, and its thread's late result
+//! is discarded; the thread is not abandoned for this, and reads its
 //! application's next event when its call returns. A read still in its
-//! checks at the bound is left to the rules below. The watchdog abandons a
-//! thread whose read runs past [`READ_DEADLINE`], the budget and the one
-//! call that can be under way when the budget passes, and, as NVDA's
-//! watchdog cancels a slow call once the user has
-//! moved on (`docs/nvda/main-loop-and-watchdog.md`, "The watchdog:
-//! detection"), a thread whose read of a focus has taken
-//! [`MOVED_ON_GRACE`] while the
-//! window in front belongs to the read's application on another UI thread
-//! than the window being read ([`WatchedRead`]). A read is judged so only
-//! once its window is known, from the event's cached window handle or from
-//! the sender's nearest window once the read has found it, and a selection
-//! or a notification is never judged so. It is judged on each foreground
-//! event the listener's hook delivers once the grace has ended
-//! ([`Readers::foreground_changed`]), and when the grace ends if a
-//! foreground event has come since the read's event arrived, or if the
-//! window in front was already another thread's when the read's window
-//! became known: one process can own windows on several UI threads, as
-//! File Explorer's folder windows, the taskbar and the Alt+Tab switcher
-//! are all `explorer.exe`'s, and the application's focus on another thread
-//! must not wait behind a slow read of the first. Either way its event is
-//! dropped, a new thread takes the application's later events, and the
-//! abandoned thread, once UIA gives up, says nothing more, forgets the
-//! focus it read, which Core never got, and ends or reads on. An application whose abandoned threads reach
+//! checks at the bound is left to the rules below.
+//!
+//! Each application's read under way is its work in flight in the
+//! schedule (`verbatim_reader_rules::in_flight`,
+//! `docs/design/logic-foundations.md`, "The work in flight, shared by both
+//! readers"), which abandons a thread whose read runs past
+//! [`READ_DEADLINE`], the budget and the one call that can be under way
+//! when the budget passes, and, as NVDA's watchdog cancels a slow call
+//! once the user has moved on (`docs/nvda/main-loop-and-watchdog.md`,
+//! "The watchdog: detection"), a thread whose read of a focus is still
+//! under way while the window in front belongs to the read's application
+//! on another UI thread than the window being read. That is judged at
+//! [`MOVED_ON_GRACE`] after the read's start and every [`MOVED_ON_GRACE`]
+//! after, with no foreground event as evidence, once the read's window is
+//! known, from the event's cached window handle or from the sender's
+//! nearest window once the read has found it ([`WatchedRead::learn`]); a
+//! selection or a notification is never judged so. One process can own
+//! windows on several UI threads, as File Explorer's folder windows, the
+//! taskbar and the Alt+Tab switcher are all `explorer.exe`'s, and the
+//! application's focus on another thread must not wait behind a slow read
+//! of the first. Either way a walk armed is published first, the event is
+//! dropped unless it was published, a new thread takes the application's
+//! later events, and the abandoned thread, once UIA gives up, says nothing
+//! more, forgets the focus it read, which Core never got, and ends or
+//! reads on. An application whose abandoned threads reach
 //! [`ABANDONED_LIMIT`](verbatim_listener_logic::focus::ABANDONED_LIMIT) gets no new thread until one returns: its events
 //! wait, a newer event of an element replacing its waiting one, and the
 //! first abandoned thread whose call returns reads them, unless

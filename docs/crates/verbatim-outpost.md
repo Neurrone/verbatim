@@ -419,9 +419,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   order (`reducer::intake`), the gap record, the reports Core may hold
   (`reducer::held`), the follow state (`reducer::follow`), the hand-over's
   hold, the arbitrator's verdicts (`reducer::verdicts`), each node's text
-  facts (`reducer::text`), the worker generation in charge with its
-  deadline, the moved-on grace and the walk's bound, and the queries not
-  yet answered. Inputs
+  facts (`reducer::text`), the program in flight as its work in flight
+  (`verbatim_reader_rules::in_flight::InFlight`: the worker generation in
+  charge, the deadline, the moved-on rule and the walk's bound), and the
+  queries not yet answered. Inputs
   come in mailbox order; effects go out: dispatch a program, send a
   message, release, move the subscription, abandon a worker, set a timer.
   It names no Windows type, holds no application object and makes no
@@ -545,18 +546,21 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - Deadlines and abandonment are the reducer's: an event, a focus, or a
   focus-now 10 s, NVDA's watchdog timeout; a navigation or activation
   400 ms; an ancestor walk, a tree dump or a release 5 s; a text request
-  2 s. After half a second on a window it also abandons a worker once the
-  user has moved to another UI thread of the same provider process,
-  judged when the grace ends and at each foreground fact, by an ask the
+  2 s. A program on a window also has its worker abandoned once the user
+  has moved to another UI thread of the same provider process, judged
+  when the half-second grace ends and every half second after until the
+  deadline, as NVDA's watchdog judges, published or not, by an ask the
   shell answers with
-  `verbatim_win32::window::front_is_another_thread_of_its_application`.
-  It publishes an
+  `verbatim_win32::window::front_is_another_thread_of_its_application`;
+  a foreground fact judges nothing. It publishes an
   armed walk first, marks the generation dead in the worker's charge
   (`worker::Charge`), answers the query the program was running
   `Abandoned`, and starts a replacement. A returning abandoned worker has
-  its commits refused, posts that it returned, and exits; the count of
-  those that have not returned is published to an atomic the I/O thread
-  answers pings with.
+  its commits refused, posts that it returned, and exits. The shell alone
+  counts the abandoned workers that have not returned, one more as it
+  carries out `Effect::Abandon` and one fewer at each return, which no
+  longer reaches the reducer, and publishes the count to an atomic the
+  I/O thread answers pings with.
 - The bound met when a call is stuck (`outpost::bound`;
   `docs/design/focus-pipeline-rework.md`, "A window's name, and the one
   fallback"). An MSAA focus that has passed NVDA's checks, its

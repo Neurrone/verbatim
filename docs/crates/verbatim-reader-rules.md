@@ -2,8 +2,8 @@
 
 What both of Verbatim's readers, an outpost and the focus listener, apply
 before reading a window: NVDA's class verdict and the class name
-normalization it is judged on, NVDA's acceptance test, and the waits both
-readers judge by. A rule both apply is defined here once, because the two
+normalization it is judged on, NVDA's acceptance test, the waits both
+readers judge by, and the work in flight both keep. A rule both apply is defined here once, because the two
 readers' crates may not depend on each other and no test could tie two
 copies (decision D14, "Where the rules run"). It is a logic crate: pure,
 in the GPL tier, with no Windows dependency, so it builds and is tested on
@@ -36,12 +36,53 @@ Public API:
   `foreground_relation(window, class, &windows)` is how the window stands
   to the foreground window, the rules the test ends with, which an outpost
   also reports in an event's window facts.
+- `in_flight` — the work in flight: a reader's record of the one slow-call
+  item a worker is running (`docs/design/logic-foundations.md`, "The work
+  in flight, shared by both readers"). `InFlight<T>` holds the worker
+  generation in charge and the last request number given, and the item
+  running: its `Request` (generation and number), its start and deadline,
+  its `Walk` (`Unarmed`, `Armed(bound)` or `Published`, so a walk armed
+  after its publication cannot be represented), its `Moved` rule
+  (`Never`, `Unknown` until the reader learns the window, or
+  `Known { window, next }`) and the reader's own item `T`. The outpost's
+  reducer embeds one, and the listener's schedule one per application.
+  Times are microseconds on the reader's monotonic clock, passed in.
+  - Transitions: `start(item, deadline, window, now)`, the window `None`
+    for an item never judged by the moved-on rule and `Some(0)` for one
+    still to learn it; `hand_on()`, a new request for the running item
+    keeping its times, walk and rule (the outpost's finish of a cut caret
+    read); `learned(request, window, now)`; `armed(request, bound)`;
+    `walk_returned(request, past)`; `tick(now)`; the answers
+    `moved_on(request, answer)` and `published(request, got, then_abandon,
+    now)`; `end(request)`, which gives the item once with whether it was
+    published; and `succeed()`, a new generation without an abandonment,
+    for the listener's start of a thread.
+  - Each transition returns a `Decision`: `Nothing`, one `Ask`
+    (`MovedOn { request, window }` or `Publish { request, then_abandon }`)
+    for the reader's shell to answer by the matching transition, or
+    `Abandon(Abandoned { dead, replacement, reason, item, published })`,
+    `reason` being `Reason::Deadline` or `Reason::MovedOn`, which each
+    reader puts in its own words.
+  - A tick, and the judgment a publication's answer makes again, apply
+    the first of these that is due: the deadline (publishing an armed walk
+    first, by a `Publish` carrying the abandonment, or abandoning at once);
+    the walk's bound (`Publish`, the walk unarmed until the answer); and
+    the moved-on rule, judged at `MOVED_ON_GRACE` after the start and
+    every `MOVED_ON_GRACE` after that, published or not, as NVDA's
+    watchdog judges. A window learned past the grace is judged at once.
+    A true moved-on answer publishes an armed walk first and abandons any
+    other at once. An answer whose request is no longer running is
+    dropped, with the abandonment it carried.
+  - Queries: `accepts(request)` (running and not published),
+    `generation()`, `running()`, `deadline()`, `item_mut()` and
+    `next_wake()`, the soonest of the deadline, the bound while armed and
+    the next judgment while the window is known.
 - `CONSOLE_WINDOW_CLASS` — the console host's window class.
 - `MOVED_ON_GRACE` — how long a slow call into an application is waited
   for before it is abandoned because the user moved on to a window of the
   same application on another UI thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`,
-  500 ms. An outpost's reducer judges its programs by it, and the
-  listener's reading threads their reads.
+  500 ms. The work in flight judges by it, at the grace's end and every
+  grace after.
 - `UIA_FOCUS_WAIT` — how long an outpost waits for a UIA focus after a
   focus `WinEvent`, a second: the bound of the outpost reducer's gap
   record (`gap_record::BOUND_US`), and, by definition, the bound under
@@ -49,5 +90,12 @@ Public API:
   failing fast (`verbatim_listener_logic::focus::NEAREST_FAILED_FAST_BOUND`).
 
 Tests: the class normalization, the class lists pinned to their NVDA
-sources so an NVDA sync is a diff, and the acceptance test rule by rule
-against a made-up desk.
+sources so an NVDA sync is a diff, the acceptance test rule by rule
+against a made-up desk, and the work in flight: a replay test per rule,
+and a generated test under a fixed seed that drives sequences of starts,
+learned windows, armed walks, ticks, returned walks and ends, answers
+each ask at once with a drawn value, compares the record with a reference
+model and checks its invariants after every step (each item leaves once,
+the generation rises by one per abandonment, a published walk followed an
+armed one, and a wake that is due is acted on). It is the crate's one
+development dependency, `proptest`.

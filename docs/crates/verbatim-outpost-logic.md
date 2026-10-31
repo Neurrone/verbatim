@@ -5,8 +5,9 @@ that holds every remembered fact of an outpost's application, with no
 Windows type and no application object. It is a logic crate: in the GPL
 tier, with no Windows dependency, so it builds and is tested on any host.
 It depends on `verbatim-model`, on `verbatim-core` for `focus_rules`, and
-on [verbatim-reader-rules](verbatim-reader-rules.md) for the moved-on
-grace and the UIA focus wait it shares with the focus listener.
+on [verbatim-reader-rules](verbatim-reader-rules.md) for the work in
+flight (`InFlight`, with `Request` and `Reason`, which it re-exports) and
+the UIA focus wait it shares with the focus listener.
 
 The outpost ([verbatim-outpost](verbatim-outpost.md)) runs it on a thread
 of its own, its shell, which applies its effects and keeps its time; that
@@ -23,25 +24,40 @@ Public API:
   due; and `next_timer(now)`, the time of the shell's timed wait. It makes
   no call of any kind.
 - `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
-  program finished, a release's answer, a worker returned, the gap
-  record's bound, the answers to its asks (`MovedOn`, `Published`), and
+  program finished, a release's answer, the gap record's bound, the answers to its asks (`MovedOn`, `Published`), and
   the shell's close. `Effect`: dispatch a `Program`, send a message,
   release, move the subscription (`Subscription`), drop elements or
-  objects, abandon a worker generation, publish the intake's marks or the
+  objects, abandon a worker generation (`Abandon`, with the dead
+  generation, its replacement and the reason in words; the shell alone
+  counts the abandoned workers that have not returned), publish the intake's marks or the
   verdicts, set the gap record's timer, and two asks: `AskMovedOn`,
   whether the user has left the program's window for another thread of
   its application, and `Publish`, the publication of a walk armed, with
   the facts it is judged against and `then_abandon`, the abandonment
-  that asked for it, which comes back in the answer so the reducer keeps
-  nothing between the two.
+  that asked for it (a `Reason`), which comes back in the answer so the
+  reducer keeps nothing between the two.
+- The program in flight is the reducer's work in flight
+  (`InFlight<Current>`): its request, deadline, walk and moved-on rule
+  are kept there, and the reducer keeps beside them only the query the
+  program answers, its focus group try and whether it is deferred work.
+  The reducer calls it where it judges: a tick, a walk armed or
+  returned, and the asks' answers; a foreground fact judges nothing. The
+  moved-on rule is judged at the grace's end and every half second after
+  for a program with a window, until its deadline. On an abandonment the
+  reducer emits `Abandon` and answers its own obligations: the running
+  query, the owed work of the dead generation, the open watch, and the
+  focus group's older entries unless the try was published. A cut caret
+  read's finish is handed on to a new request (`InFlight::hand_on`),
+  keeping the read's deadline, walk and rule.
 - The rule for asks: the shell answers each ask exactly once, as the
   reducer's next input, before it takes another message, and the reducer
   applies an answer only while its request is the program in flight. A
   transition makes at most one ask: a tick judges the deadline first
   (abandoning, by one `Publish` with `then_abandon` when a walk is armed),
-  then the walk's bound (`Publish`), then the end of the grace
-  (`AskMovedOn`), the first that applies deciding; a judgment left over
-  is made by the publication's answer against its own `Now`.
+  then the walk's bound (`Publish`), then the moved-on rule's next
+  judgment (`AskMovedOn`), the first that applies deciding; a judgment
+  left over is made by the publication's answer against its own `Now`. A
+  true `MovedOn` for a program already published abandons it at once.
 - `Program` and `Work`: what the worker generation in charge runs, with
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
