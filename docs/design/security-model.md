@@ -15,6 +15,8 @@ This document is Verbatim's threat model, followed by the architectural mitigati
 7. **Behaviour users hear.** Two mitigations change what is heard: speaking text-direction override characters (S2), and playing through another audio device while the default refuses Verbatim (R5). Adopt them? Recommended: yes.
 8. **Screen curtain across a crash.** Hold the screen curtain in the small guardian process that restarts Core (R1), so a crash of Core does not uncover the screen without the user knowing? Recommended: yes; the alternative is to re-apply it first thing on restart and accept the seconds between.
 9. **Engine files the user supplies.** Engines such as Eloquence are closed binaries users find wherever they can. Pin the SHA-256 of known engine releases and warn on an unknown one, still loading it in the sandbox? Recommended: yes.
+10. **Where extensions run.** Today's design runs Wasm modules on the outpost's worker, so an escape from wasmtime lands in a process with the user's token and, from M8.1, UIAccess. Moving modules to a process of their own lets that process take Chromium's renderer profile (section 7.9), at the cost of a pipe round trip for each read a module makes. Recommended: measure that cost on the first-party modules in M5 before deciding, and decide before M8.1 gives outposts UIAccess.
+11. **Outposts' token.** Run outposts with a write-restricted token, as the Codex CLI does, if an experiment shows UIA and MSAA still work under one? Recommended: yes, run the experiment in M6.x.
 
 ## 2. Method
 
@@ -294,6 +296,29 @@ Developer folders and hot reload load modules without the install dialog, which 
 - **R4. The keyboard hook's health is checked.** A hook that stops receiving keys while `GetLastInputInfo` shows input is reinstalled, and Verbatim says so. Status: missing.
 - **R5. Speech survives losing the audio device.** While the default device refuses a shared stream, play through another active device if there is one, and report the time lost on recovery. Status: retries the same device.
 
+### 7.9 Sandboxing each process
+
+What other programs do, and what fits each of Verbatim's processes. The evidence, with sources, is in [the survey](../../experiments/security-model-survey/readme.md), "Sandboxing".
+
+How others sandbox:
+
+- **Chromium** splits a broker, the browser process, from targets, each limited four ways: a restricted token, a job, an alternate desktop and a low or untrusted integrity level. Renderers get the strictest token (`USER_LOCKDOWN`), untrusted integrity and the window-manager system calls removed; the network service runs in a less privileged AppContainer; every process but those that load third-party code (speech recognition, screen AI, media decryption) may load only Microsoft-signed images. Its interception of system calls is for compatibility, and its own documentation says it provides no security.
+- **Firefox** uses the same Chromium sandbox code at configurable levels, and compiles some third-party libraries (font shaping, spell checking, XML parsing) to Wasm and back to C with RLBox, so a memory-safety bug in them stays inside a Wasm boundary within the same process. Removing window-manager calls once broke its accessibility, because DLLs injected by other software made such calls while COM started.
+- **Both browsers** moved accessibility out of their sandboxed processes: the browser process caches the whole tree and answers UIA and IA2 from it, because a sandboxed process cannot serve those interfaces and asking it for each call was too slow. No browser process is a UIA client.
+- **The Codex CLI** on Windows uses no AppContainer: it runs commands under a write-restricted token, whose writes succeed only where an access entry names one of its restricting SIDs, adds those entries to the folders it allows, gives each command a job, a private desktop and a default access list that keeps launches apart, and, when installed by an administrator, blocks network access with Windows Filtering Platform rules scoped to a dedicated account.
+- **Windows' Win32 app isolation** (preview) puts an ordinary program in an AppContainer with brokered file access. None of its capabilities covers UIA, observing input or crossing UIPI.
+- Windows has no general system-call filter like Linux's seccomp; the closest are the policies that remove the window-manager or file-system-control calls. Its signed-image policy admits only Microsoft, Store or WHQL signatures, never a third party's own certificate; only App Control for Business (WDAC) can allow a chosen publisher.
+
+What follows for Verbatim:
+
+- **No process that reads applications can be an AppContainer or run below medium integrity.** UIA and MSAA start every connection with a `WM_GETOBJECT` message to the application's window, which UIPI drops from a lower level, and AppContainers cannot be granted UIAccess. So the listener and outposts stay at medium integrity, with UIAccess from M8.1, and are hardened by mitigations, not by token level.
+- **Outposts.** Mitigations that leave UIA working: control-flow guard and hardware shadow stacks, strict handle checks, the image load policy of X15, no child processes, the job's limits on the clipboard, atoms, system settings and desktop switching, but never its limit on other processes' window handles, which UIA and MSAA need, nor the removal of window-manager calls, nor the Microsoft-only image policy, since IA2 proxy DLLs and applications' own proxy DLLs are not Microsoft-signed. A write-restricted token, as the Codex CLI uses, keeps medium integrity and may leave UIA working, since UIPI compares integrity levels and the token restricts only writes; no source confirms it for UIA calls and event callbacks, so it waits on an experiment (question 11). Outposts need no network, so the installer adds a filtering rule blocking it for `verbatim-outpost.exe`, as the Codex CLI blocks its account.
+- **Extensions.** A Wasm module inside an outpost inherits whatever an escape from wasmtime reaches, and Cranelift's compiled code conflicts with the mitigation that forbids creating executable code, which the Pulley interpreter avoids at a cost in speed. A process of its own, given its reads by the outpost over a pipe, could take Chromium's renderer profile in full: the strictest token, untrusted integrity, no window-manager calls, one process in its job, no network. That trades a round trip per read for containment (question 10).
+- **The synthesizer host.** The less privileged AppContainer of X5, with X15's limits; the mitigation that forbids creating executable code per engine, since some engines may generate code; never the Microsoft-only image policy, since it exists to load third-party engines, as Chromium exempts its speech process. Where an engine fails in the container, the fall-back to measure is Chromium's GPU profile (a limited restricted token at low integrity) as well as the ordinary AppContainer the extensions design names. Running a 32-bit engine under x86 emulation inside the container is untested and is M6's first measurement. For eSpeak NG, whose source Verbatim builds, compiling it to Wasm in the host, as the extensions design already allows and as Firefox does with RLBox, adds a memory-safety boundary inside the container; its synthesis cost is to be measured against the latency budget.
+- **Core.** It holds the keyboard hook and, from M8.1, UIAccess, so it stays at medium integrity. It drops every privilege it does not use at start, enables strict handle checks, control-flow guard and shadow stacks, and passes children only the handles named in their attribute lists, as it does today. Only the updater (M8) and Remote (M12) need the network; putting the updater in a short-lived process of its own keeps Core off the network until Remote.
+- **Signing and App Control.** Every Verbatim binary is signed, which UIAccess needs anyway; an optional App Control supplemental policy lets an administrator choose which engine DLLs may load.
+- **Not adopted:** an interception broker (no security, by Chromium's account), a private desktop (Verbatim must see the user's), and Win32 app isolation (no UIA).
+
 ## 8. How well the architecture serves the goal
 
 The architecture is strongest exactly where screen readers have historically been weakest, and weakest in product surfaces that have not been designed yet.
@@ -342,13 +367,13 @@ Ranked by severity, judged for today's development use; those marked as rising w
 
 - Now, as a small build of its own: F1 (the agent, C4), F5 (the message filter, C7), and the configuration fallbacks of C3.
 - M5: L1 and L2, since M5 brings the log ring forward; C1's user endpoint, since the install request arrives with M5; S1, X13 and the log cap of section 7.6.1 for extensions.
-- M6: R3, X5, X11, X12, X14, X15, X16 and J1, the AppContainer as designed, and the native synthesizer's install warning of section 7.6.1.
-- The M6.x developer-mode milestone (Dickson, 2026-10-31): C1a, C1's developer endpoint, C8's developer folder, L3's developer setting, and C2's per-session pipe name.
+- M6: R3, X5, X11, X12, X14, X15, X16 and J1, section 7.9's measurements for the synthesizer host (x86 emulation in the container, the fall-back profile, eSpeak NG as Wasm), the AppContainer as designed, and the native synthesizer's install warning of section 7.6.1.
+- The M6.x developer-mode milestone (Dickson, 2026-10-31): the write-restricted token experiment of question 11, C1a, C1's developer endpoint, C8's developer folder, L3's developer setting, and C2's per-session pipe name.
 - M6.3, the speech and audio pipeline: U4's cut reaching speech, and R5.
 - M6.4, terminal residuals: U5.
 - M6.5, text residuals: L9's check that a character is judged against the focus it was typed in.
 - M7: X6, S3 and J3, and U2 and U3 before the IA2 tree walks multiply.
-- M8, with the installer skeleton: X1, X2, X7, B2, L4, R1 and R2, the per-user state location, X8's signing key, and J2, S2 and L7 with dictionaries and the clipboard command, and L8 with the screen curtain.
+- M8, with the installer skeleton: the network block for outposts, the updater's own process and Core's mitigations of section 7.9, X1, X2, X7, B2, L4, R1 and R2, the per-user state location, X8's signing key, and J2, S2 and L7 with dictionaries and the clipboard command, and L8 with the screen curtain.
 - M8.1: B1 first, then B3 to B8 with B3a and B5a, C5 and C6, and the secure instance's own screen curtain (L8).
 - M9: L3 as file logging arrives.
 - M12: C9, B9 and B3a's remote rule.
