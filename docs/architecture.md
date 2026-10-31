@@ -924,6 +924,9 @@ input.
 
 ## 12. Security posture
 
+The threat model, its rules and the gaps in today's code are in
+[the security model](design/security-model.md), proposed on 2026-10-31.
+
 - No injection unless and until the D2 helper ships (M7), and then only via
   it.
 - Native synth DLLs and Wasm extensions are sandboxed as described; Core never
