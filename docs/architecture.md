@@ -155,8 +155,10 @@ Verbatim runs as three kinds of process:
    - the GUI thread (wxWidgets through the D4 C++ layer);
    - the relay thread, which reads every child's pipe on one completion
      port and finishes the writes to them that pended;
-   - the extension-host threads (wasmtime with epoch preemption), planned
-     for M5; `verbatim-ext` is a skeleton today.
+   - the global modules' threads (wasmtime with epoch preemption), planned
+     for M5; built-in app modules run in outposts and each installed
+     extension in a sandboxed host process of its own (D6); `verbatim-ext`
+     is a skeleton today.
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
    (D9), each containing an event thread (WinEvent message loop and UIA
    callbacks), one worker, the only thread that calls into the
@@ -830,8 +832,10 @@ language tagging, synth driver, PCM, the mixer (D17), and the
 
 - Runtime: wasmtime with the component model (per D6, replaceable); host API
   defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway
-  extension is interrupted, never hangs Core, so the host runs in-process on
-  dedicated threads.
+  extension is interrupted, never hangs its host. Built-in app modules run
+  on outpost workers and global modules on Core threads of their own; each
+  installed extension runs in a sandboxed host process of its own (D6;
+  [security model](design/security-model.md), X4).
 - Capability-gated, deny-by-default: a component's capabilities are
   derived from the interfaces it imports, never declared (tree-query,
   event subscription, speech/braille output, gesture binding, config,

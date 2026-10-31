@@ -496,8 +496,10 @@ package reader get generated tests of their own.
   install and Extensions dialogs show only the sentences naming the user's
   things or code outside the sandbox.
 - Binding by application identity (executable, console client, hosted app,
-  WebView2 parent) resolved by the supervisor, one module instance per
-  outpost; hot reload of installed, developer and built-in module folders
+  WebView2 parent) resolved by the supervisor, one built-in module
+  instance per outpost and one host process per installed extension
+  ([security model](design/security-model.md), X4); hot reload of developer
+  and built-in module folders in developer mode
   by validate-then-swap, the folder watch starting from the `notify` crate
   with `notify-debouncer-full`, adopted only once its source and its idle
   wake-ups are checked.
@@ -891,8 +893,8 @@ After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security
 
 - Developer mode: said at startup, never reaching secure screens; the control protocol's two endpoints, the developer one only in developer mode (C1, C1a); the extension developer folder and debug-level logging only in developer mode (C7, L3).
 - The test agent bound to loopback with a deploy-time token, and the VM's firewall rule scoped to the host's switch (C4). Critical on any networked development machine: it now listens on every interface with no authentication and can launch processes and write files.
-- Named objects that cannot be squatted: the startup mutex and replacement event in a private namespace, the pipe named per session and user, and a pipe failure that never stops startup (C2). Today another session holding the pipe name, or anyone holding the mutex, stops Verbatim from starting.
-- The process-wide `WM_QUIT` filter removed (C6); size limits on the control pipe's and configuration's readers, and no fallback to `%TEMP%\verbatim-defaults` or the current directory (C3).
+- Names that cannot be squatted to stop Verbatim: the startup mutex and replacement event in a private namespace, the pipe named per session and user, a pipe failure that never stops startup, and clients that check the server they reach (C2). Today another session holding the pipe name, or anyone holding the mutex, stops Verbatim from starting.
+- The process-wide `WM_QUIT` filter removed, with a lower-integrity copy refusing to start beside a higher one (C6); size limits on the control pipe's and configuration's readers, and no fallback to `%TEMP%\verbatim-defaults` or the current directory (C3).
 - Keys injected from a lower integrity level never trigger gestures and are never held or re-sent (C5).
 - Characters typed into protected fields recorded as stars (L2); native crashes dumped by Verbatim, never by Windows Error Reporting (L5).
 - COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, tested together against UIA, MSAA and a remote operation (X7, section 6.9).
@@ -900,6 +902,8 @@ After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security
 - Terminal alignment's quadratic cost and Core's memory cap (U5, A2).
 - Synthesizer escapes covering control and NUL characters (J1).
 - `cargo deny` in `cargo xtask ci`, and fuzzing of the frame and raw-section decoders, terminal alignment and the control-plane reader first (X10, X12).
+
+Exit: each item above is built with its tests; the test agent refuses a connection without its token from another machine; Verbatim starts while another session holds the old pipe name and while a Low-integrity process holds a name it could create; a key injected from Low integrity triggers no gesture.
 
 Security work other milestones carry:
 
