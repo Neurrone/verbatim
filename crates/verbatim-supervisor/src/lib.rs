@@ -743,3 +743,28 @@ impl Supervisor {
         let _ = self.owner.send(owner::OwnerEvent::IdleRound(round));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_role_runs_from_its_own_executable() {
+        let executables = Executables {
+            outpost: PathBuf::from("outpost.exe"),
+            listener: PathBuf::from("listener.exe"),
+        };
+        assert_eq!(
+            executables.of(process::Role::Outpost(verbatim_model::Pid(7))),
+            Path::new("outpost.exe")
+        );
+        assert_eq!(
+            executables.of(process::Role::Spare(verbatim_model::OutpostId(1))),
+            Path::new("outpost.exe")
+        );
+        assert_eq!(
+            executables.of(process::Role::Listener),
+            Path::new("listener.exe")
+        );
+    }
+}

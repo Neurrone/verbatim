@@ -206,7 +206,7 @@ The harness reads these; set them in the terminal that runs `cargo test`.
 - `VERBATIM_E2E_RUST_LOG`: passed to the Verbatim a scenario launches as
   `RUST_LOG`, which its outposts and the focus listener inherit. Unset,
   Verbatim logs with
-  `info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug`
+  `info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug`
   (`DEFAULT_RUST_LOG`), so a failed run's artifacts hold the outposts'
   debug lines: what each read and how long it took, what it released, and
   what it reported; and, in every process, each UIA event's arrival ("UIA

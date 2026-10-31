@@ -140,7 +140,7 @@ naming it, since any process can raise a `WinEvent` naming another's
 window, and the probe, or a console window's check by handle, would call
 into that process. The supervisor checks that a
 process it starts an outpost for serves the fact's window
-(`check_served_by` in `supervisor/owner.rs`; a debug build fails). Core
+(`check_served_by` in `crates/verbatim-supervisor/src/owner.rs`; a debug build fails). Core
 routes a console client's focus-now query to its host through
 `verbatim_win32::provider`'s `provider_process` and `console_host_of`.
 
@@ -760,7 +760,10 @@ and the inherited pipe handles.
   subscription's target is compared by node, group, element and slider
   element, each element by the shell's token for it, which the shell keeps
   while it is followed, so a node or slider whose element was replaced is
-  followed again. Its
+  followed again. When the node still keeps the earlier element because the
+  focus's own element was not found, the caret read reports the text as not
+  read (`FocusText::NotRead`), so Core speaks neither the text nor the value
+  (`Worker::read_focus_text`). Its
   ancestors are the listener's chain, filtered, spliced at the previous
   chain, and completed above as the listener's walk ended
   (`read::uia_chain_from_read`). Every UIA

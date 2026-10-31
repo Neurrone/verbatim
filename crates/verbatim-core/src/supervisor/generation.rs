@@ -175,8 +175,8 @@ pub enum Notice {
 
 /// A lifecycle notice for the app, as the typestates make it: plain data,
 /// which only the supervisor's owner turns into the message the app takes
-/// as the supervisor's own (`docs/design/logic-foundations.md`, "The
-/// seal"). Each variant is one of the owner's messages, with its fields in
+/// as the supervisor's own (`docs/design/logic-foundations.md`, "The choices,
+/// and why"). Each variant is one of the owner's messages, with its fields in
 /// the same order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lifecycle {

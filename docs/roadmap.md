@@ -135,6 +135,9 @@ Further follow-ups from the focus work and the ownership builds:
   runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
   host not responding at its outpost's first call"). Find which call it
   is, at debug level, and whether it holds the console host.
+- `verbatim-model`'s comment on `DeliveredFact::key` cites NVDA source
+  files, which the provenance rule forbids in a platform-neutral crate;
+  rewrite it to cite the parity docs.
 - After a voice change, NVDA refreshes the other settings controls from the
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
 

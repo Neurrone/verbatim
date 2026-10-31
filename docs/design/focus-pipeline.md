@@ -124,7 +124,7 @@ The listener holds the one desktop-wide UIA focus handler, with NVDA's base cach
 
 ### 12.2 Threads and their lifecycle
 
-A reading thread is created on its application's first UIA focus event, in COM's multithreaded apartment, and ends when its application's outpost ends (section 16.6). It never adds or removes a handler, so Microsoft's rule that one thread makes the registrations is kept. Each has a watchdog: a read past its deadline, or a focus read the user has moved on from after half a second, is reported dropped and a new thread takes the application's later events; an application whose abandoned threads reach a small cap gets no new thread until one returns (`docs/crates/verbatim-outpost.md`).
+A reading thread is created on its application's first UIA focus event, in COM's multithreaded apartment, and ends when its application's outpost ends (section 16.6). It never adds or removes a handler, so Microsoft's rule that one thread makes the registrations is kept. Each has a watchdog: a read past its deadline, or a focus read the user has moved on from after half a second, is reported dropped and a new thread takes the application's later events; an application whose abandoned threads reach a small cap gets no new thread until one returns (`docs/crates/verbatim-listener.md`).
 
 ### 12.3 How a slow application is contained, and D13
 

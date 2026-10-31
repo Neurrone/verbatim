@@ -1141,6 +1141,38 @@ mod tests {
     }
 
     #[test]
+    fn the_followed_focus_keeps_its_slider_when_other_nodes_are_released() {
+        let mut facts = Facts::default();
+        facts.follow.retarget(&thumb(5, 6), &mut Applied::default());
+        facts
+            .follow
+            .kept_groups
+            .push((NodeId::new(9), Group::Base, 4));
+        let mut applied = Applied::default();
+        facts
+            .follow
+            .release_groups(&HashSet::from([9]), &mut applied);
+        assert_eq!(
+            (
+                facts.follow.followed_element,
+                facts.follow.followed_slider,
+                applied.subscribe,
+                applied.unfollowed
+            ),
+            (
+                Some(5),
+                Some(6),
+                Some(Subscription {
+                    newest: Some((5, Group::Base)),
+                    slider: Some(6),
+                    kept: Vec::new(),
+                }),
+                vec![4]
+            )
+        );
+    }
+
+    #[test]
     fn a_focus_whose_element_was_replaced_ends_the_caret_keys_watch_on_its_node() {
         let opened = Duration::from_secs(1);
         let mut facts = Facts::default();

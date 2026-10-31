@@ -3,14 +3,14 @@
 
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReport, EarlierElement, FocusText, Input, NodeDetails,
-    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, StateSet, TextAnchor, TextChunk,
-    TextUnit, TraceId,
+    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, Role, StateSet, TextAnchor,
+    TextChunk, TextUnit, TraceId,
 };
 use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
 
 use super::{Said, SaidItem, TerminalModel, rules_key, speech_of};
-use crate::state::SrState;
+use crate::state::{PendingCaret, SrState};
 use crate::terminal::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 #[test]
@@ -223,22 +223,38 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
     state
         .terminals
         .push(TerminalModel::new(node, Settings::default()));
+    state.pending_caret = Some(PendingCaret {
+        query_id: QueryId(9),
+        node,
+        key: CaretKey {
+            motion: CaretMotion::PreviousCharacter,
+            select: false,
+        },
+        deleted: None,
+        before: None,
+        later_key_at_ms: None,
+        selected_before: false,
+        before_unknown: false,
+        heard: Vec::new(),
+    });
     assert_eq!(
         (
             state.caret.as_ref().map(|caret| caret.node),
-            state.terminals.len()
+            state.terminals.len(),
+            state.pending_caret.as_ref().map(|pending| pending.node)
         ),
-        (Some(node), 1),
-        "the first element's caret and model are kept"
+        (Some(node), 1, Some(node)),
+        "the first element's caret, model and waiting caret key are kept"
     );
 
     let _ = crate::reduce(&mut state, &terminal_focus(node, None, Some(earlier)));
     assert_eq!(
         (
             state.caret.as_ref().map(|caret| caret.node),
-            state.terminals.len()
+            state.terminals.len(),
+            state.pending_caret.as_ref().map(|pending| pending.node)
         ),
-        (None, 0)
+        (None, 0, None)
     );
 }
 

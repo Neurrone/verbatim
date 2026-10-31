@@ -110,10 +110,10 @@
 //! starts an outpost. Their events still reach the listener: UIA and
 //! `WinEvent` delivery cannot be scoped to leave a process out.
 //!
-//! Run as `verbatim-outpost.exe --listener --pipe-in <handle> --pipe-out
+//! Run as `verbatim-listener.exe --listener --pipe-in <handle> --pipe-out
 //! <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`
-//! — the same binary as a per-application outpost, with no target pid,
-//! supervised by the same machinery.
+//! — its own executable, with no target pid, supervised by the same
+//! machinery as the outposts.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
