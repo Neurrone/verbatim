@@ -30,12 +30,12 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use verbatim_core::SrState;
+use verbatim_listener_logic::focus::Judged;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
 use verbatim_model::{
     Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
     TraceId,
 };
-use verbatim_outpost::focus_read::Judged;
 use verbatim_uia::{
     Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Subscription, Uia,
 };
@@ -163,7 +163,7 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
 
 /// mockapp's element selected events under its window, subscribed to with
 /// the focus listener's cache request: each event's fact as the listener's
-/// callback captures it (`verbatim_outpost::listener::capture_selection`), with the
+/// callback captures it (`verbatim_listener::listener::capture_selection`), with the
 /// event's element in its agile form, as the listener hands both to its
 /// reading thread.
 struct Selections {
@@ -181,7 +181,7 @@ impl Selections {
                 event: UIA_SelectionItem_ElementSelectedEventId,
                 callback: Arc::new(move |element: &Cached<ListenerSelection>| {
                     let (hwnd, snapshot) =
-                        verbatim_outpost::listener::capture_selection(element, &element.read())
+                        verbatim_listener::listener::capture_selection(element, &element.read())
                             .expect("mockapp's element has its process");
                     let fact = DeliveredFact::UiaSelection {
                         hwnd,

@@ -4,17 +4,11 @@
 //! its inbox, which the reducer's shell fills, runs it on the copies the
 //! program came with, and posts each commit and its end to the mailbox; it
 //! writes no follow state and sends nothing to Core itself. The programs
-//! are the handlers below: an entry's handling, the owed work, a settle,
-//! a release's drop, and the console poll. Each makes the calls the outpost
-//! has always made for its entry, so the calls each handling makes are
-//! unchanged.
-//!
-//! The inbox is the worker's own ([`super::inbox`]): the console poll waits
-//! on it for its next read and looks into it before each read and at each
-//! wake. A job other than a release's drop makes the poll yield; the jobs
-//! it takes meanwhile are held and run after it, and the pure part of each
-//! of its commits is applied to the copies of the next program the worker
-//! runs, which the reducer may have dispatched before it took them in.
+//! are the handlers below: an entry's handling, the owed work, a release's
+//! drop, and the finish of a cut caret read. Each makes the
+//! calls the outpost has always made for its entry, so the calls each
+//! handling makes are unchanged. The worker keeps nothing between programs:
+//! each runs on the copies it was dispatched with.
 //!
 //! The worker is also where calls are counted: the backend crates count
 //! each call on the thread that makes it, and the worker takes the count
@@ -39,10 +33,9 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Instant;
 
@@ -63,45 +56,44 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
-use crate::protocol::now_us;
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query, QueryOutcome,
     QueryResult, UiaFocusRead, UiaSnapshotFact,
 };
+use verbatim_process::clock::now_us;
 
-use super::acceptance::{self, EventName, SystemWindows};
 use super::bound::{self, BoundFocus, FocusProgress};
 use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
-use super::inbox::{Inbox, Taken};
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, CARET_WATCH_BOUND, Change, Cut, Entry, Evidence, Finish, FocusPath, GapNote, GapRead,
-    Handling, Item, Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent,
-    UiaKind, VerdictChange, WatchChange, WinKind, Work, wake_for,
+    self, CARET_WATCH_BOUND, Cut, Entry, Evidence, Finish, FocusPath, GapNote, GapRead, Handling,
+    Item, Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent, UiaKind,
+    VerdictChange, WatchChange, WinKind, Work, wake_for,
 };
 use super::shell::{Garbage, Posted};
-use super::text_reads::{self, ProgramText};
-use super::window::{
-    alt_is_held, console_client, event_window_unreadable, foreground_window_handle, now_ms,
-    top_level_of, window_belongs_to_hidden_frame, window_exists, window_facts,
-    window_is_hidden_frame,
-};
+use super::text_reads;
+use super::window::{alt_is_held, console_client, now_ms, window_facts};
 use super::{Context, RequestContext};
 use crate::arbitration::Judgement as _;
-use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::{Checked, Watched};
 use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
+use verbatim_reader_rules::acceptance::{self, EventName};
+use verbatim_win32::window::SystemWindows;
+use verbatim_win32::window::window_class_name;
+use verbatim_win32::window::{
+    event_window_unreadable, foreground_window_handle, top_level_of,
+    window_belongs_to_hidden_frame, window_exists, window_is_hidden_frame,
+};
 
 pub(super) use super::reducer::is_state_property;
 
 /// A program for a worker, with what the shell let go of for the worker to
-/// drop before it runs, and, for a settle, who waits on it.
+/// drop before it runs.
 pub(super) struct Job {
     pub(super) program: Program,
     pub(super) garbage: Garbage,
-    pub(super) settle: Option<mpsc::Sender<()>>,
 }
 
 /// A worker generation's charge, shared between the worker and the shell
@@ -247,20 +239,19 @@ pub(super) fn take_calls() -> CallCounts {
     verbatim_uia::calls::take() + verbatim_ia2::calls::take()
 }
 
-/// Starts worker generation `generation`, which takes its programs from
+/// Starts a worker generation, which takes its programs from
 /// `jobs`. With `warm`, it creates its UIA client at once instead of on its
 /// first read: a spare's worker makes it while the spare waits for its
 /// application (`docs/design/focus-pipeline.md`, section 19.2).
 pub(super) fn spawn(
     context: Arc<Context>,
-    generation: u64,
     warm: bool,
-    jobs: Inbox<Job>,
+    jobs: crossbeam_channel::Receiver<Job>,
     charge: Arc<Charge>,
 ) -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("verbatim-worker".to_owned())
-        .spawn(move || run(&context, generation, warm, &jobs, &charge))
+        .spawn(move || run(&context, warm, &jobs, &charge))
         .expect("spawn a worker")
 }
 
@@ -269,9 +260,8 @@ pub(super) fn spawn(
 /// from its thread-local destructors under the loader lock.
 fn run(
     context: &Arc<Context>,
-    generation: u64,
     warm: bool,
-    jobs: &Inbox<Job>,
+    jobs: &crossbeam_channel::Receiver<Job>,
     charge: &Arc<Charge>,
 ) {
     // Held objects are agile references, resolved in this apartment.
@@ -283,22 +273,14 @@ fn run(
     if warm {
         let _ = client.uia();
     }
-    // The jobs the console poll took in, to run after it, and the pure part
-    // of its commits with what it held of the store's text, for the next
-    // program's copies.
-    let mut held = VecDeque::new();
-    let mut carried = (Vec::new(), ProgramText::default());
     // Until the shell lets go of this generation's inbox, abandoned or at
     // the outpost's shutdown.
-    while let Some(mut job) = held.pop_front().or_else(|| jobs.take()) {
+    while let Ok(job) = jobs.recv() {
         if charge.is_dead() {
-            // Dispatched again to the replacement: an abandoned worker makes
-            // no further call.
+            // An abandoned worker makes no further call.
             continue;
         }
-        let (changes, text) = std::mem::take(&mut carried);
-        carry(&mut job.program.facts, generation, &changes);
-        carried = run_job(context, &mut client, (job, text), charge, (jobs, &mut held));
+        run_job(context, &mut client, job, charge);
     }
     if charge.is_dead() {
         context.mailbox.post(Posted::Returned);
@@ -310,56 +292,10 @@ fn run(
     }
 }
 
-/// Applies `carried`, the pure part of the console poll's commits, in order,
-/// to `facts`, the copies of the program that runs after it: the reducer
-/// may have dispatched that program before it took them in. Each change of
-/// the poll's names its watch by request or sets a value, and its text
-/// facts' changes put back what its reads left, so one the copies already
-/// hold changes nothing.
-fn carry(facts: &mut reducer::Facts, generation: u64, carried: &[Change]) {
-    for change in carried {
-        let _ = reducer::apply_local(facts, generation, change);
-    }
-}
-
-/// Whether the console poll yields to `work`, a program waiting in its
-/// worker's inbox: to anything but a release's drop, which waits for the
-/// poll's end, at most the poll's bound.
-fn poll_yields_to(work: &Work) -> bool {
-    !matches!(work, Work::Drop)
-}
-
-/// Takes every job waiting in `inbox` into `held`, and answers whether the
-/// console poll is to yield: a job it yields to waits, or the inbox is
-/// closed.
-fn look(inbox: &Inbox<Job>, held: &mut VecDeque<Job>) -> bool {
-    loop {
-        match inbox.try_take() {
-            Taken::Job(job) => held.push_back(job),
-            Taken::Empty => break,
-            Taken::Closed => return true,
-        }
-    }
-    held.iter().any(|job| poll_yields_to(&job.program.work))
-}
-
 /// Runs one program, after dropping what the shell let go of, and posts its
-/// end, with `text`, what the console poll before it held of the store's
-/// text. The console poll takes the jobs sent meanwhile into `held`; the
-/// pure part of its commits, and what it held of the store's text, are
-/// returned, for the next program.
-fn run_job(
-    context: &Arc<Context>,
-    client: &mut Client,
-    (job, text): (Job, ProgramText),
-    charge: &Arc<Charge>,
-    (inbox, held): (&Inbox<Job>, &mut VecDeque<Job>),
-) -> (Vec<Change>, ProgramText) {
-    let Job {
-        program,
-        garbage,
-        settle,
-    } = job;
+/// end.
+fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<Charge>) {
+    let Job { program, garbage } = job;
     // Objects the shell let go of: releasing one can call into the
     // application, so it is done here, under the program's deadline.
     drop(garbage);
@@ -372,16 +308,8 @@ fn run_job(
     let started = Instant::now();
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let tag = super::shell::tag_of(request);
-    let mut request_context = RequestContext::for_program(
-        context,
-        tag,
-        (request, facts, waiting),
-        (text, Arc::clone(charge)),
-    );
-    let polls = matches!(work, Work::Poll(_));
-    if polls {
-        request_context.keep_commits();
-    }
+    let mut request_context =
+        RequestContext::for_program(context, tag, (request, facts, waiting), Arc::clone(charge));
     let mut reported = false;
     let mut cut = None;
     let handled = catch_unwind(AssertUnwindSafe(|| match work {
@@ -413,20 +341,7 @@ fn run_job(
         Work::Owed(owed) => {
             Worker::new(&request_context, client, 0, EventTiming::default()).attempt_owed(owed);
         }
-        Work::Settle(_) => {
-            if let Some(registration) = context.focus_events.get() {
-                registration.settle();
-            }
-            context.outbound.flush();
-            if let Some(done) = settle {
-                let _ = done.send(());
-            }
-        }
         Work::Drop => {}
-        Work::Poll(watch) => {
-            let mut worker = Worker::new(&request_context, client, 0, EventTiming::default());
-            worker.poll(watch, inbox, held);
-        }
         Work::Finish { cut, waiting } => {
             Worker::new(&request_context, client, 0, cut.timing).finish(*cut, waiting);
         }
@@ -451,12 +366,6 @@ fn run_job(
         failed_reads,
         "handled"
     );
-    let carried = request_context.kept_commits();
-    let text = if polls {
-        request_context.take_program_text()
-    } else {
-        ProgramText::default()
-    };
     // Elements the program's lookups replaced, and the text objects it
     // held, dropped holding no lock.
     drop(request_context);
@@ -466,7 +375,6 @@ fn run_job(
         panicked: handled.is_err(),
         cut,
     });
-    (carried, text)
 }
 
 /// The observation `entry`'s verdicts are judged at: its event's, for an
@@ -488,9 +396,7 @@ fn describe(work: &Work) -> String {
     match work {
         Work::Entry { entry, .. } => describe_item(&entry.item),
         Work::Owed(owed) => format!("owed work of {:?}", owed.node),
-        Work::Settle(id) => format!("settle {id}"),
         Work::Drop => "drop".to_owned(),
-        Work::Poll(watch) => format!("the console poll of {watch}"),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
     }
 }
@@ -515,8 +421,7 @@ fn describe_item(item: &Item) -> String {
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
-        Item::Settle(_) => "settle".to_owned(),
-        Item::IdleQuery { round, .. } => format!("idle query {round}"),
+        Item::Barrier { asker, .. } => format!("barrier of {asker:?}"),
         Item::Wake => "wake".to_owned(),
         Item::GapBound => "the gap record's bound".to_owned(),
         Item::GapRead { window } => format!("the gap record's read, window {window}"),
@@ -619,6 +524,35 @@ fn terminal_event_of(op: &TextOp) -> Option<Event> {
         TextOp::TerminalCancel => Some(Event::Cancel),
         _ => None,
     }
+}
+
+/// The name NVDA gives a `WinEvent` of `kind` when it tests it for
+/// acceptance, or `None` for a kind the worker handles outside the test:
+/// an object destroyed, which NVDA handles in its event callback, and
+/// Verbatim's own kinds, the text selection of edit controls, the console
+/// host's updates and caret, and the shell's coming to the front, which
+/// only the listener takes (`docs/parity/focus-events.md`, "Event
+/// acceptance").
+fn event_name_of(kind: WinEventKind) -> Option<EventName> {
+    Some(match kind {
+        WinEventKind::Focus | WinEventKind::Foreground => EventName::GainFocus,
+        WinEventKind::MenuPopupStart => EventName::MenuStart,
+        WinEventKind::MenuEnd => EventName::MenuEnd,
+        WinEventKind::SwitchEnd => EventName::SwitchEnd,
+        WinEventKind::Show => EventName::Show,
+        WinEventKind::Alert => EventName::Alert,
+        WinEventKind::ValueChange => EventName::ValueChange,
+        WinEventKind::StateChange => EventName::StateChange,
+        WinEventKind::NameChange => EventName::NameChange,
+        WinEventKind::DescriptionChange => EventName::DescriptionChange,
+        WinEventKind::Selection => EventName::Selection,
+        WinEventKind::Caret => EventName::LocationChange,
+        WinEventKind::Destroy
+        | WinEventKind::TextSelectionChange
+        | WinEventKind::ConsoleUpdate
+        | WinEventKind::ConsoleCaret
+        | WinEventKind::ShellForeground => return None,
+    })
 }
 
 /// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
@@ -883,7 +817,7 @@ impl Worker<'_> {
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
             Item::Wake => self.wake(),
             // The reducer's own: never a program's.
-            Item::NodesHeld { .. } | Item::Settle(_) | Item::IdleQuery { .. } | Item::GapBound => {}
+            Item::NodesHeld { .. } | Item::Barrier { .. } | Item::GapBound => {}
             Item::GapRead { window } => self.gap_read(
                 GapRead {
                     window,
@@ -1127,128 +1061,105 @@ impl Worker<'_> {
         });
     }
 
-    /// [`Item::Wake`]: ends the open caret key's watch once it has reached
-    /// [`CARET_WATCH_BOUND`], which only frees it and says nothing, and
-    /// otherwise asks to be woken at its bound. A watch that polls the
-    /// console host's caret has no wake: its poll ends it.
+    /// [`Item::Wake`]: makes the next read of the open watch's console
+    /// poll when it polls ([`read_poll`](Self::read_poll)); otherwise ends
+    /// the watch once it has reached [`CARET_WATCH_BOUND`], which only
+    /// frees it and says nothing, and asks to be woken at its bound before
+    /// then.
     fn wake(&mut self) {
-        let wake = self.context.follow(|follow| {
-            follow
-                .caret_watch
-                .as_ref()
-                .map(|open| (open.opened + CARET_WATCH_BOUND, wake_for(open)))
-        });
-        match wake {
-            Some((bound, _)) if self.context.now() >= bound => self.end_watch("its bound passed"),
-            Some((_, wake)) => {
-                self.commit(Effects {
-                    watch: Some(WatchChange::Wake(wake)),
-                    ..Effects::default()
-                });
-            }
-            None => {}
+        let Some(open) = self.context.follow(|follow| follow.caret_watch.clone()) else {
+            return;
+        };
+        if let Some(poll) = open.poll {
+            self.read_poll(&open, poll);
+        } else if self.context.now() >= open.opened + CARET_WATCH_BOUND {
+            self.end_watch("its bound passed");
+        } else {
+            self.commit(Effects {
+                watch: Some(WatchChange::Wake(wake_for(&open))),
+                ..Effects::default()
+            });
         }
     }
 
-    /// The console poll of the open caret key's watch for request
-    /// `request_id` ([`Work::Poll`], [`reducer::Poll`]): re-reads the
-    /// console host's caret at each of the poll's reads, waiting for the
-    /// next on `inbox`, with the check a caret event makes. It commits
-    /// once: on evidence it answers the key, the watch removed, and reads
-    /// the terminal, as after a first check that answers it; at a last
-    /// read that finds nothing it ends the watch; and when a program other
-    /// than a release's drop waits in `inbox`, which it looks at before
-    /// each read and at each wake, it yields, the watch keeping the poll
-    /// as it stands, and the reducer dispatches it again after that
-    /// program. The jobs it takes in go to `held`.
-    fn poll(&mut self, request_id: u64, inbox: &Inbox<Job>, held: &mut VecDeque<Job>) {
+    /// One read of `open`'s console poll ([`reducer::Poll`]), a program of
+    /// its own: re-reads the console host's caret with the check a caret
+    /// event makes. On evidence it answers the key, the watch removed, and
+    /// reads the terminal, as after a first check that answers it; at a
+    /// last read that finds nothing it ends the watch; and otherwise it
+    /// commits the poll's next read, which the reducer wakes for. A wake
+    /// taken before the read is due only sets the wake again.
+    fn read_poll(&mut self, open: &OpenWatch, poll: reducer::Poll) {
         let context = self.context;
-        let Some(open) = context.follow(|follow| {
-            follow
-                .caret_watch
-                .clone()
-                .filter(|open| open.request_id == request_id)
-        }) else {
-            return;
-        };
-        let Some(mut poll) = open.poll else {
-            return;
-        };
+        let request_id = open.request_id;
         let node_id = open.node_id;
-        let mut calls = open.calls;
-        let mut caret_read = None;
-        loop {
-            if look(inbox, held) {
-                self.commit(Effects {
-                    watch: Some(WatchChange::Yielded {
-                        request_id,
-                        poll,
-                        calls,
-                    }),
+        if context.now() < poll.next {
+            self.commit(Effects {
+                watch: Some(WatchChange::Read {
+                    request_id,
+                    poll,
+                    calls: open.calls,
+                }),
+                ..Effects::default()
+            });
+            return;
+        }
+        let calls = open.calls;
+        let awaited_at_us = now_us();
+        let (watched, read_at) = text_reads::check_watch_uncut(context, node_id, &open.watch);
+        let caret_read = read_at.map(|at| (node_id, at));
+        match watched {
+            Watched::Answered(reply) => {
+                let sent_caret = self.reply_caret(node_id, &reply);
+                let read_calls = take_calls();
+                tracing::debug!(
+                    trace = %open.trace,
+                    waited_ms = context.now().saturating_sub(open.opened).as_millis(),
+                    "a caret key's watch is answered"
+                );
+                let answer = OutpostToCore::Reply {
+                    trace_id: open.trace,
+                    request_id,
+                    outcome: QueryOutcome::Done(QueryResult::Text(reply)),
+                    timing: EventTiming {
+                        // The watch waited until this read began; the
+                        // read is the answer's.
+                        awaited_at_us,
+                        awaited_calls: calls,
+                        calls: calls + read_calls,
+                        published_at_us: now_us(),
+                        ..open.timing
+                    },
+                };
+                let committed = self.commit(Effects {
+                    aside: Some((request_id, answer)),
+                    watch: Some(WatchChange::Answered(request_id)),
+                    sent_caret,
                     caret_read,
                     ..Effects::default()
                 });
-                return;
+                // Core's reading rules answer the key from a read that
+                // shows what it did, as after a first check that
+                // answers it.
+                if committed == Committed::Applied && self.focused_terminal(node_id) {
+                    self.terminal_output(node_id, open.trace, 0);
+                }
             }
-            if context.now() < poll.next {
-                inbox.wait_until(context.epoch + poll.next);
-                continue;
-            }
-            let awaited_at_us = now_us();
-            let (watched, read_at) = text_reads::check_watch_uncut(context, node_id, &open.watch);
-            if let Some(at) = read_at {
-                caret_read = Some((node_id, at));
-            }
-            match watched {
-                Watched::Answered(reply) => {
-                    let sent_caret = self.reply_caret(node_id, &reply);
-                    let read_calls = take_calls();
-                    tracing::debug!(
-                        trace = %open.trace,
-                        waited_ms = context.now().saturating_sub(open.opened).as_millis(),
-                        "a caret key's watch is answered"
-                    );
-                    let answer = OutpostToCore::Reply {
-                        trace_id: open.trace,
+            Watched::Watching => {
+                let calls = calls + take_calls();
+                let watch = match poll.after_read(context.now()) {
+                    Some(poll) => WatchChange::Read {
                         request_id,
-                        outcome: QueryOutcome::Done(QueryResult::Text(reply)),
-                        timing: EventTiming {
-                            // The watch waited until this read began; the
-                            // read is the answer's.
-                            awaited_at_us,
-                            awaited_calls: calls,
-                            calls: calls + read_calls,
-                            published_at_us: now_us(),
-                            ..open.timing
-                        },
-                    };
-                    let committed = self.commit(Effects {
-                        aside: Some((request_id, answer)),
-                        watch: Some(WatchChange::Answered(request_id)),
-                        sent_caret,
-                        caret_read,
-                        ..Effects::default()
-                    });
-                    // Core's reading rules answer the key from a read that
-                    // shows what it did, as after a first check that
-                    // answers it.
-                    if committed == Committed::Applied && self.focused_terminal(node_id) {
-                        self.terminal_output(node_id, open.trace, 0);
-                    }
-                    return;
-                }
-                Watched::Watching => {
-                    calls += take_calls();
-                    let Some(next) = poll.after_read(context.now()) else {
-                        self.commit(Effects {
-                            watch: Some(WatchChange::Ended(request_id, "its poll's bound passed")),
-                            caret_read,
-                            ..Effects::default()
-                        });
-                        return;
-                    };
-                    poll = next;
-                }
+                        poll,
+                        calls,
+                    },
+                    None => WatchChange::Ended(request_id, "its poll's bound passed"),
+                };
+                self.commit(Effects {
+                    watch: Some(watch),
+                    caret_read,
+                    ..Effects::default()
+                });
             }
         }
     }
@@ -2362,7 +2273,7 @@ impl Worker<'_> {
 
     /// Whether the event's own window, `hwnd`, can be read: NVDA's checks
     /// after acceptance and before the window's UIA test and the object's
-    /// acquisition (`window::event_window_unreadable`). A dropped event is
+    /// acquisition (`verbatim_win32::window::event_window_unreadable`). A dropped event is
     /// logged.
     fn readable(hwnd: isize) -> bool {
         let reason = event_window_unreadable(hwnd);
@@ -2428,7 +2339,7 @@ impl Worker<'_> {
         }
         // NVDA's order of checks: acceptance, the window's state, the
         // window's UIA test, and only then the object.
-        if let Some(event) = EventName::of_win_event(kind)
+        if let Some(event) = event_name_of(kind)
             && !self.accepts(event, hwnd)
         {
             return;
@@ -2641,7 +2552,9 @@ impl Worker<'_> {
                     && id_object == OBJID_CLIENT.0
                     && id_child == CHILDID_SELF
                     && verbatim_ia2::edit::edit_api_version(
-                        &crate::arbitration::normalize_class_name(&window_class_name(hwnd)),
+                        &verbatim_reader_rules::class::normalize_class_name(&window_class_name(
+                            hwnd,
+                        )),
                     )
                     .is_some() =>
             {
@@ -4003,7 +3916,7 @@ impl Worker<'_> {
         let reported = reported.or_else(|| {
             context
                 .focus_window()
-                .filter(|&window| super::window::served_by(window, context.target_pid()))
+                .filter(|&window| verbatim_win32::window::served_by(window, context.target_pid()))
         });
         if reported.is_none_or(window_belongs_to_hidden_frame) {
             return Err(Dropped);
@@ -4402,9 +4315,11 @@ impl Worker<'_> {
 /// window's event address; each dialog of its line carries the text the
 /// report gave it. NVDA makes its foreground object when the focus enters
 /// a top-level window, so the window keeps the verdict it had then while
-/// the focus moves within it ([`Worker::is_foreground_window`]): a focus
-/// inherits it from the newest report in its top-level window, and a
-/// foreground change of the window sets it. Local calls.
+/// the focus moves within it ([`Worker::is_foreground_window`]): the
+/// report carries what was read of its top-level window being in front,
+/// and the rule that decides it runs as the report is recorded
+/// (`reducer::Held::entered_in_front`), on the program's copy and in the
+/// reducer alike. Local calls.
 fn judged_focus(
     context: &RequestContext<'_>,
     (node, ancestors): (&NodeSnapshot, &[NodeSnapshot]),
@@ -4412,20 +4327,14 @@ fn judged_focus(
     msaa_event: Option<((isize, i32, i32), bool)>,
 ) -> reducer::Focus {
     let top_level = window.map_or(0, top_level_of);
-    // What the focus before it gives it, taken under the lock, which
-    // is let go before the foreground window is read.
-    let inherited = if foreground {
-        None
+    // The evidence; the reducer's rule decides what the window entered
+    // with as the report is recorded (`reducer::Held::entered_in_front`).
+    let in_front = if foreground {
+        reducer::InFront::Foreground(top_level)
     } else {
-        let held = context.held();
-        held.newest_in(top_level)
-            .map(|before| before.entered_in_front)
-    };
-    // A foreground change's window was just found in front.
-    let entered_in_front = match inherited {
-        Some(entered) => entered,
-        None if foreground => Some(top_level).filter(|&top| top != 0),
-        None => (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
+        reducer::InFront::Read(
+            (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
+        )
     };
     let dialog_texts = ancestors
         .iter()
@@ -4442,7 +4351,8 @@ fn judged_focus(
         node: HeldNode::of(node),
         ancestors,
         top_level,
-        entered_in_front,
+        in_front,
+        entered_in_front: None,
         event,
         simple_child,
         dialog_texts,
@@ -4534,8 +4444,8 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         at_bound,
     } = made;
     let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
-    let console =
-        window.is_some_and(|hwnd| window_class_name(hwnd) == text_reads::CONSOLE_WINDOW_CLASS);
+    let console = window
+        .is_some_and(|hwnd| window_class_name(hwnd) == verbatim_reader_rules::CONSOLE_WINDOW_CLASS);
     let (target, to_find) = target_for(context, (node_id, role), &chain, terminal && console);
     // A focus whose own element is not kept yet has the slider found with
     // it, once it is.
@@ -4768,130 +4678,13 @@ fn event_window_facts(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::TraceId;
-
-    use super::super::inbox::inbox;
-    use super::super::shell::Garbage;
     use super::*;
 
-    /// A job for `work`.
-    fn job(work: Work) -> Job {
-        Job {
-            program: Program {
-                request: Request {
-                    generation: 0,
-                    number: 1,
-                },
-                facts: reducer::Facts::default(),
-                work,
-                waiting: Vec::new(),
-            },
-            garbage: Garbage::default(),
-            settle: None,
-        }
-    }
-
-    /// A console caret event's handling, which checks the open watch.
-    fn console_caret() -> Work {
-        Work::Entry {
-            entry: Entry::own(
-                Item::Msaa {
-                    kind: WinKind::ConsoleCaret,
-                    hwnd: 9,
-                    id_object: 0,
-                    id_child: 0,
-                    raiser: 3,
-                },
-                TraceId::mint(),
-                1,
-            ),
-            handling: Handling::Run,
-            batch: 1,
-            group: None,
-        }
-    }
-
     #[test]
-    fn the_poll_holds_a_drop_and_goes_on_reading() {
-        let (sender, jobs) = inbox();
-        assert!(sender.send(job(Work::Drop)).is_ok());
-        let mut held = VecDeque::new();
-        assert!(!look(&jobs, &mut held));
-        assert_eq!(held.len(), 1);
-        assert!(matches!(held[0].program.work, Work::Drop));
-    }
-
-    #[test]
-    fn the_poll_yields_to_a_caret_read_and_holds_it() {
-        let (sender, jobs) = inbox();
-        assert!(sender.send(job(Work::Drop)).is_ok());
-        assert!(sender.send(job(console_caret())).is_ok());
-        let mut held = VecDeque::new();
-        assert!(look(&jobs, &mut held));
-        assert_eq!(held.len(), 2);
-        assert!(matches!(held[0].program.work, Work::Drop));
-        assert!(matches!(held[1].program.work, Work::Entry { .. }));
-    }
-
-    #[test]
-    fn the_poll_ends_when_its_inbox_is_closed() {
-        let (sender, jobs) = inbox::<Job>();
-        drop(sender);
-        let mut held = VecDeque::new();
-        assert!(look(&jobs, &mut held));
-        assert!(held.is_empty());
-    }
-
-    /// An edit control's text facts for node 1 as a poll's read leaves
-    /// them: anchor `anchor` minted at offset `offset`.
-    fn read_left(anchor: u64, offset: u32) -> reducer::TextChange {
-        let mut part = reducer::NodeAnchors::default();
-        part.anchors.insert(
-            anchor,
-            reducer::Anchor {
-                pos: offset,
-                text: Arc::from("line"),
-            },
+    fn the_system_carets_event_is_tested_as_a_location_change() {
+        assert_eq!(
+            event_name_of(WinEventKind::Caret),
+            Some(EventName::LocationChange)
         );
-        reducer::TextChange::Edit {
-            node: 1,
-            part,
-            copied: std::collections::BTreeSet::new(),
-        }
-    }
-
-    /// The console poll's text changes, which its reads carry to its next
-    /// commit rather than commit, go with the commit that yields, in the
-    /// order its reads made them, and are applied with its watch's change
-    /// to the copies of the program the worker runs after it.
-    #[test]
-    fn the_polls_text_changes_are_committed_with_its_yield() {
-        let mut text = ProgramText::default();
-        for (anchor, offset) in [(3, 4), (5, 6)] {
-            text.write(super::super::store::TextWrite::Facts {
-                change: read_left(anchor, offset),
-                ranges: Vec::new(),
-                touched: vec![anchor],
-            });
-        }
-        let yielded = text.seal(Effects {
-            watch: Some(WatchChange::Yielded {
-                request_id: 7,
-                poll: Poll::new(std::time::Duration::ZERO, 0, 0),
-                calls: verbatim_model::CallCounts::default(),
-            }),
-            ..Effects::default()
-        });
-        assert!(!text.has_pending());
-        let carried = yielded.carried();
-        assert_eq!(carried.text, vec![read_left(3, 4), read_left(5, 6)]);
-        assert!(matches!(
-            carried.watch,
-            Some(WatchChange::Yielded { request_id: 7, .. })
-        ));
-        let mut facts = reducer::Facts::default();
-        carry(&mut facts, 0, &[carried]);
-        let kept = facts.text.edit(1).expect("node 1's text facts");
-        assert_eq!(kept.anchors.keys().copied().collect::<Vec<_>>(), [3, 5]);
     }
 }

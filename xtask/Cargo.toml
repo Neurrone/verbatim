@@ -10,14 +10,16 @@ license.workspace = true
 # Every package depends on the generated workspace-hack crate
 # (`cargo hakari manage-deps` requires it), so it stays unconditional.
 workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
+# The tier check reads `cargo metadata`'s JSON on every host.
+serde_json.workspace = true
 
 # Everything else is used only by the Windows-only commands, which
 # `src/main.rs` gates on `cfg(windows)`; on any other host xtask builds only
 # its portable part (`ci` and `docs`).
 [target.'cfg(windows)'.dependencies]
 # Kept to workspace crates already compiled for other purposes, so the M2
-# Hyper-V harness (`cargo xtask vm`) stays dependency-light: base64 and
-# serde_json are already pulled in by verbatim-agent and verbatim-e2e, and
+# Hyper-V harness (`cargo xtask vm`) stays dependency-light: base64 is
+# already pulled in by verbatim-agent and verbatim-e2e, and
 # verbatim-config lets `xtask vm deploy` stage settings.toml through the
 # same ConfigStore the app itself uses, rather than hand-writing TOML.
 # verbatim-e2e is a direct dependency (M3 Track B): `xtask vm test` reads
@@ -26,7 +28,6 @@ workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
 # than duplicating that catalog here.
 base64.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 verbatim-agent.workspace = true
 verbatim-config.workspace = true
 verbatim-control.workspace = true

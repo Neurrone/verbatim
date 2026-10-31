@@ -95,6 +95,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use verbatim_listener::focus_read::FocusReader;
+use verbatim_listener_logic::focus::{Arrival, FocusEvent, Judged};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
     QueryOutcome, QueryResult, WinEventStamp,
@@ -103,9 +105,9 @@ use verbatim_model::{
     CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowFacts, WindowHandle,
 };
-use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged};
-use verbatim_outpost::protocol::read_message;
-use verbatim_outpost::{GapTimer, Heard, Outpost, OutpostOptions};
+use verbatim_outpost::{GapTimer, Heard, Outpost};
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::message::read_message;
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::BlockingReader;
 use verbatim_uia::{Cached, ListenerEvent, Live};
@@ -683,7 +685,7 @@ impl OutpostUnderTest {
             Arc::clone(&jump_after),
             Arc::clone(&system_time),
         );
-        let clock: verbatim_outpost::arbitration::Clock = Arc::new(move || {
+        let clock: verbatim_process::clock::Clock = Arc::new(move || {
             if system.load(Ordering::Relaxed) {
                 return Instant::now();
             }
@@ -770,7 +772,7 @@ impl OutpostUnderTest {
     /// Tells `observer` the name of each call the listener's reader's
     /// classic walk is about to make, before it makes it, so a test can
     /// change mockapp's windows between two of them.
-    pub fn listener_observes_calls(&self, observer: verbatim_outpost::focus_read::CallObserver) {
+    pub fn listener_observes_calls(&self, observer: verbatim_listener::focus_read::CallObserver) {
         self.reader.borrow_mut().observe_calls(observer);
     }
 
@@ -780,11 +782,11 @@ impl OutpostUnderTest {
     /// seconds, and every other window by the system's judgement.
     pub fn judge_hung(&self, hung: HWND) {
         let hung = hung.0 as isize;
-        let reader: verbatim_outpost::WindowReadabilityReader = Arc::new(move |hwnd| {
+        let reader: verbatim_win32::window::WindowReadabilityReader = Arc::new(move |hwnd| {
             if hwnd == hung {
                 Some("its application is not responding")
             } else {
-                verbatim_outpost::window_unreadable(hwnd)
+                verbatim_win32::window::window_unreadable(hwnd)
             }
         });
         self.outpost
@@ -1226,7 +1228,7 @@ impl OutpostUnderTest {
     /// Has the user moved away from mockapp's application since the
     /// listener's last read, as another application's focus queued does:
     /// that read is no longer current for a later menu opening
-    /// (`QueuePlace::current_since` in `verbatim_outpost`'s read schedule).
+    /// (`QueuePlace::current_since` in `verbatim_listener_logic`'s read schedule).
     pub fn listener_moved_away(&self) {
         self.listener_left_at.set(self.listener_queued.get());
     }

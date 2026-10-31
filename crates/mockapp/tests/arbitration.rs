@@ -15,15 +15,16 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
 use verbatim_model::{CallCounts, NormalizedEvent};
-use verbatim_outpost::arbitration::{Arbitrator, Verdicts, WindowClasses};
+use verbatim_outpost::arbitration::{Arbitrator, Verdicts};
 use verbatim_uia::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe};
+use verbatim_win32::window::window_classes;
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let title = common::unique_title("mockapp-arb-uia");
     let app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
 
-    let classes = WindowClasses::of(hwnd);
+    let classes = window_classes(hwnd);
     let arbitrator = Arbitrator::new(&[]);
     let mut verdicts = Verdicts::default();
     assert_eq!(
@@ -174,7 +175,7 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
     let app = common::spawn("small.json", "msaa", &title);
     let hwnd = common::find_window(&title).0 as isize;
 
-    let classes = WindowClasses::of(hwnd);
+    let classes = window_classes(hwnd);
     let arbitrator = Arbitrator::new(&[]);
     let mut verdicts = Verdicts::default();
     assert_eq!(

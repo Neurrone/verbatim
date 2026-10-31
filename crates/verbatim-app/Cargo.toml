@@ -25,16 +25,17 @@ verbatim-input.workspace = true
 verbatim-input-windows.workspace = true
 verbatim-model.workspace = true
 verbatim-process.workspace = true
-verbatim-outpost.workspace = true
 verbatim-speech.workspace = true
+verbatim-supervisor.workspace = true
 verbatim-synth-capture.workspace = true
 verbatim-synth-hosted.workspace = true
+verbatim-win32.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 # The supervisor's sealed lifecycle notices, made by the reducer's tests.
-verbatim-outpost = { workspace = true, features = ["lifecycle-for-tests"] }
+verbatim-supervisor = { workspace = true, features = ["lifecycle-for-tests"] }
 
 [lints]
 workspace = true

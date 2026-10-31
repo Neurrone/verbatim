@@ -8,25 +8,20 @@ license.workspace = true
 
 [dependencies]
 crossbeam-channel.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-simdutf8.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 verbatim-core.workspace = true
 verbatim-ia2.workspace = true
 verbatim-model.workspace = true
+verbatim-outpost-logic.workspace = true
 verbatim-process.workspace = true
+verbatim-reader-rules.workspace = true
 verbatim-text.workspace = true
 verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true
+verbatim-win32.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
-
-[features]
-# `Sealed::for_tests`, so the app's tests can hand its reducer the
-# supervisor's lifecycle notices.
-lifecycle-for-tests = []
 
 [dev-dependencies]
 verbatim-term-sim.workspace = true
@@ -35,42 +30,7 @@ verbatim-test-console.workspace = true
 [lints]
 workspace = true
 
-# Runs itself as stand-in applications, listener, and outpost, which its
-# own `main` recognizes.
-[[test]]
-name = "ignored_process"
-harness = false
-
-# Runs itself as a stand-in child, which its own `main` recognizes.
-[[test]]
-name = "shutdown_fallback"
-harness = false
-
 # Runs itself as a stand-in application, which its own `main` recognizes.
 [[test]]
 name = "target_exit"
-harness = false
-
-# Runs itself as a stand-in application, outpost, and listener, which its own
-# `main` recognizes.
-[[test]]
-name = "target_gone"
-harness = false
-
-# Runs itself as a stand-in application, outpost, and listener, which its own
-# `main` recognizes.
-[[test]]
-name = "idle_round"
-harness = false
-
-# Runs itself as a stand-in application, outpost, and listener, which its own
-# `main` recognizes.
-[[test]]
-name = "arrival_order"
-harness = false
-
-# Runs itself as stand-in applications, listener, outposts, and spares,
-# which its own `main` recognizes.
-[[test]]
-name = "spares"
 harness = false

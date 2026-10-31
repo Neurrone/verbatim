@@ -1,0 +1,19 @@
+[package]
+name = "verbatim-win32"
+description = "Local window and process queries more than one role makes, none of which waits on an application"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+verbatim-model.workspace = true
+verbatim-reader-rules.workspace = true
+windows.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+verbatim-test-console.workspace = true
+
+[lints]
+workspace = true

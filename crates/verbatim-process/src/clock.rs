@@ -11,10 +11,20 @@
 //! its times still name the moment they were taken closely enough for
 //! logs and for the end-to-end harness to match them with its own.
 
-use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, OnceLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+
+/// What time it is on the monotonic clock: [`Instant::now`] unless a test
+/// sets its own, for the lifetime of a kept verdict and the time budget of
+/// a classic walk.
+pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+
+/// What time it is on the run's shared clock, in microseconds
+/// ([`now_us`]), for the stamp an observation is judged at: the shared
+/// clock unless a test sets its own.
+pub type ObservationClock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
 /// The environment variable a launching process hands its offset on in.
 pub const OFFSET_VARIABLE: &str = "VERBATIM_CLOCK_OFFSET_US";

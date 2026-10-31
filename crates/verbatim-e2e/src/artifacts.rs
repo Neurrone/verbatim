@@ -118,8 +118,8 @@ pub struct ScenarioSummary {
     pub optional_utterances: Vec<String>,
 }
 
-/// One outpost (a `verbatim-outpost.exe` process, the focus listener
-/// included) that crashed during a scenario: it ended on an unhandled
+/// One outpost (a `verbatim-outpost.exe` or `verbatim-listener.exe`
+/// process) that crashed during a scenario: it ended on an unhandled
 /// exception or a fail-fast, which Windows reports as an abnormal exit or
 /// an exit code that is an exception code, and the scenario did not end it
 /// on purpose.

@@ -82,7 +82,7 @@ pub(crate) fn locate(
     registry: &dyn Interning,
 ) -> Result<(Accessible, MsaaKey, bool), AcquireError> {
     let (key, held, at_address) = registry.locate(node).ok_or(AcquireError::Gone)?;
-    if !window::exists(key.0) {
+    if !window::window_exists(key.0) {
         return Err(AcquireError::Gone);
     }
     match held {
@@ -525,7 +525,7 @@ impl FocusCandidate {
         if focused(state) {
             return true;
         }
-        let desktop = window::desktop();
+        let desktop = window::desktop_window();
         let mut current_hwnd = self.key.0;
         // The object's own state is read; a simple child's next is that of
         // the object it is a child of, a full object's that of its parent.
@@ -651,7 +651,7 @@ fn onward_from_window(
     (hops, max_hops): (&mut u32, u32),
     parent_window: &mut dyn FnMut(isize) -> ParentWindow,
 ) -> Onward {
-    let desktop = window::desktop();
+    let desktop = window::desktop_window();
     while *hops <= max_hops && hwnd != 0 && hwnd != desktop {
         *hops += 1;
         match parent_window(hwnd) {
@@ -742,7 +742,7 @@ fn focus_event_names_list((hwnd, id_object, id_child): MsaaKey, role: Option<i32
     {
         return true;
     }
-    id_object == OBJID_CLIENT.0 && window::class_name(hwnd).contains("SysListView32")
+    id_object == OBJID_CLIENT.0 && window::window_class_name(hwnd).contains("SysListView32")
 }
 
 /// Walks the chain of ancestors of the node named by `key`, nearest first,
@@ -919,7 +919,7 @@ pub fn ancestor_chain_until(
         }
     }
 
-    let desktop = window::desktop();
+    let desktop = window::desktop_window();
     let mut current = acc.with_child(CHILDID_SELF);
     let mut current_hwnd = hwnd;
     let mut at_self = !is_simple_child;
@@ -1107,7 +1107,7 @@ fn group_box_of(hwnd: isize) -> Option<(Accessible, isize)> {
     let inner = window::rect(hwnd)?;
     let mut previous = window::related(hwnd, GW_HWNDPREV);
     while previous != 0 {
-        if window::class_name(previous) == "Button"
+        if window::window_class_name(previous) == "Button"
             && window::style(previous) & BS_TYPEMASK == BS_GROUPBOX
             && window::style(previous) & WS_VISIBLE_STYLE != 0
         {
@@ -1272,7 +1272,7 @@ pub fn navigate(
     // navigates between are sibling windows the window hierarchy walks
     // directly.
     if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
-        if !window::exists(hwnd) {
+        if !window::window_exists(hwnd) {
             return Err(AcquireError::Gone);
         }
         return Ok(window_navigate(hwnd, direction, registry));
@@ -1406,8 +1406,9 @@ pub fn navigate(
     // NVDA's `_get_firstChild` takes another object as the first child only
     // when its window is this object's window or one inside it, or this
     // object is the desktop's.
-    let in_own_window =
-        target_hwnd == hwnd || window::is_child(hwnd, target_hwnd) || window::desktop() == hwnd;
+    let in_own_window = target_hwnd == hwnd
+        || window::is_child(hwnd, target_hwnd)
+        || window::desktop_window() == hwnd;
     if !navigation_result_is_usable(
         direction,
         same_object,
@@ -1793,7 +1794,7 @@ fn first_accessible_child(acc: &Accessible) -> Option<Related> {
 /// responsiveness guard, not a correctness one, and the worker's deadline
 /// already bounds a hung provider here.)
 fn is_usable_window(hwnd: isize) -> bool {
-    hwnd != 0 && window::is_visible(hwnd)
+    hwnd != 0 && window::window_is_visible(hwnd)
 }
 
 /// The window-object snapshot for `hwnd` (`OBJID_WINDOW`, `CHILDID_SELF`): the
@@ -1826,7 +1827,7 @@ fn window_navigate(
     match direction {
         NavigateDirection::Parent => {
             let parent = window::parent(hwnd);
-            if parent == 0 || parent == window::desktop() {
+            if parent == 0 || parent == window::desktop_window() {
                 return None;
             }
             window_object_snapshot(parent, registry)

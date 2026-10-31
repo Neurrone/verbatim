@@ -74,7 +74,8 @@ use verbatim_model::{
     CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalScope,
     TerminalSnapshot, TextOp, TextPosition, TextReply, TextUnit,
 };
-use verbatim_outpost::{Heard, OutpostOptions};
+use verbatim_outpost::Heard;
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::UIA_HelpTextPropertyId;
@@ -934,7 +935,7 @@ fn a_colours_request_after_a_read_without_them_reads_at_once() {
     assert!(reported(&outpost, term).colours.is_some());
     assert_eq!(answer_to(&outpost, colours), TextReply::Done);
     outpost.settled();
-    let later = verbatim_outpost::protocol::now_us() / 1_000 + 1;
+    let later = verbatim_process::clock::now_us() / 1_000 + 1;
     let colours = ask(
         &mut outpost,
         term,

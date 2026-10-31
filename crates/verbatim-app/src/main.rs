@@ -50,14 +50,15 @@ use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
     ReaderSettings, TextRequest, TraceId, WindowHandle,
 };
-use verbatim_outpost::supervisor::{EndReason, Frames};
-use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::port_queue::{PortQueue, Poster, Received, port_queue};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
     QueueItem, SpeakToken, SpeechInbox, SpeechInboxTaker, SpeechManager, SpeechManagerConfig,
     SpeechSettingsHost, SynthId, SynthRegistry,
 };
+use verbatim_supervisor::{EndReason, Frames};
+use verbatim_supervisor::{OutpostMessage, Supervisor};
 use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
@@ -283,7 +284,7 @@ fn run(
     // The processes the end-to-end harness names in `VERBATIM_IGNORE_PIDS`
     // (the owner's own Windows Terminal), ignored entirely: nothing is ever
     // read from them. Unset for real users, so nothing is ignored.
-    let ignored = Arc::new(verbatim_outpost::supervisor::IgnoredProcesses::from_env());
+    let ignored = Arc::new(verbatim_process::held::IgnoredProcesses::from_env());
     let supervisor = Arc::new(Supervisor::new(
         outpost_sink(command_tx.clone()),
         outpost_options,
@@ -848,7 +849,7 @@ fn taskbar_process() -> Option<Pid> {
 /// The process whose outpost answers a focus-now query for the
 /// application `pid`. When Windows names `pid` as the owner of the window in
 /// front, the process that serves that window
-/// ([`verbatim_outpost::provider_process`]), which differs from its owner
+/// ([`verbatim_win32::provider::provider_process`]), which differs from its owner
 /// only for a console window, whose console host serves it; `None` when it
 /// cannot be read, for a console window whose host cannot be read from its
 /// client or a window closed since, so no outpost is asked: the client's
@@ -861,7 +862,7 @@ fn focus_now_server(pid: Pid) -> Option<Pid> {
     if window_pid(hwnd) != Some(pid) {
         return Some(pid);
     }
-    verbatim_outpost::provider_process(hwnd).map(Pid)
+    verbatim_win32::provider::provider_process(hwnd).map(Pid)
 }
 
 /// The application holding the system foreground right now, read with a
@@ -1109,7 +1110,7 @@ impl ReducerThread<'_> {
             }
             OutpostMessage::SpareReady { spare, waiting, .. } => {
                 tracing::debug!(%spare, waiting, "spare outpost ready");
-                if waiting >= verbatim_outpost::supervisor::SPARES {
+                if waiting >= verbatim_supervisor::SPARES {
                     self.context.readiness.spares_ready();
                 }
             }
@@ -1131,7 +1132,7 @@ impl ReducerThread<'_> {
                     thread: report.thread,
                     console: report.console,
                     integrity: report.integrity,
-                    own_integrity: verbatim_outpost::integrity::own_integrity(),
+                    own_integrity: verbatim_win32::integrity::own_integrity(),
                 }));
             }
             OutpostMessage::IdleQueried {
@@ -2048,16 +2049,16 @@ impl ReducerThread<'_> {
 /// they arrived (`docs/design/communication.md`, section 4.5); and lets the
 /// supervisor's relay watch the reducer through the port's counts, logging
 /// a stall it reports (section 6.8).
-fn outpost_sink(command_tx: Commands) -> verbatim_outpost::EventSink {
+fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {
     let progress = command_tx.clone();
-    verbatim_outpost::EventSink::new(move |message| {
+    verbatim_supervisor::EventSink::new(move |message| {
         match command_tx.send(ShellCommand::Outpost(message)) {
             Ok(()) => Ok(()),
             // The port refused the packet; the queue is still taken.
             Err(ShellCommand::Outpost(message)) if command_tx.is_open() => {
-                Err(verbatim_outpost::Undelivered::Refused(message))
+                Err(verbatim_supervisor::Undelivered::Refused(message))
             }
-            Err(_) => Err(verbatim_outpost::Undelivered::Gone),
+            Err(_) => Err(verbatim_supervisor::Undelivered::Gone),
         }
     })
     .watched(
@@ -2413,7 +2414,7 @@ mod tests {
         assert!(
             sink.send(OutpostMessage::NotWatched {
                 target_pid: Pid(1),
-                sealed: verbatim_outpost::supervisor::Sealed::for_tests(),
+                sealed: verbatim_supervisor::Sealed::for_tests(),
             })
             .is_ok()
         );
@@ -2424,7 +2425,7 @@ mod tests {
         assert!(
             sink.send(OutpostMessage::NotWatched {
                 target_pid: Pid(2),
-                sealed: verbatim_outpost::supervisor::Sealed::for_tests(),
+                sealed: verbatim_supervisor::Sealed::for_tests(),
             })
             .is_ok()
         );

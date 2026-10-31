@@ -38,8 +38,8 @@
 use verbatim_ia2::{WinEvent, WinEventKind};
 
 use super::Context;
-use super::window;
-use crate::arbitration::{EventWindows, WindowClasses};
+
+use crate::arbitration::EventWindows;
 use std::sync::atomic::Ordering;
 
 /// The kinds unhooked while the application's focus and foreground windows
@@ -158,8 +158,8 @@ impl EventThreadState {
                     || context.mailbox.verdicts(),
                     overrides,
                 ),
-                (hwnd, window::window_thread(hwnd)),
-                WindowClasses::of,
+                (hwnd, verbatim_win32::window::window_thread(hwnd)),
+                verbatim_win32::window::window_classes,
             )
         };
         let narrow = match (self.focus, self.foreground) {

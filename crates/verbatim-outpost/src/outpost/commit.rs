@@ -21,8 +21,7 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, TextChange,
-    VerdictChange, WatchChange,
+    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, WatchChange,
 };
 use super::store::TextWrite;
 
@@ -183,8 +182,6 @@ pub(super) struct Effects {
     /// A held terminal's caret event, noted to be read once nothing else is
     /// waiting, with its event's timing.
     pub(super) noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
-    /// The verdicts probed, and the windows found destroyed.
-    pub(super) verdicts: Vec<VerdictChange>,
     /// The program's text writes since its last commit, in order: its
     /// text facts' changes, which it applied to its own copies as it made
     /// them, with the ranges they name, and its patterns and support.
@@ -217,27 +214,8 @@ impl Effects {
             states: self.states,
             gap: self.gap.clone(),
             noted_caret: self.noted_caret,
-            verdicts: self.verdicts.clone(),
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
-        }
-    }
-
-    /// [`local`](Self::local), with the changes of text facts these
-    /// carry, in order: what the program the worker runs after the console
-    /// poll applies of the poll's commit to its copies, which the poll had
-    /// applied to its own as its text calls made them.
-    pub(super) fn carried(&self) -> Change {
-        Change {
-            text: self
-                .text
-                .iter()
-                .filter_map(|write| match write {
-                    TextWrite::Facts { change, .. } => Some(change.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<TextChange>>(),
-            ..self.local()
         }
     }
 
@@ -266,7 +244,6 @@ impl Effects {
             states: self.states,
             gap: self.gap,
             noted_caret: self.noted_caret,
-            verdicts: self.verdicts,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
         };

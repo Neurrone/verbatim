@@ -17,7 +17,7 @@ The answer: not with `GetFocusedElementBuildCache`, which the outpost uses today
 ## Terms
 
 - The focus read is the outpost's read of its application's focused control with no event element to start from: `focused_control_in` in `crates/verbatim-outpost/src/outpost/read.rs`.
-- The checked window is the window with the keyboard focus as `GetGUIThreadInfo` names it, accepted by the focus read only when its provider process is the outpost's application (`served_by`, `crates/verbatim-uia/src/provider.rs`), it is not Core's hidden frame, and it is readable (not a ghost, not hung).
+- The checked window is the window with the keyboard focus as `GetGUIThreadInfo` names it, accepted by the focus read only when its provider process is the outpost's application (`served_by`, `crates/verbatim-win32/src/provider.rs`), it is not Core's hidden frame, and it is readable (not a ghost, not hung).
 - The race is the focus moving to another application's window between that check and UIA's own reading of the focus inside `GetFocusedElementBuildCache`.
 - The read below the checked window is the proposed replacement: `ElementFromHandleBuildCache` on the checked window, then the element with the keyboard focus found below it.
 

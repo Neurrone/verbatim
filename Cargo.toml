@@ -80,13 +80,18 @@ verbatim-i18n = { path = "crates/verbatim-i18n" }
 verbatim-ia2 = { path = "crates/verbatim-ia2" }
 verbatim-input = { path = "crates/verbatim-input" }
 verbatim-input-windows = { path = "crates/verbatim-input-windows" }
+verbatim-listener = { path = "crates/verbatim-listener" }
+verbatim-listener-logic = { path = "crates/verbatim-listener-logic" }
 verbatim-model = { path = "crates/verbatim-model" }
 verbatim-text = { path = "crates/verbatim-text" }
 verbatim-term-sim = { path = "crates/verbatim-term-sim" }
 verbatim-test-console = { path = "crates/verbatim-test-console" }
 verbatim-outpost = { path = "crates/verbatim-outpost" }
+verbatim-outpost-logic = { path = "crates/verbatim-outpost-logic" }
 verbatim-process = { path = "crates/verbatim-process" }
+verbatim-reader-rules = { path = "crates/verbatim-reader-rules" }
 verbatim-speech = { path = "crates/verbatim-speech" }
+verbatim-supervisor = { path = "crates/verbatim-supervisor" }
 verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
 verbatim-synth-espeak = { path = "crates/verbatim-synth-espeak" }
 verbatim-synth-host = { path = "crates/verbatim-synth-host" }
@@ -94,6 +99,7 @@ verbatim-synth-hosted = { path = "crates/verbatim-synth-hosted" }
 verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }
 verbatim-uia = { path = "crates/verbatim-uia" }
 verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
+verbatim-win32 = { path = "crates/verbatim-win32" }
 
 # `windows-core` is a direct dependency because the `windows` crate's
 # `#[implement]` macro emits `::windows_core` paths that only resolve when

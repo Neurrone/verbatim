@@ -8,7 +8,8 @@ client stacks, and the outpost's arbitration, are exercised cross-process
 with no real applications, on plain CI Windows runners. `mockapp`'s own
 binary depends only on `verbatim-model` (for `Role`, `State`, and
 `StateSet`); the client crates it is built to be tested against
-(`verbatim-uia`, `verbatim-ia2`, `verbatim-outpost`) are dev-dependencies,
+(`verbatim-uia`, `verbatim-ia2`, `verbatim-outpost`, `verbatim-listener`
+and `verbatim-listener-logic`) are dev-dependencies,
 used only by its own integration tests. Running it by hand, and its stdin
 commands, are in [the mockapp tooling guide](../tooling/mockapp.md).
 
@@ -409,7 +410,7 @@ a walk of the window's whole tree would wait on its
   passes the time between a focus's observation and its read, bringing its
   walk's bound that much sooner with no real wait. A test of the
   listener's watchdog runs the listener's reading threads in its process
-  (`verbatim_outpost::focus_read::ReadingThreads`), their readers on
+  (`verbatim_listener::focus_read::ReadingThreads`), their readers on
   frozen clocks of the test's, so that only the watchdog, on the system's
   clock, meets a read's bound. The outpost's own watchdog meets its
   walks' bound the same way: the outpost's walks are timed by the frozen

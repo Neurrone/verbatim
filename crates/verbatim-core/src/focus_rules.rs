@@ -4,8 +4,8 @@
 //! Core holds, which property changes and selections are spoken, and which
 //! containers a focus newly enters. The rules ported from NVDA that only the
 //! listener and the outposts make, the acceptance test and NVDA's
-//! foreground tests, are defined once in `verbatim-outpost`, which both
-//! share, since ported code stays in the Windows-specific crates. The reducer applies them after an event is
+//! foreground tests, are defined once in `verbatim-reader-rules`, which both
+//! share, since ported code stays in the GPL-tier crates. The reducer applies them after an event is
 //! read; the focus listener and the outposts apply the same definitions
 //! where a judgment must come before an element is read, because a UI
 //! Automation element cannot pass to another process. Those judgments

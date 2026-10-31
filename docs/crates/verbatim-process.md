@@ -4,8 +4,12 @@ Contained child processes (architecture section 1): what Core launches
 outposts, the focus listener, and synthesizer hosts (decision D18) with,
 so every kind of child is launched and contained the same way. It also
 reads the calling process's
-session, which Verbatim and the test agent check at startup. It is a
-Windows-specific crate and depends only on `tracing` and the Windows
+session, which Verbatim and the test agent check at startup. And it holds
+what every end of Core's children shares: the message layer over the
+transport, the launch arguments, the processes held open by handle, a
+child's start and end, and the alarm a thread waits on. It is a
+Windows-specific crate and depends on `verbatim-model`, `serde`,
+`serde_json`, `simdutf8`, `tracing`, `tracing-subscriber` and the Windows
 bindings.
 
 Public API:
@@ -67,7 +71,9 @@ Public API:
   verbatim.exe's `main`, puts it in the environment every child inherits.
   The counter is monotonic and the same in every process, so a key's
   press, an outpost's read and Core's receipt compare on one clock however
-  the system's clock is set meanwhile.
+  the system's clock is set meanwhile. `Clock` and `ObservationClock`
+  are the clocks a test may replace: `Instant::now`, and the shared
+  clock's `now_us`, as `Arc`'d closures.
 - `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
   `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
   library makes its child pipes (`NtCreateNamedPipeFile` on the named
@@ -249,6 +255,86 @@ Public API:
   serves the port until every write in flight has completed and the pipe
   is closed, so a child never exits with a write in flight, which its
   exit would cancel, cutting the frame.
+- `message` — the message layer of the private protocol between Core and
+  its children. The messages themselves, one enum per direction and role,
+  their kinds, their merging and the types they carry, are
+  `verbatim_model::protocol`'s ([verbatim-model](verbatim-model.md), "The
+  wire protocol"); this module re-exports none of them. It holds the
+  framing below and `peek`, which reads a frame's kind from its first
+  bytes (`message_kind`) as a `Peeked`, the variants the supervisor's
+  relay handles itself by name, so its frame handlers match it
+  exhaustively and a test pins every variant's name.
+
+  Each message is stamped as its write begins, by whichever thread writes
+  it: `listener_written_at_us` on a listener's fact or menu end,
+  `written_at_us` on an outpost's `Event`, `Reply`, or `Pong`; the listener
+  adds `listener_handled_at_us`. verbatim.exe stamps its relay times on a
+  routed fact or query as it writes it, and a ping or a hand-over notice
+  to the listener with `sent_at_us`; the listener logs each hop at trace
+  under `verbatim::stage`.
+
+  Framing. Each message is one frame of `transport`, a `Content-Length`
+  header and compact JSON, through `write_message` and `read_message`,
+  for any type that implements `Message` (`put_frame` and `from_parts`):
+  the four direction enums, the outpost's with the raw section below.
+  `write_message` writes the whole frame in one `WriteFile`,
+  `encode_message` gives the bytes, `put_message` appends them to a
+  sender's buffer, and `decode_message` parses a frame's `Parts`. A
+  message that carries a terminal's text (an event with a
+  `TerminalSnapshot`, or a reply with a `TerminalSnapshot`,
+  `TerminalHistory`, or `TerminalFound`) has a raw section (the private
+  `message::raw` module; `docs/design/communication.md`, section 4.2): each
+  text is UTF-8 there and a range in the JSON, `"raw":[start,length]` in a
+  `TerminalText` and `"text":[start,length]` for a history's or match's
+  text, and colour runs are 16-byte records of four little-endian `u32`s
+  (column, length, foreground, background), the JSON giving
+  `"colours":{"raw":[start,length],"rows":[...]}` with each row's run
+  count. The module converts while encoding, borrowing from the message,
+  and back while decoding, validating text with `simdutf8`; the model's
+  types know nothing of it. A range outside the section, invalid UTF-8,
+  records that do not fill their range, a section longer or shorter than
+  its ranges, or a section on any other message is a protocol error. For
+  example, a history whose text is `abc` has a header with
+  `Raw-Length: 0000000003`, a body whose outcome is
+  `{"Done":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
+  and then the bytes `abc`. `message_kind(body)` reads a frame's variant
+  name from its first bytes without parsing the rest; the relay reads it
+  on every outpost frame.
+- `arguments` — the launch arguments the supervisor gives its children,
+  defined once for the end that builds them and the end that parses them,
+  each with its command line (`command_line(Pipes)`) and its parse
+  (`parse(args)`, the arguments after the program's name), tested by a
+  round trip. `OutpostArguments` is an outpost's: `--pipe-in`,
+  `--pipe-out`, its `OutpostTarget` (`--target-pid <pid>`, or `--spare
+  <launch>` for a spare), and `--classic-uia` when `OutpostOptions`'
+  `remote_operations` is off. `ListenerArguments` is the focus listener's,
+  `--listener` first (`LISTENER_ARG`), then the pipes, the ignored pids
+  (`--ignore-pids`, `IGNORE_PIDS_ARG`) and the applications whose outposts
+  have their own hooks in (`--hooks-in`, `HOOKS_IN_ARG`, with
+  `format_hooks_in` and `parse_hooks_in` for its `pid:outpost` pairs).
+  Each executable's `main` parses its own and refuses the other's: an
+  outpost refuses `--listener`, and the listener refuses an outpost's
+  options.
+- `held` — processes held open by handle, so a pid names one process and
+  no other while held. `Target::open(pid)` holds a target application
+  (`NotHeld` when it has exited or cannot be opened), with `has_exited`
+  and `image_stem` (`stem_of` reads any process handle's lower-cased
+  executable stem). `IgnoredProcesses` (`IGNORE_PIDS_ENV`,
+  `VERBATIM_IGNORE_PIDS`; `from_env`, `hold`, `contains`, `list`,
+  `parse_pids`) are the processes Verbatim ignores, named by the
+  end-to-end harness: its own Windows Terminal. Each is held open; the
+  supervisor starts no outpost for one and routes none of its facts, and
+  the listener, given `--ignore-pids`, drops them before queuing.
+- `child` — what a child does as it starts and ends: `init_tracing`
+  installs its log's subscriber (`RUST_LOG`, `info` by default),
+  `report_error!` writes to standard error without panicking, and
+  `end_without_detach(code)` ends the process with `TerminateProcess`, so
+  no DLL's detach code runs (`docs/architecture.md`, "Process lifetime").
+- `alarm` — `Alarm`, a high-resolution waitable timer and an event waited
+  on together by one thread (`docs/design/wake-ups.md`, item 3): `set`,
+  `cancel`, `wake`, `wait` (whether the timer ended it) and
+  `wait_for_event`. An outpost's mailbox and worker inbox and the
+  listener's watchdog wait on one.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can
@@ -310,7 +396,9 @@ any `.log` file the earlier flat layout left directly in `logs`. Removal
 is partial for a launch still running, since the files its children hold
 open stay until a later launch removes them.
 
-Tests: the crate has no tests of its own. The synthesizer host's tests in
+Tests: the message layer's round trips and raw sections, the launch
+arguments' round trip, and the held processes are unit-tested here. The
+synthesizer host's tests in
 `crates/verbatim-synth-host/tests/hosting.rs` launch real children
 through it, and every end-to-end run launches outposts, the listener,
 and a synthesizer host through it.

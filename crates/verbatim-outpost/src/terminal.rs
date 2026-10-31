@@ -445,7 +445,7 @@ pub fn read<'a>(
     terminal: &mut Terminal,
     (scope, remote, waited): (Option<TerminalScope>, bool, bool),
 ) -> Result<ReadAnswer, TextError> {
-    let clock_us = crate::protocol::now_us();
+    let clock_us = verbatim_process::clock::now_us();
     let started_ms = clock_us / 1_000;
     let start = terminal.start_range();
     let colours = terminal
@@ -519,7 +519,7 @@ pub fn read<'a>(
         "terminal snapshot timing"
     );
     let mut wire = snapshot_of(&snapshot, started_ms, waited);
-    wire.ended_ms = (crate::protocol::now_us() / 1_000).max(started_ms);
+    wire.ended_ms = (verbatim_process::clock::now_us() / 1_000).max(started_ms);
     if terminal.number(&mut wire) {
         terminal.start = snapshot
             .next_start

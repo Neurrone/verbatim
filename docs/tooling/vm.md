@@ -34,11 +34,13 @@ verb list printed from the source of truth.
   waits for the agent: the fast way back to a known-clean state, instead
   of a full `create`.
 - `deploy` builds `verbatim-app`, `verbatim-agent`, `verbatim-outpost`,
+  `verbatim-listener`,
   and `verbatim-synth-host` (debug profile, matching the CI job), then
   compares a SHA-256 hash of each artifact it would place in the guest
   against the guest's existing copy, fetching all the guest-side hashes in
   a single PowerShell Direct call. The artifacts are:
-  - `verbatim.exe`, `verbatim-outpost.exe`, and `verbatim-synth-host.exe`
+  - `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-listener.exe`, and
+    `verbatim-synth-host.exe`
     in `C:\VerbatimLab\verbatim`;
   - eSpeak NG's `espeak-ng-data` directory, which the build puts next to
     the executables, archived with Windows' own `tar` into one

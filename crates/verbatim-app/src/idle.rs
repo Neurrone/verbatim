@@ -9,7 +9,7 @@
 //! the listener, then every outpost, whether anything that came before the
 //! question is still in progress, each child answering behind every
 //! message it sent before. The relay says which outposts it asked
-//! ([`verbatim_outpost::OutpostMessage::IdleQueried`]); each answers, or
+//! ([`verbatim_supervisor::OutpostMessage::IdleQueried`]); each answers, or
 //! ends, which counts as its answer, except a spare that failed before its
 //! `Ready`, whose place goes to the generation holding its facts. When
 //! every one has, the reducer takes
@@ -122,7 +122,7 @@ impl<W> IdleBarrier<W> {
 
     /// `outpost`, a spare given to an application, failed before its
     /// `Ready`, and the generation `next` holds what was held for it
-    /// ([`verbatim_outpost::OutpostMessage::Regenerated`]): in a round
+    /// ([`verbatim_supervisor::OutpostMessage::Regenerated`]): in a round
     /// asking `outpost` that it has not answered, `next` answers in its
     /// place, so `outpost`'s end, which follows, does not end the round
     /// before the facts held for it are handled.

@@ -130,6 +130,14 @@ Further follow-ups from the focus work and the ownership builds:
   the window is spoken without its role; the rule is unbuilt, in
   [the remaining focus builds](design/focus-pipeline-rework-remaining.md),
   "A window past the bound that the outpost judges UIA".
+- A new console host's window can stay hidden and not responding while
+  the outpost's first call into it passes its deadline (3 of 20 measure
+  runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
+  host not responding at its outpost's first call"). Find which call it
+  is, at debug level, and whether it holds the console host.
+- `verbatim-model`'s comment on `DeliveredFact::key` cites NVDA source
+  files, which the provenance rule forbids in a platform-neutral crate;
+  rewrite it to cite the parity docs.
 - After a voice change, NVDA refreshes the other settings controls from the
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
 
@@ -143,6 +151,10 @@ its own, a few large builds, each designed against the code and reviewed
 just before it. All five builds are built; the rules for the planned milestones are in [the milestone rules](design/ownership-milestone-rules.md).
 
 ### The caret and selection rework
+
+Follow-up from the reducers' simplification study: Core's
+`caret_history` makes the same caret-before-the-key judgement as the
+outpost, a fact judged in two places; the rework gives it one owner.
 
 The decisions, the design and the order of work are in
 [the caret and selection rework](design/caret-selection-rework.md), consolidated for building, the one
@@ -214,7 +226,6 @@ Tests and tooling:
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
 - Compare mode presses Verbatim+V (`kb:verbatim+v`) as Insert+V, which under NVDA types "v" into Notepad and corrupts the later steps of `notepad_editing`'s comparison.
-- The platform-neutral dependency check (`check_platform_neutral_deps` in `xtask/src/main.rs`) runs `cargo tree -e normal`, so a build-dependency on `windows-sys` or a Windows-specific workspace crate is not caught, `winapi` is on neither banned list, and a dependency on a Windows-only workspace crate that uses no bindings itself passes.
 - `cargo xtask trace scenario` and `cargo xtask measure` look for the build under `<worktree>\target` and ignore `CARGO_TARGET_DIR`, so a worktree building elsewhere measures a stale or missing build.
 - A double-click is checked only by hand: the agent has no mouse request, so no scenario pins "beta selected" for a double-click inside a word.
 - Key holding has no test of a waiting key following the newest watch (`crates/verbatim-core/src/editing.rs`); its other gaps are in M6.5.
@@ -310,7 +321,20 @@ alternatives weighed and its limits are in
   standard hash map or set, whose order changes with each process, no
   clock, no randomness, no thread and no environment read, checked by
   Clippy's disallowed types and methods per crate and by the ownership
-  scan, after an audit of the 29 standard hash maps and sets there.
+  scan, after an audit of the standard hash maps and sets there.
+- The reducers simplified (Dickson, 2026-10-31), from
+  `experiments/logic-tests-study/radical-simplification-study.md` and the
+  purity audit beside it, in this order, each with its own design and
+  review: the caret watch decided wholly by the outpost's reducer, with
+  the held caret key's second bound, first, since the watch has had six
+  rounds of fixes; then the determinism builds of
+  [the logic foundations](design/logic-foundations.md), "Determinism",
+  with the outpost's three local reads made inputs; one pure worker
+  charge shared by the outpost and the listener, after the first; Core's
+  outstanding queries in one table owned by its reducer, with a shell
+  item's wait under two deadlines in a row, and the hook's hold decision
+  in the keyboard decision machine, after the second; the simpler
+  owners last. One child record in a pure supervisor is M6.2's.
 - `CLAUDE.md` updated for the third kind of crate and for the Linux job
   beside `cargo xtask ci` in its Commands section.
 - Before and after: wake-ups, processor time, each child's memory, and
@@ -640,11 +664,14 @@ At most one outpost serves an application at any time (Dickson,
 2026-10-29): a failed or retired outpost is ended, killed if it does not
 exit, before its replacement starts, because a failed outpost is retired
 on a thread of its own while its replacement is started after the backoff
-(`crates/verbatim-outpost/src/supervisor/owner.rs`, the failure path),
+(`crates/verbatim-supervisor/src/owner.rs`, the failure path),
 so for up to `SHUTDOWN_LIMIT` a stuck outpost and its replacement can
 both be in the application, where two Verbatim processes' calls collide
 inside UIA (`docs/design/listener-without-connections.md`).
 
+- The supervisor checks an application's exit twice, from the outpost's
+  report and by polling the process; M6.2's single child record keeps
+  one (the reducers' simplification study).
 - A mockapp test that fails an outpost during a held remote operation and
   checks what its replacement reads.
 - The replacement started only once the old process has exited, and the

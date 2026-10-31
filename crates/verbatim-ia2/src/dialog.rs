@@ -133,7 +133,7 @@ impl DialogObject {
             && hwnd != self.hwnd
         {
             let child = Self::window_client(acc, hwnd);
-            let hidden = !window::is_visible(hwnd);
+            let hidden = !window::window_is_visible(hwnd);
             let disabled = !window::is_enabled(hwnd);
             if hidden || disabled {
                 // Passed over on these alone, without acquiring it.

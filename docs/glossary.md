@@ -77,12 +77,12 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Fact** (focus fact) — one focus-relevant observation captured by
   the focus listener from an OS event's own payload and routed to the
   target's outpost for announcement (D13); a `ListenerFact` becomes a
-  `DeliveredFact` once routed. [verbatim-outpost](crates/verbatim-outpost.md).
+  `DeliveredFact` once routed. [verbatim-listener](crates/verbatim-listener.md).
 - **Flight recorder** — the bounded ring buffer of reducer inputs,
   dumpable to a versioned JSON-lines file and deterministically
   replayable. [verbatim-core](crates/verbatim-core.md).
-- **Focus listener** — the permanent outpost mode holding the
-  desktop-global focus registrations, whose callbacks never make a
+- **Focus listener** — the permanent process, `verbatim-listener.exe`,
+  holding the desktop-global focus registrations, whose callbacks never make a
   cross-process call (D13); since stage A step 6 of phase 6 it also judges
   and reads each UIA focus from the event's own element, on a reading
   thread per application. [Architecture](architecture.md) section 1.
@@ -90,7 +90,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   outpost the moment a UIA focus event arrives, before it has read it:
   the outpost holds everything it takes in after the marker until the
   listener's read of the focus, or its drop, takes the marker's place.
-  [verbatim-outpost](crates/verbatim-outpost.md).
+  [verbatim-listener](crates/verbatim-listener.md).
 - **Golden image** — the Packer-built Windows VM baseline the Hyper-V
   harness imports, deploys to, and checkpoints. [The VM harness](tooling/vm.md).
 - **Held nodes** — the node references the reducer holds (the focus,
@@ -104,7 +104,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Idle retirement** — ending an outpost whose application has not
   held attention for two minutes and in which Core holds no nodes
   (risk R2's memory mitigation).
-  [verbatim-outpost](crates/verbatim-outpost.md).
+  [verbatim-supervisor](crates/verbatim-supervisor.md).
 - **Indication** — one entry of the catalogue of everything Verbatim
   can report (a role, a state, a description, a spelling error, an
   event), with a stable id and a category; a theme says how each is
@@ -127,8 +127,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   name it. [verbatim-outpost](crates/verbatim-outpost.md).
 - **Outpost** — the per-application process owning that app's event
   hooks, queries, and announcements (D9); also the binary
-  `verbatim-outpost.exe`, which runs as an app outpost or, with
-  `--listener`, as the focus listener. Each process generation has an
+  `verbatim-outpost.exe` it runs. Each process generation has an
   **outpost id**, which every node id it issues carries.
   [verbatim-outpost](crates/verbatim-outpost.md).
 - **Pending key** — a key Core has taken in for a terminal and not yet
@@ -213,4 +212,4 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   (missed pongs, called stuck) or accumulating parked workers; the
   heartbeat's `wedge_decision` ends it and its application is given the
   next outpost (rung 3).
-  [verbatim-outpost](crates/verbatim-outpost.md).
+  [verbatim-supervisor](crates/verbatim-supervisor.md).

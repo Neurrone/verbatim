@@ -23,7 +23,8 @@ file, and takes four kinds of kernel event:
 - an image loaded in a process: the process is named by its `.exe`.
 
 For each thread of the processes named (by default `verbatim.exe`,
-`verbatim-outpost.exe` and `verbatim-synth-host.exe`) it prints the
+`verbatim-outpost.exe`, `verbatim-listener.exe` and
+`verbatim-synth-host.exe`) it prints the
 process's image and id, the thread's id and name, how many times it was
 woken (each ready event naming it), its time on a processor (summed from
 the context switch giving it one to the next taking it away; a thread

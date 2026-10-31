@@ -209,7 +209,7 @@ The claims as they stood and their corrections, applied on 2026-10-29.
 - `docs/crates/verbatim-uia.md`, `find_by_runtime_id`: "a search that finds nothing is `Ok(None)`; one that fails is an error." Corrected: "a search that finds nothing is `Ok(None)`, and so is one that passed over a child window whose process did not answer within the connection timeout; one that fails otherwise is an error."
 - `docs/crates/verbatim-outpost.md`, "Who calls into an application": "Only an application's own outpost sends it a remote operation or makes a new UIA connection to its windows". Corrected: "Only an application's own outpost sends it a remote operation or makes a new UIA connection to its windows by a call of Verbatim's, with the exceptions `docs/design/cross-process-calls-study.md` lists: UIA's client side's connections to a parent across the boundary, the focus-read and walk-up races, and the runtime-id search's entry into another process's child window."
 
-Not a document but false, a code comment: `SHUTDOWN_LIMIT`'s doc in `crates/verbatim-outpost/src/supervisor/retire.rs` says Verbatim leaves UIA's transaction timeout at its default of 20 seconds and the connection timeout at 10; Verbatim sets 5 and 2 (`TRANSACTION_TIMEOUT`, `CONNECTION_TIMEOUT`). Corrected with the documents.
+Not a document but false, a code comment: `SHUTDOWN_LIMIT`'s doc in `crates/verbatim-supervisor/src/retire.rs` says Verbatim leaves UIA's transaction timeout at its default of 20 seconds and the connection timeout at 10; Verbatim sets 5 and 2 (`TRANSACTION_TIMEOUT`, `CONNECTION_TIMEOUT`). Corrected with the documents.
 
 ## What was not proved
 

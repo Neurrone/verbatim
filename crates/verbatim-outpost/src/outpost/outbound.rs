@@ -40,7 +40,8 @@ use verbatim_model::protocol::{Merge, OutpostToCore, Urgent, merge_into};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
 use super::store::Recorded;
-use crate::protocol::{now_us, put_message};
+use verbatim_process::clock::now_us;
+use verbatim_process::message::put_message;
 
 /// Something a message may carry that the outpost keeps until Core has
 /// seen it and does not hold it: a node, or a text anchor, by number.
@@ -364,8 +365,8 @@ mod tests {
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
-    use crate::protocol::read_message;
     use verbatim_model::protocol::{EventTiming, QueryOutcome};
+    use verbatim_process::message::read_message;
 
     fn node(number: u64) -> NodeId {
         NodeId::new(number)

@@ -40,16 +40,12 @@
 //! never reported. A node reported later, or named by a request still
 //! running, is kept.
 
-pub(crate) mod acceptance;
-pub(crate) mod alarm;
 mod bound;
 mod commit;
 mod focus_path;
-mod inbox;
 mod narrowing;
 mod outbound;
 mod read;
-mod reducer;
 mod shell;
 mod shell_items;
 mod store;
@@ -84,14 +80,20 @@ use verbatim_uia::{
     Subscription, TextEvent, Uia,
 };
 
-use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
-use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
-use crate::protocol::{decode_message, now_us, read_message};
-use crate::supervisor::Target;
+use crate::arbitration::{Arbitrator, EventWindows};
+use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, UiaSnapshotFact,
     Urgent, WinEventStamp,
 };
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::clock::now_us;
+use verbatim_process::held::Target;
+use verbatim_process::message::{decode_message, read_message};
+use verbatim_reader_rules::acceptance;
+use verbatim_win32::window::{ForegroundReader, WindowReadabilityReader};
+
+use verbatim_outpost_logic as reducer;
 
 use commit::{Committed, Effects};
 use outbound::Outbound;
@@ -197,11 +199,11 @@ pub(crate) struct Context {
     /// events' observations with, and its arbitrator its verdicts' keeps
     /// by: the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
-    observation: OnceLock<crate::arbitration::ObservationClock>,
+    observation: OnceLock<verbatim_process::clock::ObservationClock>,
     /// The processes Verbatim ignores, which the outpost inherits through
-    /// [`IGNORE_PIDS_ENV`](crate::supervisor::IGNORE_PIDS_ENV): a focus in
+    /// [`IGNORE_PIDS_ENV`](verbatim_process::held::IGNORE_PIDS_ENV): a focus in
     /// one's window is not reported.
-    ignored: crate::supervisor::IgnoredProcesses,
+    ignored: verbatim_process::held::IgnoredProcesses,
     /// The client on a thread of its own for the worker's operations with a
     /// deadline of their own: a dialog's text.
     bounded: verbatim_uia::BoundedClient,
@@ -281,32 +283,11 @@ pub enum Heard {
 /// Told of each event an outpost takes in ([`Outpost::observe_heard`]).
 pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 
-/// Reads the foreground window's handle. An outpost reads the system's
-/// (`GetForegroundWindow`); a test whose application cannot take the
-/// foreground on the desktop it runs on supplies its own
-/// ([`Outpost::set_foreground_reader`]).
-pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
-
 /// Reads the handle of the window with the keyboard focus, `None` when
 /// there is none. An outpost reads the system's (`GetGUIThreadInfo`); a
 /// test whose application cannot take the keyboard focus on the desktop it
 /// runs on supplies its own ([`Outpost::set_focus_window_reader`]).
 pub type FocusWindowReader = Arc<dyn Fn() -> Option<isize> + Send + Sync>;
-
-/// Why a window cannot be read, `None` when it can: it is no window, a
-/// ghost window stands in for it, or its application is hung. An outpost
-/// asks the system ([`window::event_window_unreadable`]); a test that cannot
-/// wait for Windows to judge an application hung supplies its own
-/// ([`Outpost::set_window_readability_reader`]).
-pub type WindowReadabilityReader = Arc<dyn Fn(isize) -> Option<&'static str> + Send + Sync>;
-
-/// Why window `hwnd` cannot be read, by the system's judgement, `None` when
-/// it can: what an outpost's [`WindowReadabilityReader`] answers unless a
-/// test supplies its own. Local calls.
-#[must_use]
-pub fn window_unreadable(hwnd: isize) -> Option<&'static str> {
-    window::event_window_unreadable(hwnd)
-}
 
 /// Reads the UIA element that has the keyboard focus, filled by the given
 /// request, with the given client, on the worker's thread, for a
@@ -318,25 +299,6 @@ pub fn window_unreadable(hwnd: isize) -> Option<&'static str> {
 /// ([`Outpost::with_focused_element_reader`]).
 pub type FocusedElementReader =
     Arc<dyn Fn(&Uia, &Request<Node>) -> windows::core::Result<Cached<Node>> + Send + Sync>;
-
-/// How an outpost reads its application, fixed for its whole life. The
-/// supervisor passes it on each outpost's command line, from
-/// `settings.toml`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OutpostOptions {
-    /// Whether a UIA focus's ancestors are read with a remote operation
-    /// where the window's provider supports one (`uia.remote_operations`
-    /// in `settings.toml`, on by default); off forces the classic walk.
-    pub remote_operations: bool,
-}
-
-impl Default for OutpostOptions {
-    fn default() -> Self {
-        Self {
-            remote_operations: true,
-        }
-    }
-}
 
 /// The outpost's shared state as one request sees it: the store's handle
 /// for the request ([`store::Nodes`]), carrying its mint tag, that of a
@@ -369,10 +331,6 @@ struct Program<'a> {
     request: reducer::Request,
     waiting: Vec<WaitingCaret>,
     charge: Arc<Charge>,
-    /// The pure part of each commit made, kept for the console poll, whose
-    /// commits the worker applies to the next program's copies
-    /// ([`RequestContext::keep_commits`]).
-    kept: Option<RefCell<Vec<reducer::Change>>>,
     _context: std::marker::PhantomData<&'a ()>,
 }
 
@@ -391,25 +349,23 @@ impl<'a> RequestContext<'a> {
         }
     }
 
-    /// The context of program `request`, given `facts`, `waiting`, what
-    /// the console poll before it held of the store's text, and its
+    /// The context of program `request`, given `facts`, `waiting`, and its
     /// worker's `charge`.
     fn for_program(
         context: &'a Context,
         tag: store::Tag,
         (request, facts, waiting): (reducer::Request, Facts, Vec<WaitingCaret>),
-        (text, charge): (text_reads::ProgramText, Arc<Charge>),
+        charge: Arc<Charge>,
     ) -> Self {
         Self {
             context,
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
-            program_text: RefCell::new(text),
+            program_text: RefCell::default(),
             program: Some(Program {
                 request,
                 waiting,
                 charge,
-                kept: None,
                 _context: std::marker::PhantomData,
             }),
             judged_at: None,
@@ -420,24 +376,6 @@ impl<'a> RequestContext<'a> {
     /// `at_us`.
     fn judge_at(&mut self, at_us: u64) {
         self.judged_at = Some(at_us);
-    }
-
-    /// Keeps the pure part of every commit the program makes from now on,
-    /// for [`kept_commits`](Self::kept_commits).
-    fn keep_commits(&mut self) {
-        if let Some(program) = &mut self.program {
-            program.kept = Some(RefCell::new(Vec::new()));
-        }
-    }
-
-    /// The pure part of each commit made since
-    /// [`keep_commits`](Self::keep_commits), in order.
-    fn kept_commits(&self) -> Vec<reducer::Change> {
-        self.program
-            .as_ref()
-            .and_then(|program| program.kept.as_ref())
-            .map(|kept| std::mem::take(&mut *kept.borrow_mut()))
-            .unwrap_or_default()
     }
 
     /// The program this context runs.
@@ -564,13 +502,6 @@ impl<'a> RequestContext<'a> {
         }
     }
 
-    /// What the program holds of the store's text, for the program the
-    /// worker runs after the console poll: the poll's commits may not have
-    /// been taken in when it reads.
-    fn take_program_text(&self) -> text_reads::ProgramText {
-        self.program_text.take()
-    }
-
     /// Commits `effects`, with the program's text writes since its last
     /// commit: unless the worker was abandoned, applies their pure part to
     /// the program's copies, so what it reads after is what the reducer
@@ -591,9 +522,6 @@ impl<'a> RequestContext<'a> {
             program.request.generation,
             &local,
         );
-        if let Some(kept) = &program.kept {
-            kept.borrow_mut().push(effects.carried());
-        }
         self.mailbox.post(Posted::Commit {
             request: program.request,
             effects: Box::new(effects),
@@ -611,35 +539,19 @@ impl crate::arbitration::Judgement for RequestContext<'_> {
         Arc::clone(&self.facts().verdicts)
     }
 
-    /// Keeps `change` in the program's copies and posts it at once, alone
-    /// in its commit, even from an abandoned worker: the reducer judges by
-    /// its generation whether to record it, and a probe that timed out is
-    /// recorded from any. A context that runs no program keeps it in its
-    /// copies only.
+    /// Keeps `change` in the program's copies and posts it at once, as a
+    /// message of its own, even from an abandoned worker: the reducer
+    /// judges by its generation whether to record it, and a probe that
+    /// timed out is recorded from any. A context that runs no program keeps
+    /// it in its copies only.
     fn record(&self, change: VerdictChange) {
-        let local = reducer::Change {
-            verdicts: vec![change],
-            ..reducer::Change::default()
-        };
-        let Some(program) = &self.program else {
-            reducer::apply_local(&mut self.facts.borrow_mut(), 0, &local);
-            return;
-        };
-        reducer::apply_local(
-            &mut self.facts.borrow_mut(),
-            program.request.generation,
-            &local,
-        );
-        if let Some(kept) = &program.kept {
-            kept.borrow_mut().push(local);
+        let _ = Arc::make_mut(&mut self.facts.borrow_mut().verdicts).apply(&change);
+        if let Some(program) = &self.program {
+            self.mailbox.post(Posted::Verdict {
+                generation: program.request.generation,
+                change,
+            });
         }
-        self.mailbox.post(Posted::Commit {
-            request: program.request,
-            effects: Box::new(Effects {
-                verdicts: vec![change],
-                ..Effects::default()
-            }),
-        });
     }
 }
 
@@ -701,7 +613,7 @@ impl Context {
 
     /// The outpost's clock ([`Outpost::set_clock`]), which its classic
     /// walks measure their time budgets by.
-    fn clock(&self) -> crate::arbitration::Clock {
+    fn clock(&self) -> verbatim_process::clock::Clock {
         self.arbitrator().clock()
     }
 
@@ -745,7 +657,8 @@ impl Context {
     /// Verbatim ignores. Local calls, made only while one is ignored.
     fn in_ignored_window(&self, hwnd: isize) -> bool {
         !self.ignored.is_empty() && {
-            let (_, pid) = window::window_owner(window::top_level_of(hwnd));
+            let (_, pid) =
+                verbatim_win32::window::window_owner(verbatim_win32::window::top_level_of(hwnd));
             self.ignored.contains(verbatim_model::Pid(pid))
         }
     }
@@ -790,14 +703,15 @@ impl Context {
     fn tries_remote(&self, hwnd: Option<isize>) -> bool {
         self.remote_operations
             && hwnd.is_none_or(|hwnd| {
-                self.classic_windows().get(&hwnd) != Some(&window::window_thread(hwnd))
+                self.classic_windows().get(&hwnd)
+                    != Some(&verbatim_win32::window::window_thread(hwnd))
             })
     }
 
     /// Reads `hwnd`'s UIA elements the classic way from now on.
     fn read_classically(&self, hwnd: isize) {
         self.classic_windows()
-            .insert(hwnd, window::window_thread(hwnd));
+            .insert(hwnd, verbatim_win32::window::window_thread(hwnd));
     }
 
     /// Forgets what was learned about a destroyed window, whose handle may
@@ -921,8 +835,8 @@ impl Context {
                     || self.mailbox.verdicts(),
                     self.override_changes.load(Ordering::Acquire),
                 ),
-                (hwnd, window::window_thread(hwnd)),
-                WindowClasses::of,
+                (hwnd, verbatim_win32::window::window_thread(hwnd)),
+                verbatim_win32::window::window_classes,
             ) {
                 self.tell_heard(Heard::Msaa(kind));
                 return;
@@ -941,8 +855,7 @@ impl Context {
             );
             return;
         }
-        let Some(fact) = crate::protocol::fact_of_win_event(kind, (hwnd, id_object, id_child))
-        else {
+        let Some(fact) = verbatim_ia2::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
             return;
         };
         let stamp = WinEventStamp { thread, time };
@@ -1160,16 +1073,18 @@ impl Outpost {
             store: store::Store::new(),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
-            ignored: crate::supervisor::IgnoredProcesses::from_env(),
+            ignored: verbatim_process::held::IgnoredProcesses::from_env(),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             fetches: Mutex::new(Fetches::default()),
             focused_element,
-            foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
-            focus_window: Mutex::new(Arc::new(window::focus_window)),
-            window_readability: Mutex::new(Arc::new(window::event_window_unreadable)),
+            foreground: Mutex::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
+            focus_window: Mutex::new(Arc::new(verbatim_win32::window::focus_window)),
+            window_readability: Mutex::new(Arc::new(
+                verbatim_win32::window::event_window_unreadable,
+            )),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
@@ -1304,20 +1219,30 @@ impl Outpost {
         Ok(())
     }
 
-    /// Waits until the worker has handled everything queued before this
-    /// call and the noted caret those entries left, the focus-following
-    /// subscriptions have made every move the worker asked of them, and
-    /// every message the worker published has been written to the pipe. A
-    /// test that measures what the outpost's handling cost the application,
-    /// or that asserts the outpost said nothing more, waits on this for its
-    /// evidence. Returns early if the worker is abandoned meanwhile.
+    /// Waits until the reducer reaches a barrier behind everything queued
+    /// before this call and the noted caret those entries left, with no
+    /// program in flight, then until the focus-following subscriptions
+    /// have made every move asked of them before it and every message
+    /// published before it has been written to the pipe. A test that
+    /// measures what the outpost's handling cost the application, or that
+    /// asserts the outpost said nothing more, waits on this for its
+    /// evidence. Unlike Core's idle round, it waits for no open caret
+    /// watch, open gap record or held copies of the hook's, and it divides
+    /// batches as the round does. Returns once the outpost shuts down.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.context.mailbox.post(Posted::Settle(done_tx));
-        // An error means the request was dropped: its worker abandoned, or
-        // the outpost shut down.
-        let _ = done_rx.recv();
-        // The hook changes the worker's handling asked for are made too.
+        // An error means the settle was dropped: the outpost shut down.
+        // Every move and message before the answer was handed to its
+        // thread before the shell answered, so these waits come after
+        // them, on this thread rather than the reducer's.
+        if done_rx.recv().is_ok() {
+            if let Some(registration) = self.context.focus_events.get() {
+                registration.settle();
+            }
+            self.context.outbound.flush();
+        }
+        // The hook changes the programs asked for are made too.
         if let Some(nudger) = self.context.event_thread.get() {
             nudger.sync();
         }
@@ -1425,7 +1350,7 @@ impl Outpost {
     /// from `clock` from now on, in place of the system's
     /// ([`Arbitrator::set_clock`]): a test that counts an operation's calls
     /// decides when a walk's time is up, however long its calls take.
-    pub fn set_clock(&self, clock: crate::arbitration::Clock) {
+    pub fn set_clock(&self, clock: verbatim_process::clock::Clock) {
         self.context.arbitrator().set_clock(clock);
     }
 
@@ -1462,7 +1387,7 @@ impl Outpost {
     /// provider runs out and its probe is made again, by moving that time
     /// on, since a verdict is compared with the observation of the event it
     /// judges. Set once; a later call changes nothing.
-    pub fn set_observation_clock(&self, clock: crate::arbitration::ObservationClock) {
+    pub fn set_observation_clock(&self, clock: verbatim_process::clock::ObservationClock) {
         self.context
             .arbitrator()
             .set_observation_clock(Arc::clone(&clock));
@@ -1580,8 +1505,8 @@ impl Outpost {
                 Source::Other,
             ),
             CoreToOutpost::IdleQuery { round } => context.push(
-                Item::IdleQuery {
-                    round: *round,
+                Item::Barrier {
+                    asker: reducer::Asker::Round(*round),
                     behind_noted: false,
                 },
                 (TraceId::mint(), now_us(), EventTiming::default()),
@@ -1897,7 +1822,7 @@ fn read_answer(item: &Item) -> Option<GapAnswer> {
     } else {
         read.window.unwrap_or(0)
     };
-    let top = (window != 0).then(|| window::top_level_of(window));
+    let top = (window != 0).then(|| verbatim_win32::window::top_level_of(window));
     Some(GapAnswer::Answers(top.filter(|&top| top != 0)))
 }
 
@@ -2091,7 +2016,7 @@ mod shutdown_tests {
     use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 
     use super::Outpost;
-    use crate::protocol::read_message;
+    use verbatim_process::message::read_message;
 
     /// An outpost of this process watching this process, its messages read
     /// and dropped on a thread of their own, so its writes complete.

@@ -229,13 +229,13 @@ mod tests {
     /// every test sights and keeps: its location reads the same each time.
     fn desktop() -> Accessible {
         crate::accessible::join_mta();
-        Accessible::client_of_window(crate::window::desktop()).expect("the desktop's client")
+        Accessible::client_of_window(crate::window::desktop_window()).expect("the desktop's client")
     }
 
     /// The facts both sides have unless a test changes one.
     fn facts() -> Facts {
         Facts {
-            event: (crate::window::desktop(), None, 0),
+            event: (crate::window::desktop_window(), None, 0),
             identity: Some(Some(vec![1, 2, 3])),
             raw_role: Some(10),
             name: Some("Desktop".to_owned()),
@@ -252,7 +252,7 @@ mod tests {
             child: 0,
             identity: object.canonical().expect("its identity"),
         };
-        let key = (crate::window::desktop(), OBJID_CLIENT.0, 0);
+        let key = (crate::window::desktop_window(), OBJID_CLIENT.0, 0);
         let id = registry.insert(key, Some(held), (Role::Pane, facts), false);
         (registry, id)
     }
@@ -291,32 +291,32 @@ mod tests {
 
     #[test]
     fn an_equal_sighting_is_given_the_kept_nodes_id() {
-        assert!(given(|_| {}, (crate::window::desktop(), 0)));
+        assert!(given(|_| {}, (crate::window::desktop_window(), 0)));
     }
 
     #[test]
     fn a_sighting_at_another_child_id_is_not_given_the_id() {
-        assert!(!given(|_| {}, (crate::window::desktop(), 4)));
+        assert!(!given(|_| {}, (crate::window::desktop_window(), 4)));
     }
 
     #[test]
     fn a_sighting_with_another_event_child_id_is_not_given_the_id() {
         assert!(!given(
             |mine| mine.event.2 = 4,
-            (crate::window::desktop(), 0)
+            (crate::window::desktop_window(), 0)
         ));
     }
 
     #[test]
     fn a_sighting_in_another_window_is_not_given_the_id() {
-        assert!(!given(|_| {}, (crate::window::desktop() + 1, 0)));
+        assert!(!given(|_| {}, (crate::window::desktop_window() + 1, 0)));
     }
 
     #[test]
     fn a_sighting_with_another_identity_string_is_not_given_the_id() {
         assert!(!given(
             |mine| mine.identity = Some(Some(vec![9])),
-            (crate::window::desktop(), 0)
+            (crate::window::desktop_window(), 0)
         ));
     }
 
@@ -324,7 +324,7 @@ mod tests {
     fn a_sighting_with_another_raw_role_is_not_given_the_id() {
         assert!(!given(
             |mine| mine.raw_role = Some(20),
-            (crate::window::desktop(), 0)
+            (crate::window::desktop_window(), 0)
         ));
     }
 
@@ -334,7 +334,7 @@ mod tests {
     fn a_candidate_gives_its_id_at_most_once() {
         let (registry, id) = kept(facts());
         let candidates = Candidates::new(vec![vec![id]]);
-        let window = (crate::window::desktop(), 0);
+        let window = (crate::window::desktop_window(), 0);
         let given = [
             compared(&registry, &candidates, window, &facts()),
             compared(&registry, &candidates, window, &facts()),

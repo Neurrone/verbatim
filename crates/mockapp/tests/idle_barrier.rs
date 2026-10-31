@@ -21,7 +21,8 @@ use verbatim_model::{
     CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextPosition,
     TextReply, TextUnit,
 };
-use verbatim_outpost::{Heard, OutpostOptions};
+use verbatim_outpost::Heard;
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 

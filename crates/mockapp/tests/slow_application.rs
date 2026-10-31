@@ -21,7 +21,7 @@ use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, OutpostToCore};
 use verbatim_model::{NormalizedEvent, TraceId};
 use verbatim_outpost::Outpost;
-use verbatim_outpost::protocol::read_message;
+use verbatim_process::message::read_message;
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 

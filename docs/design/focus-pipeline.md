@@ -1,6 +1,6 @@
 # How events reach Verbatim and are processed: a design aligned with NVDA
 
-Status: built. This document keeps the problem, the options weighed, the reasons for the choices and their limits. The mechanism is described in `docs/crates/verbatim-outpost.md` ("The hand-over of an application's MSAA events", "A UIA focus, judged and read by the listener", the spare outposts, the intake and the worker), `docs/crates/verbatim-uia.md` (registrations, time limits, the probe) and `docs/crates/verbatim-core.md` (the duplicate rule and acceptance). The experiments behind it are under `experiments/`, chiefly `mockapp-experiments-2026-10-10/`, `elements-cannot-be-passed-to-another-process/`, `focus-events-cannot-be-limited-to-one-application/`, `a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/` and `windows-terminal-raises-focus-from-a-second-runtime-identity/`; the UIA defects they found are in `docs/uia-bugs.md`. Section numbers are cited from code and other documents, so they are kept stable.
+Status: built. This document keeps the problem, the options weighed, the reasons for the choices and their limits. The mechanism is described in `docs/crates/verbatim-outpost.md` ("The hand-over of an application's MSAA events", the intake and the worker), `docs/crates/verbatim-listener.md` ("How a UIA focus is judged and read"), `docs/crates/verbatim-supervisor.md` (the spare outposts), `docs/crates/verbatim-uia.md` (registrations, time limits, the probe) and `docs/crates/verbatim-core.md` (the duplicate rule and acceptance). The experiments behind it are under `experiments/`, chiefly `mockapp-experiments-2026-10-10/`, `elements-cannot-be-passed-to-another-process/`, `focus-events-cannot-be-limited-to-one-application/`, `a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/` and `windows-terminal-raises-focus-from-a-second-runtime-identity/`; the UIA defects they found are in `docs/uia-bugs.md`. Section numbers are cited from code and other documents, so they are kept stable.
 
 ## 1. The problem
 
@@ -124,7 +124,7 @@ The listener holds the one desktop-wide UIA focus handler, with NVDA's base cach
 
 ### 12.2 Threads and their lifecycle
 
-A reading thread is created on its application's first UIA focus event, in COM's multithreaded apartment, and ends when its application's outpost ends (section 16.6). It never adds or removes a handler, so Microsoft's rule that one thread makes the registrations is kept. Each has a watchdog: a read past its deadline, or a focus read the user has moved on from after half a second, is reported dropped and a new thread takes the application's later events; an application whose abandoned threads reach a small cap gets no new thread until one returns (`docs/crates/verbatim-outpost.md`).
+A reading thread is created on its application's first UIA focus event, in COM's multithreaded apartment, and ends when its application's outpost ends (section 16.6). It never adds or removes a handler, so Microsoft's rule that one thread makes the registrations is kept. Each has a watchdog: a read past its deadline, or a focus read the user has moved on from after half a second, is reported dropped and a new thread takes the application's later events; an application whose abandoned threads reach a small cap gets no new thread until one returns (`docs/crates/verbatim-listener.md`).
 
 ### 12.3 How a slow application is contained, and D13
 
@@ -196,7 +196,7 @@ The first build of option (b) failed many scenarios. Most failures had one cause
 
 ### 16.2 The acceptance test against the nearest window
 
-The listener's reading thread makes NVDA's acceptance test, after the repeat check and before the read, against the element's own window or, one call, its nearest ancestor's (`verbatim_uia::nearest_window_handle`, NVDA's `getNearestWindowHandle`), using the outpost's port of the test (`outpost::acceptance`, defined once for both) (Dickson, 2026-10-11). An element with no window in its chain, or whose walk to one fails, is dropped, as NVDA makes no object for it. A focus that fails is dropped and never becomes the last accepted focus. The outpost does not test a UIA focus; it keeps the test for every other event.
+The listener's reading thread makes NVDA's acceptance test, after the repeat check and before the read, against the element's own window or, one call, its nearest ancestor's (`verbatim_uia::nearest_window_handle`, NVDA's `getNearestWindowHandle`), using the outpost's port of the test (`verbatim_reader_rules::acceptance`, defined once for both) (Dickson, 2026-10-11). An element with no window in its chain, or whose walk to one fails, is dropped, as NVDA makes no object for it. A focus that fails is dropped and never becomes the last accepted focus. The outpost does not test a UIA focus; it keeps the test for every other event.
 
 ### 16.3 Repeated focus, judged as NVDA judges it
 

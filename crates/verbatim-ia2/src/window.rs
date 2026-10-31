@@ -1,10 +1,9 @@
-//! Safe wrappers over the Win32 window functions and window messages the
-//! MSAA client uses, with window handles as `isize` (zero for none).
+//! Safe wrappers over the window messages the MSAA client sends, with
+//! window handles as `isize` (zero for none), beside the local window
+//! functions it shares with the other roles (`verbatim_win32::window`),
+//! re-exported here.
 //!
-//! The local window functions (`IsWindow`, `GetClassNameW`, `GetAncestor`,
-//! `GetWindow`, and the rest) tolerate any handle value, failing on one that
-//! names no window, and are not counted (`docs/performance.md`, "What counts
-//! as a call"). The list view and tree view messages are sent with
+//! The list view and tree view messages are sent with
 //! `SendMessageTimeoutW`, giving up after [`MESSAGE_TIMEOUT_MS`] or at once
 //! when the owning application is hung, as the list view's and the edit
 //! control's own messages are (`docs/design/focus-pipeline.md`, section
@@ -19,128 +18,25 @@
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{
     CCM_GETVERSION, LVM_GETITEMCOUNT, TVIS_STATEIMAGEMASK, TVM_GETITEMSTATE, TVM_GETNEXTITEM,
     TVM_MAPACCIDTOHTREEITEM, TVM_MAPHTREEITEMTOACCID,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
-use windows::Win32::UI::WindowsAndMessaging::{
-    ES_MULTILINE, GA_PARENT, GET_WINDOW_CMD, GWL_STYLE, GetAncestor, GetClassNameW,
-    GetDesktopWindow, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, IsChild, IsWindow, IsWindowVisible, SMTO_ABORTIFHUNG, SMTO_BLOCK,
-    SendMessageTimeoutW,
-};
+use windows::Win32::UI::WindowsAndMessaging::{SMTO_ABORTIFHUNG, SMTO_BLOCK, SendMessageTimeoutW};
 
 use verbatim_model::CallKind;
 
 use crate::calls::count;
 
+pub(crate) use verbatim_win32::window::{
+    desktop_window, is_child, is_enabled, is_multiline_edit, parent, rect, related, style,
+    top_child, window_class_name, window_exists, window_is_visible, window_thread,
+};
+
 /// The `HWND` for a handle value.
 fn handle(hwnd: isize) -> HWND {
     HWND(hwnd as *mut c_void)
-}
-
-/// Whether `hwnd` still names a window.
-pub(crate) fn exists(hwnd: isize) -> bool {
-    // SAFETY: IsWindow tolerates any handle.
-    unsafe { IsWindow(Some(handle(hwnd))) }.as_bool()
-}
-
-/// Whether `hwnd` is a visible window; false for one that names no window.
-pub(crate) fn is_visible(hwnd: isize) -> bool {
-    // SAFETY: IsWindowVisible tolerates any handle.
-    unsafe { IsWindowVisible(handle(hwnd)) }.as_bool()
-}
-
-/// Whether `hwnd` is an enabled window; false for one that names no
-/// window.
-pub(crate) fn is_enabled(hwnd: isize) -> bool {
-    // SAFETY: IsWindowEnabled tolerates any handle.
-    unsafe { IsWindowEnabled(handle(hwnd)) }.as_bool()
-}
-
-/// Whether `child` is a window inside `parent`.
-pub(crate) fn is_child(parent: isize, child: isize) -> bool {
-    // SAFETY: IsChild tolerates any handles.
-    unsafe { IsChild(handle(parent), handle(child)) }.as_bool()
-}
-
-/// The desktop window.
-pub(crate) fn desktop() -> isize {
-    // SAFETY: GetDesktopWindow has no preconditions.
-    unsafe { GetDesktopWindow() }.0 as isize
-}
-
-/// The window's class name, empty when it has none or names no window.
-pub(crate) fn class_name(hwnd: isize) -> String {
-    let mut buffer = [0u16; 256];
-    // SAFETY: GetClassNameW writes at most the local buffer's length and
-    // returns the count written, zero for an invalid handle.
-    let len = unsafe { GetClassNameW(handle(hwnd), &mut buffer) };
-    let Ok(len) = usize::try_from(len) else {
-        return String::new();
-    };
-    String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
-}
-
-/// The thread that owns the window, 0 for a handle that names no window.
-pub(crate) fn thread_of(hwnd: isize) -> u32 {
-    // SAFETY: GetWindowThreadProcessId tolerates any handle, returning 0
-    // for an invalid one.
-    unsafe { GetWindowThreadProcessId(handle(hwnd), None) }
-}
-
-/// Whether the window is a standard or rich edit control made multi-line
-/// (`ES_MULTILINE`), which NVDA's edit control class reports as the
-/// multi-line state. Any class with "edit" in its name counts, so the
-/// Windows Forms and rich edit classes do too. Local.
-pub(crate) fn is_multiline_edit(hwnd: isize) -> bool {
-    if !class_name(hwnd).to_ascii_lowercase().contains("edit") {
-        return false;
-    }
-    // SAFETY: a local read of the window's style; any handle is tolerated.
-    let style = unsafe { GetWindowLongPtrW(handle(hwnd), GWL_STYLE) };
-    style & ES_MULTILINE as isize != 0
-}
-
-/// The window's style (`GWL_STYLE`), zero for one that names no window.
-/// Local.
-pub(crate) fn style(hwnd: isize) -> isize {
-    // SAFETY: a local read of the window's style; any handle is tolerated.
-    unsafe { GetWindowLongPtrW(handle(hwnd), GWL_STYLE) }
-}
-
-/// The window's rectangle in screen coordinates (`GetWindowRect`), `None`
-/// for one that names no window. Local.
-pub(crate) fn rect(hwnd: isize) -> Option<RECT> {
-    let mut rect = RECT::default();
-    // SAFETY: a local out-parameter; any handle is tolerated, failing.
-    unsafe { GetWindowRect(handle(hwnd), &raw mut rect) }.ok()?;
-    Some(rect)
-}
-
-/// The window's parent (`GA_PARENT`), zero for none.
-pub(crate) fn parent(hwnd: isize) -> isize {
-    // SAFETY: GetAncestor tolerates any handle.
-    unsafe { GetAncestor(handle(hwnd), GA_PARENT) }.0 as isize
-}
-
-/// The window's first child window in z-order (`GetTopWindow`), zero for
-/// none.
-pub(crate) fn top_child(hwnd: isize) -> isize {
-    // SAFETY: GetTopWindow tolerates any handle.
-    unsafe { GetTopWindow(Some(handle(hwnd))) }
-        .unwrap_or_default()
-        .0 as isize
-}
-
-/// The window related to `hwnd` by `command` (`GetWindow`), zero for none.
-pub(crate) fn related(hwnd: isize, command: GET_WINDOW_CMD) -> isize {
-    // SAFETY: GetWindow tolerates any handle, failing at an edge.
-    unsafe { GetWindow(handle(hwnd), command) }
-        .unwrap_or_default()
-        .0 as isize
 }
 
 /// How long a message waits for the window to answer: the list view's and

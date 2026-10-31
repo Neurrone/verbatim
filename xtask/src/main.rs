@@ -6,8 +6,8 @@
 //! text, which lists only `ci` and `docs`.
 //!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
-//! the two cannot drift. On every host it runs the platform-neutral
-//! dependency check and the scans that test code waits for evidence
+//! the two cannot drift. On every host it runs the check of the crate
+//! tiers (`xtask/src/tiers.rs`) and the scans that test code waits for evidence
 //! (`xtask/src/waits.rs`), that UIA caches are read through shapes alone
 //! (`xtask/src/shapes.rs`), and that the pure owners name nothing impure
 //! (`xtask/src/ownership.rs`), then the documentation check. On Windows it
@@ -77,6 +77,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 mod docs;
 mod ownership;
 mod shapes;
+mod tiers;
 mod waits;
 
 // The Windows-only commands' modules: each is gated whole, never single
@@ -99,25 +100,9 @@ mod trace;
 #[cfg(windows)]
 mod vm;
 
-/// The crates `CLAUDE.md`'s "NVDA provenance" section lists as
-/// platform-neutral. None of them may depend, directly or through another
-/// workspace crate, on the Windows bindings; `ci` checks their dependency
-/// trees for [`WINDOWS_BINDINGS`] so the boundary is a fact of the graph
-/// rather than a convention. Adding a crate to the neutral tier means
-/// adding it here.
-const PLATFORM_NEUTRAL_CRATES: &[&str] = &[
-    "verbatim-model",
-    "verbatim-core",
-    "verbatim-speech",
-    "verbatim-config",
-    "verbatim-i18n",
-    "verbatim-input",
-    "verbatim-audio",
-    "verbatim-text",
-];
-
 /// The crates `ci` lints and tests on a host other than Windows, each
-/// passed to cargo as `-p`: the platform-neutral tier and xtask itself, so
+/// passed to cargo as `-p`: the platform-neutral tier, the logic crates,
+/// and xtask itself, so
 /// the unit tests of the documentation check and the scans run there too
 /// (`docs/design/logic-foundations.md`, "xtask on Linux and the Linux
 /// job"). Every crate here must build on Linux, which GitHub's `ci-linux`
@@ -131,25 +116,11 @@ const LINUX_CRATES: &[&str] = &[
     "verbatim-input",
     "verbatim-audio",
     "verbatim-text",
+    "verbatim-reader-rules",
+    "verbatim-outpost-logic",
+    "verbatim-listener-logic",
     "xtask",
 ];
-
-/// The crates through which Verbatim reaches the Windows API, which no
-/// platform-neutral crate may reach by any path.
-const WINDOWS_BINDINGS: &[&str] = &["windows", "windows-core"];
-
-/// The raw Windows bindings, which no workspace crate in a platform-neutral
-/// crate's tree may depend on directly. Third-party libraries with
-/// target-gated `windows-sys` dependencies are cross-platform code, not a
-/// dependency on Windows, so `windows-sys` beneath them is allowed, as it is
-/// beneath the generated `workspace-hack` crate, which only unifies those
-/// libraries' features.
-const RAW_WINDOWS_BINDINGS: &[&str] = &["windows-sys"];
-
-/// The generated crate that unifies third-party features across the
-/// workspace (`docs/tooling/setup.md`), exempt from
-/// [`RAW_WINDOWS_BINDINGS`].
-const WORKSPACE_HACK: &str = "workspace-hack";
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -183,11 +154,11 @@ fn main() -> ExitCode {
             eprintln!("commands:");
             #[cfg(windows)]
             eprintln!(
-                "  ci    platform-neutral dependency check, source scans, documentation check, workspace-hack checks, rustfmt, and clippy and unit tests for the workspace, for the host's architecture"
+                "  ci    crate tier check, source scans, documentation check, workspace-hack checks, rustfmt, and clippy and unit tests for the workspace, for the host's architecture"
             );
             #[cfg(not(windows))]
             eprintln!(
-                "  ci    platform-neutral dependency check, source scans, documentation check, and clippy and unit tests for the crates in LINUX_CRATES (xtask/src/main.rs), for the host's architecture"
+                "  ci    crate tier check, source scans, documentation check, and clippy and unit tests for the crates in LINUX_CRATES (xtask/src/main.rs), for the host's architecture"
             );
             eprintln!(
                 "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
@@ -298,16 +269,16 @@ fn windows_terminal() -> ExitCode {
 }
 
 fn ci() -> ExitCode {
-    println!("xtask ci: platform-neutral dependency check");
-    if let Err(error) = check_platform_neutral_deps() {
-        eprintln!("xtask ci: step failed: platform-neutral dependency check\n{error}");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask lives in the workspace root");
+    println!("xtask ci: crate tiers");
+    if let Err(error) = tiers::check(root) {
+        eprintln!("xtask ci: step failed: crate tiers\n{error}");
         return ExitCode::FAILURE;
     }
 
     println!("xtask ci: waits in test code");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask lives in the workspace root");
     if let Err(error) = waits::check(root) {
         eprintln!("xtask ci: step failed: waits in test code\n{error}");
         return ExitCode::FAILURE;
@@ -414,98 +385,4 @@ fn other_host_steps() -> Vec<Step> {
     let mut test = args(&["test"]);
     test.extend(packages);
     vec![("clippy", clippy), ("unit tests", test)]
-}
-
-/// Fails if any of [`PLATFORM_NEUTRAL_CRATES`] has one of
-/// [`WINDOWS_BINDINGS`] anywhere in its normal (non-dev, non-build)
-/// dependency tree for any target, or a workspace crate in that tree
-/// other than [`WORKSPACE_HACK`] depends directly on one of
-/// [`RAW_WINDOWS_BINDINGS`]. It also fails if cargo tree does not list the
-/// neutral crate itself as a workspace crate, since the second rule would
-/// then pass whatever the tree held. The error names every offending crate and
-/// binding so one run reports the whole problem.
-fn check_platform_neutral_deps() -> Result<(), String> {
-    // The workspace root, the parent of this crate's directory; a crate
-    // whose source path lies under it is a workspace crate.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("xtask's directory has no parent")?
-        .to_string_lossy()
-        .into_owned();
-    let mut offences = Vec::new();
-    for crate_name in PLATFORM_NEUTRAL_CRATES {
-        let output = Command::new(env!("CARGO"))
-            .args([
-                "tree", "-p", crate_name, "-e", "normal", "--prefix", "depth",
-                // Every target's graph, not the host's, so the check reads
-                // the same graph and gives the same answer on every host:
-                // on Linux the host's graph would leave out a dependency
-                // gated on `cfg(windows)`. `cargo tree` builds nothing.
-                "--target", "all",
-            ])
-            .output()
-            .map_err(|error| format!("could not run cargo tree for {crate_name}: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "cargo tree for {crate_name} failed ({}):\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let tree = str::from_utf8(&output.stdout)
-            .map_err(|error| format!("cargo tree output for {crate_name} is not UTF-8: {error}"))?;
-        // Each line is the depth, then "name vX.Y.Z (source)"; the crate on
-        // the line above at one less depth is the one that depends on it.
-        // `ancestors[depth]` is the latest crate seen at each depth, with
-        // whether it is a workspace crate.
-        let mut ancestors: Vec<(&str, bool)> = Vec::new();
-        // The neutral crate itself, at depth 0, must be recognised as a
-        // workspace crate, or a change in how cargo tree writes paths would
-        // make every workspace crate look external and the rule pass.
-        let mut root_recognised = false;
-        for line in tree.lines() {
-            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
-            let Ok(depth) = line[..digits].parse::<usize>() else {
-                continue;
-            };
-            let rest = &line[digits..];
-            let Some(name) = rest.split_whitespace().next() else {
-                continue;
-            };
-            let in_workspace = rest.contains(&format!("({root}{}", std::path::MAIN_SEPARATOR));
-            if depth == 0 && name == *crate_name && in_workspace {
-                root_recognised = true;
-            }
-            if WINDOWS_BINDINGS.contains(&name) {
-                offences.push(format!("{crate_name} depends on {name}"));
-            }
-            if RAW_WINDOWS_BINDINGS.contains(&name)
-                && let Some(&(parent, true)) = depth.checked_sub(1).and_then(|up| ancestors.get(up))
-                && parent != WORKSPACE_HACK
-            {
-                offences.push(format!(
-                    "{crate_name} depends on {name} through {parent}, a workspace crate"
-                ));
-            }
-            ancestors.truncate(depth);
-            ancestors.push((name, in_workspace));
-        }
-        if !root_recognised {
-            return Err(format!(
-                "cargo tree for {crate_name} did not list it as a workspace crate under {root}, \
-                 so the check cannot tell workspace crates apart:\n{tree}"
-            ));
-        }
-    }
-    if offences.is_empty() {
-        Ok(())
-    } else {
-        offences.sort();
-        offences.dedup();
-        Err(format!(
-            "platform-neutral crates must not depend on the Windows bindings \
-             (see the NVDA provenance section of CLAUDE.md):\n  {}",
-            offences.join("\n  ")
-        ))
-    }
 }

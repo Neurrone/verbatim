@@ -412,7 +412,7 @@ pub enum FocusText {
 /// keeps while it handles everything else. A watch that ends with none of
 /// them holding, because the next caret key's watch replaced it, the focus
 /// moved, or the bound on a watch's age that only frees it passed
-/// (`verbatim-outpost`'s `CARET_WATCH_BOUND`), is answered
+/// (`verbatim-outpost-logic`'s `CARET_WATCH_BOUND`), is answered
 /// [`TextReply::WatchEnded`], and nothing is spoken: a key that does not
 /// move the caret is silent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

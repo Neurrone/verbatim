@@ -35,6 +35,7 @@ use std::time::Duration;
 
 use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
+use verbatim_listener_logic::focus::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, UiaFocusRead,
     UiaSnapshotFact, WinEventStamp,
@@ -44,8 +45,8 @@ use verbatim_model::{
     NodeSnapshot, NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent,
     State, StateSet, TextFormat, TraceId, WindowHandle,
 };
-use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
-use verbatim_outpost::{Heard, OutpostOptions};
+use verbatim_outpost::Heard;
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Cached, ListenerEvent, ListenerSelection, Part, RAW_PROBE_TIMEOUT_MS, Registration,
     Subscription, Uia,
@@ -2819,7 +2820,7 @@ fn a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache(
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element: &Cached<ListenerSelection>| {
                 let captured =
-                    verbatim_outpost::listener::capture_selection(element, &element.read())
+                    verbatim_listener::listener::capture_selection(element, &element.read())
                         .expect("mockapp's element has its process");
                 let agile = element.agile().expect("an agile reference");
                 // The test may have finished.
@@ -3398,7 +3399,7 @@ const STUCK_PARENT_MS: u32 = 3000;
 /// application's next focus, "Second", whose whole chain is its outcome,
 /// and nothing else is said of "First".
 fn a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded() {
-    use verbatim_outpost::focus_read::ReadingThreads;
+    use verbatim_listener::focus_read::ReadingThreads;
     let title = common::unique_title("mockapp-bound-stuck");
     let mut app = common::spawn("tree.json", "uia", &title);
     let hwnd = common::find_window(&title);

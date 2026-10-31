@@ -85,7 +85,7 @@ The end-to-end harness's hooks (private `harness` module):
 
 - Ignored processes: when launched with `VERBATIM_IGNORE_PIDS` naming
   pids, separated by commas, Verbatim holds those processes open and
-  ignores them entirely (`verbatim_outpost::supervisor::IgnoredProcesses`,
+  ignores them entirely (`verbatim_process::held::IgnoredProcesses`,
   handed to `Supervisor::new`): no outpost is started for one, the focus
   listener drops their facts, the shell never asks one for its focus (a
   foreground read naming one is passed over), and a focus reported in one
@@ -420,7 +420,7 @@ knowing for review:
   console's client whose console window is in front goes to the console
   host's outpost even before it has reported for the console: Core finds
   the host locally (`focus_now_server`, through
-  `verbatim_outpost::provider_process`), so the client's own outpost, which
+  `verbatim_win32::provider::provider_process`), so the client's own outpost, which
   serves none of the console window, is never asked for it. When the host
   cannot be read from the client, such as for a client run as another
   user, the window has no provider process and no outpost is asked. When the supervisor reports
@@ -598,7 +598,7 @@ knowing for review:
   (`NotWatched`), when no outpost is ready six seconds after the request,
   when no answer has come six seconds after the query was sent, or when
   the request is dropped anywhere on its way (`wanted::SHELL_ITEMS_DEADLINE`: the
-  outpost's own deadline for the walk, `verbatim_outpost::protocol::WALK_DEADLINE`,
+  outpost's own deadline for the walk, `verbatim_model::protocol::WALK_DEADLINE`,
   and a second for the way through the pipes, so that Core gives up only
   after the outpost's deadline has run out and what it read by then
   reaches the dialog). The requests still waiting for an

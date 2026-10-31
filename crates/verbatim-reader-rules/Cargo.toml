@@ -1,0 +1,14 @@
+[package]
+name = "verbatim-reader-rules"
+description = "What both readers apply before reading: NVDA's class verdict and acceptance test, and the waits they share"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+verbatim-core.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[lints]
+workspace = true

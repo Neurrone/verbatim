@@ -23,9 +23,20 @@
 //!
 //! The [`session`] module reads the calling process's own session, which
 //! Verbatim and the test agent check before starting.
+//!
+//! What every end of Core's children shares lives here too: the message
+//! layer over the transport ([`message`]), the launch arguments
+//! ([`arguments`]), the processes held open by handle ([`held`]), a
+//! child's start and end ([`child`]), and the alarm a thread waits on
+//! ([`alarm`]).
 
+pub mod alarm;
+pub mod arguments;
+pub mod child;
 pub mod clock;
 pub mod event;
+pub mod held;
+pub mod message;
 pub mod overlapped;
 pub mod port_queue;
 pub mod scheduling;

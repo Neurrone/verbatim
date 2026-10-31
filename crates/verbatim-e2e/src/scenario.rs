@@ -98,8 +98,16 @@ const QUIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// before it exits, and its synthesizer host ends with its job at once.
 const JOB_EMPTY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// The executable of Verbatim's outposts and its focus listener.
-const OUTPOST_IMAGE: &str = "verbatim-outpost.exe";
+/// The executables of Verbatim's children that the supervisor ends: its
+/// outposts' and its focus listener's.
+const CHILD_IMAGES: [&str; 2] = ["verbatim-outpost.exe", "verbatim-listener.exe"];
+
+/// Whether `image` is one of [`CHILD_IMAGES`].
+fn is_child_image(image: &str) -> bool {
+    CHILD_IMAGES
+        .iter()
+        .any(|child| image.eq_ignore_ascii_case(child))
+}
 
 /// The folder Windows Error Reporting writes crash dumps of Verbatim's
 /// processes into, once `vm\scripts\Enable-VerbatimCrashDumps.ps1` has
@@ -108,9 +116,10 @@ const OUTPOST_IMAGE: &str = "verbatim-outpost.exe";
 pub const CRASH_DUMP_FOLDER: &str = r"C:\ProgramData\Verbatim\CrashDumps";
 
 /// The images whose crash dumps the harness collects.
-const VERBATIM_IMAGES: [&str; 3] = [
+const VERBATIM_IMAGES: [&str; 4] = [
     "verbatim.exe",
     "verbatim-outpost.exe",
+    "verbatim-listener.exe",
     "verbatim-synth-host.exe",
 ];
 
@@ -160,14 +169,16 @@ pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 
 /// The tracing filter every scenario's Verbatim logs with unless
 /// [`RUST_LOG_ENV`] says otherwise: everything at info, and the outposts'
-/// and the focus listener's debug lines, so a failed run's artifacts say
+/// and the focus listener's debug lines, their logic crates' among them,
+/// since a directive matches its target as a prefix, and the supervisor's,
+/// so a failed run's artifacts say
 /// what each outpost read and when, what it released, and what the listener
 /// reported, not only what the flight recorder kept; every move of a UIA
 /// subscription, with each call it made and its result
 /// (`docs/design/focus-pipeline.md`, section 17); and the arrival of every
 /// UIA event and `WinEvent` in each process, a `WinEvent` with how long
 /// ago it was raised, so a delay before an event reached Verbatim shows.
-pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
+pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
 
 /// Enforces one live Verbatim instance at a time within this process; the
 /// tests also run with `--test-threads=1`.
@@ -1826,7 +1837,8 @@ impl Scenario {
 
     /// Checks, once Verbatim has quit, that it left no outpost or focus
     /// listener behind and that every one shut down cleanly rather than
-    /// being killed: each `verbatim-outpost.exe` process of its job, but
+    /// being killed: each `verbatim-outpost.exe` and `verbatim-listener.exe`
+    /// process of its job, but
     /// one the scenario ended on purpose, exited with code 0, not
     /// abnormally, and before Verbatim itself did. A child Verbatim's
     /// supervisor had to kill exits with `verbatim_process::KILLED_EXIT_CODE`;
@@ -1845,9 +1857,7 @@ impl Scenario {
         let mut problems = Vec::new();
         let mut outposts = 0;
         for (index, exit) in exits.iter().enumerate() {
-            if !exit.image.eq_ignore_ascii_case(OUTPOST_IMAGE)
-                || self.expected_exits.contains(&exit.pid)
-            {
+            if !is_child_image(&exit.image) || self.expected_exits.contains(&exit.pid) {
                 continue;
             }
             outposts += 1;
@@ -2108,10 +2118,12 @@ impl Scenario {
     /// The outposts that crashed during the run, read from the exits the
     /// agent recorded for Verbatim's job once Verbatim has exited and
     /// [`Scenario::collect_run_artifacts`] has copied the crash dumps into
-    /// `dir`: every `verbatim-outpost.exe` the scenario did not end on
+    /// `dir`: every `verbatim-outpost.exe` or `verbatim-listener.exe` the
+    /// scenario did not end on
     /// purpose whose exit Windows called abnormal or whose exit code is an
     /// exception code, each with the copy of its dump in `dir` when Windows
-    /// Error Reporting wrote one (`verbatim-outpost.exe.<pid>.dmp`). Each is
+    /// Error Reporting wrote one (`<image>.<pid>.dmp`, such as
+    /// `verbatim-outpost.exe.4242.dmp`). Each is
     /// also one of [`Scenario::unexpected_exits`], so a crash fails the
     /// scenario as well as being counted here.
     ///
@@ -2124,12 +2136,12 @@ impl Scenario {
         Ok(exits
             .into_iter()
             .filter(|exit| {
-                exit.image.eq_ignore_ascii_case(OUTPOST_IMAGE)
+                is_child_image(&exit.image)
                     && !self.expected_exits.contains(&exit.pid)
                     && (exit.abnormal || exit.exit_code.is_some_and(is_exception_code))
             })
             .map(|exit| {
-                let name = format!("{OUTPOST_IMAGE}.{}.dmp", exit.pid);
+                let name = format!("{}.{}.dmp", exit.image, exit.pid);
                 OutpostCrash {
                     pid: exit.pid,
                     exit_code: exit.exit_code,
@@ -2743,7 +2755,8 @@ fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> 
         .ok_or_else(|| io::Error::other("stderr log path is not valid UTF-8"))
 }
 
-/// Builds `verbatim-app` and `verbatim-outpost` (debug profile, the default
+/// Builds `verbatim-app`, `verbatim-outpost` and `verbatim-listener` (debug
+/// profile, the default
 /// source build [`verbatim_exe_path`] resolves to) once per test process.
 ///
 /// `cargo test -p verbatim-e2e` builds only this crate and its library
@@ -2772,6 +2785,8 @@ fn build_default_source_binaries() -> io::Result<()> {
                     "-p",
                     "verbatim-outpost",
                     "-p",
+                    "verbatim-listener",
+                    "-p",
                     "verbatim-synth-host",
                     "-p",
                     "mockapp",
@@ -2783,8 +2798,8 @@ fn build_default_source_binaries() -> io::Result<()> {
                 Ok(())
             } else {
                 Err(format!(
-                    "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host \
-                     -p mockapp failed ({status}); set \
+                    "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-listener \
+                     -p verbatim-synth-host -p mockapp failed ({status}); set \
                      {VERBATIM_EXE_ENV} to stage an existing build instead"
                 ))
             }
@@ -2793,17 +2808,18 @@ fn build_default_source_binaries() -> io::Result<()> {
         .map_err(io::Error::other)
 }
 
-/// Copies `verbatim.exe` and `verbatim-outpost.exe` from `source_dir` (the
+/// Copies `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-listener.exe`
+/// and the rest of [`STAGED_BINARIES`] from `source_dir` (the
 /// directory [`verbatim_exe_path`] resolved — the ordinary build output, or
 /// [`VERBATIM_EXE_ENV`]'s override directory) into the fixed staging
 /// directory `target/e2e-stage` under the workspace root, and returns that
 /// staging directory.
 ///
-/// The outpost binary must come along, not just `verbatim.exe`:
-/// `verbatim_outpost::supervisor::Supervisor::new` resolves it next to
-/// whatever `verbatim.exe` is actually running as (`std::env::current_exe`),
-/// so once the launched copy lives in the staging directory, the outpost
-/// must live there too or the supervisor cannot find it.
+/// The outpost and listener binaries must come along, not just
+/// `verbatim.exe`: `verbatim_supervisor::Supervisor::new` resolves both next
+/// to whatever `verbatim.exe` is actually running as
+/// (`std::env::current_exe`), so once the launched copy lives in the staging
+/// directory, they must live there too or the supervisor cannot find them.
 ///
 /// A file already staged with matching contents is left alone rather than
 /// re-copied (see [`files_match`]) — the common case in a tight edit-test
@@ -2832,13 +2848,15 @@ pub fn stage_directory() -> PathBuf {
     workspace_root().join("target").join("e2e-stage")
 }
 
-/// The executables a run needs side by side: the app finds the outpost and
-/// the synthesizer host next to itself, and a scenario reading scripted text
+/// The executables a run needs side by side: the app finds the outpost, the
+/// listener and the synthesizer host next to itself, and a scenario reading
+/// scripted text
 /// launches `mockapp` from the run's directory
 /// ([`Scenario::run_directory`]).
-const STAGED_BINARIES: [&str; 4] = [
+const STAGED_BINARIES: [&str; 5] = [
     "verbatim.exe",
     "verbatim-outpost.exe",
+    "verbatim-listener.exe",
     "verbatim-synth-host.exe",
     "mockapp.exe",
 ];
@@ -3407,6 +3425,8 @@ mod tests {
         fs::write(source_dir.join("verbatim.exe"), b"verbatim v1").expect("seed verbatim.exe");
         fs::write(source_dir.join("verbatim-outpost.exe"), b"outpost v1")
             .expect("seed verbatim-outpost.exe");
+        fs::write(source_dir.join("verbatim-listener.exe"), b"listener v1")
+            .expect("seed verbatim-listener.exe");
         fs::write(source_dir.join("verbatim-synth-host.exe"), b"host v1")
             .expect("seed verbatim-synth-host.exe");
         fs::write(source_dir.join("mockapp.exe"), b"mockapp v1").expect("seed mockapp.exe");
@@ -3432,6 +3452,10 @@ mod tests {
         assert_eq!(
             fs::read(stage_dir.join("verbatim-outpost.exe")).expect("read staged outpost"),
             b"outpost v1"
+        );
+        assert_eq!(
+            fs::read(stage_dir.join("verbatim-listener.exe")).expect("read staged listener"),
+            b"listener v1"
         );
         assert_eq!(
             fs::read(stage_dir.join(ESPEAK_DATA).join("voices").join("en"))

@@ -30,9 +30,9 @@ use verbatim_model::{
     NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, StateSet, TerminalScope,
     TerminalSnapshot, TextOp, TextReply, TraceId,
 };
-use verbatim_outpost::protocol::now_us;
 use verbatim_outpost::terminal::{Terminal, read};
 use verbatim_outpost::text::uia::UiaText;
+use verbatim_process::clock::now_us;
 use verbatim_uia::Uia;
 use verbatim_uia_rops::CaretLineQuery;
 use windows::Win32::Foundation::HWND;

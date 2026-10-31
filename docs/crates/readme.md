@@ -41,7 +41,9 @@ changed crate's own guide leaves those claims stale.
   synthesizer.
 - [verbatim-process](verbatim-process.md) — contained child processes:
   kill-on-close jobs, inherited pipes, and per-launch child logs; unnamed
-  overlapped pipes and a completion port; and thread priorities.
+  overlapped pipes and a completion port; thread priorities; and what
+  every end of Core's children shares: the message layer, the launch
+  arguments, the held processes, a child's start and end, and the alarm.
 - [verbatim-trace-waits](verbatim-trace-waits.md) — how long threads
   waited to run, from a WPR trace (`cargo xtask trace waits`).
 - [verbatim-term-sim](verbatim-term-sim.md) — a simulated terminal for the
@@ -55,13 +57,27 @@ changed crate's own guide leaves those claims stale.
   one synthesizer in its own process.
 - [verbatim-core](verbatim-core.md) — the pure reducer, flight recorder,
   and dump format.
+- [verbatim-reader-rules](verbatim-reader-rules.md) — what both readers
+  apply before reading: NVDA's class verdict and acceptance test, and the
+  waits they share.
+- [verbatim-outpost-logic](verbatim-outpost-logic.md) — the outpost's
+  reducer, a pure state machine.
+- [verbatim-listener-logic](verbatim-listener-logic.md) — the focus
+  listener's read scheduler, menu end's grace, foreground watch and focus
+  vocabulary, pure.
+- [verbatim-win32](verbatim-win32.md) — the local window and process
+  queries more than one role makes.
 - [verbatim-uia](verbatim-uia.md) — the UIA client stack.
 - [verbatim-uia-rops](verbatim-uia-rops.md) — UIA remote operations:
   programs that run inside a provider's process, and the focus ancestry
   in one round trip.
 - [verbatim-ia2](verbatim-ia2.md) — the MSAA/IA2 client stack.
-- [verbatim-outpost](verbatim-outpost.md) — per-app outposts, the focus
-  listener (D13), the supervisor, and their protocol.
+- [verbatim-outpost](verbatim-outpost.md) — the per-application outpost
+  process.
+- [verbatim-listener](verbatim-listener.md) — the focus listener process
+  (D13).
+- [verbatim-supervisor](verbatim-supervisor.md) — Core's side of starting,
+  watching and ending the outposts and the listener.
 - [mockapp](mockapp.md) — scripted accessibility providers for
   cross-process tests.
 - [verbatim-control](verbatim-control.md) — the control-plane protocol and

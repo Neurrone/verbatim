@@ -29,16 +29,16 @@ use verbatim_model::TraceId;
 use verbatim_model::protocol::{EventTiming, GapAnswer, OutpostToCore, QueryOutcome, Responder};
 use verbatim_uia::{Agile, Kept};
 
-use super::alarm::Alarm;
 use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Change, Cut, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program, Reducer,
-    Request, Source, Subscription, Verdicts, Work,
+    Asker, Change, Cut, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program,
+    Reducer, Request, Source, Subscription, VerdictChange, Verdicts,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
 use super::{Context, RequestContext};
+use verbatim_process::alarm::Alarm;
 
 /// Times the gap record's bound in place of the reducer's own timer: for a
 /// test that says when the bound is reached rather than waiting for it
@@ -64,7 +64,7 @@ pub(super) enum Posted {
         source: Source,
         read_answer: Option<GapAnswer>,
     },
-    /// `Outpost::settle`, answered on `0` once handled.
+    /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
     /// The outpost's hook is in.
     Hooked,
@@ -74,6 +74,12 @@ pub(super) enum Posted {
     ForwardingEnded(u32),
     /// Core withdraws a query.
     Cancel(u64),
+    /// A verdict a program of generation `generation` made, posted alone,
+    /// and taken after the mailbox closes, as a commit is.
+    Verdict {
+        generation: u64,
+        change: VerdictChange,
+    },
     /// A program's commit.
     Commit {
         request: Request,
@@ -239,61 +245,11 @@ impl Garbage {
     }
 }
 
-/// Who waits on each settle, by its number, kept until the settle's
-/// program ends: a settle dispatched behind the console poll is dispatched
-/// again to the replacement if the poll is abandoned, and its worker is
-/// given the same waiter then as the first time.
-#[derive(Default)]
-struct Settles {
-    waiting: HashMap<u64, mpsc::Sender<()>>,
-    taken: u64,
-    /// The settle in flight, by the request of its program.
-    in_flight: Option<(Request, u64)>,
-}
-
-impl Settles {
-    /// Numbers a settle `done` waits on.
-    fn taken(&mut self, done: mpsc::Sender<()>) -> u64 {
-        self.taken += 1;
-        self.waiting.insert(self.taken, done);
-        self.taken
-    }
-
-    /// Settle `id` is dispatched as `request`: its worker's waiter. A
-    /// different settle still in flight was abandoned, so it is let go of.
-    fn dispatched(&mut self, request: Request, id: u64) -> Option<mpsc::Sender<()>> {
-        if let Some((_, previous)) = self.in_flight.replace((request, id))
-            && previous != id
-        {
-            self.waiting.remove(&previous);
-        }
-        self.waiting.get(&id).cloned()
-    }
-
-    /// `request`'s program ended: if it was a settle's, the settle is
-    /// done.
-    fn finished(&mut self, request: Request) {
-        if let Some((_, id)) = self.in_flight.take_if(|(settle, _)| *settle == request) {
-            self.waiting.remove(&id);
-        }
-    }
-
-    /// Generation `generation` is in charge: a settle in flight on another,
-    /// abandoned and not dispatched again, is let go of.
-    fn in_charge(&mut self, generation: u64) {
-        if let Some((_, id)) = self
-            .in_flight
-            .take_if(|(settle, _)| settle.generation != generation)
-        {
-            self.waiting.remove(&id);
-        }
-    }
-}
-
 /// A worker generation the shell started.
 struct Generation {
-    /// Its inbox: dropping it closes the inbox and rings its doorbell.
-    jobs: super::inbox::Sender<Job>,
+    /// Its inbox: dropping it closes the inbox, which ends the worker once
+    /// it has taken what was sent before.
+    jobs: crossbeam_channel::Sender<Job>,
     charge: Arc<Charge>,
 }
 
@@ -303,7 +259,13 @@ pub(super) struct Shell {
     reducer: Reducer,
     /// The reply tokens of the queries the reducer records, by request id.
     tokens: HashMap<u64, Responder<OutpostToCore>>,
-    settles: Settles,
+    /// Who waits on each test's settle, by its number: kept while the
+    /// settle waits in the intake ([`Reducer::settles`]), answered as the
+    /// reducer reaches it, and dropped as the outpost closes, which ends
+    /// the wait too.
+    settles: HashMap<u64, mpsc::Sender<()>>,
+    /// The last settle numbered.
+    settles_taken: u64,
     /// The elements the subscription follows, by token.
     elements: Elements,
     garbage: Garbage,
@@ -347,11 +309,11 @@ struct ShellLocals<'a> {
 
 impl Locals for ShellLocals<'_> {
     fn window_is_hung(&self, hwnd: isize) -> bool {
-        super::window::window_is_hung(hwnd)
+        verbatim_win32::window::window_is_hung(hwnd)
     }
 
     fn moved_on(&self, window: isize) -> bool {
-        super::window::front_is_another_thread_of_its_application(window)
+        verbatim_win32::window::front_is_another_thread_of_its_application(window)
     }
 
     fn publication(&mut self, request: Request, facts: &Facts) -> Option<Change> {
@@ -384,10 +346,9 @@ pub(super) fn tag_of(request: Request) -> Tag {
 }
 
 /// The change the reducer is given for `effects`, a commit of `request`:
-/// for a commit it accepts, its writes made ([`write`]); for any other,
-/// only the verdicts the reducer records from any request, its writes not
-/// made and its objects let go of into `garbage`. `None` when the reducer
-/// is given nothing.
+/// for a commit it accepts, its writes made ([`write`]). Any other is
+/// refused whole, `None`: its writes are not made and its objects are let
+/// go of into `garbage`.
 fn admit(
     store: &Store,
     reducer: &Reducer,
@@ -398,13 +359,8 @@ fn admit(
     if reducer.accepts(request) {
         return Some(write(store, tag_of(request), effects, elements, garbage));
     }
-    let mut effects = effects;
-    let verdicts = std::mem::take(&mut effects.verdicts);
     discard(effects, garbage);
-    (!verdicts.is_empty()).then(|| Change {
-        verdicts,
-        ..Change::default()
-    })
+    None
 }
 
 /// Lets go of what a refused commit holds into `garbage`.
@@ -520,7 +476,8 @@ impl Shell {
             context: Arc::clone(context),
             reducer: Reducer::new(),
             tokens: HashMap::new(),
-            settles: Settles::default(),
+            settles: HashMap::new(),
+            settles_taken: 0,
             elements: Elements::default(),
             garbage: Garbage::default(),
             generations: HashMap::new(),
@@ -536,11 +493,10 @@ impl Shell {
 
     /// Starts worker generation `generation`.
     fn spawn_worker(&mut self, generation: u64, warm: bool) {
-        let (jobs, receiver) = super::inbox::inbox();
+        let (jobs, receiver) = crossbeam_channel::unbounded();
         let charge = Arc::new(Charge::default());
         let thread = worker::spawn(
             Arc::clone(&self.context),
-            generation,
             warm,
             receiver,
             Arc::clone(&charge),
@@ -556,7 +512,7 @@ impl Shell {
         Now {
             at: self.context.epoch.elapsed(),
             observed_us: self.context.observed_now(),
-            wall_us: crate::protocol::now_us(),
+            wall_us: verbatim_process::clock::now_us(),
         }
     }
 
@@ -633,22 +589,19 @@ impl Shell {
                 }
             }
             Posted::Settle(done) => {
-                let id = self.settles.taken(done);
-                let now = self.now();
-                Input::Entry {
-                    entry: Entry::own(Item::Settle(id), TraceId::mint(), now.wall_us),
-                    source: Source::Other,
-                    read_answer: None,
-                }
+                let Some(input) = self.settle(done) else {
+                    return;
+                };
+                input
             }
             Posted::Hooked => Input::Hooked,
             Posted::WithoutListener => Input::WithoutListener,
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
+            Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
-                // the reducer only the verdicts it records from any
-                // request, and its objects go to a worker.
+                // the reducer nothing, and its objects go to a worker.
                 let Some(change) = admit(
                     &self.context.store,
                     &self.reducer,
@@ -673,27 +626,48 @@ impl Shell {
                 reported,
                 panicked,
                 cut,
-            } => {
-                self.settles.finished(request);
-                Input::Finished {
-                    request,
-                    reported,
-                    panicked,
-                    cut,
-                }
-            }
+            } => Input::Finished {
+                request,
+                reported,
+                panicked,
+                cut,
+            },
             Posted::Returned => Input::Returned,
             Posted::GapTimerGiven => Input::GapTimerGiven,
             Posted::GapBound => Input::GapBound,
             Posted::Close => {
                 self.closing = true;
                 self.context.mailbox.close();
+                // The reducer drops every settle waiting, so `Outpost::settle`
+                // returns.
+                self.settles.clear();
                 Input::Close
             }
         };
         let now = self.now();
         let effects = self.with_locals(|reducer, locals| reducer.input(input, now, locals));
         self.apply(effects);
+    }
+
+    /// Numbers a test's settle that `done` waits on, and gives the reducer
+    /// its barrier; once the outpost is closing it is dropped, which
+    /// answers it.
+    fn settle(&mut self, done: mpsc::Sender<()>) -> Option<Input> {
+        if self.closing {
+            return None;
+        }
+        self.settles_taken += 1;
+        let id = self.settles_taken;
+        self.settles.insert(id, done);
+        let barrier = Item::Barrier {
+            asker: Asker::Settle(id),
+            behind_noted: false,
+        };
+        Some(Input::Entry {
+            entry: Entry::own(barrier, TraceId::mint(), self.now().wall_us),
+            source: Source::Other,
+            read_answer: None,
+        })
     }
 
     /// Applies the reducer's effects, in order.
@@ -762,6 +736,11 @@ impl Shell {
                 }
                 Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
                 Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
+                Effect::Settled(id) => {
+                    if let Some(done) = self.settles.remove(&id) {
+                        let _ = done.send(());
+                    }
+                }
                 // After the copy above, so the event thread decides on it.
                 Effect::Narrow => self
                     .context
@@ -784,9 +763,21 @@ impl Shell {
                 }
             }
         }
-        // A settle whose worker was abandoned and that was not dispatched
-        // again is let go of: `Outpost::settle` returns.
-        self.settles.in_charge(self.reducer.generation());
+        self.check_tables();
+    }
+
+    /// Checks, in debug builds, that the shell's tables match the
+    /// reducer's: a waiter for every settle waiting in the intake, and a
+    /// reply token for every query the reducer records, and no other.
+    fn check_tables(&self) {
+        debug_assert_eq!(
+            self.settles
+                .keys()
+                .copied()
+                .collect::<std::collections::BTreeSet<u64>>(),
+            self.reducer.settles(),
+            "a waiter for every settle waiting in the intake, and no other"
+        );
         debug_assert_eq!(
             self.tokens
                 .keys()
@@ -798,19 +789,10 @@ impl Shell {
     }
 
     /// Hands `program` to the worker in charge, with what the shell has let
-    /// go of for it to drop, and, for a settle, who waits on it.
+    /// go of for it to drop.
     fn dispatch(&mut self, program: Program) {
-        let settle = if let Work::Settle(id) = &program.work {
-            self.settles.dispatched(program.request, *id)
-        } else {
-            None
-        };
         let garbage = std::mem::take(&mut self.garbage);
-        let job = Job {
-            program,
-            garbage,
-            settle,
-        };
+        let job = Job { program, garbage };
         let request = job.program.request;
         let sent = match self.generations.get(&self.reducer.generation()) {
             Some(generation) => generation.jobs.send(job).is_ok(),
@@ -1066,66 +1048,5 @@ mod tests {
         .expect("the change of the program in flight");
         assert_eq!(admitted.text, vec![change]);
         assert!(store.tags_anchor(8));
-    }
-
-    /// A settle dispatched behind the console poll and dispatched again
-    /// after the poll's worker is abandoned gives the replacement the same
-    /// waiter: the dead worker's copy going does not end the wait, the
-    /// replacement's answer does, and its end lets the waiter go.
-    #[test]
-    fn a_settle_dispatched_again_keeps_its_waiter() {
-        let mut settles = Settles::default();
-        let (done, waits) = mpsc::channel();
-        let id = settles.taken(done);
-        let first = Request {
-            generation: 0,
-            number: 3,
-        };
-        let dead = settles.dispatched(first, id).expect("the waiter");
-        let again = Request {
-            generation: 1,
-            number: 4,
-        };
-        let given = settles.dispatched(again, id).expect("the same waiter");
-        settles.in_charge(1);
-        settles.finished(first);
-        drop(dead);
-        assert_eq!(waits.try_recv(), Err(mpsc::TryRecvError::Empty));
-        given.send(()).expect("the settle's waiter");
-        assert_eq!(waits.try_recv(), Ok(()));
-        drop(given);
-        settles.finished(again);
-        assert_eq!(waits.try_recv(), Err(mpsc::TryRecvError::Disconnected));
-    }
-
-    /// A settle abandoned on its generation and replaced by another settle
-    /// on the next lets its waiter go once its dead worker drops its copy.
-    #[test]
-    fn an_abandoned_settle_replaced_by_another_lets_its_waiter_go() {
-        let mut settles = Settles::default();
-        let (done_a, waits_a) = mpsc::channel();
-        let (done_b, _waits_b) = mpsc::channel();
-        let a = settles.taken(done_a);
-        let b = settles.taken(done_b);
-        let dead = settles
-            .dispatched(
-                Request {
-                    generation: 0,
-                    number: 3,
-                },
-                a,
-            )
-            .expect("a's waiter");
-        let _given = settles
-            .dispatched(
-                Request {
-                    generation: 1,
-                    number: 4,
-                },
-                b,
-            )
-            .expect("b's waiter");
-        drop(dead);
-        assert_eq!(waits_a.try_recv(), Err(mpsc::TryRecvError::Disconnected));
     }
 }

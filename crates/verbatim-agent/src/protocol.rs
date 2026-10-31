@@ -76,7 +76,7 @@ pub const AGENT_SELF: &str = "<verbatim-agent>";
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
 /// [`Request::LaunchProcess`]): their pids, separated by commas. The same
-/// name as `verbatim_outpost::supervisor::IGNORE_PIDS_ENV`, which this crate
+/// name as `verbatim_process::held::IGNORE_PIDS_ENV`, which this crate
 /// does not depend on.
 pub const IGNORE_PIDS_ENV: &str = "VERBATIM_IGNORE_PIDS";
 

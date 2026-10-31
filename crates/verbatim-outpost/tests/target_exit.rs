@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use verbatim_model::Pid;
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
-use verbatim_outpost::protocol::{read_message, write_message};
+use verbatim_process::message::{read_message, write_message};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::{BlockingReader, BlockingWriter, EVENT_PIPE_BUFFER};
 use verbatim_process::{ChildEnds, ChildSpec};

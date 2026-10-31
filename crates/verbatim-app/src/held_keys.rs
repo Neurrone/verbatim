@@ -124,8 +124,7 @@ impl HeldKeys {
                     ..
                 } => {
                     held_inputs(*stroke, modifiers, &mut inputs);
-                    let held_us =
-                        verbatim_outpost::protocol::now_us().saturating_sub(*pressed_at_us);
+                    let held_us = verbatim_process::clock::now_us().saturating_sub(*pressed_at_us);
                     tracing::info!(
                         target: "verbatim::held_key",
                         %trace_id,
