@@ -1704,3 +1704,107 @@ fn a_settle_waits_for_a_noted_caret_and_for_no_open_watch() {
     assert_eq!(settled_and_dispatches(&effects), ["settled 1"]);
     assert!(replay.reducer.facts().follow.caret_watch.is_some());
 }
+
+/// The commit that reports node `id` as a focus in top-level window 7,
+/// with `in_front`, what the program read of the window being in front.
+fn reported_in_window(id: u64, in_front: InFront) -> Change {
+    let held_node = verbatim_core::focus_rules::HeldNode {
+        id: NodeId::new(id),
+        backend: Backend::Msaa,
+        role: Role::Button,
+        name: None,
+        states: StateSet::new(),
+        window: None,
+    };
+    let focus = Focus {
+        node: held_node,
+        ancestors: Vec::new(),
+        top_level: 7,
+        in_front,
+        entered_in_front: None,
+        event: None,
+        simple_child: false,
+        dialog_texts: Vec::new(),
+    };
+    Change {
+        report: Some(Report::Reported(focus, Evidence::Msaa)),
+        ..Change::default()
+    }
+}
+
+/// What the newest report in window 7 entered in front, as the reducer
+/// holds it, after the program's own copy, given the same commit, agrees.
+fn commit_in_window(
+    replay: &mut Replay,
+    request: Request,
+    change: Change,
+    at_ms: u64,
+) -> Option<isize> {
+    let mut copy = replay.reducer.facts().clone();
+    let _ = apply_local(&mut copy, request.generation, &change);
+    replay.commit(request, change, at_ms);
+    let held = replay
+        .reducer
+        .facts()
+        .held
+        .newest_in(7)
+        .map(|focus| focus.entered_in_front);
+    let copied = copy.held.newest_in(7).map(|focus| focus.entered_in_front);
+    assert_eq!(copied, held, "the program's copy and the reducer agree");
+    held.flatten()
+}
+
+#[test]
+fn a_focus_inherits_its_windows_entered_in_front_at_commit() {
+    let mut replay = Replay::new();
+    let request = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    // Read in front as the focus entered the window.
+    let entered = commit_in_window(
+        &mut replay,
+        request,
+        reported_in_window(1, InFront::Read(Some(7))),
+        2,
+    );
+    assert_eq!(entered, Some(7));
+    replay.finish(request, true, 3);
+    // A later focus in the same window, read while another window was in
+    // front, keeps what the window entered with.
+    let request = program(&replay.push(msaa_focus(2, 4), Source::Hook, 4)).request;
+    let entered = commit_in_window(
+        &mut replay,
+        request,
+        reported_in_window(2, InFront::Read(None)),
+        5,
+    );
+    assert_eq!(entered, Some(7));
+}
+
+#[test]
+fn a_foreground_change_after_a_background_focus_in_the_same_window_sets_it() {
+    let mut replay = Replay::new();
+    let request = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    // The window is in the background as its focus is reported.
+    let entered = commit_in_window(
+        &mut replay,
+        request,
+        reported_in_window(1, InFront::Read(None)),
+        2,
+    );
+    assert_eq!(entered, None);
+    // The user switches to it: its foreground change does not inherit.
+    let entered = commit_in_window(
+        &mut replay,
+        request,
+        reported_in_window(3, InFront::Foreground(7)),
+        3,
+    );
+    assert_eq!(entered, Some(7));
+    // And the focus after it inherits from the foreground change.
+    let entered = commit_in_window(
+        &mut replay,
+        request,
+        reported_in_window(4, InFront::Read(None)),
+        4,
+    );
+    assert_eq!(entered, Some(7));
+}

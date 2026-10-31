@@ -2319,7 +2319,7 @@ mod tests {
         Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet, WindowHandle,
     };
 
-    use super::super::reducer::{Evidence, Focus, Held};
+    use super::super::reducer::{Evidence, Focus, Held, InFront};
     use super::{
         CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice_onto,
         window_read_without_its_handle,
@@ -2439,6 +2439,7 @@ mod tests {
                 node: held_node(2, Role::Button, Some("OK"), None),
                 ancestors: vec![held_node(1, Role::Dialog, Some("Remove"), Some(20))],
                 top_level: 7,
+                in_front: InFront::Read(None),
                 entered_in_front: None,
                 event: None,
                 simple_child: false,

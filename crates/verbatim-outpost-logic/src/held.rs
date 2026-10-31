@@ -26,9 +26,14 @@ pub struct Focus {
     pub ancestors: Vec<HeldNode>,
     /// Its top-level window, 0 when not known.
     pub top_level: isize,
+    /// What the program read of its top-level window being in front: the
+    /// evidence [`entered_in_front`](Self::entered_in_front) is decided by.
+    pub in_front: InFront,
     /// The top-level window that was the foreground window when the focus
     /// entered it, which NVDA holds the foreground object for
-    /// (`Worker::is_foreground_window`); `None` when it was not.
+    /// (`Worker::is_foreground_window`); `None` when it was not. Decided
+    /// as the report is recorded ([`Held::reported`]), from `in_front`:
+    /// what the program builds it with is replaced.
     pub entered_in_front: Option<isize>,
     /// The MSAA event address it came from: an MSAA focus's, or a
     /// foreground change's.
@@ -66,6 +71,18 @@ impl Focus {
     }
 }
 
+/// What a program read of whether a focus's top-level window was in front
+/// ([`Focus::in_front`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InFront {
+    /// A foreground change, of this top-level window (0 when not known):
+    /// the window was just found in front.
+    Foreground(isize),
+    /// Any other focus: its top-level window, when it was the foreground
+    /// window as read.
+    Read(Option<isize>),
+}
+
 /// What a new report's own evidence says of whether it repeats the newest
 /// report: the reader's read of the element it held under a UIA node, or
 /// the MSAA event address and whether it was acquired as a simple child.
@@ -94,8 +111,10 @@ impl Held {
     /// The focus `focus` has been reported, with `evidence`: a report of
     /// the newest report's node whose evidence says the same element still
     /// has the focus is a repeat, which leaves the states last read as they
-    /// were.
-    pub fn reported(&mut self, focus: Focus, evidence: Evidence) {
+    /// were. Its [`entered_in_front`](Focus::entered_in_front) is decided
+    /// here ([`entered_in_front`](Self::entered_in_front)).
+    pub fn reported(&mut self, mut focus: Focus, evidence: Evidence) {
+        focus.entered_in_front = self.entered_in_front(&focus);
         if !self.repeats_newest(&focus, evidence) {
             self.states_read = Some((focus.node.id, focus.node.states));
         }
@@ -121,6 +140,22 @@ impl Held {
                     focus.event.is_some() && newest.event == focus.event && !focus.simple_child
                 }
             }
+    }
+
+    /// The top-level window `focus` entered in front, as NVDA makes its
+    /// foreground object when the focus enters a top-level window, so the
+    /// window keeps the verdict it had then while the focus moves within
+    /// it: a foreground change sets it to its window; any other focus
+    /// inherits it from the newest report in the same top-level window;
+    /// otherwise it is the window when it was read in front.
+    #[must_use]
+    pub fn entered_in_front(&self, focus: &Focus) -> Option<isize> {
+        match focus.in_front {
+            InFront::Foreground(window) => Some(window).filter(|&window| window != 0),
+            InFront::Read(read) => self
+                .newest_in(focus.top_level)
+                .map_or(read, |before| before.entered_in_front),
+        }
     }
 
     /// The store released `released`, by node number: every report whose
@@ -250,6 +285,7 @@ mod tests {
             node: node(id, Role::Button),
             ancestors: vec![node(100, Role::Dialog)],
             top_level: 7,
+            in_front: InFront::Read(Some(7)),
             entered_in_front: Some(7),
             event: Some((7, -4, i32::try_from(id).unwrap_or(0))),
             simple_child: false,

@@ -817,9 +817,16 @@ and the inherited pipe handles.
   released, added at a program's commit and removed by a release, one
   per node and line. Core's focus line is always among them. With each
   the outpost keeps its MSAA address, whether a simple child, the window in
-  front as it was entered (inherited from the newest report in its
-  top-level window, set by a foreground change of it), and the text each
-  dialog of its line was given. The newest is `expected()`. A report of
+  front as it was entered, and the text each dialog of its line was
+  given. The program reports the evidence (`InFront`: a foreground
+  change's window, or any other focus's top-level window when it was read
+  as the foreground window), and the rule runs as the report is recorded
+  (`Held::entered_in_front`), on the program's copy and in the reducer
+  alike: a foreground change sets it to its window, any other focus
+  inherits it from the newest report in its top-level window, and
+  otherwise it is the read. The two agree at each commit, since only the
+  program in flight, a publication that claims it, and a release with no
+  program in flight write the reports. The newest is `expected()`. A report of
   the newest report's node whose own evidence says the same element still
   has the focus leaves the states last read as they were. The followed
   focus (`Tracking::focus`, `focus_role`, `window`, `chain`) is the newest

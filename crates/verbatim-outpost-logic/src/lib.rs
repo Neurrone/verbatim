@@ -50,7 +50,7 @@ pub use self::follow::{
     apply_local, wake_for,
 };
 pub use self::gap_record::{CopyDropped, GapRead};
-pub use self::held::{Evidence, Focus, Held};
+pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TimerAction};
 pub use self::text::{
     Anchor, AnswerCut, CaretSeen, CutLine, KeptSelection, NodeAnchors, RangeKey, ReportCut,

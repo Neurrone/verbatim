@@ -37,7 +37,7 @@ Public API:
 - The vocabulary of its state, used by the shell and the worker: the
   intake's `Entry`, `Item`, `Source`, `Marks` and `Object`; the follow
   state (`Follow`, `FollowState`, `Target`, `OpenWatch`, `Owed`); the
-  reports Core may hold (`Held`, `Focus`, `Evidence`); the verdicts
+  reports Core may hold (`Held`, `Focus`, `Evidence`, `InFront`); the verdicts
   (`Verdicts`, `VerdictChange`, `Probe`, `Probed`); each node's text facts
   (`NodeAnchors`, `Anchor`, `TextChange`, `ReportCut`, `AnswerCut`); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,

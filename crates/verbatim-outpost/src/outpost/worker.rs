@@ -4315,9 +4315,11 @@ impl Worker<'_> {
 /// window's event address; each dialog of its line carries the text the
 /// report gave it. NVDA makes its foreground object when the focus enters
 /// a top-level window, so the window keeps the verdict it had then while
-/// the focus moves within it ([`Worker::is_foreground_window`]): a focus
-/// inherits it from the newest report in its top-level window, and a
-/// foreground change of the window sets it. Local calls.
+/// the focus moves within it ([`Worker::is_foreground_window`]): the
+/// report carries what was read of its top-level window being in front,
+/// and the rule that decides it runs as the report is recorded
+/// (`reducer::Held::entered_in_front`), on the program's copy and in the
+/// reducer alike. Local calls.
 fn judged_focus(
     context: &RequestContext<'_>,
     (node, ancestors): (&NodeSnapshot, &[NodeSnapshot]),
@@ -4325,20 +4327,14 @@ fn judged_focus(
     msaa_event: Option<((isize, i32, i32), bool)>,
 ) -> reducer::Focus {
     let top_level = window.map_or(0, top_level_of);
-    // What the focus before it gives it, taken under the lock, which
-    // is let go before the foreground window is read.
-    let inherited = if foreground {
-        None
+    // The evidence; the reducer's rule decides what the window entered
+    // with as the report is recorded (`reducer::Held::entered_in_front`).
+    let in_front = if foreground {
+        reducer::InFront::Foreground(top_level)
     } else {
-        let held = context.held();
-        held.newest_in(top_level)
-            .map(|before| before.entered_in_front)
-    };
-    // A foreground change's window was just found in front.
-    let entered_in_front = match inherited {
-        Some(entered) => entered,
-        None if foreground => Some(top_level).filter(|&top| top != 0),
-        None => (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
+        reducer::InFront::Read(
+            (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
+        )
     };
     let dialog_texts = ancestors
         .iter()
@@ -4355,7 +4351,8 @@ fn judged_focus(
         node: HeldNode::of(node),
         ancestors,
         top_level,
-        entered_in_front,
+        in_front,
+        entered_in_front: None,
         event,
         simple_child,
         dialog_texts,
