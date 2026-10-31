@@ -17,12 +17,16 @@ use verbatim_model::GestureId;
 /// Verbatim modifier's own transitions, which the decision machine swallows.
 /// An observed gesture (a caret key, [`crate::caret_bindings`]) is passed to
 /// the application as usual and reported as well, so the reducer can speak
-/// what the application did with it. Identifiers are already normalized by
+/// what the application did with it. Some observed gestures are held
+/// ([`GestureMap::holds`]): while Core's view lets keys be held, their key
+/// is held back for its caret to be read and sent again
+/// (`docs/design/key-holding.md`). Identifiers are already normalized by
 /// [`GestureId`], so lookup is order- and case-insensitive.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GestureMap {
     bound: BTreeSet<GestureId>,
     observed: BTreeSet<GestureId>,
+    held: BTreeSet<GestureId>,
 }
 
 impl GestureMap {
@@ -32,6 +36,7 @@ impl GestureMap {
         Self {
             bound: gestures.into_iter().collect(),
             observed: BTreeSet::new(),
+            held: BTreeSet::new(),
         }
     }
 
@@ -41,6 +46,24 @@ impl GestureMap {
     pub fn with_observed(mut self, gestures: impl IntoIterator<Item = GestureId>) -> Self {
         self.observed.extend(gestures);
         self
+    }
+
+    /// This map, also observing and holding `gestures`: the caret keys,
+    /// held back while Core's view lets keys be held.
+    #[must_use]
+    pub fn with_held(mut self, gestures: impl IntoIterator<Item = GestureId>) -> Self {
+        for gesture in gestures {
+            self.observed.insert(gesture.clone());
+            self.held.insert(gesture);
+        }
+        self
+    }
+
+    /// Whether the given gesture is held: observed, and its key held back
+    /// while Core's view lets keys be held.
+    #[must_use]
+    pub fn holds(&self, gesture: &GestureId) -> bool {
+        self.held.contains(gesture)
     }
 
     /// Whether the given gesture is bound.

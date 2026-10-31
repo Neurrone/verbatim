@@ -28,7 +28,8 @@ pub use scripts::{
     KeyboardLayout, ScriptAction, bindings_for, caret_bindings, clearing_keys, gesture_map_for,
 };
 pub use state::{
-    Decision, DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect, RaisedGesture,
+    Decision, DecisionConfig, DecisionMachine, EmittedGesture, HoldPermit, KeyInput, KeySource,
+    KeySpeechEffect, PressReport, RaisedGesture, Verdict,
 };
 pub use toggle::ToggleKey;
 

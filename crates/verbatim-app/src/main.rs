@@ -310,14 +310,10 @@ fn run(
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
-    // Which caret keys the keyboard hook holds back while the focus is
+    // Whether the keyboard hook holds caret keys back, while the focus is
     // text, switched by the reducer thread from Core's focus
     // (`docs/design/key-holding.md`).
-    let holding = Arc::new(KeyHolding::new(
-        verbatim_input::caret_bindings()
-            .into_iter()
-            .map(|(gesture, _)| gesture),
-    ));
+    let holding = Arc::new(KeyHolding::new());
 
     // Core's view of the window in front, for the keyboard hook: whether
     // it may hold keys there, and which thread's layout translates them,
@@ -2241,9 +2237,10 @@ fn next_of(received: Received<ShellCommand>) -> Next {
 /// hook's decision machine owns: the menu gesture
 /// plus every review and object-navigation binding for the active layout
 /// (roadmap M3). The layout's own table already carries the time and tray
-/// gestures, so they are not listed separately. The caret keys are observed,
-/// not bound: they reach the application, and the hook reports them for the
-/// reducer to speak what they did (milestone M4).
+/// gestures, so they are not listed separately. The caret keys are observed
+/// and held, not bound: they reach the application, held back while the
+/// focus has text until its caret is read, and the hook reports them for
+/// the reducer to speak what they did (milestone M4).
 fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
     let mut gestures = vec![GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")];
     gestures.extend(
@@ -2251,12 +2248,13 @@ fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
             .into_iter()
             .map(|(gesture, _action)| gesture),
     );
-    GestureMap::new(gestures).with_observed(
-        verbatim_input::caret_bindings()
-            .into_iter()
-            .map(|(gesture, _key)| gesture)
-            .chain(verbatim_input::clearing_keys()),
-    )
+    GestureMap::new(gestures)
+        .with_observed(verbatim_input::clearing_keys())
+        .with_held(
+            verbatim_input::caret_bindings()
+                .into_iter()
+                .map(|(gesture, _key)| gesture),
+        )
 }
 
 /// Sends one command to the GUI when it is up; during the startup window

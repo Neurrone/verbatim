@@ -130,14 +130,14 @@ impl Typing {
     /// not yet passed on, in order, which the key follows: the modifiers
     /// among them are taken as made, since the key reaches the application
     /// after them.
-    /// `front` reads the window in front, only for a key that may type,
-    /// and `view` is Core's view of the foreground, from which a console
-    /// host window's own thread is taken.
+    /// `front` gives the window in front, called only for a key that may
+    /// type, and `view` is Core's view of the foreground, from which a
+    /// console host window's own thread is taken.
     pub(crate) fn translate(
         &mut self,
         (vk, scan_code): (u16, u32),
         deferred: &[(u16, bool)],
-        (front, view): (fn() -> HWND, Option<HookForeground>),
+        (front, view): (impl FnOnce() -> HWND, Option<HookForeground>),
     ) -> Option<String> {
         if vk == VK_PACKET.0 {
             return self.packet(u16::try_from(scan_code).ok()?);
