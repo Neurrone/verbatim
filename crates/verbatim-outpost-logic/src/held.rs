@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 
 use verbatim_core::focus_rules::HeldNode;
 use verbatim_model::{EarlierElement, NodeId, Role, StateSet};
+use verbatim_reader_rules::Window;
 
 /// One focus or foreground report of this outpost's, with what the outpost
 /// recorded of it as it reported it.
@@ -24,8 +25,8 @@ pub struct Focus {
     pub node: HeldNode,
     /// Its ancestors, outermost first.
     pub ancestors: Vec<HeldNode>,
-    /// Its top-level window, 0 when not known.
-    pub top_level: isize,
+    /// Its top-level window, when known.
+    pub top_level: Option<Window>,
     /// What the program read of its top-level window being in front: the
     /// evidence [`entered_in_front`](Self::entered_in_front) is decided by.
     pub in_front: InFront,
@@ -34,7 +35,7 @@ pub struct Focus {
     /// (`Worker::is_foreground_window`); `None` when it was not. Decided
     /// as the report is recorded ([`Held::reported`]), from `in_front`:
     /// what the program builds it with is replaced.
-    pub entered_in_front: Option<isize>,
+    pub entered_in_front: Option<Window>,
     /// The MSAA event address it came from: an MSAA focus's, or a
     /// foreground change's.
     pub event: Option<(isize, i32, i32)>,
@@ -75,12 +76,12 @@ impl Focus {
 /// ([`Focus::in_front`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InFront {
-    /// A foreground change, of this top-level window (0 when not known):
-    /// the window was just found in front.
-    Foreground(isize),
+    /// A foreground change, of this top-level window, when known: the
+    /// window was just found in front.
+    Foreground(Option<Window>),
     /// Any other focus: its top-level window, when it was the foreground
     /// window as read.
-    Read(Option<isize>),
+    Read(Option<Window>),
 }
 
 /// What a new report's own evidence says of whether it repeats the newest
@@ -149,9 +150,9 @@ impl Held {
     /// inherits it from the newest report in the same top-level window;
     /// otherwise it is the window when it was read in front.
     #[must_use]
-    pub fn entered_in_front(&self, focus: &Focus) -> Option<isize> {
+    pub fn entered_in_front(&self, focus: &Focus) -> Option<Window> {
         match focus.in_front {
-            InFront::Foreground(window) => Some(window).filter(|&window| window != 0),
+            InFront::Foreground(window) => window,
             InFront::Read(read) => self
                 .newest_in(focus.top_level)
                 .map_or(read, |before| before.entered_in_front),
@@ -184,17 +185,15 @@ impl Held {
         self.reports.last()
     }
 
-    /// The newest report whose top-level window is `top_level`, not 0.
+    /// The newest report whose top-level window is `top_level`, when it
+    /// is known.
     #[must_use]
-    pub fn newest_in(&self, top_level: isize) -> Option<&Focus> {
-        (top_level != 0)
-            .then(|| {
-                self.reports
-                    .iter()
-                    .rev()
-                    .find(|report| report.top_level == top_level)
-            })
-            .flatten()
+    pub fn newest_in(&self, top_level: Option<Window>) -> Option<&Focus> {
+        let top_level = top_level?;
+        self.reports
+            .iter()
+            .rev()
+            .find(|report| report.top_level == Some(top_level))
     }
 
     /// Whether `node` is the focus of any report.
@@ -284,9 +283,9 @@ mod tests {
         Focus {
             node: node(id, Role::Button),
             ancestors: vec![node(100, Role::Dialog)],
-            top_level: 7,
-            in_front: InFront::Read(Some(7)),
-            entered_in_front: Some(7),
+            top_level: Window::new(7),
+            in_front: InFront::Read(Window::new(7)),
+            entered_in_front: Window::new(7),
             event: Some((7, -4, i32::try_from(id).unwrap_or(0))),
             simple_child: false,
             dialog_texts: Vec::new(),

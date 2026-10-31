@@ -841,7 +841,7 @@ fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped(
     assert!(
         matches!(
             &effects[..],
-            [Effect::AskMovedOn { request: asked, window: 9 }] if *asked == request
+            [Effect::AskMovedOn { request: asked, window }] if *asked == request && window.get() == 9
         ),
         "{effects:?}"
     );
@@ -2299,7 +2299,7 @@ fn reported_in_window(id: u64, in_front: InFront) -> Change {
     let focus = Focus {
         node: held_node,
         ancestors: Vec::new(),
-        top_level: 7,
+        top_level: Window::new(7),
         in_front,
         entered_in_front: None,
         event: None,
@@ -2327,11 +2327,14 @@ fn commit_in_window(
         .reducer
         .facts()
         .held
-        .newest_in(7)
+        .newest_in(Window::new(7))
         .map(|focus| focus.entered_in_front);
-    let copied = copy.held.newest_in(7).map(|focus| focus.entered_in_front);
+    let copied = copy
+        .held
+        .newest_in(Window::new(7))
+        .map(|focus| focus.entered_in_front);
     assert_eq!(copied, held, "the program's copy and the reducer agree");
-    held.flatten()
+    held.flatten().map(Window::get)
 }
 
 #[test]
@@ -2342,7 +2345,7 @@ fn a_focus_inherits_its_windows_entered_in_front_at_commit() {
     let entered = commit_in_window(
         &mut replay,
         request,
-        reported_in_window(1, InFront::Read(Some(7))),
+        reported_in_window(1, InFront::Read(Window::new(7))),
         2,
     );
     assert_eq!(entered, Some(7));
@@ -2375,7 +2378,7 @@ fn a_foreground_change_after_a_background_focus_in_the_same_window_sets_it() {
     let entered = commit_in_window(
         &mut replay,
         request,
-        reported_in_window(3, InFront::Foreground(7)),
+        reported_in_window(3, InFront::Foreground(Window::new(7))),
         3,
     );
     assert_eq!(entered, Some(7));

@@ -47,7 +47,8 @@ use verbatim_model::protocol::{
     WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
-use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight};
+use verbatim_reader_rules::Window;
+use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
 
 use self::watch::Reached;
 
@@ -293,7 +294,7 @@ pub enum Effect {
         /// The program in flight asked about.
         request: Request,
         /// Its window.
-        window: isize,
+        window: Window,
     },
     /// Publish the walk `request` armed from its progress: claim the
     /// progress from the charge of `request`'s own generation, so its
@@ -1233,7 +1234,7 @@ impl Reducer {
                 }
                 self.dispatch(
                     Work::Owed(owed),
-                    (HANDLING_DEADLINE, 0, None),
+                    (HANDLING_DEADLINE, None, None),
                     None,
                     now,
                     effects,
@@ -1245,7 +1246,7 @@ impl Reducer {
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
-                self.dispatch(Work::Drop, (WALK_DEADLINE, 0, None), None, now, effects);
+                self.dispatch(Work::Drop, (WALK_DEADLINE, None, None), None, now, effects);
                 continue;
             }
             let Some((planned, batch)) = self.intake.next(&self.facts.marks) else {
@@ -1257,7 +1258,13 @@ impl Reducer {
                         // Under the text deadline, waited for by the idle
                         // answer: after its answer it reads the terminal
                         // under the key's trace.
-                        self.dispatch(Work::PollRead, (TEXT_DEADLINE, 0, None), None, now, effects);
+                        self.dispatch(
+                            Work::PollRead,
+                            (TEXT_DEADLINE, None, None),
+                            None,
+                            now,
+                            effects,
+                        );
                         if let Some(current) = self.flight.item_mut() {
                             current.deferred = true;
                         }
@@ -1440,14 +1447,14 @@ impl Reducer {
         self.dispatch(work, (deadline, window, running), group, now, effects);
     }
 
-    /// Dispatches `work` under `deadline`, concerning `window` (0 for none)
+    /// Dispatches `work` under `deadline`, concerning `window`, if any,
     /// and answering `running`, as a try of `group` when it is one. A read
     /// of the gap record is deferred work. A caret key's program ends the
     /// open watch, which the next key replaces, before its copy is taken.
     fn dispatch(
         &mut self,
         work: Work,
-        (deadline, window, running): (Duration, isize, Option<(RequestId, TraceId)>),
+        (deadline, window, running): (Duration, Option<Window>, Option<(RequestId, TraceId)>),
         group: Option<GroupTry>,
         now: Now,
         effects: &mut Vec<Effect>,
@@ -1480,7 +1487,7 @@ impl Reducer {
         let request = self.flight.start(
             current,
             micros(deadline),
-            (window != 0).then_some(window),
+            window.map_or(RuleWindow::Never, RuleWindow::Known),
             micros(now.at),
         );
         effects.push(Effect::Dispatch(Box::new(Program {

@@ -49,14 +49,16 @@ pub(crate) fn find(
     remote: bool,
     clock: &Clock,
 ) -> (Result<Option<Cached<Node>>, String>, bool) {
-    let root = match uia.window_element(route.window, nodes) {
+    let root = match uia.window_element(route.window.get(), nodes) {
         Ok(root) => root,
-        Err(error) if verbatim_uia::element_is_gone(&error) || !window_exists(route.window) => {
-            tracing::debug!(window = route.window, %error, "a path's window is gone");
+        Err(error)
+            if verbatim_uia::element_is_gone(&error) || !window_exists(route.window.get()) =>
+        {
+            tracing::debug!(window = route.window.get(), %error, "a path's window is gone");
             return (Ok(None), false);
         }
         Err(error) => {
-            tracing::debug!(window = route.window, %error, "a path's window could not be read");
+            tracing::debug!(window = route.window.get(), %error, "a path's window could not be read");
             return (Err(format!("reading the route's window: {error}")), false);
         }
     };
@@ -77,12 +79,15 @@ pub(crate) fn find(
             let import_failed =
                 matches!(&path, Path::Fallback(verbatim_uia_rops::Error::Import(_)));
             if let Path::Fallback(error) = &path {
-                tracing::warn!(window = route.window, %error, "a remote operation failed; read the classic way");
+                tracing::warn!(window = route.window.get(), %error, "a remote operation failed; read the classic way");
             }
             // A classic walk stops with nothing found once its budget is
             // spent, whether or not the path leads on.
             if found.is_none() && !matches!(path, Path::Remote) && out_of_time() {
-                tracing::debug!(window = route.window, "a path's walk ran past its budget");
+                tracing::debug!(
+                    window = route.window.get(),
+                    "a path's walk ran past its budget"
+                );
                 return (
                     Err("the walk ran past its time budget".to_owned()),
                     import_failed,
@@ -95,11 +100,11 @@ pub(crate) fn find(
                 verbatim_uia::element_is_gone(&windows::core::Error::from(code))
             }) =>
         {
-            tracing::debug!(window = route.window, %error, "an element on a path is gone");
+            tracing::debug!(window = route.window.get(), %error, "an element on a path is gone");
             (Ok(None), false)
         }
         Err(error) => {
-            tracing::debug!(window = route.window, %error, "a path could not be walked");
+            tracing::debug!(window = route.window.get(), %error, "a path could not be walked");
             (Err(format!("walking the route: {error}")), false)
         }
     }
@@ -153,7 +158,7 @@ mod tests {
         assert_eq!(
             path.route_to(&[42, 1]),
             Some(Route {
-                window: 70,
+                window: verbatim_reader_rules::Window::new(70).expect("70 is not 0"),
                 path: vec![vec![42, 2], vec![42, 1]],
                 runtime_id: vec![42, 1],
             })
@@ -166,7 +171,7 @@ mod tests {
         // The window's own element is its route's start.
         assert_eq!(
             path.route_to(&[42, 3])
-                .map(|route| (route.window, route.path)),
+                .map(|route| (route.window.get(), route.path)),
             Some((70, Vec::new()))
         );
     }
@@ -176,7 +181,7 @@ mod tests {
         let path = FocusPath::of(&read(60, [0, 70, 80]));
         assert_eq!(
             path.route_to(&[42, 1])
-                .map(|route| (route.window, route.path)),
+                .map(|route| (route.window.get(), route.path)),
             Some((60, Vec::new()))
         );
     }

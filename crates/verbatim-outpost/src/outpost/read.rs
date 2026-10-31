@@ -110,9 +110,9 @@ pub(super) fn walk_left(
     window: isize,
     observed_at_us: u64,
 ) -> std::time::Duration {
-    let top_level = top_level_of(window);
+    let top_level = verbatim_reader_rules::Window::new(top_level_of(window));
     let previous = context.held().expected().map(|focus| focus.top_level);
-    let bound = if top_level != 0 && previous == Some(top_level) {
+    let bound = if top_level.is_some() && previous == Some(top_level) {
         ENRICHMENT_BUDGET
     } else {
         verbatim_reader_rules::MOVED_ON_GRACE
@@ -1490,7 +1490,7 @@ fn dialog_text_of(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<S
             };
             let remote = route
                 .as_ref()
-                .is_some_and(|route| context.tries_remote(Some(route.window)));
+                .is_some_and(|route| context.tries_remote(Some(route.window.get())));
             let gates = crate::gates::node_gates(&context.fetches());
             let clock = context.clock();
             let gathered = context.bounded.run(DIALOG_TEXT_WAIT, move |uia| {
@@ -1967,11 +1967,11 @@ fn resolve_uia_element(
     // An element of the chain the focus listener read for the focus is
     // found by its path.
     let route = context.focus_route(&runtime_id).ok_or(ReadError::Gone)?;
-    let remote = context.tries_remote(Some(route.window));
+    let remote = context.tries_remote(Some(route.window.get()));
     let (found, import_failed) =
         super::focus_path::find(uia, &route, nodes, remote, &context.clock());
     if import_failed {
-        context.read_classically(route.window);
+        context.read_classically(route.window.get());
     }
     // A walk that failed, against a slow application above all, may have
     // missed a live element; only one that finished without it says gone.
@@ -2438,7 +2438,7 @@ mod tests {
             Focus {
                 node: held_node(2, Role::Button, Some("OK"), None),
                 ancestors: vec![held_node(1, Role::Dialog, Some("Remove"), Some(20))],
-                top_level: 7,
+                top_level: verbatim_reader_rules::Window::new(7),
                 in_front: InFront::Read(None),
                 entered_in_front: None,
                 event: None,

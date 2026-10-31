@@ -10,6 +10,8 @@ use std::sync::Arc;
 use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
 use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
 
+use verbatim_reader_rules::Window;
+
 use super::held::{self, Held};
 use super::intake::{Marks, Object};
 use super::text::{RangeKey, TextChange, TextFacts};
@@ -118,10 +120,10 @@ pub enum OwedWork {
 
 /// The raw-view chain of the UIA focus the outpost last reported from the
 /// listener's read: the focus, then its ancestors, nearest first, each with
-/// its runtime id and its own window handle (0 for none).
+/// its runtime id and its own window, if it has one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FocusPath {
-    chain: Vec<(Vec<i32>, isize)>,
+    chain: Vec<(Vec<i32>, Option<Window>)>,
     /// Whether the listener's walk up from the focus did not reach the
     /// top: its read failed, or the walk was cut or ended at a failed step.
     cut: bool,
@@ -133,7 +135,7 @@ pub struct FocusPath {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Route {
     /// The window whose element the walk starts at.
-    pub window: isize,
+    pub window: Window,
     /// The runtime ids below it, outermost first.
     pub path: Vec<Vec<i32>>,
     /// The runtime id of the element wanted.
@@ -144,12 +146,13 @@ impl FocusPath {
     /// The chain of the focus `read` names.
     #[must_use]
     pub fn of(read: &UiaFocusRead) -> Self {
-        let chain = std::iter::once((read.snapshot.runtime_id.clone(), read.hwnd))
-            .chain(
-                read.ancestors
-                    .iter()
-                    .map(|ancestor| (ancestor.snapshot.runtime_id.clone(), ancestor.hwnd)),
-            )
+        let chain = std::iter::once((read.snapshot.runtime_id.clone(), Window::new(read.hwnd)))
+            .chain(read.ancestors.iter().map(|ancestor| {
+                (
+                    ancestor.snapshot.runtime_id.clone(),
+                    Window::new(ancestor.hwnd),
+                )
+            }))
             .collect();
         let cut = read.ancestors_end != verbatim_model::protocol::AncestorsEnd::Top;
         Self { chain, cut }
@@ -163,7 +166,7 @@ impl FocusPath {
     pub fn is_cut_at(&self, runtime_id: &[i32]) -> bool {
         self.cut
             && self.chain.first().is_some_and(|(id, _)| id == runtime_id)
-            && self.chain.iter().all(|&(_, hwnd)| hwnd == 0)
+            && self.chain.iter().all(|(_, window)| window.is_none())
     }
 
     /// The route to the element of the chain whose runtime id is
@@ -173,9 +176,10 @@ impl FocusPath {
     #[must_use]
     pub fn route_to(&self, runtime_id: &[i32]) -> Option<Route> {
         let index = self.chain.iter().position(|(id, _)| id == runtime_id)?;
-        let above = self.chain[index..]
+        let (above, window) = self.chain[index..]
             .iter()
-            .position(|&(_, hwnd)| hwnd != 0)?;
+            .enumerate()
+            .find_map(|(above, &(_, window))| Some((above, window?)))?;
         let root = index + above;
         let path = self.chain[index..root]
             .iter()
@@ -183,7 +187,7 @@ impl FocusPath {
             .map(|(id, _)| id.clone())
             .collect();
         Some(Route {
-            window: self.chain[root].1,
+            window,
             path,
             runtime_id: runtime_id.to_vec(),
         })
@@ -617,7 +621,7 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
             // (`docs/parity/text.md`).
             facts.marks = Marks {
                 focused: follow.object.clone(),
-                terminal: follow.terminal.then(|| follow.window.unwrap_or(0)),
+                terminal: follow.terminal.then(|| follow.window.and_then(Window::new)),
                 focus_redirected: follow.redirected,
                 absorbed: None,
                 system_caret_unused: follow.terminal && follow.console,

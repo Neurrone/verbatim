@@ -31,6 +31,8 @@ use std::collections::BTreeSet;
 
 use verbatim_core::focus_rules::ForegroundRelation;
 
+use crate::Window;
+
 /// An event, by the name NVDA gives it when it tests it for acceptance.
 /// NVDA's hide and desktop switch events have no counterpart: Verbatim hooks
 /// neither.
@@ -83,35 +85,37 @@ impl RequestedEvents {
     }
 }
 
-/// The window queries the test makes, all local calls.
+/// The window queries the test makes, all local calls. A window the
+/// system names by a handle of 0 is given as `None`, parsed by the
+/// implementation.
 pub trait WindowQueries {
     /// The window's class name, empty for an invalid window.
-    fn class_name(&self, window: isize) -> String;
+    fn class_name(&self, window: Window) -> String;
     /// The id of the process that owns the window, 0 for none.
-    fn process(&self, window: isize) -> u32;
-    /// `GetAncestor` with `GA_PARENT`, `GA_ROOT`, or `GA_ROOTOWNER`: 0 for
-    /// none.
-    fn parent(&self, window: isize) -> isize;
+    fn process(&self, window: Window) -> u32;
+    /// `GetAncestor` with `GA_PARENT`, `GA_ROOT`, or `GA_ROOTOWNER`: `None`
+    /// for none.
+    fn parent(&self, window: Window) -> Option<Window>;
     /// See [`WindowQueries::parent`].
-    fn root(&self, window: isize) -> isize;
+    fn root(&self, window: Window) -> Option<Window>;
     /// See [`WindowQueries::parent`].
-    fn root_owner(&self, window: isize) -> isize;
+    fn root_owner(&self, window: Window) -> Option<Window>;
     /// Whether `child` is a child window of `parent` (`IsChild`).
-    fn is_child(&self, parent: isize, child: isize) -> bool;
+    fn is_child(&self, parent: Window, child: Window) -> bool;
     /// Whether the window has the topmost extended style.
-    fn is_topmost(&self, window: isize) -> bool;
+    fn is_topmost(&self, window: Window) -> bool;
     /// The desktop window.
-    fn desktop(&self) -> isize;
-    /// The active window of the thread that has the keyboard input, 0 for
-    /// none.
-    fn active_window(&self) -> isize;
-    /// The foreground window, 0 for none.
-    fn foreground(&self) -> isize;
+    fn desktop(&self) -> Option<Window>;
+    /// The active window of the thread that has the keyboard input, if
+    /// any.
+    fn active_window(&self) -> Option<Window>;
+    /// The foreground window, if any.
+    fn foreground(&self) -> Option<Window>;
 }
 
 /// NVDA's `isDescendantWindow`: `child` is `parent` or one of its child
 /// windows.
-fn is_descendant(windows: &impl WindowQueries, parent: isize, child: isize) -> bool {
+fn is_descendant(windows: &impl WindowQueries, parent: Window, child: Window) -> bool {
     parent == child || windows.is_child(parent, child)
 }
 
@@ -120,16 +124,16 @@ fn is_descendant(windows: &impl WindowQueries, parent: isize, child: isize) -> b
 /// window in the foreground, an event from an invalid window is refused,
 /// where NVDA's comparison of the two root owners, both 0, accepts it;
 /// nothing is spoken differently, since such a window cannot be read.
-/// `window` 0 means the event has no window, which cannot be filtered.
+/// An event with no window cannot be filtered.
 pub fn accepts_event(
     event: EventName,
-    window: isize,
+    window: Option<Window>,
     windows: &impl WindowQueries,
     requested: &RequestedEvents,
 ) -> bool {
-    if window == 0 {
+    let Some(window) = window else {
         return true;
-    }
+    };
     let class = windows.class_name(window);
     if requested.contains(event, windows.process(window), &class) {
         return true;
@@ -152,7 +156,9 @@ pub fn accepts_event(
         }
         // A toast.
         EventName::Alert
-            if windows.class_name(windows.parent(window)) == "ToastChildWindowClass" =>
+            if windows
+                .parent(window)
+                .is_some_and(|parent| windows.class_name(parent) == "ToastChildWindowClass") =>
         {
             return true;
         }
@@ -162,7 +168,7 @@ pub fn accepts_event(
         _ => {}
     }
     // The cursor's events come from the desktop window (NVDA issue 5595).
-    if window == windows.desktop() {
+    if Some(window) == windows.desktop() {
         return true;
     }
     foreground_relation(window, &class, windows).related()
@@ -175,30 +181,36 @@ pub fn accepts_event(
 /// read (`ForegroundRelation::related`), so the rule has one definition
 /// (decision D14, "Where the rules run"). Every query is a local call.
 pub fn foreground_relation(
-    window: isize,
+    window: Window,
     class: &str,
     windows: &impl WindowQueries,
 ) -> ForegroundRelation {
-    let foreground = windows.foreground();
     let root_owner = windows.root_owner(window);
     ForegroundRelation {
         // Windows sharing the foreground window's root owner, as the Office
         // ribbon's (NVDA issues 5504, 14916 and 15432); the foreground
         // application, and windows owned from inside it, as context menus
         // (NVDA issues 3899 and 3905). With no foreground window nothing
-        // is in it: an invalid window's root owner reads as 0, as the
-        // missing foreground's does, and would otherwise match it.
-        in_foreground: foreground != 0
-            && (root_owner == windows.root_owner(foreground)
+        // is in it: an invalid window has no root owner, as the missing
+        // foreground has none, and would otherwise match it.
+        in_foreground: windows.foreground().is_some_and(|foreground| {
+            root_owner == windows.root_owner(foreground)
                 || is_descendant(windows, foreground, window)
-                || is_descendant(windows, foreground, root_owner)),
+                || root_owner
+                    .is_some_and(|root_owner| is_descendant(windows, foreground, root_owner))
+        }),
         // Menus, combo box drop-downs, and the task switching list.
-        topmost: windows.is_topmost(window) || windows.is_topmost(windows.root(window)),
+        topmost: windows.is_topmost(window)
+            || windows
+                .root(window)
+                .is_some_and(|root| windows.is_topmost(root)),
         // A UWP window is under the input thread's active window, not under
         // the foreground window (NVDA issue 6713).
-        under_active_window: class
-            .starts_with("Windows.UI.Core")
-            .then(|| is_descendant(windows, windows.active_window(), window)),
+        under_active_window: class.starts_with("Windows.UI.Core").then(|| {
+            windows
+                .active_window()
+                .is_some_and(|active| is_descendant(windows, active, window))
+        }),
     }
 }
 
@@ -211,7 +223,7 @@ mod tests {
     /// A made-up window: its class, process, parent, root, root owner, and
     /// whether it is topmost.
     #[derive(Clone, Default)]
-    struct Window {
+    struct MadeUp {
         class: &'static str,
         process: u32,
         parent: isize,
@@ -223,7 +235,7 @@ mod tests {
     /// Made-up windows, the foreground and active windows among them.
     #[derive(Default)]
     struct Desk {
-        windows: BTreeMap<isize, Window>,
+        windows: BTreeMap<isize, MadeUp>,
         foreground: isize,
         active: isize,
     }
@@ -254,7 +266,7 @@ mod tests {
         fn top_level(&mut self, handle: isize, class: &'static str, process: u32) {
             self.windows.insert(
                 handle,
-                Window {
+                MadeUp {
                     class,
                     process,
                     parent: DESKTOP,
@@ -269,7 +281,7 @@ mod tests {
             let of = self.windows[&parent].clone();
             self.windows.insert(
                 handle,
-                Window {
+                MadeUp {
                     class,
                     parent,
                     topmost: false,
@@ -278,42 +290,54 @@ mod tests {
             );
         }
 
-        fn window(&mut self, handle: isize) -> &mut Window {
+        fn window(&mut self, handle: isize) -> &mut MadeUp {
             self.windows.get_mut(&handle).expect("a made-up window")
         }
 
         fn accepts(&self, event: EventName, window: isize) -> bool {
-            accepts_event(event, window, self, &RequestedEvents::default())
+            accepts_event(
+                event,
+                Window::new(window),
+                self,
+                &RequestedEvents::default(),
+            )
+        }
+    }
+
+    impl Desk {
+        fn made_up(&self, window: Window) -> Option<&MadeUp> {
+            self.windows.get(&window.get())
         }
     }
 
     impl WindowQueries for Desk {
-        fn class_name(&self, window: isize) -> String {
-            self.windows
-                .get(&window)
+        fn class_name(&self, window: Window) -> String {
+            self.made_up(window)
                 .map_or_else(String::new, |window| window.class.to_owned())
         }
 
-        fn process(&self, window: isize) -> u32 {
-            self.windows.get(&window).map_or(0, |window| window.process)
+        fn process(&self, window: Window) -> u32 {
+            self.made_up(window).map_or(0, |window| window.process)
         }
 
-        fn parent(&self, window: isize) -> isize {
-            self.windows.get(&window).map_or(0, |window| window.parent)
+        fn parent(&self, window: Window) -> Option<Window> {
+            self.made_up(window)
+                .and_then(|window| Window::new(window.parent))
         }
 
-        fn root(&self, window: isize) -> isize {
-            self.windows.get(&window).map_or(0, |window| window.root)
+        fn root(&self, window: Window) -> Option<Window> {
+            self.made_up(window)
+                .and_then(|window| Window::new(window.root))
         }
 
-        fn root_owner(&self, window: isize) -> isize {
-            self.windows
-                .get(&window)
-                .map_or(0, |window| window.root_owner)
+        fn root_owner(&self, window: Window) -> Option<Window> {
+            self.made_up(window)
+                .and_then(|window| Window::new(window.root_owner))
         }
 
-        fn is_child(&self, parent: isize, child: isize) -> bool {
-            let mut at = child;
+        fn is_child(&self, parent: Window, child: Window) -> bool {
+            let parent = parent.get();
+            let mut at = child.get();
             while let Some(window) = self.windows.get(&at) {
                 if window.parent == parent && parent != DESKTOP {
                     return true;
@@ -326,23 +350,26 @@ mod tests {
             false
         }
 
-        fn is_topmost(&self, window: isize) -> bool {
-            self.windows
-                .get(&window)
-                .is_some_and(|window| window.topmost)
+        fn is_topmost(&self, window: Window) -> bool {
+            self.made_up(window).is_some_and(|window| window.topmost)
         }
 
-        fn desktop(&self) -> isize {
-            DESKTOP
+        fn desktop(&self) -> Option<Window> {
+            Window::new(DESKTOP)
         }
 
-        fn active_window(&self) -> isize {
-            self.active
+        fn active_window(&self) -> Option<Window> {
+            Window::new(self.active)
         }
 
-        fn foreground(&self) -> isize {
-            self.foreground
+        fn foreground(&self) -> Option<Window> {
+            Window::new(self.foreground)
         }
+    }
+
+    /// The made-up window of `handle`.
+    fn window(handle: isize) -> Window {
+        Window::new(handle).expect("a made-up window is not 0")
     }
 
     #[test]
@@ -358,12 +385,17 @@ mod tests {
         };
         assert!(accepts_event(
             EventName::Selection,
-            BACKGROUND_CHILD,
+            Window::new(BACKGROUND_CHILD),
             &desk,
             &requested
         ));
         assert!(
-            !accepts_event(EventName::NameChange, BACKGROUND_CHILD, &desk, &requested),
+            !accepts_event(
+                EventName::NameChange,
+                Window::new(BACKGROUND_CHILD),
+                &desk,
+                &requested
+            ),
             "only the event asked for"
         );
     }
@@ -468,7 +500,7 @@ mod tests {
         desk.top_level(30, "Windows.UI.Core.CoreWindow", 300);
         desk.active = 30;
         assert_eq!(
-            foreground_relation(30, "Windows.UI.Core.CoreWindow", &desk),
+            foreground_relation(window(30), "Windows.UI.Core.CoreWindow", &desk),
             ForegroundRelation {
                 in_foreground: false,
                 topmost: false,
@@ -476,14 +508,14 @@ mod tests {
             }
         );
         assert_eq!(
-            foreground_relation(FOREGROUND_CHILD, "Edit", &desk),
+            foreground_relation(window(FOREGROUND_CHILD), "Edit", &desk),
             ForegroundRelation {
                 in_foreground: true,
                 topmost: false,
                 under_active_window: None,
             }
         );
-        assert!(!foreground_relation(BACKGROUND_CHILD, "Edit", &desk).related());
+        assert!(!foreground_relation(window(BACKGROUND_CHILD), "Edit", &desk).related());
     }
 
     #[test]
@@ -494,7 +526,7 @@ mod tests {
             foreground: 0,
             ..Desk::new()
         };
-        assert!(!foreground_relation(INVALID, "", &desk).in_foreground);
+        assert!(!foreground_relation(window(INVALID), "", &desk).in_foreground);
     }
 
     #[test]

@@ -692,7 +692,7 @@ impl Shell {
                 return Some(Input::MovedOn {
                     request,
                     moved_on: verbatim_win32::window::front_is_another_thread_of_its_application(
-                        window,
+                        window.get(),
                     ),
                 });
             }

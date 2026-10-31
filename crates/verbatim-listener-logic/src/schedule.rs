@@ -31,7 +31,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use verbatim_model::Pid;
-use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, Reason};
+use verbatim_reader_rules::Window;
+use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, Reason, RuleWindow};
 
 pub use verbatim_reader_rules::in_flight::Request;
 
@@ -65,8 +66,9 @@ pub enum ScheduleInput<J> {
         kind: FocusEvent,
         /// The element it is of, for NVDA's limiter.
         key: Option<Vec<i32>>,
-        /// The window it is of as far as its cache says.
-        window: Option<isize>,
+        /// The window it is of as far as its cache says, which the
+        /// moved-on rule judges its read by.
+        window: RuleWindow,
     },
     /// The reading thread `generation` of `pid` asks for its next event.
     Next {
@@ -77,7 +79,7 @@ pub enum ScheduleInput<J> {
     },
     /// A reading thread of `pid` returned from its read `request` of
     /// `meta`'s event with `judged`, placed in top-level window `placed`
-    /// for its gap record, and of top-level window `top`, 0 for none.
+    /// for its gap record, and of top-level window `top`, if any.
     Returned {
         /// The thread's application.
         pid: Pid,
@@ -89,8 +91,8 @@ pub enum ScheduleInput<J> {
         judged: Judged,
         /// The top-level window it is placed in for its gap record.
         placed: Option<isize>,
-        /// The top-level window of the read, 0 for none.
-        top: isize,
+        /// The top-level window of the read, if any.
+        top: Option<Window>,
     },
     /// The watchdog's alarm went off, which spends its timer.
     Tick,
@@ -101,7 +103,7 @@ pub enum ScheduleInput<J> {
         /// The read.
         request: Request,
         /// Its window.
-        window: isize,
+        window: Window,
     },
     /// `pid`'s read `request` passed NVDA's checks, its bound at `bound`,
     /// in the schedule's microseconds.
@@ -125,7 +127,7 @@ pub enum ScheduleInput<J> {
     },
     /// The shell's answer to [`ScheduleEffect::Publish`]: the read as
     /// published from its progress, none when its walk had ended, and its
-    /// top-level window, 0 for none.
+    /// top-level window, if any.
     Published {
         /// The read's application.
         pid: Pid,
@@ -133,22 +135,22 @@ pub enum ScheduleInput<J> {
         request: Request,
         /// The read as published, if its progress was there to publish.
         read: Option<Box<UiaFocusRead>>,
-        /// Its top-level window, 0 for none.
-        top: isize,
+        /// Its top-level window, if any.
+        top: Option<Window>,
         /// The abandonment the ask carried, made once the publication is
         /// sent.
         then_abandon: Option<Reason>,
     },
     /// A foreground event reached the listener's hook, of top-level window
     /// `top_level`; `running_tops` is, for each application with a read
-    /// under way, that read's top-level window, 0 while its window is not
-    /// known. For menu currentness only.
+    /// under way, that read's top-level window, `None` while its window is
+    /// not known. For menu currentness only.
     Foreground {
-        /// The foreground window's top-level window.
-        top_level: isize,
+        /// The foreground window's top-level window, if any.
+        top_level: Option<Window>,
         /// For each application with a read under way, that read's top-level
-        /// window, 0 while it is not known.
-        running_tops: Vec<(Pid, isize)>,
+        /// window, `None` while it is not known.
+        running_tops: Vec<(Pid, Option<Window>)>,
     },
     /// The listener's `WinEvent` thread forwarded an MSAA focus of `pid`'s.
     MsaaFocus {
@@ -244,7 +246,7 @@ pub enum ScheduleEffect<J> {
         /// The read.
         request: Request,
         /// Its window.
-        window: isize,
+        window: Window,
     },
     /// Publish `pid`'s read `request` at its bound from its progress, read
     /// and not taken: answered by [`ScheduleInput::Published`], which
@@ -271,9 +273,9 @@ pub struct Job<J> {
     pub meta: Meta,
     /// What its read takes.
     pub work: J,
-    /// The window the event is of as far as its cache says, `None` for an
-    /// event never judged by the moved-on rule.
-    pub window: Option<isize>,
+    /// The window the event is of as far as its cache says, which the
+    /// moved-on rule judges its read by.
+    pub window: RuleWindow,
     /// Whether the focus event queued before it was another
     /// application's.
     pub after_elsewhere: bool,
@@ -312,7 +314,7 @@ struct Queued<J> {
     left_at: u64,
     kind: FocusEvent,
     key: Option<Vec<i32>>,
-    window: Option<isize>,
+    window: RuleWindow,
     meta: Meta,
     job: J,
 }
@@ -343,8 +345,8 @@ struct App<J> {
     ending: bool,
     /// The place of the newest event that moved away from it.
     left_at: u64,
-    /// The top-level window of its last read focus, 0 for none.
-    last_top: isize,
+    /// The top-level window of its last read focus, if any.
+    last_top: Option<Window>,
 }
 
 impl<J> App<J> {
@@ -357,7 +359,7 @@ impl<J> App<J> {
             limit_reached: None,
             ending: false,
             left_at: 0,
-            last_top: 0,
+            last_top: None,
         }
     }
 
@@ -603,7 +605,7 @@ impl<J> Schedule<J> {
         effects: &mut Vec<ScheduleEffect<J>>,
         now: u64,
         (pid, meta, job): (Pid, Meta, J),
-        (kind, key, window): (FocusEvent, Option<Vec<i32>>, Option<isize>),
+        (kind, key, window): (FocusEvent, Option<Vec<i32>>, RuleWindow),
     ) {
         if self.stopping {
             effects.push(ScheduleEffect::Outcome {
@@ -750,7 +752,7 @@ impl<J> Schedule<J> {
         effects: &mut Vec<ScheduleEffect<J>>,
         (pid, request): (Pid, Request),
         meta: Meta,
-        (judged, placed, top): (Judged, Option<isize>, isize),
+        (judged, placed, top): (Judged, Option<isize>, Option<Window>),
     ) {
         let stopping = self.stopping;
         let Some(app) = self.apps.get_mut(&pid) else {
@@ -758,7 +760,7 @@ impl<J> Schedule<J> {
         };
         if app.in_charge(request.generation) {
             let read = matches!(judged, Judged::Read(_));
-            if read && top != 0 {
+            if read && top.is_some() {
                 app.last_top = top;
             }
             match app.flight.end(request) {
@@ -943,7 +945,7 @@ impl<J> Schedule<J> {
         effects: &mut Vec<ScheduleEffect<J>>,
         now: u64,
         (pid, request): (Pid, Request),
-        (read, top): (Option<Box<UiaFocusRead>>, isize),
+        (read, top): (Option<Box<UiaFocusRead>>, Option<Window>),
         then_abandon: Option<Reason>,
     ) {
         let Some(app) = self.apps.get_mut(&pid) else {
@@ -965,7 +967,7 @@ impl<J> Schedule<J> {
                     pid,
                     meta,
                     judged: Judged::Read(read),
-                    placed: Some(top).filter(|&top| top != 0),
+                    placed: top.map(Window::get),
                 });
                 true
             }
@@ -1018,18 +1020,18 @@ impl<J> Schedule<J> {
     /// way, once it knows its window, or else whose last read, is of
     /// another top-level window; a read under way whose window is unknown
     /// counts as moving away. It judges nothing else.
-    fn foreground(&mut self, top_level: isize, running_tops: &[(Pid, isize)]) {
+    fn foreground(&mut self, top_level: Option<Window>, running_tops: &[(Pid, Option<Window>)]) {
         let place = self.queued;
         for (pid, app) in &mut self.apps {
             let reference = if app.flight.running().is_some() {
                 running_tops
                     .iter()
                     .find(|(owner, _)| owner == pid)
-                    .map_or(0, |&(_, top)| top)
+                    .and_then(|&(_, top)| top)
             } else {
                 app.last_top
             };
-            if reference == 0 || reference != top_level {
+            if reference.is_none() || reference != top_level {
                 app.left_at = place;
             }
         }
@@ -1182,7 +1184,10 @@ mod tests {
     const GRACE: u64 = 500_000;
 
     /// The window the tests' events are of.
-    const WINDOW: isize = 0x10;
+    const WINDOW: Window = match Window::new(0x10) {
+        Some(window) => window,
+        None => panic!("0x10 is not 0"),
+    };
 
     fn schedule() -> Schedule<u64> {
         Schedule::new(Duration::from_micros(DEADLINE))
@@ -1204,7 +1209,7 @@ mod tests {
             job: marker,
             kind,
             key: None,
-            window: Some(WINDOW),
+            window: RuleWindow::Known(WINDOW),
         }
     }
 
@@ -1299,7 +1304,7 @@ mod tests {
             meta: meta(marker, FocusEvent::Focus),
             judged: Judged::Dropped("read"),
             placed: None,
-            top: 0,
+            top: None,
         }
     }
 
@@ -1484,8 +1489,8 @@ mod tests {
             step(
                 &mut schedule,
                 ScheduleInput::Foreground {
-                    top_level: 0x20,
-                    running_tops: vec![(Pid(1), WINDOW)],
+                    top_level: Window::new(0x20),
+                    running_tops: vec![(Pid(1), Some(WINDOW))],
                 },
                 2,
             ),
@@ -1560,7 +1565,7 @@ mod tests {
                     pid: Pid(1),
                     request: asked,
                     read: Some(a_read()),
-                    top: WINDOW,
+                    top: Some(WINDOW),
                     then_abandon: Some(Reason::MovedOn),
                 },
                 GRACE,
@@ -1602,7 +1607,7 @@ mod tests {
                     pid: Pid(1),
                     request: asked,
                     read: Some(a_read()),
-                    top: WINDOW,
+                    top: Some(WINDOW),
                     then_abandon: None,
                 },
                 300_000,
@@ -1667,7 +1672,7 @@ mod tests {
             job: marker,
             kind: FocusEvent::Focus,
             key: Some(vec![42]),
-            window: Some(WINDOW),
+            window: RuleWindow::Known(WINDOW),
         };
         effects.extend(step(&mut schedule, focus(1, 1), 0));
         effects.extend(step(&mut schedule, next(1, 1), 0));
@@ -1716,8 +1721,8 @@ mod tests {
                     request: request(1, 1),
                     meta: meta(1, FocusEvent::Focus),
                     judged: Judged::Read(a_read()),
-                    placed: Some(WINDOW),
-                    top: WINDOW,
+                    placed: Some(WINDOW.get()),
+                    top: Some(WINDOW),
                 },
                 1,
             );
@@ -1731,7 +1736,7 @@ mod tests {
             opening_after(&|schedule| {
                 let _ = schedule.step(
                     ScheduleInput::Foreground {
-                        top_level: WINDOW,
+                        top_level: Some(WINDOW),
                         running_tops: Vec::new(),
                     },
                     1,
@@ -1761,7 +1766,7 @@ mod tests {
             !opening_after(&|schedule| {
                 let _ = schedule.step(
                     ScheduleInput::Foreground {
-                        top_level: 0x30,
+                        top_level: Window::new(0x30),
                         running_tops: Vec::new(),
                     },
                     1,
@@ -1781,8 +1786,8 @@ mod tests {
         let _ = step(
             &mut schedule,
             ScheduleInput::Foreground {
-                top_level: WINDOW,
-                running_tops: vec![(Pid(1), 0)],
+                top_level: Some(WINDOW),
+                running_tops: vec![(Pid(1), None)],
             },
             1,
         );
@@ -1846,7 +1851,7 @@ mod tests {
                 job: 2,
                 kind: FocusEvent::Focus,
                 key: None,
-                window: Some(0),
+                window: RuleWindow::Unknown,
             },
             0,
         );

@@ -13,7 +13,10 @@ const MS: u64 = 1_000;
 const GRACE: u64 = 500 * MS;
 
 /// The window the tests' items are of.
-const WINDOW: isize = 0x10;
+const WINDOW: Window = match Window::new(0x10) {
+    Some(window) => window,
+    None => panic!("0x10 is not 0"),
+};
 
 fn publish(request: Request, then_abandon: Option<Reason>) -> Decision<u32> {
     Decision::Ask(Ask::Publish {
@@ -46,7 +49,7 @@ fn abandoned(dead: u64, reason: Reason, published: bool) -> Decision<u32> {
 #[test]
 fn a_late_tick_judges_the_deadline_then_the_bound_then_the_moved_on_rule() {
     let mut late = InFlight::new();
-    let request = late.start(7, 2_000 * MS, Some(WINDOW), 0);
+    let request = late.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
     late.armed(request, 1_000 * MS);
     assert_eq!(
         late.tick(3_000 * MS),
@@ -58,7 +61,7 @@ fn a_late_tick_judges_the_deadline_then_the_bound_then_the_moved_on_rule() {
     );
 
     let mut early = InFlight::new();
-    let request = early.start(7, 2_000 * MS, Some(WINDOW), 0);
+    let request = early.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
     early.armed(request, 1_000 * MS);
     assert_eq!(early.tick(1_500 * MS), publish(request, None));
     assert_eq!(
@@ -73,7 +76,7 @@ fn a_late_tick_judges_the_deadline_then_the_bound_then_the_moved_on_rule() {
 #[test]
 fn an_armed_walk_is_published_before_each_abandonment() {
     let mut deadline = InFlight::new();
-    let request = deadline.start(7, 400 * MS, None, 0);
+    let request = deadline.start(7, 400 * MS, RuleWindow::Never, 0);
     deadline.armed(request, 1_000 * MS);
     assert_eq!(
         deadline.tick(400 * MS),
@@ -85,7 +88,7 @@ fn an_armed_walk_is_published_before_each_abandonment() {
     );
 
     let mut moved = InFlight::new();
-    let request = moved.start(7, 10_000 * MS, Some(WINDOW), 0);
+    let request = moved.start(7, 10_000 * MS, RuleWindow::Known(WINDOW), 0);
     moved.armed(request, 2_000 * MS);
     assert_eq!(moved.tick(GRACE), moved_on(request));
     assert_eq!(
@@ -106,7 +109,7 @@ fn an_armed_walk_is_published_before_each_abandonment() {
 #[test]
 fn the_moved_on_rule_is_judged_every_half_second() {
     let mut known = InFlight::new();
-    let request = known.start(7, 10_000 * MS, Some(WINDOW), 0);
+    let request = known.start(7, 10_000 * MS, RuleWindow::Known(WINDOW), 0);
     assert_eq!(known.next_wake(), Some(GRACE));
     assert_eq!(known.tick(GRACE - 1), Decision::Nothing);
     assert_eq!(known.tick(GRACE), moved_on(request));
@@ -116,7 +119,7 @@ fn the_moved_on_rule_is_judged_every_half_second() {
     assert_eq!(known.tick(2 * GRACE), moved_on(request));
 
     let mut learned = InFlight::new();
-    let request = learned.start(7, 10_000 * MS, Some(0), 0);
+    let request = learned.start(7, 10_000 * MS, RuleWindow::Unknown, 0);
     assert_eq!(learned.next_wake(), Some(10_000 * MS), "no window to judge");
     assert_eq!(learned.tick(600 * MS), Decision::Nothing);
     assert_eq!(
@@ -126,7 +129,7 @@ fn the_moved_on_rule_is_judged_every_half_second() {
     assert_eq!(learned.next_wake(), Some(700 * MS + GRACE));
 
     let mut early = InFlight::new();
-    let request = early.start(7, 10_000 * MS, Some(0), 0);
+    let request = early.start(7, 10_000 * MS, RuleWindow::Unknown, 0);
     assert_eq!(early.learned(request, WINDOW, 100 * MS), Decision::Nothing);
     assert_eq!(early.next_wake(), Some(GRACE), "judged at the grace's end");
 }
@@ -136,7 +139,7 @@ fn the_moved_on_rule_is_judged_every_half_second() {
 #[test]
 fn a_published_item_is_abandoned_at_once_when_the_user_moves_on() {
     let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 8_000 * MS, Some(WINDOW), 0);
+    let request = in_flight.start(7, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
     in_flight.armed(request, 2_000 * MS);
     assert_eq!(in_flight.tick(2_000 * MS), publish(request, None));
     assert_eq!(
@@ -157,9 +160,9 @@ fn a_published_item_is_abandoned_at_once_when_the_user_moves_on() {
 #[test]
 fn an_answer_to_a_dead_request_is_dropped() {
     let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 8_000 * MS, Some(WINDOW), 0);
+    let request = in_flight.start(7, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
     assert_eq!(in_flight.end(request), Some((7, false)));
-    let next = in_flight.start(8, 8_000 * MS, Some(WINDOW), 0);
+    let next = in_flight.start(8, 8_000 * MS, RuleWindow::Known(WINDOW), 0);
     assert_eq!(in_flight.moved_on(request, true), Decision::Nothing);
     assert_eq!(
         in_flight.published(request, true, Some(Reason::Deadline), 0),
@@ -178,7 +181,7 @@ fn an_answer_to_a_dead_request_is_dropped() {
 #[test]
 fn a_walk_returned_before_its_bound_is_disarmed() {
     let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 8_000 * MS, None, 0);
+    let request = in_flight.start(7, 8_000 * MS, RuleWindow::Never, 0);
     in_flight.armed(request, 2_000 * MS);
     assert_eq!(in_flight.next_wake(), Some(2_000 * MS));
     assert_eq!(in_flight.walk_returned(request, false), Decision::Nothing);
@@ -191,7 +194,7 @@ fn a_walk_returned_before_its_bound_is_disarmed() {
 #[test]
 fn an_item_handed_on_keeps_its_times() {
     let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 2_000 * MS, Some(WINDOW), 0);
+    let request = in_flight.start(7, 2_000 * MS, RuleWindow::Known(WINDOW), 0);
     in_flight.armed(request, 1_000 * MS);
     let handed = in_flight.hand_on().expect("an item running");
     assert_eq!(
@@ -214,10 +217,10 @@ fn an_item_handed_on_keeps_its_times() {
 #[test]
 fn a_succeeded_generation_takes_charge() {
     let mut in_flight = InFlight::new();
-    let request = in_flight.start(7, 2_000 * MS, None, 0);
+    let request = in_flight.start(7, 2_000 * MS, RuleWindow::Never, 0);
     assert_eq!(in_flight.end(request), Some((7, false)));
     assert_eq!(in_flight.succeed(), 1);
-    let next = in_flight.start(8, 2_000 * MS, None, 0);
+    let next = in_flight.start(8, 2_000 * MS, RuleWindow::Never, 0);
     assert_eq!(
         next,
         Request {
@@ -324,7 +327,7 @@ struct Timeline {
     id: u32,
     start: u64,
     deadline: u64,
-    window: Option<isize>,
+    window: RuleWindow,
     events: Vec<(u64, Event)>,
 }
 
@@ -339,13 +342,13 @@ impl Timeline {
     /// tick, or a window learned past the grace.
     fn fate(&self, answers: &Answers) -> Fate {
         let grace_end = self.start + GRACE;
-        let mut next = self.window.filter(|window| *window != 0).map(|_| grace_end);
+        let mut next = self.window.known().map(|_| grace_end);
         let mut bound = None;
         let mut published = false;
         for &(now, event) in &self.events {
             let judged = match event {
                 Event::Learned => {
-                    if self.window == Some(0) && next.is_none() {
+                    if self.window == RuleWindow::Unknown && next.is_none() {
                         next = Some(grace_end.max(now));
                         now >= grace_end
                     } else {
@@ -469,7 +472,11 @@ impl Run {
                     return;
                 }
                 self.items += 1;
-                let window = [None, Some(0), Some(WINDOW)][usize::from(window)];
+                let window = [
+                    RuleWindow::Never,
+                    RuleWindow::Unknown,
+                    RuleWindow::Known(WINDOW),
+                ][usize::from(window)];
                 let deadline = DEADLINES[usize::from(deadline)];
                 let request = self.in_flight.start(self.items, deadline, window, self.now);
                 let timeline = Timeline {

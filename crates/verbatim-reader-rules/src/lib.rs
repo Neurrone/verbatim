@@ -1,7 +1,8 @@
 //! What both of Verbatim's readers, an outpost and the focus listener,
 //! apply before reading: NVDA's class verdict and the class name
 //! normalization it is judged on ([`class`]), NVDA's acceptance test
-//! ([`acceptance`]), and the constants both readers wait and judge by. A
+//! ([`acceptance`]), a window's handle that is never 0 ([`Window`]), and
+//! the constants both readers wait and judge by. A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
 //! D14, "Where the rules run"). Pure: no Windows dependency, no call and
@@ -14,6 +15,9 @@ use std::time::Duration;
 pub mod acceptance;
 pub mod class;
 pub mod in_flight;
+mod window;
+
+pub use window::Window;
 
 /// The console host's window class. A console window's provider is the
 /// console host, the process of the window's thread, while

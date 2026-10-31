@@ -165,6 +165,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use verbatim_model::protocol::{DeliveredFact, GapAnswer, RequestId, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
+use verbatim_reader_rules::Window;
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
 use super::gap_record::{Accepted, CopyDropped, GapRead, GapRecord, Outcome};
@@ -329,10 +330,10 @@ pub struct Intake {
 pub struct Marks {
     /// The object last reported as the focus.
     pub focused: Option<Object>,
-    /// When `focused` is a terminal read through UIA, its window (0 when
-    /// not known): its caret event is planned after its text changes
+    /// When `focused` is a terminal read through UIA, its window, `None`
+    /// when not known: its caret event is planned after its text changes
     /// waiting with it ([`caret_after_update`]).
-    pub terminal: Option<isize>,
+    pub terminal: Option<Option<Window>>,
     /// Whether `focused` was reached by redirecting a control's own focus
     /// event to its focused child, whose own event is still to come.
     pub focus_redirected: bool,
@@ -912,9 +913,9 @@ fn remove_waiting(
     waiting.remove(found).map(|removed| (found, removed))
 }
 
-/// The window an item concerns, 0 for none.
-pub fn window_of(item: &Item) -> isize {
-    classify(item).2
+/// The window an item concerns, if any.
+pub fn window_of(item: &Item) -> Option<Window> {
+    Window::new(classify(item).2)
 }
 
 /// The key, category, and window of an item.
@@ -989,17 +990,21 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
 /// Terminal raises its caret event after its text change, but the intake
 /// moves a newer change that replaces a waiting one to the back, behind the
 /// caret event; the console host raises the two in either order.
+#[expect(
+    clippy::option_option,
+    reason = "the marks' terminal: no terminal, one whose window is not known, or one in a window"
+)]
 fn caret_after_update(
     waiting: &mut Vec<Waiting>,
     focused: Option<&Object>,
-    terminal: Option<isize>,
+    terminal: Option<Option<Window>>,
 ) {
     let (Some(Object::Uia(runtime_id)), Some(window)) = (focused, terminal) else {
         return;
     };
     let uia_caret = Key::Uia(2, 0, runtime_id.clone());
     let console_caret =
-        (window != 0).then_some(Key::Msaa(WinKind::ConsoleCaret as u8, window, 0, 0, 0));
+        window.map(|window| Key::Msaa(WinKind::ConsoleCaret as u8, window.get(), 0, 0, 0));
     let Some(at) = waiting.iter().position(|waiting| {
         let key = waiting.key.as_ref();
         key == Some(&uia_caret) || (key.is_some() && key == console_caret.as_ref())
@@ -1008,7 +1013,7 @@ fn caret_after_update(
     };
     let text_changed = Key::Uia(3, 0, runtime_id.clone());
     let console_update =
-        (window != 0).then_some(Key::Msaa(WinKind::ConsoleUpdate as u8, window, 0, 0, 0));
+        window.map(|window| Key::Msaa(WinKind::ConsoleUpdate as u8, window.get(), 0, 0, 0));
     let mut newest_change = None;
     for (index, later) in waiting.iter().enumerate().skip(at + 1) {
         if !matches!(later.entry.item, Item::Msaa { .. } | Item::Uia(_)) {
@@ -1380,7 +1385,7 @@ mod tests {
             intake: Intake::default(),
             marks: Marks {
                 focused: object,
-                terminal,
+                terminal: terminal.map(Window::new),
                 ..Marks::default()
             },
         }

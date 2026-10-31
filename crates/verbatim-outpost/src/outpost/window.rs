@@ -102,11 +102,21 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
     // How the window stands to the foreground window, by the acceptance
     // test's own rule (`acceptance::foreground_relation`), against the system's
     // foreground window now.
-    let relation = verbatim_reader_rules::acceptance::foreground_relation(
-        handle,
-        &class,
-        &verbatim_win32::window::SystemWindows {
-            foreground: verbatim_win32::window::foreground_window_handle(),
+    // No window stands in no relation to it.
+    let relation = verbatim_reader_rules::Window::new(handle).map_or(
+        verbatim_core::focus_rules::ForegroundRelation {
+            in_foreground: false,
+            topmost: false,
+            under_active_window: None,
+        },
+        |window| {
+            verbatim_reader_rules::acceptance::foreground_relation(
+                window,
+                &class,
+                &verbatim_win32::window::SystemWindows {
+                    foreground: verbatim_win32::window::foreground_window_handle(),
+                },
+            )
         },
     );
     WindowFacts {

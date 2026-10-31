@@ -25,6 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, HSTRING, s, w};
 
 use verbatim_model::HIDDEN_FRAME_WINDOW_PROP;
+use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::WindowQueries;
 use verbatim_reader_rules::class::WindowClasses;
 
@@ -437,55 +438,55 @@ pub struct SystemWindows {
 }
 
 impl WindowQueries for SystemWindows {
-    fn class_name(&self, window: isize) -> String {
-        window_class_name(window)
+    fn class_name(&self, window: Window) -> String {
+        window_class_name(window.get())
     }
 
-    fn process(&self, window: isize) -> u32 {
-        window_owner(window).1
+    fn process(&self, window: Window) -> u32 {
+        window_owner(window.get()).1
     }
 
-    fn parent(&self, window: isize) -> isize {
-        ancestor(window, GA_PARENT)
+    fn parent(&self, window: Window) -> Option<Window> {
+        Window::new(ancestor(window.get(), GA_PARENT))
     }
 
-    fn root(&self, window: isize) -> isize {
-        ancestor(window, GA_ROOT)
+    fn root(&self, window: Window) -> Option<Window> {
+        Window::new(ancestor(window.get(), GA_ROOT))
     }
 
-    fn root_owner(&self, window: isize) -> isize {
-        ancestor(window, GA_ROOTOWNER)
+    fn root_owner(&self, window: Window) -> Option<Window> {
+        Window::new(ancestor(window.get(), GA_ROOTOWNER))
     }
 
-    fn is_child(&self, parent: isize, child: isize) -> bool {
-        is_child(parent, child)
+    fn is_child(&self, parent: Window, child: Window) -> bool {
+        is_child(parent.get(), child.get())
     }
 
-    fn is_topmost(&self, window: isize) -> bool {
+    fn is_topmost(&self, window: Window) -> bool {
         // SAFETY: GetWindowLongW reads a window's style word; an invalid
         // handle yields 0.
-        let style = unsafe { GetWindowLongW(hwnd(window), GWL_EXSTYLE) };
+        let style = unsafe { GetWindowLongW(hwnd(window.get()), GWL_EXSTYLE) };
         style.cast_unsigned() & WS_EX_TOPMOST.0 != 0
     }
 
-    fn desktop(&self) -> isize {
-        desktop_window()
+    fn desktop(&self) -> Option<Window> {
+        Window::new(desktop_window())
     }
 
-    fn active_window(&self) -> isize {
+    fn active_window(&self) -> Option<Window> {
         let mut info = GUITHREADINFO {
             cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
             ..Default::default()
         };
         // SAFETY: `info` has cbSize set before the call, which fails safely.
         if unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_err() {
-            return 0;
+            return None;
         }
-        info.hwndActive.0 as isize
+        Window::new(info.hwndActive.0 as isize)
     }
 
-    fn foreground(&self) -> isize {
-        self.foreground
+    fn foreground(&self) -> Option<Window> {
+        Window::new(self.foreground)
     }
 }
 

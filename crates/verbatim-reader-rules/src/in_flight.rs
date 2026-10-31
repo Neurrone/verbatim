@@ -18,7 +18,7 @@
 //! the reader's own monotonic clock, passed in; nothing here reads a
 //! clock or makes a call.
 
-use crate::MOVED_ON_GRACE;
+use crate::{MOVED_ON_GRACE, Window};
 
 /// The moved-on grace, in microseconds.
 const GRACE_US: u64 = {
@@ -66,10 +66,46 @@ pub enum Moved {
     /// The item's window is known; the rule is next judged at `next`.
     Known {
         /// The window.
-        window: isize,
+        window: Window,
         /// When the rule is next judged.
         next: u64,
     },
+}
+
+/// The window an item is started with, which the moved-on rule judges
+/// it by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuleWindow {
+    /// The item is never judged by the rule.
+    Never,
+    /// Its window is still to be learned.
+    Unknown,
+    /// Its window.
+    Known(Window),
+}
+
+impl RuleWindow {
+    /// The window a cache gives, `None` for an item never judged by the
+    /// rule and a handle of 0 while the window is not known.
+    #[must_use]
+    pub const fn from_cached(handle: Option<isize>) -> Self {
+        match handle {
+            None => Self::Never,
+            Some(handle) => match Window::new(handle) {
+                Some(window) => Self::Known(window),
+                None => Self::Unknown,
+            },
+        }
+    }
+
+    /// The window, when it is known.
+    #[must_use]
+    pub const fn known(self) -> Option<Window> {
+        match self {
+            Self::Known(window) => Some(window),
+            Self::Never | Self::Unknown => None,
+        }
+    }
 }
 
 /// Why the item in flight was abandoned, which each reader puts in its own
@@ -94,7 +130,7 @@ pub enum Ask {
         /// The item asked about.
         request: Request,
         /// Its window.
-        window: isize,
+        window: Window,
     },
     /// Publish the walk of `request`'s item from its progress; answered by
     /// [`InFlight::published`], which carries `then_abandon` back.
@@ -171,16 +207,15 @@ impl<T> InFlight<T> {
     }
 
     /// Starts `item` at `now`, to be abandoned `deadline` microseconds
-    /// later, with its window: `None` for an item never judged by the
-    /// moved-on rule, `Some(0)` for one whose window is still to be
-    /// learned, and `Some(window)` otherwise. Nothing may be running.
-    pub fn start(&mut self, item: T, deadline: u64, window: Option<isize>, now: u64) -> Request {
+    /// later, with the window the moved-on rule judges it by. Nothing may
+    /// be running.
+    pub fn start(&mut self, item: T, deadline: u64, window: RuleWindow, now: u64) -> Request {
         debug_assert!(self.running.is_none(), "an item started over another");
         let request = self.next_request();
         let moved = match window {
-            None => Moved::Never,
-            Some(0) => Moved::Unknown,
-            Some(window) => Moved::Known {
+            RuleWindow::Never => Moved::Never,
+            RuleWindow::Unknown => Moved::Unknown,
+            RuleWindow::Known(window) => Moved::Known {
                 window,
                 next: now.saturating_add(GRACE_US),
             },
@@ -212,11 +247,11 @@ impl<T> InFlight<T> {
     /// `request`'s item has learned its window, `window`, at `now`: an
     /// unknown window becomes known, its rule judged at the grace's end, or
     /// at once when the grace has passed.
-    pub fn learned(&mut self, request: Request, window: isize, now: u64) -> Decision<T> {
+    pub fn learned(&mut self, request: Request, window: Window, now: u64) -> Decision<T> {
         let Some(running) = self.running_of(request) else {
             return Decision::Nothing;
         };
-        if window == 0 || running.moved != Moved::Unknown {
+        if running.moved != Moved::Unknown {
             return Decision::Nothing;
         }
         let grace_end = running.started.saturating_add(GRACE_US);

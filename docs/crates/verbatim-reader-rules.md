@@ -26,12 +26,19 @@ Public API:
   the arbitrator's own lists, built from `GOOD_UIA_CLASSES` and
   `BAD_UIA_CLASSES` with its configured additions. `SHELL_ROOT_CLASSES`
   are the shell's top-level windows.
+- `Window` — a window's handle that is never 0. The protocol and the
+  system's calls carry a handle as an `isize`, 0 for none; the logic
+  crates parse one where it enters them, `Window::new(handle)` giving
+  `None` for 0, and give it back for a call with `get`, so no rule judges
+  a 0 as none.
 - `acceptance` — NVDA's test for accepting an event before anything is
   read of it (`shouldAcceptEvent`; `docs/parity/focus-events.md`, "Event
   acceptance"). `accepts_event(event, window, &windows, &requested)` is a
-  function of the event's name (`EventName`), its window, the window
-  queries (`WindowQueries`, which `verbatim_win32::window::SystemWindows`
-  answers with local calls and the tests answer from a made-up desk) and
+  function of the event's name (`EventName`), its window, `None` for an
+  event with no window, which is accepted, the window queries
+  (`WindowQueries`, which `verbatim_win32::window::SystemWindows` answers
+  with local calls, parsing each handle the system gives into an
+  `Option<Window>`, and the tests answer from a made-up desk) and
   the events application support asked for (`RequestedEvents`).
   `foreground_relation(window, class, &windows)` is how the window stands
   to the foreground window, the rules the test ends with, which an outpost
@@ -47,9 +54,10 @@ Public API:
   `Known { window, next }`) and the reader's own item `T`. The outpost's
   reducer embeds one, and the listener's schedule one per application.
   Times are microseconds on the reader's monotonic clock, passed in.
-  - Transitions: `start(item, deadline, window, now)`, the window `None`
-    for an item never judged by the moved-on rule and `Some(0)` for one
-    still to learn it; `hand_on()`, a new request for the running item
+  - Transitions: `start(item, deadline, window, now)`, the window a
+    `RuleWindow`: `Never` for an item never judged by the moved-on rule,
+    `Unknown` for one still to learn it, or `Known(window)`, which
+    `RuleWindow::from_cached` parses from a cache's handle; `hand_on()`, a new request for the running item
     keeping its times, walk and rule (the outpost's finish of a cut caret
     read); `learned(request, window, now)`; `armed(request, bound)`;
     `walk_returned(request, past)`; `tick(now)`; the answers

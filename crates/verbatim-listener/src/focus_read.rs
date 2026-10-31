@@ -148,8 +148,10 @@ use verbatim_process::clock::now_us;
 use verbatim_process::clock::{Clock, ObservationClock};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_reader_rules::MOVED_ON_GRACE;
+use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::{EventName, RequestedEvents, accepts_event};
 use verbatim_reader_rules::class::{ClassVerdict, WindowClasses, class_verdict};
+use verbatim_reader_rules::in_flight::RuleWindow;
 use verbatim_win32::window::ForegroundReader;
 use verbatim_win32::window::SystemWindows;
 use verbatim_win32::window::window_class_name;
@@ -1314,7 +1316,7 @@ impl FocusReader {
         };
         if !accepts_event(
             EventName::GainFocus,
-            window,
+            Window::new(window),
             &windows,
             &RequestedEvents::default(),
         ) {
@@ -1768,14 +1770,14 @@ fn step<R: Reading>(
                 let (pid, request) = (job.pid, job.request);
                 let watched = WatchedRead::new(
                     request,
-                    job.window.unwrap_or(0),
-                    if job.window.is_some() {
+                    job.window.known().map_or(0, Window::get),
+                    if job.window == RuleWindow::Never {
+                        (None, None)
+                    } else {
                         (
                             Some(on_learn(shared, pid, request)),
                             Some(on_arm(shared, pid, request)),
                         )
-                    } else {
-                        (None, None)
                     },
                     job.after_elsewhere,
                 );
@@ -1819,7 +1821,7 @@ fn answer<R: Reading>(
         } => ScheduleInput::MovedOn {
             pid,
             request,
-            moved_on: shared.reading.moved_on(window),
+            moved_on: shared.reading.moved_on(window.get()),
         },
         ScheduleEffect::Publish {
             pid,
@@ -1834,7 +1836,7 @@ fn answer<R: Reading>(
                 pid,
                 request,
                 read: watched.and_then(WatchedRead::prepare_publish).map(Box::new),
-                top: watched.map_or(0, WatchedRead::top_level),
+                top: watched.and_then(|watched| Window::new(watched.top_level())),
                 then_abandon,
             }
         }
@@ -1921,7 +1923,7 @@ impl<R: Reading> Readers<R> {
                 job,
                 kind,
                 key,
-                window,
+                window: RuleWindow::from_cached(window),
             },
             None,
         );
@@ -1984,13 +1986,13 @@ impl<R: Reading> Readers<R> {
         let running_tops = state
             .watched
             .iter()
-            .map(|(pid, watched)| (*pid, watched.top_level()))
+            .map(|(pid, watched)| (*pid, Window::new(watched.top_level())))
             .collect();
         step(
             &self.shared,
             &mut state,
             ScheduleInput::Foreground {
-                top_level,
+                top_level: Window::new(top_level),
                 running_tops,
             },
             None,
@@ -2124,7 +2126,7 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
                 meta,
                 judged,
                 placed,
-                top,
+                top: Window::new(top),
             },
             Some(ThreadSide {
                 reader: &mut reader,
@@ -2176,9 +2178,10 @@ fn next_job<R: Reading>(
 fn on_learn<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, request: Request) -> OnLearn {
     let shared = Arc::downgrade(shared);
     Box::new(move |window: isize| {
-        let Some(shared) = shared.upgrade() else {
+        let (Some(shared), Some(window)) = (shared.upgrade(), Window::new(window)) else {
             return;
         };
+
         let mut state = shared.lock();
         step(
             &shared,

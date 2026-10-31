@@ -477,7 +477,7 @@ impl<'a> RequestContext<'a> {
                 .as_ref()
                 .and_then(|path| path.route_to(runtime_id))
         })?;
-        read::serves(self, route.window).then_some(route)
+        read::serves(self, route.window.get()).then_some(route)
     }
 
     /// Applies `change`, a change of text facts one of the program's text
@@ -915,7 +915,7 @@ impl Context {
         runtime_id: &[i32],
     ) -> Option<focus_path::Route> {
         let route = path.route_to(runtime_id)?;
-        read::serves(self, route.window).then_some(route)
+        read::serves(self, route.window.get()).then_some(route)
     }
 }
 

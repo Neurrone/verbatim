@@ -79,6 +79,7 @@ use crate::arbitration::Judgement as _;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::{Checked, Watched};
 use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
+use verbatim_reader_rules::Window;
 use verbatim_reader_rules::acceptance::{self, EventName};
 use verbatim_win32::window::SystemWindows;
 use verbatim_win32::window::window_class_name;
@@ -1496,13 +1497,13 @@ impl Worker<'_> {
         {
             return Some(focus);
         }
-        let top_level = top_level_of(hwnd);
+        let top_level = verbatim_reader_rules::Window::new(top_level_of(hwnd));
         let reported: Vec<NodeId> = self
             .context
             .held()
             .focuses()
             .rev()
-            .filter(|focus| top_level != 0 && focus.top_level == top_level)
+            .filter(|focus| top_level.is_some() && focus.top_level == top_level)
             .map(|focus| focus.node.id)
             .collect();
         reported
@@ -2182,8 +2183,12 @@ impl Worker<'_> {
         let windows = SystemWindows {
             foreground: self.context.foreground_window(),
         };
-        let accepted =
-            acceptance::accepts_event(event, hwnd, &windows, &self.context.requested_events);
+        let accepted = acceptance::accepts_event(
+            event,
+            Window::new(hwnd),
+            &windows,
+            &self.context.requested_events,
+        );
         if !accepted {
             tracing::debug!(
                 hwnd,
@@ -2684,13 +2689,13 @@ impl Worker<'_> {
     /// object, never to the ancestor (`docs/parity/focus-announcement.md`, "A top-level
     /// window's state change"). A top-level window that is not the
     /// foreground, such as a popup menu's, keeps its ancestor.
-    fn is_foreground_window(&self, node: NodeId, foreground: Option<isize>) -> bool {
+    fn is_foreground_window(&self, node: NodeId, foreground: Option<Window>) -> bool {
         foreground.is_some_and(|foreground| {
             self.context
                 .store
                 .key_of(node)
                 .is_some_and(|(hwnd, id_object, child)| {
-                    hwnd == foreground
+                    hwnd == foreground.get()
                         && child == CHILDID_SELF
                         && (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0)
                 })
@@ -3340,8 +3345,8 @@ impl Worker<'_> {
         // Whether the window holds an unreleased node of a report's line,
         // judged before this change is recorded among the reports: then
         // the group's next older entry is tried after it.
-        let top_level = top_level_of(hwnd);
-        let holds_a_line = top_level != 0
+        let top_level = Window::new(top_level_of(hwnd));
+        let holds_a_line = top_level.is_some()
             && self
                 .context
                 .held()
@@ -3816,11 +3821,11 @@ impl Worker<'_> {
         }?;
         let uia = self.client.uia()?;
         let nodes = context.node_request(uia).ok()?;
-        let remote = context.tries_remote(Some(route.window));
+        let remote = context.tries_remote(Some(route.window.get()));
         let (found, import_failed) =
             focus_path::find(uia, &route, &nodes, remote, &context.clock());
         if import_failed {
-            context.read_classically(route.window);
+            context.read_classically(route.window.get());
         }
         // Read as `Kept`: the callers keep it, or read only its runtime id.
         found.ok().flatten().map(|found| found.narrow())
@@ -4302,14 +4307,14 @@ fn judged_focus(
     (window, foreground): (Option<isize>, bool),
     msaa_event: Option<((isize, i32, i32), bool)>,
 ) -> reducer::Focus {
-    let top_level = window.map_or(0, top_level_of);
+    let top_level = window.and_then(|window| Window::new(top_level_of(window)));
     // The evidence; the reducer's rule decides what the window entered
     // with as the report is recorded (`reducer::Held::entered_in_front`).
     let in_front = if foreground {
         reducer::InFront::Foreground(top_level)
     } else {
         reducer::InFront::Read(
-            (top_level != 0 && top_level == context.foreground_window()).then_some(top_level),
+            top_level.filter(|top_level| top_level.get() == context.foreground_window()),
         )
     };
     let dialog_texts = ancestors
