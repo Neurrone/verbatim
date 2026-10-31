@@ -178,14 +178,14 @@ rules):
   `Hold(place)`. While a place waits in the line, any other transition
   that would pass is `Defer(place)` when the permit is not `None`, unless
   it is a lock key, whose state is announced from Windows' own, or
-  Verbatim's own key; a bound gesture is swallowed, never deferred. A
-  release whose key's press waits in the line is deferred whatever the
-  permit, since passed ahead of its press it would leave the key down. The
+  Verbatim's own key; a bound gesture is swallowed, never deferred. The
   line's places count from 1; `passed_on(place)` takes the line up to that
   place, since Core passes keys on in order and one Windows dropped is not
   waited for once a later one arrives. Every short sequence of keys,
   pass-ons and permit changes is checked against a reference model by
-  `tests/hold_sequences.rs`.
+  `tests/hold_sequences.rs`, except where the permit falls to `None` while
+  a deferred press waits, whose release then passes at once (the design's
+  "Limitations").
 - Double-tap passthrough: releasing the modifier with no other key pressed
   during the hold arms a window (`multi_press_timeout`, 500 ms). Pressing
   the same physical key again inside the window hands that whole press to the

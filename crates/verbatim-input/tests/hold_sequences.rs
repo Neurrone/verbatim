@@ -10,7 +10,10 @@
 //! Verbatim+Right Arrow and Verbatim+T are bound, and Right Arrow and
 //! Shift+Right Arrow held, so a caret key is also a gesture's key. Steps
 //! are 33 ms apart, inside the multi-press timeout. A release is offered
-//! only for a key down, and a pass-on only while a place waits. After
+//! only for a key down, and a pass-on only while a place waits. The permit
+//! never falls to `None` while a deferred press waits in line: its release
+//! would then pass at once, ahead of the press, the known limitation of
+//! "The hook's hold decision". After
 //! every step the machine's verdict and raised gesture must equal the
 //! model's, and after every sequence, every key let go and every place
 //! passed on, the application must have every key up, having received no
@@ -126,11 +129,9 @@ impl Model {
     }
 
     /// A transition that would reach the application: deferred while a
-    /// place waits and the permit lets it be, or while its own press
-    /// waits; passed otherwise.
+    /// place waits and the permit lets it be; passed otherwise.
     fn reach(&mut self, key: K, pressed: bool, permit: HoldPermit) -> Verdict {
-        let press_waits = !pressed && self.line.contains(&Some((key, true)));
-        if press_waits || (permit != HoldPermit::None && !self.line.is_empty()) {
+        if permit != HoldPermit::None && !self.line.is_empty() {
             Verdict::Defer(self.queue(Some((key, pressed))))
         } else {
             Verdict::Pass
@@ -260,7 +261,14 @@ impl World {
         match step {
             Step::Release(key) => self.user_down.contains(&key),
             Step::PassOn => !self.line.is_empty(),
-            Step::Press(_) | Step::NextPermit => true,
+            Step::NextPermit => {
+                self.permit != HoldPermit::Defer
+                    || !self
+                        .line
+                        .iter()
+                        .any(|&(_, sent)| matches!(sent, Sent::Transition(_, true)))
+            }
+            Step::Press(_) => true,
         }
     }
 
@@ -429,19 +437,6 @@ fn every_sequence_of_up_to_five_steps_matches_the_model() {
         ]),
         [Verdict::Pass, Verdict::Hold(1), Verdict::Swallow]
     );
-    // A press deferred behind a held one, then the permit lost: the
-    // release still follows its press.
-    assert_eq!(
-        verdicts(&[
-            NextPermit,
-            Press(K::Right),
-            Press(K::A),
-            NextPermit,
-            NextPermit,
-            Release(K::A)
-        ]),
-        [Verdict::Hold(1), Verdict::Defer(2), Verdict::Defer(3)]
-    );
     // A press passed, then the Verbatim modifier down, and the key's
     // auto-repeat completing a gesture: the release is delivered.
     assert_eq!(
@@ -466,4 +461,4 @@ fn every_sequence_of_up_to_five_steps_matches_the_model() {
 
 /// The number of sequences the walk takes, so that a change to the
 /// alphabet or its pruning is seen.
-const WALKED: u64 = 18_936;
+const WALKED: u64 = 18_929;

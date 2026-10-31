@@ -345,9 +345,9 @@ struct KeyDown {
 struct Waiting {
     /// Its place in line.
     place: u32,
-    /// A deferred transition's key and whether it is a press; `None` for a
-    /// held caret key, whose release Core sends with it.
-    transition: Option<(KeyCode, bool)>,
+    /// A deferred transition's virtual-key code and whether it is a press;
+    /// `None` for a held caret key, whose release Core sends with it.
+    transition: Option<(u16, bool)>,
 }
 
 /// The part a key plays in the press currently being decided.
@@ -601,10 +601,7 @@ impl DecisionMachine {
     /// The deferred transitions not yet passed on, in order: each key's
     /// virtual-key code and whether it is a press.
     pub fn deferred_transitions(&self) -> impl Iterator<Item = (u16, bool)> + '_ {
-        self.line
-            .iter()
-            .filter_map(|waiting| waiting.transition)
-            .map(|((vk, _), pressed)| (vk, pressed))
+        self.line.iter().filter_map(|waiting| waiting.transition)
     }
 
     /// The verdict on a transition the rules above passed or swallowed,
@@ -614,9 +611,7 @@ impl DecisionMachine {
     /// while a transition waits in the line and the permit lets it be,
     /// unless it is a lock key or Verbatim's own; a release is swallowed
     /// while no press of its key has reached the application since it went
-    /// down or was last held, and deferred while its key's press waits in
-    /// the line, whatever the permit, since a release passed ahead of its
-    /// press would leave the key down in Windows.
+    /// down or was last held.
     fn place(
         &mut self,
         event: KeyEvent,
@@ -649,17 +644,12 @@ impl DecisionMachine {
         {
             return Verdict::Swallow;
         }
-        let press_waits = !event.pressed
-            && self
-                .line
-                .iter()
-                .any(|waiting| waiting.transition == Some((key, true)));
         let deferred = source == KeySource::User
             && ToggleKey::from_vk(event.vk).is_none()
             && permit != HoldPermit::None
             && !self.line.is_empty();
-        if press_waits || deferred {
-            Verdict::Defer(self.queue(Some((key, event.pressed))))
+        if deferred {
+            Verdict::Defer(self.queue(Some((event.vk, event.pressed))))
         } else {
             Verdict::Pass
         }
@@ -667,7 +657,7 @@ impl DecisionMachine {
 
     /// Puts a transition held back or deferred in line, giving it the next
     /// place.
-    fn queue(&mut self, transition: Option<(KeyCode, bool)>) -> u32 {
+    fn queue(&mut self, transition: Option<(u16, bool)>) -> u32 {
         self.last_place = self.last_place.checked_add(1).unwrap_or(1);
         self.line.push_back(Waiting {
             place: self.last_place,
@@ -1921,32 +1911,6 @@ mod tests {
             verdict(&mut m, HOLD, up(RIGHT, true), START),
             Verdict::Swallow
         );
-    }
-
-    /// A press deferred behind a held key, then the window in front changes
-    /// so that the permit is lost: the release still waits behind its
-    /// press, since passed ahead of it it would leave the key down.
-    #[test]
-    fn a_release_whose_press_waits_in_line_is_deferred_whatever_the_permit() {
-        let mut m = holding_machine();
-        assert_eq!(
-            verdict(&mut m, HOLD, down(RIGHT, true), START),
-            Verdict::Hold(1)
-        );
-        assert_eq!(
-            verdict(&mut m, HOLD, down(X, false), START),
-            Verdict::Defer(2)
-        );
-        let none = HoldPermit::None;
-        assert_eq!(
-            verdict(&mut m, none, up(RIGHT, true), START),
-            Verdict::Swallow
-        );
-        assert_eq!(
-            verdict(&mut m, none, up(X, false), START),
-            Verdict::Defer(3)
-        );
-        assert_eq!(verdict(&mut m, none, down(A, false), START), Verdict::Pass);
     }
 
     #[test]
