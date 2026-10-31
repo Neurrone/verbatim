@@ -1,6 +1,7 @@
 # CI per docs/architecture.md D3: GitHub-hosted Windows runners build and run
 # unit and provider tests, then the end-to-end suite runner-direct (the e2e
-# job below).
+# job below); a Linux runner lints and tests the platform-neutral tier and
+# xtask (the ci-linux job).
 #
 # The nvda/ submodule is reference material only and is deliberately not
 # checked out here (actions/checkout does not fetch submodules by default).
@@ -68,11 +69,13 @@ jobs:
           fi
 
   # The documentation check alone, for a change that touches nothing else;
-  # `cargo xtask ci` runs the same check when code changed.
+  # `cargo xtask ci` runs the same check when code changed. On Linux, xtask
+  # builds only its portable part, not the Windows bindings and the
+  # end-to-end crates, so a documentation change gets its answer sooner.
   docs:
     needs: changes
     if: needs.changes.outputs.code == 'false'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
@@ -180,6 +183,24 @@ jobs:
           name: verbatim-ci-logs-${{ runner.arch }}
           path: target/debug/logs/
           if-no-files-found: ignore
+
+  # `cargo xtask ci` on Linux: the dependency check, the scans and the
+  # documentation check, then clippy and unit tests for the crates in
+  # LINUX_CRATES (xtask/src/main.rs), the platform-neutral tier and xtask.
+  # Nothing names a target, so it builds for the runner's own architecture.
+  # No submodule, wxWidgets, cargo-hakari or speech warm-up: none of them is
+  # in what it builds or runs.
+  ci-linux:
+    needs: changes
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml pins the toolchain, installed on the first cargo
+      # invocation.
+      - uses: Swatinem/rust-cache@v2
+      - name: Run CI checks
+        run: cargo xtask ci
 
   # Milestone M2's runner-direct E2E suite (docs/roadmap.md): builds the
   # debug binaries the suite drives, starts verbatim-agent.exe bound to

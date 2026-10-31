@@ -74,12 +74,31 @@ cargo hakari manage-deps
 ### What cargo xtask ci runs
 
 `cargo xtask ci` is the standard check and exactly what GitHub Actions
-runs, in its `ci` and `ci-arm64` jobs. Its steps are the platform-neutral
-dependency check, the workspace-hack check above, rustfmt, pedantic clippy
-with warnings denied, and unit tests, all for the host's own architecture
-into `target/debug`; no step names a target, so an ARM64 machine checks
-ARM64. The dependency check inspects the `cargo tree` of each crate the
-`CLAUDE.md` NVDA provenance section lists as platform-neutral, and fails
+runs, in its `ci`, `ci-arm64` and `ci-linux` jobs. On Windows its steps are
+the platform-neutral dependency check, the scans below, the documentation
+check, the workspace-hack check above, rustfmt, and pedantic clippy with
+warnings denied and unit tests for the whole workspace, all for the host's
+own architecture into `target/debug`; no build names a target, so an ARM64
+machine checks ARM64. On Linux, where the `ci-linux` job runs it on
+`ubuntu-latest`, it runs the dependency check, the scans and the
+documentation check, then clippy and unit tests only for the crates in
+`LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier and xtask.
+rustfmt and the workspace-hack checks run only on Windows, since they read
+source and metadata the same way on every host. On Linux xtask builds only
+its portable part, so `ci` and `docs` are its only commands there; the
+documentation-only `docs` job runs on Linux for that reason, as it builds
+less. To check xtask's Linux build from this machine, which has no Linux
+C compiler, run a check-only build, which produces no binary:
+`cargo clippy -p xtask --all-targets --target x86_64-unknown-linux-gnu
+--target-dir <scratch> -- -D warnings` after `rustup target add
+x86_64-unknown-linux-gnu`; crates that reach `verbatim-text` cannot be
+checked this way, because its `zstd-sys` needs a Linux C toolchain, so
+GitHub's `ci-linux` run is their check.
+
+The dependency check inspects the `cargo tree --target all` of each crate the
+`CLAUDE.md` NVDA provenance section lists as platform-neutral (every
+target's graph, so a dependency gated on `cfg(windows)` counts on Linux
+too), and fails
 naming every one that pulls in the `windows` or `windows-core` bindings by
 any path, or reaches `windows-sys` through a workspace crate that names it
 directly; `windows-sys` beneath third-party libraries and the

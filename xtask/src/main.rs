@@ -1,17 +1,28 @@
 //! Workspace automation, invoked as `cargo xtask <command>`.
 //!
+//! xtask builds on every host, but only `ci` and `docs` exist on all of
+//! them; every other command, with its module and dependencies, exists on
+//! Windows alone (`#[cfg(windows)]`), and on another host it gets the usage
+//! text, which lists only `ci` and `docs`.
+//!
 //! `ci` is the standard check for both local runs and GitHub Actions, so
-//! the two cannot drift: the platform-neutral dependency check, the scans
-//! that test code waits for evidence (`xtask/src/waits.rs`), that UIA
-//! caches are read through shapes alone (`xtask/src/shapes.rs`), and that
-//! the pure owners name nothing impure (`xtask/src/ownership.rs`), rustfmt,
-//! clippy (warnings denied), and unit tests, all for the host's own
+//! the two cannot drift. On every host it runs the platform-neutral
+//! dependency check and the scans that test code waits for evidence
+//! (`xtask/src/waits.rs`), that UIA caches are read through shapes alone
+//! (`xtask/src/shapes.rs`), and that the pure owners name nothing impure
+//! (`xtask/src/ownership.rs`), then the documentation check. On Windows it
+//! then runs the workspace-hack checks, rustfmt, and clippy (warnings
+//! denied) and unit tests for the whole workspace; on any other host,
+//! clippy and unit tests for [`LINUX_CRATES`] alone, which GitHub Actions
+//! runs as the `ci-linux` job. Everything builds for the host's own
 //! architecture.
 //!
 //! `docs` checks the repository's Markdown documents: that every relative
 //! link and every backticked repository path names something that exists,
 //! and that `docs/readme.md` indexes every document under `docs/`. See
 //! `xtask/src/docs.rs`.
+//!
+//! The commands below exist on Windows only.
 //!
 //! `vm` drives the milestone M2 Hyper-V E2E harness (`docs/architecture.md`
 //! section 14): building and importing the golden VM, deploying builds into
@@ -52,24 +63,41 @@
 use std::env;
 use std::process::{Command, ExitCode};
 use std::str;
+#[cfg(windows)]
 use std::time::Instant;
 
+#[cfg(windows)]
 use windows::Media::SpeechSynthesis::SpeechSynthesizer;
+#[cfg(windows)]
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+#[cfg(windows)]
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
-mod conformance;
-mod demo;
+// The portable modules, built on every host.
 mod docs;
-mod nvda;
 mod ownership;
-mod park;
-mod perf;
-mod record;
 mod shapes;
-mod trace;
-mod vm;
 mod waits;
+
+// The Windows-only commands' modules: each is gated whole, never single
+// functions inside it, so a Windows module never keeps a branch for
+// another host compiling.
+#[cfg(windows)]
+mod conformance;
+#[cfg(windows)]
+mod demo;
+#[cfg(windows)]
+mod nvda;
+#[cfg(windows)]
+mod park;
+#[cfg(windows)]
+mod perf;
+#[cfg(windows)]
+mod record;
+#[cfg(windows)]
+mod trace;
+#[cfg(windows)]
+mod vm;
 
 /// The crates `CLAUDE.md`'s "NVDA provenance" section lists as
 /// platform-neutral. None of them may depend, directly or through another
@@ -86,6 +114,24 @@ const PLATFORM_NEUTRAL_CRATES: &[&str] = &[
     "verbatim-input",
     "verbatim-audio",
     "verbatim-text",
+];
+
+/// The crates `ci` lints and tests on a host other than Windows, each
+/// passed to cargo as `-p`: the platform-neutral tier and xtask itself, so
+/// the unit tests of the documentation check and the scans run there too
+/// (`docs/design/logic-foundations.md`, "xtask on Linux and the Linux
+/// job"). Every crate here must build on Linux, which GitHub's `ci-linux`
+/// job proves.
+const LINUX_CRATES: &[&str] = &[
+    "verbatim-model",
+    "verbatim-core",
+    "verbatim-speech",
+    "verbatim-config",
+    "verbatim-i18n",
+    "verbatim-input",
+    "verbatim-audio",
+    "verbatim-text",
+    "xtask",
 ];
 
 /// The crates through which Verbatim reaches the Windows API, which no
@@ -110,45 +156,69 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("docs") => docs::run(),
+        #[cfg(windows)]
         Some("vm") => vm::run(&args[1..]),
+        #[cfg(windows)]
         Some("park") => park::run(),
+        #[cfg(windows)]
         Some("trace") => trace::run(&args[1..]),
+        #[cfg(windows)]
         Some("measure") => perf::measure(&args[1..]),
+        #[cfg(windows)]
         Some("demo") => demo::run(&args[1..]),
+        #[cfg(windows)]
         Some("nvda") => nvda::run(&args[1..]),
+        #[cfg(windows)]
         Some("windows-terminal") => windows_terminal(),
+        #[cfg(windows)]
         Some("warm-speech") => warm_speech(),
+        #[cfg(windows)]
         Some("regenerate-terminal-conformance-expectations") => conformance::regenerate(&args[1..]),
+        #[cfg(windows)]
         Some("conformance-player") => conformance::player(&args[1..]),
+        #[cfg(windows)]
         Some("record-terminal-streams") => record::run(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
+            #[cfg(windows)]
             eprintln!(
-                "  ci    platform-neutral dependency check, rustfmt, clippy, and unit tests, for the host's architecture"
+                "  ci    platform-neutral dependency check, source scans, documentation check, workspace-hack checks, rustfmt, and clippy and unit tests for the workspace, for the host's architecture"
+            );
+            #[cfg(not(windows))]
+            eprintln!(
+                "  ci    platform-neutral dependency check, source scans, documentation check, and clippy and unit tests for the crates in LINUX_CRATES (xtask/src/main.rs), for the host's architecture"
             );
             eprintln!(
                 "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
             );
+            #[cfg(windows)]
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
+            #[cfg(windows)]
             eprintln!(
                 "  demo  record one scenario on this machine as a video in videos/tests, or a demonstration in videos/demos (cargo xtask demo <scenario> [--name <name>])"
             );
+            #[cfg(windows)]
             eprintln!(
                 "  nvda  build the NVDA transcript add-on, capture what NVDA speaks, or compare a scenario with NVDA; run `cargo xtask nvda` alone for its verbs"
             );
+            #[cfg(windows)]
             eprintln!(
                 "  park  move this Remote Desktop session to the console, unlocked, for unattended local runs"
             );
+            #[cfg(windows)]
             eprintln!(
                 "  trace  WPR traces of the CPU's scheduling: start, stop, waits <trace.etl>, or scenario <name> to trace a window inside one scenario and read it (docs/tooling/measuring.md)"
             );
+            #[cfg(windows)]
             eprintln!(
                 "  measure  run the measure set on this machine and report each latency stage's distribution (cargo xtask measure [--release | --verbatim-exe <path>]; docs/tooling/measuring.md)"
             );
+            #[cfg(windows)]
             eprintln!(
                 "  windows-terminal  download and unpack the terminal scenarios' pinned portable Windows Terminal into target/e2e-stage"
             );
+            #[cfg(windows)]
             eprintln!(
                 "  warm-speech  activate the Windows speech platform once and print how long it took and the default voice"
             );
@@ -164,6 +234,7 @@ fn main() -> ExitCode {
 /// dropped. It prints how long that
 /// took, so a CI job's log shows the platform's cold cost, and fails when
 /// any step fails.
+#[cfg(windows)]
 fn warm_speech() -> ExitCode {
     let started = Instant::now();
     match activate_speech() {
@@ -185,6 +256,7 @@ fn warm_speech() -> ExitCode {
 }
 
 /// Constructs a speech synthesizer and returns its voice's display name.
+#[cfg(windows)]
 fn activate_speech() -> Result<String, String> {
     // SAFETY: no reserved parameter; COM stays initialized for the process.
     let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
@@ -203,6 +275,7 @@ fn activate_speech() -> Result<String, String> {
 /// terminal scenarios drive into the runner-direct stage, as the suite's
 /// first launch would: CI runs it as a step of its own, so a failed
 /// download is reported before the suite starts.
+#[cfg(windows)]
 fn windows_terminal() -> ExitCode {
     let stage = verbatim_e2e::scenario::stage_directory();
     match verbatim_e2e::windows_terminal::prepare(&stage) {
@@ -262,35 +335,16 @@ fn ci() -> ExitCode {
     // architecture, x64 on an x64 machine and ARM64 on an ARM64 one, into
     // `target/debug`, the same output the end-to-end suite and plain
     // `cargo test` use.
-    let steps: &[(&str, &[&str])] = &[
-        // The workspace-hack crate must match what cargo-hakari would
-        // generate, and every package must depend on it, or commands that
-        // select different packages build dependencies apart again
-        // (`docs/tooling/setup.md`, "The workspace-hack crate").
-        ("workspace-hack", &["hakari", "generate", "--diff"]),
-        (
-            "workspace-hack dependencies",
-            &["hakari", "manage-deps", "--dry-run"],
-        ),
-        ("rustfmt", &["fmt", "--all", "--check"]),
-        (
-            "clippy",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--",
-                "-D",
-                "warnings",
-            ],
-        ),
-        ("unit tests", &["test", "--workspace"]),
-    ];
+    let steps = if cfg!(windows) {
+        windows_steps()
+    } else {
+        other_host_steps()
+    };
 
-    for (name, cargo_args) in steps {
+    for (name, cargo_args) in &steps {
         println!("xtask ci: {name}");
         let mut command = Command::new(env!("CARGO"));
-        command.args(*cargo_args);
+        command.args(cargo_args);
         match command.status() {
             Ok(status) if status.success() => {}
             Ok(status) => {
@@ -308,9 +362,63 @@ fn ci() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// One cargo invocation of `ci`: the step's name and cargo's arguments.
+type Step = (&'static str, Vec<String>);
+
+/// Turns a list of string literals into cargo's arguments.
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|arg| (*arg).to_owned()).collect()
+}
+
+/// `ci`'s cargo steps on Windows: the workspace-hack checks, rustfmt, and
+/// clippy and unit tests for the whole workspace. The workspace-hack crate
+/// must match what cargo-hakari would generate, and every package must
+/// depend on it, or commands that select different packages build
+/// dependencies apart again (`docs/tooling/setup.md`, "The workspace-hack
+/// crate").
+fn windows_steps() -> Vec<Step> {
+    vec![
+        ("workspace-hack", args(&["hakari", "generate", "--diff"])),
+        (
+            "workspace-hack dependencies",
+            args(&["hakari", "manage-deps", "--dry-run"]),
+        ),
+        ("rustfmt", args(&["fmt", "--all", "--check"])),
+        (
+            "clippy",
+            args(&[
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ]),
+        ),
+        ("unit tests", args(&["test", "--workspace"])),
+    ]
+}
+
+/// `ci`'s cargo steps on any other host: clippy (warnings denied, all
+/// targets) and unit tests for [`LINUX_CRATES`] alone. rustfmt and the
+/// workspace-hack checks read source and metadata the same way on every
+/// host, so the Windows jobs' run of them suffices.
+fn other_host_steps() -> Vec<Step> {
+    let packages: Vec<String> = LINUX_CRATES
+        .iter()
+        .flat_map(|name| ["-p".to_owned(), (*name).to_owned()])
+        .collect();
+    let mut clippy = args(&["clippy", "--all-targets"]);
+    clippy.extend(packages.iter().cloned());
+    clippy.extend(args(&["--", "-D", "warnings"]));
+    let mut test = args(&["test"]);
+    test.extend(packages);
+    vec![("clippy", clippy), ("unit tests", test)]
+}
+
 /// Fails if any of [`PLATFORM_NEUTRAL_CRATES`] has one of
 /// [`WINDOWS_BINDINGS`] anywhere in its normal (non-dev, non-build)
-/// dependency tree for the host's target, or a workspace crate in that tree
+/// dependency tree for any target, or a workspace crate in that tree
 /// other than [`WORKSPACE_HACK`] depends directly on one of
 /// [`RAW_WINDOWS_BINDINGS`]. It also fails if cargo tree does not list the
 /// neutral crate itself as a workspace crate, since the second rule would
@@ -329,6 +437,11 @@ fn check_platform_neutral_deps() -> Result<(), String> {
         let output = Command::new(env!("CARGO"))
             .args([
                 "tree", "-p", crate_name, "-e", "normal", "--prefix", "depth",
+                // Every target's graph, not the host's, so the check reads
+                // the same graph and gives the same answer on every host:
+                // on Linux the host's graph would leave out a dependency
+                // gated on `cfg(windows)`. `cargo tree` builds nothing.
+                "--target", "all",
             ])
             .output()
             .map_err(|error| format!("could not run cargo tree for {crate_name}: {error}"))?;

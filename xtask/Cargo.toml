@@ -7,6 +7,14 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+# Every package depends on the generated workspace-hack crate
+# (`cargo hakari manage-deps` requires it), so it stays unconditional.
+workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
+
+# Everything else is used only by the Windows-only commands, which
+# `src/main.rs` gates on `cfg(windows)`; on any other host xtask builds only
+# its portable part (`ci` and `docs`).
+[target.'cfg(windows)'.dependencies]
 # Kept to workspace crates already compiled for other purposes, so the M2
 # Hyper-V harness (`cargo xtask vm`) stays dependency-light: base64 and
 # serde_json are already pulled in by verbatim-agent and verbatim-e2e, and
@@ -33,7 +41,6 @@ verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true
 # The OneCore speech binding, for `xtask warm-speech`.
 windows.workspace = true
-workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }
 
 [lints]
 workspace = true
