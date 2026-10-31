@@ -195,6 +195,249 @@ Wake-ups in all processes per input-hook wake, debug builds, test audio mode, on
 - The console poll: each read is a program of its own, timed by the reducer, which removes the poll's slot, the yield, the re-dispatch and the worker's carry, and keeps what Core receives and today's latency; its added wake-ups, on console keys that move nothing, are measured in the build (Dickson, 2026-10-31).
 - A test's settle is answered as soon as it is reached, without the idle round's waits for an open caret watch, an open gap record or the hook's held copies, and divides batches as the round does (Dickson, 2026-10-31).
 
+## The caret watch (a build of its own)
+
+Status: proposed on 2026-11-01, written against main 691ef87e, for its adversarial review. Dickson approved building it first in M4.5 (2026-10-31), from candidate one of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`), because the watch has had six rounds of fixes, past `CLAUDE.md`'s rule of three. It builds no part of [the caret and selection rework](caret-selection-rework.md) and changes nothing that rework decides; it gives the rework's 100 ms bound answer and 1-second bound a place to live (below, "What the rework finds").
+
+A caret key's watch is the outpost's open check for a key's evidence (`docs/design/key-holding.md`). Its query is answered once: with the evidence, `WatchEnded` with none, `Abandoned`, or by the outpost's end.
+
+### The watch today
+
+**Where its state lives.** The fact "is a watch open, for which query, and when does it end" has six holders:
+
+- the reducer's follow state, `FollowState::caret_watch: Option<OpenWatch>` (`verbatim-outpost-logic`, `src/follow.rs` 140 and 512), with its poll inside (`Poll { next, until }`, 166);
+- the intake's one wake time (`Intake::wake`, `src/intake.rs` 333), a copy of the watch's next due time, set through `Applied::wake` (`src/follow.rs` 568) and handed out as `Item::Wake`;
+- the program in flight's `Current::running` and `Current::deferred` (`src/lib.rs` 415 and 429), set when a program takes the watch out or reads its poll;
+- every program's copy of the follow state (`Program::facts`), to which the worker applies its own watch changes (`follow::apply_local`);
+- the worker's local `open` while it checks a watch it took out (`verbatim-outpost`, `src/outpost/worker.rs` 959 to 1003), and the cut's `Finish::Watch { open }` (`src/lib.rs` 206), which carries the whole watch through the reducer to the program that finishes the read;
+- Core's wait for it: `HeldKeys::awaiting_watch` and `bounded` (`verbatim-core`, `src/state.rs` 407 and 410), bounded by the shell's `held_wait` (`verbatim-app`, `src/main.rs` 1025).
+
+**Its eight change kinds** (`WatchChange`, `src/follow.rs` 347), each a commit from a program:
+
+- `Open`: the first check found nothing; the watch and its wake time, both computed by the worker.
+- `Take(node)`: a check takes the watch out of the follow state; the reducer then makes its query the program's (`running`) and marks the program deferred.
+- `PutBack`: the check found nothing; the watch and its wake go back.
+- `End`: the next caret key ends the open watch; committed at the start of every caret key's program, open watch or not (`worker.rs` 842).
+- `Read`: a poll read found nothing; the worker's next read time.
+- `Answered`: a poll read found the evidence.
+- `Ended`: a poll's last read found nothing.
+- `Wake`: the reducer's wake time, set again by the worker, or cleared after an answer.
+
+**Its four special cases in the reducer** (`src/lib.rs`):
+
+- the commit's changes of `running` and `deferred` for `Open`, `PutBack` and `Read` (812 to 819), and for a take (838 to 843);
+- abandonment: a poll read's watch, still in the facts, taken out and answered `Abandoned` (1052 to 1067);
+- a program that ends unanswered: a poll read's watch ended, otherwise `Failed` sent for a taken check (1098 to 1112);
+- the wake item: a poll read dispatched as a program, deferred, or else the item dispatched to the worker (1344 to 1374).
+
+**Who decides its times, and on which clock.** The worker, on its copy, with its own clock reads: the watch's `opened` from `context.now()` (the shell's monotonic clock read on the worker's thread, `worker.rs` 867), the poll's last read from `now_ms()` on the shared clock against the key's `pressed_at_ms` (873), whether the bound has passed (`Worker::wake`, 1075), whether a wake came early (`read_poll`, 1096), and the next read (1150). The reducer only stores the time it is given and hands out `Item::Wake` when nothing else is ready and no program is in flight. So a non-polling watch's 10-second bound is a whole program sent to the worker to compare two times, a wake taken early is a program that commits the wake again, and a replay cannot reproduce the watch, since the worker's clock decides it.
+
+**The fix commits, and the defect each fixed:**
+
+- 6b0bf0d4 (2026-10-13, counted by the study though earlier than the rest): a watch stayed open with its evidence already seen, when a text change's read covered a waiting caret event that was then handled after a read that covered it. Fixed by the program's list of waiting caret events (`Program::waiting`).
+- d7ec6b04 (2026-10-22, Core): a held key behind a key that moved nothing waited for that key's watch until its 10-second bound. Fixed by Core's 100 ms bound on the wait (`KEY_AHEAD_BOUND_MS`), kept by the shell's `held_wait`.
+- 463f2ef9 (2026-10-26), three defects: a console caret event stopped the poll even when its check found nothing; the poll's ticker wrote the intake's one wake time, which the worker then overwrote with the watch's bound, so a tick was lost and the watch left open for 10 seconds; and an abandoned poll read matched the watch by node, so it could change a newer key's watch.
+- 17767cbf (2026-10-31), in part: the watch's wake was timed while a program was in flight, when no tick takes it, so a past wake made the reducer's thread spin.
+- 60dc079c (2026-10-31): a watch on a node whose element was replaced stayed open, though Core forgets that key. Fixed by `Change::replaced`.
+- b5d2588d (2026-10-31), two defects: a poll read was not work the idle answer waited for, so Core's round was answered between the read's answer and the terminal read it makes under the key's trace; and a take left the watch's wake set, so a check abandoned or failed with a polling watch left a timed wake nothing acted on.
+
+Four of the nine defects are a copy of the watch's time or state that went stale (the lost tick, the wake left after a take, the abandoned read matching by node, the spin), and one is a state no one held (the poll read not deferred).
+
+### The new model
+
+The reducer holds the watch as one explicit state, and nothing else holds its times:
+
+- **None:** no watch.
+- **Waiting { open, bound }:** waiting for evidence, checked by its node's events; it ends at `bound`, 10 seconds after it opened (`CARET_WATCH_BOUND`).
+- **Polling { open, next, until }:** the console host's poll: a read due at `next`, the last at `until`.
+- **Checking { open, resume }:** the program in flight holds it, by a take or as a poll read the reducer dispatched; `resume` is what it goes back to: the bound, the poll unchanged, or a poll read's next step.
+
+`OpenWatch` keeps what the watch is (its request, trace, node, `CaretWatch`, timing and calls so far) and loses `opened` and `poll`, which become the states' times. All times are microseconds on the run's shared clock (`Now::wall_us`), the clock today's poll already compares `pressed_at_ms` with (`now_ms()`); the shell turns a due time into its timer from `Now::at`, as it does the gap record's. Reason: tests freeze or move the observation clock (mockapp's `set_observation_clock` and `pass_time`) but never the shared clock, so on the observation clock a watch's bound would never come in such a test and the shell would time wakes it does not act on.
+
+The program's copy holds the same enum. `apply_local` applies every transition as the reducer does, except that it reads no clock: where a transition sets a time (`Open`, and a poll read's `Watching`), the copy's time is left at zero. No program reads a watch's time, so the copy agrees with the reducer on everything a program reads: the state, its node and its `OpenWatch`.
+
+Transitions, each made by the reducer:
+
+- **A caret key's program is dispatched** (a query with `TextOp::AwaitCaret`): an open watch in Waiting or Polling ends, with `WatchEnded` ("the next caret key replaced it"), before the program's copy is taken. Reason: the old watch's end is decided by the arrival of the next key, which the reducer sees at dispatch; the worker's `End` commit, made on every caret key, goes.
+- **`Open`** from that program, carrying the watch, its calls and whether its node is the focused console host's text area (a fact the program reads from its store): None becomes Waiting with its bound from now, or Polling with `until` 50 ms after `pressed_at_ms` (50 ms after now when the key has no time) and `next` 5 ms after now or `until`, whichever is first. The query stops being the program's.
+- **`Take(node)`** from a program: Waiting or Polling on that node becomes Checking, its resume the bound or the poll as they stood, and the program is deferred. Anything else is unchanged. The program's own copy gives it the watch as today.
+- **A due time is reached** with no program in flight, no release in progress, the outpost not stopping, and `Intake::next` returning `None`, so after the noted caret the intake keeps for when it is idle, as `Item::Wake` comes after it today (`src/intake.rs` 664 to 673): Waiting ends with `WatchEnded` ("its bound passed"), with no program; Polling becomes Checking, its resume the poll read, and a poll read is dispatched (`Work::PollRead`, under the text deadline, the watch's trace, deferred).
+- **`Checked`** from the program in flight, the one result of every check:
+  - `Answered { reply, calls, awaited_at_us }`: Checking becomes None, and the reducer sends the key's reply, built from the watch's timing and calls. The program stays deferred until it ends, since it may read the terminal under the key's trace.
+  - `Watching { calls }`: after a take, Checking goes back to Waiting or Polling as it stood, its calls added, and the program is no longer deferred; after a poll read, it becomes Polling with `next` 5 ms after now or `until`, whichever is first, as `Poll::after_read` does today, or, when now is at or past `until`, None with `WatchEnded` ("its poll's bound passed").
+- **The program in flight is abandoned** while the watch is Checking: None, with `Abandoned` sent.
+- **The program in flight ends** while the watch is Checking, having panicked, returned without `Checked`, or been claimed by its walk's publication: None, with `WatchEnded` ("its check failed"). A program ending with a cut read goes on as the program that finishes it, which inherits the watch, as it inherits the query today.
+- **A report's commit** ends the watch, in any state, when it is on another node than the focus (a focus elsewhere) or on a replaced node (`Change::replaced`), with `WatchEnded`. A `Checked` that then finds no watch in Checking is dropped. Reason: today a report leaves a taken watch alone, since it is not in the facts, and the check puts it back on a node Core has forgotten; no code path takes the watch before a report in one program today, but the state no longer allows it.
+- **A release** (`Input::Released`) ends a Waiting or Polling watch whose node is among the nodes released, with `WatchEnded` ("its node was released"). Today such a watch stays open until its bound or the next key, though Core has forgotten the node and drops its answer, and the idle answer waits for it up to 10 seconds. A release comes only with no program in flight, since `pump` dispatches nothing while `releasing` and `Item::NodesHeld` runs only when no program is in flight, so the watch cannot be Checking then.
+- **The idle answer** waits while the watch is anything but None, or the program in flight is deferred.
+- **`next_timer`** gives the watch's due time only under the condition its transition is taken: no program in flight, no release, not stopping.
+
+The rules, each with its reason:
+
+- The reducer changes the watch outside the program in flight's own commits only at a dispatch, before the copy is taken, or with no program in flight. The one exception is a walk's publication (`publish`), which applies the program's report while it is in flight and can end the watch; it claims that program, so none of its later commits is applied. Reason: the program's copy then equals the reducer's state at every commit it makes, so a take on the copy and on the reducer always agree, and step one keeps the copies.
+- A watch's answer is sent only by a transition that leaves None. Reason: None answers nothing, so a query gets at most one answer, and every state has a path to None.
+- A program's watch result names no node and no request; it is taken only from the program in flight, whose commits `accepts` already checks by request, and only while the watch is Checking. Reason: the abandoned poll read of 463f2ef9 matched by node, and a request number is a second copy of what `accepts` decides.
+- A due time is acted on only when nothing else is ready, as `Item::Wake` is today. Reason: a waiting event's check comes before the bound, so an answer that arrives at the bound is still heard as today.
+- The program reports what it found and the facts it read; the reducer decides every time. Reason: a decision made from a copy with a second clock is what went stale four times, and a replay then reproduces the watch.
+
+Removed:
+
+- `WatchChange::PutBack`, `End`, `Read`, `Answered`, `Ended` and `Wake`; `WatchChange` keeps `Open` and `Take` and gains `Checked`: eight change kinds to three.
+- `Item::Wake`, the intake's `wake`, `wake_at` and `wake()`, and `Applied::wake`: the copy of the watch's time.
+- `Worker::wake` and `Worker::end_watch`, `read_poll`'s early-wake branch and its decisions of the next read and the last, `wake_for`, `Poll::after_read`, and the worker's five clock reads that decide the watch (two more are for logs and go to the reducer's `WatchEnded` effect).
+- The four special-case blocks in `src/lib.rs` (76 lines), replaced by calls into one module at five points: dispatch, commit, abandonment, a program's end and the due time.
+- `Finish::Watch`'s watch: the finish program needs only its read, since the reducer builds the reply.
+- `Change::aside` and the commit's branch that sends it (`src/follow.rs` 435, `src/lib.rs` 808 to 811), and the worker's `Effects::aside`: only a watch's answer uses them, and the reducer now sends that answer itself.
+- The use of `Current::running` for the watch; `running` stays for the queries a program answers itself, and `deferred` for a gap read and a program holding the watch.
+
+Added: the `Watch` enum and its transitions in a module of its own (`src/watch.rs`), `Checked`, and `Work::PollRead`.
+
+Counts, before and after:
+
+- holders of the watch's state: 6 to 3 (the reducer's `Watch`, each program's copy, the worker's local during a check), Core's wait apart;
+- change kinds: 8 to 3;
+- special-case blocks in the reducer: 4 to none;
+- clock reads in the worker that decide the watch: 5 to none;
+- intake item kinds: 10 to 9, and program kinds (`Work`): 4 to 5;
+- `OpenWatch` fields: 8 to 6, and `Applied` loses `wake`;
+- states: four implicit ones spread over four fields (in the facts with or without a poll, with or without a wake, taken while `running` names it, read while `running` and `deferred` name it) to four explicit states in one field;
+- lines: about 420 in the watch's code today (210 in `follow.rs`, 135 in `worker.rs`, 76 in `lib.rs`) to about 270, counted again in the build.
+
+### The held caret key's one bound
+
+A held key has two bounds today, both deadlines on the app's reducer thread, decided in two places:
+
+- its wait for the key ahead's watch, at most 100 ms after that key was passed on: Core decides it (`KEY_AHEAD_BOUND_MS`, `verbatim-core` `src/editing.rs` 57) and asks the shell by `Effect::BoundHeldKeyWait`, which keeps it in `held_wait` and enters `Input::HeldKeyWaitEnded`;
+- its before read, at most 150 ms: the shell decides it, by matching the request's `TextOp::ReadCaret` in `text_request` and giving the table entry a deadline (`HELD_KEY_BOUND`, `verbatim-app` `src/main.rs` 884 and 1835), and the table's expiry answers the read `Failed`.
+
+They bound two waits in a row, so they are not redundant; what is doubled is the mechanism and the owner. Made one:
+
+- Core's `HeldKeys` keeps one deadline, for the key named in `bounded`: 100 ms after the key ahead was passed on while the key waits, and 150 ms after its read is asked while the read is in flight (`HELD_READ_BOUND_MS`, moved from the app into Core).
+- One effect, `Effect::BoundHeldKey(Option<(TraceId, u64)>)`, sets the shell's one slot or clears it, and one input, `Input::HeldKeyDue { trace_id }`, enters when it passes. Core clears the slot when the wait or the read ends sooner, so no timer fires for nothing, where today a wait ended early by the watch's answer still fires `held_wait`.
+- At the due time: a key still waiting is read, as `held_wait_ended` does; a key still being read is passed on as unanswered, as the table's expiry does today through `held_read`. A later answer of that read finds no slot and is dropped, as one finds no table entry today.
+- The table's before read becomes an ordinary request (`begin`), and the shell no longer judges the before read by its kind. Its branch that makes an `AwaitCaret` request passive (`begin_passive`, `src/main.rs` 1828) stays: that is how the table counts a watch for the idle barrier, which the caret rework keeps.
+
+Removed: `HELD_KEY_BOUND`, the shell's branch for `ReadCaret` and the table deadline it gives. Renamed: the effect and the input, at 20 sites. Wake-ups: one shell deadline per held key, as today. The caret rework, which keeps both bounds unchanged, keeps them as this one deadline; its documents change one sentence in the build's documents commit.
+
+### The past defects cannot recur
+
+- **A console caret event that stops the poll (463f2ef9).** Polling with `next` = t+5 and `until` = t+50; the console caret event's program takes the watch, so it is Checking with the poll as it stood; its check finds nothing and commits `Watching`; the reducer puts Polling back with the same `next` and `until`. Only `Answered`, a due time or an end leaves Polling.
+- **A lost tick (463f2ef9).** Nothing but the watch holds its time: `next_timer` reads it from the state at each transition, and only the reducer writes the state. No second writer exists to overwrite it.
+- **An abandoned read touching a newer watch (463f2ef9).** Poll read P1 of watch W1 is abandoned at its deadline: the reducer answers W1 `Abandoned` and W1 is None. Key K2's program opens W2. P1's late `Checked` comes from a dead generation and `accepts` refuses it; it names no node or request to match in any case.
+- **A watch whose evidence a read already saw (6b0bf0d4).** Unchanged: `Program::waiting` is still computed by the reducer at dispatch from the watch's `pressed_at_ms`, now from Waiting, Polling or the poll read's own work. Its replay and mockapp tests stay.
+- **A held key behind a key that moved nothing (d7ec6b04).** K1, Control+Home at the top, is passed on at t, and its watch is Waiting until t+10 s. K2 is pressed at t+20 and waits; Core sets the one deadline for t+100. At t+100 `HeldKeyDue` reads K2's caret and sets the deadline to t+250 for the read; the read answers at t+103 and Core clears it; K2's program is dispatched and ends W1 with `WatchEnded`, which Core takes silently.
+- **A spinning reducer (17767cbf).** Polling with `next` = t+5; an event's program runs from t+3 to t+20. At t+5 `next_timer` leaves the watch out, since a program is in flight, and names only that program's deadline. At t+20 the program ends; in that transition the intake has nothing, so the poll read is dispatched at once.
+- **A watch kept for a replaced node (60dc079c).** The report's commit applies `Change::replaced`, which ends the watch on that node in any state. A focus program that reports the replaced node and then reads its terminal finds no watch to take; one that had taken the watch before its report would have its later `Checked` dropped, where today its `PutBack` would restore the watch on the forgotten node.
+- **A watch on a released node (found by this design's review, fixed here).** Key K opens W on node N, Waiting until t+10 s. The focus moves to another application, so this outpost reports no focus elsewhere, and Core releases N (`NodesHeld`, run with no program in flight). Today W stays open until t+10 s, its answer dropped by Core, and an idle round waits for it. Now `Released` naming N ends W with `WatchEnded` in the same transition, and the round is answered.
+- **A poll read the idle answer did not wait for (b5d2588d).** The poll read is dispatched deferred; it commits `Answered`, the watch is None, the program stays deferred, reads the terminal under the key's trace and ends; only then is the idle answer free, since the round is answered after every input that clears `deferred`.
+- **A wake left after a take (b5d2588d).** Checking has no due time, so a take times nothing; a check abandoned or failed leaves None, which has none either.
+
+### Every key's query gets exactly one answer
+
+- **Answered at the first check:** the key's program sends its result; no watch opens.
+- **Abandonment.** The key's program abandoned before `Open`: its query is `running`, answered `Abandoned`, as today. A program abandoned while the watch is Waiting or Polling, whatever it was doing: the watch is untouched and keeps its one answer to come. A program abandoned while it holds the watch: `Abandoned` once, None, and its later commits are refused.
+- **A panic:** the program holding the watch panics; `Finished` with `panicked` makes it None with `WatchEnded`. A program that committed `Answered` and then panicked finds None at its end and sends nothing more.
+- **A generation's death:** that is abandonment; the replacement's programs get copies taken from the reducer after the transition.
+- **A new key while a read is in flight.** Poll read P1 holds W1 (Checking); K2's query waits in the intake. P1 commits `Answered` (W1 None, answered) or `Watching` (W1 Polling, or None and `WatchEnded` at its last read). P1 ends; K2's program is dispatched and ends W1 if it is still Polling. The same holds when an event's check holds the watch.
+- **A publication at a walk's bound** claims a program holding the watch: its later `Checked` is refused, and its end makes the watch None with `WatchEnded`.
+- **A release** naming the watch's node: `WatchEnded` once, None; it comes only with no program in flight, so never while a program holds the watch.
+- **Close:** the outpost stops; no due time is timed, a program holding the watch resolves by its end, and an open watch's query is answered by the outpost's end, Core's table taking its first outcome (`Gone`), as today.
+
+### Step two: the watch lent at dispatch
+
+Step two would lend the watch to a program at dispatch and take it back at its end, removing `Take`, `Applied::taken` and the second application of the watch's changes to the worker's copy, about 60 more lines.
+
+Judged against the code:
+
+- The reducer cannot tell which programs will check the watch: `check_watch_now` and `check_open_watch` decide by the event's node after the worker resolves it through the store. So it must lend the watch to every program whose entry may check it: caret, text, selection, console update and value-change events, and terminal reads, which is most programs while the user edits.
+- While lent, the watch's due time cannot be acted on, so the bound and the poll wait for every such program, where today they wait only for programs that took it.
+- On abandonment the reducer cannot tell a program that had begun its check from one that had not. Answering `Abandoned` for both changes what is heard: in a field whose application stalls on an event's program past its handling deadline (`HANDLING_DEADLINE`, 10 seconds, `budget` in `src/lib.rs` 1598 to 1605), or until the moved-on rule abandons it, the key's later evidence is answered today and spoken when no later key was pressed, and would be silent. Core handles `Abandoned` as `WatchEnded` (`caret_reply`'s branch for a reply that is not a caret, `verbatim-core` `src/editing.rs` 664), so the silence is certain, not a question of Core. Putting the watch back on abandonment instead changes the opposite case: a check stuck in the application today answers `Abandoned`, which also stops a poll from reading a stuck console again every 5 ms.
+- Keeping today's behaviour therefore needs the program to tell the reducer when its check begins, which is `Take`.
+
+Recommendation: not in this build. `Take` stays the one change a program makes in the middle of its run. The caret rework replaces the separate watch request and its first check with one request per key, which changes which programs open and check the watch, so the question is better asked after it.
+
+### What is heard
+
+Nothing changes. What differs, none of it heard:
+
+- The old watch's `WatchEnded` is sent at the next key's dispatch, not at its program's first commit; nothing else is sent between the two.
+- A program that holds the watch and panics, or is claimed, answers `WatchEnded` where today it answers `Failed`. Core delivers `Failed` as `TextReply::Unanswered` (`verbatim-app` `src/requests.rs`, `deliver`), and both reach the same branch for a reply that is not a caret, in `caret_reply` and `superseded_reply` (`verbatim-core` `src/editing.rs` 664 and 855), and release the keys behind as any answer does.
+- The bound, the poll's next read and its last are timed from the reducer's transition, a mailbox hop (well under a millisecond) after the worker's clock read today, and the reply's `published_at_us` is the reducer's.
+- The bound is acted on only when nothing else is ready, as today.
+- A watch whose node is released ends then, where today it stays open; Core has already forgotten the node and drops either answer.
+- Measurement sees one difference: the `WatchEnded` that replaces `Failed` carries the watch's timing, whose `dequeued_at_us` is set, so the app's latency ledger records it (`verbatim-app` `src/main.rs` 1340), where the `Failed` carried the default timing and was not recorded.
+
+NVDA's behaviour is not changed by this build, so nothing new is claimed of it. The poll keeps its documented bounds, beside NVDA's 10 ms retries until its 100 ms timeout (`nvda/source/editableText.py` 70, 87 and 151; `caretMoveTimeoutMs`, `nvda/source/config/configSpec.py` 364), and the key-ahead wait stays Verbatim's own divergence, NVDA's caret script returning as soon as another script is queued (`nvda/source/editableText.py` 94 and 166), at the pinned commit 732d1ce2.
+
+### Wake-ups and calls on the key path
+
+Calls into the application: unchanged. No read is added or removed; the bound's program never called the application.
+
+Wake-ups, by the counts of programs and commits:
+
+- each caret key: one commit fewer from its program (the `End` posted on every key), so up to one shell wake fewer;
+- each key whose watch reaches its 10-second bound: its program goes, one worker wake and its commit and end, two shell wakes; the timer's own shell wake stays;
+- each wake taken early: its program goes;
+- each poll read: unchanged, the shell's timer, the worker, and the shell for its commit and end;
+- a held key: one shell deadline, as today, and none for a wait that ended early.
+
+How measured, before (on the commit the build starts from) and after, with the mode named: `cargo xtask trace scenario` on `measure_keys_notepad`, `measure_keys_conhost`, the temporary `measure_keys_conhost_unmoved` (branch `measure`) and `measure_held_repeat_text_box`, debug builds, test audio mode, one 12-second window each as the bookkeeping build measured, at most 20 runs each: wake-ups in all processes per input-hook wake, the outpost's shell thread and worker separately, and processor time. Beside the traces, the programs dispatched and commits posted per caret key, counted from the outpost's debug log over the same runs, since they are exact where a trace window is not. The expected result is no rise anywhere; a rise is a finding.
+
+### Tests
+
+Guards that stay, rewritten to the new results where they commit watch changes (`verbatim-outpost-logic`, `src/tests.rs`): `the_console_poll_is_dispatched_only_when_nothing_else_is_ready`, `a_newer_keys_request_ends_the_old_watch_and_its_poll`, `the_poll_ends_its_watch_by_its_answer_or_at_its_last_read`, `an_abandoned_poll_answers_its_watchs_query_once`, `a_panicked_poll_read_ends_its_watch_once`, `a_cut_watch_check_is_finished_within_its_reads_deadline_and_query`, `the_watchs_wake_is_not_timed_while_a_program_or_a_release_is_in_flight`, `a_settle_waits_for_a_noted_caret_and_for_no_open_watch`, `a_poll_read_that_answers_its_watch_holds_the_idle_answer_until_it_ends` and `a_check_abandoned_with_the_polling_watch_leaves_no_wake`; `src/follow.rs`'s poll tests move to `src/watch.rs`, and `a_polls_change_leaves_a_newer_watch_on_its_node_alone` becomes the refusal of an abandoned read's late result. The mockapp suite `crates/mockapp/tests/caret_watch.rs` is unchanged and runs whole.
+
+New, one per behaviour:
+
+- a watch without a poll ends at its bound with `WatchEnded` and no program dispatched;
+- an entry ready at the bound is dispatched first, and its check's answer is the one sent;
+- a take's `Watching` puts a polling watch back with its `next` and `until` unchanged;
+- a caret key's dispatch ends the open watch before its program's copy is taken, and the program commits no end;
+- a program claimed while it holds the watch ends it once with `WatchEnded`;
+- a release naming the watch's node ends it with `WatchEnded`, and the idle round waiting for it is answered in the same transition; a release of other nodes leaves it open;
+- with the observation clock frozen, the bound is reached by the shared clock;
+- Core: a held key's read past 150 ms is passed on as unanswered by Core's own deadline, and its late answer is dropped; a read answered in time clears the deadline; the existing key-ahead tests rewritten to the one effect and input.
+
+A generated test, as the design principles ask of a pure state machine with many lifecycle paths, kept small, since M4.6 builds the full generated tests. It drives `Reducer::input` and `Reducer::tick`, because the rules the past defects broke live around the module: in `next_timer`, `accepts`, `publish`, `finished`, `answer_idle` and `dispatch`.
+
+- Its inputs: a caret key's query entry (one node, a console host or not); a caret event's entry for the watch's node; the program in flight's commits (`Open`, `Take`, `Checked::Answered`, `Checked::Watching`, a report ending the watch); `Finished` (normal, panicked, with a cut); a tick at the program's deadline and at the watch's due time; a walk's `Armed` and its publication; `NodesHeld` and its `Released`; an idle round; and `Close`. A commit is given only as the program in flight's, built from its last dispatched `Program`.
+- After every step it checks four invariants: each `AwaitCaret` request has at most one `Reply` among the `Send` effects, and exactly one once the sequence ends with `Close` and the outpost's end; `next_timer` gives no time for the watch while a program is in flight or a release is pending; at each accepted commit, the watch in the last dispatched program's copy, with that program's own commits applied, equals the reducer's watch apart from its times; and no idle answer is sent while the watch is not None or the program in flight is deferred.
+- Its reference model is the open query and whether a program holds it.
+- Sequences: every one of up to six steps, enumerated without randomness, those the reducer refuses as impossible pruned at their first step; the count is measured in the build and kept to seconds in a debug build.
+
+The enumeration of the watch module's own transitions stays as a unit test of the module. Both run under `cargo xtask ci`.
+
+### End-to-end scenarios and the order of work
+
+Scenarios, each run three times at the end of the build, none recorded in `docs/flaky-tests.md`:
+
+- `text_box_editing`: Control+Home at the top moves nothing, and Right Arrow sent at once behind it is read at the one held-key deadline, its dispatch ending the old watch;
+- `conhost_editing`: the console poll's reads, answers and last reads;
+- `conhost_up_typing`: the watch asked before the key, and a typed character arriving during a poll.
+
+No scenario reaches the 10-second bound, since each step's next key ends the watch first; the bound's end, and the end at a release, are covered by the unit and generated tests only.
+
+The order of work:
+
+- Measure before.
+- The watch module and the reducer's timing: `Watch`, `Checked`, `Work::PollRead`, the removal of `Item::Wake` and the intake's wake, the four blocks replaced, `Change::aside` removed, the end at a release, the worker's reports, with the replay and generated tests. One commit, since the worker's results and the reducer's change together.
+- The old watch ended at the next key's dispatch, removing `End`, with its test.
+- The held key's one bound in Core, the model and the app, with Core's tests.
+- `cargo xtask ci`, the scenarios, and measure after.
+- Documents: the crate guides of `verbatim-outpost`, `verbatim-outpost-logic`, `verbatim-core` and `verbatim-app`; `docs/design/key-holding.md` ("Core", "The shell", the poll's rules); the caret rework's sentence on the two bounds; the determinism design's trace id for `Item::Wake`, which goes, since the poll read runs under the watch's trace; and the performance ledger.
+
+**What the rework finds.** The rework's 100 ms bound answer is a due time of Waiting that dispatches a read, as Polling's does, and its 1-second bound replaces the 10-second one in the same state; nothing here decides either.
+
+### Limitations
+
+- A held key passed on at its read's bound leaves its read outstanding in Core's table until the outpost answers it: up to about 12 seconds when the read waits behind a program in flight (its 10-second handling deadline, or 5 seconds for a walk, then the read's own 2-second text deadline), so the harness's idle barrier waits that long in that case; today the table ended it at 150 ms, but Core's idle round queues behind the same program in the outpost, so the harness waits about as long today. The path has been reached only in its unit test.
+- The program copies stay, so the rule that the reducer changes the watch only at a dispatch, at a publication that claims the program, or with no program in flight is a rule the generated test checks, not one the types enforce.
+
+### Decisions
+
+- Step two, the watch lent to a program at dispatch, is not in this build: `Take` stays, and the question is asked again after the caret and selection rework, which changes when the watch opens (Dickson, 2026-11-01).
+- The held key's one bound is built in this build, with its limitation: a key passed on at its read's bound leaves that read outstanding in Core's request table for up to 2 s, or about 12 s behind a program in flight, so the harness's idle check waits that long in that case, as Core's idle round already does today (Dickson, 2026-11-01; the figure corrected after the design review).
+
 ## Determinism (a build of its own)
 
 Status: proposed on 2026-10-31 and revised after its adversarial review (`experiments/logic-tests-study/determinism-design-review.md`). It is written against the bookkeeping build's code (branch `bookkeeping`, cec81531), which it starts from, and revised again for Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) and his simplification goal.
