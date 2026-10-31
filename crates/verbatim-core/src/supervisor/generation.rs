@@ -9,11 +9,10 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::Instant;
-
 use verbatim_model::{OutpostId, Pid};
 
 use super::EndReason;
+use super::policy::{WedgeLimits, WedgeReason, wedge_decision};
 
 /// A child's process from its launch: still being launched, or running.
 /// The listener and the spares waiting, which have no generations, live
@@ -44,25 +43,44 @@ impl<C> Run<C> {
     }
 }
 
-/// What a running generation's liveness is judged by.
+/// What a running generation's liveness is judged by, changed and judged
+/// only by the generation's own transitions
+/// ([`ponged`](Generation::ponged), [`heartbeat`](Generation::heartbeat),
+/// [`hang_check_ended`](Generation::hang_check_ended) and
+/// [`hang_checked`](Generation::hang_checked)).
 #[derive(Clone, Copy, Debug)]
 pub struct Live {
-    /// When it last answered a ping.
-    pub last_pong_at: Instant,
+    /// When it last answered a ping, or was launched or given, on the
+    /// run's shared clock.
+    last_pong_us: u64,
     /// How many of its workers are abandoned to calls past their deadline.
-    pub abandoned: usize,
+    abandoned: usize,
     /// Whether a check of whether its application is hung is running.
-    pub hang_check: bool,
+    hang_check: bool,
 }
 
 impl Live {
-    fn new(now: Instant) -> Self {
+    fn new(now_us: u64) -> Self {
         Self {
-            last_pong_at: now,
+            last_pong_us: now_us,
             abandoned: 0,
             hang_check: false,
         }
     }
+}
+
+/// What the heartbeat does with a running generation
+/// ([`Generation::heartbeat`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heartbeat {
+    /// Ping it.
+    Ping,
+    /// Ping it, and start a check of whether its application is hung: it
+    /// reports at least the limit of abandoned workers, which are judged
+    /// when the check answers ([`Generation::hang_checked`]).
+    CheckHang,
+    /// End it as stuck.
+    Wedged(WedgeReason),
 }
 
 /// What a given spare's generation keeps until its `Ready`.
@@ -307,7 +325,7 @@ impl<C> Generation<C> {
     }
 
     /// The running generation's liveness.
-    pub fn live_mut(&mut self) -> Option<&mut Live> {
+    fn live_mut(&mut self) -> Option<&mut Live> {
         match self {
             Generation::Starting { live, .. } | Generation::Ready { live, .. } => Some(live),
             Generation::Launching { .. }
@@ -316,14 +334,62 @@ impl<C> Generation<C> {
         }
     }
 
-    /// The running generation's liveness.
-    pub fn live(&self) -> Option<&Live> {
-        match self {
-            Generation::Starting { live, .. } | Generation::Ready { live, .. } => Some(live),
-            Generation::Launching { .. }
-            | Generation::SpareGiven { .. }
-            | Generation::Waiting { .. } => None,
+    /// The running generation answered a ping at `at_us`, with `abandoned`
+    /// workers abandoned to calls past their deadline. Any other state
+    /// ignores it.
+    pub fn ponged(&mut self, at_us: u64, abandoned: usize) {
+        if let Some(live) = self.live_mut() {
+            live.last_pong_us = at_us;
+            live.abandoned = abandoned;
         }
+    }
+
+    /// The heartbeat at `now_us`: whether the running generation is pinged,
+    /// pinged with a check of whether its application is hung started, or
+    /// ended as stuck, by [`wedge_decision`] under `limits`. Abandoned
+    /// workers at the limit start a check, unless one runs, and are judged
+    /// only when it answers, so until then only missed pongs count against
+    /// it. `None` in any state but a running one.
+    pub fn heartbeat(&mut self, now_us: u64, limits: WedgeLimits) -> Option<Heartbeat> {
+        let live = self.live_mut()?;
+        let check_hang = live.abandoned >= limits.abandoned_workers;
+        if let Some(reason) = wedge_decision(
+            live.last_pong_us,
+            now_us,
+            limits,
+            live.abandoned,
+            check_hang,
+        ) {
+            return Some(Heartbeat::Wedged(reason));
+        }
+        if check_hang && !live.hang_check {
+            live.hang_check = true;
+            return Some(Heartbeat::CheckHang);
+        }
+        Some(Heartbeat::Ping)
+    }
+
+    /// The check [`heartbeat`](Self::heartbeat) asked for could not be
+    /// started: the next heartbeat asks again.
+    pub fn hang_check_ended(&mut self) {
+        if let Some(live) = self.live_mut() {
+            live.hang_check = false;
+        }
+    }
+
+    /// The check of whether the application is hung answered `hung` at
+    /// `now_us`: it ends, and the running generation is judged by its
+    /// abandoned workers as well as its pongs ([`wedge_decision`] under
+    /// `limits`), returning why it is stuck, if it is.
+    pub fn hang_checked(
+        &mut self,
+        hung: bool,
+        now_us: u64,
+        limits: WedgeLimits,
+    ) -> Option<WedgeReason> {
+        let live = self.live_mut()?;
+        live.hang_check = false;
+        wedge_decision(live.last_pong_us, now_us, limits, live.abandoned, hung)
     }
 
     /// Whether its hook is in.
@@ -366,7 +432,7 @@ impl<C> Generation<C> {
     /// one's end if it heard it started; then a spare running is assigned
     /// and announced, and an outpost to launch is launched. Any other state
     /// is kept, with nothing to do.
-    pub fn given(self, pid: Pid, next: Next<C>, now: Instant) -> (Self, Vec<Notice>) {
+    pub fn given(self, pid: Pid, next: Next<C>, now_us: u64) -> (Self, Vec<Notice>) {
         let Generation::Waiting { unready } = self else {
             debug_assert!(false, "a generation given while one is current");
             return (self, Vec::new());
@@ -396,7 +462,7 @@ impl<C> Generation<C> {
                     outpost,
                     child,
                     spare: Some(GivenSpare::default()),
-                    live: Live::new(now),
+                    live: Live::new(now_us),
                 }
             }
             Next::Spare {
@@ -422,7 +488,7 @@ impl<C> Generation<C> {
         self,
         pid: Pid,
         child: C,
-        now: Instant,
+        now_us: u64,
     ) -> Result<(Self, Vec<Notice>), (Self, C)> {
         match self {
             Generation::Launching { outpost } => Ok((
@@ -430,7 +496,7 @@ impl<C> Generation<C> {
                     outpost,
                     child,
                     spare: None,
-                    live: Live::new(now),
+                    live: Live::new(now_us),
                 },
                 vec![started(outpost, pid)],
             )),
@@ -448,7 +514,7 @@ impl<C> Generation<C> {
         self,
         pid: Pid,
         child: C,
-        now: Instant,
+        now_us: u64,
     ) -> Result<(Self, Vec<Notice>), (Self, C)> {
         match self {
             Generation::SpareGiven { outpost } => Ok((
@@ -456,7 +522,7 @@ impl<C> Generation<C> {
                     outpost,
                     child,
                     spare: Some(GivenSpare::default()),
-                    live: Live::new(now),
+                    live: Live::new(now_us),
                 },
                 vec![Notice::Assign { outpost }, started(outpost, pid)],
             )),
@@ -609,6 +675,16 @@ mod tests {
     use super::*;
 
     const PID: Pid = Pid(40);
+    /// A time on the shared clock, in microseconds.
+    const START: u64 = 1_000_000_000;
+    /// One second, in microseconds.
+    const SECOND: u64 = 1_000_000;
+    /// The supervisor's limits: a ping every 3 s, 3 missed, 8 workers.
+    const LIMITS: WedgeLimits = WedgeLimits {
+        ping_interval: std::time::Duration::from_secs(3),
+        missed_pongs: 3,
+        abandoned_workers: 8,
+    };
 
     /// Each notice, named.
     fn named(notices: &[Notice]) -> Vec<String> {
@@ -645,9 +721,7 @@ mod tests {
 
     /// A generation given spare `outpost`, running.
     fn starting(outpost: u64) -> Generation<()> {
-        Generation::new()
-            .given(PID, spare(outpost), Instant::now())
-            .0
+        Generation::new().given(PID, spare(outpost), START).0
     }
 
     /// A generation given spare `outpost`, ready.
@@ -665,7 +739,7 @@ mod tests {
     fn a_spare_given_and_failed_before_its_ready_is_regenerated_then_ended_then_the_next_started() {
         let failure = failed(starting(3), EndReason::Exited);
         assert_eq!(named(&failure.notices), Vec::<String>::new());
-        let (next, notices) = failure.next.given(PID, spare(4), Instant::now());
+        let (next, notices) = failure.next.given(PID, spare(4), START);
         assert_eq!(
             named(&notices),
             [
@@ -687,12 +761,12 @@ mod tests {
                     outpost: OutpostId(3),
                     child: None,
                 },
-                Instant::now(),
+                START,
             )
             .0;
         assert!(given.is_spare_given());
         let failure = failed(given, EndReason::Exited);
-        let (_, notices) = failure.next.given(PID, spare(4), Instant::now());
+        let (_, notices) = failure.next.given(PID, spare(4), START);
         assert_eq!(
             named(&notices),
             ["Regenerated 3 as 4", "Assign 4", "Started 4"]
@@ -707,7 +781,7 @@ mod tests {
             ["HookRemoved", "Ended 3 killed, follows true"]
         );
         // No wait: the next generation is given at once.
-        let (next, notices) = failure.next.given(PID, spare(4), Instant::now());
+        let (next, notices) = failure.next.given(PID, spare(4), START);
         assert_eq!(named(&notices), ["Assign 4", "Started 4"]);
         let (_, notices) = next.ready(PID, OutpostId(4));
         assert_eq!(named(&notices), ["HookInstalled 4"]);
@@ -762,5 +836,54 @@ mod tests {
         assert!(generation.forwarding_target(OutpostId(3)).is_some());
         assert!(generation.forwarding_target(OutpostId(2)).is_none());
         assert!(starting(3).forwarding_target(OutpostId(3)).is_none());
+    }
+    /// A running generation is pinged until it has gone 9 s without a
+    /// pong, which a pong puts off; one with no process has no heartbeat.
+    #[test]
+    fn a_running_generation_is_pinged_until_nine_seconds_pass_without_a_pong() {
+        let mut generation = starting(4);
+        assert_eq!(
+            generation.heartbeat(START + 9 * SECOND - 1, LIMITS),
+            Some(Heartbeat::Ping)
+        );
+        generation.ponged(START + 2 * SECOND, 0);
+        assert_eq!(
+            generation.heartbeat(START + 11 * SECOND - 1, LIMITS),
+            Some(Heartbeat::Ping)
+        );
+        assert_eq!(
+            generation.heartbeat(START + 11 * SECOND, LIMITS),
+            Some(Heartbeat::Wedged(WedgeReason::MissedHeartbeats))
+        );
+        assert_eq!(Generation::<()>::new().heartbeat(START, LIMITS), None);
+    }
+
+    /// Abandoned workers at the limit start one check of whether the
+    /// application is hung and are judged only by its answer: a hung
+    /// application excuses them, one that answers does not; a check that
+    /// could not start is asked for again.
+    #[test]
+    fn abandoned_workers_are_judged_by_the_hang_check_alone() {
+        let mut generation = ready(4);
+        generation.ponged(START, 8);
+        assert_eq!(
+            generation.heartbeat(START, LIMITS),
+            Some(Heartbeat::CheckHang)
+        );
+        assert_eq!(generation.heartbeat(START, LIMITS), Some(Heartbeat::Ping));
+        generation.hang_check_ended();
+        assert_eq!(
+            generation.heartbeat(START, LIMITS),
+            Some(Heartbeat::CheckHang)
+        );
+        assert_eq!(generation.hang_checked(true, START, LIMITS), None);
+        assert_eq!(
+            generation.heartbeat(START, LIMITS),
+            Some(Heartbeat::CheckHang)
+        );
+        assert_eq!(
+            generation.hang_checked(false, START, LIMITS),
+            Some(WedgeReason::AbandonedWorkers)
+        );
     }
 }

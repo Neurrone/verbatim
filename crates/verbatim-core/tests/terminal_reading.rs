@@ -44,7 +44,7 @@ fn pressed(command: ReviewCommand, repeat: u8) -> Input {
     Input::Command {
         pressed_at_ms: 0,
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         command,
         repeat,
     }
@@ -310,7 +310,7 @@ fn the_review_reads_where_the_caret_is() {
 // Keys against reads.
 
 fn typed(text: &str, at_ms: u64) -> (TraceId, Input) {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(2);
     (
         trace_id,
         Input::CharacterTyped {
@@ -350,7 +350,7 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
     // recalled line with the "x", one window, and its speech goes out for
     // "x", whose number the speech manager's fence keeps.
     let mut session = showing(20, 3, 10, "$ ");
-    let up = TraceId::mint();
+    let up = TraceId::from_raw(3);
     session.input(&Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: up,
@@ -381,7 +381,7 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
     }));
     session.input(&Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(4),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
@@ -449,7 +449,7 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
     // before the timer, with no read since, moves the pause later, so the
     // timer says nothing and comes again.
     let mut session = showing(20, 5, 10, "line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H");
-    let up = TraceId::mint();
+    let up = TraceId::from_raw(5);
     session.input(&Input::CaretKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: up,
@@ -464,12 +464,12 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
     assert_eq!(session.timers, [Some(2000)]);
     session.input(&Input::ClearingKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(6),
         at_ms: 1900,
     });
     session.timers.clear();
     session.input(&Input::TerminalTimer {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(7),
         at_ms: 2000,
     });
     assert_eq!(session.heard(), []);
@@ -737,7 +737,7 @@ fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     session.input(&Input::CaretKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(8),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
@@ -1182,7 +1182,7 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
     let mut session = showing(20, 4, 10, "$ ls");
     session.input(&Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(9),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
@@ -1238,7 +1238,7 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     let mut session = showing(20, 4, 10, "$ ");
     session.input(&Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(10),
         key: CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
@@ -1298,7 +1298,7 @@ fn a_caret_move_with_no_key_says_nothing_and_the_next_key_is_judged_from_it() {
     assert_eq!(session.heard(), []);
     // Right Arrow then moves it one along, from where the program put it,
     // to the "n".
-    let right = TraceId::mint();
+    let right = TraceId::from_raw(11);
     session.input(&Input::CaretKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: right,

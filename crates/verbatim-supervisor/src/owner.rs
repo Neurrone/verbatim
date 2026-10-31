@@ -17,7 +17,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;
@@ -39,10 +39,10 @@ use verbatim_process::clock::now_us;
 use verbatim_process::message::{Peeked, decode_message, peek};
 
 use super::frames::Frame;
-use super::generation::{Generation, Next, Notice, Removed, Run};
+use super::generation::{Generation, Heartbeat, Next, Notice, Removed, Run};
 use super::policy::{
-    Backoff, HeldFact, HeldFacts, Spares, WedgeReason, may_start_outpost, retirement_decision,
-    wedge_decision,
+    Backoff, HeldFact, HeldFacts, Liveness, Spares, WedgeLimits, WedgeReason, due_starts,
+    may_start_outpost, retirement_decision,
 };
 use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
@@ -175,13 +175,15 @@ struct Record {
     generation: Generation<OutpostChild>,
     /// Facts that arrived before `Ready`, released in order on `Ready`.
     held: HeldFacts,
-    /// When the application last held attention.
-    last_attention_at: Instant,
+    /// When the application last held attention, on the run's shared
+    /// clock.
+    last_attention_us: u64,
     /// The idle barrier's round, held behind the held facts until `Ready`.
     idle_query: Option<u64>,
     /// When the current generation was given to the application or
-    /// launched for it: how long it had been up when it fails.
-    since: Instant,
+    /// launched for it, on the run's shared clock: how long it had been up
+    /// when it fails.
+    since_us: u64,
     /// The failures of the application's outposts while serving it, and,
     /// while a failure's wait runs, when the next generation is given.
     backoff: Backoff,
@@ -203,7 +205,8 @@ enum IdleStage {
 struct ListenerRecord {
     outpost: OutpostId,
     child: Run<Child<CoreToListener>>,
-    last_pong_at: Instant,
+    /// Its pongs.
+    liveness: Liveness,
     /// Whether this listener replaces an earlier one: facts were lost in the
     /// gap, so the attention application is asked to report again on `Ready`.
     replacement: bool,
@@ -288,13 +291,13 @@ struct Owner {
     port: Arc<Port>,
     /// Numbers every launch, outposts and listener alike; never reused.
     generation: u64,
-    records: HashMap<Pid, Record>,
+    records: BTreeMap<Pid, Record>,
     listener: Option<ListenerRecord>,
     /// The applications given a record, each until its process exits: the
     /// process, held open so the pid it is known by names that process and
     /// no other ([`Target`]), which outlives the record, so a process id is
     /// never reused while an outpost or a reading thread serves it.
-    apps: HashMap<Pid, App>,
+    apps: BTreeMap<Pid, App>,
     attention: Option<Pid>,
     holding: BTreeSet<OutpostId>,
     ping_seq: u64,
@@ -322,7 +325,7 @@ struct Owner {
     spares: Spares,
     /// Every spare's process, by outpost id, from its launch until it is
     /// given or ends: `None` while its launch is at work.
-    spare_children: HashMap<OutpostId, SpareChild>,
+    spare_children: BTreeMap<OutpostId, SpareChild>,
 }
 
 /// An application the supervisor has given a record, from its first record
@@ -336,11 +339,13 @@ struct App {
 /// A spare outpost's process while it waits.
 struct SpareChild {
     child: Run<OutpostChild>,
-    last_pong_at: Instant,
+    /// Its pongs.
+    liveness: Liveness,
     /// The last fault it reported: logged with its failure.
     fault: Option<String>,
-    /// When it was launched: how long it had been up when it fails.
-    started_at: Instant,
+    /// When it was launched, on the run's shared clock: how long it had
+    /// been up when it fails.
+    started_us: u64,
 }
 
 /// The relay's watch over the thread taking the app's inputs, the reducer
@@ -411,9 +416,9 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         port: Arc::clone(relay.port()),
         relay,
         generation: 0,
-        records: HashMap::new(),
+        records: BTreeMap::new(),
         listener: None,
-        apps: HashMap::new(),
+        apps: BTreeMap::new(),
         attention: None,
         holding: BTreeSet::new(),
         ping_seq: 0,
@@ -422,7 +427,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         idle: None,
         reducer: ReducerWatch::default(),
         spares: Spares::default(),
-        spare_children: HashMap::new(),
+        spare_children: BTreeMap::new(),
     };
     thread::Builder::new()
         .name("verbatim-relay".to_owned())
@@ -432,6 +437,18 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
             owner.run(&events);
         })?;
     Ok(())
+}
+
+/// The limits a child is judged stuck by.
+const WEDGE_LIMITS: WedgeLimits = WedgeLimits {
+    ping_interval: PING_INTERVAL,
+    missed_pongs: MISSED_PONG_THRESHOLD,
+    abandoned_workers: ABANDONED_WORKER_LIMIT,
+};
+
+/// How long from `since_us` until now, on the run's shared clock.
+fn up_since(since_us: u64) -> Duration {
+    Duration::from_micros(now_us().saturating_sub(since_us))
 }
 
 /// The next time a periodic duty with `interval` is due after `due`, which
@@ -455,12 +472,12 @@ impl Owner {
             if self.finish_shutdown() {
                 return;
             }
-            let timeout = [Some(heartbeat_due), Some(sweep_due), self.next_due()]
-                .into_iter()
-                .flatten()
-                .min()
-                .unwrap_or(heartbeat_due)
+            let mut timeout = heartbeat_due
+                .min(sweep_due)
                 .saturating_duration_since(Instant::now());
+            if let Some(due_us) = self.next_due() {
+                timeout = timeout.min(Duration::from_micros(due_us.saturating_sub(now_us())));
+            }
             if let Err(error) = self.relay.wait(&mut completions, Some(timeout)) {
                 tracing::error!(%error, "the relay's wait failed; the supervisor stops");
                 return;
@@ -476,8 +493,8 @@ impl Owner {
                     Taken::Read(key) => self.read_pipe(key, &completion),
                 }
             }
+            self.start_due(now_us());
             let now = Instant::now();
-            self.start_due(now);
             if now >= heartbeat_due {
                 // What was sent while the port refused the mailbox's wake,
                 // and what the app's port refused.
@@ -630,7 +647,7 @@ impl Owner {
         };
         #[deny(clippy::wildcard_enum_match_arm)]
         match peek(body.parts().body) {
-            Peeked::Pong => spare.last_pong_at = Instant::now(),
+            Peeked::Pong => spare.liveness.ponged(now_us()),
             Peeked::SpareReady => {
                 let OutpostToCore::SpareReady { outpost_pid } = decode_message(body.parts())?
                 else {
@@ -755,10 +772,10 @@ impl Owner {
 
             OwnerEvent::Views { attention, holding } => {
                 if attention != self.attention {
-                    let now = Instant::now();
+                    let now = now_us();
                     for pid in [self.attention, attention].into_iter().flatten() {
                         if let Some(record) = self.records.get_mut(&pid) {
-                            record.last_attention_at = now;
+                            record.last_attention_us = now;
                         }
                     }
                     self.attention = attention;
@@ -797,16 +814,13 @@ impl Owner {
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
             OwnerEvent::Pong { outpost, abandoned } => {
                 if let Some(record) = self.record_of(outpost) {
-                    if let Some(live) = record.generation.live_mut() {
-                        live.last_pong_at = Instant::now();
-                        live.abandoned = abandoned;
-                    }
+                    record.generation.ponged(now_us(), abandoned);
                 } else if let Some(listener) = self
                     .listener
                     .as_mut()
                     .filter(|listener| listener.outpost == outpost)
                 {
-                    listener.last_pong_at = Instant::now();
+                    listener.liveness.ponged(now_us());
                 }
             }
             OwnerEvent::Unreadable(outpost) => self.on_pipe_closed(outpost),
@@ -946,22 +960,22 @@ impl Owner {
             self.not_watched(pid);
             return false;
         }
-        let now = Instant::now();
+        let now = now_us();
         let mut held = HeldFacts::default();
         if let Some(fact) = first {
             if let Some(window) = fact_window(&fact.fact) {
                 check_served_by(pid, window);
             }
-            held.hold(fact, Instant::now);
+            held.hold(fact, now);
         }
         self.records.insert(
             pid,
             Record {
                 generation: Generation::new(),
                 held,
-                last_attention_at: now,
+                last_attention_us: now,
                 idle_query: None,
-                since: now,
+                since_us: now,
                 backoff: Backoff::default(),
             },
         );
@@ -1016,7 +1030,7 @@ impl Owner {
         if !self.records.contains_key(&pid) {
             return;
         }
-        let now = Instant::now();
+        let now = now_us();
         let next = match self.spares.take() {
             Some(spare) => Next::Spare {
                 outpost: spare,
@@ -1035,7 +1049,7 @@ impl Owner {
             return;
         };
         if let Some(record) = self.records.get_mut(&pid) {
-            record.since = now;
+            record.since_us = now;
         }
         if took_spare {
             self.replenish_spares();
@@ -1077,7 +1091,7 @@ impl Owner {
         if self.shutting_down.is_some() {
             return;
         }
-        let now = Instant::now();
+        let now = now_us();
         for _ in 0..self.spares.wanted(SPARES, now) {
             let spare = self.next_outpost_id();
             self.spares.add(spare);
@@ -1085,9 +1099,9 @@ impl Owner {
                 spare,
                 SpareChild {
                     child: Run::Launching,
-                    last_pong_at: now,
+                    liveness: Liveness::new(now),
                     fault: None,
-                    started_at: now,
+                    started_us: now,
                 },
             );
             self.launch(spare, Role::Spare(spare));
@@ -1098,7 +1112,7 @@ impl Owner {
     /// `up` as an error, the evidence to find its cause from, and replaces
     /// it, at once or after its backoff: spares are always replaced.
     fn spare_failed(&mut self, why: &str, up: Duration) {
-        let wait = self.spares.failed(up, Instant::now(), BACKOFF);
+        let wait = self.spares.failed(up, now_us(), BACKOFF);
         tracing::error!(
             why,
             backoff_ms = wait.as_millis(),
@@ -1108,8 +1122,8 @@ impl Owner {
     }
 
     /// The earliest time a failure's backoff ends, an application's or the
-    /// spares'.
-    fn next_due(&self) -> Option<Instant> {
+    /// spares', on the run's shared clock.
+    fn next_due(&self) -> Option<u64> {
         self.records
             .values()
             .filter_map(|record| record.backoff.due())
@@ -1117,18 +1131,19 @@ impl Owner {
             .min()
     }
 
-    /// Ends every backoff due at `now`: each application waiting is given
-    /// its next generation, and the spares are replenished.
-    fn start_due(&mut self, now: Instant) {
+    /// Ends every backoff due at `now`, on the run's shared clock: each
+    /// application waiting is given its next generation, in the order
+    /// [`due_starts`] gives, and the spares are replenished.
+    fn start_due(&mut self, now: u64) {
         if self.shutting_down.is_some() {
             return;
         }
-        let due: Vec<Pid> = self
-            .records
-            .iter_mut()
-            .filter(|(_, record)| record.backoff.due().is_some())
-            .filter_map(|(pid, record)| record.backoff.ended(now).then_some(*pid))
-            .collect();
+        let due = due_starts(
+            self.records
+                .iter_mut()
+                .map(|(pid, record)| (*pid, &mut record.backoff)),
+            now,
+        );
         for pid in due {
             tracing::info!(%pid, "a failed outpost's backoff has ended; its application is given the next");
             self.incarnate(pid);
@@ -1174,7 +1189,7 @@ impl Owner {
         record.generation = failure.next;
         let wait = record
             .backoff
-            .failed(record.since.elapsed(), Instant::now(), BACKOFF);
+            .failed(up_since(record.since_us), now_us(), BACKOFF);
         let failed = failure.outpost;
         let ready = failure.ready;
         // What it reported before it failed is the evidence of why.
@@ -1294,7 +1309,7 @@ impl Owner {
         self.listener = Some(ListenerRecord {
             outpost,
             child: Run::Launching,
-            last_pong_at: Instant::now(),
+            liveness: Liveness::new(now_us()),
             replacement,
             pending: Vec::new(),
         });
@@ -1451,7 +1466,7 @@ impl Owner {
                 Ok(child) => {
                     let pending = std::mem::take(&mut listener.pending);
                     listener.child = Run::Running(child);
-                    listener.last_pong_at = Instant::now();
+                    listener.liveness.ponged(now_us());
                     let Some(child) = self
                         .listener
                         .as_ref()
@@ -1510,7 +1525,7 @@ impl Owner {
         };
         match result {
             Ok(child) => {
-                let now = Instant::now();
+                let now = now_us();
                 let taken = self.transition(pid, |generation| {
                     let taken = if generation.is_spare_given() {
                         generation.assigned(pid, child, now)
@@ -1571,7 +1586,7 @@ impl Owner {
             Ok(child) => {
                 if let Some(spare) = self.spare_children.get_mut(&outpost) {
                     spare.child = Run::Running(child);
-                    spare.last_pong_at = Instant::now();
+                    spare.liveness.ponged(now_us());
                 }
             }
             Err(error) => {
@@ -1579,7 +1594,7 @@ impl Owner {
                 let up = self
                     .spare_children
                     .remove(&outpost)
-                    .map_or(Duration::ZERO, |spare| spare.started_at.elapsed());
+                    .map_or(Duration::ZERO, |spare| up_since(spare.started_us));
                 if self.spares.remove(outpost) {
                     self.spare_failed(&format!("spare {outpost}'s launch failed: {error}"), up);
                 }
@@ -1615,14 +1630,14 @@ impl Owner {
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
-        if let Some(held_at) = record.held.first_held_at() {
+        if let Some(held_us) = record.held.first_held_us() {
             // The time the supervisor held the application's first fact
             // for its outpost's start (`docs/design/focus-pipeline.md`,
             // section 19.6).
             tracing::info!(
                 %outpost,
                 %pid,
-                first_fact_held_us = u64::try_from(held_at.elapsed().as_micros()).unwrap_or(u64::MAX),
+                first_fact_held_us = now_us().saturating_sub(held_us),
                 "outpost ready, its application's first fact held until now"
             );
         }
@@ -1672,7 +1687,7 @@ impl Owner {
         match self.records.get_mut(&pid) {
             Some(record) => match record.generation.ready_child() {
                 Some(child) => deliver(&child.writer, held),
-                None => record.held.hold(held, Instant::now),
+                None => record.held.hold(held, now_us()),
             },
             None => {
                 // A selection, or a notification Core would not speak, in
@@ -1704,7 +1719,7 @@ impl Owner {
         }
         if let Some(spare) = self.spare_children.remove(&outpost) {
             let listed = self.spares.remove(outpost);
-            let up = spare.started_at.elapsed();
+            let up = up_since(spare.started_us);
             self.forget_writer(outpost);
             if let Some(child) = spare.child.into_running() {
                 self.retire_child(
@@ -1908,7 +1923,7 @@ impl Owner {
             };
             match record.generation.ready_child() {
                 Some(child) => deliver(&child.writer, held),
-                None => record.held.hold(held, Instant::now),
+                None => record.held.hold(held, now_us()),
             }
         }
     }
@@ -1948,36 +1963,37 @@ impl Owner {
         let mut wedged = Vec::new();
         let mut exited = Vec::new();
         let mut hang_checks = Vec::new();
-        for (&pid, record) in &self.records {
-            let (Some(child), Some(live), Some(outpost)) = (
-                record.generation.child(),
-                record.generation.live(),
-                record.generation.outpost(),
-            ) else {
-                continue;
-            };
+        let at_us = now_us();
+        let running: Vec<Pid> = self
+            .records
+            .iter()
+            .filter(|(_, record)| record.generation.child().is_some())
+            .map(|(&pid, _)| pid)
+            .collect();
+        for pid in running {
             // An application whose outpost could not tell it exited.
             if self.has_exited(pid) {
                 exited.push(pid);
                 continue;
             }
-            let check_hang = live.abandoned >= ABANDONED_WORKER_LIMIT;
-            if check_hang && !live.hang_check {
-                hang_checks.push((pid, outpost));
-            }
-            match wedge_decision(
-                live.last_pong_at,
-                now,
-                PING_INTERVAL,
-                MISSED_PONG_THRESHOLD,
-                live.abandoned,
-                ABANDONED_WORKER_LIMIT,
-                // Abandoned workers are judged when the check answers.
-                check_hang,
-            ) {
-                Some(reason) => wedged.push((pid, reason)),
-                None => {
-                    let _ = child.writer.push(Outgoing::Ping(ping.clone()));
+            let Some(record) = self.records.get_mut(&pid) else {
+                continue;
+            };
+            let (Some(outpost), Some(beat)) = (
+                record.generation.outpost(),
+                record.generation.heartbeat(at_us, WEDGE_LIMITS),
+            ) else {
+                continue;
+            };
+            match beat {
+                Heartbeat::Wedged(reason) => wedged.push((pid, reason)),
+                Heartbeat::Ping | Heartbeat::CheckHang => {
+                    if beat == Heartbeat::CheckHang {
+                        hang_checks.push((pid, outpost));
+                    }
+                    if let Some(child) = record.generation.child() {
+                        let _ = child.writer.push(Outgoing::Ping(ping.clone()));
+                    }
                 }
             }
         }
@@ -1991,21 +2007,13 @@ impl Owner {
             tracing::warn!(%pid, %reason, "ending a stuck outpost");
             self.outpost_failed(pid, &format!("ended as stuck: {reason}"), EndReason::Killed);
         }
-        self.spare_heartbeat(now, &ping);
+        self.spare_heartbeat(at_us, &ping);
 
         match &self.listener {
             None => self.start_listener(true),
             Some(listener) => {
                 if let Some(child) = listener.child.running() {
-                    let decision = wedge_decision(
-                        listener.last_pong_at,
-                        now,
-                        PING_INTERVAL,
-                        MISSED_PONG_THRESHOLD,
-                        0,
-                        ABANDONED_WORKER_LIMIT,
-                        false,
-                    );
+                    let decision = listener.liveness.wedged(at_us, WEDGE_LIMITS);
                     if decision == Some(WedgeReason::MissedHeartbeats) {
                         tracing::warn!("focus listener stopped answering; replacing it");
                         self.end_listener("it stopped answering pings; it is replaced");
@@ -2023,23 +2031,14 @@ impl Owner {
     }
 
     /// Pings every spare waiting and ends any that has missed its pings, as
-    /// a spare's failure.
-    fn spare_heartbeat(&mut self, now: Instant, ping: &CoreToOutpost) {
+    /// a spare's failure, at `now_us` on the run's shared clock.
+    fn spare_heartbeat(&mut self, now_us: u64, ping: &CoreToOutpost) {
         let mut wedged = Vec::new();
         for (&outpost, spare) in &self.spare_children {
             let Some(child) = spare.child.running() else {
                 continue;
             };
-            let decision = wedge_decision(
-                spare.last_pong_at,
-                now,
-                PING_INTERVAL,
-                MISSED_PONG_THRESHOLD,
-                0,
-                ABANDONED_WORKER_LIMIT,
-                false,
-            );
-            if decision.is_some() {
+            if spare.liveness.wedged(now_us, WEDGE_LIMITS).is_some() {
                 wedged.push(outpost);
             } else {
                 let _ = child.writer.push(Outgoing::Ping(ping.clone()));
@@ -2049,7 +2048,7 @@ impl Owner {
             tracing::warn!(%outpost, "ending a spare outpost that stopped answering pings");
             let mut up = Duration::ZERO;
             if let Some(spare) = self.spare_children.remove(&outpost) {
-                up = spare.started_at.elapsed();
+                up = up_since(spare.started_us);
                 if let Some(child) = spare.child.into_running() {
                     self.forget_writer(outpost);
                     self.retire_child(
@@ -2077,19 +2076,11 @@ impl Owner {
                 let hung = process::application_is_hung(pid);
                 let _ = own_tx.send(OwnerEvent::HangChecked { outpost, hung });
             });
-        match spawned {
-            Ok(_) => {
-                if let Some(live) = self
-                    .records
-                    .get_mut(&pid)
-                    .and_then(|record| record.generation.live_mut())
-                {
-                    live.hang_check = true;
-                }
-            }
-            // Tried again on the next heartbeat.
-            Err(error) => {
-                tracing::error!(%error, %pid, "no thread to check whether an application is hung");
+        // Asked for again on the next heartbeat.
+        if let Err(error) = spawned {
+            tracing::error!(%error, %pid, "no thread to check whether an application is hung");
+            if let Some(record) = self.records.get_mut(&pid) {
+                record.generation.hang_check_ended();
             }
         }
     }
@@ -2104,23 +2095,11 @@ impl Owner {
         let Some(record) = self.records.get_mut(&pid) else {
             return;
         };
-        let Some(live) = record.generation.live_mut() else {
-            return;
-        };
-        live.hang_check = false;
-        let live = *live;
+        let reason = record.generation.hang_checked(hung, now_us(), WEDGE_LIMITS);
         if self.shutting_down.is_some() {
             return;
         }
-        if let Some(reason) = wedge_decision(
-            live.last_pong_at,
-            Instant::now(),
-            PING_INTERVAL,
-            MISSED_PONG_THRESHOLD,
-            live.abandoned,
-            ABANDONED_WORKER_LIMIT,
-            hung,
-        ) {
+        if let Some(reason) = reason {
             tracing::warn!(%pid, %reason, "ending a stuck outpost");
             self.outpost_failed(pid, &format!("ended as stuck: {reason}"), EndReason::Killed);
         }
@@ -2133,7 +2112,7 @@ impl Owner {
         if self.shutting_down.is_some() {
             return;
         }
-        let now = Instant::now();
+        let now = now_us();
         let retiring: Vec<Pid> = self
             .records
             .iter()
@@ -2141,7 +2120,7 @@ impl Owner {
                 **pid != self.own_pid
                     && record.generation.child().is_some()
                     && retirement_decision(
-                        record.last_attention_at,
+                        record.last_attention_us,
                         now,
                         IDLE_RETIREMENT,
                         self.attention == Some(**pid),

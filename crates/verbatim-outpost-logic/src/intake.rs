@@ -163,7 +163,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use verbatim_model::protocol::{DeliveredFact, GapAnswer, WinEventStamp};
-use verbatim_model::{NotificationKind, NotificationProcessing};
+use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
 use super::gap_record::{Accepted, CopyDropped, GapRead, GapRecord, Outcome};
@@ -563,10 +563,10 @@ impl Intake {
         &mut self,
         window: isize,
         top_level: isize,
-        at_us: u64,
+        stamp: (u64, TraceId),
     ) -> (CopyDropped, TimerAction) {
         let was_open = self.gap.is_open();
-        let dropped = self.gap.copy_dropped(window, top_level, at_us);
+        let dropped = self.gap.copy_dropped(window, top_level, stamp);
         let action = match dropped {
             CopyDropped::Opened { due_us } => TimerAction::Set(due_us),
             _ if was_open && !self.gap.is_open() => TimerAction::Cancel,
@@ -583,10 +583,10 @@ impl Intake {
         &mut self,
         window: isize,
         top_level: isize,
-        at_us: u64,
+        stamp: (u64, TraceId),
         restamps: bool,
     ) -> TimerAction {
-        match self.gap.accepted(window, top_level, at_us, restamps) {
+        match self.gap.accepted(window, top_level, stamp, restamps) {
             Accepted::Answered => TimerAction::Cancel,
             Accepted::Restamped | Accepted::Unchanged => TimerAction::Keep,
         }
@@ -608,6 +608,12 @@ impl Intake {
     /// Whether the gap record is open, which the idle answer waits for.
     pub fn gap_open(&self) -> bool {
         self.gap.is_open()
+    }
+
+    /// The open gap record's trace, which its bound's entry carries
+    /// ([`GapRecord::trace`]).
+    pub fn gap_trace(&self) -> Option<TraceId> {
+        self.gap.trace()
     }
 
     /// The next entry to handle and the number of its batch, planning a new
@@ -682,15 +688,15 @@ impl Intake {
             .collect()
     }
 
-    /// Withdraws query `request_id` if it has not started. Returns whether it
-    /// was found.
-    pub fn cancel(&mut self, request_id: u64) -> bool {
+    /// Withdraws query `request_id` if it has not started. Returns the trace
+    /// it came with, Core's, when it was found.
+    pub fn cancel(&mut self, request_id: u64) -> Option<TraceId> {
         let is_it = |entry: &Entry| matches!(entry.item, Item::Query { request_id: id, .. } if id == request_id);
-        let before = self.waiting.len() + self.batch.len();
+        let trace = self.entries().find(|entry| is_it(entry))?.trace;
         self.waiting.retain(|waiting| !is_it(&waiting.entry));
         self.batch
             .retain(|planned| !planned.entries().into_iter().any(is_it));
-        before != self.waiting.len() + self.batch.len()
+        Some(trace)
     }
 
     /// Whether [`next`](Self::next) has an entry to hand out without
@@ -1433,7 +1439,7 @@ mod tests {
             marker: None,
             entry: Entry {
                 item,
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(1),
                 observed_at_us: u64::try_from(child).unwrap_or(0),
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
@@ -1456,7 +1462,7 @@ mod tests {
             marker: None,
             entry: Entry {
                 item,
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(2),
                 observed_at_us,
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
@@ -1521,7 +1527,7 @@ mod tests {
             marker: None,
             entry: Entry {
                 item,
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(3),
                 observed_at_us: 0,
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
@@ -2025,7 +2031,7 @@ mod tests {
             marker: None,
             entry: Entry {
                 item: held,
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(4),
                 observed_at_us: 2,
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
@@ -2141,7 +2147,7 @@ mod tests {
             intake.push(
                 Entry {
                     item,
-                    trace: TraceId::mint(),
+                    trace: TraceId::from_raw(5),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
                 },
@@ -2193,7 +2199,7 @@ mod tests {
                         id_child: child,
                         raiser: 0,
                     },
-                    trace: TraceId::mint(),
+                    trace: TraceId::from_raw(6),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
                 },
@@ -2228,7 +2234,7 @@ mod tests {
                         id_child: 1,
                         raiser: thread,
                     },
-                    trace: TraceId::mint(),
+                    trace: TraceId::from_raw(7),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
                 },
@@ -2263,7 +2269,7 @@ mod tests {
                             time: u32::try_from(observed_at_us).unwrap_or(0),
                         }),
                     ),
-                    trace: TraceId::mint(),
+                    trace: TraceId::from_raw(8),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
                 },
@@ -2287,7 +2293,7 @@ mod tests {
                         anchors: Vec::new(),
                         acknowledged,
                     },
-                    trace: TraceId::mint(),
+                    trace: TraceId::from_raw(9),
                     observed_at_us: 0,
                     timing: verbatim_model::protocol::EventTiming::default(),
                 },
@@ -2312,7 +2318,7 @@ mod tests {
         intake.push(
             Entry {
                 item: Item::Fact(fact, None),
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(10),
                 observed_at_us: 0,
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
@@ -2352,21 +2358,21 @@ mod tests {
                     request_id: 5,
                     query: Query::DumpTree { locations: false },
                 },
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(7),
                 observed_at_us: 0,
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
             None,
         );
-        assert!(intake.cancel(5));
-        assert!(!intake.cancel(5), "already withdrawn");
+        assert_eq!(intake.cancel(5), Some(TraceId::from_raw(7)), "Core's trace");
+        assert_eq!(intake.cancel(5), None, "already withdrawn");
     }
 
     fn push_item(intake: &mut Intake, item: Item, observed_at_us: u64) {
         intake.push(
             Entry {
                 item,
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(11),
                 observed_at_us,
                 timing: verbatim_model::protocol::EventTiming::default(),
             },
@@ -2500,7 +2506,7 @@ mod tests {
     fn the_bounds_entry_waits_behind_a_marker() {
         let mut intake = Intake::default();
         push_item(&mut intake, marker(7), 1);
-        intake.push_gap_bound(Entry::own(Item::GapBound, TraceId::mint(), 0));
+        intake.push_gap_bound(Entry::own(Item::GapBound, TraceId::from_raw(12), 0));
         assert_eq!(handed_out(&mut intake), Vec::<u64>::new());
         push_item(
             &mut intake,
@@ -2545,7 +2551,7 @@ mod tests {
                 None,
             )
         };
-        let (opened, timer) = intake.gap_copy_dropped(0x11, 0x10, 1_000);
+        let (opened, timer) = intake.gap_copy_dropped(0x11, 0x10, (1_000, TraceId::from_raw(1)));
         assert_eq!(
             (opened, timer),
             (
@@ -2559,7 +2565,7 @@ mod tests {
                 .push(
                     Entry {
                         item: dropped(7, GapAnswer::Answers(Some(0x10))),
-                        trace: TraceId::mint(),
+                        trace: TraceId::from_raw(13),
                         observed_at_us: 1_500,
                         timing: verbatim_model::protocol::EventTiming::default(),
                     },
@@ -2571,7 +2577,7 @@ mod tests {
         assert!(!intake.gap_open());
         assert!(!intake.busy(), "nothing for the worker");
 
-        let _ = intake.gap_copy_dropped(0x11, 0x10, 500_000);
+        let _ = intake.gap_copy_dropped(0x11, 0x10, (500_000, TraceId::from_raw(2)));
         push_item(&mut intake, marker(8), 501_000);
         push_item(&mut intake, name_change(3), 502_000);
         assert_eq!(
@@ -2579,7 +2585,7 @@ mod tests {
                 .push(
                     Entry {
                         item: dropped(8, GapAnswer::ReadsNow),
-                        trace: TraceId::mint(),
+                        trace: TraceId::from_raw(14),
                         observed_at_us: 501_000,
                         timing: verbatim_model::protocol::EventTiming::default(),
                     },

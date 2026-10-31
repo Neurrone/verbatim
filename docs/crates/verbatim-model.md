@@ -13,7 +13,9 @@ recorder unchanged. What the reducer does with each type is in
   `mint()` allocates process-unique increasing ids; `namespace(pid)`,
   called once at every process's startup, seeds the counter with the
   process id in the high 32 bits, so ids minted in Core and in each
-  outpost never collide in the latency ledger.
+  outpost never collide in the latency ledger. Only the processes that
+  observe events mint; a reducer takes every trace id with the input that
+  caused the work. `from_raw(u64)` gives a fixed id, for tests and samples.
 - `OutpostId`, `NodeId`, `Pid`, `QueryId`: small identity types. An
   `OutpostId` names one outpost process generation and is never reused. A
   `NodeId` is an outpost id plus a number that outpost issued: outposts
@@ -590,8 +592,9 @@ is [verbatim-speech](verbatim-speech.md)'s.
   speaks it; sounds where NVDA plays them by default (NVDA's files in the
   top-level `sounds` directory); Verbatim's own cues as tones (an
   application not responding, skipped terminal lines, and progress bars
-  rising three octaves from 220 Hz, `progress_frequency`); font name,
-  size, color, background color, font attributes, and strikethrough off;
+  rising three octaves from 220 Hz, the pitch `verbatim-speech` computes);
+  font name, size, color, background color, font attributes, and
+  strikethrough off;
   links in text spoken; the kind of underline and bullet style off; and a
   capital raised in pitch.
 - `ThemeProblem` and `is_plain_file_name`: what loading a theme found

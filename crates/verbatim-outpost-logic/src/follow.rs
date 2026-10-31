@@ -291,6 +291,8 @@ pub enum GapNote {
         top_level: isize,
         /// The copy's observation, in microseconds.
         at_us: u64,
+        /// The copy's trace.
+        trace: TraceId,
     },
     /// An event of `window` accepted: a foreground change, which
     /// `restamps`, or a copy handled through MSAA.
@@ -301,6 +303,8 @@ pub enum GapNote {
         top_level: isize,
         /// The event's observation, in microseconds.
         at_us: u64,
+        /// The event's trace.
+        trace: TraceId,
         /// Whether it restamps the record: a foreground change.
         restamps: bool,
     },
@@ -756,7 +760,7 @@ mod tests {
         Watch::Waiting {
             open: OpenWatch {
                 request_id,
-                trace: TraceId::mint(),
+                trace: TraceId::from_raw(1),
                 node_id: NodeId::new(1),
                 watch: CaretWatch {
                     since: None,

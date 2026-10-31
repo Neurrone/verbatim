@@ -35,6 +35,7 @@
 
 use std::collections::BTreeMap;
 
+use verbatim_model::TraceId;
 use verbatim_model::protocol::GapAnswer;
 
 /// How long a record waits, from its first copy's observation, for a UIA
@@ -74,6 +75,9 @@ struct Open {
     /// The newest copy's or foreground change's observation, which its
     /// read is stamped with.
     stamp_us: u64,
+    /// The newest copy's or foreground change's trace, which its bound's
+    /// entry carries.
+    trace: TraceId,
     /// When its bound passes: a second from its first copy's observation.
     due_us: u64,
 }
@@ -158,6 +162,11 @@ impl GapRecord {
         self.open.is_some()
     }
 
+    /// The open record's trace: its newest copy's or foreground change's.
+    pub fn trace(&self) -> Option<TraceId> {
+        self.open.map(|open| open.trace)
+    }
+
     /// The worker dropped a copy in `window`, of top-level window
     /// `top_level`, observed at `at_us`, because it judges the window UIA.
     /// With a record open in its top-level window it restamps it, when
@@ -167,7 +176,12 @@ impl GapRecord {
     /// for any window, observed with it, stands for it; otherwise a drop
     /// for no window observed with it has it read at once; otherwise it
     /// opens the record.
-    pub fn copy_dropped(&mut self, window: isize, top_level: isize, at_us: u64) -> CopyDropped {
+    pub fn copy_dropped(
+        &mut self,
+        window: isize,
+        top_level: isize,
+        (at_us, trace): (u64, TraceId),
+    ) -> CopyDropped {
         if let Some(open) = self.open {
             if at_us <= open.stamp_us {
                 return CopyDropped::Answered;
@@ -176,6 +190,7 @@ impl GapRecord {
                 self.open = Some(Open {
                     window,
                     stamp_us: at_us,
+                    trace,
                     ..open
                 });
                 return CopyDropped::Restamped;
@@ -200,6 +215,7 @@ impl GapRecord {
             window,
             top_level,
             stamp_us: at_us,
+            trace,
             due_us,
         });
         CopyDropped::Opened { due_us }
@@ -215,7 +231,7 @@ impl GapRecord {
         &mut self,
         window: isize,
         top_level: isize,
-        at_us: u64,
+        (at_us, trace): (u64, TraceId),
         restamps: bool,
     ) -> Accepted {
         let Some(open) = self.open else {
@@ -234,6 +250,7 @@ impl GapRecord {
         self.open = Some(Open {
             window,
             stamp_us: at_us,
+            trace,
             ..open
         });
         Accepted::Restamped
@@ -314,6 +331,31 @@ mod tests {
     const OTHER_TOP: isize = 0x20;
     const WINDOW: isize = 0x11;
 
+    /// An event observed at `at_us`, its trace numbered by its observation.
+    fn at(at_us: u64) -> (u64, TraceId) {
+        (at_us, TraceId::from_raw(at_us))
+    }
+
+    /// The open record's trace is its newest copy's or foreground change's,
+    /// for its bound's entry; an older copy or an accepted copy that does
+    /// not restamp leaves it.
+    #[test]
+    fn the_records_trace_is_its_newest_stamps() {
+        let mut record = GapRecord::default();
+        assert_eq!(record.trace(), None);
+        record.copy_dropped(WINDOW, TOP, at(1_000));
+        assert_eq!(record.trace(), Some(TraceId::from_raw(1_000)));
+        record.copy_dropped(0x12, TOP, at(2_000));
+        assert_eq!(record.trace(), Some(TraceId::from_raw(2_000)));
+        record.copy_dropped(0x12, TOP, at(1_500));
+        record.accepted(WINDOW, TOP, at(3_000), false);
+        assert_eq!(record.trace(), Some(TraceId::from_raw(2_000)));
+        record.accepted(WINDOW, TOP, at(4_000), true);
+        assert_eq!(record.trace(), Some(TraceId::from_raw(4_000)));
+        let _ = record.bound_reached(1_000 + BOUND_US);
+        assert_eq!(record.trace(), None);
+    }
+
     /// A UIA focus's drop observed just after its copy, because its element
     /// no longer has the keyboard focus, as in fast navigation, says
     /// nothing of the copy's focus: the record stays open, and at its bound
@@ -322,7 +364,7 @@ mod tests {
     fn a_drop_for_no_keyboard_focus_leaves_the_gap_record_open() {
         let mut record = GapRecord::default();
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, 1_000),
+            record.copy_dropped(WINDOW, TOP, at(1_000)),
             CopyDropped::Opened {
                 due_us: 1_000 + BOUND_US
             }
@@ -348,7 +390,7 @@ mod tests {
     #[test]
     fn a_windowless_senders_read_answers_the_record_in_its_nearest_windows_top_level_window() {
         let mut record = GapRecord::default();
-        record.copy_dropped(WINDOW, TOP, 1_000);
+        record.copy_dropped(WINDOW, TOP, at(1_000));
         assert_eq!(
             record.outcome(GapAnswer::Answers(Some(OTHER_TOP)), 2_000),
             Outcome::Unchanged
@@ -369,12 +411,12 @@ mod tests {
         let mut record = GapRecord::default();
         record.outcome(GapAnswer::Answers(Some(TOP)), 1_000_000);
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, 1_000_000 + ANSWERED_BEFORE_US),
+            record.copy_dropped(WINDOW, TOP, at(1_000_000 + ANSWERED_BEFORE_US)),
             CopyDropped::Answered
         );
         assert!(!record.is_open());
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, 1_000_001 + ANSWERED_BEFORE_US),
+            record.copy_dropped(WINDOW, TOP, at(1_000_001 + ANSWERED_BEFORE_US)),
             CopyDropped::Opened {
                 due_us: 1_000_001 + ANSWERED_BEFORE_US + BOUND_US
             }
@@ -389,7 +431,7 @@ mod tests {
         record.outcome(GapAnswer::Answers(Some(TOP)), 1_000);
         record.outcome(GapAnswer::Answers(Some(OTHER_TOP)), 5_000);
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, 2_000),
+            record.copy_dropped(WINDOW, TOP, at(2_000)),
             CopyDropped::Answered
         );
     }
@@ -401,19 +443,19 @@ mod tests {
     #[test]
     fn an_accepted_focus_in_another_top_level_window_answers_the_record() {
         let mut record = GapRecord::default();
-        record.copy_dropped(WINDOW, TOP, 1_000);
+        record.copy_dropped(WINDOW, TOP, at(1_000));
         assert_eq!(
-            record.accepted(WINDOW, TOP, 2_000, false),
+            record.accepted(WINDOW, TOP, at(2_000), false),
             Accepted::Unchanged
         );
         assert_eq!(
-            record.accepted(0x21, OTHER_TOP, 3_000, false),
+            record.accepted(0x21, OTHER_TOP, at(3_000), false),
             Accepted::Answered
         );
         assert!(!record.is_open());
-        record.copy_dropped(WINDOW, TOP, 4_000);
+        record.copy_dropped(WINDOW, TOP, at(4_000));
         assert_eq!(
-            record.accepted(OTHER_TOP, OTHER_TOP, 5_000, true),
+            record.accepted(OTHER_TOP, OTHER_TOP, at(5_000), true),
             Accepted::Answered
         );
         assert!(!record.is_open());
@@ -426,9 +468,9 @@ mod tests {
     #[test]
     fn a_later_copy_in_the_records_window_restamps_it() {
         let mut record = GapRecord::default();
-        record.copy_dropped(WINDOW, TOP, 0);
+        record.copy_dropped(WINDOW, TOP, at(0));
         assert_eq!(
-            record.copy_dropped(0x12, TOP, 150_000),
+            record.copy_dropped(0x12, TOP, at(150_000)),
             CopyDropped::Restamped
         );
         assert_eq!(
@@ -451,22 +493,25 @@ mod tests {
     #[test]
     fn an_older_copy_neither_restamps_nor_answers_the_record() {
         let mut record = GapRecord::default();
-        record.copy_dropped(WINDOW, TOP, 50_000);
+        record.copy_dropped(WINDOW, TOP, at(50_000));
         assert_eq!(
-            record.copy_dropped(0x12, TOP, 0),
+            record.copy_dropped(0x12, TOP, at(0)),
             CopyDropped::Answered,
             "an older copy in the record's window opens nothing"
         );
         assert_eq!(
-            record.copy_dropped(0x21, OTHER_TOP, 10_000),
+            record.copy_dropped(0x21, OTHER_TOP, at(10_000)),
             CopyDropped::Answered,
             "an older copy in another window answers nothing"
         );
         assert_eq!(
-            record.accepted(0x21, OTHER_TOP, 20_000, false),
+            record.accepted(0x21, OTHER_TOP, at(20_000), false),
             Accepted::Unchanged
         );
-        assert_eq!(record.accepted(TOP, TOP, 30_000, true), Accepted::Unchanged);
+        assert_eq!(
+            record.accepted(TOP, TOP, at(30_000), true),
+            Accepted::Unchanged
+        );
         assert_eq!(
             record.bound_reached(50_000 + BOUND_US),
             Ok(Some(GapRead {
@@ -484,7 +529,7 @@ mod tests {
         let mut record = GapRecord::default();
         assert_eq!(record.outcome(GapAnswer::ReadsNow, 0), Outcome::Unchanged);
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, 20_000),
+            record.copy_dropped(WINDOW, TOP, at(20_000)),
             CopyDropped::ReadNow
         );
         assert!(!record.is_open());
@@ -496,7 +541,7 @@ mod tests {
     #[test]
     fn a_drop_for_no_window_after_its_copy_closes_the_record_and_reads_at_once() {
         let mut record = GapRecord::default();
-        record.copy_dropped(WINDOW, TOP, 0);
+        record.copy_dropped(WINDOW, TOP, at(0));
         assert_eq!(
             record.outcome(GapAnswer::ReadsNow, 10_000),
             Outcome::ReadNow(GapRead {
@@ -516,7 +561,7 @@ mod tests {
         record.outcome(GapAnswer::Answers(Some(TOP)), 1_000);
         record.window_destroyed(TOP);
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, 2_000),
+            record.copy_dropped(WINDOW, TOP, at(2_000)),
             CopyDropped::Opened {
                 due_us: 2_000 + BOUND_US
             }

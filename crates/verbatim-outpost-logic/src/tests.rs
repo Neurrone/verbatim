@@ -119,7 +119,7 @@ fn now(at_ms: u64) -> Now {
 fn entry(item: Item, at_ms: u64) -> Entry {
     Entry {
         item,
-        trace: TraceId::mint(),
+        trace: TraceId::from_raw(at_ms),
         observed_at_us: at_ms * 1_000,
         timing: EventTiming::default(),
     }
@@ -225,7 +225,7 @@ fn outcome_name(outcome: &QueryOutcome) -> &'static str {
 /// The reply to query `request_id`, done.
 fn done(request_id: u64) -> OutpostToCore {
     OutpostToCore::Reply {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         request_id,
         outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
         timing: EventTiming::default(),
@@ -251,7 +251,7 @@ fn focus_change(id: u64, owes: bool) -> Change {
     let focus = node(id, if owes { Role::Terminal } else { Role::Button });
     Change {
         result: Some(OutpostToCore::Event {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(2),
             observed_at_us: 0,
             backend: Backend::Msaa,
             window: None,
@@ -279,7 +279,7 @@ fn focus_change(id: u64, owes: bool) -> Change {
             console: false,
             target: Target::default(),
             owed: owes.then_some(OwedWork::FirstRead(None)),
-            trace: TraceId::mint(),
+            trace: TraceId::from_raw(3),
             observed_at_us: 0,
             adopt: true,
         }),
@@ -307,6 +307,7 @@ fn copy_dropped() -> Change {
             window: 0x11,
             top_level: 0x10,
             at_us: 1_000,
+            trace: TraceId::from_raw(1_000),
         }],
         ..Change::default()
     }
@@ -413,8 +414,40 @@ fn a_drop_that_leaves_the_record_open_has_it_read_at_its_bound() {
         Work::Entry { entry, .. } => {
             assert!(matches!(entry.item, Item::GapRead { window: 0x11 }));
             assert_eq!(entry.observed_at_us, 1_000, "the record's stamp");
+            assert_eq!(entry.trace, TraceId::from_raw(1_000), "the copy's trace");
         }
         work => panic!("the gap's read, not {work:?}"),
+    }
+}
+
+/// A copy that a drop for no window observed with it has read at once is
+/// read under the copy's own trace.
+#[test]
+fn a_copy_read_at_once_is_read_under_its_trace() {
+    let mut replay = Replay::new();
+    let effects = replay.push(
+        Item::Fact(
+            DeliveredFact::UiaFocusDropped {
+                marker: 4,
+                focus: true,
+                answer: GapAnswer::ReadsNow,
+            },
+            None,
+        ),
+        Source::Other,
+        1,
+    );
+    assert!(programs(&effects).is_empty());
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.commit(request, copy_dropped(), 2);
+    let effects = replay.finish(request, false, 3);
+    match &program(&effects).work {
+        Work::Entry { entry, .. } => {
+            assert!(matches!(entry.item, Item::GapRead { window: 0x11 }));
+            assert_eq!(entry.trace, TraceId::from_raw(1_000), "the copy's trace");
+        }
+        work => panic!("the copy's read, not {work:?}"),
     }
 }
 
@@ -640,7 +673,7 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
 fn open_watch(request_id: u64) -> OpenWatch {
     OpenWatch {
         request_id,
-        trace: TraceId::mint(),
+        trace: TraceId::from_raw(4),
         node_id: NodeId::new(1),
         watch: CaretWatch {
             since: None,
@@ -1226,6 +1259,13 @@ fn a_query_is_answered_once_whatever_ends_it() {
     replay.push(focus_now(4), Source::Other, 10_021);
     let effects = replay.input(Input::Cancel(4), 10_022);
     assert_eq!(replies(&effects), [(4, "not started")]);
+    assert!(
+        matches!(
+            sent(&effects)[..],
+            [OutpostToCore::Reply { trace_id, .. }] if *trace_id == TraceId::from_raw(10_021)
+        ),
+        "the reply carries the query's trace"
+    );
     assert!(programs(&replay.finish(busy, false, 10_023)).is_empty());
     assert!(replay.reducer.queries().is_empty());
 
@@ -1488,7 +1528,7 @@ fn cut(finish: Finish) -> Box<Cut> {
 /// after "h", nothing selected.
 fn report_cut() -> Finish {
     Finish::Report {
-        trace: TraceId::mint(),
+        trace: TraceId::from_raw(5),
         observed_at_us: 1_000,
         read: ReportCut {
             caret: 1,
@@ -1661,7 +1701,7 @@ fn a_noted_caret_is_read_with_its_events_timing() {
     replay.commit(
         request,
         Change {
-            noted_caret: Some((NodeId::new(4), TraceId::mint(), 1_000, timing)),
+            noted_caret: Some((NodeId::new(4), TraceId::from_raw(6), 1_000, timing)),
             ..Change::default()
         },
         2,
@@ -1843,7 +1883,7 @@ fn a_settle_waits_for_a_noted_caret_and_for_no_open_watch() {
     replay.commit(
         key,
         Change {
-            noted_caret: Some((NodeId::new(4), TraceId::mint(), 1_000, timing)),
+            noted_caret: Some((NodeId::new(4), TraceId::from_raw(7), 1_000, timing)),
             ..opens(7, false)
         },
         2,

@@ -62,7 +62,7 @@ fn the_exit_sound_plays_unless_a_new_instance_replaces_this_one() {
 
 #[test]
 fn a_lock_keys_new_state_is_said_interrupting() {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(1);
     assert_eq!(
         effects_of(&Input::LockKeyToggled {
             trace_id,
@@ -82,7 +82,7 @@ fn a_lock_keys_new_state_is_said_interrupting() {
 
 #[test]
 fn the_time_is_said_on_a_first_press_and_the_date_on_a_second() {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(2);
     let clock = |repeat| Input::ClockRead {
         trace_id,
         repeat,
@@ -119,7 +119,7 @@ fn the_time_is_said_on_a_first_press_and_the_date_on_a_second() {
 
 #[test]
 fn a_copy_is_confirmed_with_its_text_or_said_to_have_failed() {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(3);
     assert_eq!(
         effects_of(&Input::ClipboardCopied {
             trace_id,
@@ -148,7 +148,7 @@ fn a_copy_is_confirmed_with_its_text_or_said_to_have_failed() {
 
 #[test]
 fn a_shell_item_gone_is_said_queued() {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(4);
     assert_eq!(
         effects_of(&Input::ShellItemGone {
             trace_id,
@@ -164,7 +164,7 @@ fn a_shell_item_gone_is_said_queued() {
 
 #[test]
 fn a_shell_item_unclickable_is_said_queued() {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(5);
     assert_eq!(
         effects_of(&Input::ShellItemUnclickable {
             trace_id,
@@ -180,7 +180,7 @@ fn a_shell_item_unclickable_is_said_queued() {
 
 #[test]
 fn the_theme_pages_previews_are_spoken_interrupting_or_played() {
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(6);
     assert_eq!(
         effects_of(&Input::PreviewSpeech {
             trace_id,
@@ -206,7 +206,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     let _ = reduce(
         &mut state,
         &Input::Event {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(7),
             observed_at_us: 1_000,
             source: Pid(1),
             backend: Backend::Uia,
@@ -261,7 +261,7 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
         alt_held: false,
     };
     Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(8),
         observed_at_us: us,
         source: Pid(1),
         backend: Backend::Msaa,
@@ -423,7 +423,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     let effects = reduce(
         &mut state,
         &Input::ToggleKeyPressed {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(9),
             key_seq: KeySeq::new(1),
             toggle: LockKey::ScrollLock,
             pressed_at_ms: 1_000,
@@ -438,7 +438,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     );
     assert!(state.announces_toggle_key());
     // "a", pressed as key 2 within the 30 ms, is spoken with its number.
-    let letter = TraceId::mint();
+    let letter = TraceId::from_raw(10);
     let effects = reduce(
         &mut state,
         &Input::CharacterTyped {
@@ -464,7 +464,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     assert!(state.announces_toggle_key());
     // The announcement carries no number, so the letter's cancel does not
     // fence it off.
-    let toggled = TraceId::mint();
+    let toggled = TraceId::from_raw(11);
     assert_eq!(
         reduce(
             &mut state,

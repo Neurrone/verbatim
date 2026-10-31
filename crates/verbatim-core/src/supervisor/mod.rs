@@ -5,9 +5,9 @@
 //! held, which facts may start an outpost, and which spare outposts are
 //! kept and given ([`policy`]). The supervisor's owner, in
 //! `verbatim-supervisor`, gathers their inputs, reads the clocks, and
-//! carries out what they decide.
-
-use std::time::Instant;
+//! carries out what they decide. Every time they take is in microseconds
+//! on the run's shared clock (`verbatim_process::clock::now_us`), given
+//! with the input.
 
 pub mod generation;
 pub mod policy;
@@ -39,13 +39,11 @@ impl std::fmt::Display for EndReason {
     }
 }
 
-/// When verbatim.exe read a fact from the listener: the monotonic clock's
-/// instant and the run's shared clock's microseconds, read together, which
-/// the supervisor stamps the fact's relay with when it routes it.
+/// When verbatim.exe read a fact from the listener, on the run's shared
+/// clock, which the supervisor stamps the fact's relay with when it routes
+/// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Received {
-    /// The instant, on the monotonic clock.
-    pub at: Instant,
-    /// The same moment on the run's shared clock, in microseconds.
+    /// The moment, in microseconds on the run's shared clock.
     pub at_us: u64,
 }

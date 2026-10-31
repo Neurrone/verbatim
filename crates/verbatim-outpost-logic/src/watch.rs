@@ -380,10 +380,9 @@ mod tests {
     /// A watch for request 7 on node 1, its key pressed at `pressed_ms` on
     /// the shared clock.
     fn open(pressed_ms: u64) -> OpenWatch {
-        static TRACE: std::sync::OnceLock<TraceId> = std::sync::OnceLock::new();
         OpenWatch {
             request_id: 7,
-            trace: *TRACE.get_or_init(TraceId::mint),
+            trace: TraceId::from_raw(1),
             node_id: NodeId::new(1),
             watch: CaretWatch {
                 since: None,

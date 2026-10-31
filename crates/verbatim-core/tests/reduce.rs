@@ -93,7 +93,7 @@ fn foreground_window(handle: u64) -> WindowFacts {
 fn event_in(source: Pid, facts: Option<WindowFacts>, event: NormalizedEvent) -> Input {
     Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         source,
         backend: Backend::Uia,
         window: facts,
@@ -180,14 +180,14 @@ fn a_focus_read_on_request_is_ordered_by_its_read_time() {
         None,
         StateSet::new(),
     );
-    let mut read = focus_event(TraceId::mint(), Pid(7), edit);
+    let mut read = focus_event(TraceId::from_raw(2), Pid(7), edit);
     if let Input::Event { observed_at_us, .. } = &mut read {
         *observed_at_us = 2_000;
     }
     let (state, _) = reduce_from(&SrState::new(), &read, OutpostId(7));
 
     let button = node(8001, Role::Button, Some("OK"), None, StateSet::new());
-    let mut late = focus_event(TraceId::mint(), Pid(8), button);
+    let mut late = focus_event(TraceId::from_raw(3), Pid(8), button);
     if let Input::Event { observed_at_us, .. } = &mut late {
         *observed_at_us = 1_500;
     }
@@ -316,7 +316,7 @@ fn only_speech(effects: &[Effect]) -> Vec<&Utterance> {
 fn focus_menu_item_with_popup_speaks_name_and_submenu() {
     let state = SrState::new();
     let source = Pid(100);
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(4);
     let snapshot = node(
         1,
         Role::MenuItem,
@@ -348,7 +348,7 @@ fn focus_menu_item_with_popup_speaks_name_and_submenu() {
 fn focus_slider_then_drag_speaks_value_only_on_change() {
     let state = SrState::new();
     let source = Pid(200);
-    let trace_1 = TraceId::mint();
+    let trace_1 = TraceId::from_raw(5);
     let slider = node(2, Role::Slider, Some("Rate"), Some("50"), StateSet::new());
 
     let (state, effects) = reduce(&state, &focus_event(trace_1, source, slider));
@@ -364,7 +364,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
         )
     );
 
-    let trace_2 = TraceId::mint();
+    let trace_2 = TraceId::from_raw(6);
     let value_changed = Input::Event {
         observed_at_us: 0,
         trace_id: trace_2,
@@ -548,11 +548,11 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
         Some("a"),
         StateSet::new(),
     );
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, focused));
+    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(7), source, focused));
 
     let other_value_changed = Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(8),
         source,
         backend: Backend::Uia,
         window: None,
@@ -584,11 +584,11 @@ fn a_name_change_on_the_focus_speaks_the_new_name_alone_queued() {
         states: StateSet::new(),
         details: NodeDetails::default(),
     };
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, focused));
+    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(9), source, focused));
 
     let name_changed = Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(10),
         source,
         backend: Backend::Uia,
         window: None,
@@ -665,7 +665,7 @@ fn an_ancestors_change_before_a_focus_in_another_window_is_cut_off() {
     let (reader, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(11),
             source,
             NodeId::new(31),
             states(&[State::Disabled]),
@@ -733,7 +733,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
     let (reader, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(12),
             source,
             NodeId::new(31),
             states(&[State::Expanded]),
@@ -744,7 +744,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
     let (reader, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(13),
             source,
             NodeId::new(31),
             states(&[State::Expanded]),
@@ -755,7 +755,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
     let (_, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(14),
             source,
             NodeId::new(99),
             states(&[State::Checked]),
@@ -817,11 +817,14 @@ fn visited_is_said_of_a_link_and_linked_only_as_a_change() {
         None,
         states(&[State::Focused]),
     );
-    let (reader, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::from_raw(15), source, item),
+    );
     let (_, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(16),
             source,
             NodeId::new(64),
             states(&[State::Focused, State::Linked]),
@@ -864,7 +867,10 @@ fn a_progress_bar_indicates_its_percentage() {
         Some("0"),
         states(&[State::Focusable, State::Focused]),
     );
-    let (reader, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, bar));
+    let (reader, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::from_raw(17), source, bar),
+    );
 
     let (reader, effects) = reduce(&reader, &at(51, "20", 0, false));
     assert_eq!(
@@ -911,11 +917,11 @@ fn a_description_change_on_the_focus_is_spoken() {
     );
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, field),
+        &focus_event(TraceId::from_raw(18), source, field),
     );
     let described = |node: u64, description: &str| Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(19),
         source,
         backend: Backend::Msaa,
         window: None,
@@ -957,11 +963,11 @@ fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
     );
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, field),
+        &focus_event(TraceId::from_raw(20), source, field),
     );
     let suggestions = |node: u64, open: bool| Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(21),
         source,
         backend: Backend::Uia,
         window: None,
@@ -994,12 +1000,15 @@ fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
         .with(State::Selectable);
     let collapsed = focusable.with(State::Selected).with(State::Collapsed);
     let item = node(21, Role::TreeItem, Some("Roles"), None, collapsed);
-    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::from_raw(22), source, item),
+    );
 
     let expanded = focusable.with(State::Selected).with(State::Expanded);
     let (state, effects) = reduce(
         &state,
-        &states_changed_with_children(TraceId::mint(), source, node_id, expanded, Some(52)),
+        &states_changed_with_children(TraceId::from_raw(23), source, node_id, expanded, Some(52)),
     );
     assert_eq!(
         heard(&effects),
@@ -1019,7 +1028,7 @@ fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
     let unselected = focusable.with(State::Expanded);
     let (_, effects) = reduce(
         &state,
-        &states_changed_with_children(TraceId::mint(), source, node_id, unselected, Some(52)),
+        &states_changed_with_children(TraceId::from_raw(24), source, node_id, unselected, Some(52)),
     );
     assert_eq!(
         heard(&effects),
@@ -1034,12 +1043,15 @@ fn expanding_without_a_count_says_only_expanded() {
     let node_id = NodeId::new(22);
     let collapsed = StateSet::new().with(State::Focused).with(State::Collapsed);
     let item = node(22, Role::TreeItem, Some("Folder"), None, collapsed);
-    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::from_raw(25), source, item),
+    );
 
     let expanded = StateSet::new().with(State::Focused).with(State::Expanded);
     let (_, effects) = reduce(
         &state,
-        &states_changed_input(TraceId::mint(), source, node_id, expanded),
+        &states_changed_input(TraceId::from_raw(26), source, node_id, expanded),
     );
     assert_eq!(
         heard(&effects),
@@ -1057,10 +1069,10 @@ fn states_changed_checkbox_toggle_on_announces_checked() {
     let checkbox = node(20, Role::CheckBox, Some("Agree"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, checkbox),
+        &focus_event(TraceId::from_raw(27), source, checkbox),
     );
 
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(28);
     let toggled_on = states_changed_input(
         trace_id,
         source,
@@ -1095,10 +1107,10 @@ fn states_changed_checkbox_toggle_off_announces_negated_checked() {
     );
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, checkbox),
+        &focus_event(TraceId::from_raw(29), source, checkbox),
     );
 
-    let trace_id = TraceId::mint();
+    let trace_id = TraceId::from_raw(30);
     let toggled_off = states_changed_input(
         trace_id,
         source,
@@ -1137,9 +1149,12 @@ fn states_changed_as_the_focus_leaves_an_item_is_silent() {
         None,
         selectable.with(State::Focused).with(State::Selected),
     );
-    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::from_raw(31), source, item),
+    );
 
-    let left = states_changed_input(TraceId::mint(), source, node_id, selectable);
+    let left = states_changed_input(TraceId::from_raw(32), source, node_id, selectable);
     let (_, effects) = reduce(&state, &left);
 
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
@@ -1160,9 +1175,12 @@ fn states_changed_unselecting_the_focused_item_announces_not_selected() {
         None,
         focused.with(State::Selected),
     );
-    let (state, _) = reduce(&SrState::new(), &focus_event(TraceId::mint(), source, item));
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_event(TraceId::from_raw(33), source, item),
+    );
 
-    let unselected = states_changed_input(TraceId::mint(), source, node_id, focused);
+    let unselected = states_changed_input(TraceId::from_raw(34), source, node_id, focused);
     let (_, effects) = reduce(&state, &unselected);
 
     assert_eq!(heard(&effects), vec![queued(vec![not(State::Selected)])]);
@@ -1175,11 +1193,11 @@ fn states_changed_disabled_appearing_announces_unavailable() {
     let button = node(22, Role::Button, Some("Submit"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, button),
+        &focus_event(TraceId::from_raw(35), source, button),
     );
 
     let disabled = states_changed_input(
-        TraceId::mint(),
+        TraceId::from_raw(36),
         source,
         node_id,
         StateSet::new().with(State::Disabled),
@@ -1212,20 +1230,20 @@ fn a_button_disabled_after_the_focus_left_it_is_silent() {
     );
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, button),
+        &focus_event(TraceId::from_raw(37), source, button),
     );
 
     let disabled = StateSet::new().with(State::Disabled);
     let (state, effects) = reduce(
         &state,
-        &states_changed_input(TraceId::mint(), source, node_id, disabled),
+        &states_changed_input(TraceId::from_raw(38), source, node_id, disabled),
     );
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     assert_eq!(state.focused().map(|(_, n)| n.states), Some(disabled));
 
     let (_, effects) = reduce(
         &state,
-        &states_changed_input(TraceId::mint(), source, node_id, focusable),
+        &states_changed_input(TraceId::from_raw(39), source, node_id, focusable),
     );
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
@@ -1238,13 +1256,13 @@ fn a_button_disabled_while_still_focused_says_unavailable() {
     let button = node(29, Role::Button, Some("Reset"), None, focused);
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, button),
+        &focus_event(TraceId::from_raw(40), source, button),
     );
 
     let (_, effects) = reduce(
         &state,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(41),
             source,
             node_id,
             focused.with(State::Disabled),
@@ -1266,10 +1284,10 @@ fn states_changed_identical_set_is_silent() {
     let checkbox = node(23, Role::CheckBox, Some("Agree"), None, states);
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, checkbox),
+        &focus_event(TraceId::from_raw(42), source, checkbox),
     );
 
-    let same = states_changed_input(TraceId::mint(), source, node_id, states);
+    let same = states_changed_input(TraceId::from_raw(43), source, node_id, states);
     let (_, effects) = reduce(&state, &same);
 
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
@@ -1282,11 +1300,11 @@ fn states_changed_for_non_focused_node_is_ignored() {
     let focused = node(24, Role::CheckBox, Some("Agree"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, focused),
+        &focus_event(TraceId::from_raw(44), source, focused),
     );
 
     let other_changed = states_changed_input(
-        TraceId::mint(),
+        TraceId::from_raw(45),
         source,
         other_id,
         StateSet::new().with(State::Checked),
@@ -1304,7 +1322,7 @@ fn states_changed_for_non_focused_node_is_ignored() {
 fn fetch_completed_for_unknown_query_id_is_ignored() {
     let state = SrState::new();
     let completed = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(46),
         query_id: QueryId(9999),
         kind: QueryKind::Parent,
         result: FetchResult::Gone,
@@ -1323,10 +1341,10 @@ fn sample_script() -> Vec<Input> {
         ..node(1, Role::CheckBox, Some("Agree"), None, StateSet::new())
     };
     vec![
-        focus_event(TraceId::mint(), source, button),
+        focus_event(TraceId::from_raw(47), source, button),
         Input::Event {
             observed_at_us: 0,
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(48),
             source,
             backend: Backend::Uia,
             window: None,
@@ -1342,7 +1360,7 @@ fn sample_script() -> Vec<Input> {
         },
         Input::Event {
             observed_at_us: 0,
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(49),
             source,
             backend: Backend::Uia,
             window: None,
@@ -1395,7 +1413,7 @@ fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
 #[test]
 fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
     let slider = node(1, Role::Slider, Some("Rate"), Some("0"), StateSet::new());
-    let mut script = vec![focus_event(TraceId::mint(), Pid(1), slider)];
+    let mut script = vec![focus_event(TraceId::from_raw(50), Pid(1), slider)];
     script.extend((1..=20).map(|value| value_changed(1, &value.to_string())));
 
     let mut recorder = ReducerRecorder::new(4, 1 << 20, SrState::new());
@@ -1483,7 +1501,7 @@ fn entering_a_dialog_announces_it_before_the_control() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![window, dialog]),
+        &focus_event_with_ancestors(TraceId::from_raw(51), source, button, vec![window, dialog]),
     );
 
     assert_eq!(
@@ -1526,11 +1544,11 @@ fn moving_within_the_same_dialog_does_not_reannounce_it() {
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, save, vec![dialog.clone()]),
+        &focus_event_with_ancestors(TraceId::from_raw(52), source, save, vec![dialog.clone()]),
     );
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, cancel, vec![dialog]),
+        &focus_event_with_ancestors(TraceId::from_raw(53), source, cancel, vec![dialog]),
     );
 
     assert_eq!(
@@ -1567,13 +1585,13 @@ fn focus_from_another_application_treats_the_chain_as_new() {
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), edit_a, vec![dialog]),
+        &focus_event_with_ancestors(TraceId::from_raw(54), Pid(1), edit_a, vec![dialog]),
     );
     let state = switch_to(&state, Pid(2));
     let (_, effects) = reduce(
         &state,
         &focus_event_with_ancestors(
-            TraceId::mint(),
+            TraceId::from_raw(55),
             Pid(2),
             edit_b,
             vec![
@@ -1606,7 +1624,7 @@ fn nameless_groups_are_not_announced_but_named_ones_are() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, field, vec![nameless, named]),
+        &focus_event_with_ancestors(TraceId::from_raw(56), source, field, vec![nameless, named]),
     );
 
     assert_eq!(
@@ -1632,7 +1650,7 @@ fn a_named_list_ancestor_is_announced_as_entered_context() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![list]),
+        &focus_event_with_ancestors(TraceId::from_raw(57), source, item, vec![list]),
     );
 
     assert_eq!(
@@ -1658,7 +1676,7 @@ fn an_unnamed_tree_ancestor_is_still_announced() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![tree]),
+        &focus_event_with_ancestors(TraceId::from_raw(58), source, item, vec![tree]),
     );
 
     assert_eq!(
@@ -1688,7 +1706,7 @@ fn a_tree_view_taking_the_focus_on_its_item_is_spoken_as_the_items_ancestor() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![tree]),
+        &focus_event_with_ancestors(TraceId::from_raw(59), Pid(1), item, vec![tree]),
     );
 
     assert_eq!(
@@ -1719,7 +1737,7 @@ fn an_unnamed_group_ancestor_is_dropped() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![group]),
+        &focus_event_with_ancestors(TraceId::from_raw(60), source, button, vec![group]),
     );
 
     assert_eq!(
@@ -1749,7 +1767,7 @@ fn a_named_window_ancestor_is_announced_as_entered_context() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![window]),
+        &focus_event_with_ancestors(TraceId::from_raw(61), source, button, vec![window]),
     );
 
     assert_eq!(
@@ -1771,7 +1789,7 @@ fn an_unnamed_window_ancestor_is_not_announced() {
 
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), button, vec![window_node]),
+        &focus_event_with_ancestors(TraceId::from_raw(62), Pid(1), button, vec![window_node]),
     );
 
     assert_eq!(
@@ -1792,7 +1810,7 @@ fn a_border_or_white_space_ancestor_is_not_announced() {
 
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), button, vec![border, space]),
+        &focus_event_with_ancestors(TraceId::from_raw(63), Pid(1), button, vec![border, space]),
     );
 
     assert_eq!(
@@ -1822,7 +1840,7 @@ fn list_item_and_editable_text_ancestors_are_dropped() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, button, vec![list_item, edit]),
+        &focus_event_with_ancestors(TraceId::from_raw(64), source, button, vec![list_item, edit]),
     );
 
     assert_eq!(
@@ -1917,7 +1935,7 @@ fn a_tree_items_level_goes_first_only_when_it_changes() {
         let (next, effects) = reduce(
             &state,
             &focus_event_with_ancestors(
-                TraceId::mint(),
+                TraceId::from_raw(65),
                 Pid(1),
                 tree_item(id, name, depth),
                 vec![window_node(499, Backend::Msaa, Role::Window, "", 499)],
@@ -1991,7 +2009,7 @@ fn a_repeated_focus_with_another_selected_item_is_silent_until_the_selection_eve
     let second = node(12, Role::ListItem, Some("b.txt"), None, StateSet::new());
     let (state, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_selection(TraceId::mint(), app, list.clone(), Some(first)),
+        &focus_event_with_selection(TraceId::from_raw(66), app, list.clone(), Some(first)),
     );
     assert_eq!(
         heard(&effects),
@@ -2007,11 +2025,11 @@ fn a_repeated_focus_with_another_selected_item_is_silent_until_the_selection_eve
 
     let (state, effects) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), app, list, Some(second.clone())),
+        &focus_event_with_selection(TraceId::from_raw(67), app, list, Some(second.clone())),
     );
     assert!(effects.is_empty(), "the same focus is not announced again");
 
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), app, second));
+    let (_, effects) = reduce(&state, &selection_event(TraceId::from_raw(68), app, second));
     assert_eq!(
         heard(&effects),
         vec![queued(vec![UtteranceSegment::label("b.txt")])],
@@ -2039,7 +2057,7 @@ fn focusing_a_list_announces_its_selected_item() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), source, list, Some(item)),
+        &focus_event_with_selection(TraceId::from_raw(69), source, list, Some(item)),
     );
 
     assert_eq!(
@@ -2065,13 +2083,13 @@ fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), source, list, Some(speech)),
+        &focus_event_with_selection(TraceId::from_raw(70), source, list, Some(speech)),
     );
 
     // Arrowing to another item announces it.
     let (state, effects) = reduce(
         &state,
-        &selection_event(TraceId::mint(), source, keyboard.clone()),
+        &selection_event(TraceId::from_raw(71), source, keyboard.clone()),
     );
     assert_eq!(
         heard(&effects),
@@ -2079,7 +2097,10 @@ fn selection_changes_in_the_focused_list_announce_each_new_item_once() {
     );
 
     // A duplicate selection event for the same item stays silent.
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, keyboard));
+    let (_, effects) = reduce(
+        &state,
+        &selection_event(TraceId::from_raw(72), source, keyboard),
+    );
     assert!(effects.is_empty(), "the same selection is not spoken twice");
 }
 
@@ -2092,12 +2113,15 @@ fn the_focus_events_own_selected_item_is_not_reannounced_by_a_selection_event() 
 
     let (state, _) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), source, list, Some(speech.clone())),
+        &focus_event_with_selection(TraceId::from_raw(73), source, list, Some(speech.clone())),
     );
 
     // Platforms often raise a selection event right after focus lands; the
     // focus announcement already spoke this item.
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, speech));
+    let (_, effects) = reduce(
+        &state,
+        &selection_event(TraceId::from_raw(74), source, speech),
+    );
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
@@ -2108,10 +2132,10 @@ fn selection_changes_outside_a_focused_container_stay_silent() {
     let item = node(601, Role::ListItem, Some("Row"), None, StateSet::new());
 
     // Focus on a non-container: selection noise elsewhere is not announced.
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(1), button));
+    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(75), Pid(1), button));
     let (state, effects) = reduce(
         &state,
-        &selection_event(TraceId::mint(), Pid(1), item.clone()),
+        &selection_event(TraceId::from_raw(76), Pid(1), item.clone()),
     );
     assert!(effects.is_empty(), "focus is not on a selection container");
 
@@ -2120,9 +2144,12 @@ fn selection_changes_outside_a_focused_container_stay_silent() {
     let list = node(602, Role::List, Some("Files"), None, StateSet::new());
     let (state, _) = reduce(
         &state,
-        &focus_event_with_selection(TraceId::mint(), Pid(1), list, None),
+        &focus_event_with_selection(TraceId::from_raw(77), Pid(1), list, None),
     );
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), Pid(2), item));
+    let (_, effects) = reduce(
+        &state,
+        &selection_event(TraceId::from_raw(78), Pid(2), item),
+    );
     assert!(effects.is_empty(), "another application's selection");
 }
 
@@ -2158,7 +2185,7 @@ fn notification_with_text_is_announced_and_priority_follows_processing() {
     let (_, effects) = reduce(
         &SrState::new(),
         &notification_event(
-            TraceId::mint(),
+            TraceId::from_raw(79),
             Pid(1),
             NotificationProcessing::MostRecent,
             Some("Snap layout available"),
@@ -2176,7 +2203,7 @@ fn notification_with_text_is_announced_and_priority_follows_processing() {
     let (_, effects) = reduce(
         &SrState::new(),
         &notification_event(
-            TraceId::mint(),
+            TraceId::from_raw(80),
             Pid(1),
             NotificationProcessing::All,
             Some("Download complete"),
@@ -2194,7 +2221,12 @@ fn notification_without_text_is_silent() {
 
     let (_, effects) = reduce(
         &SrState::new(),
-        &notification_event(TraceId::mint(), Pid(1), NotificationProcessing::All, None),
+        &notification_event(
+            TraceId::from_raw(81),
+            Pid(1),
+            NotificationProcessing::All,
+            None,
+        ),
     );
     assert!(
         effects.is_empty(),
@@ -2209,7 +2241,7 @@ fn identical_back_to_back_focus_is_suppressed() {
 
     let (state, effects) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, button.clone()),
+        &focus_event(TraceId::from_raw(82), source, button.clone()),
     );
     assert_eq!(
         heard(&effects),
@@ -2221,7 +2253,7 @@ fn identical_back_to_back_focus_is_suppressed() {
     );
 
     // The exact same node focusing again from the same app: suppressed.
-    let (_, effects) = reduce(&state, &focus_event(TraceId::mint(), source, button));
+    let (_, effects) = reduce(&state, &focus_event(TraceId::from_raw(83), source, button));
     assert!(
         effects.is_empty(),
         "a redundant identical focus event is not re-announced"
@@ -2235,18 +2267,18 @@ fn returning_to_a_window_after_visiting_another_is_announced() {
 
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), Pid(1), a.clone()),
+        &focus_event(TraceId::from_raw(84), Pid(1), a.clone()),
     );
     // Visit another control (different app), then come back to the first.
     let state = switch_to(&state, Pid(2));
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), Pid(2), b));
+    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(85), Pid(2), b));
     let state = switch_to(&state, Pid(1));
     // Its chain meets the line at its window, which the return brought
     // forward.
     let (_, effects) = reduce(
         &state,
         &focus_event_with_ancestors(
-            TraceId::mint(),
+            TraceId::from_raw(86),
             Pid(1),
             a,
             vec![window_node(1000, Backend::Uia, Role::Window, "App", 1000)],
@@ -2288,7 +2320,7 @@ fn only_fetch(effects: &[Effect]) -> verbatim_model::Query {
 fn focused(source: Pid, snapshot: NodeSnapshot) -> SrState {
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, snapshot),
+        &focus_event(TraceId::from_raw(87), source, snapshot),
     );
     state
 }
@@ -2308,7 +2340,7 @@ fn report_object_announces_spells_then_copies() {
     // First press: full announcement.
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(88), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         heard(&effects),
@@ -2323,7 +2355,7 @@ fn report_object_announces_spells_then_copies() {
     // spoken as "space" and the capitals marked for a raised pitch.
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 1),
+        &command(TraceId::from_raw(89), ReviewCommand::ReportObject, 1),
     );
     assert_eq!(
         heard(&effects),
@@ -2342,7 +2374,7 @@ fn report_object_announces_spells_then_copies() {
     // Third press: copy name and value to the clipboard.
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 2),
+        &command(TraceId::from_raw(90), ReviewCommand::ReportObject, 2),
     );
     assert_eq!(
         effects,
@@ -2357,7 +2389,10 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
     let state = focused(source, button);
 
     // The command emits a navigation fetch.
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(91), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
     assert_eq!(query.kind, QueryKind::Parent);
     assert_eq!(query.node_id, NodeId::in_outpost(outpost_of(source), 10));
@@ -2365,7 +2400,7 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
     // The completion moves the navigator to the parent and announces it.
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(92),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Node(parent),
@@ -2410,7 +2445,7 @@ fn the_same_focus_reported_again_after_its_window_was_renamed_is_silent() {
     let item = node(31, Role::ListItem, Some("alpha.txt"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), source, item.clone(), vec![window]),
+        &focus_event_with_ancestors(TraceId::from_raw(93), source, item.clone(), vec![window]),
     );
     let renamed = node(
         30,
@@ -2421,7 +2456,7 @@ fn the_same_focus_reported_again_after_its_window_was_renamed_is_silent() {
     );
     let (state, effects) = reduce(
         &state,
-        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![renamed]),
+        &focus_event_with_ancestors(TraceId::from_raw(94), source, item, vec![renamed]),
     );
     assert!(effects.is_empty(), "already the focus");
     // The repeat updates the reading Core holds, which review reads; what
@@ -2445,10 +2480,10 @@ fn a_name_change_after_a_repeat_carried_it_is_spoken() {
     let first = node(42, Role::Button, Some("Connect"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, first),
+        &focus_event(TraceId::from_raw(95), source, first),
     );
     let renamed = node(42, Role::Button, Some("Disconnect"), None, StateSet::new());
-    let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), source, renamed));
+    let (state, effects) = reduce(&state, &focus_event(TraceId::from_raw(96), source, renamed));
     assert_eq!(heard(&effects), vec![], "already the focus");
     let name_changed = event_in(
         source,
@@ -2475,13 +2510,13 @@ fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
     let first = node(42, Role::Button, Some("Connect"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, first),
+        &focus_event(TraceId::from_raw(97), source, first),
     );
     let renamed = node(42, Role::Button, Some("Disconnect"), None, StateSet::new());
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, renamed));
+    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(98), source, renamed));
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportFocus, 0),
+        &command(TraceId::from_raw(99), ReviewCommand::ReportFocus, 0),
     );
     assert_eq!(
         heard(&effects),
@@ -2511,11 +2546,17 @@ fn a_name_change_the_navigator_s_return_to_the_focus_spoke_is_silent() {
     let first = node(44, Role::Button, Some("Play"), None, StateSet::new());
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, first),
+        &focus_event(TraceId::from_raw(100), source, first),
     );
     let renamed = node(44, Role::Button, Some("Pause"), None, StateSet::new());
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, renamed));
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    let (state, _) = reduce(
+        &state,
+        &focus_event(TraceId::from_raw(101), source, renamed),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(102), ReviewCommand::ToFocus, 0),
+    );
     assert_eq!(
         heard(&effects),
         vec![queued(vec![
@@ -2545,7 +2586,7 @@ fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
     let unchecked = node(43, Role::CheckBox, Some("Wrap"), None, StateSet::new());
     let (reader, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, unchecked),
+        &focus_event(TraceId::from_raw(103), source, unchecked),
     );
     let checked = node(
         43,
@@ -2554,10 +2595,13 @@ fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
         None,
         states(&[State::Checked]),
     );
-    let (reader, _) = reduce(&reader, &focus_event(TraceId::mint(), source, checked));
+    let (reader, _) = reduce(
+        &reader,
+        &focus_event(TraceId::from_raw(104), source, checked),
+    );
     let (reader, effects) = reduce(
         &reader,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(105), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         heard(&effects),
@@ -2570,7 +2614,7 @@ fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
     let (_, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(106),
             source,
             NodeId::new(43),
             states(&[State::Checked]),
@@ -2588,13 +2632,16 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
     let source = Pid(1);
     let first = node(45, Role::Button, Some("Connect"), None, StateSet::new());
     let state = focused(source, first);
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(107), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
     let window = node(10, Role::Window, Some("App"), None, StateSet::new());
     let (state, _) = reduce(
         &state,
         &Input::FetchCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(108),
             query_id: query.query_id,
             kind: query.kind,
             result: FetchResult::Node(window),
@@ -2602,7 +2649,7 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
     );
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::FirstChild, 0),
+        &command(TraceId::from_raw(109), ReviewCommand::FirstChild, 0),
     );
     let query = only_fetch(&effects);
     // The outpost answers with the id it gave the focus.
@@ -2611,7 +2658,7 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
     let (state, effects) = reduce(
         &state,
         &Input::FetchCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(110),
             query_id: query.query_id,
             kind: query.kind,
             result: FetchResult::Node(fetched),
@@ -2623,7 +2670,7 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
     );
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(111), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         heard(&effects),
@@ -2665,7 +2712,7 @@ fn an_expand_of_the_focus_left_reported_after_the_new_focus_is_spoken() {
     );
     let (reader, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, collapsed),
+        &focus_event(TraceId::from_raw(112), source, collapsed),
     );
     let expanded = node(
         50,
@@ -2677,7 +2724,7 @@ fn an_expand_of_the_focus_left_reported_after_the_new_focus_is_spoken() {
     let item = node(51, Role::ListItem, Some("Dark"), None, StateSet::new());
     let (reader, effects) = reduce(
         &reader,
-        &focus_event_with_ancestors(TraceId::mint(), source, item, vec![expanded]),
+        &focus_event_with_ancestors(TraceId::from_raw(113), source, item, vec![expanded]),
     );
     assert_eq!(
         heard(&effects),
@@ -2690,7 +2737,7 @@ fn an_expand_of_the_focus_left_reported_after_the_new_focus_is_spoken() {
     let (_, effects) = reduce(
         &reader,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(114),
             source,
             NodeId::new(50),
             states(&[State::Expanded]),
@@ -2713,7 +2760,7 @@ fn the_same_focus_reported_again_with_other_states_is_silent_and_kept() {
     );
     let (state, _) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, first),
+        &focus_event(TraceId::from_raw(115), source, first),
     );
     let again = node(
         40,
@@ -2722,7 +2769,7 @@ fn the_same_focus_reported_again_with_other_states_is_silent_and_kept() {
         None,
         StateSet::new(),
     );
-    let (state, effects) = reduce(&state, &focus_event(TraceId::mint(), source, again));
+    let (state, effects) = reduce(&state, &focus_event(TraceId::from_raw(116), source, again));
     assert!(effects.is_empty(), "already the focus");
     assert_eq!(
         state.focused().map(|(_, node)| node.states),
@@ -2898,7 +2945,7 @@ fn a_state_change_of_the_window_of_a_refused_foreground_report_is_silent() {
     let (_, effects) = reduce(
         &state,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(117),
             Pid(1),
             NodeId::new(3),
             states(&[State::Disabled]),
@@ -3151,7 +3198,12 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     let (state, effects) = reduce_from(
         &SrState::new(),
         &observed_at(
-            focus_event_with_ancestors(TraceId::mint(), Pid(1), menu_item, vec![menu.clone()]),
+            focus_event_with_ancestors(
+                TraceId::from_raw(118),
+                Pid(1),
+                menu_item,
+                vec![menu.clone()],
+            ),
             2_000,
         ),
         OutpostId(1),
@@ -3170,7 +3222,7 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
         None,
         StateSet::new(),
     );
-    let late = observed_at(focus_event(TraceId::mint(), Pid(2), edit), 1_990);
+    let late = observed_at(focus_event(TraceId::from_raw(119), Pid(2), edit), 1_990);
     let (_, effects) = reduce_from(&state, &late, OutpostId(2));
     assert!(effects.is_empty(), "observed before the menu's focus");
 
@@ -3180,7 +3232,7 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     let (_, effects) = reduce_from(
         &state,
         &observed_at(
-            focus_event_with_ancestors(TraceId::mint(), Pid(1), other_item, vec![menu]),
+            focus_event_with_ancestors(TraceId::from_raw(120), Pid(1), other_item, vec![menu]),
             1_990,
         ),
         OutpostId(1),
@@ -3201,7 +3253,7 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     );
     let (_, effects) = reduce_from(
         &state,
-        &focus_event(TraceId::mint(), Pid(2), edit),
+        &focus_event(TraceId::from_raw(121), Pid(2), edit),
         OutpostId(2),
     );
     assert_eq!(
@@ -3308,7 +3360,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     let client = window_node(2, Backend::Msaa, Role::Pane, "Untitled - Notepad", 30);
     let foreground = |us| Input::Event {
         observed_at_us: us,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(122),
         source,
         backend: Backend::Msaa,
         window: Some(facts.clone()),
@@ -3360,7 +3412,10 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     );
     let (_, effects) = reduce_from(
         &state,
-        &observed_at(focus_event(TraceId::mint(), Pid(1), menu_item), 2_900),
+        &observed_at(
+            focus_event(TraceId::from_raw(123), Pid(1), menu_item),
+            2_900,
+        ),
         OutpostId(1),
     );
     assert!(
@@ -3548,7 +3603,7 @@ fn an_entered_container_is_spoken_as_a_focus_is() {
     let item = node(22, Role::Button, Some("OK"), None, StateSet::new());
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![label, list]),
+        &focus_event_with_ancestors(TraceId::from_raw(124), Pid(1), item, vec![label, list]),
     );
     assert_eq!(
         heard(&effects),
@@ -3572,7 +3627,7 @@ fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
     let state = focused(source, item);
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(125), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         said(&effects),
@@ -3584,12 +3639,12 @@ fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
 
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::NextSibling, 0),
+        &command(TraceId::from_raw(126), ReviewCommand::NextSibling, 0),
     );
     let query = only_fetch(&effects);
     let next = node(11, Role::ListItem, Some("beta.txt"), None, StateSet::new());
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(127),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Node(next),
@@ -3604,10 +3659,13 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
     let root = node(10, Role::Window, Some("App"), None, StateSet::new());
     let state = focused(source, root);
 
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(128), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(129),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::NoNeighbor,
@@ -3623,7 +3681,7 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
     // The navigator stays put: reporting the object re-announces the root.
     let (_, effects) = reduce(
         &after,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(130), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         said(&effects),
@@ -3644,10 +3702,10 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
         let source = Pid(1);
         let root = node(10, Role::Window, Some("App"), None, StateSet::new());
         let state = focused(source, root);
-        let (state, effects) = reduce(&state, &command(TraceId::mint(), command_kind, 0));
+        let (state, effects) = reduce(&state, &command(TraceId::from_raw(131), command_kind, 0));
         let query = only_fetch(&effects);
         let completion = Input::FetchCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(132),
             query_id: query.query_id,
             kind: query.kind,
             result: FetchResult::NoNeighbor,
@@ -3668,7 +3726,10 @@ fn navigate_completion_after_an_intervening_focus_event_still_applies() {
     let state = focused(source, button);
 
     // Issue the navigation command; its completion is still in flight.
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(133), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
 
     // A focus event for a different node in the same application arrives
@@ -3676,11 +3737,14 @@ fn navigate_completion_after_an_intervening_focus_event_still_applies() {
     // snaps to it, but this must not discard the user's still-pending
     // navigation.
     let elsewhere = node(20, Role::Button, Some("Cancel"), None, StateSet::new());
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, elsewhere));
+    let (state, _) = reduce(
+        &state,
+        &focus_event(TraceId::from_raw(134), source, elsewhere),
+    );
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(135),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Node(parent),
@@ -3699,19 +3763,22 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
 
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(136), ReviewCommand::Parent, 0),
+    );
     let first_query = only_fetch(&effects);
 
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::NextSibling, 0),
+        &command(TraceId::from_raw(137), ReviewCommand::NextSibling, 0),
     );
     let second_query = only_fetch(&effects);
 
     // The first (now stale) completion is dropped.
     let stale_parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let stale_completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(138),
         query_id: first_query.query_id,
         kind: first_query.kind,
         result: FetchResult::Node(stale_parent),
@@ -3725,7 +3792,7 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
     // The second completion applies.
     let sibling = node(12, Role::Button, Some("Cancel"), None, StateSet::new());
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(139),
         query_id: second_query.query_id,
         kind: second_query.kind,
         result: FetchResult::Node(sibling),
@@ -3743,16 +3810,22 @@ fn to_focus_after_a_navigation_drops_its_late_completion() {
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
 
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(140), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
 
     // The user explicitly returns to focus before the navigation's
     // completion arrives; that explicit intent must win.
-    let (state, _) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    let (state, _) = reduce(
+        &state,
+        &command(TraceId::from_raw(141), ReviewCommand::ToFocus, 0),
+    );
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(142),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Node(parent),
@@ -3770,14 +3843,17 @@ fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
     let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
 
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(143), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
 
     // The outpost could not re-acquire the navigator's node: distinct from
     // a tree edge, so this must not stay silent. It falls back to
     // announcing whatever is currently focused.
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(144),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Gone,
@@ -3797,7 +3873,7 @@ fn activate_emits_activate_for_the_navigator_object() {
 
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::Activate, 0),
+        &command(TraceId::from_raw(145), ReviewCommand::Activate, 0),
     );
     assert_eq!(
         effects,
@@ -3824,21 +3900,21 @@ fn review_cursor_walks_lines_words_and_characters() {
     // Current line at the start.
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewCurrentLine, 0),
+        &command(TraceId::from_raw(146), ReviewCommand::ReviewCurrentLine, 0),
     );
     assert_eq!(said(&effects), vec![UtteranceSegment::text("first line")]);
 
     // Next line.
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
+        &command(TraceId::from_raw(147), ReviewCommand::ReviewNextLine, 0),
     );
     assert_eq!(said(&effects), vec![UtteranceSegment::text("second line")]);
 
     // Next line at the bottom: says "Bottom", stays put, re-reads.
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewNextLine, 0),
+        &command(TraceId::from_raw(148), ReviewCommand::ReviewNextLine, 0),
     );
     assert_eq!(
         said(&effects),
@@ -3851,23 +3927,27 @@ fn review_cursor_walks_lines_words_and_characters() {
     // Top, then first word, then next word.
     let (state, _) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewTop, 0),
+        &command(TraceId::from_raw(149), ReviewCommand::ReviewTop, 0),
     );
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewCurrentWord, 0),
+        &command(TraceId::from_raw(150), ReviewCommand::ReviewCurrentWord, 0),
     );
     assert_eq!(said(&effects), vec![UtteranceSegment::text("first")]);
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewNextWord, 0),
+        &command(TraceId::from_raw(151), ReviewCommand::ReviewNextWord, 0),
     );
     assert_eq!(said(&effects), vec![UtteranceSegment::text("line")]);
 
     // First character of the current position ("line" -> 'l').
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
+        &command(
+            TraceId::from_raw(152),
+            ReviewCommand::ReviewCurrentCharacter,
+            0,
+        ),
     );
     assert_eq!(said(&effects), vec![UtteranceSegment::text("l")]);
 }
@@ -3879,13 +3959,16 @@ fn navigator_follows_focus_and_returns_to_focus() {
     let state = focused(source, first);
 
     // Move the navigator to the parent.
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(153), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
     let parent = node(11, Role::Group, Some("Group"), None, StateSet::new());
     let (state, _) = reduce(
         &state,
         &Input::FetchCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(154),
             query_id: query.query_id,
             kind: query.kind,
             result: FetchResult::Node(parent),
@@ -3900,10 +3983,10 @@ fn navigator_follows_focus_and_returns_to_focus() {
         Some("x"),
         StateSet::new(),
     );
-    let (state, _) = reduce(&state, &focus_event(TraceId::mint(), source, second));
+    let (state, _) = reduce(&state, &focus_event(TraceId::from_raw(155), source, second));
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(156), ReviewCommand::ReportObject, 0),
     );
     // An edit field says its name and role, and its text follows from a
     // read of the selection in place of its value.
@@ -3931,8 +4014,14 @@ fn navigator_follows_focus_and_returns_to_focus() {
     );
 
     // Explicit "to focus" also reports the focused control after wandering.
-    let (state, _) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
-    let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    let (state, _) = reduce(
+        &state,
+        &command(TraceId::from_raw(157), ReviewCommand::Parent, 0),
+    );
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(158), ReviewCommand::ToFocus, 0),
+    );
     assert_eq!(
         heard(&effects),
         vec![
@@ -3954,11 +4043,14 @@ fn commands_with_no_navigator_yet_say_so() {
     let no_navigator = vec![UtteranceSegment::new(SegmentContent::Message(
         verbatim_model::Message::NoNavigatorObject,
     ))];
-    let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(159), ReviewCommand::Parent, 0),
+    );
     assert_eq!(said(&effects), no_navigator);
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(160), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(said(&effects), no_navigator);
 }
@@ -4415,7 +4507,7 @@ fn entering_menus_is_silent_and_only_the_item_is_announced() {
 
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![menu_bar, menu]),
+        &focus_event_with_ancestors(TraceId::from_raw(161), Pid(1), item, vec![menu_bar, menu]),
     );
 
     assert_eq!(
@@ -4442,7 +4534,7 @@ fn a_container_entered_before_a_menu_is_cut_off_by_it() {
 
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), Pid(1), item, vec![popup, menu]),
+        &focus_event_with_ancestors(TraceId::from_raw(162), Pid(1), item, vec![popup, menu]),
     );
 
     assert_eq!(
@@ -4553,14 +4645,14 @@ fn without_window_facts_the_application_decides() {
 
     let (_, effects) = reduce(
         &state,
-        &focus_event(TraceId::mint(), Pid(2), button.clone()),
+        &focus_event(TraceId::from_raw(163), Pid(2), button.clone()),
     );
     assert!(effects.is_empty(), "another application without facts");
 
     let (_, effects) = reduce(
         &state,
         &focus_event_with_ancestors(
-            TraceId::mint(),
+            TraceId::from_raw(164),
             Pid(1),
             button,
             vec![window_node(1000, Backend::Uia, Role::Window, "App", 1000)],
@@ -4737,7 +4829,7 @@ fn an_ended_outposts_focus_is_dead_and_navigation_does_nothing() {
         ReviewCommand::ReportObject,
         ReviewCommand::Activate,
     ] {
-        let (_, effects) = reduce(&state, &command(TraceId::mint(), cmd, 0));
+        let (_, effects) = reduce(&state, &command(TraceId::from_raw(165), cmd, 0));
         assert_eq!(
             said(&effects),
             vec![UtteranceSegment::new(SegmentContent::Message(
@@ -4746,7 +4838,10 @@ fn an_ended_outposts_focus_is_dead_and_navigation_does_nothing() {
             "{cmd:?} after the outpost ended"
         );
     }
-    let (_, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::ToFocus, 0));
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(166), ReviewCommand::ToFocus, 0),
+    );
     assert!(effects.is_empty(), "to focus after the outpost ended");
 }
 
@@ -4755,12 +4850,15 @@ fn a_pending_navigation_to_an_ended_outpost_is_dropped() {
     let source = Pid(1);
     let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(167), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
 
     let (state, _) = reduce(&state, &ended(outpost_of(source)));
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(168),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Node(node(6, Role::Group, Some("Buttons"), None, StateSet::new())),
@@ -4774,7 +4872,7 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     let source = Pid(1);
     let dialog = node(4, Role::Dialog, Some("Save"), None, StateSet::new());
     let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
-    let report = focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]);
+    let report = focus_event_with_ancestors(TraceId::from_raw(169), source, button, vec![dialog]);
     let (state, _) = reduce_from(&SrState::new(), &report, OutpostId(1));
     let (state, _) = reduce(&state, &ended(OutpostId(1)));
 
@@ -4782,7 +4880,7 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     let dialog = node(1, Role::Dialog, Some("Save"), None, StateSet::new());
     let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
     let report = observed_at(
-        focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]),
+        focus_event_with_ancestors(TraceId::from_raw(170), source, button, vec![dialog]),
         3_000,
     );
     let (state, effects) = reduce_from(&state, &report, OutpostId(2));
@@ -4799,7 +4897,7 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     );
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::Activate, 0),
+        &command(TraceId::from_raw(171), ReviewCommand::Activate, 0),
     );
     assert_eq!(
         effects,
@@ -4875,7 +4973,7 @@ fn the_same_node_number_from_another_outpost_never_reaches_the_focus() {
     let slider = node(500, Role::Slider, Some("Rate"), Some("50"), StateSet::new());
     let (state, _) = reduce_from(
         &SrState::new(),
-        &focus_event(TraceId::mint(), source, slider),
+        &focus_event(TraceId::from_raw(172), source, slider),
         OutpostId(1),
     );
 
@@ -5335,7 +5433,7 @@ fn focus_segments(snapshot: NodeSnapshot) -> Vec<UtteranceSegment> {
     let focus = snapshot.id.number();
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event(TraceId::mint(), Pid(1), snapshot),
+        &focus_event(TraceId::from_raw(173), Pid(1), snapshot),
     );
     match heard(&effects).as_slice() {
         [
@@ -5349,7 +5447,7 @@ fn focus_segments(snapshot: NodeSnapshot) -> Vec<UtteranceSegment> {
 fn value_changed(node_id: u64, value: &str) -> Input {
     Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(174),
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -5599,7 +5697,7 @@ fn reporting_the_object_speaks_selected_read_only_and_focused() {
     let state_after_focus = focused(Pid(1), item);
     let (_, effects) = reduce(
         &state_after_focus,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(175), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         said(&effects),
@@ -5626,7 +5724,7 @@ fn a_selection_gained_by_the_focus_says_selected() {
     let (_, effects) = reduce(
         &state_after_focus,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(176),
             Pid(1),
             NodeId::new(44),
             states(&[State::Focusable, State::Selectable, State::Selected]),
@@ -5647,7 +5745,12 @@ fn losing_half_checked_says_not_checked() {
     let state_after_focus = focused(Pid(1), check_box);
     let (_, effects) = reduce(
         &state_after_focus,
-        &states_changed_input(TraceId::mint(), Pid(1), NodeId::new(45), StateSet::new()),
+        &states_changed_input(
+            TraceId::from_raw(177),
+            Pid(1),
+            NodeId::new(45),
+            StateSet::new(),
+        ),
     );
     assert_eq!(said(&effects), vec![not(State::Checked)]);
 }
@@ -5657,7 +5760,7 @@ fn losing_half_checked_says_not_checked() {
 fn controlled_selection(controller: u64, selected: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(178),
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -5713,7 +5816,7 @@ fn a_result_selected_in_the_list_the_focus_controls_is_spoken_as_a_focus() {
     );
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(179), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         said(&effects),
@@ -6213,7 +6316,7 @@ fn reporting_the_object_after_a_change_reads_the_object_as_it_is_now() {
     let (state, _) = reduce(
         &state,
         &states_changed_input(
-            TraceId::mint(),
+            TraceId::from_raw(180),
             source,
             NodeId::new(120),
             StateSet::new().with(State::Checked),
@@ -6221,7 +6324,7 @@ fn reporting_the_object_after_a_change_reads_the_object_as_it_is_now() {
     );
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(181), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         said(&effects),
@@ -6239,12 +6342,15 @@ fn a_navigation_the_application_did_not_answer_leaves_the_navigator_put() {
     let source = Pid(1);
     let button = node(121, Role::Button, Some("OK"), None, StateSet::new());
     let state = focused(source, button);
-    let (state, effects) = reduce(&state, &command(TraceId::mint(), ReviewCommand::Parent, 0));
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(182), ReviewCommand::Parent, 0),
+    );
     let query = only_fetch(&effects);
     let (state, effects) = reduce(
         &state,
         &Input::FetchCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(183),
             query_id: query.query_id,
             kind: query.kind,
             result: FetchResult::Unanswered,
@@ -6253,7 +6359,7 @@ fn a_navigation_the_application_did_not_answer_leaves_the_navigator_put() {
     assert!(effects.is_empty(), "nothing is spoken: {effects:?}");
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+        &command(TraceId::from_raw(184), ReviewCommand::ReportObject, 0),
     );
     assert_eq!(
         said(&effects),
@@ -6275,7 +6381,10 @@ fn selecting_the_focused_item_itself_says_selected() {
     let state = focused(source, item.clone());
     let mut selected = item;
     selected.states.insert(State::Selected);
-    let (_, effects) = reduce(&state, &selection_event(TraceId::mint(), source, selected));
+    let (_, effects) = reduce(
+        &state,
+        &selection_event(TraceId::from_raw(185), source, selected),
+    );
     assert_eq!(said(&effects), vec![state_segment_selected()]);
 }
 
@@ -6300,7 +6409,7 @@ fn an_entered_container_speaks_its_states_and_position_but_not_its_value() {
     let field = node(131, Role::EditableText, Some("Name"), None, StateSet::new());
     let (_, effects) = reduce(
         &SrState::new(),
-        &focus_event_with_ancestors(TraceId::mint(), source, field, vec![tab]),
+        &focus_event_with_ancestors(TraceId::from_raw(186), source, field, vec![tab]),
     );
     assert_eq!(
         heard(&effects),
@@ -6329,7 +6438,7 @@ fn an_entered_container_speaks_its_states_and_position_but_not_its_value() {
 /// asserting that it produced exactly one queued utterance and no other
 /// effect.
 fn review(state: &SrState, cmd: ReviewCommand, repeat: u8) -> (SrState, Vec<UtteranceSegment>) {
-    let (state, effects) = reduce(state, &command(TraceId::mint(), cmd, repeat));
+    let (state, effects) = reduce(state, &command(TraceId::from_raw(187), cmd, repeat));
     (state, said(&effects))
 }
 
@@ -6405,7 +6514,7 @@ fn flat_review_moves_by_grapheme_cluster() {
     assert_eq!(segments, vec![UtteranceSegment::text("हिन्दी")]);
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+        &command(TraceId::from_raw(188), ReviewCommand::SelectThenCopy, 1),
     );
     assert_eq!(effects, vec![Effect::CopyToClipboard("न्दी".to_owned())]);
 }
@@ -6429,7 +6538,7 @@ fn flat_review_copies_back_from_the_marker_through_the_marker_s_character() {
     );
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+        &command(TraceId::from_raw(189), ReviewCommand::SelectThenCopy, 1),
     );
     assert_eq!(effects, vec![Effect::CopyToClipboard("bc".to_owned())]);
 }
@@ -6449,7 +6558,7 @@ fn flat_review_asks_for_the_second_press_after_a_first() {
     assert_eq!(segments, vec![message(Message::PressTwiceToCopy)]);
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+        &command(TraceId::from_raw(190), ReviewCommand::SelectThenCopy, 1),
     );
     assert_eq!(effects, vec![Effect::CopyToClipboard("ab".to_owned())]);
     let (_, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
@@ -6473,7 +6582,7 @@ fn flat_review_copies_the_range_the_first_press_built() {
     assert_eq!(segments, vec![message(Message::PressTwiceToCopy)]);
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+        &command(TraceId::from_raw(191), ReviewCommand::SelectThenCopy, 1),
     );
     assert_eq!(effects, vec![Effect::CopyToClipboard("ab".to_owned())]);
 }
@@ -6490,7 +6599,7 @@ fn flat_review_copy_of_nothing_clears_the_start_marker() {
     let (state, _) = review(&state, ReviewCommand::SetStartMarker, 0);
     let (state, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+        &command(TraceId::from_raw(192), ReviewCommand::SelectThenCopy, 1),
     );
     assert_eq!(effects, Vec::new());
     let (_, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
@@ -6554,7 +6663,7 @@ fn an_activation_says_its_action_activate_or_no_action() {
         let (_, effects) = reduce(
             &SrState::new(),
             &Input::ActivationCompleted {
-                trace_id: TraceId::mint(),
+                trace_id: TraceId::from_raw(193),
                 activated,
                 action,
             },
@@ -6695,7 +6804,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
     };
     let focus = |snapshot: NodeSnapshot, ancestors: Vec<NodeSnapshot>| Input::Event {
         observed_at_us: 0,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(194),
         source,
         backend: snapshot.backend,
         window: None,
@@ -6739,7 +6848,11 @@ fn spelling_marks_capitals_for_a_raised_pitch() {
     let state = reviewing("Hi");
     let (_, effects) = reduce(
         &state,
-        &command(TraceId::mint(), ReviewCommand::ReviewCurrentCharacter, 0),
+        &command(
+            TraceId::from_raw(195),
+            ReviewCommand::ReviewCurrentCharacter,
+            0,
+        ),
     );
     assert_eq!(
         said(&effects),
@@ -7077,7 +7190,7 @@ fn a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing(
             );
             let (_, effects) = reduce(
                 &after,
-                &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+                &command(TraceId::from_raw(196), ReviewCommand::ReportObject, 0),
             );
             assert_eq!(
                 heard(&effects),

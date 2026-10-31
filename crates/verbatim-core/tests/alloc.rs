@@ -95,7 +95,7 @@ fn node(id: u64, role: Role, name: &str) -> NodeSnapshot {
 
 fn focus_event(node: NodeSnapshot, ancestors: Vec<NodeSnapshot>) -> Input {
     Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
@@ -158,7 +158,7 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
     let command = Input::Command {
         pressed_at_ms: 0,
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(2),
         command: ReviewCommand::Parent,
         repeat: 0,
     };
@@ -174,7 +174,7 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
         panic!("expected a navigation fetch, got {small_effects:?}");
     };
     let completion = Input::FetchCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(3),
         query_id: query.query_id,
         kind: query.kind,
         result: FetchResult::Node(node(6, Role::Pane, "Toolbar")),
@@ -222,7 +222,7 @@ fn editing_with_chain(depth: u64) -> SrState {
 
 fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
     Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(4),
         observed_at_us: observed_at_ms * 1_000,
         source: Pid(1),
         backend: Backend::Uia,
@@ -255,7 +255,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
 
     let effects = same(&Input::CaretKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(5),
         key: CaretKey {
             motion: CaretMotion::NextCharacter,
             select: false,
@@ -266,7 +266,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         panic!("expected a caret wait, got {effects:?}");
     };
     let _ = same(&Input::TextCompleted {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(6),
         query_id: request.query_id,
         reply: TextReply::Caret(Box::new(CaretReply {
             same_line: None,
@@ -287,7 +287,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
     let _ = same(&Input::Command {
         pressed_at_ms: 0,
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(7),
         command: ReviewCommand::ReviewNextWord,
         repeat: 0,
     });
@@ -313,7 +313,7 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
     let mut outpost =
         terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
     let snapshot = |outpost: &mut terminal_support::Outpost, at_ms: u64| Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(8),
         observed_at_us: at_ms * 1_000,
         source: Pid(1),
         backend: Backend::Uia,

@@ -37,14 +37,14 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
     };
     Some(match previous {
         CoreToOutpost::SetBackendOverride { .. } => CoreToOutpost::DeliverFact {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(1),
             timing: timing(),
             fact: DeliveredFact::UiaFocusReadsEnded,
             win_event: None,
         },
         CoreToOutpost::DeliverFact { .. } => CoreToOutpost::ForwardingEnded { through: 1 },
         CoreToOutpost::ForwardingEnded { .. } => CoreToOutpost::Query {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(2),
             request_id: 1,
             query: Query::FocusNow,
             timing: timing(),
@@ -98,7 +98,7 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
 /// A reply with `outcome`.
 fn reply(outcome: QueryOutcome) -> OutpostToCore {
     OutpostToCore::Reply {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(3),
         request_id: 1,
         outcome,
         timing: timing(),
@@ -115,7 +115,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
     };
     Some(match previous {
         ListenerToCore::Ready { .. } => ListenerToCore::FocusFact {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(4),
             timing: timing(),
             fact: ListenerFact {
                 pid: Pid(2),
@@ -315,7 +315,7 @@ fn a_message_names_its_nodes_and_its_texts_anchors() {
         formats: Vec::new(),
     };
     let focus = OutpostToCore::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(5),
         timing: EventTiming::default(),
         observed_at_us: 0,
         backend: Backend::Uia,
@@ -373,7 +373,7 @@ fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
         details: NodeDetails::default(),
     };
     let mut event = OutpostToCore::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(6),
         timing: EventTiming::default(),
         observed_at_us: 0,
         backend: Backend::Uia,

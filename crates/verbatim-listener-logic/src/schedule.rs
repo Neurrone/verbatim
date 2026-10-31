@@ -1152,7 +1152,7 @@ mod tests {
         Meta {
             marker,
             kind,
-            trace: TraceId::mint(),
+            trace: TraceId::from_raw(1),
             timing: EventTiming::default(),
         }
     }

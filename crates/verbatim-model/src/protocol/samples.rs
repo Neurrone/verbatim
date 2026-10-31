@@ -19,7 +19,7 @@ pub fn outpost_to_core() -> Vec<OutpostToCore> {
 /// An event of node 1.
 fn event() -> OutpostToCore {
     OutpostToCore::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         observed_at_us: 0,
         backend: Backend::Uia,
         window: None,
@@ -45,7 +45,7 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         },
         OutpostToCore::SpareReady { .. } => event(),
         OutpostToCore::Event { .. } => OutpostToCore::Reply {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(2),
             request_id: 1,
             outcome: QueryOutcome::Gone,
             timing: EventTiming::default(),

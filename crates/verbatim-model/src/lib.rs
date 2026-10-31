@@ -54,7 +54,7 @@ pub use text::{
 pub use theme::{
     DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,
     Presentation, SoundSource, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
-    is_plain_file_name, progress_frequency,
+    is_plain_file_name,
 };
 pub use tree::{
     Backend, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet, TreeNode,
@@ -94,6 +94,13 @@ impl TraceId {
     /// any ID is minted, to keep the ID spaces disjoint.
     pub fn namespace(pid: u32) {
         NEXT_TRACE_ID.store((u64::from(pid) << 32) | 1, Ordering::Relaxed);
+    }
+
+    /// The trace ID `raw`, given rather than minted: for tests and samples,
+    /// whose IDs must not depend on what else the process minted first.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
     }
 }
 

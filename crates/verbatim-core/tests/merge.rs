@@ -57,7 +57,7 @@ fn window() -> WindowFacts {
 /// The outpost's report of `event`.
 fn report(event: NormalizedEvent) -> OutpostToCore {
     OutpostToCore::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         observed_at_us: 0,
         backend: Backend::Uia,
         window: Some(window()),
@@ -178,7 +178,7 @@ impl Other {
                 (message, input)
             }
             Other::Reply => {
-                let trace_id = TraceId::mint();
+                let trace_id = TraceId::from_raw(2);
                 let message = OutpostToCore::Reply {
                     trace_id,
                     request_id: 77,

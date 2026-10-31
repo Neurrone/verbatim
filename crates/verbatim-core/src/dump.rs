@@ -272,7 +272,7 @@ mod tests {
         vec![
             RecordedInput {
                 input: Input::Event {
-                    trace_id: TraceId::mint(),
+                    trace_id: TraceId::from_raw(1),
                     observed_at_us: 0,
                     source: Pid(1),
                     backend: Backend::Uia,
@@ -394,7 +394,7 @@ mod tests {
 
         let third = RecordedInput {
             input: Input::Event {
-                trace_id: TraceId::mint(),
+                trace_id: TraceId::from_raw(2),
                 observed_at_us: 0,
                 source: Pid(2),
                 backend: Backend::Uia,

@@ -106,16 +106,26 @@ guide maps those behaviors onto the crate's types and modules.
   `Notice`s in order; the app's notices among them are a plain
   `Lifecycle` (`Started`, `Ended`, `Regenerated`, `NotWatched`), which only
   the supervisor's owner turns into the sealed message the app takes as
-  the supervisor's own. `policy` decides when an outpost is wedged
-  (`wedge_decision`), when an idle one is retired
-  (`retirement_decision`), how long a failed outpost's replacement waits
-  (`Backoff`), how facts that arrive during a start are held and merged
-  (`HeldFacts`, which takes a clock it reads only for the first fact held;
-  `docs/parity/backends.md`, "MSAA winevent flood control"), which facts
-  may start an outpost (`may_start_outpost`;
+  the supervisor's own. A running generation's liveness (`Live`) is
+  private and changed and judged only by its transitions: `ponged`,
+  `heartbeat(now_us, limits)`, which answers `Heartbeat::Ping`,
+  `CheckHang` (ping, and start a check of whether the application is
+  hung) or `Wedged(reason)`, `hang_check_ended` when the check could not
+  start, and `hang_checked`, which judges the abandoned workers by the
+  check's answer. `policy` decides when an outpost is wedged
+  (`wedge_decision` under `WedgeLimits`, and `Liveness` for the listener
+  and the spares, which report no abandoned workers), when an idle one is
+  retired (`retirement_decision`), how long a failed outpost's
+  replacement waits (`Backoff`), in which order the applications whose
+  waits ended start (`due_starts`: in the order the waits ended, then by
+  process id), how facts that arrive during a start are held and merged
+  (`HeldFacts`, which keeps the time it is given with the first fact
+  held; `docs/parity/backends.md`, "MSAA winevent flood control"), which
+  facts may start an outpost (`may_start_outpost`;
   `docs/parity/focus-events.md`, "Background events"), and which spares
-  are kept and given (`Spares`). `EndReason` is why a generation ended;
-  `Received` is when verbatim.exe read a fact, on both clocks.
+  are kept and given (`Spares`). Every time these take is in
+  microseconds on the run's shared clock. `EndReason` is why a generation
+  ended; `Received` is when verbatim.exe read a fact.
 
 ## The flight recorder
 

@@ -454,8 +454,8 @@ mod tests {
         let relay = Relay::new().expect("a relay");
         let (writer, mut child) = command_pipe(&relay, 1, 0);
         let mut starting = HeldFacts::default();
-        starting.hold(held(1, 10), std::time::Instant::now);
-        starting.hold(held(2, 20), std::time::Instant::now);
+        starting.hold(held(1, 10), 10);
+        starting.hold(held(2, 20), 20);
         for fact in starting.take() {
             super::super::owner::deliver(&writer, fact);
         }

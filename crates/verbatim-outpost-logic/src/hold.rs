@@ -205,7 +205,7 @@ mod tests {
                 },
                 Some(WinEventStamp { thread: 3, time }),
             ),
-            trace: TraceId::mint(),
+            trace: TraceId::from_raw(1),
             observed_at_us: u64::from(time),
             timing: EventTiming::default(),
         }
@@ -221,7 +221,7 @@ mod tests {
                 id_child: 0,
                 raiser: 3,
             },
-            trace: TraceId::mint(),
+            trace: TraceId::from_raw(2),
             observed_at_us,
             timing: EventTiming::default(),
         }

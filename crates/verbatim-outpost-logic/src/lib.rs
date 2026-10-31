@@ -593,9 +593,9 @@ impl Reducer {
                 }
             }
             Input::Cancel(request_id) => {
-                if self.intake.cancel(request_id) {
+                if let Some(trace) = self.intake.cancel(request_id) {
                     self.send(
-                        reply(request_id, TraceId::mint(), QueryOutcome::NotStarted),
+                        reply(request_id, trace, QueryOutcome::NotStarted),
                         &mut effects,
                     );
                 }
@@ -705,11 +705,14 @@ impl Reducer {
         effects
     }
 
-    /// The gap record's bound has been reached: its entry waits behind
-    /// every marker queued before it.
+    /// The gap record's bound has been reached: its entry, under the
+    /// record's trace, waits behind every marker queued before it. With no
+    /// record open there is nothing for it to read, so none is queued.
     fn gap_bound_entry(&mut self, now: Now) {
-        self.intake
-            .push_gap_bound(Entry::own(Item::GapBound, TraceId::mint(), now.observed_us));
+        if let Some(trace) = self.intake.gap_trace() {
+            self.intake
+                .push_gap_bound(Entry::own(Item::GapBound, trace, now.observed_us));
+        }
     }
 
     /// The program in flight, if it is `request`'s.
@@ -986,8 +989,11 @@ impl Reducer {
                 window,
                 top_level,
                 at_us,
+                trace,
             } => {
-                let (dropped, action) = self.intake.gap_copy_dropped(window, top_level, at_us);
+                let (dropped, action) =
+                    self.intake
+                        .gap_copy_dropped(window, top_level, (at_us, trace));
                 self.gap_timer(action, effects);
                 if dropped == CopyDropped::ReadNow {
                     // Read at once, in the copy's place, as part of the
@@ -1000,19 +1006,20 @@ impl Reducer {
                             older: VecDeque::new(),
                         })
                     });
-                    self.after.push_front((
-                        Entry::own(Item::GapRead { window }, TraceId::mint(), at_us),
-                        group,
-                    ));
+                    self.after
+                        .push_front((Entry::own(Item::GapRead { window }, trace, at_us), group));
                 }
             }
             GapNote::Accepted {
                 window,
                 top_level,
                 at_us,
+                trace,
                 restamps,
             } => {
-                let action = self.intake.gap_accepted(window, top_level, at_us, restamps);
+                let action = self
+                    .intake
+                    .gap_accepted(window, top_level, (at_us, trace), restamps);
                 self.gap_timer(action, effects);
             }
             GapNote::WindowDestroyed(hwnd) => self.intake.gap_window_destroyed(hwnd),

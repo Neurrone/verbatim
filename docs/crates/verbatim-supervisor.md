@@ -107,8 +107,8 @@ How it works:
   opening) or the oldest fact makes room; anything else fails at once.
 - Facts for a starting outpost are held, merged by the same rule, and
   released on `Ready` (`verbatim_core::supervisor::policy::HeldFacts`, which
-  reads the clock, through the owner, only for an application's first held
-  fact); then the listener gets `HookInstalled`,
+  keeps the time the owner reads at each hold only for an application's
+  first held fact); then the listener gets `HookInstalled`,
   and later `HookRemoved`, through `Owner::tell_listener`.
 - Each application is identified by a process held open
   (`verbatim_process::held::Target`)
@@ -119,7 +119,9 @@ How it works:
   path (`crates/verbatim-supervisor/tests/spares.rs`). Every child is pinged
   every three seconds, and nine seconds without a pong ends it; eight
   abandoned workers end an outpost unless its application's windows are
-  reported hung (`policy::wedge_decision`). An outpost whose application has not
+  reported hung, judged by the generation's `heartbeat` and
+  `hang_checked` and, for the listener and the spares, by their
+  `Liveness`, all on the run's shared clock. An outpost whose application has not
   held attention for two minutes, is not Core's own, and holds no nodes of
   the reducer's is retired by the sweep (`policy::retirement_decision`). An
   outpost says `TargetExited` when its application exits, and the heartbeat

@@ -52,7 +52,6 @@ use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;
-use std::time::Instant;
 
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, EventTiming, FactKey};
 use verbatim_process::overlapped::{Completion, Port};
@@ -253,26 +252,22 @@ impl<M: ToChild> Outgoing<M> {
 
 /// Now, as verbatim.exe takes in something it relays to an outpost: a
 /// listener's fact as its read completed, or a request as it was queued
-/// (`docs/design/communication.md`, section 10.1). Read on two clocks: the monotonic
-/// one, for verbatim.exe's own duration, and the wall clock the other
-/// processes' stamps share, for the spans across processes.
+/// (`docs/design/communication.md`, section 10.1), on the run's shared
+/// clock, which every process's stamps share.
 /// The data is `verbatim_core::supervisor::Received`.
 pub(super) fn received_now() -> Received {
-    Received {
-        at: Instant::now(),
-        at_us: now_us(),
-    }
+    Received { at_us: now_us() }
 }
 
 /// How long ago `received` was, in microseconds.
 pub(super) fn elapsed_us(received: Received) -> u64 {
-    u64::try_from(received.at.elapsed().as_micros()).unwrap_or(u64::MAX)
+    now_us().saturating_sub(received.at_us)
 }
 
 /// Fills in `timing`'s relay stamps: received at `received`, relayed now.
-/// The duration is measured on the monotonic clock alone, so it does not
-/// depend on clocks agreeing across processes, and the time sent is
-/// derived from it.
+/// The shared clock counts on the performance counter from one offset
+/// fixed for the run, so the duration does not depend on the wall clock,
+/// and the time sent is derived from it.
 pub(super) fn stamp(received: Received, timing: &mut EventTiming) {
     let relay_us = elapsed_us(received);
     timing.core_received_at_us = received.at_us;

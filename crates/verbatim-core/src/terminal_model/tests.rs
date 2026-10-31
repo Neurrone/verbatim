@@ -66,7 +66,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
     let _ = crate::reduce(
         &mut state,
         &Input::Event {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(1),
             observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Uia,
@@ -95,7 +95,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         .push(TerminalModel::new(node, Settings::default()));
     let caret = |motion, at_ms| Input::CaretKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(2),
         key: CaretKey {
             motion,
             select: false,
@@ -104,7 +104,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
     };
     let typed = |text: &str, at_ms| Input::CharacterTyped {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(3),
         text: text.to_owned(),
         at_ms,
     };
@@ -119,7 +119,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         // Escape: the hook's clearing key, then the key passed.
         Input::ClearingKey {
             key_seq: verbatim_model::KeySeq::NONE_YET,
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(4),
             at_ms: 8,
         },
         caret(CaretMotion::Other, 8),
@@ -161,7 +161,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
 /// the element it held before under the node's runtime id, `earlier`.
 fn terminal_focus(node: NodeId, text: Option<FocusText>, earlier: Option<EarlierElement>) -> Input {
     Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(5),
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,

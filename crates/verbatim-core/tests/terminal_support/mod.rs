@@ -29,7 +29,7 @@ pub fn node() -> NodeId {
 /// An event from the terminal's outpost.
 pub fn event(event: NormalizedEvent) -> Input {
     Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
@@ -573,7 +573,7 @@ impl Session {
 
     fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
         self.step(Input::TextCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(2),
             query_id,
             reply,
         })

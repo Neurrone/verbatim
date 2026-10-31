@@ -3285,6 +3285,7 @@ impl Worker<'_> {
                 window: hwnd,
                 top_level: top_level_of(hwnd),
                 at_us: observed_at_us,
+                trace,
                 restamps: true,
             }],
             ..Effects::default()
@@ -3372,6 +3373,7 @@ impl Worker<'_> {
                 window: hwnd,
                 top_level,
                 at_us: observed_at_us,
+                trace,
                 restamps: false,
             }],
             ..Effects::default()
@@ -3543,6 +3545,7 @@ impl Worker<'_> {
                 window,
                 top_level,
                 at_us: observed_at_us,
+                trace,
             }],
             ..Effects::default()
         });

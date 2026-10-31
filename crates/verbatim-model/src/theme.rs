@@ -413,27 +413,6 @@ impl Indication {
 /// The frequency of the default theme's progress tone at 0 percent.
 const PROGRESS_BASE_HZ: u32 = 220;
 
-/// How far a progress tone rises from 0 to 100 percent: three octaves.
-const PROGRESS_OCTAVES: f64 = 3.0;
-
-/// The frequency of a progress tone at `percent` (0 to 100), given the
-/// theme's tone for progress at 0 percent: rising evenly in pitch by three
-/// octaves to 100 percent.
-#[must_use]
-pub fn progress_frequency(base_hz: u32, percent: u8) -> u32 {
-    let percent = f64::from(percent.min(100));
-    let frequency = f64::from(base_hz) * (PROGRESS_OCTAVES * percent / 100.0).exp2();
-    // Within u32: at most eight times a u32 frequency, and frequencies are
-    // validated to at most 20 kHz.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a positive frequency well within u32"
-    )]
-    let frequency = frequency.round() as u32;
-    frequency
-}
-
 impl fmt::Display for Indication {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.id())
@@ -1154,12 +1133,5 @@ mod tests {
             Indication::of_earcon(Earcon::Progress(50)),
             Indication::Progress
         );
-    }
-
-    #[test]
-    fn progress_rises_three_octaves() {
-        assert_eq!(progress_frequency(220, 0), 220);
-        assert_eq!(progress_frequency(220, 100), 1_760);
-        assert_eq!(progress_frequency(220, 200), 1_760);
     }
 }

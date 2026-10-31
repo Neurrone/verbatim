@@ -34,7 +34,7 @@ fn id(number: u64) -> NodeId {
 
 fn event(event: NormalizedEvent) -> Input {
     Input::Event {
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(1),
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
@@ -108,7 +108,7 @@ fn said_of(speech: TerminalSpeech) -> Said {
 fn say(state: &mut SrState, out: &Out) -> Vec<Effect> {
     let mut effects = super::speech(
         state,
-        TraceId::mint(),
+        TraceId::from_raw(2),
         out.observed_at_ms,
         id(out.node),
         said_of(out.speech.clone()),
@@ -171,7 +171,7 @@ fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
 fn typed(text: &str) -> Input {
     Input::CharacterTyped {
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(3),
         text: text.to_owned(),
         at_ms: 1_000,
     }
@@ -304,7 +304,7 @@ impl Playback {
         let effects = reduce(
             state,
             &Input::TextCompleted {
-                trace_id: TraceId::mint(),
+                trace_id: TraceId::from_raw(4),
                 query_id,
                 reply,
             },
@@ -323,7 +323,8 @@ impl Playback {
     /// said, as the terminal model hands an answer's speech to the flood
     /// policy.
     fn answer_with(&mut self, state: &mut SrState, query_id: QueryId, output: TerminalSpeech) {
-        let mut effects = super::answered(state, TraceId::mint(), query_id, said_of(output), None);
+        let mut effects =
+            super::answered(state, TraceId::from_raw(5), query_id, said_of(output), None);
         if effects.iter().any(super::cuts_speech) {
             effects.extend(super::cut(state, 0));
         }
@@ -965,7 +966,7 @@ fn report_new_output_toggles_with_verbatim_5() {
     let toggle = Input::Command {
         pressed_at_ms: 0,
         key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
+        trace_id: TraceId::from_raw(6),
         command: ReviewCommand::ToggleReportNewOutput,
         repeat: 0,
     };
@@ -1181,7 +1182,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
             &Input::Command {
                 pressed_at_ms: 0,
                 key_seq: verbatim_model::KeySeq::NONE_YET,
-                trace_id: TraceId::mint(),
+                trace_id: TraceId::from_raw(7),
                 command: ReviewCommand::ReviewCurrentLine,
                 repeat: 0,
             },
@@ -1219,7 +1220,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     let effects = reduce(
         &mut state,
         &Input::TextCompleted {
-            trace_id: TraceId::mint(),
+            trace_id: TraceId::from_raw(8),
             query_id: request.query_id,
             reply: TextReply::Read { moved: 0, chunk },
         },
