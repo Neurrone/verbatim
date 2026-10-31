@@ -1623,6 +1623,9 @@ pub(crate) type IdleWaiter = Box<dyn FnOnce() + Send>;
 
 struct Shared<R: Reading> {
     reading: R,
+    /// The schedule's clock: the system's, unless a test sets its own
+    /// ([`Readers::with_clock`]).
+    clock: Clock,
     /// The time the schedule's microseconds count from.
     origin: Instant,
     state: Mutex<ReadersState<R::Job, R::Owed>>,
@@ -1646,14 +1649,15 @@ impl<R: Reading> Shared<R> {
         u64::try_from(at.saturating_duration_since(self.origin).as_micros()).unwrap_or(u64::MAX)
     }
 
-    /// The schedule's microseconds `us` as a time.
-    fn instant(&self, us: u64) -> Instant {
-        self.origin + Duration::from_micros(us)
+    /// The system's time at which the schedule's clock reaches `us`, for
+    /// the alarm: as long from now as the schedule's clock has left.
+    fn alarm_at(&self, us: u64) -> Instant {
+        Instant::now() + Duration::from_micros(us.saturating_sub(self.now()))
     }
 
     /// Now, in the schedule's microseconds.
     fn now(&self) -> u64 {
-        self.micros(Instant::now())
+        self.micros((self.clock)())
     }
 }
 
@@ -1733,7 +1737,7 @@ fn step<R: Reading>(
                 }
             }
             ScheduleEffect::Alarm(AlarmChange::Set(Some(due))) => {
-                shared.alarm.set(shared.instant(due));
+                shared.alarm.set(shared.alarm_at(due));
             }
             ScheduleEffect::Alarm(AlarmChange::Set(None)) => shared.alarm.cancel(),
             ScheduleEffect::Alarm(AlarmChange::Now) => shared.alarm.wake(),
@@ -1839,9 +1843,17 @@ impl<R: Reading> Readers<R> {
     /// Panics if the watchdog's thread cannot be spawned, which means the
     /// process is out of OS thread resources.
     pub(crate) fn new(reading: R, deadline: Duration) -> Self {
+        Self::with_clock(reading, deadline, Arc::new(Instant::now))
+    }
+
+    /// [`new`](Self::new)'s readers, whose schedule reads now from `clock`:
+    /// a test whose clock stands still has nothing come due but what it
+    /// moves the clock to.
+    fn with_clock(reading: R, deadline: Duration, clock: Clock) -> Self {
         let shared = Arc::new(Shared {
             reading,
-            origin: Instant::now(),
+            origin: clock(),
+            clock,
             state: Mutex::new(ReadersState {
                 schedule: Schedule::new(deadline),
                 owed: HashMap::new(),
@@ -2629,6 +2641,11 @@ mod tests {
     /// that are not windows, and whose reads find the sender's nearest
     /// window to be `nearest`, 0 for none.
     fn fixture_of(deadline: Duration, (hwnd, nearest): (isize, isize)) -> Fixture {
+        fixture_by(deadline, (hwnd, nearest), Arc::new(Instant::now))
+    }
+
+    /// [`fixture_of`]'s readers, whose schedule's clock is `clock`.
+    fn fixture_by(deadline: Duration, (hwnd, nearest): (isize, isize), clock: Clock) -> Fixture {
         let (outcomes_tx, outcomes) = mpsc::channel();
         let (read_tx, read_on) = mpsc::channel();
         let (finished_tx, finished) = mpsc::channel();
@@ -2636,7 +2653,7 @@ mod tests {
         let (facts_tx, facts) = mpsc::channel();
         let (lasts_tx, lasts) = mpsc::channel();
         Fixture {
-            readers: Readers::new(
+            readers: Readers::with_clock(
                 Script {
                     outcomes: Mutex::new(outcomes_tx),
                     read_on: Mutex::new(read_tx),
@@ -2652,6 +2669,7 @@ mod tests {
                     order: Mutex::new(Vec::new()),
                 },
                 deadline,
+                clock,
             ),
             outcomes,
             read_on,
@@ -2662,17 +2680,48 @@ mod tests {
         }
     }
 
-    /// Holds the readers' lock, so the watchdog judges nothing, until the
-    /// schedule's clock reaches `at`, read from the clock itself.
-    fn hold_until(
-        fixture: &Fixture,
-        at: Instant,
-    ) -> MutexGuard<'_, ReadersState<<Script as Reading>::Job, <Script as Reading>::Owed>> {
-        let state = fixture.readers.shared.lock();
-        while Instant::now() < at {
-            thread::yield_now();
+    /// A schedule's clock that stands still until the test moves it, in
+    /// microseconds from its start.
+    struct Still {
+        start: Instant,
+        at: Arc<AtomicU64>,
+    }
+
+    impl Still {
+        /// The clock, for the readers.
+        fn clock(&self) -> Clock {
+            let (start, at) = (self.start, Arc::clone(&self.at));
+            Arc::new(move || start + Duration::from_micros(at.load(Ordering::SeqCst)))
         }
-        state
+    }
+
+    /// [`fixture`]'s readers, whose schedule's clock stands at its start
+    /// until [`tick_at`] moves it: nothing comes due but what a test ticks
+    /// by hand, and the watchdog's own ticks judge nothing more.
+    fn still_fixture(deadline: Duration) -> (Fixture, Still) {
+        let still = Still {
+            start: Instant::now(),
+            at: Arc::new(AtomicU64::new(0)),
+        };
+        (fixture_by(deadline, (WINDOW, 0), still.clock()), still)
+    }
+
+    /// Moves `still` to `at` microseconds and steps the watchdog's tick
+    /// there by hand, both under `state`, the readers' lock, which the
+    /// watchdog's own tick waits for.
+    fn tick_at(
+        fixture: &Fixture,
+        still: &Still,
+        state: &mut ReadersState<<Script as Reading>::Job, <Script as Reading>::Owed>,
+        at: u64,
+    ) {
+        still.at.store(at, Ordering::SeqCst);
+        step(&fixture.readers.shared, state, ScheduleInput::Tick, None);
+    }
+
+    /// [`MOVED_ON_GRACE`] in microseconds.
+    fn grace_us() -> u64 {
+        u64::try_from(MOVED_ON_GRACE.as_micros()).expect("the grace in microseconds")
     }
 
     fn meta(marker: u64) -> Meta {
@@ -3079,31 +3128,32 @@ mod tests {
     }
 
     /// A held read is not judged within its grace, and neither a
-    /// foreground change nor anything else asks: at the grace's end the
-    /// readers' lock is held, so the watchdog's first judgement waits for
-    /// it, and nothing has been asked.
+    /// foreground change nor a tick a microsecond before the grace's end
+    /// asks; the tick at the grace's end judges it.
     #[test]
     fn a_held_read_within_its_grace_is_left_alone_though_the_user_moved_on() {
-        let fixture = fixture(Duration::from_secs(60));
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
-        let pushed = Instant::now();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         fixture.readers.foreground_changed(WINDOW);
         {
-            let _state = hold_until(&fixture, pushed + MOVED_ON_GRACE);
+            let mut state = fixture.readers.shared.lock();
+            tick_at(&fixture, &still, &mut state, grace_us() - 1);
             assert_eq!(
                 fixture.asked.try_recv(),
                 Err(mpsc::TryRecvError::Empty),
                 "nothing asked within the grace"
             );
+            assert_eq!(fixture.outcomes.try_recv(), Err(mpsc::TryRecvError::Empty));
+            tick_at(&fixture, &still, &mut state, grace_us());
+            assert_eq!(
+                fixture.outcomes.try_recv(),
+                Ok((Pid(5), 1, MOVED_ON)),
+                "judged at the grace's end"
+            );
         }
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, MOVED_ON),
-            "judged once the grace has passed"
-        );
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
         let asked: Vec<isize> = fixture.asked.try_iter().collect();
@@ -3208,26 +3258,19 @@ mod tests {
     }
 
     /// Each ask of the schedule's is answered once, after the step's other
-    /// effects, and before the readers' lock is let go: with the lock held
-    /// past a read's grace, the watchdog's tick is made by hand, and by its
-    /// return the user's moving on has been asked once and the read's drop
-    /// sent.
+    /// effects, and before the readers' lock is let go: with the lock held,
+    /// the tick at a read's grace's end is made by hand, and by its return
+    /// the user's moving on has been asked once and the read's drop sent.
     #[test]
     fn each_ask_is_answered_once_before_the_lock_is_let_go() {
-        let fixture = fixture(Duration::from_secs(60));
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        let started = Instant::now();
         {
-            let mut state = hold_until(&fixture, started + MOVED_ON_GRACE);
-            step(
-                &fixture.readers.shared,
-                &mut state,
-                ScheduleInput::Tick,
-                None,
-            );
+            let mut state = fixture.readers.shared.lock();
+            tick_at(&fixture, &still, &mut state, grace_us());
             assert_eq!(fixture.asked.try_recv(), Ok(WINDOW), "asked once");
             assert_eq!(fixture.asked.try_recv(), Err(mpsc::TryRecvError::Empty));
             assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 1, MOVED_ON)));
@@ -3242,19 +3285,19 @@ mod tests {
     /// deadline in the tick that asks about application 5's, begun later.
     #[test]
     fn a_step_with_an_ask_and_another_applications_outcomes_keeps_the_owed_markers() {
-        let fixture = fixture(Duration::from_secs(1));
+        let (fixture, still) = still_fixture(Duration::from_secs(1));
         let (open_six, gate) = mpsc::channel();
         fixture.push(Pid(6), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        let six_started = Instant::now();
-        assert_eq!(
-            fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
-            WINDOW
-        );
+        {
+            let mut state = fixture.readers.shared.lock();
+            tick_at(&fixture, &still, &mut state, grace_us());
+            assert_eq!(fixture.asked.try_recv(), Ok(WINDOW), "the grace's check");
+        }
+        // Application 5's read begins at application 6's grace's end.
         let (open_five, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
-        let five_started = Instant::now();
         fixture
             .readers
             .shared
@@ -3264,18 +3307,10 @@ mod tests {
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
         {
-            // Past application 6's deadline and application 5's grace,
+            // At application 6's deadline and application 5's grace's end,
             // before application 5's deadline.
-            let mut state = hold_until(
-                &fixture,
-                (six_started + Duration::from_secs(1)).max(five_started + MOVED_ON_GRACE),
-            );
-            step(
-                &fixture.readers.shared,
-                &mut state,
-                ScheduleInput::Tick,
-                None,
-            );
+            let mut state = fixture.readers.shared.lock();
+            tick_at(&fixture, &still, &mut state, 2 * grace_us());
         }
         assert_eq!(
             *fixture

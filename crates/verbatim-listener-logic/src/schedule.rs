@@ -92,7 +92,7 @@ pub enum ScheduleInput<J> {
         /// The top-level window of the read, 0 for none.
         top: isize,
     },
-    /// The watchdog's alarm went off.
+    /// The watchdog's alarm went off, which spends its timer.
     Tick,
     /// `pid`'s read `request` learned its window, `window`.
     Learned {
@@ -478,7 +478,8 @@ impl<J> Schedule<J> {
     /// Takes one input at `now`, microseconds on the shell's monotonic
     /// clock, and returns its effects in the order they are applied; the
     /// last, while the listener runs, sets the watchdog's alarm when the
-    /// soonest time anything is due has changed.
+    /// soonest time anything is due has changed, or after a tick, which
+    /// spends the alarm's timer.
     pub fn step(&mut self, input: ScheduleInput<J>, now: u64) -> Vec<ScheduleEffect<J>> {
         let mut effects = Vec::new();
         match input {
@@ -501,7 +502,13 @@ impl<J> Schedule<J> {
                 placed,
                 top,
             } => self.returned(&mut effects, (pid, request), meta, (judged, placed, top)),
-            ScheduleInput::Tick => self.tick(&mut effects, now),
+            ScheduleInput::Tick => {
+                // The alarm went off, and its timer goes off once: set it
+                // again below to whatever is still due, even a time that
+                // has not changed, as a timer can go off a little early.
+                self.alarm_due = None;
+                self.tick(&mut effects, now);
+            }
             ScheduleInput::Learned {
                 pid,
                 request,
@@ -568,7 +575,7 @@ impl<J> Schedule<J> {
     }
 
     /// Sets the watchdog's alarm to the soonest time anything is due, when
-    /// that has changed: each read's next wake ([`InFlight::next_wake`]),
+    /// that differs from the time it is set to (none once it went off): each read's next wake ([`InFlight::next_wake`]),
     /// and the end of each application's wait at the abandoned limit.
     fn set_alarm(&mut self, effects: &mut Vec<ScheduleEffect<J>>) {
         if self.stopping {
@@ -1344,13 +1351,13 @@ mod tests {
                 Seen::Unwatch(1),
                 Seen::Outcome(1, 1, NOT_IN_TIME),
                 Seen::Spawn(1, 3, false),
-                CANCEL,
-            ]
+            ],
+            "the alarm went off and nothing else is due: it is left unset"
         );
         let _ = step(schedule, next(1, 3), DEADLINE);
         assert_eq!(
             step(schedule, ScheduleInput::Tick, 2 * DEADLINE),
-            [Seen::Unwatch(1), Seen::Outcome(1, 2, NOT_IN_TIME), CANCEL]
+            [Seen::Unwatch(1), Seen::Outcome(1, 2, NOT_IN_TIME)]
         );
         assert_eq!(
             step(schedule, focus(1, 3), 2 * DEADLINE),
@@ -1446,6 +1453,20 @@ mod tests {
         assert_eq!(
             step(&mut schedule, returned(1, request(1, 1), 2), 300),
             [Seen::Outcome(1, 2, "read"), CANCEL]
+        );
+    }
+
+    /// A tick spends the watchdog's one-shot timer: one a little before the
+    /// time due, as the timer can go off against the shell's clock, judges
+    /// nothing and sets the alarm again to the same time.
+    #[test]
+    fn an_early_tick_sets_the_alarm_again() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, GRACE - 1),
+            [set(GRACE)]
         );
     }
 
@@ -1606,11 +1627,12 @@ mod tests {
         assert!(!schedule.focus_pending(Some(Pid(2))));
         assert_eq!(
             step(&mut schedule, ScheduleInput::Tick, 2 * DEADLINE + 1),
-            []
+            [set(3 * DEADLINE)],
+            "an early tick drops nothing and sets the alarm again"
         );
         assert_eq!(
             step(&mut schedule, ScheduleInput::Tick, 3 * DEADLINE),
-            [Seen::Outcome(1, 3, WAITED_TOO_LONG), CANCEL]
+            [Seen::Outcome(1, 3, WAITED_TOO_LONG)]
         );
     }
 

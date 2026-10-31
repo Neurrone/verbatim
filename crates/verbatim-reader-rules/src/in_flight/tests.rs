@@ -243,6 +243,8 @@ enum Action {
     Advance(u16),
     /// The item's walk returns, past its bound or not.
     WalkReturned(bool),
+    /// The item is handed on to a new request.
+    HandOn,
     /// The item ends.
     End,
     /// A new generation takes charge, when nothing is running.
@@ -260,6 +262,7 @@ fn action() -> impl Strategy<Value = Action> {
         // own times.
         prop_oneof![Just(100u16), Just(200), Just(400), Just(500)].prop_map(Action::Advance),
         any::<bool>().prop_map(Action::WalkReturned),
+        Just(Action::HandOn),
         Just(Action::End),
         Just(Action::Succeed),
     ]
@@ -269,174 +272,197 @@ fn action() -> impl Strategy<Value = Action> {
 /// and the listener's.
 const DEADLINES: [u64; 4] = [400 * MS, 2_000 * MS, 10_000 * MS, 8_000 * MS];
 
-/// What the model expects of a transition.
+/// The answers a run gives, each drawn by the time it is given at, so the
+/// reference model knows them from the times alone.
+struct Answers(Vec<bool>);
+
+impl Answers {
+    /// Whether the user has moved on, asked at `now`.
+    fn moved_on(&self, now: u64) -> bool {
+        self.at(now, 0)
+    }
+
+    /// Whether the walk was published, asked at `now`.
+    fn published(&self, now: u64) -> bool {
+        self.at(now, 1)
+    }
+
+    fn at(&self, now: u64, salt: u64) -> bool {
+        let index = (now / MS + salt) % u64::try_from(self.0.len()).expect("a few answers");
+        self.0[usize::try_from(index).expect("a small index")]
+    }
+}
+
+/// What happens to one item, as its timeline records it.
+#[derive(Clone, Copy, Debug)]
+enum Event {
+    /// It learns its window.
+    Learned,
+    /// Its walk is armed, with this bound.
+    Armed(u64),
+    /// Its walk returns, past its bound or not.
+    Returned(bool),
+    /// The reader ticks.
+    Tick,
+    /// It ends.
+    End,
+}
+
+/// The fate of one item: still running, ended, or abandoned for a reason,
+/// each with whether its walk was published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Expected {
-    Nothing,
-    MovedOn,
-    Publish(Option<Reason>),
-    /// Abandoned, why, and whether published.
-    Abandon(Reason, bool),
+enum Fate {
+    Running(bool),
+    Ended(bool),
+    Abandoned(Reason, bool),
 }
 
-/// The reference model's item: plain fields, each set by the rule that
-/// names it.
+/// The reference model: one item's timeline, from its start, scanned for
+/// its fate.
 #[derive(Clone, Debug)]
-struct ModelItem {
+struct Timeline {
     id: u32,
-    request: Request,
+    start: u64,
     deadline: u64,
-    /// Whether the item is never judged by the moved-on rule.
-    never: bool,
-    /// Its window, 0 while unknown.
-    window: isize,
-    /// When the moved-on rule is next judged, once the window is known.
-    next: u64,
-    started: u64,
-    bound: Option<u64>,
-    published: bool,
-    /// Whether its walk was ever armed.
-    ever_armed: bool,
+    window: Option<isize>,
+    events: Vec<(u64, Event)>,
 }
 
-/// The reference model: the item running, and the generation.
-#[derive(Clone, Debug, Default)]
-struct Model {
-    item: Option<ModelItem>,
-    generation: u64,
-}
-
-impl Model {
-    fn judge(&mut self, now: u64) -> Expected {
-        let Some(item) = self.item.as_mut() else {
-            return Expected::Nothing;
-        };
-        if now >= item.deadline {
-            if item.bound.take().is_some() {
-                return Expected::Publish(Some(Reason::Deadline));
+impl Timeline {
+    /// The item's fate after its events so far, with every answer drawn by
+    /// its time. Its walk is published at a judgment past its bound or at
+    /// a return past it, or before an abandonment while armed, when the
+    /// answer then says so. It is abandoned at the first judgment at or
+    /// past its deadline, or when the user is found to have moved on at a
+    /// judgment of its window: the grace after its start, or after the
+    /// window is learned, and each grace after the last. A judgment is a
+    /// tick, or a window learned past the grace.
+    fn fate(&self, answers: &Answers) -> Fate {
+        let grace_end = self.start + GRACE;
+        let mut next = self.window.filter(|window| *window != 0).map(|_| grace_end);
+        let mut bound = None;
+        let mut published = false;
+        for &(now, event) in &self.events {
+            let judged = match event {
+                Event::Learned => {
+                    if self.window == Some(0) && next.is_none() {
+                        next = Some(grace_end.max(now));
+                        now >= grace_end
+                    } else {
+                        false
+                    }
+                }
+                Event::Armed(at) => {
+                    if !published {
+                        bound = Some(at);
+                    }
+                    false
+                }
+                Event::Returned(past) => {
+                    if bound.take().is_some() && past {
+                        published |= answers.published(now);
+                    }
+                    false
+                }
+                Event::Tick => true,
+                Event::End => return Fate::Ended(published),
+            };
+            if !judged {
+                continue;
             }
-            return self.abandon(Reason::Deadline);
+            let mut publish = |bound: &mut Option<u64>| {
+                if bound.take().is_some() {
+                    published |= answers.published(now);
+                }
+            };
+            if now >= self.start + self.deadline {
+                publish(&mut bound);
+                return Fate::Abandoned(Reason::Deadline, published);
+            }
+            if bound.is_some_and(|at| now >= at) {
+                publish(&mut bound);
+            }
+            if let Some(at) = next
+                && now >= at
+            {
+                next = Some(now + GRACE);
+                if answers.moved_on(now) {
+                    publish(&mut bound);
+                    return Fate::Abandoned(Reason::MovedOn, published);
+                }
+            }
         }
-        if item.bound.is_some_and(|bound| now >= bound) {
-            item.bound = None;
-            return Expected::Publish(None);
-        }
-        if !item.never && item.window != 0 && now >= item.next {
-            item.next = now + GRACE;
-            return Expected::MovedOn;
-        }
-        Expected::Nothing
-    }
-
-    fn abandon(&mut self, reason: Reason) -> Expected {
-        let published = self.item.take().is_some_and(|item| item.published);
-        self.generation += 1;
-        Expected::Abandon(reason, published)
-    }
-
-    fn moved_on(&mut self, answer: bool) -> Expected {
-        let Some(item) = self.item.as_mut() else {
-            return Expected::Nothing;
-        };
-        if !answer {
-            return Expected::Nothing;
-        }
-        if item.bound.take().is_some() {
-            return Expected::Publish(Some(Reason::MovedOn));
-        }
-        self.abandon(Reason::MovedOn)
-    }
-
-    fn published(&mut self, got: bool, then_abandon: Option<Reason>, now: u64) -> Expected {
-        let Some(item) = self.item.as_mut() else {
-            return Expected::Nothing;
-        };
-        item.published |= got;
-        match then_abandon {
-            Some(reason) => self.abandon(reason),
-            None => self.judge(now),
-        }
+        Fate::Running(published)
     }
 }
 
-/// One generated run: the record, the model, the time, the answers to
-/// draw, and every item that has left, by id.
+/// One generated run: the record, the time, the answers, the item running
+/// and its request, the fate of one that left in the step, and every item
+/// that has left, by id.
 struct Run {
     in_flight: InFlight<u32>,
-    model: Model,
     now: u64,
-    answers: Vec<bool>,
-    drawn: usize,
+    answers: Answers,
     items: u32,
+    item: Option<(Timeline, Request)>,
+    left_as: Option<(u32, Fate)>,
     left: Vec<u32>,
+    succeeded: u64,
+    abandonments: u64,
     trail: Vec<String>,
 }
 
 impl Run {
-    fn answer(&mut self) -> bool {
-        let answer = self.answers[self.drawn % self.answers.len()];
-        self.drawn += 1;
-        answer
-    }
-
-    /// Compares `decision` with `expected`, and answers each ask at once
-    /// with a drawn value, until nothing more is asked.
-    fn settle(&mut self, mut decision: Decision<u32>, mut expected: Expected) {
+    /// Answers each ask at once, by the time, until nothing more is asked.
+    fn settle(&mut self, mut decision: Decision<u32>) {
         loop {
+            let (_, request) = self.item.as_ref().expect("an item decided on");
+            let request = *request;
             match decision {
-                Decision::Nothing => {
-                    assert_eq!(expected, Expected::Nothing, "{:?}", self.trail);
-                    return;
-                }
+                Decision::Nothing => return,
                 Decision::Abandon(abandoned) => {
-                    assert_eq!(
-                        expected,
-                        Expected::Abandon(abandoned.reason, abandoned.published),
-                        "{:?}",
-                        self.trail
-                    );
                     assert_eq!(abandoned.replacement, abandoned.dead + 1);
                     assert_eq!(abandoned.replacement, self.in_flight.generation());
-                    self.left.push(abandoned.item);
+                    self.abandonments += 1;
+                    self.left_as = Some((
+                        abandoned.item,
+                        Fate::Abandoned(abandoned.reason, abandoned.published),
+                    ));
                     return;
                 }
-                Decision::Ask(Ask::MovedOn { request, window }) => {
-                    assert_eq!(expected, Expected::MovedOn, "{:?}", self.trail);
-                    let item = self.model.item.as_ref().expect("an item asked about");
-                    assert_eq!((request, window), (item.request, item.window));
-                    let answer = self.answer();
-                    self.trail.push(format!("moved on {answer}"));
+                Decision::Ask(Ask::MovedOn {
+                    request: asked,
+                    window,
+                }) => {
+                    assert_eq!((asked, window), (request, WINDOW), "{:?}", self.trail);
+                    let answer = self.answers.moved_on(self.now);
                     decision = self.in_flight.moved_on(request, answer);
-                    expected = self.model.moved_on(answer);
                 }
                 Decision::Ask(Ask::Publish {
-                    request,
+                    request: asked,
                     then_abandon,
                 }) => {
-                    assert_eq!(
-                        expected,
-                        Expected::Publish(then_abandon),
-                        "{:?}",
-                        self.trail
-                    );
-                    let item = self.model.item.as_ref().expect("an item published");
-                    assert_eq!(request, item.request);
-                    assert!(item.ever_armed, "published only after armed");
-                    let got = self.answer();
-                    self.trail.push(format!("published {got}"));
+                    assert_eq!(asked, request, "{:?}", self.trail);
+                    let got = self.answers.published(self.now);
                     decision = self
                         .in_flight
                         .published(request, got, then_abandon, self.now);
-                    expected = self.model.published(got, then_abandon, self.now);
                 }
             }
+        }
+    }
+
+    /// Records `event` in the running item's timeline, now.
+    fn record(&mut self, event: Event) {
+        if let Some((timeline, _)) = self.item.as_mut() {
+            timeline.events.push((self.now, event));
         }
     }
 
     fn step(&mut self, action: Action) {
         self.trail.push(format!("{action:?} at {}", self.now));
         let generation = self.in_flight.generation();
-        let running = self.model.item.as_ref().map(|item| item.request);
+        let running = self.item.as_ref().map(|(_, request)| *request);
         match action {
             Action::Start { window, deadline } => {
                 if running.is_some() {
@@ -446,42 +472,40 @@ impl Run {
                 let window = [None, Some(0), Some(WINDOW)][usize::from(window)];
                 let deadline = DEADLINES[usize::from(deadline)];
                 let request = self.in_flight.start(self.items, deadline, window, self.now);
-                self.model.item = Some(ModelItem {
+                let timeline = Timeline {
                     id: self.items,
-                    request,
-                    deadline: self.now + deadline,
-                    never: window.is_none(),
-                    window: window.unwrap_or(0),
-                    next: self.now + GRACE,
-                    started: self.now,
-                    bound: None,
-                    published: false,
-                    ever_armed: false,
-                });
+                    start: self.now,
+                    deadline,
+                    window,
+                    events: Vec::new(),
+                };
+                self.item = Some((timeline, request));
             }
             Action::Learned => {
                 let Some(request) = running else {
                     return;
                 };
-                self.learned(request);
+                self.record(Event::Learned);
+                let decision = self.in_flight.learned(request, WINDOW, self.now);
+                self.settle(decision);
             }
             Action::Armed(offset) => {
                 let Some(request) = running else {
                     return;
                 };
                 let bound = (self.now + u64::from(offset) * MS).saturating_sub(200 * MS);
+                self.record(Event::Armed(bound));
                 self.in_flight.armed(request, bound);
-                let item = self.model.item.as_mut().expect("running");
-                if !item.published {
-                    item.bound = Some(bound);
-                    item.ever_armed = true;
-                }
             }
             Action::Advance(ms) => {
                 self.now += u64::from(ms) * MS;
                 let decision = self.in_flight.tick(self.now);
-                let expected = self.model.judge(self.now);
-                self.settle(decision, expected);
+                if running.is_some() {
+                    self.record(Event::Tick);
+                    self.settle(decision);
+                } else {
+                    assert_eq!(decision, Decision::Nothing);
+                }
                 assert!(
                     self.in_flight.next_wake().is_none_or(|due| due > self.now),
                     "a wake left due after a tick: {:?}",
@@ -492,108 +516,100 @@ impl Run {
                 let Some(request) = running else {
                     return;
                 };
+                self.record(Event::Returned(past));
                 let decision = self.in_flight.walk_returned(request, past);
-                let item = self.model.item.as_mut().expect("running");
-                let expected = if item.bound.take().is_some() && past {
-                    Expected::Publish(None)
-                } else {
-                    Expected::Nothing
+                self.settle(decision);
+            }
+            Action::HandOn => {
+                let handed = self.in_flight.hand_on();
+                let Some((_, request)) = self.item.as_mut() else {
+                    assert_eq!(handed, None);
+                    return;
                 };
-                self.settle(decision, expected);
+                let handed = handed.expect("an item running is handed on");
+                assert_eq!(handed.generation, request.generation);
+                assert!(handed.number > request.number);
+                *request = handed;
             }
             Action::End => {
                 let Some(request) = running else {
                     return;
                 };
-                let item = self.model.item.take().expect("running");
-                assert_eq!(
-                    self.in_flight.end(request),
-                    Some((item.id, item.published)),
-                    "{:?}",
-                    self.trail
-                );
-                self.left.push(item.id);
+                self.record(Event::End);
+                let ended = self.in_flight.end(request).expect("the item running ends");
                 assert_eq!(self.in_flight.end(request), None, "the item leaves once");
+                self.left_as = Some((ended.0, Fate::Ended(ended.1)));
             }
             Action::Succeed => {
                 if running.is_some() {
                     return;
                 }
-                self.model.generation += 1;
-                assert_eq!(self.in_flight.succeed(), self.model.generation);
+                self.succeeded += 1;
+                assert_eq!(self.in_flight.succeed(), generation + 1);
             }
         }
         self.check(generation, running);
     }
 
-    /// The item `request` learns its window.
-    fn learned(&mut self, request: Request) {
-        let decision = self.in_flight.learned(request, WINDOW, self.now);
-        let item = self.model.item.as_mut().expect("running");
-        let expected = if !item.never && item.window == 0 {
-            item.window = WINDOW;
-            item.next = (item.started + GRACE).max(self.now);
-            if self.now >= item.started + GRACE {
-                self.model.judge(self.now)
+    /// The item's fate, and the invariants, after every step.
+    fn check(&mut self, generation: u64, before: Option<Request>) {
+        let trail = self.trail.clone();
+        if let Some((timeline, request)) = &self.item {
+            let fate = timeline.fate(&self.answers);
+            if let Some((id, left_as)) = self.left_as.take() {
+                assert_eq!((id, left_as), (timeline.id, fate), "{trail:?}");
+                self.left.push(id);
+                self.item = None;
             } else {
-                Expected::Nothing
+                let Fate::Running(published) = fate else {
+                    panic!("{fate:?} of an item still running: {trail:?}");
+                };
+                assert_eq!(
+                    self.in_flight
+                        .running()
+                        .map(|(request, id, published)| (request, *id, published)),
+                    Some((*request, timeline.id, published)),
+                    "{trail:?}"
+                );
+                assert_eq!(self.in_flight.accepts(*request), !published);
+                if published {
+                    assert!(
+                        timeline
+                            .events
+                            .iter()
+                            .any(|(_, event)| matches!(event, Event::Armed(_))),
+                        "published only after armed"
+                    );
+                }
             }
-        } else {
-            Expected::Nothing
-        };
-        self.settle(decision, expected);
-    }
-
-    /// The invariants after every step.
-    fn check(&self, generation: u64, before: Option<Request>) {
-        let trail = &self.trail;
+        }
+        if self.item.is_none() {
+            assert!(self.in_flight.running().is_none(), "{trail:?}");
+        }
         assert_eq!(
             self.in_flight.generation(),
-            self.model.generation,
-            "{trail:?}"
+            self.succeeded + self.abandonments,
+            "the generation rises by one per abandonment or succession: {trail:?}"
         );
-        assert!(
-            self.in_flight.generation() >= generation,
-            "the generation never falls"
-        );
+        assert!(self.in_flight.generation() >= generation);
         let mut left = self.left.clone();
         left.sort_unstable();
         left.dedup();
         assert_eq!(left.len(), self.left.len(), "an item left twice: {trail:?}");
-        let running = u32::from(self.model.item.is_some());
         assert_eq!(
-            u32::try_from(self.left.len()).expect("few items") + running,
+            u32::try_from(self.left.len()).expect("few items") + u32::from(self.item.is_some()),
             self.items,
             "every item but the running one has left once: {trail:?}"
         );
-        match (&self.model.item, self.in_flight.running()) {
-            (None, None) => {}
-            (Some(item), Some((request, id, published))) => {
-                assert_eq!(
-                    (request, *id, published),
-                    (item.request, item.id, item.published)
-                );
-                assert_eq!(
-                    self.in_flight.accepts(request),
-                    !item.published,
-                    "{trail:?}"
-                );
-                if item.published {
-                    assert!(item.ever_armed, "published only after armed");
-                }
-            }
-            (model, record) => panic!("{model:?} against {record:?}: {trail:?}"),
-        }
         if let Some(before) = before
             && self
-                .model
                 .item
                 .as_ref()
-                .is_none_or(|item| item.request != before)
+                .is_none_or(|(_, request)| *request != before)
         {
             assert!(
                 !self.in_flight.accepts(before),
-                "a request that left is refused"
+                "a request that left or was handed on is refused"
             );
         }
         if let Some(due) = self.in_flight.next_wake()
@@ -634,9 +650,9 @@ fn config() -> Config {
 }
 
 /// Generated sequences of starts, learned windows, armed walks, ticks as
-/// time advances, returned walks and ends, each ask answered at once by a
-/// drawn value, behave as the reference model says, with every invariant
-/// holding after every step.
+/// time advances, returned walks, hand-ons and ends, each ask answered at
+/// once by a value drawn by its time, give each item the fate a scan of its
+/// timeline names, with every invariant holding after every step.
 #[test]
 fn generated_sequences_match_the_reference_model() {
     use proptest::collection::vec;
@@ -650,12 +666,14 @@ fn generated_sequences_match_the_reference_model() {
             .current();
         let mut run = Run {
             in_flight: InFlight::new(),
-            model: Model::default(),
             now: 0,
-            answers,
-            drawn: 0,
+            answers: Answers(answers),
             items: 0,
+            item: None,
+            left_as: None,
             left: Vec::new(),
+            succeeded: 0,
+            abandonments: 0,
             trail: Vec::new(),
         };
         for action in actions {

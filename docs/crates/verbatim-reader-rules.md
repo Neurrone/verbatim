@@ -54,9 +54,12 @@ Public API:
     read); `learned(request, window, now)`; `armed(request, bound)`;
     `walk_returned(request, past)`; `tick(now)`; the answers
     `moved_on(request, answer)` and `published(request, got, then_abandon,
-    now)`; `end(request)`, which gives the item once with whether it was
-    published; and `succeed()`, a new generation without an abandonment,
-    for the listener's start of a thread.
+    now)`, with `published_judging_nothing` for a reader that has stopped,
+    which makes only the abandonment the ask carried; `end(request)`, which
+    gives the item once with whether it was published; `succeed()`, a new
+    generation without an abandonment, for the listener's start of a
+    thread; and `next_request()`, a request for work the record does not
+    keep, the outpost's last drop as it stops.
   - Each transition returns a `Decision`: `Nothing`, one `Ask`
     (`MovedOn { request, window }` or `Publish { request, then_abandon }`)
     for the reader's shell to answer by the matching transition, or
@@ -93,9 +96,11 @@ Tests: the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the acceptance test rule by rule
 against a made-up desk, and the work in flight: a replay test per rule,
 and a generated test under a fixed seed that drives sequences of starts,
-learned windows, armed walks, ticks, returned walks and ends, answers
-each ask at once with a drawn value, compares the record with a reference
-model and checks its invariants after every step (each item leaves once,
+learned windows, armed walks, ticks, returned walks, hand-ons and ends,
+answers each ask at once with a value drawn by the time it is asked at,
+compares each item's fate (running, ended, or abandoned with its reason,
+each with whether it was published) with the one a scan of its timeline
+names, and checks its invariants after every step (each item leaves once,
 the generation rises by one per abandonment, a published walk followed an
 armed one, and a wake that is due is acted on). It is the crate's one
 development dependency, `proptest`.

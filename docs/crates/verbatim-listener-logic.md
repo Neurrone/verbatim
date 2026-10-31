@@ -50,7 +50,8 @@ Public API:
   read (`Unwatch`). The schedule owns the watchdog's alarm: after every
   step it computes the soonest of each read's next wake and each
   application's end of its wait at the abandoned limit, and emits
-  `Alarm(Set(due))` only when that changed; `Alarm(Now)` is the
+  `Alarm(Set(due))` only when that changed, or after a `Tick`, which
+  spends the one-shot timer; `Alarm(Now)` is the
   shutdown's. A foreground event only moves applications away for menu
   currentness. `GraceState::step` is the menu end's grace, which the
   listener's threadpool timer and its callers drive.

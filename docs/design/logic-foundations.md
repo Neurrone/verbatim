@@ -1285,7 +1285,7 @@ An abandonment takes the running item out, adds one to the generation, and retur
   - `Walk::Published` prevents a second publication, and `end` refuses the thread's late result. So `WatchedRead`'s claim goes, and no copy replaces it.
 - **The listener's alarm** is set from the schedule's state after every step.
   - The schedule keeps `alarm_due`, today the shell's. After each step it computes the soonest of every application's `next_wake` and each limit's end.
-  - It emits `Alarm(Set(due))` only when that time differs from `alarm_due`.
+  - It emits `Alarm(Set(due))` only when that time differs from `alarm_due`. A `Tick` clears `alarm_due` first, because the timer goes off once and can go off a little before the time due, so whatever is still due is set again.
   - `By` and `Settle` go, and `Now` remains for the shutdown.
   - So a quick read's end moves the alarm back to whatever else is due, or cancels it, even while another application's read is under way. That fixes the wake the review found in the case of e46d4183, and the same pre-existing wake from `on_arm`'s `By`.
 

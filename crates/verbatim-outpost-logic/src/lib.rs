@@ -1054,11 +1054,14 @@ impl Reducer {
             _ => false,
         };
         // While the outpost stops nothing is judged, as `tick` judges
-        // nothing then: the answer is given a time before anything of the
-        // program's can be due, so it makes only the abandonment it
-        // carried.
-        let at = if self.stopping { 0 } else { micros(now.at) };
-        let decision = self.flight.published(request, got, then_abandon, at);
+        // nothing then: the answer makes only the abandonment it carried.
+        let decision = if self.stopping {
+            self.flight
+                .published_judging_nothing(request, got, then_abandon)
+        } else {
+            self.flight
+                .published(request, got, then_abandon, micros(now.at))
+        };
         self.decided(decision, now, effects);
     }
 
@@ -1201,17 +1204,10 @@ impl Reducer {
     /// The program that drops what the shell still holds as the outpost
     /// shuts down, with no program in flight: releasing an object can call
     /// into the application, so a worker does it, as at runtime. Nothing
-    /// follows it, so it is numbered as a program and ended at once.
+    /// follows it, so it is numbered as a program and not kept in flight.
     pub fn shutdown_drop(&mut self) -> Program {
-        let current = Current {
-            running: None,
-            group: None,
-            deferred: false,
-        };
-        let request = self.flight.start(current, 0, None, 0);
-        let _ = self.flight.end(request);
         Program {
-            request,
+            request: self.flight.next_request(),
             facts: Facts::default(),
             work: Work::Drop,
             waiting: Vec::new(),

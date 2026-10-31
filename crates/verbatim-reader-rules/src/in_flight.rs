@@ -300,16 +300,41 @@ impl<T> InFlight<T> {
         then_abandon: Option<Reason>,
         now: u64,
     ) -> Decision<T> {
-        let Some(running) = self.running_of(request) else {
-            return Decision::Nothing;
-        };
+        match self.publication(request, got, then_abandon) {
+            Some(Decision::Nothing) => self.judge(now),
+            decision => decision.unwrap_or(Decision::Nothing),
+        }
+    }
+
+    /// [`published`](Self::published) for a reader that has stopped, which
+    /// judges nothing more: the walk is published with `got`, and the
+    /// abandonment the ask carried is made, if any; nothing else is.
+    pub fn published_judging_nothing(
+        &mut self,
+        request: Request,
+        got: bool,
+        then_abandon: Option<Reason>,
+    ) -> Decision<T> {
+        self.publication(request, got, then_abandon)
+            .unwrap_or(Decision::Nothing)
+    }
+
+    /// Applies the answer to [`Ask::Publish`] for `request`, with its
+    /// abandonment, if any: `None` when `request` is not running.
+    fn publication(
+        &mut self,
+        request: Request,
+        got: bool,
+        then_abandon: Option<Reason>,
+    ) -> Option<Decision<T>> {
+        let running = self.running_of(request)?;
         if got {
             running.walk = Walk::Published;
         }
-        match then_abandon {
+        Some(match then_abandon {
             Some(reason) => Decision::Abandon(self.abandon(reason)),
-            None => self.judge(now),
-        }
+            None => Decision::Nothing,
+        })
     }
 
     /// The item of `request`, once, with whether its walk was published, if
@@ -458,8 +483,10 @@ impl<T> InFlight<T> {
             .filter(|running| running.request == request)
     }
 
-    /// A new request of the generation in charge.
-    fn next_request(&mut self) -> Request {
+    /// A new request of the generation in charge, for work the record
+    /// does not keep, which nothing is judged of and whose results are
+    /// refused: a reader's last drop as it stops.
+    pub fn next_request(&mut self) -> Request {
         self.requests += 1;
         Request {
             generation: self.generation,
