@@ -22,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, WM_APP, WM_QUIT,
 };
 
-use verbatim_ia2::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind};
+use crate::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The thread message that carries a nudge's two words to the nudge
@@ -40,13 +40,16 @@ const WM_HOOK: u32 = WM_APP + 2;
 /// to, and, for an owner that nudges it, the handler of each nudge's two
 /// words. Both are made on the event thread, so they may share state that
 /// only it touches.
-pub(crate) struct EventHandlers {
-    pub(crate) win_event: WinEventCallback,
-    pub(crate) nudge: Option<Box<dyn Fn(usize, isize)>>,
+pub struct EventHandlers {
+    /// Called with each `WinEvent` the hooks deliver.
+    pub win_event: WinEventCallback,
+    /// Called with each nudge's two words ([`Nudger::nudge`]), for an
+    /// owner that nudges the thread.
+    pub nudge: Option<Box<dyn Fn(usize, isize)>>,
 }
 
 /// Makes an [`EventHandlers`], on the event thread.
-pub(crate) type MakeHandlers = Arc<dyn Fn() -> EventHandlers + Send + Sync>;
+pub type MakeHandlers = Arc<dyn Fn() -> EventHandlers + Send + Sync>;
 
 /// The `WinEvent` thread's priority: it only moves each event on, for
 /// microseconds per wake (`docs/design/communication.md`, section 6.1).
@@ -57,7 +60,7 @@ const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 /// asked ([`EventThread::hook`]), scoped to the given pid, or global for pid
 /// zero. Both a per-application outpost and the focus listener (decision
 /// D13) use it, differing only in their pid and subscription set.
-pub(crate) struct EventThread {
+pub struct EventThread {
     nudger: Nudger,
     /// The outcome of installing the hooks, sent by the thread.
     hooked: Receiver<Result<(), String>>,
@@ -66,7 +69,12 @@ pub(crate) struct EventThread {
 
 impl EventThread {
     /// Starts the thread, with its message queue and handlers and no hook.
-    pub(crate) fn spawn(kinds: &'static [WinEventKind], make_handlers: MakeHandlers) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// When the thread cannot be spawned.
+    #[must_use]
+    pub fn spawn(kinds: &'static [WinEventKind], make_handlers: MakeHandlers) -> Self {
         let (id_tx, id_rx) = unbounded::<u32>();
         let (hooked_tx, hooked) = unbounded();
         let synced = Arc::new(Synced::default());
@@ -101,7 +109,7 @@ impl EventThread {
     ///
     /// Returns why the hooks are not in: a hook failed to install, the
     /// thread already has its hooks, or the thread has ended.
-    pub(crate) fn hook(&self, target_pid: u32) -> Result<(), String> {
+    pub fn hook(&self, target_pid: u32) -> Result<(), String> {
         let word = usize::try_from(target_pid).map_err(|error| error.to_string())?;
         // SAFETY: posting a message with no pointer parameters; the call
         // fails safely for a thread that has ended.
@@ -113,7 +121,8 @@ impl EventThread {
     }
 
     /// What nudges this thread, for any thread to keep.
-    pub(crate) fn nudger(&self) -> Nudger {
+    #[must_use]
+    pub fn nudger(&self) -> Nudger {
         self.nudger.clone()
     }
 }
@@ -121,7 +130,7 @@ impl EventThread {
 /// Nudges an event thread from any thread: each nudge reaches its owner's
 /// nudge handler on the event thread, in the order nudges were sent.
 #[derive(Clone)]
-pub(crate) struct Nudger {
+pub struct Nudger {
     thread_id: u32,
     synced: Arc<Synced>,
     tickets: Arc<Mutex<Tickets>>,
@@ -207,7 +216,11 @@ impl Nudger {
     /// Hands the two words to the event thread's nudge handler, behind
     /// every event already delivered to the thread. Returns at once, saying
     /// whether the thread took the nudge: one that has ended takes none.
-    pub(crate) fn nudge(&self, (word, hwnd): (usize, isize)) -> bool {
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "a caller that need not know whether the thread took the nudge ignores the answer"
+    )]
+    pub fn nudge(&self, (word, hwnd): (usize, isize)) -> bool {
         // SAFETY: posting a message with no pointer parameters; the call
         // fails safely for a thread that has ended.
         unsafe { PostThreadMessageW(self.thread_id, WM_NUDGE, WPARAM(word), LPARAM(hwnd)) }.is_ok()
@@ -223,10 +236,10 @@ impl Nudger {
     /// event reaches the hook thread, and a message posted after it has
     /// been handled first. So once the hooks are in, the sync also raises a
     /// sync marker, a `WinEvent` of this process's that the thread's own
-    /// hook set hears (`verbatim_ia2::SyncMarker`), and waits for it too:
+    /// hook set hears (`crate::SyncMarker`), and waits for it too:
     /// a `WinEvent` arrives behind every one raised before it. This costs
     /// one `NotifyWinEvent` and up to one more wake of the thread.
-    pub(crate) fn sync(&self) {
+    pub fn sync(&self) {
         let (ticket, marker) = {
             let mut tickets = self.tickets.lock().unwrap_or_else(PoisonError::into_inner);
             tickets.last += 1;
@@ -316,7 +329,7 @@ fn event_thread_main(
                     // why the application is set once, at the outpost's
                     // start or at its assignment, and never rebound.
                     // Unhooking some of the set's kinds and hooking them
-                    // again (`verbatim_ia2::suspend_kinds`) changes one raw
+                    // again (`crate::suspend_kinds`) changes one raw
                     // event's hook at a time within this one set, as the
                     // focus listener hooks and unhooks the console's
                     // events.
@@ -408,7 +421,7 @@ mod tests {
                     } else {
                         &[]
                     };
-                    let _ = changes.send(verbatim_ia2::suspend_kinds(suspended));
+                    let _ = changes.send(crate::suspend_kinds(suspended));
                 })),
             }
         });

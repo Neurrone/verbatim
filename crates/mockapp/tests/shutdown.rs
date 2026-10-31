@@ -28,7 +28,7 @@ use verbatim_model::{
     CallCounts, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply,
     TextUnit,
 };
-use verbatim_outpost::OutpostOptions;
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Node, Shape, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{

@@ -23,8 +23,8 @@ use common::outpost::OutpostUnderTest;
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, WinEventStamp};
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
-use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,

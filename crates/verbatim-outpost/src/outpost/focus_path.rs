@@ -19,9 +19,10 @@ use std::time::Duration;
 use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::{Path, PathQuery, element_by_path};
 
-use crate::arbitration::{Clock, time_limit};
+use crate::arbitration::time_limit;
+use verbatim_process::clock::Clock;
 
-use super::window::window_exists;
+use verbatim_win32::window::window_exists;
 
 /// How long the classic walk down a path, used where a remote operation
 /// cannot import the window's element, may take: checked between its

@@ -196,7 +196,7 @@ The first build of option (b) failed many scenarios. Most failures had one cause
 
 ### 16.2 The acceptance test against the nearest window
 
-The listener's reading thread makes NVDA's acceptance test, after the repeat check and before the read, against the element's own window or, one call, its nearest ancestor's (`verbatim_uia::nearest_window_handle`, NVDA's `getNearestWindowHandle`), using the outpost's port of the test (`outpost::acceptance`, defined once for both) (Dickson, 2026-10-11). An element with no window in its chain, or whose walk to one fails, is dropped, as NVDA makes no object for it. A focus that fails is dropped and never becomes the last accepted focus. The outpost does not test a UIA focus; it keeps the test for every other event.
+The listener's reading thread makes NVDA's acceptance test, after the repeat check and before the read, against the element's own window or, one call, its nearest ancestor's (`verbatim_uia::nearest_window_handle`, NVDA's `getNearestWindowHandle`), using the outpost's port of the test (`verbatim_reader_rules::acceptance`, defined once for both) (Dickson, 2026-10-11). An element with no window in its chain, or whose walk to one fails, is dropped, as NVDA makes no object for it. A focus that fails is dropped and never becomes the last accepted focus. The outpost does not test a UIA focus; it keeps the test for every other event.
 
 ### 16.3 Repeated focus, judged as NVDA judges it
 

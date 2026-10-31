@@ -45,7 +45,8 @@
 //!   the workspace.
 //! - [`provider_process`], [`served_by`] and [`console_host_of`] — the
 //!   process that serves a window's UIA, a console window's being its
-//!   console host, read with local calls only;
+//!   console host, read with local calls only, re-exported from
+//!   `verbatim_win32::provider` under the same names;
 //!   [`parent_across_process_boundary`], the
 //!   parent window, or a top-level window's visible owner, served by
 //!   another process, where a walk up stops.
@@ -70,7 +71,6 @@ mod focus;
 pub mod map;
 mod nearest;
 mod probe;
-mod provider;
 mod proxy;
 mod registry;
 mod shape;
@@ -92,10 +92,6 @@ pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::FocusCallback;
 pub use nearest::{nearest_window_handle, nearest_window_lookup};
 pub use probe::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe, raw_probe_verdict};
-pub use provider::{
-    console_host_of, is_top_level_window, outermost_nearest_window, parent_across_process_boundary,
-    parent_window, plain_windows_start, provider_process, raw_view_parent_window, served_by,
-};
 pub use registry::{Interning, NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
@@ -108,6 +104,10 @@ pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
     NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,
     registering_thread_runs,
+};
+pub use verbatim_win32::provider::{
+    console_host_of, is_top_level_window, outermost_nearest_window, parent_across_process_boundary,
+    parent_window, plain_windows_start, provider_process, raw_view_parent_window, served_by,
 };
 
 /// Releases the UIA objects this crate keeps for the calling thread: the

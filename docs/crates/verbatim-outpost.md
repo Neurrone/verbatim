@@ -114,7 +114,7 @@ receives the event's own element, judges and reads a UIA focus
   notification). A hung window or the console window's own element is
   dropped before any call; so is a focus whose nearest window's class is on
   NVDA's MSAA class list (`focus_read::MSAA_CLASS`), by the class verdict
-  every outpost's arbitrator gives (`arbitration::class_verdict`), unless a
+  every outpost's arbitrator gives (`verbatim_reader_rules::class::class_verdict`), unless a
   backend override forcing UIA holds for its application
   (`SetBackendOverride` with its `pid`, `FocusReader::forces_uia`); the
   listener makes no other backend verdict, no probe and no console check,
@@ -133,8 +133,8 @@ receives the event's own element, judges and reads a UIA focus
   whose window is unknown counting (`Readers::foreground_changed`). An
   opening UI Automation equates with it is judged as that focus, with its
   window; a failed comparison drops the opening. Then the acceptance test
-  against the foreground window (`outpost::acceptance`, shared with the
-  outposts) on the element's own or nearest window
+  against the foreground window (`verbatim_reader_rules::acceptance`,
+  shared with the outposts) on the element's own or nearest window
   (`verbatim_uia::nearest_window_handle`); the outpost does not test a UIA
   focus again.
 - The read (`verbatim_uia_rops::focus_ancestry_classic`) makes every call
@@ -232,8 +232,8 @@ receives the event's own element, judges and reads a UIA focus
   (`docs/uia-bugs.md`). A focus's or menu opening's read is also abandoned
   after `MOVED_ON_GRACE` (half a second) once the window in front belongs
   to its application on another UI thread
-  (`outpost::window::front_is_another_thread_of_its_application`, by
-  provider process, `verbatim_uia::provider_process`), as NVDA's watchdog
+  (`verbatim_win32::window::front_is_another_thread_of_its_application`,
+  by provider process, `verbatim_win32::provider::provider_process`), as NVDA's watchdog
   cancels a slow call. The window watched (`focus_read::WatchedRead`) is the
   cached handle or the nearest window once found (`WatchedRead::learn`), and
   the front is judged only with evidence: a foreground event from the
@@ -247,7 +247,7 @@ receives the event's own element, judges and reads a UIA focus
   (two) threads still in calls the application gets no new thread and its
   events wait, and the first that returns reads them; `READ_DEADLINE` after
   that every waiting and later event is dropped until a thread returns.
-  The watchdog sleeps on an alarm (`outpost::alarm::Alarm`, as an
+  The watchdog sleeps on an alarm (`verbatim_process::alarm::Alarm`, as an
   outpost's reducer does): a read sets its timer as it starts, to its
   deadline, or to the end of its grace when a foreground event came while
   it waited, and again to its bound once it has passed its checks, each
@@ -297,7 +297,7 @@ decision 11). UI Automation sometimes delivers an application's focus late
 or never while its `WinEvent` focus comes, so the outpost keeps, beside the
 verdict that dropped its own copy, one record: a focus copy it dropped
 because it judged the window UIA, with its window, top-level window
-(`window::top_level_of`), stamp, and the bound's due time, on one clock.
+(`verbatim_win32::window::top_level_of`), stamp, and the bound's due time, on one clock.
 
 - Opening. The worker opens it when it drops a focus copy, its own hook's
   or the listener's forwarded before the hook is in, because its verdict
@@ -383,8 +383,8 @@ change carries its application's name, read once per process and kept with
 the process held open (`outpost::ApplicationNames`).
 
 An outpost takes a window as its application's when the application serves
-its UIA (`window::served_by`, through `verbatim_uia::served_by`, local
-calls), and `read::focused_control_in` reads no focused element in another
+its UIA (`verbatim_win32::window::served_by`, through
+`verbatim_win32::provider::served_by`, local calls), and `read::focused_control_in` reads no focused element in another
 process's window (`read::control_window`). `GetFocusedElementBuildCache`
 reads the keyboard focus again itself and can return an element of the
 application the focus has just moved to
@@ -407,9 +407,9 @@ naming it, since any process can raise a `WinEvent` naming another's
 window, and the probe, or a console window's check by handle, would call
 into that process. The supervisor checks that a
 process it starts an outpost for serves the fact's window
-(`check_served_by` in `supervisor/owner.rs`; a debug build fails). The
-crate re-exports `provider_process` and `console_host_of` so Core routes a
-console client's focus-now query to its host.
+(`check_served_by` in `supervisor/owner.rs`; a debug build fails). Core
+routes a console client's focus-now query to its host through
+`verbatim_win32::provider`'s `provider_process` and `console_host_of`.
 
 A focus whose top-level window belongs to another process, as the Settings
 page inside `ApplicationFrameHost`'s frame, is read by the listener up to
@@ -470,11 +470,12 @@ from the event's observation, `UiaFocusRead::bound_us`; for an MSAA
 focus's walk and the gap's read, `read::walk_left`; `ENRICHMENT_BUDGET`
 for a focus-now answer) or its depth limit of 64 is completed by plain
 windows from its outermost element's nearest window, included. Whether a
-window can be read is the system's judgement (`window_unreadable`), which a
+window can be read is the system's judgement
+(`verbatim_win32::window::window_unreadable`), which a
 test that cannot wait five seconds for Windows to judge an application
 hung replaces (`Outpost::set_window_readability_reader` and
 `FocusReader::set_window_readability_reader`, each a
-`WindowReadabilityReader`).
+`verbatim_win32::window::WindowReadabilityReader`).
 
 ### Starting an outpost and asking for the focus
 
@@ -537,53 +538,11 @@ by their elements (`Scope::Subtrees`), with no connection by handle.
 
 ### The protocol
 
-The messages themselves, one enum per direction and role, their kinds,
-their merging and the types they carry, are `verbatim_model::protocol`'s
-([verbatim-model](verbatim-model.md), "The wire protocol"); this crate's
-`protocol` module re-exports none of them. It holds what needs the
-Windows crates: the framing below; `now_us`, the run's shared clock;
-`fact_of_win_event`, the fact an MSAA `WinEvent` makes, whichever hook
-took it; and `peek`, which reads a frame's kind from its first bytes
-(`message_kind`) as a `Peeked`, the variants the relay handles itself by
-name, so `outpost_frame` and `spare_frame` match it exhaustively and a test
-pins every variant's name.
-
-Each message is stamped as its write begins, by whichever thread writes
-it: `listener_written_at_us` on a listener's fact or menu end,
-`written_at_us` on an outpost's `Event`, `Reply`, or `Pong`; the listener
-adds `listener_handled_at_us`. verbatim.exe stamps its relay times on a
-routed fact or query as it writes it, and a ping or a hand-over notice to
-the listener with `sent_at_us`; the listener logs each hop at trace under
-`verbatim::stage`.
-
-Framing. Each message is one frame of `verbatim_process::transport`, a
-`Content-Length` header and compact JSON, through `write_message` and
-`read_message`, for any type that implements `Message` (`put_frame` and
-`from_parts`): the four direction enums, the outpost's with the raw
-section below.
-`write_message` writes the whole frame in one `WriteFile`,
-`encode_message` gives the bytes, `put_message` appends them to a sender's
-buffer, and `decode_message` parses a frame's `Parts`. A message that
-carries a terminal's text (an event with a `TerminalSnapshot`, or a reply
-with a `TerminalSnapshot`, `TerminalHistory`, or `TerminalFound`) has a raw
-section (the private `protocol::raw` module;
-`docs/design/communication.md`, section 4.2): each text is UTF-8 there and
-a range in the JSON, `"raw":[start,length]` in a `TerminalText` and
-`"text":[start,length]` for a history's or match's text, and colour runs
-are 16-byte records of four little-endian `u32`s (column, length,
-foreground, background), the JSON giving
-`"colours":{"raw":[start,length],"rows":[...]}` with each row's run count.
-The module converts while encoding, borrowing from the message, and back
-while decoding, validating text with `simdutf8`; the model's types know
-nothing of it. A range outside the section, invalid UTF-8, records that do
-not fill their range, a section longer or shorter than its ranges, or a
-section on any other message is a protocol error. For example, a history
-whose text is `abc` has a header with `Raw-Length: 0000000003`, a body whose
-outcome is
-`{"Done":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
-and then the bytes `abc`. `message_kind(body)` reads a frame's variant name
-from its first bytes without parsing the rest; the relay reads it on every
-outpost frame.
+The messages are `verbatim_model::protocol`'s, and the framing, the shared
+clock and `peek` are `verbatim_process::message`'s
+([verbatim-process](verbatim-process.md)); the fact a `WinEvent` makes,
+whichever hook took it, is `verbatim_ia2::fact_of_win_event`
+([verbatim-ia2](verbatim-ia2.md)).
 
 ### The arbitrator
 
@@ -600,11 +559,14 @@ its answer through its `arbitration::Judgement`, the request's context
 (`Arbitrator::record_probe` makes the same record for a test that probes
 by hand). No connection follows a probe
 (`docs/design/listener-without-connections.md`, decision 2). The listener
-makes no verdict; it skips a read only by `arbitration::class_verdict`,
-the class lists alone, from the same tables and code.
+makes no verdict; it skips a read only by
+`verbatim_reader_rules::class::class_verdict`, the class lists alone, from
+the same tables and code, which the arbitrator's own lists are built from.
 
-- `WindowClasses::of(hwnd)` reads the raw class, the class normalized as
-  NVDA does (`normalize_class_name`), and the root ancestor's class.
+- `verbatim_win32::window::window_classes(hwnd)` reads a window's
+  `WindowClasses` (`verbatim_reader_rules::class`): the raw class, the
+  class normalized as NVDA does (`normalize_class_name`), and the root
+  ancestor's class.
 - `post_probe_check` names NVDA's check before using a provider: a list
   view's Windows Forms origin, or a console's formatted text, read from
   the window. A provider that fails is recorded as excluded
@@ -641,7 +603,8 @@ the class lists alone, from the same tables and code.
   to decide its hook again (`Effect::Narrow`).
 - `lasting_verdict` answers only a verdict that lasts the window's
   lifetime.
-- `Clock`, `Arbitrator::set_clock`, and `Arbitrator::now` time the classic
+- `Clock` (`verbatim_process::clock`), `Arbitrator::set_clock`, and
+  `Arbitrator::now` time the classic
   walk budgets (`PATH_BUDGET`, `ENRICHMENT_BUDGET`, through
   `arbitration::time_limit`); `Outpost::set_clock` and
   `FocusReader::set_clock` set it for tests that count calls. The keeps'
@@ -649,8 +612,8 @@ the class lists alone, from the same tables and code.
   (`Arbitrator::set_observation_clock`), the run's shared clock, which
   `Outpost::set_observation_clock` sets, with the stamps of the outpost's
   own events, for a test that moves that time on.
-- Both class lists are lifted from NVDA and pinned by unit tests naming
-  their sources (`badUIAWindowClassNames` and `goodUIAWindowClassNames` in
+- Both class lists, `verbatim_reader_rules::class`'s, are lifted from
+  NVDA and pinned by unit tests there naming their sources (`badUIAWindowClassNames` and `goodUIAWindowClassNames` in
   `nvda/source/UIAHandler/__init__.py`, and `isGoodUIAWindow` in
   `nvda/source/appModules/explorer.py`), so an NVDA sync is a diff.
 
@@ -661,23 +624,23 @@ the class lists alone, from the same tables and code.
 - `run_pipe(pipe_in, pipe_out, target_pid, options)` runs one on Core's
   inherited overlapped pipes, watching `target_pid`, or for `None` as a
   spare. `Outpost::assign` sets the application once: the clock, the hook on
-  the `WinEvent` thread (`EventThread::hook`), and `Ready`. When the hook
+  the `WinEvent` thread (`verbatim_ia2::event_thread::EventThread::hook`), and `Ready`. When the hook
   fails it reports a `Fault`, sends no `Ready`, and exits with code 1
   (`docs/design/focus-pipeline.md`, section 19.8). It serves until
   `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
   thread waiting on the target sends `TargetExited`.
 - `run_attach` watches a pid, asks for its focus, and prints each outbound
   message as the model's JSON on stdout: the development mode.
-- `OutpostOptions::remote_operations` says whether a UIA focus's ancestry
+- `OutpostOptions::remote_operations` (`verbatim_process::arguments`) says whether a UIA focus's ancestry
   may be read with a remote operation (on; `--classic-uia` turns it off).
 - For tests in their own process: `Outpost::new` and its siblings watch
   from construction and panic when the hook fails, with a sender thread in
   place of the I/O thread; `with_options`; `with_focused_element_reader` (a
   `FocusedElementReader` in place of `Uia::focused`);
-  `set_foreground_reader` (a `ForegroundReader` in place of
+  `set_foreground_reader` (a `verbatim_win32::window::ForegroundReader` in place of
   `GetForegroundWindow`, for acceptance and the window a focus entered);
   `set_focus_window_reader` (a `FocusWindowReader` for focus-now and the
-  gap's read); `set_observation_clock` (an `arbitration::ObservationClock`
+  gap's read); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
   for the outpost's own events' stamps and its verdicts' keeps); and
   `set_gap_timer` (a `GapTimer` for the gap record's bound, which
   `gap_bound_reacher` reaches); and `without_listener`, for an outpost
@@ -721,7 +684,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   walk's bound) reach it through `reducer::Locals`. `cargo xtask ci`
   reads every file of its directory by the pure rule
   (`xtask/src/ownership.rs`). The shell waits on the mailbox's alarm
-  (`outpost/alarm.rs`): an event set by an append while it waits, and a
+  (`verbatim_process::alarm::Alarm`): an event set by an append while it waits, and a
   high-resolution timer set to the reducer's next timer, so the watchdog
   thread and the gap record's threadpool timer are gone, and each timer
   costs one wake. Every lock its thread takes is a short hold with no
@@ -819,9 +782,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   application, one program at a time, so events and replies leave in
   planned order but for menu openings, a run's older focuses, and a caret
   key's answer. Before any call a program applies NVDA's acceptance test
-  (`outpost::acceptance`; `docs/parity/focus-events.md`, "Event
-  acceptance"): `accepts_event`, a pure function of the event, its window,
-  `WindowQueries` (local calls in `SystemWindows`), and `RequestedEvents`;
+  (`verbatim_reader_rules::acceptance`; `docs/parity/focus-events.md`,
+  "Event acceptance"): `accepts_event`, a pure function of the event, its
+  window, `WindowQueries` (local calls in
+  `verbatim_win32::window::SystemWindows`), and `RequestedEvents`;
   its `foreground_relation` goes in the window facts
   (`verbatim_core::focus_rules::ForegroundRelation`). It takes the backend
   crates' per-thread call counts into each published `EventTiming`; a
@@ -833,7 +797,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   2 s. After half a second on a window it also abandons a worker once the
   user has moved to another UI thread of the same provider process,
   judged when the grace ends and at each foreground fact
-  (`window::front_is_another_thread_of_its_application`). It publishes an
+  (`verbatim_win32::window::front_is_another_thread_of_its_application`).
+  It publishes an
   armed walk first, marks the generation dead in the worker's charge
   (`worker::Charge`), answers the query the program was running
   `Abandoned`, and starts a replacement. A returning abandoned worker has
@@ -946,13 +911,11 @@ and the inherited pipe handles.
 
 ### Ignored processes
 
-`supervisor::IgnoredProcesses` (`IGNORE_PIDS_ENV`, `VERBATIM_IGNORE_PIDS`;
-`from_env`, `hold`, `contains`, `parse_pids`) are processes Verbatim
-ignores, named by the end-to-end harness: its own Windows Terminal. Each is
-held open; no outpost starts for one (`ensure_spawned` answers
-`NotWatched`), none of its facts is routed, and the listener, given
-`--ignore-pids`, drops them before queuing. `Supervisor::is_ignored` lets
-the app pass them over.
+The processes Verbatim ignores are `verbatim_process::held::IgnoredProcesses`
+([verbatim-process](verbatim-process.md)): no outpost starts for one
+(`ensure_spawned` answers `NotWatched`), none of its facts is routed, and
+the listener, given `--ignore-pids`, drops them before queuing.
+`Supervisor::is_ignored` lets the app pass them over.
 
 ### The focus listener
 
@@ -992,8 +955,8 @@ section 6.3).
   that a later end sets again; a callback that runs early sends nothing.
 - For every foreground event, whatever its process, the listener sends
   `ForegroundWindow` (window, the event's thread, whether a console host
-  window, integrity level by `integrity::process_integrity`;
-  `integrity::own_integrity` is verbatim.exe's), only the newest waiting
+  window, integrity level by `verbatim_win32::integrity::process_integrity`;
+  `verbatim_win32::integrity::own_integrity` is verbatim.exe's), only the newest waiting
   (`FactKey::ForegroundWindow`), and once its hooks are in, the window then
   in front (`NUDGE_FOREGROUND_START`). The console's events stay unhooked
   (`verbatim_ia2::suspend_kinds`) unless it starts with a console window in
@@ -1005,7 +968,7 @@ section 6.3).
   with a `pid` (an override forcing UIA, after which that application's
   readers skip nothing by class), `IdleQuery`, and `Shutdown`, and ignores
   the rest. A replacement gets `--hooks-in`
-  (`listener::parse_hooks_in`) and does without each thread's last focus,
+  (`verbatim_process::arguments::parse_hooks_in`) and does without each thread's last focus,
   at the cost of one fuller ancestor read per application. It makes no
   remote operation, so takes no `--classic-uia`.
 - `listener::capture` is what the notification callback captures, and
@@ -1072,7 +1035,7 @@ How it works:
   frame in the pass that read it: a listener's frame decodes as a
   `ListenerToCore`, matched exhaustively, and its fact is routed and
   written to its outpost there and then; an outpost's frame is read only
-  for its kind (`protocol::peek`), a pong and `TargetExited` handled,
+  for its kind (`verbatim_process::message::peek`), a pong and `TargetExited` handled,
   `Ready` handled and passed on, anything else handed on whole
   (`transport::FrameBody::Owned` or a copy). Helpers report through `relay::Mailbox`. It never blocks:
   launches, retirements, and hang checks run on threads of their own.
@@ -1103,7 +1066,8 @@ How it works:
 - Facts for a starting outpost are held, merged by the same rule, and
   released on `Ready` (`HeldFacts`); then the listener gets `HookInstalled`,
   and later `HookRemoved`, through `Owner::tell_listener`.
-- Each application is identified by a process held open (`process::Target`)
+- Each application is identified by a process held open
+  (`verbatim_process::held::Target`)
   while it has a record. Nothing is started for an application that exited
   or cannot be opened; the app hears `NotWatched`.
 - An outpost whose pipe closes is ended once everything it wrote is handed
@@ -1226,7 +1190,7 @@ unredirected, never unspawned.
   events are unhooked (`narrowing::NARROWED`), hooked again once the focus,
   a menu opening, or the foreground is in an MSAA or undecided window.
   Those windows come from the hook's own events, or, until it delivers one,
-  from nudges for routed facts (`event_thread::Nudger`); the shell nudges
+  from nudges for routed facts (`verbatim_ia2::event_thread::Nudger`); the shell nudges
   when the reducer records a UIA verdict (`Effect::Narrow`).
 - Trace ids are minted when an event arrives. `WindowFacts` (`window_facts`,
   local calls) give the top-level window and root owner, topmost style,

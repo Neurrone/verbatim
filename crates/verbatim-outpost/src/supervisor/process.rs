@@ -4,15 +4,10 @@
 //! its decisions.
 
 use std::io;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::io::OwnedHandle;
 use std::path::Path;
 
-use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0};
-use windows::Win32::System::Threading::{
-    GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW, WaitForSingleObject,
-};
-use windows::core::PWSTR;
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
 use verbatim_model::Pid;
 use verbatim_process::overlapped::{End, Flow, pipe};
@@ -70,18 +65,21 @@ pub(super) struct Launched {
 pub(super) fn launch(
     exe_path: &Path,
     role: Role,
-    options: crate::OutpostOptions,
+    options: verbatim_process::arguments::OutpostOptions,
     (ignored, hooks_in): (&str, &str),
 ) -> io::Result<(Launched, ChildPipes)> {
     let ignore = if ignored.is_empty() {
         String::new()
     } else {
-        format!(" {} {ignored}", super::ignored::IGNORE_PIDS_ARG)
+        format!(
+            " {} {ignored}",
+            verbatim_process::arguments::IGNORE_PIDS_ARG
+        )
     };
     let hooked = if hooks_in.is_empty() {
         String::new()
     } else {
-        format!(" {} {hooks_in}", crate::listener::HOOKS_IN_ARG)
+        format!(" {} {hooks_in}", verbatim_process::arguments::HOOKS_IN_ARG)
     };
     let classic_uia = if options.remote_operations {
         ""
@@ -142,103 +140,12 @@ pub(super) fn launch(
     ))
 }
 
-/// A target application's process, held open for as long as the supervisor
-/// has an outpost for it or remembers its crashes. Windows never gives a
-/// process's id to another process while a handle to it is open, so the
-/// pid the supervisor knows the target by, and passes to its outpost, names
-/// this process and no other for as long as this is held. An outpost holds
-/// the processes it names applications by the same way.
-#[derive(Debug)]
-pub(crate) struct Target {
-    process: OwnedHandle,
-}
-
-/// Why a target was not opened.
-#[derive(Debug)]
-pub(crate) enum NotHeld {
-    /// No process has that id, or the one that has it has exited.
-    Exited,
-    /// The process could not be opened, so it cannot be held, and an
-    /// outpost for it could not tell its exit from another process's start.
-    Denied(windows::core::Error),
-}
-
-impl std::fmt::Display for NotHeld {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NotHeld::Exited => f.write_str("the process has exited"),
-            NotHeld::Denied(error) => write!(f, "the process cannot be opened: {error}"),
-        }
-    }
-}
-
-impl Target {
-    /// Opens the process `pid` names now, if it is running. It is opened to
-    /// be waited on, or, when that is refused, for limited queries only;
-    /// either right is enough to hold it and to tell whether it has exited.
-    pub(crate) fn open(pid: Pid) -> Result<Self, NotHeld> {
-        let mut opened = Err(NotHeld::Exited);
-        for rights in [
-            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_QUERY_LIMITED_INFORMATION,
-        ] {
-            // SAFETY: OpenProcess with these rights fails safely on an
-            // invalid or inaccessible pid; a handle it returns is owned
-            // below.
-            match unsafe { OpenProcess(rights, false, pid.0) } {
-                Ok(handle) => {
-                    opened = Ok(handle);
-                    break;
-                }
-                Err(error) if error.code() == ERROR_INVALID_PARAMETER.to_hresult() => {
-                    return Err(NotHeld::Exited);
-                }
-                Err(error) => opened = Err(NotHeld::Denied(error)),
-            }
-        }
-        let handle = opened?;
-        // SAFETY: the handle was just returned by OpenProcess, is valid,
-        // and is owned by nothing else.
-        let process = unsafe { OwnedHandle::from_raw_handle(handle.0 as RawHandle) };
-        let target = Self { process };
-        if target.has_exited() {
-            return Err(NotHeld::Exited);
-        }
-        Ok(target)
-    }
-
-    /// The process's executable name without its extension, lower-cased,
-    /// as [`image_stem`] reads it. `None` when it cannot be read.
-    pub(crate) fn image_stem(&self) -> Option<String> {
-        stem_of(HANDLE(self.process.as_raw_handle()))
-    }
-
-    /// Whether the process has exited.
-    pub(crate) fn has_exited(&self) -> bool {
-        let handle = HANDLE(self.process.as_raw_handle());
-        let mut exit_code = 0u32;
-        // SAFETY: the handle is open with at least limited query access;
-        // `exit_code` is a local.
-        let running = unsafe { GetExitCodeProcess(handle, &raw mut exit_code) }.is_ok()
-            && exit_code == STILL_ACTIVE.0.cast_unsigned();
-        if !running {
-            return true;
-        }
-        // A process can end with STILL_ACTIVE as its exit code; a handle that
-        // can be waited on tells for certain.
-        // SAFETY: a zero-timeout wait on an open handle; one opened without
-        // SYNCHRONIZE fails the wait, and the exit code above stands.
-        let waited = unsafe { WaitForSingleObject(handle, 0) };
-        waited == WAIT_OBJECT_0
-    }
-}
-
 /// Whether any visible top-level window of `pid` is reported hung by the
 /// system (`IsHungAppWindow`, a local call). While it is, abandoned workers in
 /// that application's outpost are expected, and a replacement outpost would
 /// hang the same way.
 pub(super) fn application_is_hung(pid: Pid) -> bool {
-    use crate::outpost::window::{top_level_windows, window_is_hung, window_is_visible};
+    use verbatim_win32::window::{top_level_windows, window_is_hung, window_is_visible};
     top_level_windows(pid.0)
         .into_iter()
         .any(|window| window_is_visible(window) && window_is_hung(window))
@@ -250,31 +157,8 @@ fn image_stem(pid: Pid) -> Option<String> {
     // SAFETY: OpenProcess with a query-only right fails safely; the handle
     // is closed below.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) }.ok()?;
-    let stem = stem_of(handle);
+    let stem = verbatim_process::held::stem_of(handle);
     // SAFETY: the handle opened above, closed once.
     let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
     stem
-}
-
-/// The executable name without its extension, lower-cased, of the process
-/// `handle`, open with at least limited query access.
-fn stem_of(handle: HANDLE) -> Option<String> {
-    let mut buffer = [0u16; 1024];
-    let mut length = u32::try_from(buffer.len()).ok()?;
-    // SAFETY: `handle` is open with query access; the buffer outlives the
-    // call, which writes at most `length` units.
-    unsafe {
-        QueryFullProcessImageNameW(
-            handle,
-            PROCESS_NAME_WIN32,
-            PWSTR(buffer.as_mut_ptr()),
-            &raw mut length,
-        )
-    }
-    .ok()?;
-    let path = String::from_utf16_lossy(&buffer[..usize::try_from(length).ok()?]);
-    Path::new(&path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(str::to_lowercase)
 }

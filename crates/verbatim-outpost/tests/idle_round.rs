@@ -37,9 +37,9 @@ use verbatim_model::protocol::{
     OutpostToCore,
 };
 use verbatim_model::{OutpostId, Pid, TraceId};
-use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::message::{read_message, write_message};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
 /// The application's argument.

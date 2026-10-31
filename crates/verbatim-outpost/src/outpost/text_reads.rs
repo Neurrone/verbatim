@@ -40,12 +40,14 @@ use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
 use verbatim_uia_rops::Path;
 
-use crate::arbitration::{normalize_class_name, window_class_name};
 use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{
     self, CaretSignal, Checked, LastSelection, NodeTextCopy, Slot, TextError, Watched,
 };
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_reader_rules::class::normalize_class_name;
+use verbatim_win32::window::window_class_name;
 
 use super::commit::Effects;
 use super::reducer::{AnswerCut, NodeAnchors, RangeKey, ReportCut, TextChange};
@@ -557,9 +559,6 @@ pub(super) fn console_focus(context: &RequestContext<'_>, node_id: NodeId) -> bo
             .tracked_window()
             .is_some_and(|hwnd| window_class_name(hwnd) == CONSOLE_WINDOW_CLASS)
 }
-
-/// The console host's window class.
-pub(crate) const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 
 /// Whether a focused node may have text, and so gets a caret report:
 /// through UIA, an edit field, a document, or a terminal (whose text
@@ -1188,7 +1187,7 @@ pub(super) fn terminal_read(
     };
     // The caret is stamped as read when the round trip began: a caret event
     // observed while it was in flight may report a move it did not see.
-    let started_us = crate::protocol::now_us();
+    let started_us = verbatim_process::clock::now_us();
     let read = crate::terminal::read(
         uia,
         (source.element(), source.pattern()),

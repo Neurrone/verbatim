@@ -44,8 +44,9 @@ use verbatim_model::{
     NodeSnapshot, NormalizedEvent, OutpostId, Pid, PropertyChange, QueryKind, Role, SegmentContent,
     State, StateSet, TextFormat, TraceId, WindowHandle,
 };
+use verbatim_outpost::Heard;
 use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
-use verbatim_outpost::{Heard, OutpostOptions};
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Cached, ListenerEvent, ListenerSelection, Part, RAW_PROBE_TIMEOUT_MS, Registration,
     Subscription, Uia,

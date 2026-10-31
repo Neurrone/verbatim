@@ -7,9 +7,13 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+crossbeam-channel.workspace = true
 tracing.workspace = true
 verbatim-model.workspace = true
+verbatim-process.workspace = true
+verbatim-reader-rules.workspace = true
 verbatim-text.workspace = true
+verbatim-win32.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 

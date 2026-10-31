@@ -306,7 +306,7 @@ impl Terminal<'_> {
     /// Appends the message's frame to `buffer`: the body, then the raw
     /// section, in one buffer, so the frame is still one write.
     pub(super) fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
-        verbatim_process::transport::put_frame_with_raw(
+        crate::transport::put_frame_with_raw(
             buffer,
             |body| serde_json::to_writer(body, &self.wire).map_err(io::Error::other),
             |raw| {
@@ -535,7 +535,7 @@ fn invalid(message: &str) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_process::transport::{Parts, read_frame};
+    use crate::transport::{Parts, read_frame};
 
     use verbatim_model::{TextAnchor, TextChunk, TextUnit, WindowHandle};
 

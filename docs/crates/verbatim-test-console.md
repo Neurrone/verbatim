@@ -1,7 +1,7 @@
 # verbatim-test-console
 
 A console the tests start, for the tests of a console window's provider
-process in `verbatim-uia` and `verbatim-outpost`
+process in `verbatim-win32` and `verbatim-outpost`
 (`docs/design/listener-without-connections.md`, section 4.3). It is a
 dev-dependency only: kept out of the crates it serves, so that their
 tests and their builds compile them once, with the same features.

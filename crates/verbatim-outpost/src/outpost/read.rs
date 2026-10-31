@@ -27,18 +27,21 @@ use verbatim_core::focus_rules::{HeldNode, already_entered};
 
 use crate::dialog_text::is_dialog;
 
-use crate::arbitration::{time_limit, window_class_name};
+use crate::arbitration::time_limit;
 use crate::gates;
-use crate::protocol::now_us;
 use verbatim_model::protocol::{DumpedTree, FocusNow, FocusedControl};
+use verbatim_process::clock::now_us;
+use verbatim_win32::window::window_class_name;
 
-use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, foreground_window_of, main_window_of, parent_window, served_by, top_level_of,
-    window_belongs_to_hidden_frame, window_exists, window_facts, window_is_hidden_frame,
-    window_style, window_text,
+    foreground_window_of, main_window_of, window_facts, window_style, window_text,
 };
 use super::{Context, RequestContext};
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_win32::window::{
+    desktop_window, parent, served_by, top_level_of, window_belongs_to_hidden_frame, window_exists,
+    window_is_hidden_frame,
+};
 
 /// Depth cap for a tree dump (the root is depth 0).
 const MAX_DUMP_DEPTH: u32 = 64;
@@ -97,7 +100,7 @@ pub(super) type WalkProgress<'a> = Option<WalkTold<'a>>;
 
 /// How much of a focus walk's bound is left, the walk's focus in window
 /// `window` observed at `observed_at_us` on the run's shared clock: the
-/// bound of the design's Terms, [`MOVED_ON_GRACE`](super::window::MOVED_ON_GRACE)
+/// bound of the design's Terms, [`MOVED_ON_GRACE`](verbatim_reader_rules::MOVED_ON_GRACE)
 /// when the focus's top-level window is not that of the focus this outpost
 /// expects Core to hold, the one before it (`held::Held::expected`), and
 /// [`ENRICHMENT_BUDGET`] otherwise, less the time since the observation.
@@ -112,7 +115,7 @@ pub(super) fn walk_left(
     let bound = if top_level != 0 && previous == Some(top_level) {
         ENRICHMENT_BUDGET
     } else {
-        super::window::MOVED_ON_GRACE
+        verbatim_reader_rules::MOVED_ON_GRACE
     };
     let waited = context.observed_now().saturating_sub(observed_at_us);
     bound.saturating_sub(std::time::Duration::from_micros(waited))
@@ -144,11 +147,11 @@ impl Outermost {
             self.window.set(hwnd);
             self.own.set(true);
         } else if self.own.get() {
-            self.window.set(parent_window(self.window.get()));
+            self.window.set(parent(self.window.get()));
             self.own.set(false);
         }
         if self.own.get() {
-            parent_window(self.window.get())
+            parent(self.window.get())
         } else {
             self.window.get()
         }
@@ -684,11 +687,7 @@ fn plain_windows_above(
     own: isize,
     nearest: isize,
 ) -> Vec<NodeSnapshot> {
-    let from = if own == 0 {
-        nearest
-    } else {
-        parent_window(own)
-    };
+    let from = if own == 0 { nearest } else { parent(own) };
     if own == 0 && nearest == 0 {
         tracing::warn!("a focus's walk failed with no window known; it is reported with no chain");
     }
@@ -712,7 +711,7 @@ pub(super) fn plain_windows_from(context: &RequestContext<'_>, hwnd: isize) -> V
         } else {
             plain_window(context, current)
         });
-        current = parent_window(current);
+        current = parent(current);
     }
     windows.reverse();
     windows
@@ -757,7 +756,7 @@ fn window_onward(
             break;
         }
         passed.push(plain_window(context, current));
-        current = parent_window(current);
+        current = parent(current);
     }
     tracing::debug!(
         hwnd,
@@ -1530,7 +1529,7 @@ fn dialog_text_of(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<S
 /// window this outpost would connect to
 /// (`docs/design/listener-without-connections.md`, section 4.3); and when
 /// the focus window is no longer a window. A focus window stood in for by
-/// a ghost window, or hung (`window::event_window_unreadable`, local calls), is
+/// a ghost window, or hung (`verbatim_win32::window::event_window_unreadable`, local calls), is
 /// answered as a plain window, with the plain windows above it, and nothing
 /// is asked of the application that does not answer: a deliberate
 /// difference, since NVDA says nothing then (Dickson, 2026-10-29). Returned
@@ -1569,7 +1568,7 @@ pub(super) fn focused_control_in(
             hung,
             FocusedControl {
                 node: plain_window(context, hung),
-                ancestors: plain_windows_from(context, parent_window(hung)),
+                ancestors: plain_windows_from(context, parent(hung)),
                 selected_child: None,
                 window: Some(window_facts(hung)),
                 text: None,
@@ -2321,11 +2320,11 @@ mod tests {
     };
 
     use super::super::reducer::{Evidence, Focus, Held};
-    use super::super::window::window_owner;
     use super::{
         CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before, splice_onto,
         window_read_without_its_handle,
     };
+    use verbatim_win32::window::window_owner;
 
     fn node(id: u64) -> NodeSnapshot {
         NodeSnapshot {

@@ -40,8 +40,6 @@
 //! never reported. A node reported later, or named by a request still
 //! running, is kept.
 
-pub(crate) mod acceptance;
-pub(crate) mod alarm;
 mod bound;
 mod commit;
 mod focus_path;
@@ -84,14 +82,18 @@ use verbatim_uia::{
     Subscription, TextEvent, Uia,
 };
 
-use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
-use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
-use crate::protocol::{decode_message, now_us, read_message};
-use crate::supervisor::Target;
+use crate::arbitration::{Arbitrator, EventWindows};
+use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, UiaSnapshotFact,
     Urgent, WinEventStamp,
 };
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::clock::now_us;
+use verbatim_process::held::Target;
+use verbatim_process::message::{decode_message, read_message};
+use verbatim_reader_rules::acceptance;
+use verbatim_win32::window::{ForegroundReader, WindowReadabilityReader};
 
 use commit::{Committed, Effects};
 use outbound::Outbound;
@@ -197,11 +199,11 @@ pub(crate) struct Context {
     /// events' observations with, and its arbitrator its verdicts' keeps
     /// by: the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
-    observation: OnceLock<crate::arbitration::ObservationClock>,
+    observation: OnceLock<verbatim_process::clock::ObservationClock>,
     /// The processes Verbatim ignores, which the outpost inherits through
-    /// [`IGNORE_PIDS_ENV`](crate::supervisor::IGNORE_PIDS_ENV): a focus in
+    /// [`IGNORE_PIDS_ENV`](verbatim_process::held::IGNORE_PIDS_ENV): a focus in
     /// one's window is not reported.
-    ignored: crate::supervisor::IgnoredProcesses,
+    ignored: verbatim_process::held::IgnoredProcesses,
     /// The client on a thread of its own for the worker's operations with a
     /// deadline of their own: a dialog's text.
     bounded: verbatim_uia::BoundedClient,
@@ -281,32 +283,11 @@ pub enum Heard {
 /// Told of each event an outpost takes in ([`Outpost::observe_heard`]).
 pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 
-/// Reads the foreground window's handle. An outpost reads the system's
-/// (`GetForegroundWindow`); a test whose application cannot take the
-/// foreground on the desktop it runs on supplies its own
-/// ([`Outpost::set_foreground_reader`]).
-pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
-
 /// Reads the handle of the window with the keyboard focus, `None` when
 /// there is none. An outpost reads the system's (`GetGUIThreadInfo`); a
 /// test whose application cannot take the keyboard focus on the desktop it
 /// runs on supplies its own ([`Outpost::set_focus_window_reader`]).
 pub type FocusWindowReader = Arc<dyn Fn() -> Option<isize> + Send + Sync>;
-
-/// Why a window cannot be read, `None` when it can: it is no window, a
-/// ghost window stands in for it, or its application is hung. An outpost
-/// asks the system ([`window::event_window_unreadable`]); a test that cannot
-/// wait for Windows to judge an application hung supplies its own
-/// ([`Outpost::set_window_readability_reader`]).
-pub type WindowReadabilityReader = Arc<dyn Fn(isize) -> Option<&'static str> + Send + Sync>;
-
-/// Why window `hwnd` cannot be read, by the system's judgement, `None` when
-/// it can: what an outpost's [`WindowReadabilityReader`] answers unless a
-/// test supplies its own. Local calls.
-#[must_use]
-pub fn window_unreadable(hwnd: isize) -> Option<&'static str> {
-    window::event_window_unreadable(hwnd)
-}
 
 /// Reads the UIA element that has the keyboard focus, filled by the given
 /// request, with the given client, on the worker's thread, for a
@@ -318,25 +299,6 @@ pub fn window_unreadable(hwnd: isize) -> Option<&'static str> {
 /// ([`Outpost::with_focused_element_reader`]).
 pub type FocusedElementReader =
     Arc<dyn Fn(&Uia, &Request<Node>) -> windows::core::Result<Cached<Node>> + Send + Sync>;
-
-/// How an outpost reads its application, fixed for its whole life. The
-/// supervisor passes it on each outpost's command line, from
-/// `settings.toml`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OutpostOptions {
-    /// Whether a UIA focus's ancestors are read with a remote operation
-    /// where the window's provider supports one (`uia.remote_operations`
-    /// in `settings.toml`, on by default); off forces the classic walk.
-    pub remote_operations: bool,
-}
-
-impl Default for OutpostOptions {
-    fn default() -> Self {
-        Self {
-            remote_operations: true,
-        }
-    }
-}
 
 /// The outpost's shared state as one request sees it: the store's handle
 /// for the request ([`store::Nodes`]), carrying its mint tag, that of a
@@ -701,7 +663,7 @@ impl Context {
 
     /// The outpost's clock ([`Outpost::set_clock`]), which its classic
     /// walks measure their time budgets by.
-    fn clock(&self) -> crate::arbitration::Clock {
+    fn clock(&self) -> verbatim_process::clock::Clock {
         self.arbitrator().clock()
     }
 
@@ -745,7 +707,8 @@ impl Context {
     /// Verbatim ignores. Local calls, made only while one is ignored.
     fn in_ignored_window(&self, hwnd: isize) -> bool {
         !self.ignored.is_empty() && {
-            let (_, pid) = window::window_owner(window::top_level_of(hwnd));
+            let (_, pid) =
+                verbatim_win32::window::window_owner(verbatim_win32::window::top_level_of(hwnd));
             self.ignored.contains(verbatim_model::Pid(pid))
         }
     }
@@ -790,14 +753,15 @@ impl Context {
     fn tries_remote(&self, hwnd: Option<isize>) -> bool {
         self.remote_operations
             && hwnd.is_none_or(|hwnd| {
-                self.classic_windows().get(&hwnd) != Some(&window::window_thread(hwnd))
+                self.classic_windows().get(&hwnd)
+                    != Some(&verbatim_win32::window::window_thread(hwnd))
             })
     }
 
     /// Reads `hwnd`'s UIA elements the classic way from now on.
     fn read_classically(&self, hwnd: isize) {
         self.classic_windows()
-            .insert(hwnd, window::window_thread(hwnd));
+            .insert(hwnd, verbatim_win32::window::window_thread(hwnd));
     }
 
     /// Forgets what was learned about a destroyed window, whose handle may
@@ -921,8 +885,8 @@ impl Context {
                     || self.mailbox.verdicts(),
                     self.override_changes.load(Ordering::Acquire),
                 ),
-                (hwnd, window::window_thread(hwnd)),
-                WindowClasses::of,
+                (hwnd, verbatim_win32::window::window_thread(hwnd)),
+                verbatim_win32::window::window_classes,
             ) {
                 self.tell_heard(Heard::Msaa(kind));
                 return;
@@ -941,8 +905,7 @@ impl Context {
             );
             return;
         }
-        let Some(fact) = crate::protocol::fact_of_win_event(kind, (hwnd, id_object, id_child))
-        else {
+        let Some(fact) = verbatim_ia2::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
             return;
         };
         let stamp = WinEventStamp { thread, time };
@@ -1160,16 +1123,18 @@ impl Outpost {
             store: store::Store::new(),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
-            ignored: crate::supervisor::IgnoredProcesses::from_env(),
+            ignored: verbatim_process::held::IgnoredProcesses::from_env(),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             fetches: Mutex::new(Fetches::default()),
             focused_element,
-            foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
-            focus_window: Mutex::new(Arc::new(window::focus_window)),
-            window_readability: Mutex::new(Arc::new(window::event_window_unreadable)),
+            foreground: Mutex::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
+            focus_window: Mutex::new(Arc::new(verbatim_win32::window::focus_window)),
+            window_readability: Mutex::new(Arc::new(
+                verbatim_win32::window::event_window_unreadable,
+            )),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
@@ -1425,7 +1390,7 @@ impl Outpost {
     /// from `clock` from now on, in place of the system's
     /// ([`Arbitrator::set_clock`]): a test that counts an operation's calls
     /// decides when a walk's time is up, however long its calls take.
-    pub fn set_clock(&self, clock: crate::arbitration::Clock) {
+    pub fn set_clock(&self, clock: verbatim_process::clock::Clock) {
         self.context.arbitrator().set_clock(clock);
     }
 
@@ -1462,7 +1427,7 @@ impl Outpost {
     /// provider runs out and its probe is made again, by moving that time
     /// on, since a verdict is compared with the observation of the event it
     /// judges. Set once; a later call changes nothing.
-    pub fn set_observation_clock(&self, clock: crate::arbitration::ObservationClock) {
+    pub fn set_observation_clock(&self, clock: verbatim_process::clock::ObservationClock) {
         self.context
             .arbitrator()
             .set_observation_clock(Arc::clone(&clock));
@@ -1897,7 +1862,7 @@ fn read_answer(item: &Item) -> Option<GapAnswer> {
     } else {
         read.window.unwrap_or(0)
     };
-    let top = (window != 0).then(|| window::top_level_of(window));
+    let top = (window != 0).then(|| verbatim_win32::window::top_level_of(window));
     Some(GapAnswer::Answers(top.filter(|&top| top != 0)))
 }
 
@@ -2091,7 +2056,7 @@ mod shutdown_tests {
     use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 
     use super::Outpost;
-    use crate::protocol::read_message;
+    use verbatim_process::message::read_message;
 
     /// An outpost of this process watching this process, its messages read
     /// and dropped on a thread of their own, so its writes complete.

@@ -16,8 +16,8 @@ use verbatim_text::terminal_reading::{Settings, Speech, Step, TerminalReader};
 use verbatim_text::terminal_rows::{Read, ReadText};
 
 use super::Terminal;
-use crate::protocol::{decode_message, encode_message, put_message};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
+use verbatim_process::message::{decode_message, encode_message, put_message};
 
 /// The simulated terminal read as the outpost reads it, each read the
 /// outpost sends given to the reading rules.

@@ -42,11 +42,10 @@ use verbatim_model::protocol::{
     OutpostToCore,
 };
 use verbatim_model::{OutpostId, Pid, TraceId};
-use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{read_message, write_message};
-use verbatim_outpost::supervisor::{
-    EndReason, IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor,
-};
+use verbatim_outpost::supervisor::{EndReason, OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::held::IgnoredProcesses;
+use verbatim_process::message::{read_message, write_message};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{

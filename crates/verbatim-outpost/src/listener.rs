@@ -149,21 +149,22 @@ use verbatim_uia::{
     Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Scope, Subscription,
 };
 
-use crate::arbitration::window_class_name;
-use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
     FocusEvent, FocusReader, Judged, Meta, READ_DEADLINE, Readers, Reading, WatchedRead, arrival_of,
 };
 use crate::foreground::{ForegroundWatch, Front, Step};
-use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::MOVED_ON_GRACE;
-use crate::protocol::{decode_message, now_us, put_message};
 use crate::read_schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
-use crate::supervisor::IgnoredProcesses;
+use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
     CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore, Responder,
     UiaSnapshotFact, WinEventStamp, hop_us,
 };
+use verbatim_process::clock::now_us;
+use verbatim_process::held::IgnoredProcesses;
+use verbatim_process::message::{decode_message, put_message};
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_reader_rules::MOVED_ON_GRACE;
+use verbatim_win32::window::window_class_name;
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
 /// before telling Core, so a focus event the end causes can arrive first:
@@ -600,7 +601,7 @@ impl Outgoing {
             window: front.window,
             thread: front.thread,
             console: front.console,
-            integrity: crate::integrity::process_integrity(owner),
+            integrity: verbatim_win32::integrity::process_integrity(owner),
         };
         sent(&self.sender.send(Sent::Fact(
             Some((Pid(0), FactKey::ForegroundWindow)),
@@ -1588,7 +1589,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
     // Every kind the listener subscribes to (LISTENER_SUBSCRIPTIONS) that
     // reaches here is a fact: the console's and the shell's foreground
     // events are handled before this.
-    let Some(fact) = crate::protocol::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
+    let Some(fact) = verbatim_ia2::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
         return (console, None);
     };
     outgoing.fact(
@@ -1619,7 +1620,7 @@ fn front_now() -> Option<Front> {
     }
     Some(Front {
         window,
-        thread: crate::outpost::window::window_owner(window).0,
+        thread: verbatim_win32::window::window_owner(window).0,
         console: window_class_name(window) == CONSOLE_WINDOW_CLASS,
     })
 }
@@ -1650,7 +1651,7 @@ fn foreground_step(outgoing: &Outgoing, step: Step) {
 
 /// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.
 fn window_pid(hwnd: isize) -> u32 {
-    crate::outpost::window::window_owner(hwnd).1
+    verbatim_win32::window::window_owner(hwnd).1
 }
 
 /// The process whose outpost a `WinEvent` goes to, for a window of class
@@ -1767,32 +1768,6 @@ pub fn run_listener(
     ended
 }
 
-/// The command-line option that tells a listener the applications whose
-/// outposts have their own hooks in.
-pub(crate) const HOOKS_IN_ARG: &str = "--hooks-in";
-
-/// The applications and outposts in `list`, as the listener's `--hooks-in`
-/// option gives them: `pid:outpost` pairs separated by commas. Anything
-/// that is not such a pair is skipped.
-#[must_use]
-pub fn parse_hooks_in(list: &str) -> Vec<(Pid, OutpostId)> {
-    list.split(',')
-        .filter_map(|pair| {
-            let (pid, outpost) = pair.trim().split_once(':')?;
-            Some((Pid(pid.parse().ok()?), OutpostId(outpost.parse().ok()?)))
-        })
-        .collect()
-}
-
-/// `hooks_in` as [`HOOKS_IN_ARG`] gives it.
-pub(crate) fn format_hooks_in(hooks_in: &[(Pid, OutpostId)]) -> String {
-    hooks_in
-        .iter()
-        .map(|(pid, outpost)| format!("{}:{}", pid.0, outpost.0))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -1803,7 +1778,7 @@ mod tests {
     use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
     use super::*;
-    use crate::protocol::read_message;
+    use verbatim_process::message::read_message;
 
     /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
     /// writes that pend finished by a thread of the sender's own, as the
@@ -2004,14 +1979,6 @@ mod tests {
             ),
             "{sent:?}"
         );
-    }
-
-    #[test]
-    fn the_applications_with_hooks_in_round_trip_through_the_command_line() {
-        let hooks_in = [(Pid(12), OutpostId(3)), (Pid(40), OutpostId(7))];
-        assert_eq!(parse_hooks_in(&format_hooks_in(&hooks_in)), hooks_in);
-        assert_eq!(parse_hooks_in(" 12:3,x,9, 40:7 "), hooks_in);
-        assert_eq!(parse_hooks_in(""), Vec::<(Pid, OutpostId)>::new());
     }
 
     fn uia_snapshot() -> UiaSnapshotFact {

@@ -851,7 +851,10 @@ unsafe extern "system" fn win_event_proc(
                 (event, hwnd.0 as isize, id_object, id_child),
                 &kinds.borrow(),
                 &mut classes.borrow_mut(),
-                (crate::window::thread_of, crate::window::class_name),
+                (
+                    crate::window::window_thread,
+                    crate::window::window_class_name,
+                ),
             )
         })
     });
@@ -910,7 +913,7 @@ mod tests {
     /// [`is_wanted`] for window `hwnd`, its class read from Windows.
     fn wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
         let hwnd = hwnd.0 as isize;
-        let mut class = || Rc::from(crate::window::class_name(hwnd));
+        let mut class = || Rc::from(crate::window::window_class_name(hwnd));
         is_wanted(kind, id_object, id_child, &mut class)
     }
 

@@ -1,7 +1,7 @@
 //! Outpost library: the Core-outpost IPC vocabulary and framing, the outpost
 //! runtime, the focus listener, and the Core-side supervisor.
 //!
-//! The [`protocol`] module is the wire vocabulary shared by both ends.
+//! The message layer every end shares is `verbatim_process::message`.
 //! [`outpost`] is the per-application outpost — intake, one worker and its
 //! watchdog, the reader, and the writer — used by the `verbatim-outpost`
 //! binary, watching one application for its whole life (decision D9).
@@ -23,14 +23,11 @@
 
 pub mod arbitration;
 pub mod dialog_text;
-mod event_thread;
 pub mod focus_read;
 mod foreground;
 mod gates;
-pub mod integrity;
 pub mod listener;
 pub mod outpost;
-pub mod protocol;
 mod read_schedule;
 pub mod supervisor;
 pub mod terminal;
@@ -38,13 +35,7 @@ pub mod text;
 
 pub use listener::run_listener;
 pub use outpost::{
-    FocusWindowReader, FocusedElementReader, ForegroundReader, GapTimer, Heard, HeardObserver,
-    Outpost, OutpostOptions, WindowReadabilityReader, run_attach, run_pipe, window_unreadable,
+    FocusWindowReader, FocusedElementReader, GapTimer, Heard, HeardObserver, Outpost, run_attach,
+    run_pipe,
 };
 pub use supervisor::{EventSink, ForegroundReport, OutpostMessage, Supervisor, Undelivered};
-/// The process that serves a window's UI Automation, and a console client's
-/// console host, read locally: re-exported so Core can route a console
-/// client's focus-now query to its console host without depending on
-/// `verbatim-uia` (`docs/design/listener-without-connections.md`, section
-/// 4.3).
-pub use verbatim_uia::{console_host_of, provider_process};

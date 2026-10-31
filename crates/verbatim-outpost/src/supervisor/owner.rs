@@ -32,20 +32,20 @@ use verbatim_process::port_queue::Progress;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{FrameBody, Reading};
 
-use crate::protocol::{Peeked, decode_message, now_us, peek};
 use verbatim_model::protocol::{
     CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
     OutpostToCore, WinEventStamp, hop_us,
 };
+use verbatim_process::clock::now_us;
+use verbatim_process::message::{Peeked, decode_message, peek};
 
 use super::frames::Frame;
 use super::generation::{Generation, Next, Notice, Removed, Run};
-use super::ignored::IgnoredProcesses;
 use super::policy::{
     Backoff, HeldFact, HeldFacts, Spares, WedgeReason, may_start_outpost, retirement_decision,
     wedge_decision,
 };
-use super::process::{self, Launched, Role, Target};
+use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, ToChild, WriterHandle};
@@ -54,6 +54,7 @@ use super::{
     OutpostMessage, PING_INTERVAL, ReducerStall, SPARES, SWEEP_INTERVAL, Sealed, Undelivered,
     Writers,
 };
+use verbatim_process::held::{IgnoredProcesses, Target};
 
 /// The relay thread's priority: it reads each of the listener's facts and
 /// routes it to its outpost, reads each outpost's frame and hands it on,
@@ -153,7 +154,7 @@ pub(super) struct Launch {
 /// What the owner thread starts with.
 pub(super) struct Setup {
     pub(super) exe_path: PathBuf,
-    pub(super) options: crate::OutpostOptions,
+    pub(super) options: verbatim_process::arguments::OutpostOptions,
     pub(super) shutdown_limit: Duration,
     pub(super) events_tx: EventSink,
     pub(super) writers: Writers,
@@ -275,7 +276,7 @@ impl Outbox {
 struct Owner {
     exe_path: PathBuf,
     /// What every outpost is launched with.
-    options: crate::OutpostOptions,
+    options: verbatim_process::arguments::OutpostOptions,
     outbox: Outbox,
     writers: Writers,
     own_tx: Mailbox<OwnerEvent>,
@@ -1236,11 +1237,11 @@ impl Owner {
     /// that process for as long as it is held. Fails when the process has
     /// exited, the one held included, or cannot be opened. A process that
     /// has exited is let go.
-    fn hold_target(&mut self, pid: Pid) -> Result<(), process::NotHeld> {
+    fn hold_target(&mut self, pid: Pid) -> Result<(), verbatim_process::held::NotHeld> {
         match self.apps.get(&pid) {
             Some(app) if app.target.has_exited() => {
                 self.forget_app(pid);
-                Err(process::NotHeld::Exited)
+                Err(verbatim_process::held::NotHeld::Exited)
             }
             Some(_) => Ok(()),
             None => {
@@ -1357,7 +1358,7 @@ impl Owner {
     fn launch(&self, outpost: OutpostId, role: Role) {
         let ignored = self.ignored.list();
         let hooks_in = match role {
-            Role::Listener => crate::listener::format_hooks_in(&self.hooks_in()),
+            Role::Listener => verbatim_process::arguments::format_hooks_in(&self.hooks_in()),
             Role::Outpost(_) | Role::Spare(_) => String::new(),
         };
         let exe_path = self.exe_path.clone();
@@ -1894,7 +1895,7 @@ impl Owner {
             let held = HeldFact {
                 trace_id: TraceId::mint(),
                 timing: EventTiming {
-                    observed_at_us: crate::protocol::now_us(),
+                    observed_at_us: verbatim_process::clock::now_us(),
                     ..EventTiming::default()
                 },
                 fact: DeliveredFact::UiaFocusReadsEnded,
@@ -2213,7 +2214,7 @@ fn fact_window(fact: &DeliveredFact) -> Option<isize> {
 /// since is not checked. Local calls only, once per outpost started.
 fn check_served_by(pid: Pid, hwnd: isize) {
     let provider = verbatim_uia::provider_process(hwnd);
-    let served = provider == Some(pid.0) || !crate::outpost::window::window_exists(hwnd);
+    let served = provider == Some(pid.0) || !verbatim_win32::window::window_exists(hwnd);
     if !served {
         tracing::error!(
             %pid,
@@ -2248,7 +2249,7 @@ pub(super) fn deliver(writer: &WriterHandle<CoreToOutpost>, held: HeldFact) {
 /// with the pipe the relay will read.
 fn launch_child(
     exe_path: &std::path::Path,
-    (options, ignored, hooks_in): (crate::OutpostOptions, &str, &str),
+    (options, ignored, hooks_in): (verbatim_process::arguments::OutpostOptions, &str, &str),
     (outpost, role): (OutpostId, Role),
     (writers, commands): (&Writers, &CommandPipes),
 ) -> io::Result<Launch> {

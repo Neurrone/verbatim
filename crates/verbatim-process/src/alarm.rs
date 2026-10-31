@@ -2,7 +2,7 @@
 //! together by one thread. Setting and cancelling the timer are system
 //! calls that wake no thread.
 //!
-//! The mailbox's alarm is the reducer's wait ([`super::shell`]): the event
+//! The outpost mailbox's alarm is its reducer's wait: the event
 //! is set when something is appended while the reducer's thread waits, and
 //! the timer is set to the reducer's next timer, a program's deadline, a
 //! walk's bound, a caret key's watch or the gap record's bound, at a
@@ -21,7 +21,7 @@ use windows::Win32::System::Threading::{
 };
 
 /// A waitable timer and an event, waited on together.
-pub(crate) struct Alarm {
+pub struct Alarm {
     timer: OwnedHandle,
     event: OwnedHandle,
 }
@@ -61,7 +61,7 @@ impl Alarm {
     /// Sets the timer to go off at `at`, replacing any time set before, and
     /// takes back a time that went off and was not waited for; a time
     /// already past makes it go off at once.
-    pub(crate) fn set(&self, at: Instant) {
+    pub fn set(&self, at: Instant) {
         let left = at.saturating_duration_since(Instant::now());
         // Negative: relative to now, in 100-nanosecond units; at least one,
         // since zero would mean an absolute time.
@@ -87,20 +87,24 @@ impl Alarm {
     /// Cancels the timer, if it is set. A time that has already gone off
     /// stays signalled until a wait takes it, and the waiter finds nothing
     /// behind it.
-    pub(crate) fn cancel(&self) {
+    pub fn cancel(&self) {
         // SAFETY: the timer is open.
         let _ = unsafe { CancelWaitableTimer(self.handle(&self.timer)) };
     }
 
     /// Ends the wait now, or the next one if no thread waits.
-    pub(crate) fn wake(&self) {
+    pub fn wake(&self) {
         // SAFETY: the event is open.
         let _ = unsafe { SetEvent(self.handle(&self.event)) };
     }
 
     /// Waits until the timer goes off or the event is set, and answers
     /// whether the timer ended the wait.
-    pub(crate) fn wait(&self) -> bool {
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "a waiter that acts on both causes alike ignores the answer"
+    )]
+    pub fn wait(&self) -> bool {
         let handles = [self.handle(&self.timer), self.handle(&self.event)];
         // SAFETY: both handles are open for the wait's duration, owned by
         // this alarm, which the caller borrows.
@@ -109,7 +113,7 @@ impl Alarm {
     }
 
     /// Waits until the event is set, whatever the timer does.
-    pub(crate) fn wait_for_event(&self) {
+    pub fn wait_for_event(&self) {
         let handles = [self.handle(&self.event)];
         // SAFETY: as for `wait`.
         let _ = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };

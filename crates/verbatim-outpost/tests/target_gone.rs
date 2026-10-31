@@ -28,9 +28,10 @@ mod common;
 use common::Delivered;
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 use verbatim_model::{OutpostId, Pid};
-use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{EndReason, OutpostMessage, ShutdownSummary, Supervisor};
-use verbatim_outpost::{EventSink, OutpostOptions, Undelivered};
+use verbatim_outpost::{EventSink, Undelivered};
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::message::{read_message, write_message};
 
 /// The application's argument.
 const APPLICATION: &str = "--stand-in-application";

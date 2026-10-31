@@ -34,11 +34,11 @@ use verbatim_model::protocol::{
     CoreToListener, CoreToOutpost, EventTiming, ListenerToCore, OutpostToCore,
 };
 use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
-use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::{read_message, write_message};
 use verbatim_outpost::supervisor::{
     EventSink, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
 };
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::message::{read_message, write_message};
 use verbatim_process::port_queue::{PortQueue, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};

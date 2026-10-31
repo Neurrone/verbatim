@@ -22,6 +22,7 @@ verbatim-ia2.workspace = true
 verbatim-outpost.workspace = true
 verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true
+verbatim-win32.workspace = true
 
 # The test binaries that use UIA as a client run through their own runner,
 # which ends the process without running DLL detach code; the reason is in

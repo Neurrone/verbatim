@@ -19,9 +19,9 @@ use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use crossbeam_channel::unbounded;
 use verbatim_model::Pid;
 use verbatim_model::protocol::ListenerToCore;
-use verbatim_outpost::OutpostOptions;
-use verbatim_outpost::protocol::write_message;
 use verbatim_outpost::supervisor::{OutpostMessage, ShutdownSummary, Supervisor};
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::message::write_message;
 
 /// How long the stand-in has to exit after the shutdown message: short, as
 /// it never will.

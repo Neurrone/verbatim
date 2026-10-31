@@ -14,7 +14,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::alarm::Alarm;
+use verbatim_process::alarm::Alarm;
 
 /// A new inbox: its sending side and its receiving side.
 pub(super) fn inbox<T>() -> (Sender<T>, Inbox<T>) {

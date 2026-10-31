@@ -86,6 +86,7 @@ verbatim-term-sim = { path = "crates/verbatim-term-sim" }
 verbatim-test-console = { path = "crates/verbatim-test-console" }
 verbatim-outpost = { path = "crates/verbatim-outpost" }
 verbatim-process = { path = "crates/verbatim-process" }
+verbatim-reader-rules = { path = "crates/verbatim-reader-rules" }
 verbatim-speech = { path = "crates/verbatim-speech" }
 verbatim-synth-capture = { path = "crates/verbatim-synth-capture" }
 verbatim-synth-espeak = { path = "crates/verbatim-synth-espeak" }
@@ -94,6 +95,7 @@ verbatim-synth-hosted = { path = "crates/verbatim-synth-hosted" }
 verbatim-synth-onecore = { path = "crates/verbatim-synth-onecore" }
 verbatim-uia = { path = "crates/verbatim-uia" }
 verbatim-uia-rops = { path = "crates/verbatim-uia-rops" }
+verbatim-win32 = { path = "crates/verbatim-win32" }
 
 # `windows-core` is a direct dependency because the `windows` crate's
 # `#[implement]` macro emits `::windows_core` paths that only resolve when

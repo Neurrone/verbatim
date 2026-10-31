@@ -1,7 +1,7 @@
 //! A console the tests start: `conhost.exe` running PowerShell in a hidden
 //! console window, optionally with a hidden window of the client's own on
 //! another thread, for the tests of a console window's provider process in
-//! `verbatim-uia` and `verbatim-outpost`. A dev-dependency only, so the
+//! `verbatim-win32` and `verbatim-outpost`. A dev-dependency only, so the
 //! crates it serves are built once for their tests and their builds alike.
 //!
 //! The console runs on a desktop made for it, and the test on a thread of

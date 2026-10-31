@@ -58,7 +58,6 @@
 
 mod frames;
 mod generation;
-mod ignored;
 mod owner;
 mod policy;
 mod process;
@@ -78,11 +77,9 @@ use verbatim_process::port_queue::Progress;
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 
 pub use frames::{Frame, Frames};
-pub use ignored::{IGNORE_PIDS_ENV, IgnoredProcesses, parse_pids};
 pub use retire::ShutdownSummary;
+use verbatim_process::held::IgnoredProcesses;
 pub use writer::QueueError;
-
-pub(crate) use process::Target;
 
 /// How often every child is pinged.
 const PING_INTERVAL: Duration = Duration::from_secs(3);
@@ -470,7 +467,7 @@ impl Supervisor {
     /// or the relay's completion port or the owner thread cannot be made.
     pub fn new(
         events: impl Into<EventSink>,
-        options: crate::OutpostOptions,
+        options: verbatim_process::arguments::OutpostOptions,
         ignored: Arc<IgnoredProcesses>,
     ) -> io::Result<Self> {
         let exe_path = std::env::current_exe()?
@@ -492,7 +489,7 @@ impl Supervisor {
     /// cannot be made.
     pub fn with_executable(
         events: impl Into<EventSink>,
-        options: crate::OutpostOptions,
+        options: verbatim_process::arguments::OutpostOptions,
         exe_path: std::path::PathBuf,
         shutdown_limit: Duration,
         ignored: Arc<IgnoredProcesses>,

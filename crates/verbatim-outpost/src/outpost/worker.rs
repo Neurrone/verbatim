@@ -63,13 +63,12 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
-use crate::protocol::now_us;
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query, QueryOutcome,
     QueryResult, UiaFocusRead, UiaSnapshotFact,
 };
+use verbatim_process::clock::now_us;
 
-use super::acceptance::{self, EventName, SystemWindows};
 use super::bound::{self, BoundFocus, FocusProgress};
 use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
@@ -82,17 +81,19 @@ use super::reducer::{
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads::{self, ProgramText};
-use super::window::{
-    alt_is_held, console_client, event_window_unreadable, foreground_window_handle, now_ms,
-    top_level_of, window_belongs_to_hidden_frame, window_exists, window_facts,
-    window_is_hidden_frame,
-};
+use super::window::{alt_is_held, console_client, now_ms, window_facts};
 use super::{Context, RequestContext};
 use crate::arbitration::Judgement as _;
-use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::{Checked, Watched};
 use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
+use verbatim_reader_rules::acceptance::{self, EventName};
+use verbatim_win32::window::SystemWindows;
+use verbatim_win32::window::window_class_name;
+use verbatim_win32::window::{
+    event_window_unreadable, foreground_window_handle, top_level_of,
+    window_belongs_to_hidden_frame, window_exists, window_is_hidden_frame,
+};
 
 pub(super) use super::reducer::is_state_property;
 
@@ -619,6 +620,35 @@ fn terminal_event_of(op: &TextOp) -> Option<Event> {
         TextOp::TerminalCancel => Some(Event::Cancel),
         _ => None,
     }
+}
+
+/// The name NVDA gives a `WinEvent` of `kind` when it tests it for
+/// acceptance, or `None` for a kind the worker handles outside the test:
+/// an object destroyed, which NVDA handles in its event callback, and
+/// Verbatim's own kinds, the text selection of edit controls, the console
+/// host's updates and caret, and the shell's coming to the front, which
+/// only the listener takes (`docs/parity/focus-events.md`, "Event
+/// acceptance").
+fn event_name_of(kind: WinEventKind) -> Option<EventName> {
+    Some(match kind {
+        WinEventKind::Focus | WinEventKind::Foreground => EventName::GainFocus,
+        WinEventKind::MenuPopupStart => EventName::MenuStart,
+        WinEventKind::MenuEnd => EventName::MenuEnd,
+        WinEventKind::SwitchEnd => EventName::SwitchEnd,
+        WinEventKind::Show => EventName::Show,
+        WinEventKind::Alert => EventName::Alert,
+        WinEventKind::ValueChange => EventName::ValueChange,
+        WinEventKind::StateChange => EventName::StateChange,
+        WinEventKind::NameChange => EventName::NameChange,
+        WinEventKind::DescriptionChange => EventName::DescriptionChange,
+        WinEventKind::Selection => EventName::Selection,
+        WinEventKind::Caret => EventName::LocationChange,
+        WinEventKind::Destroy
+        | WinEventKind::TextSelectionChange
+        | WinEventKind::ConsoleUpdate
+        | WinEventKind::ConsoleCaret
+        | WinEventKind::ShellForeground => return None,
+    })
 }
 
 /// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
@@ -2362,7 +2392,7 @@ impl Worker<'_> {
 
     /// Whether the event's own window, `hwnd`, can be read: NVDA's checks
     /// after acceptance and before the window's UIA test and the object's
-    /// acquisition (`window::event_window_unreadable`). A dropped event is
+    /// acquisition (`verbatim_win32::window::event_window_unreadable`). A dropped event is
     /// logged.
     fn readable(hwnd: isize) -> bool {
         let reason = event_window_unreadable(hwnd);
@@ -2428,7 +2458,7 @@ impl Worker<'_> {
         }
         // NVDA's order of checks: acceptance, the window's state, the
         // window's UIA test, and only then the object.
-        if let Some(event) = EventName::of_win_event(kind)
+        if let Some(event) = event_name_of(kind)
             && !self.accepts(event, hwnd)
         {
             return;
@@ -2641,7 +2671,9 @@ impl Worker<'_> {
                     && id_object == OBJID_CLIENT.0
                     && id_child == CHILDID_SELF
                     && verbatim_ia2::edit::edit_api_version(
-                        &crate::arbitration::normalize_class_name(&window_class_name(hwnd)),
+                        &verbatim_reader_rules::class::normalize_class_name(&window_class_name(
+                            hwnd,
+                        )),
                     )
                     .is_some() =>
             {
@@ -4003,7 +4035,7 @@ impl Worker<'_> {
         let reported = reported.or_else(|| {
             context
                 .focus_window()
-                .filter(|&window| super::window::served_by(window, context.target_pid()))
+                .filter(|&window| verbatim_win32::window::served_by(window, context.target_pid()))
         });
         if reported.is_none_or(window_belongs_to_hidden_frame) {
             return Err(Dropped);
@@ -4534,8 +4566,8 @@ fn follow_of(context: &Context, made: FocusMade) -> (Follow, Option<NodeId>) {
         at_bound,
     } = made;
     let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
-    let console =
-        window.is_some_and(|hwnd| window_class_name(hwnd) == text_reads::CONSOLE_WINDOW_CLASS);
+    let console = window
+        .is_some_and(|hwnd| window_class_name(hwnd) == verbatim_reader_rules::CONSOLE_WINDOW_CLASS);
     let (target, to_find) = target_for(context, (node_id, role), &chain, terminal && console);
     // A focus whose own element is not kept yet has the slider found with
     // it, once it is.
@@ -4773,6 +4805,14 @@ mod tests {
     use super::super::inbox::inbox;
     use super::super::shell::Garbage;
     use super::*;
+
+    #[test]
+    fn the_system_carets_event_is_tested_as_a_location_change() {
+        assert_eq!(
+            event_name_of(WinEventKind::Caret),
+            Some(EventName::LocationChange)
+        );
+    }
 
     /// A job for `work`.
     fn job(work: Work) -> Job {

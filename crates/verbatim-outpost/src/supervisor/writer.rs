@@ -58,7 +58,8 @@ use verbatim_model::protocol::{CoreToListener, CoreToOutpost, EventTiming, FactK
 use verbatim_process::overlapped::{Completion, Port};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
-use crate::protocol::{Message, now_us, put_message};
+use verbatim_process::clock::now_us;
+use verbatim_process::message::{Message, put_message};
 
 /// How many commands may wait for one child before the overload policy
 /// applies.
@@ -700,7 +701,7 @@ mod tests {
     fn names(mut data: &[u8]) -> Vec<String> {
         let mut names = Vec::new();
         while let Some(command) =
-            crate::protocol::read_message::<_, CoreToOutpost>(&mut data).expect("a frame")
+            verbatim_process::message::read_message::<_, CoreToOutpost>(&mut data).expect("a frame")
         {
             names.push(match command {
                 CoreToOutpost::Ping { seq, .. } => format!("ping {seq}"),

@@ -125,7 +125,7 @@ mod tests {
     fn a_client_maps_no_win_event_to_the_events_verbatim_handles() {
         for entry in mappings(&ignored_events()) {
             for (event, property, winevents) in entry {
-                assert_eq!(winevents, [], "{event:?} with {property:?}");
+                assert_eq!(winevents, Vec::<i32>::new(), "{event:?} with {property:?}");
             }
         }
         // The mapping was read, and focus changes keep theirs, as NVDA

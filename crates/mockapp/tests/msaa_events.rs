@@ -787,11 +787,9 @@ fn raise_focus_on(app: &mut common::MockApp, id: &str) -> (DeliveredFact, WinEve
     app.send(&format!("focus {id}"));
     let event = common::pump_until(|| *seen.lock().unwrap_or_else(PoisonError::into_inner));
     drop(hook);
-    let fact = verbatim_outpost::protocol::fact_of_win_event(
-        event.kind,
-        (event.hwnd, event.id_object, event.id_child),
-    )
-    .expect("a focus in mockapp's window");
+    let fact =
+        verbatim_ia2::fact_of_win_event(event.kind, (event.hwnd, event.id_object, event.id_child))
+            .expect("a focus in mockapp's window");
     let stamp = WinEventStamp {
         thread: event.thread,
         time: event.time,

@@ -66,7 +66,6 @@ use verbatim_model::{
     CaretWatch, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp, TextPoint,
     TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
 };
-use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
@@ -76,6 +75,7 @@ use verbatim_outpost::text::{
     Anchors, CaretSignal, LastSelection, TextSource, Watched, caret_report, caret_report_since,
     check_caret, perform,
 };
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
     ListenerSelection, Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,

@@ -130,24 +130,26 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Progress, focus_ancestry_classic};
 
-use crate::ForegroundReader;
-use crate::arbitration::{
-    ClassVerdict, Clock, ObservationClock, WindowClasses, class_verdict, window_class_name,
-};
-use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
-use crate::outpost::alarm::Alarm;
-use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{
-    MOVED_ON_GRACE, front_is_another_thread_of_its_application, top_level_of,
-    window_belongs_to_hidden_frame, window_is_hung,
-};
-use crate::protocol::now_us;
 use crate::read_schedule::{
     AlarmChange, Claim, QueuePlace, Schedule, ScheduleEffect, ScheduleInput, TickRead, Waking,
 };
 use verbatim_model::protocol::{
     AncestorsEnd, DeliveredFact, EventTiming, GapAnswer, UiaAncestorFact, UiaFocusRead,
     UiaSnapshotFact,
+};
+use verbatim_process::alarm::Alarm;
+use verbatim_process::clock::now_us;
+use verbatim_process::clock::{Clock, ObservationClock};
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_reader_rules::MOVED_ON_GRACE;
+use verbatim_reader_rules::acceptance::{EventName, RequestedEvents, accepts_event};
+use verbatim_reader_rules::class::{ClassVerdict, WindowClasses, class_verdict};
+use verbatim_win32::window::ForegroundReader;
+use verbatim_win32::window::SystemWindows;
+use verbatim_win32::window::window_class_name;
+use verbatim_win32::window::{
+    front_is_another_thread_of_its_application, top_level_of, window_belongs_to_hidden_frame,
+    window_is_hung,
 };
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -743,11 +745,12 @@ pub const NEAREST_FAILED_FAST: &str =
 /// 2-second connection timeout ([`verbatim_uia::CONNECTION_TIMEOUT`]), the
 /// shortest wait after which UIA ends a call to an application that does
 /// not answer, so a lookup that fails sooner was not kept waiting by its
-/// application. It equals the gap record's bound
-/// (`outpost::gap_record::BOUND_US`): a lookup that took that long has held
-/// its application's later events as long as the record waits for a UIA
-/// focus, and is taken as the application not answering in time.
-pub const NEAREST_FAILED_FAST_BOUND: Duration = Duration::from_secs(1);
+/// application. It is the UIA focus wait both readers share
+/// ([`verbatim_reader_rules::UIA_FOCUS_WAIT`]), the gap record's bound: a
+/// lookup that took that long has held its application's later events as
+/// long as the record waits for a UIA focus, and is taken as the
+/// application not answering in time.
+pub const NEAREST_FAILED_FAST_BOUND: Duration = verbatim_reader_rules::UIA_FOCUS_WAIT;
 
 /// The reason a focus is dropped whose nearest window's lookup failed with
 /// `UIA_E_TIMEOUT` after `elapsed`: [`NEAREST_FAILED_FAST`] under
@@ -1005,7 +1008,7 @@ pub struct FocusReader {
     /// read, or is a ghost's or a hung application's: the system's
     /// judgement, unless a test supplies its own
     /// ([`set_window_readability_reader`](Self::set_window_readability_reader)).
-    window_readability: crate::WindowReadabilityReader,
+    window_readability: verbatim_win32::window::WindowReadabilityReader,
 }
 
 /// Told the name of each call a focus read's classic walk is about to make
@@ -1025,14 +1028,14 @@ impl FocusReader {
         Ok(Self {
             uia: Uia::new()?,
             last: None,
-            foreground: Arc::new(crate::outpost::window::foreground_window_handle),
+            foreground: Arc::new(verbatim_win32::window::foreground_window_handle),
             clock: Arc::new(Instant::now),
             observed: Arc::new(now_us),
             last_top: None,
             forced_uia: Arc::default(),
             window: WatchedRead::default(),
             calls: None,
-            window_readability: Arc::new(crate::window_unreadable),
+            window_readability: Arc::new(verbatim_win32::window::window_unreadable),
         })
     }
 
@@ -1057,7 +1060,10 @@ impl FocusReader {
     /// an outpost does (`Outpost::set_window_readability_reader`): a test
     /// that cannot wait for Windows to judge an application hung says
     /// which window is.
-    pub fn set_window_readability_reader(&mut self, reader: crate::WindowReadabilityReader) {
+    pub fn set_window_readability_reader(
+        &mut self,
+        reader: verbatim_win32::window::WindowReadabilityReader,
+    ) {
         self.window_readability = reader;
     }
 
@@ -1785,7 +1791,7 @@ impl FocusReader {
             hwnd
         };
         if skipped_by_class(
-            &WindowClasses::of(nearest),
+            &verbatim_win32::window::window_classes(nearest),
             self.forced_uia.load(Ordering::Relaxed),
         ) {
             return Err(MSAA_CLASS);
@@ -2751,9 +2757,9 @@ impl Drop for ReadingThreads {
 mod tests {
     use std::sync::atomic::AtomicBool;
 
-    use crate::outpost::window::MOVED_ON_GRACE;
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::thread::ThreadId;
+    use verbatim_reader_rules::MOVED_ON_GRACE;
 
     use super::*;
     use verbatim_model::protocol::Responder;

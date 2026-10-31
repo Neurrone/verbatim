@@ -17,10 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::BOOL;
 
-/// The class of a console window, whose provider is the console host, the
-/// process of the window's thread, while `GetWindowThreadProcessId` names the
-/// console's client as its owner.
-const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 
 /// The process that serves UIA for the window `hwnd`: its owner by
 /// `GetWindowThreadProcessId`, except for a console window, whose owner by

@@ -40,6 +40,7 @@ use verbatim_model::protocol::{
     EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
+use verbatim_reader_rules::MOVED_ON_GRACE;
 
 pub(in crate::outpost) use self::entry::{
     Entry, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
@@ -74,11 +75,6 @@ const STEP_DEADLINE: Duration = Duration::from_millis(400);
 /// a caret key's watch is checked once within it and then kept open
 /// outside it.
 const TEXT_DEADLINE: Duration = Duration::from_secs(2);
-
-/// How long a program waits on a window before the reducer judges whether
-/// the user has moved on from it to another thread of its application
-/// (`docs/design/focus-pipeline.md`, section 18.3).
-pub(in crate::outpost) const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 
 /// One request of one worker generation: what a program's commits, the
 /// store's mint tags and the walk's slot name it by.

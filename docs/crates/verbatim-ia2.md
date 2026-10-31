@@ -367,15 +367,37 @@ by Core on entering the window: one acquisition; `progress`, an
   parent-then-sibling-then-child navigation between the controls of a
   dialog work: MSAA's own answers there are the control's scroll-bar and
   client pieces, not the sibling controls.
-- `class` — `normalize_class_name(raw)`, a window class name as NVDA
-  normalizes it before matching any class-based rule: a Windows Forms
+- `class` — `normalized_class_of(hwnd)`, a window's class name as NVDA
+  normalizes it before matching any class-based rule
+  (`verbatim_reader_rules::class::normalize_class_name`,
+  [verbatim-reader-rules](verbatim-reader-rules.md)): a Windows Forms
   name (`WindowsForms10.SysTreeView32.app.0.…`) cut down to the control
   class it wraps, an `ATL:` prefix dropped, and the result looked up in
-  NVDA's class map; and `normalized_class_of(hwnd)`, the same for a
-  window. Every class-based rule in this crate compares the normalized
-  name, so a Windows Forms tree view gets the `SysTreeView32` handling
-  below and a Windows Forms list view the `SysListView32` position. The
-  outpost's backend arbitration uses the same function.
+  NVDA's class map. Every class-based rule in this crate compares the
+  normalized name, so a Windows Forms tree view gets the `SysTreeView32`
+  handling below and a Windows Forms list view the `SysListView32`
+  position. The outpost's backend arbitration uses the same function.
+- `event_thread` — the thread that installs the `WinEvent` hooks and
+  pumps the messages their out-of-context callbacks are delivered
+  through, which an outpost and the focus listener each run, differing
+  only in their pid and kinds. `EventThread::spawn(kinds, make_handlers)`
+  starts it with no hook; `hook(pid)` installs its one set when asked (a
+  spare starts it before it has an application). `EventHandlers` are made
+  on the thread: the `WinEvent` callback and an optional nudge handler. A
+  `Nudger` hands the thread two words between events (`nudge`), which is
+  how an outpost unhooks some kinds and hooks them again, and waits for it
+  to catch up (`sync`): every nudge sent and, once the hooks are in, every
+  `WinEvent` raised before it, through `SyncMarker`.
+- `fact_of_win_event(kind, (hwnd, id_object, id_child))` — the
+  `DeliveredFact` an MSAA `WinEvent` makes, whether the listener's hook or
+  an outpost's own took it in: a focus, a foreground change, a menu
+  opening, an alert, or a tooltip shown; `None` for any other kind and
+  for an event with no window.
+- The window functions the client calls by handle (`window_exists`,
+  `window_class_name`, `parent`, `style` and the rest) are
+  `verbatim_win32::window`'s
+  ([verbatim-win32](verbatim-win32.md)), which the private `window` module
+  re-exports beside the list view and tree view messages it sends.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, following NVDA's MSAA
   role and state tables (so `STATE_SYSTEM_DEFAULT` is dropped and

@@ -63,7 +63,6 @@ const CHECKED: [Checked; 7] = [
             "verbatim_model",
             // The listener's data types.
             "crate::focus_read",
-            "crate::protocol",
             // The module's own tests.
             "super",
         ],
@@ -117,14 +116,15 @@ const CHECKED: [Checked; 7] = [
 
 /// What the outpost's reducer may `use`: the module's own items, by
 /// `self`, `super` from a file inside it (never `super::super`, which is
-/// forbidden) or the module's full path; the model; Core's focus rules; and
-/// the parts of `std` the design names.
-const REDUCER_ALLOWED: [&str; 10] = [
+/// forbidden) or the module's full path; the model; Core's focus rules; the
+/// rules both readers share; and the parts of `std` the design names.
+const REDUCER_ALLOWED: [&str; 11] = [
     "self",
     "super",
     "crate::outpost::reducer",
     "verbatim_model",
     "verbatim_core::focus_rules",
+    "verbatim_reader_rules",
     "std::collections",
     "std::cmp",
     "std::mem",

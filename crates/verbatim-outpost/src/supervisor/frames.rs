@@ -27,8 +27,8 @@ use verbatim_process::transport::OwnedFrame;
 use super::OutpostMessage;
 use super::owner::OwnerEvent;
 use super::relay::Mailbox;
-use crate::protocol::decode_message;
 use verbatim_model::protocol::OutpostToCore;
+use verbatim_process::message::decode_message;
 
 /// A frame from an outpost's pipe, read whole by the relay and not yet
 /// parsed. Only [`Frames`] opens it.

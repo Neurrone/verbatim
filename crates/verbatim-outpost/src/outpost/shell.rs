@@ -29,7 +29,6 @@ use verbatim_model::TraceId;
 use verbatim_model::protocol::{EventTiming, GapAnswer, OutpostToCore, QueryOutcome, Responder};
 use verbatim_uia::{Agile, Kept};
 
-use super::alarm::Alarm;
 use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
@@ -39,6 +38,7 @@ use super::reducer::{
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
 use super::{Context, RequestContext};
+use verbatim_process::alarm::Alarm;
 
 /// Times the gap record's bound in place of the reducer's own timer: for a
 /// test that says when the bound is reached rather than waiting for it
@@ -347,11 +347,11 @@ struct ShellLocals<'a> {
 
 impl Locals for ShellLocals<'_> {
     fn window_is_hung(&self, hwnd: isize) -> bool {
-        super::window::window_is_hung(hwnd)
+        verbatim_win32::window::window_is_hung(hwnd)
     }
 
     fn moved_on(&self, window: isize) -> bool {
-        super::window::front_is_another_thread_of_its_application(window)
+        verbatim_win32::window::front_is_another_thread_of_its_application(window)
     }
 
     fn publication(&mut self, request: Request, facts: &Facts) -> Option<Change> {
@@ -556,7 +556,7 @@ impl Shell {
         Now {
             at: self.context.epoch.elapsed(),
             observed_us: self.context.observed_now(),
-            wall_us: crate::protocol::now_us(),
+            wall_us: verbatim_process::clock::now_us(),
         }
     }
 

@@ -468,6 +468,10 @@ shapes, are described in `docs/crates/verbatim-outpost.md`.
   `Gone`, or `Failed` with its error. `RawProbe::has_provider` is true
   only for `Provider`. The probe's memory cost in the application is
   risk 7 of `docs/design/listener-without-connections.md`.
+- The functions below, from `provider_process` to
+  `raw_view_parent_window`, are `verbatim_win32::provider`'s
+  ([verbatim-win32](verbatim-win32.md)), re-exported here under the same
+  names, so the window queries have one crate under both backends.
 - `provider_process(hwnd)` and `console_host_of(client)`: the process that
   serves a window's UIA, by local calls: the window's owner, except a
   console window, whose provider is its console host, read from the

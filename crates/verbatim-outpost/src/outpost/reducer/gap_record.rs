@@ -49,8 +49,13 @@ use verbatim_model::protocol::GapAnswer;
 /// A read made before a late UIA focus costs one read and nothing heard
 /// twice, since Core takes the late focus as a duplicate of the read's; a
 /// read made late leaves the user in silence. So the bound is a second
-/// rather than above every late delivery measured.
-pub(crate) const BOUND_US: u64 = 1_000_000;
+/// rather than above every late delivery measured. It is the UIA focus
+/// wait both readers share ([`verbatim_reader_rules::UIA_FOCUS_WAIT`]).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a second in microseconds fits a u64"
+)]
+pub(crate) const BOUND_US: u64 = verbatim_reader_rules::UIA_FOCUS_WAIT.as_micros() as u64;
 
 /// How long before a copy's observation a UIA focus may have been observed
 /// and still answer it: a UIA focus can reach the listener before the

@@ -4,7 +4,7 @@
 //! before any call into the application (`docs/parity/focus-events.md`, "Event
 //! acceptance"). The outpost's worker makes it for every
 //! event but a UIA focus, which the focus listener's reading thread tests
-//! with it before reading the focus (`crate::focus_read`).
+//! with it before reading the focus.
 //!
 //! NVDA makes the test per event as it processes it, against the foreground
 //! window of that moment, not in its event callback, because filtering there
@@ -18,34 +18,24 @@
 //! ([`foreground_relation`]), is what an outpost reports in an event's
 //! window facts, which the reducer judges a focus by after its read
 //! (decision D14, "Where the rules run": a rule ported from NVDA is defined
-//! once in the Windows-specific crate the judges before a read share).
+//! once in the crate the judges before a read share).
 //!
-//! Every query is a local call (class names, window ancestry, styles, and
-//! the system's foreground and active windows), so the test never waits on
-//! the application. NVDA's one rule that calls into an application, for a
+//! Its window queries come through [`WindowQueries`], which
+//! `verbatim_win32::window::SystemWindows` answers with local calls (class
+//! names, window ancestry, styles, and the system's foreground and active
+//! windows), so the test never waits on the application. NVDA's one rule that calls into an application, for a
 //! windowless Chromium document under a Chrome embedding window, is not
 //! ported: Verbatim has no Chromium support yet.
 
 use std::collections::HashSet;
-use std::ffi::c_void;
-
-use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{
-    GA_PARENT, GA_ROOT, GA_ROOTOWNER, GET_ANCESTOR_FLAGS, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
-    GetDesktopWindow, GetGUIThreadInfo, GetWindowLongW, IsChild, WS_EX_TOPMOST,
-};
-
-use verbatim_ia2::WinEventKind;
 
 use verbatim_core::focus_rules::ForegroundRelation;
-
-use crate::arbitration::window_class_name;
 
 /// An event, by the name NVDA gives it when it tests it for acceptance.
 /// NVDA's hide and desktop switch events have no counterpart: Verbatim hooks
 /// neither.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum EventName {
+pub enum EventName {
     /// A focus or foreground change, or a UIA menu opening.
     GainFocus,
     /// A popup menu opening.
@@ -78,42 +68,12 @@ pub(crate) enum EventName {
     TextChange,
 }
 
-impl EventName {
-    /// The name NVDA gives a `WinEvent` of `kind`, or `None` for a kind the
-    /// worker handles outside the test: an object destroyed, which NVDA
-    /// handles in its event callback, and Verbatim's own kinds, the text
-    /// selection of edit controls, the console host's updates and caret,
-    /// and the shell's coming to the front, which only the listener takes
-    /// (`docs/parity/focus-events.md`, "Event acceptance").
-    pub(crate) fn of_win_event(kind: WinEventKind) -> Option<Self> {
-        Some(match kind {
-            WinEventKind::Focus | WinEventKind::Foreground => Self::GainFocus,
-            WinEventKind::MenuPopupStart => Self::MenuStart,
-            WinEventKind::MenuEnd => Self::MenuEnd,
-            WinEventKind::SwitchEnd => Self::SwitchEnd,
-            WinEventKind::Show => Self::Show,
-            WinEventKind::Alert => Self::Alert,
-            WinEventKind::ValueChange => Self::ValueChange,
-            WinEventKind::StateChange => Self::StateChange,
-            WinEventKind::NameChange => Self::NameChange,
-            WinEventKind::DescriptionChange => Self::DescriptionChange,
-            WinEventKind::Selection => Self::Selection,
-            WinEventKind::Caret => Self::LocationChange,
-            WinEventKind::Destroy
-            | WinEventKind::TextSelectionChange
-            | WinEventKind::ConsoleUpdate
-            | WinEventKind::ConsoleCaret
-            | WinEventKind::ShellForeground => return None,
-        })
-    }
-}
-
 /// The events an application's support asked to have from any window of
 /// its process, whatever the foreground: NVDA's `requestEvents`, by event,
 /// process id, and window class. Nothing asks yet, so it is empty; it is
 /// where application support will ask.
 #[derive(Debug, Default)]
-pub(crate) struct RequestedEvents {
+pub struct RequestedEvents {
     requested: HashSet<(EventName, u32, String)>,
 }
 
@@ -124,7 +84,7 @@ impl RequestedEvents {
 }
 
 /// The window queries the test makes, all local calls.
-pub(crate) trait WindowQueries {
+pub trait WindowQueries {
     /// The window's class name, empty for an invalid window.
     fn class_name(&self, window: isize) -> String;
     /// The id of the process that owns the window, 0 for none.
@@ -161,7 +121,7 @@ fn is_descendant(windows: &impl WindowQueries, parent: isize, child: isize) -> b
 /// where NVDA's comparison of the two root owners, both 0, accepts it;
 /// nothing is spoken differently, since such a window cannot be read.
 /// `window` 0 means the event has no window, which cannot be filtered.
-pub(crate) fn accepts_event(
+pub fn accepts_event(
     event: EventName,
     window: isize,
     windows: &impl WindowQueries,
@@ -211,10 +171,10 @@ pub(crate) fn accepts_event(
 /// How `window`, of class `class`, stands to the foreground window: the
 /// rules `shouldAcceptEvent` ends with, made for the acceptance test and
 /// for the window facts an outpost reports with an event
-/// (`window::window_facts`), which the reducer judges a focus by after its
+/// (the outpost's `window_facts`), which the reducer judges a focus by after its
 /// read (`ForegroundRelation::related`), so the rule has one definition
 /// (decision D14, "Where the rules run"). Every query is a local call.
-pub(crate) fn foreground_relation(
+pub fn foreground_relation(
     window: isize,
     class: &str,
     windows: &impl WindowQueries,
@@ -239,77 +199,6 @@ pub(crate) fn foreground_relation(
         under_active_window: class
             .starts_with("Windows.UI.Core")
             .then(|| is_descendant(windows, windows.active_window(), window)),
-    }
-}
-
-/// The system's windows, read with local calls, with the foreground window
-/// given: the outpost's foreground reader's.
-pub(crate) struct SystemWindows {
-    pub(crate) foreground: isize,
-}
-
-fn hwnd(handle: isize) -> HWND {
-    HWND(handle as *mut c_void)
-}
-
-fn ancestor(window: isize, flags: GET_ANCESTOR_FLAGS) -> isize {
-    // SAFETY: GetAncestor tolerates any handle, returning null for an
-    // invalid one.
-    unsafe { GetAncestor(hwnd(window), flags) }.0 as isize
-}
-
-impl WindowQueries for SystemWindows {
-    fn class_name(&self, window: isize) -> String {
-        window_class_name(window)
-    }
-
-    fn process(&self, window: isize) -> u32 {
-        super::window::window_owner(window).1
-    }
-
-    fn parent(&self, window: isize) -> isize {
-        ancestor(window, GA_PARENT)
-    }
-
-    fn root(&self, window: isize) -> isize {
-        ancestor(window, GA_ROOT)
-    }
-
-    fn root_owner(&self, window: isize) -> isize {
-        ancestor(window, GA_ROOTOWNER)
-    }
-
-    fn is_child(&self, parent: isize, child: isize) -> bool {
-        // SAFETY: IsChild tolerates any pair of handles.
-        unsafe { IsChild(hwnd(parent), hwnd(child)) }.as_bool()
-    }
-
-    fn is_topmost(&self, window: isize) -> bool {
-        // SAFETY: GetWindowLongW reads a window's style word; an invalid
-        // handle yields 0.
-        let style = unsafe { GetWindowLongW(hwnd(window), GWL_EXSTYLE) };
-        style.cast_unsigned() & WS_EX_TOPMOST.0 != 0
-    }
-
-    fn desktop(&self) -> isize {
-        // SAFETY: GetDesktopWindow has no preconditions.
-        unsafe { GetDesktopWindow() }.0 as isize
-    }
-
-    fn active_window(&self) -> isize {
-        let mut info = GUITHREADINFO {
-            cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
-            ..Default::default()
-        };
-        // SAFETY: `info` has cbSize set before the call, which fails safely.
-        if unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_err() {
-            return 0;
-        }
-        info.hwndActive.0 as isize
-    }
-
-    fn foreground(&self) -> isize {
-        self.foreground
     }
 }
 
@@ -568,8 +457,6 @@ mod tests {
 
     #[test]
     fn the_system_carets_event_is_tested_as_a_location_change() {
-        let event = EventName::of_win_event(WinEventKind::Caret);
-        assert_eq!(event, Some(EventName::LocationChange));
         let desk = Desk::new();
         assert!(desk.accepts(EventName::LocationChange, FOREGROUND_CHILD));
         assert!(!desk.accepts(EventName::LocationChange, BACKGROUND_CHILD));

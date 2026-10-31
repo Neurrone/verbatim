@@ -369,10 +369,10 @@ mod tests {
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
-    use crate::protocol::{read_message, write_message};
     use crate::supervisor::policy::{HeldFact, HeldFacts};
     use crate::supervisor::writer::{Outgoing, QueueError, Received};
     use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, EventTiming, ListenerToCore};
+    use verbatim_process::message::{read_message, write_message};
 
     /// How long a test waits for a completion it caused before it fails.
     const BOUND: Duration = Duration::from_secs(10);
@@ -558,7 +558,7 @@ mod tests {
                 let port = Arc::clone(relay.port());
                 match read.pipe.take(&completion, &port, |body| {
                     let message: ListenerToCore =
-                        crate::protocol::decode_message(body).expect("a message");
+                        verbatim_process::message::decode_message(body).expect("a message");
                     if let ListenerToCore::Pong { seq, .. } = message {
                         seqs.push(seq);
                     }

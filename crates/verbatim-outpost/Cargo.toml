@@ -8,18 +8,17 @@ license.workspace = true
 
 [dependencies]
 crossbeam-channel.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-simdutf8.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 verbatim-core.workspace = true
 verbatim-ia2.workspace = true
 verbatim-model.workspace = true
 verbatim-process.workspace = true
+verbatim-reader-rules.workspace = true
 verbatim-text.workspace = true
 verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true
+verbatim-win32.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 

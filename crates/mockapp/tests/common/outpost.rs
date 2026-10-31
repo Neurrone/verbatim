@@ -104,8 +104,9 @@ use verbatim_model::{
     WindowFacts, WindowHandle,
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged};
-use verbatim_outpost::protocol::read_message;
-use verbatim_outpost::{GapTimer, Heard, Outpost, OutpostOptions};
+use verbatim_outpost::{GapTimer, Heard, Outpost};
+use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::message::read_message;
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::BlockingReader;
 use verbatim_uia::{Cached, ListenerEvent, Live};
@@ -683,7 +684,7 @@ impl OutpostUnderTest {
             Arc::clone(&jump_after),
             Arc::clone(&system_time),
         );
-        let clock: verbatim_outpost::arbitration::Clock = Arc::new(move || {
+        let clock: verbatim_process::clock::Clock = Arc::new(move || {
             if system.load(Ordering::Relaxed) {
                 return Instant::now();
             }
@@ -780,11 +781,11 @@ impl OutpostUnderTest {
     /// seconds, and every other window by the system's judgement.
     pub fn judge_hung(&self, hung: HWND) {
         let hung = hung.0 as isize;
-        let reader: verbatim_outpost::WindowReadabilityReader = Arc::new(move |hwnd| {
+        let reader: verbatim_win32::window::WindowReadabilityReader = Arc::new(move |hwnd| {
             if hwnd == hung {
                 Some("its application is not responding")
             } else {
-                verbatim_outpost::window_unreadable(hwnd)
+                verbatim_win32::window::window_unreadable(hwnd)
             }
         });
         self.outpost

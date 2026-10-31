@@ -1,9 +1,11 @@
-//! The private Core-outpost protocol (architecture section 1).
+//! The message layer of the private protocol between Core and its children,
+//! the outposts and the focus listener (architecture section 1), over
+//! [`crate::transport`]: every end of every role shares it.
 //!
 //! Transport: two pipes with no name, made by the supervisor, whose child
 //! ends the child inherits, their handle values passed on its command line,
 //! so there is nothing to discover or secure. Each message is one frame of
-//! `verbatim_process::transport`: a `Content-Length` header, then the
+//! `crate::transport`: a `Content-Length` header, then the
 //! message as compact JSON, readable by eye and in captures, and, for a
 //! message carrying a terminal's text or colours, a raw section holding
 //! them, the JSON giving their places (the `raw` module); all of it
@@ -14,65 +16,12 @@
 
 use std::io::{self, BufRead, Write};
 
+use crate::transport::Parts;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, DeliveredFact, ListenerToCore, OutpostToCore,
-};
-use verbatim_process::transport::Parts;
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 
 mod raw;
-
-/// Microseconds since the Unix epoch on the run's shared clock
-/// ([`verbatim_process::clock`]), which [`EventTiming`], the latency log,
-/// and every time compared across processes share.
-#[must_use]
-pub fn now_us() -> u64 {
-    verbatim_process::clock::now_us()
-}
-
-/// The fact an MSAA `WinEvent` of `kind` at the address `(hwnd, id_object,
-/// id_child)` makes, whether the listener's hook or an outpost's own took it
-/// in: a focus, a foreground change, a menu opening, an alert, or a tooltip
-/// shown. `None` for any other kind, and for an event with no window, which
-/// neither routes nor reads.
-#[must_use]
-pub fn fact_of_win_event(
-    kind: verbatim_ia2::WinEventKind,
-    (hwnd, id_object, id_child): (isize, i32, i32),
-) -> Option<DeliveredFact> {
-    use verbatim_ia2::WinEventKind;
-    if hwnd == 0 {
-        return None;
-    }
-    Some(match kind {
-        WinEventKind::Focus => DeliveredFact::MsaaFocus {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        // Taken unchecked: whether the window is still the foreground
-        // window is checked when the fact is handled, as NVDA checks it
-        // when it processes the event rather than in its event callback.
-        WinEventKind::Foreground => DeliveredFact::Foreground { hwnd },
-        WinEventKind::MenuPopupStart => DeliveredFact::MenuPopup {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        WinEventKind::Alert => DeliveredFact::Alert {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        WinEventKind::Show => DeliveredFact::Show {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        _ => return None,
-    })
-}
 
 /// The most bytes one message may take, its frame's header aside, in either
 /// direction between Core and a child (`docs/design/communication.md`, section
@@ -81,7 +30,7 @@ pub fn fact_of_win_event(
 /// reader that is told of more treats the other end as failed rather than
 /// reading on, so an enormous message cannot make it allocate without
 /// bound.
-pub const MAX_MESSAGE_BYTES: usize = verbatim_process::transport::MAX_FRAME_BYTES;
+pub const MAX_MESSAGE_BYTES: usize = crate::transport::MAX_FRAME_BYTES;
 
 /// A message of the Core-outpost protocol as a frame carries it: its JSON
 /// body, and for a message that carries a terminal's text and colours, a
@@ -107,7 +56,7 @@ pub trait Message: Sized {
 
 /// Appends `message`'s frame, a JSON body alone, to `buffer`.
 fn put_json<T: Serialize>(buffer: &mut Vec<u8>, message: &T) -> io::Result<()> {
-    verbatim_process::transport::put_frame(buffer, |body| {
+    crate::transport::put_frame(buffer, |body| {
         serde_json::to_writer(body, message).map_err(io::Error::other)
     })
 }
@@ -225,7 +174,7 @@ pub fn put_message<T: Message>(buffer: &mut Vec<u8>, message: &T) -> io::Result<
 /// for a frame that is not a valid message (a protocol violation, not a
 /// recoverable condition).
 pub fn read_message<R: BufRead, T: Message>(reader: &mut R) -> io::Result<Option<T>> {
-    let Some(frame) = verbatim_process::transport::read_frame(reader)? else {
+    let Some(frame) = crate::transport::read_frame(reader)? else {
         return Ok(None);
     };
     decode_message(frame.parts()).map(Some)
@@ -293,8 +242,8 @@ pub fn decode_message<T: Message>(parts: Parts<'_>) -> io::Result<T> {
 mod tests {
     use super::*;
     use verbatim_model::protocol::{
-        DumpedTree, EventTiming, FocusNow, FocusedControl, GapAnswer, ListenerFact, Query,
-        QueryOutcome, QueryResult, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, Urgent,
+        DeliveredFact, DumpedTree, EventTiming, FocusNow, FocusedControl, GapAnswer, ListenerFact,
+        Query, QueryOutcome, QueryResult, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, Urgent,
         WinEventStamp,
     };
     use verbatim_model::{
@@ -305,7 +254,7 @@ mod tests {
     /// What the relay does with `message`'s frame.
     fn peeked(message: &OutpostToCore) -> Peeked {
         let frame = encode_message(message).expect("encoded");
-        let frame = verbatim_process::transport::read_frame(&mut frame.as_slice())
+        let frame = crate::transport::read_frame(&mut frame.as_slice())
             .expect("a frame")
             .expect("not the end");
         peek(frame.parts().body)
@@ -388,7 +337,7 @@ mod tests {
     fn a_frames_kind_is_its_variants_name() {
         let kind_of = |message: &OutpostToCore| {
             let frame = encode_message(message).expect("encoded");
-            let body = verbatim_process::transport::read_frame(&mut frame.as_slice())
+            let body = crate::transport::read_frame(&mut frame.as_slice())
                 .expect("a frame")
                 .expect("not the end");
             message_kind(body.parts().body).map(str::to_owned)
@@ -743,27 +692,6 @@ mod tests {
         assert_eq!(read_back, Some(answer));
         // It carries no node, so Core and the outpost do not count it.
         assert!(!OutpostToCore::IdleAnswer { round: 12 }.carries_nodes());
-    }
-
-    #[test]
-    fn only_the_five_win_event_kinds_with_a_window_make_a_fact() {
-        use verbatim_ia2::WinEventKind;
-        for kind in [
-            WinEventKind::Focus,
-            WinEventKind::Foreground,
-            WinEventKind::MenuPopupStart,
-            WinEventKind::Alert,
-            WinEventKind::Show,
-        ] {
-            let fact = fact_of_win_event(kind, (7, -4, 0))
-                .unwrap_or_else(|| panic!("{kind:?} makes a fact"));
-            assert!(fact.is_win_event(), "{kind:?}");
-            assert_eq!(fact_of_win_event(kind, (0, -4, 0)), None);
-        }
-        assert_eq!(
-            fact_of_win_event(WinEventKind::NameChange, (7, -4, 0)),
-            None
-        );
     }
 
     #[test]

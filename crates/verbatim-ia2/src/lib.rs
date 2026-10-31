@@ -20,8 +20,14 @@
 //!   objects, with the object kept behind each, sharing a mint counter with
 //!   UIA.
 //! - [`map`] — role and state mapping into the model.
-//! - [`class`] — window class names normalized as NVDA normalizes them,
-//!   which every class-based rule compares.
+//! - [`class`] — a window's class name normalized as NVDA normalizes it
+//!   (`verbatim_reader_rules::class`), which every class-based rule
+//!   compares.
+//! - [`event_thread`] — the thread that installs the `WinEvent` hooks and
+//!   runs the message loop they are delivered through, which an outpost
+//!   and the focus listener each run.
+//! - [`fact_of_win_event`] — the fact a `WinEvent` makes, whichever of
+//!   them took it in.
 //! - [`calls`] — the per-thread count of the cross-process calls
 //!   [`acquire`] makes, which the outpost's worker takes around each entry
 //!   it handles.
@@ -35,7 +41,8 @@
 //! `accessible`, the safe MSAA wrappers (an `IAccessible` with its child id,
 //! and the `oleacc` acquisition functions) that [`acquire`] is written
 //! against; `window`, the window functions and the list view and tree view
-//! messages; `hook`, the `WinEvent` hooks; and [`edit`], the edit
+//! messages; `hook`, the `WinEvent` hooks; [`event_thread`], its message
+//! loop; and [`edit`], the edit
 //! controls' messages and the target memory some of them need.
 //! [`acquire`] itself is safe code.
 
@@ -47,6 +54,8 @@ mod com;
 pub mod dialog;
 pub mod edit;
 pub mod equality;
+pub mod event_thread;
+mod fact;
 mod hook;
 mod list_view;
 pub mod map;
@@ -54,6 +63,7 @@ mod registry;
 mod window;
 
 pub use com::CHILDID_SELF;
+pub use fact::fact_of_win_event;
 pub use hook::{
     APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker, SyncMarkerCallback, WinEvent,
     WinEventCallback, WinEventHook, WinEventKind, WindowCache, event_clock, suspend_kinds,

@@ -41,8 +41,9 @@ use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, StateSet,
 };
+use verbatim_outpost::Heard;
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
-use verbatim_outpost::{Heard, OutpostOptions};
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Agile, Cached, Fill, ListenerEvent, ListenerSelection, Live, Node, Part, Registration, Shape,
     Subscription, Uia,

@@ -83,7 +83,7 @@ releases Alt. Notepad has no outpost yet.
    - That thread judges and reads the focus from the event's own element
      (`focus_read::FocusReader::read`), as NVDA's focus handler does: a
      repeat of the focus Core holds, a window that fails NVDA's acceptance
-     test against the foreground window (`outpost::acceptance`), or an
+     test against the foreground window (`verbatim_reader_rules::acceptance`), or an
      element without the keyboard focus is dropped; otherwise the classic
      walk reads its value, states, details, selected child and raw-view
      ancestors, each with its own window handle, within a two-second
