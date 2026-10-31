@@ -702,7 +702,7 @@ Sequences, each with one answer:
 - **One late tick passes both the bound and the deadline.** The walk's bound is at 9.998 s and the deadline at 10 s, and the tick wakes at 10.001 s. The deadline is judged first, so the tick emits one `Publish { R, then_abandon: deadline }`. The answer commits the published focus and marks R claimed, so the group's older entries are not tried, as today. Then it ends generation G. The same sequence is a reducer test.
 - **The deadline passes with a walk armed.** `judge_abandonment` emits `Publish { R, then_abandon: deadline }`. The answer commits the publication, then ends generation G: G + 1 takes charge, `Abandon` is emitted, and R's query is answered once. G's later results are refused by generation, as today.
 - **The user moves on during a walk.** A foreground fact emits `AskMovedOn { R }`, answered `MovedOn { R, true }`. That emits `Publish { R, then_abandon: moved on }`, and its answer completes as above. Three transitions, one shell step.
-- **The program ends between an ask and its answer.** This cannot happen, since no message is taken in between. An answer whose request is not current, or is claimed, is dropped; with `then_abandon`, the abandonment is then not made, since its program is gone. No ask is made while the outpost is stopping, as today.
+- **The program ends between an ask and its answer.** This cannot happen, since no message is taken in between. An answer whose request is not current is dropped; with `then_abandon`, the abandonment is then not made, since its program is gone. A `MovedOn` answer applies whether or not its program is claimed, so a published program still stuck is abandoned at once, as `judge_abandonment` does today (corrected after the review of "The work in flight, shared by both readers"). No ask is made while the outpost is stopping, as today.
 - **The shell's thread panics.** The outpost ends, and Core answers its outstanding requests at its end, as today.
 
 M4.6's recorder then needs nothing special: `MovedOn` and `Published` are inputs like any other. `Change` must be serializable for the recorder in any case, since `Input::Commit` carries one; that is M4.6's work.
@@ -900,21 +900,17 @@ Below are each owner's candidates, with the invalid state, copy or checks each r
 
 **The outpost's reducer.**
 
-- **The walk as one state (recommended).** `Current`'s `walk: Option<Duration>` and `claimed: bool` become `Walk { Unarmed, Armed(bound), Published }`.
-  - It removes the representable but invalid "armed after its publication": `Input::Armed` today sets the bound whatever `claimed` says (`src/lib.rs` 597).
-  - It turns the 7 `claimed` checks (529, 603, 982, 1071, 1090, 1123, 1384) into matches on one field.
-  - The program in flight goes from 10 fields with 3 flags to 9 fields with 2 flags.
-  - It mirrors the worker's own `SlotState` (`verbatim-outpost`, `worker.rs` 123 to 134). The reducer's walk is the reducer's record of what it asked and was answered, not a copy judged in its place.
-- **The gap timer as one state (recommended).** `gap_due: Option<u64>` and `gap_timer_given: bool` become `GapTimer { Own(Option<due_us>), Given }`.
-  - It removes "given, with a due time the reducer will never use": `gap_due` is set at 771 whatever the flag says.
-  - It deletes the 2 filters on the flag (553 and 670).
-  - The reducer goes from 16 fields with 4 flags to 15 fields with 3 flags.
+- **Moved out, so nothing is built twice:** the walk as one state (`Current`'s `walk` and `claimed` as `Unarmed`, `Armed(bound)` or `Published`) and the count of abandoned workers kept by the shell alone go to "The work in flight, shared by both readers", whose one `InFlight` holds the walk's bound and replaces the reducer's `abandoned` (the simplification study's second candidate).
+- **The gap timer derived from the gap record (recommended).** It replaces the `GapTimer { Own(Option<due_us>), Given }` enum this section first proposed, which kept a copy of the due time.
+  - `Reducer::gap_due` (`src/lib.rs` 470) repeats the open record's `due_us`, and `TimerAction` (`src/intake.rs` 187) threads each change of the record out to it through `Pushed::timer` (390) and `gap_timer` (`src/lib.rs` 767). `next_timer` (553) and `tick` (670) read the record's due time instead, and the record notes that its bound's entry is queued, which `tick` today notes by clearing `gap_due` (671). `next_timer` skips a record whose bound's entry is queued, so that while the entry waits behind a marker the reducer is not woken again for a time already past.
+  - Benefit: the copy goes, and with it the invalid "given, with a due time the reducer will never use" (`gap_due` is set at 771 whatever the flag says). `Effect::GapTimer`, the tests' seam, is given when the record's due time differs after a transition from before it. That also gives `GapTimer(None)` when the bound's read closes the record, where today nothing is given; harmless, but the tests that assert exact effect lists change with it.
+  - Counts: 1 field (`gap_due`), 1 type of 3 variants (`TimerAction`) and 1 helper fewer, about 70 lines. `gap_timer_given` stays a flag until the seam goes (below), so the flags are unchanged, and its 2 filters stay.
+- **One copy of the marks (recommended).** `Intake::marks` (`src/intake.rs` 325) copies `Facts::marks` (`src/follow.rs` 532) within the same owner, kept equal by `sync_marks` (`src/lib.rs` 917, called at 850, 1214 and 1405), `note_focus` and `absorb_console_updates` (`src/intake.rs` 803 and 791), and `Applied::adopted` (`src/follow.rs` 566). The intake takes the facts' marks as an argument where it reads them (529 and 651 to 654).
+  - `sync_marks` is also the only giver of `Effect::Marks`, which the shell turns into the mailbox's push-time copy of the marks (`verbatim-outpost`, `shell.rs` 737), against which `drops_on_arrival` judges each arrival. In its place, `Effect::Marks` is given whenever `Facts::marks` differs after a transition from before it, as the gap timer's effect is, so the mailbox's copy follows every change, including a console window's absorption cleared (`src/lib.rs` 1212 to 1214 and 1403 to 1405) and a focus adopted.
+  - Benefit: one holder of the marks within the owner, and fewer lines. No state is removed that is reachable today, since every write to the facts' marks is followed by `sync_marks` in the same transition (849, 1214 and 1405).
+  - Counts: the intake's 1 field, its 2 setters, `sync_marks`, `Applied::adopted` and the trigger at 844 to 851 go, and one comparison after each transition is added, about 40 lines net.
+- **Not taken: the focus group's remaining tries kept in the intake.** `finished` (`src/lib.rs` 1122 to 1142) does not only reorder two queues: it gives the group's remaining entries to a gap read pushed during the try, so that the read, if it reports the focus, ends the group and its older entries are never tried. That decision stays wherever the queue is kept, so moving `Reducer::after` into the intake's batch would save only the field, and is not worth a commit.
 - **A window that is never 0 (recommended for the logic crates).** Windows parsed at the boundary into `Option<Window>`, with `Window` a non-zero handle. It deletes the 9 "0 is none" comparisons in `verbatim-outpost-logic`, the 3 in `verbatim-listener-logic` and the 1 in `verbatim-reader-rules`, and makes a window of 0 unrepresentable. The protocol keeps `isize`, and the logic crates' entry points convert it.
-- **The count of abandoned workers kept by the shell alone (recommended).**
-  - The reducer's `abandoned` field (`src/lib.rs` 1045 and 615), `Input::Returned`, `Effect::Returned` and `Effect::Abandon`'s `count` exist only to hand the shell a number. The shell stores that number in `Context::abandoned` for its pongs (`verbatim-outpost`, `shell.rs` 730 and 735, read at `mod.rs` 1523). No decision of the reducer reads it.
-  - The workers and their returns are the shell's: it starts each generation, and `Posted::Returned` comes to it. So the shell counts, adding one when it carries out `Abandon` and taking one away on `Posted::Returned`. The copied fact goes.
-  - Counts: 1 field, 1 input and 1 effect fewer.
-  - A worker's return no longer runs a reducer transition, which saves one transition per abandoned worker that returns. Wake-ups are unchanged.
 - **Not this build:** `gap_timer_given`, `Input::GapTimerGiven` and `Input::GapBound` are the mockapp tests' seam for driving the gap bound by hand. They could go once those tests can drive the reducer's time, which is a follow-up.
 - **Kept as they are:**
   - `to_drop`: the reducer's knowledge that a release left objects to drop, which decides when a `Work::Drop` program runs. The alternative, attaching the shell's garbage to the next program, would hold released objects until the next event when the application is idle.
@@ -933,21 +929,12 @@ Below are each owner's candidates, with the invalid state, copy or checks each r
 
 **The supervisor's policy and generations.** `Generation` is already an explicit state machine (`Launching`, `SpareGiven`, `Starting`, `Ready`, `Waiting`). The second writer is removed by the purity build, and `Live`'s fields become private behind three transitions. No further type change is recommended: `Backoff`, `Spares` and `HeldFacts` hold no flag pairs.
 
-**Core's request table.**
-
-- **How an entry ends, as one state (recommended).** `Entry`'s `passive: bool` and `deadline: Option<_>` become `Ends { ByAnswer, Passive, ByDeadline(due_us) }`.
-  - It removes "passive with a deadline", which no constructor makes (`begin`, `begin_passive` and `begin_until`, 136 to 158) but the type allows.
-  - The three constructors become one taking an `Ends`.
-  - `Entry` goes from 4 fields with 1 flag to 3 fields with none.
-- **The count of timed entries is kept.** `timed` (`requests.rs` 127) lets both `expire` (229) and `next_deadline` (252) return at once while no request has a deadline. The reducer thread calls `next_deadline` before every command (`main.rs` 2111 to 2120), so removing `timed` would add a walk of the outstanding requests to every event, key and speech completion. Passive caret watches keep the table non-empty while the user types. With `Ends`, its two updates become one match each.
+**Core's request table.** Moved out, so nothing is built twice: how an entry ends (`passive` and `deadline` as one `Ends`, with one constructor) and the count of timed entries go to "Core's query table", which replaces the table's entries with the reducer's own record of each query (the simplification study's third candidate). The second build's purity changes to the table stay, and are that build's first step.
 
 **The keyboard decision machine.**
 
 - **The press streak's count with its gesture (not recommended).** `repeat_count` (`state.rs` 391) could join `last_gesture`, but the auto-repeat path returns the count after the streak's gesture was cleared (619 against 519, 524 and 549). Folding them would change what a held key's repeats count, and so what is heard.
-- **Num Lock as part of the key (recommended).**
-  - The hook reads Num Lock before every key and stores it with `set_num_lock` (`verbatim-input-windows`, `hook.rs` 366 and 367) just before `on_key`. So `num_lock_on` (`state.rs` 394) is an input of each key, held as state between keys.
-  - It becomes a parameter of `on_key`. That removes the field and `set_num_lock`, and with them the rule that the two calls be made in that order.
-  - Fields go from 8 to 7, and public methods lose one. The 109 calls of `on_key` in `state.rs`'s tests change with it.
+- **Moved out, so nothing is built twice:** Num Lock as part of the key (`num_lock_on` and `set_num_lock` replaced by a field of each key's input) is built in "The hook's hold decision", which changes `on_key`'s input and its 109 test calls anyway (Dickson, 2026-11-01).
 - **No other candidate.** Its other fields are independent, apart from the map, whose shared type the purity build removes.
 
 **Core's reducer.**
@@ -961,16 +948,14 @@ Below are each owner's candidates, with the invalid state, copy or checks each r
 
 Counts before and after, for the owners that change:
 
-- **The outpost's reducer**, against its state after the first build:
-  - fields: 16 to 14;
-  - flags: 4 to 3;
-  - inputs: 17 to 16;
-  - effects: 17 to 16;
-  - the program in flight: 10 fields with 3 flags, to 9 with 2;
-  - checks deleted: 7 `claimed` checks and 2 timer filters, plus 13 "0 is none" comparisons across the logic crates.
+- **The outpost's reducer**, against its state after the first build, in this build alone:
+  - fields: 16 to 15 (`gap_due`);
+  - flags: 4, unchanged;
+  - inputs and effects: 17 each, unchanged;
+  - the intake's fields: one fewer (`marks`);
+  - removed: `TimerAction`, `Pushed::timer`, `sync_marks`, the intake's 2 mark setters and `Applied::adopted`, about 110 lines net, plus 13 "0 is none" comparisons across the logic crates.
 - **The listener's scheduler:** `App`'s fields from 9 to 8.
-- **The request table:** `Entry`'s fields from 4 with 1 flag to 3 with none; constructors from 3 to 1; the table's 3 fields unchanged.
-- **The keyboard decision machine:** fields from 8 to 7; one public method fewer.
+- **The request table and the keyboard decision machine:** no change in this build; their items moved above.
 - **The rest:** no change.
 
 ### Clocks and trace ids
@@ -1181,7 +1166,7 @@ The commits within each are given in order. Each commit has its unit tests, and 
 
 **The third build, simpler types:**
 
-- One commit per owner, as recommended in "Simpler owners": the outpost's walk, gap timer and abandoned count, the window type across the logic crates, the scheduler's running place, the request table's ending, and Num Lock as part of the key.
+- One commit per owner, as recommended in "Simpler owners": the outpost's gap timer from its record and one copy of the marks, the window type across the logic crates, and the scheduler's running place.
 - Scenarios: `notepad_editing` and `rapid_tabbing_in_settings`.
 
 ### Limitations
@@ -1320,3 +1305,742 @@ Lifecycle states:
 - An outpost whose worker cannot start, at its start or as a replacement, keeps running: the generation stays without a worker, each program is answered as failed, each dispatch tries once to start one, and the shell keeps its garbage until a worker starts (Dickson, 2026-10-31).
 - The fault tests are built by `cargo xtask faults` in `target/debug`, beside the shipped build; the only executable it rewrites is `mockapp.exe`, which the suite's own build relinks (Dickson, 2026-10-31).
 - The lock check panics, and in debug builds aborts where a panic around application calls would be caught (the worker, UIA's event callbacks and the bounded client's thread), after writing its message to standard error and the log (Dickson, 2026-10-31).
+
+## The hook's hold decision (a build of its own)
+
+Status: proposed on 2026-11-01, written against main 39dce0b2, for its adversarial review, from the fifth candidate of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`). It follows the determinism build's second build, which makes the keyboard decision machine pure, owning its gesture map and taking the time in microseconds, and adds `verbatim-input` to the covered crates. Lines below are main's, before that build. A held key, a deferred key and the line of keys are as in [holding caret keys](key-holding.md) (its terms and "Keys behind a held key").
+
+### The decision today
+
+The machine (`verbatim-input`, `src/state.rs`) decides pass or swallow. The hook (`verbatim-input-windows`, `src/hook.rs`) then rewrites that decision in `hold` (275 to 310):
+
+- a release whose press was held is swallowed through the hook's own set `held_downs` (47 and 277), beside the machine's `swallowed_downs` (`state.rs` 381), which swallows the release of a bound gesture's press or the Verbatim modifier's;
+- a press the machine passed with an observed gesture becomes a swallow when `KeyHolding::holds` (`lib.rs` 134) finds the switch on and the gesture in the hook's own copy of the caret table (`lib.rs` 114), and `may_hold` (`lib.rs` 174) finds Core's view about the window in front and allowing it;
+- any other transition the machine passed becomes a swallow, deferred, while the line `outstanding` (51) is not empty;
+- Verbatim's own input and the lock keys are exempt (282).
+
+The line's places are the hook's `sequence` (53), given out by `queue` (107) and taken back by `passed_on` (120) when a key Verbatim sent again comes back with its place, before the machine sees it (359). `decide` (348) then reports from both results: `Held` or `Observed` by the rewrite, `Passed` by `may_edit` (188), whose `is_modifier` (176) repeats the machine's modifier table (`state.rs` 669) and whose lock-key test repeats the machine's, and a lock key's `Gesture` (440).
+
+So a key's fate is decided in two places, the second able to contradict the first, and two sets record "swallow this key's release".
+
+### The model
+
+The machine decides each transition whole; the hook gathers its inputs, carries out the verdict and reports.
+
+- **Input.** `on_key` takes a `KeyInput`: the event, the time and Num Lock (the third build's "Num Lock as part of the key", built here; "Decisions" below), and two more:
+  - `source`: `User`, or `Own` (tagged `OWN_INPUT_TAG`), decoded by the hook from `dwExtraInfo`;
+  - `permit`: `None`, `Defer` or `HoldAndDefer`. It is `None` unless Core's view names the window in front and lets keys be held there, and `HoldAndDefer` when the focus also has text. One enum, so "the focus has text in a window that may not hold" cannot be given.
+- **Verdict.** `Pass`, `Swallow`, `Hold(place)` or `Defer(place)`. The hook calls `CallNextHookEx` for `Pass` and returns 1 for the rest, reporting `Held` with its stroke for `Hold` and `Deferred` for `Defer`, as it does today.
+- **What the key reports**, returned with the verdict as today's `Decision` fields: the speech effect, the bound gesture, the observed gesture, whether a press that reaches the application is translated for typed text and, typing nothing, reported as `Passed` (`may_edit` and its tables move into the machine), and the lock key whose new state is announced. For `Own` the machine returns no speech effect, observed gesture or `Passed`, as the hook drops them today. The hook still translates, since translation calls the keyboard layout (`src/typed.rs`), and reads the deferred transitions it needs from the machine.
+- **The line moves into the machine:** `outstanding` and its places, unchanged in behaviour. A key Verbatim sent again (tagged `PASSED_ON_TAG`) is decoded first, as today (`hook.rs` 354 to 362), and given to the machine's `passed_on(place)`, which takes the line up to that place and changes nothing else; the hook passes it before reading Num Lock, the time, the view or the window in front, so a passed-on key costs no read, as today.
+- **One record of the keys down.** `held_downs` and `swallowed_downs` become one `BTreeMap` from each key the machine has seen go down and not come up to two facts:
+  - `reached`: a press of the key has reached the application, or is deferred to reach it, since it last went down. Set by a `Pass` or `Defer` verdict on a press. A `Hold` does not set it, since the shell sends the held press with its own release.
+  - `swallowed_gesture`: a press of the key completed a bound gesture, or was the Verbatim modifier's, and was swallowed, since it last went down. Set by such a `Swallow`, and never cleared by a hold or a pass, so a bound gesture's swallow always wins over a hold, as in `swallowed_downs` today.
+  - A release is swallowed when its key's entry has `reached` false, and otherwise passed, or deferred behind the line; a key with no entry passes, as today. The entry goes with the release.
+  - The multi-press count treats a press as an auto-repeat when `swallowed_gesture` is set, which is exactly when `swallowed_downs` holds the key today (`state.rs` 617 to 620). So Down Arrow held in Notepad (held, no flag) whose auto-repeat completes `kb:downArrow+verbatim` once the Verbatim modifier goes down counts as a fresh press, repeat 0, and every later auto-repeat carries 0, as today; and Verbatim+Down Arrow pressed, the modifier let go and Down's next auto-repeat held, then the modifier pressed again, still carries 0, as today.
+  - All four combinations of the two facts are reachable and valid.
+- **The stuck key fixed (Dickson, 2026-11-01; "Decisions" below).** `reached` is what fixes it. Today a key whose press was held, or swallowed for a bound gesture, keeps its entry while its later auto-repeats pass, so its release is swallowed and Windows keeps the key down until it is pressed again: Down Arrow held in a search box whose results list takes the focus, where holding switches off after the first press (reproduced in the design review, `experiments/logic-tests-study/hook-hold-design-review.md`), or Verbatim+Down Arrow with the modifier let go before Down. With `reached` set by the first auto-repeat that passes or is deferred, the release takes the same path as that press.
+- **The caret table moves into the gesture map**, as the observed gestures that are held; the clearing keys stay observed and not held. `KeyHolding`'s set goes.
+- **What stays in the hook:** the reads (Num Lock, the time, Core's view, the window in front), decoding `dwExtraInfo`, the calls (`CallNextHookEx`, the speech effect, the reports, translation), minting trace ids, and the harness's `Handled`.
+
+The hook reads the window in front only when Core's view lets keys be held and either the focus has text or the machine's line is not empty (`has_outstanding`, a read of the machine's own state on the same thread); otherwise the permit is `None` with no call. One read serves both the permit and translation, which today reads it for every press that may type.
+
+### Sequences
+
+**A held caret key.** Notepad's text has the focus; Right Arrow is pressed.
+
+1. The hook decodes `User`, reads Num Lock and the time, loads the view (Notepad's window, keys may be held, the focus has text), and reads the window in front, which matches: `HoldAndDefer`.
+2. `on_key`: `kb:rightArrow` is observed and held. The machine records the key as down with neither fact set, appends place n with no transition, and returns `Hold(n)` with the observed gesture and `Cancel`.
+3. The hook cancels speech, reports `Held` with the stroke and place n, and returns 1.
+4. Core reads the caret, and the shell sends the press and its release tagged with n. Each comes back to the hook, which decodes its place before any read and gives it to `passed_on(n)`; the first takes the line up to n, the second finds nothing left, and both pass.
+
+**A key released while held.** Right Arrow released before Core passes it on: the machine finds the key's entry with `reached` false, removes it and returns `Swallow`, adding no place, since the shell sends the release with the press. Released after the pass-on: the same. A letter pressed and released in between returns `Defer` twice, each with its own place, reported after what the press typed, as today.
+
+**A gesture.** Verbatim+T pressed while Right Arrow waits in the line: the bound gesture returns `Swallow`, never `Defer`, since only a transition that would pass is deferred; Core runs it after the held key, as today. The Verbatim modifier is swallowed as today; in share mode it passes and, unless it is a lock key, is deferred behind a held key, as today.
+
+**A key repeat.** Right Arrow held down: each auto-repeated press is held in its own turn, `Hold(n + 1)`, `Hold(n + 2)` and on, `reached` staying false, and the one release is swallowed, as today ("A key held with auto-repeat" in the holding design). A bound gesture's auto-repeat keeps its multi-press count.
+
+**Holding switched off while a held key is down.** Down Arrow is held in a search box; its first press is `Hold(1)`, and once it is passed on the focus moves to the results list and Core switches holding off. The first auto-repeat, with the line empty and the permit `None`, is `Pass`, setting `reached`; so do the later ones. The release finds `reached` and passes, so the list and Windows see the key come up. With the permit `Defer` and the line not empty, the auto-repeat is `Defer` and sets `reached`, and the release is deferred behind it.
+
+**The hook's timeout.** Windows removes a low-level hook without telling it once its procedure takes longer than `LowLevelHooksTimeout` (300 ms by default; `lib.rs` 15 to 30). The procedure does today's work, in a different place: at most two local reads (Num Lock, and the window in front where the permit needs it), one lock-free load, the machine's transition (a few operations on sets of a few keys and one deque push or pop) and the posts. As a covered crate the machine can name no lock, thread, clock or call, which the determinism enforcement checks, where today only the hook's own module is scanned (`xtask/src/ownership.rs`). Were the hook removed anyway, the line would stay as it was, as today.
+
+**Core not answering.** A held key's fate stays Core's: its read is bounded by Core's deadline (`HELD_KEY_BOUND`, 150 ms) and it is sent by the shell. If the reducer thread stalls, the line stays non-empty and every later transition that would pass is deferred, waiting in the reducer's queue, as today (the holding design's "Limitations"). The machine adds no bound of its own: a second owner of when a held key is let go would be a copy of Core's decision. A key Windows drops after Core sent it, to an elevated window come to the front, keeps its place until a later key comes back and takes the line up to its own place, as today; while that window is in front the permit is `None`, so nothing is deferred.
+
+### States and lines
+
+- Removed from the hook: `held_downs`, `outstanding`, `sequence`, `Outstanding`, `Hold`, `hold`, `queue`, `passed_on`, `deferred_transitions`, `is_modifier` and `may_edit`, and `KeyHolding` with its `AtomicBool` and set, its switch joining `HookForeground`. The rewrite of a decided key goes.
+- Moved into the machine, not added: the line and its places.
+- Added: `KeyInput`'s `source` and `permit`, `passed_on`, the verdict's `Hold` and `Defer`, the two facts of each key down, and the gesture map's held set. No lifecycle state is added; two swallow sets become one record.
+- Counts: the hook's state from 11 fields to 7; the machine's from 8 (after the determinism build's second build) to 9, Num Lock leaving and the line and its last place joining. About 150 non-test lines leave `verbatim-input-windows` and about 100 join `verbatim-input`.
+
+### Hook latency and wake-ups
+
+- Wake-ups: none added or removed. The reports and posts are the same, in the same order.
+- The procedure's work: the same, except that the window in front is read for every transition while the focus has text in a window that may hold keys, where today only a held or deferred key and a press that may type, modifiers included (`typed.rs` 150), read it. Releases, presses while Control or Alt is down, and Verbatim's gestures in a text field gain one local call each, which does not wait or allocate. A passed-on key reads nothing, as today. With the two views as one, one lock-free load replaces a load and an atomic read per key.
+- Measured before and after, in the build: `cargo xtask trace scenario` on `measure_keys_notepad` and `measure_held_repeat_text_box`, debug builds, test audio mode, at most 20 runs each: the hook thread's wake-ups and processor time, and wake-ups in all processes per input-hook wake. A rise in the hook thread's processor time beyond the runs' spread is a finding.
+
+### What is heard, and which keys reach the application
+
+Nothing heard changes. Every verdict equals today's rewritten decision for every source, permit and key, which the tests below check, with one exception: the release of a key one of whose presses reached the application, after an earlier press of it was held or swallowed for a gesture, now reaches the application where today it is swallowed (the stuck key, above). NVDA, from the pinned source:
+
+- NVDA keeps one set of trapped keys, for every press it swallowed, a script's gesture or the NVDA modifier, and swallows a release whose key is in it (`nvda/source/keyboardHandler.py` 93, 314, 319 and 411 to 413); one record of the keys down is the same shape. NVDA has the stuck key too: a key goes into the set when its script runs (314), a later press of it that runs no script passes without taking it out, and its release is swallowed (411 to 413). The fix departs from NVDA, as Dickson decided ("Decisions" below).
+- Its caret scripts read the caret, then send the key (`nvda/source/editableText.py` 181 to 188), and the keys it sends pass its own hook untouched (`nvda/source/keyboardHandler.py` 226, with `ignoreInjection` around `send`'s injection, 796 to 811), as Verbatim's passed-on keys bypass the machine's decision.
+- Deferring later keys behind a held key is Verbatim's own (the holding design's "Decisions") and is unchanged.
+
+### Tests
+
+- The hook's holding tests (`src/hook.rs` 609, 672 and 821, and the decision half of 887) and `a_key_with_a_meaning_outside_the_text_is_not_watched` (920), which tests `may_edit`, become tests of the machine with a source and a permit, with their assertions unchanged. `no_key_is_held_where_core_says_none_may_be` (737) and `no_key_is_held_until_core_has_a_view_of_the_window_in_front` (777) stay in the hook as tests of the permit's gathering, and one new hook test checks that each verdict is carried out: the return value and the reports.
+- New machine tests, one per behaviour: a held key's release is swallowed after its pass-on; a held key's auto-repeat that completes a bound gesture counts as a fresh press, and its later auto-repeats carry the same count; a held key's auto-repeat passed after holding switches off gets its release passed; a gesture's key whose auto-repeat passes after the modifier is let go gets its release passed; `passed_on` changes only the line; `Own` input is neither held nor deferred and reports nothing passed.
+- An enumerated test, as the design principles ask of a pure state machine with lifecycle paths. Its alphabet, 11 steps: Right Arrow's press (an auto-repeat when it is already down) and release, A's press and release, Shift's press and release, the Verbatim modifier's (Insert's) press and release, T's press, the shell's pass-on of the oldest place, and the permit moved to its next value. Verbatim+Right Arrow and Verbatim+T are bound, so a caret key is also a gesture's key. Each step is 33 ms after the one before, so multi-press timing is exercised. Every sequence of up to five steps is walked depth first, each prefix's state cloned rather than replayed, about 180,000 transitions; the build measures its run time in a debug build and keeps it under ten seconds, at four steps if five are too slow.
+  - Its reference model: the order of transitions the application should receive (the user's, less the swallowed ones, with each held or deferred one at its place), and the repeat count each emitted gesture should carry (an auto-repeat once a gesture was swallowed since the key went down, a fresh press otherwise).
+  - After every step it checks: the passed and sent-again transitions match the model; no release reaches the application before its press; at the end of each sequence, with every place passed on and every key let go, every press that reached the application is followed by its release; the emitted repeat counts match the model; and each place enters and leaves the line once.
+  - The test is written first against today's machine and hook, through `decide`, where it must find the stuck key and nothing else, and then against the new machine, where it must pass.
+
+### Scenarios and the order of work
+
+Scenarios, each run three times at the end of the build, none recorded in `docs/flaky-tests.md`:
+
+- `conhost_up_typing`: a held Up Arrow with a typed character deferred behind it;
+- `notepad_selection_keys`: Shift+Right and Right in one batch, Shift's release deferred behind the held Shift+Right and Right held in its turn;
+- `notepad_typed_words`: typed text translated with the deferred transitions, and `Passed` reports.
+
+The order of work: measure before; the enumerated test against today's code, showing the stuck key; the machine's input, verdict, line, record of keys down and held set with the hook carrying them out and the tests, one commit; the two views as one, one commit; `cargo xtask ci`, the scenarios, and measure after; documents: the crate guides of `verbatim-input` and `verbatim-input-windows`, and the ledger's "A key through the keyboard hook" in `docs/performance.md`. About two days.
+
+### Limitations
+
+- The permit is gathered before the machine decides, so the window in front is read for keys that end neither held nor deferred.
+
+### Decisions
+
+- The stuck key is fixed in this build, departing from NVDA: a key some of whose presses reached the application has its release delivered, so the application and Windows see it come up, where NVDA swallows the release and Windows reports the key down until it is next pressed and released (Dickson, 2026-11-01).
+- Core's two views become one: `KeyHolding`'s switch, stored after every input (`verbatim-app`, `main.rs` 1599) beside `ForegroundView`'s store (1600), becomes a field of `HookForeground`, so Core publishes one view and the hook makes one load per key, at the cost of a store, with its allocation, on the reducer thread when the focus moves between text and no text (Dickson, 2026-11-01).
+- The window in front is read by the wider gate above, for every transition while the focus has text in a window that may hold keys or a key waits in the line, rather than a narrower gate that would copy into the hook the machine's rule that a release is never held; if the before-and-after measurement shows a rise in the hook thread's processor time, the gate is reconsidered (Dickson, 2026-11-01).
+- Num Lock as part of the key is built in this build, since it changes `on_key`'s input and its 109 test calls as this build does, and leaves "Simpler owners" (Dickson, 2026-11-01).
+
+## Core's query table (a build of its own)
+
+Status: proposed on 2026-11-01, written against main 39dce0b2, revised after its adversarial review (`experiments/logic-tests-study/query-table-design-review.md`) and for Dickson's decisions of the same day (below). It is candidate three of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`, "Third: Core's outstanding queries in one table owned by Core's reducer"). It starts after the caret watch build and after the determinism build's request table commit, which puts the table's entries in a `BTreeMap`, moves its deadlines to the shared clock and makes it generic over its asker in `verbatim-core`; this build then takes Core's own queries out of that table. A query here is a request Core's reducer makes for a node's text, a navigation or an activation, whether an outpost answers it or Core answers it from a terminal's memory.
+
+### Two records of each query today
+
+Each of the reducer's queries is recorded twice, under two numberings, by two owners on the same thread:
+
+- **The request table** (`verbatim-app`, `src/requests.rs`), under a `RequestId` it allocates (160 to 182), records the query's ending: the outpost's answer (`finish`, 191), "gone" when its outpost ends (`outpost_ended`, 211), or its deadline (`expire`, 228). Its asker carries the reducer's own number: `Asker::Reducer { query_id, kind, trace_id }`, `Asker::Text { query_id, trace_id }` and `Asker::Activation`, beside the shell's own five askers (a tree dump, focus-now, the fake focus, and the two shell item queries). `deliver` (344 to 446) turns an outcome into one of three reducer inputs, `FetchCompleted`, `TextCompleted` or `ActivationCompleted`. Whether a query is passive, so not counted by the idle barrier, is decided by the shell from the request's operation (`main.rs` 1829), as is the held read's deadline (1831 to 1835, which the caret watch build moves into Core).
+- **The reducer's holders**, under a `QueryId` from `SrState::next_query_id`, record what the answer continues: 16 fields in 5 structures.
+  - `SrState`: `latest_navigation` (`verbatim-core`, `src/state.rs` 686), `pending_caret` (703), `superseded_caret` (708) and `pending_text` (723);
+  - `HeldKeys`: `reading` (398), and `awaiting_watch` (407), which names the one watch the held keys wait on;
+  - `SayAll::pending` (605);
+  - the terminal's speech state: `request`, `cancel` and `overtaken` (`src/terminal.rs` 103, 111 and 117);
+  - each terminal model: `owed`, `fresh`, `history_asked` and `find_asked` (`src/terminal_model.rs` 192 to 207), `reviews` (197), whose `Review::Text` and `Review::Mark` hold the numbers of review commands Core answers from its memory, and `history` (204), whose `HistoryRead::review` names one of them.
+
+An answer is routed by trying the holders in a fixed order (`text_completed`, `src/reduce.rs` 573 to 628), shown here shortened:
+
+```rust
+if let Some(reading) = state.held_keys.reading.take_if(|r| r.query_id == query_id) { ... }
+if let Some(pending) = state.pending_caret.take_if(|p| p.query_id == query_id) { ... }
+if let Some((_, node)) = state.superseded_caret.take_if(|(s, _)| *s == query_id) { ... }
+if let Some(pending) = state.pending_text.take_if(|p| p.query_id == query_id) { ... }
+if say_all::is_pending(state, query_id) { ... }
+if terminal_model::is_pending(state, query_id) { ... }
+if terminal::is_pending(state, query_id) { ... }
+Vec::new()
+```
+
+Each try is also the query's identity check: a cleared or replaced holder no longer names the number, so a late answer finds nothing and is dropped. Consequences of the two records:
+
+- An outpost's end is handled twice: the reducer's `OutpostEnded` clears holders by node (`outpost_ended`, `src/reduce.rs` 1358 to 1415), then the table answers each entry "gone" (`main.rs` 1982). Those answers find the cleared holders and are dropped, except for the held read, the superseded caret, the terminal's requests, the activation, and the held keys' resume through `awaiting_watch`.
+- A superseded query has no holder but keeps its table entry, so the idle barrier still waits for it; nothing in Core records that.
+- A review command on a terminal Core models is never sent: `terminal_model::intercept` (`src/terminal_model.rs` 1062 to 1086, applied to every input's effects at `src/reduce.rs` 69) takes its request out of the effects and keeps it in the model's `reviews`, and Core answers it from its memory by calling `text_completed` itself (1020, 1232 and 1254); `command_mark` (`src/review_text.rs` 145 to 160) allocates a number and makes no request at all.
+- Request effects are built at 12 sites, each allocating its number and filling its own holder, among them two byte-identical helpers (`review_text::request` and `editing::navigator_request`) and an inline copy of them (`reduce.rs` 1694); three modules keep an `is_pending`.
+- A withdrawal needs a lookup across the numberings: the caret watch build's withdrawal of a held key's read must find the table's entry by the reducer's number.
+
+### The one table
+
+Core's reducer owns its queries in one field of `SrState`, `queries: Queries`, in a module of its own (`verbatim-core`, `src/queries.rs`):
+
+```rust
+pub(crate) struct Queries {
+    next: u64,
+    open: BTreeMap<QueryId, Open>,
+}
+
+pub(crate) struct Open {
+    outpost: OutpostId,
+    /// The trace the request runs under, set when the reducer's
+    /// transition ends ("Traces", below); `None` for one made under an
+    /// input with no trace.
+    trace_id: Option<TraceId>,
+    asked: Asked,
+    then: Then,
+}
+
+/// Who answers: the outpost, to a read the idle barrier waits for or to
+/// a caret key's watch it does not, or Core from a terminal's memory.
+pub(crate) enum Asked { Read, Watch, Memory }
+
+/// What the answer continues.
+pub(crate) enum Then {
+    Navigation { from: NodeId, kind: QueryKind },
+    Activation,
+    Caret(PendingCaret),
+    SupersededCaret { node: NodeId },
+    HeldRead { node: NodeId, key: HeldKey },
+    Text { node: NodeId, then: TextFollowUp },
+    SayAll,
+    Terminal(TerminalAsk),
+    TerminalModel { node: NodeId, generation: u64, ask: ModelAsk },
+    Nothing,
+}
+```
+
+`TerminalAsk` is `Read`, `Cancel` or `Overtaken`. `ModelAsk` is what a terminal model asked for: `Whole` or `HistoryBlock` (today's `Owed`), `Fresh`, `History { review, above, whole }` (today's `HistoryAsked` without its number) or `Find { hash }`. `generation` is the model's: each model gets one when it is made, from a counter kept with the models, so a model forgotten or evicted and made again for the same node has a newer one. `PendingCaret`, `HeldRead` and `PendingText` lose their `query_id`, which is the map's key. The table is serialized with the rest of `SrState`, so a dump replays it.
+
+The states of a query: absent before it is asked; open with a continuation; open with `Nothing`, superseded, cleared or never awaited (say-all's caret move, the terminal's hold), until its answer comes; and absent again once ended. The open entry with `Nothing` exists today without a name, as a table entry with no holder.
+
+What stays outside the table, each with its reason:
+
+- `HeldKeys::awaiting_watch: Option<QueryId>`: it is not a record of a query but the held keys' designation of the one watch they wait on, and it moves and clears by the held keys' own rules (finding three of the review shows that a flag on each entry could mark two watches).
+- A terminal model's `reviews` and `history`: the queue holds the order of the review commands waiting for the model's answer and each one's operation, beside `StatusBar` items that are no query, and `history` holds a history read's rows; the numbers in them are references to `Memory` entries, which hold the continuation, as `awaiting_watch` is a reference to a watch.
+
+A terminal model's four asks (`owed`, `fresh`, `history_asked`, `find_asked`) go into the table as `TerminalModel { node, generation, ask }` entries. Their rules:
+
+- **The model's questions become lookups.** Where the model's logic asks whether it is owed a read, or has a fresh, history or search read out (`src/terminal_model.rs` 832, 859, 931 to 934, 946, 965 and 1097), it asks the table for an open entry with its node, its generation and that `ModelAsk`; entries with `Nothing` do not count. An owed read asked while one is open turns the older to `Nothing`, as overwriting `owed` drops its answer today (748); the other three are asked only when none is out (1097), and the build asserts it. Reason: one record of each ask.
+- **The identity check is the generation.** An answer to a `TerminalModel` entry runs only when the model now holding its node has its generation; `terminal_model::reply` takes the entry's `ModelAsk` and matches on it, in place of matching the number against four fields. A model forgotten, evicted or ended takes its asks' identity with it, as its fields did. Reason: `TerminalModel::asked` today refuses exactly the answers whose model is gone or made again, and a generation that differs refuses the same ones.
+
+The rules, each with its reason:
+
+- **One way to ask.** `Queries::ask(outpost, query, then) -> Effect` allocates the number, inserts the entry with `Read` (`Watch` for `TextOp::AwaitCaret`) and returns the request's effect (`Effect::Fetch`, `Effect::Text` or `Effect::Activate`, which gains its `query_id`). `Queries::ask_memory(node, then) -> QueryId` inserts a `Memory` entry with no effect, for `command_mark`. Reason: no effect can name a number the table lacks, and a query without an entry would have no ending. The 12 sites call one of the two after their own checks, so `say_all::read_next` asks only once it has found say-all running (`src/say_all.rs` 133 to 136 allocate first today).
+- **Core's own answers.** When `intercept` takes a request out of the effects, it turns that entry's `asked` to `Memory`. A `Memory` entry is not counted outstanding, is never sent, and ends by `Queries::answer_from_memory(number, reply)`, which `answer_reviews` and the two other sites call in place of `text_completed`: it removes the entry and runs its `then`. A model's removal ends its reviews' `Memory` entries with no continuation, since a review whose model is gone is never answered today: every removal of a model goes through one method, `SrState::drop_models(predicate)`, which `forget_text_of` (`src/reduce.rs` 469), the eviction past `MODELS` (`src/terminal_model.rs` 449) and `terminal_model::outpost_ended` (1403) call, and `state.terminals` becomes a type whose only removal is that method. Reason: a query Core answers itself has an ending too, and the idle barrier never waits for it, as it never did.
+- **Supersession and clears turn an entry to `Nothing`.** They never remove an entry the outpost will still answer, so a late answer still has its one entry to end, and an entry with `Nothing` runs nothing. A `Memory` entry superseded or cleared is removed at once instead, since nothing else will end it. Every site that clears or replaces a holder today becomes one table operation ("Every clear, and its ending", below).
+- **One ending.** An entry leaves the table exactly once, by one of four transitions, and its continuation runs then, once:
+  - `Input::Answered { trace_id, query_id, outpost, outcome }`, the outpost's reply, taken only from the outpost asked, as `finish` does today;
+  - `Input::OutpostEnded { outpost }`: first today's clearing, each cleared holder now a turn to `Nothing` and each dropped model through `drop_models`, then every remaining entry of that outpost ended "gone" in number order;
+  - a withdrawal by the entry's owner: the held key's one deadline (the caret watch build's `Input::HeldKeyDue`), finding its key still being read, removes the `HeldRead` entry, runs its continuation as unanswered, which passes the key on, and returns `Effect::Withdraw { outpost, query_id }`, which the shell sends as `CoreToOutpost::Cancel`;
+  - Core's answer from a terminal's memory, or the removal of its model, for a `Memory` entry.
+
+  An answer that finds no entry, or comes from another outpost than the entry's, is dropped. Reason: one ending per entry, and none after it.
+- **Answers routed by the entry, not by search.** Ending an entry removes it and matches its `then`. An outpost's outcome is turned into a `FetchResult`, a `TextReply` or an activation's result in Core, by the conversions `deliver` makes today; the shell logs a failed outcome before applying it, since `verbatim-core` has no logging. After the continuation, an ending whose number is `HeldKeys::awaiting_watch` clears it and resumes the held keys (`editing::held_watch_answered`), whatever the entry's `then` and however it ended, in the order `reduce_text_completed` keeps today (`src/reduce.rs` 560 to 567). Reason: the kind is known where the entry is, so no order of tries decides it.
+- **Passive from the request.** `Queries::outstanding()` counts the entries whose `asked` is `Read`, and the shell's idle check adds it to its own table's count. Reason: whether a query waits on the application is a fact of what was asked, which Core makes.
+- **Held nodes from the table.** `held_nodes` (`src/state.rs` 927) takes the navigation's `from` and the `Caret`, `Text` and `HeldRead` entries' nodes from the open entries, as it takes them from the four holders today; a `SupersededCaret`'s node is not held, as today, and an entry with `Nothing` holds nothing.
+- **One numbering, tagged by asker.** The protocol's bare `u64` request ids (`CoreToOutpost::Query` and `Cancel`, `verbatim-model` `src/protocol/mod.rs` 641 and 655, and `OutpostToCore::Reply`, 1097) become a `RequestId { asker: Requester, number: u64 }`, where `Requester` is `Reducer` or `Shell` and is marked `#[non_exhaustive]`, so that later askers, such as M5's extensions, can be added. Outposts carry it opaquely: they store, compare and echo it, and decide nothing by it. Core's reducer's queries go out as `Reducer` with the `QueryId` as their number; the shell's table numbers its own five askers as `Shell` from its own counter. The shell routes a reply by its tag: `Reducer` to `Input::Answered`, `Shell` to its table. Reason: one number per query, no lookup across numberings, and a route stated in the message rather than inferred from a number's size.
+- **No deadline in Core's table.** After the caret watch build, no query of Core's ends at a table deadline: the held read ends by Core's held-key deadline, as a withdrawal. The shell's table keeps its deadlines on the shared clock, for the shell item queries.
+
+**Traces.** The shell runs a request under the trace it executes the effect with: the key's trace inside `Effect::ForKey`, else the input's trace, else one it mints. Several asking sites have no trace (`caret_key`, `start_held`, `say_all::read_next`, `terminal::request`, `terminal_model::request`). So `reduce` ends each transition by setting the trace of the entries made in it from the effects that carry them, by the shell's rule, leaving `None` where the shell would mint; key origins (`keys::stamp`) are looked up by that trace. An ending with no reply on the wire (an outpost's end, a withdrawal) runs its continuation under the entry's trace, or the ending input's when it is `None`, which like today's minted trace has no key origin. An answer from the outpost runs under the reply's trace, which is the request's.
+
+The invariant, for M4.6's model of Core: every query Core asks has exactly one entry from its request to its ending, and exactly one ending, by its answer, its outpost's end, its owner's withdrawal or Core's answer from memory; every ending runs its continuation once, and an answer with no entry, or to an entry with `Nothing`, changes nothing but the table and the one resume of the held keys.
+
+### Every clear, and its ending
+
+Each site that clears or replaces a holder today, from the code at 39dce0b2, and its table operation. The test of each in the build is the differential check under "Tests", which compares every enumerated sequence's effects with today's routing.
+
+- **A caret key's watch (`pending_caret`).**
+  - A newer caret key (`src/editing.rs` 190): an open `Caret` entry on the same node becomes `SupersededCaret`, any older `SupersededCaret` becoming `Nothing`; on another node, `Nothing`.
+  - `forget_text_of`, at a refocus with `earlier: NotFocused` or a focus whose element is gone (`src/reduce.rs` 467): the `Caret` entry on that node becomes `Nothing`.
+  - `end_text_activity`, when the focus moves (1216): the `Caret` entry becomes `Nothing`.
+  - The outpost's end (1385): the `Caret` entry on that outpost becomes `Nothing`.
+- **A superseded caret (`superseded_caret`).** Only replaced, at 192, as above; it is not cleared at an outpost's end today, so it is answered "gone" there.
+- **The held keys' watch (`awaiting_watch`).** Unchanged in place: moved to a newer caret key's watch while it names one (`src/editing.rs` 200 to 202), set to a passed key's own watch (382), cleared when the held key's deadline ends the wait (320 and 433, the caret watch build's `HeldKeyDue`) and when the watch it names ends (`src/reduce.rs` 562).
+- **A held key's read (`HeldKeys::reading`).** Cleared only by its answer (`text_completed`), and by the caret watch build's withdrawal; both are endings.
+- **A review or text command's request (`pending_text`).** A newer request at `review_text::request`, `navigator_request`, the location request (`src/reduce.rs` 1694) or `command_mark` (`src/review_text.rs` 152): the open `Text` entry becomes `Nothing`, or is removed if it is `Memory`. The outpost's end (`src/reduce.rs` 1392): the `Text` entry on that outpost becomes `Nothing`.
+- **A navigation (`latest_navigation`).** A newer navigation (`navigate`, 1959): the open one becomes `Nothing`. `navigator_to_focus`, for `ToFocus` and a navigation answered "gone" (1771): `Nothing`. The outpost's end (1412): `Nothing`. The answer's own clears (2593 to 2609) are its ending.
+- **Say-all's read (`SayAll::pending`).** `say_all::stop` (`src/say_all.rs` 124), also called at an outpost's end, and a new say-all replacing the old (102): the `SayAll` entry becomes `Nothing`. Its answer's clear (172) is its ending.
+- **The terminal's requests (`request`, `cancel`, `overtaken`).**
+  - A cancel (`src/terminal.rs` 1168): the open `Terminal(Read)` becomes `Overtaken`, any older `Overtaken` and `Cancel` becoming `Nothing`.
+  - `terminal::focus_moved` (1190), which resets the terminal's speech state when the focus moves to another node: every `Terminal` entry becomes `Nothing`. Reason: `Then::Terminal` names no node, and console C1's read answered after the focus moved to console C2 would otherwise be taken into C2's output (`terminal::answered`, 470 to 494).
+  - The answer's own clears (485 to 491) are its ending.
+- **A terminal model's asks and reviews.** Removed with the model, through `drop_models`: by `forget_text_of` (`src/reduce.rs` 469), the eviction past `MODELS` (`src/terminal_model.rs` 449) and the outpost's end (1403). Its `TerminalModel` entries stay until answered, and their answers find no model of their generation and run nothing, as `TerminalModel::asked` refuses them today; its `Memory` entries are removed then. An owed read asked while one is open (748) turns the older to `Nothing`. The model's own clears of `owed`, `fresh`, `history_asked` and `find_asked` (922, 943, 968 and 981) are the answers' endings.
+
+### The shell items' one bound
+
+A shell items or position request waits under two deadlines in a row today (`verbatim-app`, `src/main.rs` 1898 and 1917): `Wanted`'s, `SHELL_ITEMS_DEADLINE` (6 seconds) from the dialog's request while the taskbar's outpost starts, then a fresh 6 seconds in the table when the query is sent, so the dialog can wait about 12 seconds. The 6 seconds are set to outlast the outpost's `WALK_DEADLINE` (5 seconds from when its worker begins the query) by a second, so that the items a walk read are not lost to Core's deadline; the walk itself stops making calls after its `WALK_BUDGET` of 2 seconds (`verbatim-outpost`, `src/outpost/shell_items.rs` 69) and answers what it read, and the 5 seconds allow for one call under way at that budget, which UIA's transaction timeout ends.
+
+The new bound: the dialog's whole wait, for a list or for a clicked item's position, is at most 3 seconds from its request (Dickson, 2026-11-01). Core does not cut the walk off; it gives the outpost the shorter time, so the walk answers with what it read in time. Three times, all on the shared clock and fixed when the dialog asks at `asked`:
+
+- `answer_by = asked + 3 s`: Core's deadline for the answer, in the shell's table;
+- the outpost's deadline for the query, `asked + 2.5 s`: past it the worker's query is abandoned and answered `Abandoned`, leaving half a second for the answer's way through the pipes and the reducer thread;
+- the walk's last call, `asked + 2 s`, or 2 seconds after the walk begins if that comes first: from then it makes no more calls and answers what it read, leaving half a second for one call under way.
+
+The mechanism:
+
+- `Query::ShellItems` and `Query::ShellItemPosition` gain `walk_until_us` and `answer_by_us`, the walk's last call and the outpost's deadline. Core sets them from `asked` when it sends the query.
+- In the outpost's reducer, `budget` (`verbatim-outpost-logic`, `src/lib.rs` 1584) gives these two queries the deadline `answer_by_us` from the query, a due time on the shared clock like the caret watch's, in place of `WALK_DEADLINE` from their start; `Ancestors` and `DumpTree` keep `WALK_DEADLINE`.
+- In the worker, `shell_items` and the position read take their time limit from `walk_until_us` and `WALK_BUDGET`, whichever ends first, in place of `WALK_BUDGET` alone.
+- `Wanted` keeps `asked` with the request and hands it to `ask_shell_items`, which takes it in place of a fresh time. A request whose outpost becomes ready at or after its walk's last call is answered with nothing at once and not sent, since its walk could make no call; `Wanted::expire` answers a request still waiting then. A request whose outpost is ready when the dialog asks is sent at once.
+- At `answer_by`, Core's table answers the dialog with nothing and sends `Cancel`, so a query still queued in the outpost is not run for nothing.
+- `SHELL_ITEMS_DEADLINE` is replaced by `SHELL_ITEMS_WAIT` (3 seconds) and the two margins, each with its reason in its comment; `WALK_DEADLINE`'s comment no longer says Core outlasts it.
+
+Sequences:
+
+- **Ready at once.** The dialog asks at t; the outpost is ready, and the query goes out at t with `walk_until_us = t+2 s` and `answer_by_us = t+2.5 s`. The worker begins at t+10 ms and walks until t+2 s at most, then answers the items read; the dialog has them at about t+2 s, well inside t+3 s.
+- **A slow start.** The dialog asks at t; the taskbar's outpost is ready at t+1.2 s, and the query goes out then with the same times. The walk has 0.8 seconds and answers what it read by t+2 s. Today it would have had its whole 2 seconds and answered by about t+3.2 s.
+- **Too late to walk.** The outpost is ready at t+2.1 s: the request is answered with nothing and no query is sent.
+- **A call that does not return.** A call under way at t+2 s has not returned at t+2.5 s: the outpost abandons the query and answers `Abandoned`, and the dialog gets nothing at about t+2.5 s. Core's deadline at t+3 s is the bound if even that answer is late.
+- **Behind other work.** The query waits in the outpost behind an event's program until t+1.5 s: the walk has until t+2 s, and the outpost's deadline is still t+2.5 s, measured from the dialog's request, not the worker's start.
+
+Wake-ups and calls: no timer is added in the outpost, whose deadline for the query replaces the one it timed from the start; Core's table keeps one deadline per request, as today; at its expiry one `Cancel` is sent.
+
+What the user notices: the dialog's list or click comes, or fails, within 3 seconds of the request rather than 6 to 12; on a slow taskbar, it lists the items read in what remains of 2 seconds rather than 2 full seconds.
+
+Limitations: a walk after a slow outpost start, or behind other work in the outpost, has less than 2 seconds and lists fewer items on a large taskbar; a call still under way half a second after the walk's last call loses the whole walk to `Abandoned`, where today it had 3 seconds to return; and the margins of half a second are judgements, which the build checks against the replies' timing on this machine.
+
+This is a commit of its own, since it concerns no query of Core's reducer. No end-to-end scenario opens the shell item list dialogs, so it is held by unit tests: the outpost's deadline for the two queries from `answer_by_us`, the worker's time limit from `walk_until_us`, and `Wanted`'s sending, refusing and expiring of a request.
+
+### Sequences
+
+Each is one reducer transition unless the shell's part is named.
+
+- **An answer.** A review command asks for the current line in a text box: `ask` inserts Q7 as `Text { node, then: Seed }` with `Read` and returns `Effect::Text` with Q7; the shell sends it with request id `Reducer` 7. The reply comes; the shell sees the `Reducer` tag and applies `Answered { query_id: Q7, outpost, outcome }`; the reducer removes Q7 and runs `review_text::reply` with the `TextReply` made from the outcome.
+- **Core's own answer.** The focus is a console Core reads. "Read current line" asks Q8 as `Text` with `Read`. At the transition's end `intercept` takes Q8's `Effect::Text` out, turns Q8 to `Memory`, keeps `Review::Text { query_id: Q8 }` in the model, and asks fresh read F9 as `TerminalModel { node, generation: 4, ask: Fresh }` with `Read`. F9 is answered; its model has generation 4, so `terminal_model::reply` runs its `Fresh` branch; the model takes the snapshot and `answer_reviews` calls `answer_from_memory(Q8, reply)`, which removes Q8 and speaks the line through `Text`'s continuation. `outstanding()` counted F9 until its answer and never counted Q8. "Next command mark" (`command_mark`) asks `ask_memory`, M10, and ends the same way.
+- **A model removed while a review waits.** Q8 is `Memory` and F9 open as above; the user tabs away and back to the console, and the focus event carries `earlier: NotFocused`: `forget_text_of` calls `drop_models`, which removes the model and Q8, with nothing run; F9 stays open. The refocus's text makes a new model for the node, generation 5. F9's answer finds generation 5, not 4, so nothing runs, and F9 is removed. Today Q8's review vanished with the model, and F9's answer was dropped because the new model's `fresh` did not name it.
+- **A refocus clears a caret key.** Right Arrow on edit N asks watch Q4, `Caret`. A focus event for N with `earlier: NotFocused` comes: `forget_text_of` turns Q4 to `Nothing` and the refocus announces N's line. Q4's answer removes Q4 and runs nothing, as today's `take_if` finds no holder.
+- **A model evicted.** Core models terminals T1 to T16. A review on T1 asks fresh read Q5 under T1's model's generation g. A seventeenth terminal's first snapshot evicts T1's model through `drop_models`; T1's next snapshot makes a new model with a newer generation. Q5's answer finds no model of generation g, so nothing runs; meanwhile the new model's lookups never see Q5, so it does not wait for it.
+- **The focus moves between consoles.** Console C1's `Terminal(Read)` R1 is open; the focus moves to console C2: `terminal::focus_moved` turns R1 to `Nothing`. R1's answer runs nothing, so C1's output is not taken into C2's.
+- **A late answer after supersession.** Navigation N1 is asked, then N2 before N1's answer: N1 turns to `Nothing` and N2 is the open navigation. N1's answer removes N1 and runs nothing; N2's moves the navigator. In the other order, N2's answer moves the navigator, and N1's later answer removes N1 and runs nothing. Both are outstanding for the idle barrier until answered, as today.
+- **An answer to an ended query.** A reply whose id has no entry, after a withdrawal or as a duplicate, is dropped; one from another outpost than the entry's is dropped and the entry stays.
+- **A deadline: the held read withdrawn.** Held key K's caret read R is asked at t as `HeldRead { node, key: K }` with `Read`, and Core's held-key deadline is t+150 ms. At t+150 `HeldKeyDue` finds K being read: R is removed, `held_read` runs as unanswered and passes K on, and `Effect::Withdraw { outpost, query_id: R }` is sent as `Cancel`. The outpost answers `NotStarted` if R was still queued, or its read's answer if it was running; either finds no entry and is dropped. From t+150 R is not outstanding, so the idle barrier does not wait for it. That is the caret watch build's decision, built here without a second table.
+- **A stale watch cannot resume the held keys.** K1 is passed on at t; its watch W1 is open and `awaiting_watch` is W1. K2 is pressed at t+20 and waits. At t+100 `HeldKeyDue` ends K2's wait for W1: `awaiting_watch` becomes `None` and K2's caret is read. The read answers; K2 is passed on, its caret key turns W1 to `SupersededCaret`, and its watch W2 becomes `awaiting_watch`. K3 is pressed and waits behind W2. W1's late evidence comes: W1 is removed and `superseded_reply` runs, as today; its number is not `awaiting_watch`, so the held keys are not resumed, `later_key` is not called on W2, and K2's movement is spoken at W2's answer.
+- **An outpost ending.** Outpost A has Q3, a caret key's watch, which `awaiting_watch` names, Q5, a review command's read, and Q6, an activation; outpost B has Q7, a terminal read. `OutpostEnded { outpost: A }`: the focus dies, say-all on A stops, the caret is forgotten, Q3 and Q5 turn to `Nothing`, and A's models are dropped; then A's entries end "gone" in number order: Q3 runs nothing and, being `awaiting_watch`, resumes the held keys; Q5 runs nothing; Q6 says "No action". Each is as today. Q7 is untouched.
+- **Core's idle round.** The harness asks for idle; the shell's check is clear only when `queries.outstanding()` and its own table's count are both 0, with its other conditions. A watch and a `Memory` entry are not counted; a superseded read is counted until its outpost answers; a withdrawn held read is not counted from its withdrawal.
+- **A query that cannot be sent.** The shell's send of Q fails; it applies `Answered { outcome: Failed }` at once, which ends Q as today's `finish` does.
+
+### What goes
+
+- From `verbatim-app`: `Asker::Reducer`, `Asker::Text` and `Asker::Activation` and their three `deliver` branches; `begin_passive` and `Entry::passive`, since no shell asker is passive; the table's `timed`, kept only because passive caret watches kept the table non-empty while the user typed; `text_request`'s judgement of the operation; the caret watch build's lookup of a held read's entry by the reducer's number. The shell's table keeps 5 askers, 3 entry fields with no flag, and 2 fields.
+- From `verbatim-core`: 13 of the 16 holder fields (the four in `SrState`, `HeldKeys::reading`, `SayAll::pending`, the terminal's three, and the model's `owed`, `fresh`, `history_asked` and `find_asked`), with the `Owed` enum and `HistoryAsked`'s number; `next_query_id`; the ordered tries of `text_completed`; the three `is_pending` functions and `TerminalModel::asked`; the duplicated helpers; the holder clears listed above, which become table operations.
+- From `verbatim-model`: `Input::FetchCompleted`, `Input::TextCompleted` and `Input::ActivationCompleted`, for `Input::Answered`.
+
+### Counts, before and after
+
+- Records of each of Core's queries: 2 to 1. Numberings: 2 to 1.
+- Holder fields: 16 in 5 structures, to the table, with three references into it kept (`awaiting_watch`, and the model's `reviews` and `history`). Each model gains its `generation`, and the models' type its counter.
+- `SrState`'s fields: 27 to 23 (four holders and `next_query_id` go, `queries` comes).
+- Answer inputs: 3 to 1. Routing: 7 ordered tries and a fall-through, to one match.
+- `is_pending` functions: 3, and `TerminalModel::asked`, to none. Ways to make a request: 12 sites each filling its own holder, to `ask` and `ask_memory`.
+- The shell's table: askers 8 to 5; entry fields 4 with 1 flag to 3 with none; fields 3 to 2; constructors 3 to 2. The "Simpler owners" items for the request table (`Ends`, and keeping `timed`) are subsumed.
+- Lifecycle states: none added; the open entry nothing awaits, implicit today, is named `Nothing`, and the query Core answers itself is named `Memory`.
+- Lines: about 410 removed and 330 added across `verbatim-core`, `verbatim-app` and `verbatim-model`, counted again in the build, beside the tagged id's change of type at 198 sites and the shell items' bound, about 80 lines in `verbatim-app`, `verbatim-outpost-logic` and `verbatim-outpost`. The 45 test sites of the three answer inputs are rewritten to `Answered`.
+
+### What is heard
+
+Nothing changes beyond the determinism build's decision that the outcomes at one outpost's end are taken in order: here the order of their numbers, which is the order the reducer allocated them (a fresh read `intercept` asks is numbered after effects that precede it in the list, which is harmless, since at an outpost's end those entries are cleared first). Every clear of today becomes a turn to `Nothing` or a model's removal, and the ending at an outpost's end keeps today's order, so the activation's "No action", the held read's pass and the held keys' resume happen as today. The shell items' one bound changes the list dialogs, not speech: their list or click comes, or fails, within 3 seconds of the request rather than 6 to 12, and after a slow taskbar start the list holds what the walk read in the time left ("The shell items' one bound").
+
+### Wake-ups and calls
+
+Unchanged on the event and speech path. Each reply is one reducer input, as today's table makes one. No timer is added: Core's table has no deadline, and the withdrawal's `Cancel` is the caret watch build's. The shell no longer records Core's queries, which saves one map insert and one removal per query on the reducer thread; the trace pass at a transition's end walks only that transition's effects, and only when it asked something. The shell items' expiry adds one `Cancel` per expired request. The tagged request id adds a few bytes to each query and reply frame and no message. Measured before and after with `cargo xtask trace scenario` on `measure_held_repeat_text_box` and `measure_keys_notepad`, debug builds, test audio mode, at most 20 runs each: wake-ups per input-hook wake, and the reducer thread's processor time. The expected result is no change.
+
+### Tests
+
+- **The guards.** Core's replay tests under `verbatim-core/tests/` (`reduce.rs`, `text.rs`, `merge.rs`, `alloc.rs` and the terminal suites), rewritten to `Answered`, and the request table's tests in `verbatim-app`, cut to the shell's askers. `tests/replay_fixture.rs`'s fixture is regenerated if it holds the holders.
+- **New, one per behaviour**, in `src/queries.rs`'s tests and the replay tests: an answer runs its entry's continuation and removes it; a superseded navigation's answer runs nothing and is counted outstanding until it comes; an answer from another outpost leaves the entry; a console review answered from memory is never counted and its entry ends at the answer; a model dropped by a refocus or an eviction removes its reviews' entries and drops its fresh read's answer, and the new model made for its node does not wait for that read; an owed read asked while one is open drops the older's answer; a refocus with `earlier: NotFocused` drops the earlier caret key's answer; a console read answered after the focus moved to another console is not taken; at an outpost's end, the watch the held keys wait on resumes them and an activation says "No action"; a held read withdrawn at Core's deadline passes its key on once and returns `Withdraw`, and its late answer and a `NotStarted` are dropped; a superseded watch's late answer does not resume the held keys; the shell routes a `Reducer` reply to the reducer and a `Shell` reply to its table; a `RequestId` round-trips through the protocol and the raw reply path; a shell items walk stops its calls at its query's `walk_until_us` and answers what it read; the outpost abandons a shell items query at its `answer_by_us`; a shell items request whose outpost is ready after its last send time is answered with nothing and not sent; an expired one is withdrawn.
+- **The differential check, made once in the build.** Step one keeps the holders and their tries beside the table; step two replaces them. The enumeration below is run on step one's commit, recording a digest of each sequence's effects and of `held_nodes` after each step, and again on step two's, which must match on every sequence. This proves that what is heard does not change. The digests and the result go in step two's commit message; the check is not kept as a test, since its reference is the code step two deletes.
+- **A generated test, kept**, as the design principles ask:
+  - Two start states, each reached from the default state by inputs: a text box focused with a caret on outpost A, and a console Core reads, focused with a model, on outpost B.
+  - Inputs: a caret key; a held caret key; `HeldKeyDue`; "read current line" (answered from memory in the console); a navigation command; `ToFocus`; say-all's start and stop; a terminal key and a speech cut, which ask the terminal's read and cancel; a focus move to another node of the same outpost; a refocus of the start node with `earlier: NotFocused`; in the console, the first snapshots of 16 other terminals as one step, which evicts the model; `OutpostEnded`; and `Answered` for the oldest open number, the newest, the last ended, and one never asked, with outcomes grouped as `Done` with a reply fitting the request's operation, `Gone`, and `Failed`, plus the newest from the other outpost.
+  - Its reference model is the wire's view, not the table's bookkeeping: the numbers in the request effects, less those answered by an accepted `Answered`, those of an ended outpost and those in `Withdraw` effects, each marked a watch or a read by its operation. It knows no continuation and no supersession.
+  - After every step it checks: `outstanding()` equals the model's open reads; every open entry that is not `Memory` is open in the model; after an outpost's end none of its numbers is open; an `Answered` whose number has no entry or an entry with `Nothing` leaves `SrState` equal apart from `queries` and, when the number is `awaiting_watch`, the held keys' resume, and returns no effect but the resume's; `awaiting_watch` is `None` or names an open `Watch` entry; at most one open entry each with `Caret`, `Text`, `Navigation`, `HeldRead`, `SayAll`, each `TerminalAsk`, and each `ModelAsk` kind per model generation; no `Memory` entry names a node without a model; and `held_nodes` equals the nodes of the focus, its ancestors and last selection, the navigator, the caret, the start marker and say-all, with the open entries' `from` and `Caret`, `Text` and `HeldRead` nodes.
+  - About 22 inputs a step: every sequence to depth 3 is enumerated without randomness, about 21,000 over the two starts; the depth is set in the build to keep the run under 10 seconds in a debug build, with the measured time in the commit. It runs under `cargo xtask ci`.
+
+### End-to-end scenarios and the order of work
+
+Scenarios, each run three times at the end of the build, none recorded in `docs/flaky-tests.md`:
+
+- `text_box_editing`: caret keys' watches, held keys' reads, and supersession on one node;
+- `object_navigation_over_uia`: navigation queries, superseded and answered;
+- `conhost_editing`: the terminal's request, cancel and overtaken answers, the terminal model's asks, and review answered from its memory.
+
+No scenario reaches an outpost's end with queries open, a withdrawn held read, a model's eviction, or a shell items request after a slow start; those are held by the unit, replay and generated tests.
+
+The order of work:
+
+- Measure before.
+- **The tagged request id**, first, since every later commit sends or routes by it. `RequestId` and `Requester` in `verbatim-model`'s protocol, in place of the bare `u64` in `CoreToOutpost::Query`, `CoreToOutpost::Cancel` and `OutpostToCore::Reply`, and in the raw reply path's `Wire::Reply` (`verbatim-process`, `src/message/raw.rs` 53). The sites that name `request_id`, at 39dce0b2: 198 in all, of them 116 in the outpost crates (`verbatim-outpost` 46, `verbatim-outpost-logic` 70), `mockapp` 37, `verbatim-supervisor` 13, `verbatim-process` 12, `verbatim-app` 10, `verbatim-model` 9 and `verbatim-core` 1; in the outposts the change is the type of a stored and echoed value, `Item::Query`'s, `budget`'s and the replies'. The JSON written by hand that changes: `verbatim-model` `src/protocol/tests.rs` 431 and `verbatim-process` `src/message/raw.rs` 826 and 858; no file under `crates/mockapp/tests/fixtures` holds a request id. In this commit every request Core sends is `Shell`, numbered by the table as today, so the commit changes the type alone. One commit, with the round-trip tests.
+- **The shell items' one bound**, with its tests. One commit.
+- **Step one, the table in the reducer with one numbering.** `Queries` with `outpost`, `trace_id` and `asked`; every request made by `ask` or `ask_memory`; `intercept`'s turn to `Memory`, `answer_from_memory` and `drop_models`; the trace pass; `Input::Answered` replacing the three inputs, routed by today's tries after the entry is removed; the outpost's end and the held read's withdrawal as reducer transitions; Core's queries sent as `Reducer` with their `QueryId`, and replies routed by the tag; the shell's table cut to its five askers; the idle check's sum; with their tests and the generated test, and the differential enumeration's digests recorded. One commit, since the shell and the reducer change together.
+- **Step two, the holders replaced.** `Then` on each entry and the routing by it; every clear listed above made a table operation; the terminal model's asks as entries, its questions as lookups, and its generation as their identity check; the 13 holder fields, the three `is_pending` functions, `TerminalModel::asked` and the duplicated helpers removed; `held_nodes` from the table; with the differential check matched. One commit.
+- `cargo xtask ci`, the scenarios, and measure after.
+- Documents: the crate guides of `verbatim-core`, `verbatim-app`, `verbatim-model`, `verbatim-outpost`, `verbatim-outpost-logic` and `verbatim-process`; `docs/design/key-holding.md` on the held read's withdrawal; `docs/design/terminal-model.md` on review answered from memory; `docs/design/listener-without-connections.md`, section 10, step 11, on the shell items' 3-second bound, replacing its 6 seconds; and this document's determinism section on the request table.
+
+This build replaces one piece of the caret watch build, which is being built now: the shell-side lookup by which Core's withdrawal ends a held read's entry in the shell's table. Its effect and its behaviour stay; only where the entry lives changes.
+
+### Limitations
+
+- The supersession and clear of each kind is an operation at each site listed above, checked by the differential check once and by the generated test's invariants after; the types allow a missed clear. Only a terminal model's entries carry an identity check, their generation.
+- The shell's five askers keep a table of their own: their answers go to a dialog, a control-plane caller or the shell's focus-now, none of them the reducer's.
+- A superseded query still runs in its outpost until it is answered, as today; only the held read and an expired shell items query are withdrawn.
+
+### Decisions
+
+- The shell item list dialog's whole wait, for its list or a clicked item's position, is bounded at 3 seconds from its request, with the outpost given the shorter time so that the walk answers with what it read, rather than Core cutting it off (Dickson, 2026-11-01).
+- One answer input, `Input::Answered`, carrying the protocol's outcome, replaces `FetchCompleted`, `TextCompleted` and `ActivationCompleted`, and Core turns the outcome into its result by the entry's kind (Dickson, 2026-11-01).
+- The protocol's request id is tagged with its asker, `RequestId { asker: Requester, number }`, open to later askers such as M5's extensions, carried opaquely by outposts and routed by Core by its tag, not a number range (Dickson, 2026-11-01).
+- A terminal model's asks are folded into the table in this build, with the model's generation as their identity check, so that no fact is held twice (Fable, 2026-11-01, under the first design principle).
+
+## The work in flight, shared by both readers (a build of its own)
+
+Status: proposed on 2026-11-01, written against main 39dce0b2, and revised after its adversarial review (`experiments/logic-tests-study/worker-charge-design-review.md`). It is candidate two of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`), "one pure worker charge". It follows the first determinism build ("Determinism") and takes over that build's asks: `AskMovedOn` and `MovedOn`, and `Publish` and `Published` with `then_abandon`. It replaces three items of "Simpler owners": the outpost's walk as one state, its abandoned count kept by the shell alone, and the listener's running place kept with the read.
+
+The work in flight is a reader's record of the one slow-call item a worker is running. A worker is the outpost's worker thread, or one of the listener's reading threads. The outpost calls this record "the program in flight", and the listener its running read. The record holds:
+
+- which worker generation is in charge. A generation is the numbered worker; abandoning it starts the next number, and anything the dead number sends later is refused;
+- the item's deadline;
+- its moved-on rule, with the grace `MOVED_ON_GRACE`, 500 ms;
+- the publication of its walk at the walk's bound;
+- its abandonment.
+
+Both readers keep this record, written twice with different judging points. This build writes it once, as a pure type both embed.
+
+### The concern as written twice today
+
+Line numbers are main's at 39dce0b2. The first determinism build moves them a little, and turns the outpost's three `Locals` calls into asks.
+
+**The generation.**
+
+- **Outpost.** There is one generation for the whole outpost: `Reducer::generation`, with the request counter `requests` (`verbatim-outpost-logic`, `src/lib.rs` 452 and 454), numbered by `next_request` (1176). An abandonment adds one and emits `Effect::Abandon` with the replacement, which the shell starts at once (`verbatim-outpost`, `src/outpost/shell.rs` 716 to 732).
+- **Listener.** There is one generation per application, `App::live` (`verbatim-listener-logic`, `src/schedule.rs` 296), drawn from a counter shared by all applications, `next_generation` (`start`, 598 to 609).
+  - An abandonment clears `live`.
+  - A new thread starts only when events wait and the application is under `ABANDONED_LIMIT`.
+  - An abandoned thread that returns may be reused under a fresh number (`returned`, 660 to 708).
+
+**The deadline.**
+
+- **Outpost:** set by the work at dispatch, 10 s, 2 s or 400 ms (`budget`, 1584), and judged first in `judge_abandonment` (1013).
+- **Listener:** one `READ_DEADLINE`, 8 s, judged first in `tick` (804 to 812).
+
+**The moved-on rule.** Both readers ask `front_is_another_thread_of_its_application` (`verbatim-win32`, `src/window.rs` 371) about a known window. They judge at different points:
+
+- **Outpost.**
+  - The window is fixed at dispatch, 0 for none.
+  - The rule is judged once as the grace ends, with no other condition (`tick`, 661 to 668, with `grace_judged`).
+  - It is judged again at each foreground fact taken in once the grace has passed (738), whether or not the walk was published (`judge_abandonment` ignores `claimed`, 1003 to 1030).
+- **Listener.**
+  - The window may be learned during the read (`WatchedRead::learn`, `verbatim-listener`, `src/focus_read.rs` 391).
+  - The grace end is judged only with evidence. Either a foreground event came after the read's event was queued (the `foregrounds` counts), or the window in front was already elsewhere when the read's window became known (`judge_front`, 433 to 439). That second test is a moved-on call made on every focus read with a window, by `on_learn` (2207 to 2219) or by the watchdog.
+  - Past the grace, the rule is judged at every watchdog tick while that evidence holds (`moved_on_wanted`, 422 to 432).
+  - Each foreground event during any read wakes the watchdog (`wake_on_foreground`, 637 and 996).
+  - A window learned while the answer was being gathered makes the tick stale (`window_after`, 793 to 802).
+  - The evidence rule is e46d4183's (2026-10-20), which removed a wake at the grace end of every quick read.
+- **Neither reader** is told of a move to the taskbar or the desktop. Those are `ShellForeground` events, which the listener's hook drops before `foreground_changed` (`listener.rs` 1040 to 1047) and the outpost never receives (`worker.rs` 554).
+
+**Publication at the bound.**
+
+- **Outpost.**
+  - The worker's `Input::Armed` sets the walk's bound (595 to 599).
+  - A tick past the bound, or a walk returning past it (`WalkReturned`, 600 to 607), publishes the walk through `Locals::publication` (`publish`, 972 to 994).
+  - `claimed` then refuses the worker's later results (`accepts`, 526 to 530).
+- **Listener.**
+  - The reading thread sets the alarm by its bound, through `on_arm` (2224 to 2233).
+  - The watchdog gathers each read's bound and, once that has passed, the publication itself (`TickRead`, 128 to 151, gathered at 2276 to 2296), and the schedule publishes it (`publish`, 907 to 937).
+  - `WatchedRead` keeps a second copy of that state, its `claim` (305 to 313 and 443 to 456).
+  - The watchdog only reads the progress (`prepare_publish`, 512 to 518). The reading thread takes it once its walk ends, and expects to find it (1027 to 1031).
+
+**Abandonment.**
+
+- **Outpost.** A walk that is armed is published first, then the generation dies, in one transition. This holds for the deadline and the moved-on rule alike (`judge_abandonment`, 1028 to 1030; "publish first", Dickson, 2026-10-30, [the focus pipeline rework](focus-pipeline-rework.md), "The outpost's commit point").
+- **Listener.** The read is abandoned and its event dropped, without publishing an armed walk. A publication is made in a tick only if no abandonment applies (`tick`, 813 to 823; `abandon`, 851 to 905). A published read that is still stuck is abandoned by either rule, as in the outpost.
+- **Then each reader answers its own item.**
+  - The outpost answers its running query with `Abandoned`, and the focus group's older entries are tried unless the item was published (1052 to 1075).
+  - The listener sends the event's outcome unless the read was published, and starts a new thread when events wait under the limit.
+
+### The one type
+
+The type is `InFlight<T>`, in a new module `in_flight` of `verbatim-reader-rules`.
+
+- Why that crate:
+  - it is in the logic tier, and both readers' logic crates already depend on it;
+  - it holds `MOVED_ON_GRACE`;
+  - the determinism rule covers it;
+  - the two readers' crates may not depend on each other, and a rule both apply is written once there ("The crate split").
+- The code is new, written from the design documents; no NVDA source is translated.
+- `Request { generation, number }` moves into the crate from the outpost's reducer, which re-exports it.
+
+Each reader embeds its own `InFlight`: the outpost one, and the listener one per application, so every fact keeps one owner. `T` is the reader's item:
+
+- for the outpost, the query it answers, its focus group try, and whether it is deferred work;
+- for the listener, the event's `Meta`, its kind and its queue place.
+
+Times are microseconds on the reader's own monotonic clock, passed in.
+
+**State.**
+
+- `generation` and `requests`: the generation in charge and the last request number given.
+- `running: Option<Running<T>>`, with `request`, `started`, `deadline`, `walk`, `moved` and `item`.
+- `Walk` is `Unarmed`, `Armed(bound)` or `Published`.
+  - It replaces the outpost's `walk` and `claimed`, and the listener's `published`.
+  - Reason: "armed after its publication" can no longer be represented.
+- `Moved` is one of three states:
+  - `Never`, for an item with no window: selections, notifications, or an outpost program with window 0;
+  - `Unknown`, for a listener focus whose window the read has still to learn;
+  - `Known { window, next }`, where `next` is the time the rule is next judged.
+  - It replaces the outpost's `window` and `grace_judged`, and the listener's `foregrounds` counts, `front_judged` and `front_elsewhere`.
+
+**The moved-on rule, as NVDA's watchdog judges it.** It is judged first when the item has run for the grace, then every grace after that, until the deadline. For the item, this is `started + 500 ms`, then each 500 ms. A window learned after the grace has passed is judged at once, then every 500 ms. NVDA's watchdog judges the same way: first after `MIN_CORE_ALIVE_TIMEOUT`, then every `MIN_CORE_ALIVE_TIMEOUT` until 10 s (`watchdog.py` 133 to 145 and 151 to 163). Foreground events no longer judge anything. Reasons:
+
+- One rule covers every way the user can leave: a foreground change, a move to the taskbar or the desktop, which no reader is told of, and a child window of another thread taking the focus.
+- No foreground event has to reach either reader.
+- A quick item costs no wake (below, "Wake-ups and calls").
+
+**Transitions.** Each transition answers with nothing, one ask, or an abandonment. It makes at most one ask, which the shell answers.
+
+- `start(item, deadline, moved, now) -> Request`. Nothing may be running.
+- `hand_on() -> Request`: a new request for the running item, keeping its times, walk and `moved`. This is the outpost's finish of a cut caret read (`dispatch_finish`, 1471).
+- `learned(request, window, now)`: `Unknown` becomes `Known`. Its `next` is the grace's end, or now when the grace has passed, in which case the rule is judged at once.
+- `armed(request, bound)`: `Unarmed` becomes `Armed(bound)`. A published walk is never armed again.
+- `walk_returned(request, past, now)`:
+  - with `past`, an armed walk asks `Publish`;
+  - otherwise the walk becomes `Unarmed`, so no bound is timed for a walk that has returned.
+  - Only the outpost sends this input. The listener's reader cuts a walk past its bound itself, through the same function the watchdog publishes with.
+- `tick(now)`, and the judgment each answer makes again, apply these rules in order, and the first that applies decides. This is the determinism design's order:
+  1. **The deadline.** With a walk armed, ask `Publish { then_abandon: Deadline }`; otherwise abandon at once.
+  2. **The bound has passed.** Ask `Publish`; the walk becomes `Unarmed` until the answer.
+  3. **`Known` with `next` passed.** Set `next` to now plus the grace, and ask `AskMovedOn`. This applies whether or not the walk was published.
+- `moved_on(request, answer, now)` applies whenever `request` is running, published or not.
+  - When the answer is true and a walk is armed, it asks `Publish { then_abandon: MovedOn }`.
+  - When the answer is true otherwise, `Unarmed` or `Published`, it abandons at once.
+  - When the answer is false, nothing happens.
+- `published(request, got, then_abandon, now)`, when `request` is running:
+  - with `got`, the walk becomes `Published`, and the reader applies its publication before anything else;
+  - then the item is abandoned if `then_abandon` is set, and otherwise the judgment is made again.
+- `end(request) -> Option<(T, published)>`: the item, once, if `request` is running in the generation in charge.
+- `succeed() -> generation`: a new generation without an abandonment, for the listener's start of a thread.
+- Queries:
+  - `accepts(request)`: running, and not `Published`;
+  - `generation()`;
+  - `running()`, with its published flag;
+  - `next_wake()`: the soonest of the deadline, the bound while armed, and `next` while `Known`.
+
+An abandonment takes the running item out, adds one to the generation, and returns `Abandoned { dead, replacement, reason, item, published }`. `reason` is `Deadline` or `MovedOn`, which each reader maps to its own words.
+
+**How each shell drives it.**
+
+- **The outpost's reducer** calls `InFlight` where it judges today.
+  - Asks become its `Effect::AskMovedOn`, and `Effect::Publish`, which carries the facts.
+  - On an abandonment it emits `Abandon { dead, replacement, reason }` and answers its own obligations: the running query, the owed work of the dead generation, the open watch's poll, and the focus group.
+  - A foreground fact no longer judges anything, so the reducer's call at 738 goes.
+  - Its shell answers each ask before its next mailbox message, as in the determinism build.
+  - The shell alone counts abandoned workers. It adds one as it carries out `Abandon`, and takes one away on `Posted::Returned`, which no longer enters the reducer.
+- **The listener's schedule** steps the `InFlight` of the application concerned.
+  - `Tick` loses its `reads`.
+  - The shell steps four new inputs:
+    - `Learned`, from the read's `learn`, in place of `on_learn`'s judgment;
+    - `Armed`, from `on_arm`, in place of its alarm call;
+    - `MovedOn`;
+    - `Published`, with the read and its top-level window.
+  - Two new effects ask: `AskMovedOn { pid, request, window }` and `Publish { pid, request }`. A listener step may carry one ask per application.
+  - `Claim` becomes `Unwatch { pid }` on an abandonment.
+  - `Foreground` keeps only menu currentness and no longer wakes the watchdog.
+  - `App::live` becomes `threaded: bool`, and `InFlight` holds the number.
+    - A start of a thread takes `succeed()`, so a thread that is ending is never in charge again, as today's fresh number ensures.
+    - A returning abandoned thread is reused under the generation its abandonment made.
+    - An application's `InFlight` starts again at generation 0 when its `App` is removed and made again. That is safe because removal requires no thread and no abandoned thread left (`schedule.rs` 655 and 1006), under the same lock as every `in_charge`.
+- **The listener's shell answers asks after every other effect of the step.**
+  - `step` applies the effects in order and sets the asks aside.
+  - Once the other effects are applied, it answers each ask in order, as a step of its own, which handles its own effects and asks the same way. The thread's next job, if any, is returned from the outermost step.
+  - So every `Outcome` of a step is applied before any answer's step runs, and the owed-marker check at each step's end (`focus_read.rs` 1840 to 1843) holds unchanged.
+  - Every ask is answered before the readers' lock is let go.
+- **The listener's `Publish`** finds its read by request, not by the application's current entry.
+  - It reads the progress, as `prepare_publish` does today, and does not take it, so the reading thread's `take_progress().expect` still finds it.
+  - `Walk::Published` prevents a second publication, and `end` refuses the thread's late result. So `WatchedRead`'s claim goes, and no copy replaces it.
+- **The listener's alarm** is set from the schedule's state after every step.
+  - The schedule keeps `alarm_due`, today the shell's. After each step it computes the soonest of every application's `next_wake` and each limit's end.
+  - It emits `Alarm(Set(due))` only when that time differs from `alarm_due`.
+  - `By` and `Settle` go, and `Now` remains for the shutdown.
+  - So a quick read's end moves the alarm back to whatever else is due, or cancels it, even while another application's read is under way. That fixes the wake the review found in the case of e46d4183, and the same pre-existing wake from `on_arm`'s `By`.
+
+### What is heard, and NVDA
+
+NVDA's watchdog (`nvda/source/watchdog.py`, at the pinned 732d1ce2):
+
+- It judges `_shouldRecoverAfterMinTimeout` (206 to 232) once the core has not reported alive for `MIN_CORE_ALIVE_TIMEOUT` (47, 151 to 163), then every 0.5 s until 10 s (133 to 145). It needs no event as evidence.
+- On recovery it cancels the main thread's calls (186, 235 to 240).
+- A UIA parent step that fails falls back to the window's parent (`nvda/source/NVDAObjects/UIA/__init__.py` 2136 to 2145).
+
+So NVDA speaks a focus whose stuck walk is cancelled, its chain completed by windows. Whether `CoCancelCall` ends a UIA call is M6.1's open question; if it does not, NVDA waits and speaks the focus late. In neither case does it drop the focus.
+
+What the design matches:
+
+- the first judgment at 0.5 s, with no evidence;
+- a judgment every 0.5 s after that, whatever the user moved to;
+- speaking a stuck focus rather than dropping it.
+
+What it does not match, each by existing decision:
+
+- **The rule itself.** NVDA's rule is any change of the foreground window, or of the focus thread, away from NVDA's focus object. Verbatim's is only another thread of the same application, because each application has its own reader.
+- **The deadlines.** NVDA has 10 s. Verbatim has the outpost's per-work deadlines and the listener's 8 s.
+- **What happens on recovery.** NVDA cancels the call and goes on with the same thread. Verbatim abandons the worker.
+- **When the clock starts.** NVDA's clock is the core's last report alive. Verbatim's is the item's start.
+
+The changes heard:
+
+- **Both readers: the half-second judgment.**
+  - A move to the taskbar or the desktop, or to another thread's child window within the same foreground window, now ends a stuck read within 500 ms. Today it waits for the bound, the return, or the 8 s or 10 s deadline, and every later event of the application waits with it.
+  - A move that raises a foreground event is now noticed at the next half-second rather than at once, up to 500 ms later than today.
+- **The listener: publish first.**
+  - When the moved-on rule ends a stuck read, or one late tick passes both the bound and the deadline, an armed walk is published before the read is abandoned.
+  - Heard: a stuck focus within its own top-level window (bound 2 s) whose user moves to another thread's window between 0.5 and 2 s is spoken from what was read, then the new focus. Today nothing is said for it.
+- **Unchanged:** a published item that is still stuck is abandoned by the moved-on rule, in both readers.
+
+### Every request gets one answer
+
+The item is held by value in `running` and leaves exactly once, by `end` or inside `Abandoned`: the design principles' token rule. Each ask is answered once:
+
+- in the outpost, before the next mailbox message;
+- in the listener, after the step's other effects and before its lock is let go.
+
+An answer whose request is not running is dropped. With `then_abandon`, the abandonment is then not made, since its item is gone. A `MovedOn` answer is never dropped for publication.
+
+- **The read returns before its bound.** `end(R)` gives the item, unpublished, and the reader answers it: the listener with its outcome, the outpost with its report. No ask was made.
+- **The walk is stuck past its bound.**
+  1. `tick` asks `Publish(R)`, and the walk becomes `Unarmed`.
+  2. The listener's shell reads the progress and answers `Published(R, got)`. The walk becomes `Published`, and the outcome is sent.
+  3. When the call returns, the thread takes its progress as today, and its `Returned` gives `end(R)` with the item marked published, so no second outcome is sent.
+  - The outpost does the same with its commit.
+- **The walk ends as its bound passes, in the listener.**
+  - If the thread's `Returned` takes the lock first, nothing is running at the tick.
+  - If the tick takes it first, the thread has already taken its progress at the walk's end. `Published(R, false)` leaves the walk `Unarmed`, and `Returned` then gives the unpublished item, which the thread answers.
+- **Published, then the user moves on to the taskbar.** This is the review's first counterexample.
+  1. At 2 s, `Publish(R)` is answered `got`, and the walk is `Published`.
+  2. At 2.5 s, `next` has passed, so the tick asks `AskMovedOn(R)`. It is answered true.
+  3. `moved_on` finds R running and published, so it abandons at once. G dies, G + 1 takes charge, and `Abandoned` carries the item, published. The listener sends no outcome, and the outpost answers its query `Abandoned` once and does not try the group.
+  - The application's later events no longer wait for the deadline.
+- **The user moves on during a walk.**
+  1. The half-second tick asks `AskMovedOn(R)`, answered true.
+  2. That asks `Publish(R, then_abandon: MovedOn)`.
+  3. The answer publishes, then abandons, as above.
+  - G's late results are refused by generation.
+- **The deadline passes with no walk armed.** `tick` abandons at once, the item unpublished. The listener answers `Dropped(NOT_IN_TIME)`, and the outpost answers `Abandoned`.
+- **Asks from two applications in one listener step.** This is the review's fifth counterexample.
+  1. One tick yields `[AskMovedOn(P1), Outcome(P2, WAITED_TOO_LONG)...]`.
+  2. P2's outcomes are applied first, so the owed markers match the schedule.
+  3. Then `MovedOn(P1)` is stepped, and its own effects are applied before its check.
+- **A dead generation's late inputs.** `Learned`, `Armed`, `Returned`, `Commit` and `WalkReturned` of G after its death name a request that is not running, and are ignored. The listener's `Returned` still counts the abandoned thread back, and may reuse it, as today.
+- **A thread that ends.** The listener's `next`, with the application ending, clears `threaded`. The next start takes `succeed()`, so the ending thread's own `in_charge` answers no.
+- **Shutdown.** The listener's unanswered markers are answered by its `Owed` tokens, and the outpost's queries by Core at its end, both as today. Neither reader ticks once stopping.
+
+### States and lines
+
+**The outpost's reducer**, against the first determinism build:
+
+- fields go from 16 to 13: `generation`, `requests` and `abandoned` leave, and `current` becomes the `InFlight`;
+- the program in flight goes from 10 fields with 3 flags to an item of 3 fields with 1 flag, `deferred`;
+- inputs go from 17 to 16, and effects from 17 to 16: `Returned` leaves both, and `Abandon` loses `count`;
+- the foreground fact's judgment goes;
+- about 120 lines fewer.
+
+**The listener's schedule:**
+
+- removed:
+  - `Running`, and `TickRead` with its 8 fields;
+  - `Claim`, and `moved_on_wanted`;
+  - the `foregrounds` counts, `wake_on_foreground` and `next_generation`;
+  - the schedule's `grace`, replaced by the shared constant;
+  - `AlarmChange::By` and `Settle`;
+- `alarm_due` moves in from the shell;
+- `App` keeps 8 fields, with `running_place` joining the item;
+- inputs go from 10 to 14, and effects from 8 to 10;
+- about 150 lines fewer.
+
+**The listener's shell:**
+
+- removed from `WatchedRead`: `claim` with its three values, `front_judged`, `front_elsewhere`, `judge_front`, `mark_claimed` and `claimed`, `bound_at`'s claim test, and `on_learn`'s judgment;
+- removed: the watchdog's gathering and `alarm_by`;
+- about 70 lines fewer after the answers are added.
+
+**Added:** `InFlight`, with `Walk` and `Moved`, about 250 lines. It has no lifecycle state that was not already in one of the readers.
+
+**Net:** about 90 lines fewer.
+
+**Flags and fields:**
+
+- removed: `grace_judged`, `claimed`, `published`, `front_judged`, `front_elsewhere`, `wake_on_foreground`, and the claim's three values;
+- added: one flag, `threaded`, and one field, `next`;
+- no lock, shared flag or second writer is added, three atomics leave, and the alarm's due time gets one owner.
+
+### Wake-ups and calls
+
+- **A quick item costs no wake in either reader.**
+  - The listener's alarm is set to the read's grace end as it starts, and moved back as it ends: one timer call each.
+  - Today the start sets the alarm to the deadline, and the end cancels it only when nothing else is under way. The count is the same, with one more call at an end while another application's read is under way.
+- **An item still under way past the grace** costs one wake and one moved-on call every 500 ms until it returns, is published or is abandoned:
+  - at most 15 for a listener read (8 s);
+  - at most 19 for an outpost program at the 10 s deadline, 3 at 2 s, and none at 400 ms.
+  - Today the outpost wakes once at the grace end, and the listener once with evidence. These wakes are paid only on the slow path, for the recovery they buy.
+- **Foreground events** no longer wake the listener's watchdog, or run the outpost's judgment.
+- **Every listener focus read with a window** loses its moved-on call: `GetGUIThreadInfo`, the two owner reads, and for a console the provider read.
+- **A learned window** costs one uncontended readers' lock, and no wake.
+- **Measured before and after**, in test audio mode, debug build:
+  - wake-ups and processor time per thread on `measure_focus_text_box`, at most 20 runs;
+  - the listener watchdog's wakes in its held-read tests;
+  - the timer calls per read go in `docs/performance.md`.
+
+### Tests
+
+**Replay tests of `InFlight`**, in `verbatim-reader-rules`, one per rule:
+
+- the order of the deadline, the bound and the moved-on rule in one late tick;
+- publish first, for each reason;
+- the half-second judgment, with a window known at the start and with one learned past the grace;
+- a true `MovedOn` for a published item, which abandons at once;
+- an answer to a dead request, with and without `then_abandon`;
+- `walk_returned` before its bound disarming the walk;
+- `hand_on` keeping the times;
+- `succeed`.
+
+**One generated test**, with `proptest` under a fixed seed, as `verbatim-term-sim` uses it.
+
+- It drives sequences of start, learned, armed, tick, advancing time, walk returned and end, each ask answered at once by a drawn value.
+- It compares `InFlight` with a reference model: a scan of one item's timeline that names its one fate from the times and answers alone. The fate is ended, published then ended, or abandoned, with its reason and whether it was published.
+- After every step it checks:
+  - the item leaves exactly once;
+  - each transition makes at most one ask;
+  - `accepts` is false after publication or death;
+  - the generation rises by one per abandonment;
+  - `Published` only follows `Armed`;
+  - a published item can still be abandoned for `MovedOn`;
+  - when `next_wake` is due, a tick changes the state, so no wake is timed that will not be acted on.
+
+**The readers' tests:**
+
+- The outpost's tests of publication and abandonment change their setup. `a_foreground_fact_after_the_grace_judges_the_moved_on_rule_again` becomes a test of the half-second judgment.
+- The listener's tests built on `TickRead` move to the new inputs. `no_grace_end_alarm_without_a_foreground_event` becomes a test that a quick read's end moves the alarm back while another read is under way.
+- Two new shell tests, one for each listener rule:
+  - each ask is answered once, after the step's other effects, and before the lock is let go;
+  - a step with an ask and another application's outcomes keeps the owed markers matched.
+
+**Guards**, all under `cargo xtask ci`:
+
+- mockapp's `a_stuck_parent_step_is_published_at_the_bound_and_its_late_result_discarded`, `an_msaa_focus_whose_walk_is_stuck_is_published_at_its_bound` and `a_focus_published_at_its_bound_is_followed_after_its_worker_is_abandoned`;
+- the listener's held-read tests, `a_held_read_is_abandoned_once_the_user_moves_on_past_its_grace` and its two neighbours, which now move on without a foreground event too.
+
+### End-to-end scenarios and the order of work
+
+The scenarios run three times each at the end. Neither is in `docs/flaky-tests.md`:
+
+- `notepad_editing`, for the outpost's `InFlight` on every program;
+- `rapid_tabbing_in_settings`, for the listener's on every read.
+
+No scenario reaches a moved-on abandonment or a bound reliably: the `windows_terminal_` and Explorer scenarios that could are listed as flaky. So the mockapp and unit tests hold those paths.
+
+The order of work:
+
+1. `InFlight`, with its replay tests and its generated test, and no reader using it yet.
+2. **The outpost adopts it**, and its shell keeps the abandoned count. Its tests move. The half-second judgment changes what is heard here. Scenario: `notepad_editing`.
+3. **The listener adopts it**: its schedule, its alarm, its shell's asks and the slimmer `WatchedRead`. Measurements before and after. Scenario: `rapid_tabbing_in_settings`.
+4. **The documents:**
+   - the crate guides of `verbatim-reader-rules`, `verbatim-outpost-logic`, `verbatim-listener-logic` and `verbatim-listener`;
+   - `focus_read`'s module documentation;
+   - the focus pipeline rework's paragraphs on the listener's abandonment, on "publish first" and on the moved-on rule;
+   - "Simpler owners", whose three items this build makes.
+
+The estimate is three to four days for one builder, with the adversarial review.
+
+### Limitations
+
+- A move that raises a foreground event is noticed up to 500 ms later than today, as in NVDA.
+- A stuck item past its grace costs up to two wakes a second until its deadline.
+- The listener keeps the abandoned limit and the per-application queue, and the outpost keeps the focus group and the owed work, as the study found.
+
+### Decisions
+
+- The type is `InFlight`, and the section's term is "the work in flight" (Dickson, 2026-11-01).
+- The listener speaks what it has read of a stuck focus before giving it up when the user moves on, as the outpost does: publish first, in both readers (Dickson, 2026-11-01).
+- Both readers judge whether the user has moved on at the grace's end and every 500 ms after, as NVDA does, instead of only at foreground events (Dickson, 2026-11-01).
