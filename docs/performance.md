@@ -675,11 +675,11 @@ wake-ups and processor time per event.
   selection before or after), adds two. Each timer, a
   deadline, a grace, a walk's bound or the gap record's bound, costs one
   wake where the watchdog took two (its own, then a post), and the gap
-  record's threadpool timer is gone. The console host's caret poll is one
-  program that waits for each 5 ms re-read on its worker's own
-  high-resolution timer, so a re-read wakes only the worker; a program
-  dispatched while it waits makes it yield, which costs the poll's commit
-  and end and its dispatch again, two wakes more.
+  record's threadpool timer is gone. Each 5 ms re-read of the console
+  host's caret poll is a program of its own, timed by the shell's
+  high-resolution timer: three or four wakes per re-read (the shell's
+  timer, the worker, and the shell for its commit and end), up to ten
+  re-reads on a key that moves nothing.
 - Latency: two thread hand-offs per program, each an `SetEvent` and a
   wait's return, expected at tens of microseconds.
 - Processor time: per program, a copy of the facts it reads: the reports'

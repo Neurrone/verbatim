@@ -240,9 +240,7 @@ impl Garbage {
 }
 
 /// Who waits on each settle, by its number, kept until the settle's
-/// program ends: a settle dispatched behind the console poll is dispatched
-/// again to the replacement if the poll is abandoned, and its worker is
-/// given the same waiter then as the first time.
+/// program ends or its worker is abandoned.
 #[derive(Default)]
 struct Settles {
     waiting: HashMap<u64, mpsc::Sender<()>>,
@@ -292,8 +290,9 @@ impl Settles {
 
 /// A worker generation the shell started.
 struct Generation {
-    /// Its inbox: dropping it closes the inbox and rings its doorbell.
-    jobs: super::inbox::Sender<Job>,
+    /// Its inbox: dropping it closes the inbox, which ends the worker once
+    /// it has taken what was sent before.
+    jobs: crossbeam_channel::Sender<Job>,
     charge: Arc<Charge>,
 }
 
@@ -536,11 +535,10 @@ impl Shell {
 
     /// Starts worker generation `generation`.
     fn spawn_worker(&mut self, generation: u64, warm: bool) {
-        let (jobs, receiver) = super::inbox::inbox();
+        let (jobs, receiver) = crossbeam_channel::unbounded();
         let charge = Arc::new(Charge::default());
         let thread = worker::spawn(
             Arc::clone(&self.context),
-            generation,
             warm,
             receiver,
             Arc::clone(&charge),

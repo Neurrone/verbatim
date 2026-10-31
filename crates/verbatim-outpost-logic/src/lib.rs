@@ -10,8 +10,7 @@
 //! the reports Core may hold ([`held`]), the follow state ([`follow`]),
 //! the hand-over's hold ([`hold`]), the arbitrator's verdicts
 //! ([`verdicts`]), the worker generation in charge with its deadline, the moved-on grace and the walk's bound, the program in
-//! flight and the console poll in flight beside it, the queries not yet
-//! answered, and the idle barrier's round.
+//! flight, the queries not yet answered, and the idle barrier's round.
 //! Programs, run by a worker on copies ([`Facts`]), make every call into
 //! the application; their commits come back as inputs, and the reducer
 //! applies a commit only while its request is live: its generation in
@@ -141,10 +140,6 @@ pub enum Work {
     Settle(u64),
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
-    /// The console poll of the open caret key's watch for request `0`
-    /// (`docs/design/ownership.md`): reads until it answers, reaches its last read, or
-    /// yields to the next program, which the reducer dispatches beside it.
-    Poll(u64),
     /// Finishes the caret read `cut`, cut at its value change check, with
     /// the reducer's decision: whether a value change of its edit control
     /// waited when the read part ended (`waiting`).
@@ -416,11 +411,6 @@ struct Current {
     claimed: bool,
     /// The focus group try it is, if it is one.
     group: Option<GroupTry>,
-    /// While it waits in the worker's inbox behind the console poll, its
-    /// work and its deadline's length: its deadline starts when the poll
-    /// ends, and an abandonment of the poll dispatches the work again to
-    /// the replacement.
-    behind_poll: Option<(Work, Duration)>,
     /// Whether it does work the idle barrier's answer waits for, as it
     /// waits for an open watch or an open gap record: it reads the gap
     /// record, or it took the caret key's watch from the facts.
@@ -451,9 +441,6 @@ pub struct Reducer {
     /// The last request number given.
     requests: u64,
     current: Option<Current>,
-    /// The console poll in flight, beside the program in flight: its
-    /// `running` query is its watch's.
-    poll: Option<Current>,
     /// The tries left of a focus group whose try was abandoned, or the
     /// gap's read a dropped copy asked for, to run before anything else.
     after: VecDeque<(Entry, Option<GroupTry>)>,
@@ -506,21 +493,20 @@ impl Reducer {
         &self.queries
     }
 
-    /// Whether a program or the console poll is in flight.
+    /// Whether a program is in flight.
     #[must_use]
     pub fn busy(&self) -> bool {
-        self.current.is_some() || self.poll.is_some()
+        self.current.is_some()
     }
 
     /// Whether a commit of `request` is applied: it is the program in
-    /// flight's or the console poll's, of the generation in charge, and its
-    /// walk was not published at its bound.
+    /// flight's, of the generation in charge, and its walk was not
+    /// published at its bound.
     #[must_use]
     pub fn accepts(&self, request: Request) -> bool {
         self.current
-            .iter()
-            .chain(&self.poll)
-            .any(|current| current.request == request && !current.claimed)
+            .as_ref()
+            .is_some_and(|current| current.request == request && !current.claimed)
     }
 
     /// When the shell is next to call [`tick`](Self::tick): the program's
@@ -531,15 +517,7 @@ impl Reducer {
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
-        if let Some(poll) = &self.poll
-            && !self.stopping
-        {
-            times.push(poll.deadline);
-        }
-        if let Some(current) = self
-            .current
-            .as_ref()
-            .filter(|current| current.behind_poll.is_none())
+        if let Some(current) = &self.current
             && !self.stopping
         {
             times.push(current.deadline);
@@ -652,10 +630,7 @@ impl Reducer {
     pub fn tick(&mut self, now: Now, locals: &mut dyn Locals) -> Vec<Effect> {
         let mut effects = Vec::new();
         if !self.stopping
-            && let Some(current) = self
-                .current
-                .as_ref()
-                .filter(|current| current.behind_poll.is_none())
+            && let Some(current) = &self.current
         {
             let request = current.request;
             if current.walk.is_some_and(|bound| now.at >= bound) {
@@ -669,8 +644,6 @@ impl Reducer {
                 ended
             });
             self.judge_abandonment(now, locals, grace_ended, &mut effects);
-        } else if !self.stopping && self.poll.is_some() {
-            self.judge_abandonment(now, locals, false, &mut effects);
         }
         if !self.gap_timer_given && self.gap_due.is_some_and(|due_us| now.observed_us >= due_us) {
             self.gap_due = None;
@@ -693,14 +666,6 @@ impl Reducer {
         self.current
             .as_mut()
             .filter(|current| current.request == request)
-    }
-
-    /// The program in flight or the console poll, whichever is `request`'s.
-    fn slot_of(&mut self, request: Request) -> Option<&mut Current> {
-        self.current
-            .iter_mut()
-            .chain(&mut self.poll)
-            .find(|current| current.request == request)
     }
 
     /// Takes in `entry`, from `source`: held while the hand-over's hold
@@ -795,13 +760,12 @@ impl Reducer {
     fn send(&mut self, message: OutpostToCore, effects: &mut Vec<Effect>) {
         if let OutpostToCore::Reply { request_id, .. } = &message {
             self.queries.remove(request_id);
-            for current in self.current.iter_mut().chain(&mut self.poll) {
-                if current
+            if let Some(current) = self.current.as_mut().filter(|current| {
+                current
                     .running
                     .is_some_and(|(running, _)| running == *request_id)
-                {
-                    current.running = None;
-                }
+            }) {
+                current.running = None;
             }
         }
         effects.push(Effect::Send(Box::new(message)));
@@ -814,7 +778,7 @@ impl Reducer {
             follow::record(&mut self.facts.held, report);
         }
         if let Some(message) = change.result.clone() {
-            if let Some(current) = self.slot_of(request) {
+            if let Some(current) = self.current_of(request) {
                 current.running = None;
             }
             self.send(message, effects);
@@ -825,8 +789,8 @@ impl Reducer {
         }
         if matches!(
             change.watch,
-            Some(WatchChange::Open(..) | WatchChange::PutBack(_))
-        ) && let Some(current) = self.slot_of(request)
+            Some(WatchChange::Open(..) | WatchChange::PutBack(_) | WatchChange::Read { .. })
+        ) && let Some(current) = self.current_of(request)
         {
             current.running = None;
             current.deferred = false;
@@ -850,7 +814,7 @@ impl Reducer {
             effects.push(Effect::ForgetRanges(ranges));
         }
         if let Some(open) = &applied.taken
-            && let Some(current) = self.slot_of(request)
+            && let Some(current) = self.current_of(request)
         {
             current.running = Some((open.request_id, open.trace));
             current.deferred = true;
@@ -1029,19 +993,7 @@ impl Reducer {
         if self.stopping {
             return;
         }
-        if self
-            .poll
-            .as_ref()
-            .is_some_and(|poll| now.at >= poll.deadline)
-        {
-            self.abandon_poll(now, effects);
-            return;
-        }
-        let Some(current) = self
-            .current
-            .as_ref()
-            .filter(|current| current.behind_poll.is_none())
-        else {
+        let Some(current) = &self.current else {
             return;
         };
         let reason = if now.at >= current.deadline {
@@ -1084,6 +1036,19 @@ impl Reducer {
             reason,
         });
         if let Some((request_id, trace)) = current.running {
+            // A read of the open watch's console poll leaves the watch in
+            // the facts: it is taken out without a word, its query answered
+            // here, once. A program that took the watch out to check it has
+            // already removed it.
+            if self
+                .facts
+                .follow
+                .caret_watch
+                .take_if(|open| open.request_id == request_id)
+                .is_some()
+            {
+                self.intake.wake_at(None);
+            }
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
         // A focus group's older entries are tried by the replacement, unless
@@ -1093,59 +1058,6 @@ impl Reducer {
         {
             self.continue_group(group);
         }
-    }
-
-    /// Abandons the worker in charge, whose console poll has passed its
-    /// deadline: its watch is ended, its query answered "abandoned", as a
-    /// check's taken watch is, and the program waiting behind it, which
-    /// never started, is dispatched again to the replacement.
-    fn abandon_poll(&mut self, now: Now, effects: &mut Vec<Effect>) {
-        let Some(poll) = self.poll.take() else {
-            return;
-        };
-        let dead = self.generation;
-        self.generation += 1;
-        self.abandoned += 1;
-        effects.push(Effect::Abandon {
-            dead,
-            replacement: self.generation,
-            count: self.abandoned,
-            reason: "a call passed its deadline",
-        });
-        if let Some((request_id, trace)) = poll.running {
-            let _ = self
-                .facts
-                .follow
-                .caret_watch
-                .take_if(|open| open.request_id == request_id);
-            self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
-        }
-        let Some(current) = self.current.take() else {
-            return;
-        };
-        let Some((work, deadline)) = current.behind_poll else {
-            return;
-        };
-        if let Work::Owed(_) = work {
-            // The owed work is attempted again by the replacement.
-            if let Some(owed) = self
-                .facts
-                .follow
-                .owed
-                .as_mut()
-                .filter(|owed| owed.attempting == Some(dead))
-            {
-                owed.attempting = None;
-            }
-            return;
-        }
-        self.dispatch(
-            work,
-            (deadline, current.window, current.running),
-            current.group,
-            now,
-            effects,
-        );
     }
 
     /// A program ended, having cut a caret read at its value change check
@@ -1158,10 +1070,6 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        if let Some(poll) = self.poll.take_if(|poll| poll.request == request) {
-            self.poll_finished(&poll, panicked, now, effects);
-            return;
-        }
         let Some(current) = self.current.take_if(|current| current.request == request) else {
             return;
         };
@@ -1170,9 +1078,24 @@ impl Reducer {
             return;
         }
         // A query its program left unanswered, because it panicked or
-        // returned without its reply, still gets its one reply.
+        // returned without its reply, still gets its one reply. A read of
+        // the open watch's console poll that ended so ends the watch, which
+        // answers its query, so the watch is not read again as it stood.
         if let Some((request_id, trace)) = current.running {
-            let _ = panicked;
+            if self
+                .facts
+                .follow
+                .caret_watch
+                .as_ref()
+                .is_some_and(|open| open.request_id == request_id)
+            {
+                let mut applied = Applied::default();
+                self.facts
+                    .follow
+                    .end_watch_of(request_id, "its read failed", &mut applied);
+                self.subscription_effects(applied, now, effects);
+                return;
+            }
             self.send(
                 reply(
                     request_id,
@@ -1205,32 +1128,6 @@ impl Reducer {
         }
     }
 
-    /// The console poll `poll` ended, by its last read, an answer or a
-    /// yield: the program waiting behind it starts its deadline now. A poll
-    /// that panicked ends its watch, which would otherwise be polled again
-    /// as it stood.
-    fn poll_finished(
-        &mut self,
-        poll: &Current,
-        panicked: bool,
-        now: Now,
-        effects: &mut Vec<Effect>,
-    ) {
-        if panicked && let Some((request_id, _)) = poll.running {
-            let mut applied = Applied::default();
-            self.facts
-                .follow
-                .end_watch_of(request_id, "its poll failed", &mut applied);
-            self.subscription_effects(applied, now, effects);
-        }
-        if let Some(current) = &mut self.current
-            && let Some((_, deadline)) = current.behind_poll.take()
-        {
-            current.started = now.at;
-            current.deadline = now.at + deadline;
-        }
-    }
-
     /// Queues the next older entry of `group`, if it has one.
     fn continue_group(&mut self, mut group: GroupTry) {
         if let Some(entry) = group.older.pop_front() {
@@ -1241,13 +1138,12 @@ impl Reducer {
 
     /// Answers the idle barrier's query once no deferred work is pending:
     /// the hook's copies are not held at the start, no caret key's watch is
-    /// open, no console poll is in flight, the gap record is closed, and
+    /// open, the gap record is closed, and
     /// the program in flight neither reads it nor holds the watch. The program in flight is otherwise not waited for:
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
-        if self.poll.is_some()
-            || self.hold.holding()
+        if self.hold.holding()
             || self
                 .current
                 .as_ref()
@@ -1286,8 +1182,7 @@ impl Reducer {
     /// Starts the next program, if none is in flight: owed work first, then
     /// what a program left to run after it, then a release's drop, then
     /// the intake's next entry; entries the reducer handles itself are
-    /// handled on the way. When nothing else is ready, the open watch's
-    /// console poll is dispatched, if it is not in flight.
+    /// handled on the way.
     fn pump(&mut self, now: Now, locals: &mut dyn Locals, effects: &mut Vec<Effect>) {
         while self.current.is_none() && !self.stopping && !self.releasing {
             if let Some(owed) = self
@@ -1324,7 +1219,6 @@ impl Reducer {
             let Some((planned, batch)) =
                 self.intake.next(now.at, |hwnd| locals.window_is_hung(hwnd))
             else {
-                self.dispatch_poll(now, effects);
                 return;
             };
             match planned {
@@ -1445,16 +1339,39 @@ impl Reducer {
                 Ok(None) => {}
                 Err(due_us) => self.gap_timer(TimerAction::Set(due_us), effects),
             },
+            Item::Wake => {
+                // A read of the open watch's console poll is a program of
+                // its own, timed by the reducer's wake, under the text
+                // deadline, its query the watch's until the read commits.
+                let polled = self
+                    .facts
+                    .follow
+                    .caret_watch
+                    .as_ref()
+                    .filter(|open| open.poll.is_some())
+                    .map(|open| (open.request_id, open.trace));
+                match polled {
+                    Some(running) => {
+                        let work = Work::Entry {
+                            entry,
+                            handling: Handling::Run,
+                            batch,
+                            group: None,
+                        };
+                        self.dispatch(work, (TEXT_DEADLINE, 0, Some(running)), None, now, effects);
+                    }
+                    None => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
+                }
+            }
             _ => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
         }
     }
 
     /// The live requests: the program in flight's, unless its walk was
-    /// published, and the console poll's.
+    /// published.
     fn live(&self) -> Vec<Request> {
         self.current
             .iter()
-            .chain(&self.poll)
             .filter(|current| !current.claimed && current.request.generation == self.generation)
             .map(|current| current.request)
             .collect()
@@ -1493,8 +1410,7 @@ impl Reducer {
 
     /// Dispatches `work` under `deadline`, concerning `window` (0 for none)
     /// and answering `running`, as a try of `group` when it is one. A read
-    /// of the gap record is deferred work, whether dispatched first or
-    /// again after an abandoned poll.
+    /// of the gap record is deferred work.
     fn dispatch(
         &mut self,
         work: Work,
@@ -1505,7 +1421,6 @@ impl Reducer {
     ) {
         let request = self.next_request();
         let waiting = self.waiting(&work);
-        let behind_poll = self.poll.is_some().then(|| (work.clone(), deadline));
         let deferred = matches!(
             &work,
             Work::Entry {
@@ -1526,7 +1441,6 @@ impl Reducer {
             grace_judged: false,
             claimed: false,
             group,
-            behind_poll,
             deferred,
         });
         effects.push(Effect::Dispatch(Box::new(Program {
@@ -1558,47 +1472,6 @@ impl Reducer {
             facts: self.facts.clone(),
             work: Work::Finish { cut, waiting },
             waiting: Vec::new(),
-        })));
-    }
-
-    /// Dispatches the console poll of the open caret key's watch, if the
-    /// watch polls and its poll is not in flight, under
-    /// [`HANDLING_DEADLINE`], its query the watch's.
-    fn dispatch_poll(&mut self, now: Now, effects: &mut Vec<Effect>) {
-        if self.poll.is_some() {
-            return;
-        }
-        let Some((request_id, trace)) = self
-            .facts
-            .follow
-            .caret_watch
-            .as_ref()
-            .filter(|open| open.poll.is_some())
-            .map(|open| (open.request_id, open.trace))
-        else {
-            return;
-        };
-        let request = self.next_request();
-        let work = Work::Poll(request_id);
-        let waiting = self.waiting(&work);
-        self.poll = Some(Current {
-            request,
-            deadline: now.at + HANDLING_DEADLINE,
-            started: now.at,
-            window: 0,
-            running: Some((request_id, trace)),
-            walk: None,
-            grace_judged: false,
-            claimed: false,
-            group: None,
-            behind_poll: None,
-            deferred: false,
-        });
-        effects.push(Effect::Dispatch(Box::new(Program {
-            request,
-            facts: self.facts.clone(),
-            work,
-            waiting,
         })));
     }
 

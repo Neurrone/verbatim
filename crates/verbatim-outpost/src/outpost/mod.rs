@@ -43,7 +43,6 @@
 mod bound;
 mod commit;
 mod focus_path;
-mod inbox;
 mod narrowing;
 mod outbound;
 mod read;
@@ -332,10 +331,6 @@ struct Program<'a> {
     request: reducer::Request,
     waiting: Vec<WaitingCaret>,
     charge: Arc<Charge>,
-    /// The pure part of each commit made, kept for the console poll, whose
-    /// commits the worker applies to the next program's copies
-    /// ([`RequestContext::keep_commits`]).
-    kept: Option<RefCell<Vec<reducer::Change>>>,
     _context: std::marker::PhantomData<&'a ()>,
 }
 
@@ -354,25 +349,23 @@ impl<'a> RequestContext<'a> {
         }
     }
 
-    /// The context of program `request`, given `facts`, `waiting`, what
-    /// the console poll before it held of the store's text, and its
+    /// The context of program `request`, given `facts`, `waiting`, and its
     /// worker's `charge`.
     fn for_program(
         context: &'a Context,
         tag: store::Tag,
         (request, facts, waiting): (reducer::Request, Facts, Vec<WaitingCaret>),
-        (text, charge): (text_reads::ProgramText, Arc<Charge>),
+        charge: Arc<Charge>,
     ) -> Self {
         Self {
             context,
             nodes: context.store.nodes_for(tag),
             facts: RefCell::new(facts),
-            program_text: RefCell::new(text),
+            program_text: RefCell::default(),
             program: Some(Program {
                 request,
                 waiting,
                 charge,
-                kept: None,
                 _context: std::marker::PhantomData,
             }),
             judged_at: None,
@@ -383,24 +376,6 @@ impl<'a> RequestContext<'a> {
     /// `at_us`.
     fn judge_at(&mut self, at_us: u64) {
         self.judged_at = Some(at_us);
-    }
-
-    /// Keeps the pure part of every commit the program makes from now on,
-    /// for [`kept_commits`](Self::kept_commits).
-    fn keep_commits(&mut self) {
-        if let Some(program) = &mut self.program {
-            program.kept = Some(RefCell::new(Vec::new()));
-        }
-    }
-
-    /// The pure part of each commit made since
-    /// [`keep_commits`](Self::keep_commits), in order.
-    fn kept_commits(&self) -> Vec<reducer::Change> {
-        self.program
-            .as_ref()
-            .and_then(|program| program.kept.as_ref())
-            .map(|kept| std::mem::take(&mut *kept.borrow_mut()))
-            .unwrap_or_default()
     }
 
     /// The program this context runs.
@@ -527,13 +502,6 @@ impl<'a> RequestContext<'a> {
         }
     }
 
-    /// What the program holds of the store's text, for the program the
-    /// worker runs after the console poll: the poll's commits may not have
-    /// been taken in when it reads.
-    fn take_program_text(&self) -> text_reads::ProgramText {
-        self.program_text.take()
-    }
-
     /// Commits `effects`, with the program's text writes since its last
     /// commit: unless the worker was abandoned, applies their pure part to
     /// the program's copies, so what it reads after is what the reducer
@@ -554,9 +522,6 @@ impl<'a> RequestContext<'a> {
             program.request.generation,
             &local,
         );
-        if let Some(kept) = &program.kept {
-            kept.borrow_mut().push(effects.carried());
-        }
         self.mailbox.post(Posted::Commit {
             request: program.request,
             effects: Box::new(effects),
@@ -593,9 +558,6 @@ impl crate::arbitration::Judgement for RequestContext<'_> {
             program.request.generation,
             &local,
         );
-        if let Some(kept) = &program.kept {
-            kept.borrow_mut().push(local);
-        }
         self.mailbox.post(Posted::Commit {
             request: program.request,
             effects: Box::new(Effects {

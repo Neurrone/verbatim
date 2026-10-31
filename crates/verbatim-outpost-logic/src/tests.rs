@@ -687,35 +687,39 @@ fn console_caret() -> Item {
     }
 }
 
-/// The console poll `effects` dispatch, for the watch of which request.
-fn polls(effects: &[Effect]) -> (Request, u64) {
-    let poll = program(effects);
-    match poll.work {
-        Work::Poll(watch) => (poll.request, watch),
-        ref work => panic!("the console poll, not {work:?}"),
+/// The read of the open watch's console poll `effects` dispatch: a program
+/// of the wake.
+fn reads(effects: &[Effect]) -> Request {
+    let read = program(effects);
+    match &read.work {
+        Work::Entry { entry, .. } if matches!(entry.item, Item::Wake) => read.request,
+        work => panic!("a read of the console poll, not {work:?}"),
     }
 }
 
 /// A replay whose caret key, request 7, opened a polling watch at 1 ms,
-/// and whose poll was dispatched at 3 ms; the poll's request.
-fn polling() -> (Replay, Request) {
+/// its first read due at 6 ms.
+fn polling() -> Replay {
     let mut replay = Replay::new();
     let effects = replay.push(caret_key(7), Source::Other, 1);
     let key = program(&effects).request;
     replay.commit(key, opens(&polling_watch(7, 1)), 2);
-    let (poll, watch) = polls(&replay.finish(key, false, 3));
-    assert_eq!(watch, 7);
-    (replay, poll)
+    assert!(programs(&replay.finish(key, false, 3)).is_empty());
+    assert_eq!(
+        replay.reducer.next_timer(now(3)),
+        Some(Duration::from_millis(6))
+    );
+    replay
 }
 
-/// The change of a poll of the watch for request 7 yielding at 5 ms,
-/// after one read.
-fn yields() -> Change {
+/// A read of the poll of the watch for request 7 that found nothing, its
+/// next read due at `next_ms`, after two calls.
+fn read_again(next_ms: u64) -> Change {
     Change {
-        watch: Some(WatchChange::Yielded {
+        watch: Some(WatchChange::Read {
             request_id: 7,
             poll: Poll {
-                next: Duration::from_millis(11),
+                next: Duration::from_millis(next_ms),
                 until: Duration::from_millis(51),
             },
             calls: CallCounts {
@@ -738,98 +742,40 @@ fn the_console_poll_is_dispatched_only_when_nothing_else_is_ready() {
     let effects = replay.finish(key, false, 4);
     let name = program(&effects);
     assert_eq!(handles(name), (2, None));
-    let (_, watch) = polls(&replay.finish(name.request, false, 5));
-    assert_eq!(watch, 7);
+    // The read was due at 6 ms; it goes once nothing else is ready.
+    reads(&replay.finish(name.request, false, 10));
     assert_eq!(*replay.reducer.queries(), [7].into_iter().collect());
 }
 
 #[test]
-fn a_program_is_dispatched_beside_the_poll_its_deadline_starting_when_the_poll_ends() {
-    let (mut replay, poll) = polling();
-    // The poll's deadline is the only timer.
-    assert_eq!(
-        replay.reducer.next_timer(now(3)),
-        Some(Duration::from_millis(3 + 10_000))
-    );
-    let effects = replay.push(console_caret(), Source::Hook, 4);
-    let event = program(&effects).request;
-    assert_eq!(replay.reducer.live(), [event, poll]);
-    // The event's program waits behind the poll: its deadline and its
-    // grace have not started.
-    assert_eq!(
-        replay.reducer.next_timer(now(4)),
-        Some(Duration::from_millis(3 + 10_000))
-    );
-    replay.commit(poll, yields(), 5);
-    assert!(programs(&replay.finish(poll, false, 6)).is_empty());
-    // Its grace ends 500 ms after the poll ended.
+fn a_program_goes_before_the_next_read() {
+    let mut replay = polling();
+    let read = reads(&replay.tick(6));
+    // The read runs under the text deadline, with no moved-on grace.
     assert_eq!(
         replay.reducer.next_timer(now(6)),
-        Some(Duration::from_millis(6 + 500))
+        Some(Duration::from_millis(6 + 2_000))
     );
-    assert_eq!(replay.reducer.live(), [event]);
-}
-
-#[test]
-fn the_poll_is_dispatched_again_after_it_yields() {
-    let (mut replay, poll) = polling();
-    let effects = replay.push(console_caret(), Source::Hook, 4);
-    let event = program(&effects).request;
-    replay.commit(poll, yields(), 5);
-    let yielded = replay
-        .reducer
-        .facts()
-        .follow
-        .caret_watch
-        .clone()
-        .expect("the watch stays open");
+    // A console update arriving while the read is in flight waits for it.
+    assert!(programs(&replay.push(console_caret(), Source::Hook, 7)).is_empty());
+    replay.commit(read, read_again(8), 8);
+    // The next read is due as the read ends, and the update goes first,
+    // its deadline and its grace starting now.
+    let effects = replay.finish(read, false, 9);
+    let update = program(&effects);
+    assert_eq!(handles(update), (7, None));
     assert_eq!(
-        yielded.poll,
-        Some(Poll {
-            next: Duration::from_millis(11),
-            until: Duration::from_millis(51),
-        })
+        replay.reducer.next_timer(now(9)),
+        Some(Duration::from_millis(9 + 500))
     );
-    assert_eq!(yielded.calls.uia, 2);
-    replay.finish(poll, false, 5);
-    // The console caret event's check finds no move (463f2ef9): it puts
-    // the watch back as it was, and the poll goes on from where it was.
-    replay.commit(
-        event,
-        Change {
-            watch: Some(WatchChange::Take(NodeId::new(1))),
-            ..Change::default()
-        },
-        6,
-    );
-    replay.commit(
-        event,
-        Change {
-            watch: Some(WatchChange::PutBack(yielded.clone())),
-            ..Change::default()
-        },
-        7,
-    );
-    let effects = replay.finish(event, false, 8);
-    let (again, watch) = polls(&effects);
-    assert_eq!(watch, 7);
-    assert_ne!(again, poll);
-    let copied = program(&effects)
-        .facts
-        .follow
-        .caret_watch
-        .as_ref()
-        .and_then(|open| open.poll);
-    assert_eq!(copied, yielded.poll);
+    reads(&replay.finish(update.request, false, 10));
 }
 
 #[test]
 fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
-    let (mut replay, poll) = polling();
+    let mut replay = polling();
     let effects = replay.push(caret_key(8), Source::Other, 4);
     let next = program(&effects).request;
-    replay.commit(poll, yields(), 5);
-    replay.finish(poll, false, 5);
     let effects = replay.commit(
         next,
         Change {
@@ -848,13 +794,16 @@ fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
         7,
     );
     assert_eq!(replies(&effects), [(8, "done")]);
+    // The ended watch's wake went with it.
     assert!(programs(&replay.finish(next, false, 8)).is_empty());
+    assert_eq!(replay.reducer.next_timer(now(8)), None);
     assert!(replay.reducer.queries().is_empty());
 }
 
 #[test]
 fn the_poll_ends_its_watch_by_its_answer_or_at_its_last_read() {
-    let (mut replay, poll) = polling();
+    let mut replay = polling();
+    let read = reads(&replay.tick(6));
     let answer = OutpostToCore::Reply {
         trace_id: TraceId::mint(),
         request_id: 7,
@@ -862,24 +811,26 @@ fn the_poll_ends_its_watch_by_its_answer_or_at_its_last_read() {
         timing: EventTiming::default(),
     };
     let effects = replay.commit(
-        poll,
+        read,
         Change {
             aside: Some((7, answer)),
             watch: Some(WatchChange::Answered(7)),
             ..Change::default()
         },
-        10,
+        7,
     );
     assert_eq!(replies(&effects), [(7, "done")]);
     assert!(replay.reducer.facts().follow.caret_watch.is_none());
-    assert!(programs(&replay.finish(poll, false, 11)).is_empty());
+    assert!(programs(&replay.finish(read, false, 8)).is_empty());
+    assert_eq!(replay.reducer.next_timer(now(8)), None);
 
     let effects = replay.push(caret_key(9), Source::Other, 20);
     let key = program(&effects).request;
     replay.commit(key, opens(&polling_watch(9, 20)), 21);
-    let (poll, _) = polls(&replay.finish(key, false, 22));
+    replay.finish(key, false, 22);
+    let read = reads(&replay.tick(25));
     let effects = replay.commit(
-        poll,
+        read,
         Change {
             watch: Some(WatchChange::Ended(9, "its poll's bound passed")),
             ..Change::default()
@@ -887,26 +838,80 @@ fn the_poll_ends_its_watch_by_its_answer_or_at_its_last_read() {
         70,
     );
     assert_eq!(replies(&effects), [(9, "watch ended")]);
-    assert!(programs(&replay.finish(poll, false, 71)).is_empty());
+    assert!(programs(&replay.finish(read, false, 71)).is_empty());
+    assert_eq!(replay.reducer.next_timer(now(71)), None);
     assert!(replay.reducer.queries().is_empty());
 }
 
 #[test]
-fn an_abandoned_poll_ends_its_watch_and_the_program_behind_it_goes_to_the_replacement() {
-    let (mut replay, poll) = polling();
-    let effects = replay.push(console_caret(), Source::Hook, 4);
-    let behind = program(&effects).request;
-    // The poll's read hangs past its deadline.
-    let effects = replay.tick(3 + 10_000);
+fn a_read_before_the_bound_sets_the_next_reads_wake() {
+    let mut replay = polling();
+    let read = reads(&replay.tick(6));
+    assert_eq!(replies(&replay.commit(read, read_again(11), 7)), []);
+    assert!(programs(&replay.finish(read, false, 7)).is_empty());
+    assert_eq!(
+        replay.reducer.next_timer(now(7)),
+        Some(Duration::from_millis(11))
+    );
+    assert!(programs(&replay.tick(10)).is_empty());
+    let effects = replay.tick(11);
+    reads(&effects);
+    let copied = program(&effects)
+        .facts
+        .follow
+        .caret_watch
+        .clone()
+        .expect("the watch, still open");
+    assert_eq!(
+        copied.poll.map(|poll| poll.next),
+        Some(Duration::from_millis(11))
+    );
+    assert_eq!(copied.calls.uia, 2);
+    assert_eq!(*replay.reducer.queries(), [7].into_iter().collect());
+}
+
+#[test]
+fn an_abandoned_poll_answers_its_watchs_query_once() {
+    let mut replay = polling();
+    let read = reads(&replay.tick(6));
+    // The read hangs past the text deadline.
+    let effects = replay.tick(6 + 2_000);
     assert!(abandons(&effects));
     assert_eq!(replies(&effects), [(7, "abandoned")]);
     assert!(replay.reducer.facts().follow.caret_watch.is_none());
-    let again = program(&effects);
-    assert_eq!(again.request.generation, 1);
-    assert_eq!(handles(again), (4, None));
-    assert!(!replay.reducer.accepts(poll));
-    assert!(!replay.reducer.accepts(behind));
-    assert!(replay.reducer.accepts(again.request));
+    assert_eq!(replay.reducer.next_timer(now(6 + 2_000)), None);
+    // Its late answer is refused, and its end answers nothing more.
+    assert!(!replay.reducer.accepts(read));
+    let effects = replay.commit(
+        read,
+        Change {
+            watch: Some(WatchChange::Ended(7, "its poll's bound passed")),
+            ..Change::default()
+        },
+        2_007,
+    );
+    assert_eq!(replies(&effects), []);
+    assert_eq!(replies(&replay.finish(read, false, 2_008)), []);
+    assert!(replay.reducer.queries().is_empty());
+}
+
+#[test]
+fn a_panicked_poll_read_ends_its_watch_once() {
+    let mut replay = polling();
+    let read = reads(&replay.tick(6));
+    let effects = replay.input(
+        Input::Finished {
+            request: read,
+            reported: false,
+            panicked: true,
+            cut: None,
+        },
+        7,
+    );
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
+    assert!(replay.reducer.facts().follow.caret_watch.is_none());
+    assert_eq!(replay.reducer.next_timer(now(7)), None);
+    assert!(replay.reducer.queries().is_empty());
 }
 
 #[test]
@@ -1054,10 +1059,9 @@ fn a_query_is_answered_once_whatever_ends_it() {
     replay.commit(key, opens(&polling_watch(5, 10_030)), 10_031);
     let effects = replay.finish(key, false, 10_032);
     assert_eq!(replies(&effects), []);
-    let (poll, _) = polls(&effects);
+    // The next key goes ahead of the poll's read, due at 10 035 ms.
     let effects = replay.push(caret_key(6), Source::Other, 10_040);
     let next = program(&effects).request;
-    assert_eq!(replies(&replay.finish(poll, false, 10_040)), []);
     let effects = replay.commit(
         next,
         Change {
@@ -1592,18 +1596,13 @@ fn the_idle_answer_waits_for_the_hooks_copies_held_at_the_start() {
 }
 
 #[test]
-fn a_gap_read_dispatched_again_after_an_abandoned_poll_still_holds_the_idle_answer() {
+fn a_gap_read_in_flight_holds_the_idle_answer() {
     let mut replay = Replay::new();
     let effects = replay.push(name_change(1), Source::Hook, 1);
     let request = program(&effects).request;
     replay.commit(request, copy_dropped(), 2);
     replay.finish(request, false, 3);
-    let effects = replay.push(caret_key(7), Source::Other, 4);
-    let key = program(&effects).request;
-    replay.commit(key, opens(&polling_watch(7, 5)), 5);
-    let (_, watch) = polls(&replay.finish(key, false, 6));
-    assert_eq!(watch, 7);
-    // The query is reached beside the poll, and waits for it.
+    // The query is reached with the gap record open, and waits for it.
     let effects = replay.push(
         Item::IdleQuery {
             round: 5,
@@ -1614,22 +1613,17 @@ fn a_gap_read_dispatched_again_after_an_abandoned_poll_still_holds_the_idle_answ
     );
     assert!(
         sent(&effects).is_empty(),
-        "no answer while the poll is in flight"
+        "no answer while the record is open"
     );
-    // The record's bound passes: its read waits behind the poll.
+    // The record's bound passes: its read is dispatched, and the answer
+    // waits for it.
     let effects = replay.tick(1_001);
+    assert_eq!(answers_and_dispatches(&effects), ["dispatch"]);
+    let read = program(&effects);
     assert!(matches!(
-        &program(&effects).work,
+        &read.work,
         Work::Entry { entry, .. } if matches!(entry.item, Item::GapRead { window: 0x11 })
     ));
-    // The poll is abandoned: the read goes to the replacement, and the
-    // answer still waits for it.
-    let effects = replay.tick(6 + 10_000);
-    assert!(abandons(&effects));
-    assert_eq!(replies(&effects), [(7, "abandoned")]);
-    assert_eq!(answers_and_dispatches(&effects), ["dispatch"]);
-    let read = program(&effects).request;
-    assert_eq!(read.generation, 1);
-    let effects = replay.finish(read, false, 10_007);
+    let effects = replay.finish(read.request, false, 1_002);
     assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
 }

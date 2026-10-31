@@ -200,8 +200,8 @@ pub enum Item {
         /// Whether the reducer has put it directly behind the noted caret.
         behind_noted: bool,
     },
-    /// The open caret key's watch's wake at its bound, for a watch that
-    /// does not poll.
+    /// The open caret key's watch's wake: the next read of its console
+    /// poll, for a watch that polls, and its bound otherwise.
     Wake,
     /// The gap record's bound has passed: the record, still open, is read.
     GapBound,

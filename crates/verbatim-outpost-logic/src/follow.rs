@@ -199,14 +199,15 @@ impl Poll {
     }
 }
 
-/// When the reducer is to wake for `open`: at its bound
-/// ([`CARET_WATCH_BOUND`]) when it does not poll, and never when it polls,
-/// since its poll is a program of its own that ends it at its last read.
+/// When the reducer is to wake for `open`: at its poll's next read when it
+/// polls, each read a program of its own, and otherwise at its bound
+/// ([`CARET_WATCH_BOUND`]).
 #[must_use]
 pub fn wake_for(open: &OpenWatch) -> Option<Duration> {
-    open.poll
-        .is_none()
-        .then_some(open.opened + CARET_WATCH_BOUND)
+    Some(
+        open.poll
+            .map_or(open.opened + CARET_WATCH_BOUND, |poll| poll.next),
+    )
 }
 
 /// The raw-view chain of the UIA focus the outpost last reported from the
@@ -356,18 +357,19 @@ pub enum WatchChange {
     /// The open watch ended with no evidence, answered `WatchEnded`; the
     /// reason is logged.
     End(&'static str),
-    /// The console poll of the watch for this request yields to another
-    /// program: the watch keeps its poll as it stands and the calls its
-    /// checks have made so far.
-    Yielded {
+    /// A read of the console poll of the watch for this request found no
+    /// evidence before the poll's last read: the watch keeps the poll for
+    /// its next read, which the reducer wakes for, and the calls its checks
+    /// have made so far.
+    Read {
         /// The request the watch answers.
         request_id: u64,
-        /// The poll as it stands.
+        /// The poll, its next read due.
         poll: Poll,
         /// The calls the watch's checks have made so far.
         calls: CallCounts,
     },
-    /// The watch for this request was answered by its poll.
+    /// The watch for this request was answered by a read of its poll.
     Answered(u64),
     /// The watch for this request ended with no evidence, answered
     /// `WatchEnded`; the reason is logged.
@@ -483,8 +485,7 @@ pub struct Change {
     pub replaced: Option<NodeId>,
     /// The program's changes of text facts, in order, applied before the
     /// rest: a program applies each to its own copies as its text call
-    /// makes it, so its own commit carries them only for the reducer, and
-    /// for the copies of a program the console poll ran before.
+    /// makes it, so its own commit carries them only for the reducer.
     pub text: Vec<TextChange>,
 }
 
@@ -841,7 +842,7 @@ fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mu
                 .take_if(|open| open.node_id == *node);
         }
         WatchChange::End(why) => follow_state.end_watch(why, applied),
-        WatchChange::Yielded {
+        WatchChange::Read {
             request_id,
             poll,
             calls,
@@ -853,6 +854,7 @@ fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mu
             {
                 open.poll = Some(*poll);
                 open.calls = *calls;
+                applied.wake = Some(Some(poll.next));
             }
         }
         WatchChange::Answered(request_id) => {
@@ -945,10 +947,13 @@ mod tests {
     }
 
     #[test]
-    fn only_a_watch_that_does_not_poll_wakes_the_reducer_at_its_bound() {
+    fn a_watch_wakes_the_reducer_at_its_polls_next_read_or_at_its_bound() {
         let opened = Duration::from_secs(1);
         let poll = Poll::new(opened, 0, 0);
-        assert_eq!(wake_for(&watch(7, opened, Some(poll))), None);
+        assert_eq!(
+            wake_for(&watch(7, opened, Some(poll))),
+            Some(opened + POLL_INTERVAL)
+        );
         assert_eq!(
             wake_for(&watch(7, opened, None)),
             Some(opened + CARET_WATCH_BOUND)
@@ -961,10 +966,11 @@ mod tests {
         let newer = Poll::new(opened, 0, 0);
         let mut facts = Facts::default();
         facts.follow.caret_watch = Some(watch(8, opened, Some(newer)));
-        // The poll of request 7, the older key's, yields and then ends after
-        // the newer key's watch on the same node opened.
+        // A read of request 7's poll, the older key's, finds nothing and
+        // then its last read ends it, after the newer key's watch on the
+        // same node opened.
         let yielded = Change {
-            watch: Some(WatchChange::Yielded {
+            watch: Some(WatchChange::Read {
                 request_id: 7,
                 poll: Poll::new(opened + POLL_BOUND, 0, 0),
                 calls: CallCounts::default(),
@@ -988,7 +994,7 @@ mod tests {
     }
 
     #[test]
-    fn a_yield_keeps_the_polls_state_in_its_watch() {
+    fn a_read_keeps_the_polls_state_in_its_watch_and_wakes_for_the_next() {
         let opened = Duration::from_secs(1);
         let mut facts = Facts::default();
         facts.follow.caret_watch = Some(watch(7, opened, Some(Poll::new(opened, 0, 0))));
@@ -1000,15 +1006,16 @@ mod tests {
             uia: 3,
             ..CallCounts::default()
         };
-        let yielded = Change {
-            watch: Some(WatchChange::Yielded {
+        let read = Change {
+            watch: Some(WatchChange::Read {
                 request_id: 7,
                 poll: later,
                 calls,
             }),
             ..Change::default()
         };
-        apply(&mut facts, 0, &yielded);
+        let applied = apply(&mut facts, 0, &read);
+        assert_eq!(applied.wake, Some(Some(opened + 2 * POLL_INTERVAL)));
         let open = facts.follow.caret_watch.expect("the watch stays open");
         assert_eq!(open.poll, Some(later));
         assert_eq!(open.calls, calls);

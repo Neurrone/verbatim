@@ -21,8 +21,8 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, TextChange,
-    VerdictChange, WatchChange,
+    Change, DialogMemo, FocusPath, GapNote, Group, Object, OwedWork, Report, VerdictChange,
+    WatchChange,
 };
 use super::store::TextWrite;
 
@@ -220,24 +220,6 @@ impl Effects {
             verdicts: self.verdicts.clone(),
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
-        }
-    }
-
-    /// [`local`](Self::local), with the changes of text facts these
-    /// carry, in order: what the program the worker runs after the console
-    /// poll applies of the poll's commit to its copies, which the poll had
-    /// applied to its own as its text calls made them.
-    pub(super) fn carried(&self) -> Change {
-        Change {
-            text: self
-                .text
-                .iter()
-                .filter_map(|write| match write {
-                    TextWrite::Facts { change, .. } => Some(change.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<TextChange>>(),
-            ..self.local()
         }
     }
 
