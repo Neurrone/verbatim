@@ -41,6 +41,7 @@ use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::ConfigStore;
 use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
+use verbatim_core::requests::RequestId;
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
@@ -51,6 +52,7 @@ use verbatim_model::{
     ReaderSettings, TextRequest, TraceId, WindowHandle,
 };
 use verbatim_process::arguments::OutpostOptions;
+use verbatim_process::clock::now_us;
 use verbatim_process::port_queue::{PortQueue, Poster, Received, port_queue};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
@@ -63,7 +65,7 @@ use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
 use live::LiveOutposts;
-use requests::{Asker, DumpTicket, DumpTreeResult, RequestId, RequestTable};
+use requests::{Asker, DumpTicket, DumpTreeResult, RequestTable};
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -1562,7 +1564,15 @@ impl ReducerThread<'_> {
             QueryOutcome::Done(_) | QueryOutcome::Gone => self.live.answered(outpost),
             _ => {}
         }
-        for input in self.requests.finish(id, outpost, outcome) {
+        if let Some((asker, outcome)) = self.requests.finish(id, outpost, outcome) {
+            self.deliver(asker, outcome);
+        }
+    }
+
+    /// Carries out one request's outcome for its asker
+    /// ([`requests::deliver`]), applying the reducer inputs it produces.
+    fn deliver(&mut self, asker: Asker, outcome: QueryOutcome) {
+        for input in requests::deliver(asker, outcome) {
             self.apply(input);
         }
     }
@@ -1907,7 +1917,9 @@ impl ReducerThread<'_> {
         kind: ShellItemKind,
         ask: verbatim_gui::ShellAsk,
     ) {
-        let deadline = Instant::now() + wanted::SHELL_ITEMS_DEADLINE;
+        let deadline_us = now_us().saturating_add(
+            u64::try_from(wanted::SHELL_ITEMS_DEADLINE.as_micros()).unwrap_or(u64::MAX),
+        );
         let (asker, query) = match ask {
             verbatim_gui::ShellAsk::Items(deliver) => {
                 (Asker::ShellItems { deliver }, Query::ShellItems { kind })
@@ -1917,7 +1929,7 @@ impl ReducerThread<'_> {
                 Query::ShellItemPosition { kind, item },
             ),
         };
-        let id = self.requests.begin_until(outpost, asker, deadline);
+        let id = self.requests.begin_until(outpost, asker, deadline_us);
         let command = CoreToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
@@ -1972,8 +1984,8 @@ impl ReducerThread<'_> {
                 .remove(&target_pid);
         }
         self.apply(Input::OutpostEnded { outpost });
-        for input in self.requests.outpost_ended(outpost) {
-            self.apply(input);
+        for (asker, outcome) in self.requests.outpost_ended(outpost) {
+            self.deliver(asker, outcome);
         }
         if let Some(server) = self.context.server_slot.get() {
             server.broadcast_outpost_ended(target_pid, reason.to_string());
@@ -1988,7 +2000,7 @@ impl ReducerThread<'_> {
         self.wanted
             .next_deadline()
             .into_iter()
-            .chain(self.requests.next_deadline())
+            .chain(self.requests.next_deadline().map(instant_at))
             .chain(self.held_due.map(|(_, due)| due))
             .chain(self.terminal_timer.map(|(_, due)| due))
             .chain(self.toggle_reads.front().map(|&(_, due)| due))
@@ -2001,8 +2013,8 @@ impl ReducerThread<'_> {
     /// Core once the held key's one deadline is past.
     fn expire(&mut self, now: Instant) {
         self.wanted.expire(now);
-        for input in self.requests.expire(now) {
-            self.apply(input);
+        for (asker, outcome) in self.requests.expire(now_us()) {
+            self.deliver(asker, outcome);
         }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyDue { trace_id });
@@ -2030,7 +2042,9 @@ impl ReducerThread<'_> {
     /// query not yet started is answered "not started", whose outcome, as
     /// any later one, finds no request and is dropped.
     fn withdraw_text(&mut self, query_id: verbatim_model::QueryId) {
-        let Some((id, outpost)) = self.requests.withdraw_text(query_id) else {
+        let Some((id, outpost, _asker)) = self.requests.withdraw(
+            |asker| matches!(asker, Asker::Text { query_id: asked, .. } if *asked == query_id),
+        ) else {
             return;
         };
         let command = CoreToOutpost::Cancel { request_id: id.0 };
@@ -2041,7 +2055,9 @@ impl ReducerThread<'_> {
     }
 
     fn dump_tree_given_up(&mut self, ticket: DumpTicket) {
-        let Some((id, outpost)) = self.requests.dump_tree_request(ticket) else {
+        let Some((id, outpost)) = self.requests.find(
+            |asker| matches!(asker, Asker::DumpTree { ticket: asked, .. } if *asked == ticket),
+        ) else {
             return;
         };
         let command = CoreToOutpost::Cancel { request_id: id.0 };
@@ -2135,6 +2151,18 @@ fn reducer_loop(
         thread.advance_idle_barrier(&mut command_rx);
     }
     thread.token
+}
+
+/// The moment on the monotonic clock that `due_us`, on the run's shared
+/// clock, falls at, for the reducer thread's wait. It errs late, a
+/// microsecond past and with the shared clock read first, so that once the
+/// monotonic clock has passed it the shared clock has passed `due_us`, and
+/// the deadline the wait was for is expired when the thread checks. Both
+/// clocks are the performance counter.
+fn instant_at(due_us: u64) -> Instant {
+    let shared = now_us();
+    let monotonic = Instant::now();
+    monotonic + Duration::from_micros(due_us.saturating_sub(shared).saturating_add(1))
 }
 
 /// What the reducer thread's wait for its next command came to.

@@ -22,6 +22,7 @@ mod foreground;
 mod keys;
 mod recorder;
 mod reduce;
+pub mod requests;
 mod review;
 mod review_text;
 mod say_all;

@@ -244,7 +244,7 @@ while focus is in Notepad's text area.
    Nothing is spoken yet.
 4. **The reducer thread sends a query.** `ReducerThread::execute` records
    it in the request table (`RequestTable::begin` in
-   `crates/verbatim-app/src/requests.rs`) with a fresh request id, the
+   `crates/verbatim-core/src/requests.rs`) with a fresh request id, the
    outpost generation the node id names, and `Asker::Reducer`, and queues
    `CoreToOutpost::Query` with `Query::Navigate`
    (`Supervisor::send_to_outpost`). If the generation has ended or its
@@ -258,7 +258,8 @@ while focus is in Notepad's text area.
    NVDA's `correctAPIForRelation`). It publishes one `Reply`: the
    neighbor, no neighbor (a real edge), gone, or failed.
 6. **The outcome re-enters the reducer.** `RequestTable::finish` accepts
-   it only from the generation it was sent to and only once, as
+   it only from the generation it was sent to and only once, handing back
+   its asker, and `requests::deliver` in `verbatim-app` makes it
    `Input::FetchCompleted` with a `FetchResult`.
 7. **The reducer acts on it** (`reduce_navigate_completed`), only if its
    query id is still the latest navigation. A node moves the navigator and
@@ -425,7 +426,7 @@ every query follows.
    started"; one already running finishes within its own budget.
 7. **Delivered.** `RequestTable::finish` drops an outcome for an id that
    already has one, or from another generation. The first outcome goes to
-   its asker: a tree to the control client; `Input::FetchCompleted` for
+   its asker (`requests::deliver`): a tree to the control client; `Input::FetchCompleted` for
    navigation; `Input::ActivationCompleted` for an activation, except that
    an abandoned activation is only logged; for a focus-now query, a
    foreground change and a focus.

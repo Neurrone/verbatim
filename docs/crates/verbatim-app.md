@@ -209,7 +209,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   reducer thread's other deadlines (`next_deadline`); when it passes, the
   thread enters `Input::HeldKeyDue` with the key's trace ID.
   `Effect::WithdrawText` ends Core's text request that Core gave up on,
-  removing it from the request table (`RequestTable::withdraw_text`), so
+  removing it from the request table (`RequestTable::withdraw`), so
   the harness's idle condition no longer counts it and its outcome is
   dropped, and sends its outpost `CoreToOutpost::Cancel`, as a tree dump's
   give-up does.
@@ -386,8 +386,14 @@ knowing for review:
   handoff: speech and control-plane sends never block, and a command for an
   outpost is queued on that outpost's writer, failing at once if the queue
   is full.
-- `requests::RequestTable` — the single owner of "exactly one outcome per
-  query" (`docs/architecture.md`, section 1). Every query sent to an
+- `requests` — who asks Core's queries of outposts, and where each
+  outcome goes. The request table is `verbatim-core`'s
+  `RequestTable<Asker>` ([verbatim-core](verbatim-core.md), "The request
+  table"), the single owner of "exactly one outcome per
+  query" (`docs/architecture.md`, section 1); it hands each `Asker` back
+  with its outcome, and `requests::deliver` carries the outcome out, at
+  the reducer thread's three places an outcome comes: an outpost's reply,
+  an outpost's end, and a deadline passed. Every query sent to an
   outpost (a navigation step, an activation, a tree dump, a focus-now
   query) is recorded with a fresh `RequestId` and the outpost generation it
   went to, and sent as a `Query` carrying that id; the outpost's one `Reply`
@@ -604,8 +610,10 @@ knowing for review:
   after the outpost's deadline has run out and what it read by then
   reaches the dialog). The requests still waiting for an
   outpost are `wanted::Wanted`'s; a request sent is the
-  request table's, recorded with its deadline (`RequestTable::begin_until`),
-  so a late answer is dropped. The reducer thread waits for its next
+  request table's, recorded with its deadline in microseconds on the
+  run's shared clock (`RequestTable::begin_until`), so a late answer is
+  dropped; the reducer thread turns that deadline into a moment on the
+  monotonic clock for its wait, erring a microsecond late (`instant_at`). The reducer thread waits for its next
   command only until the earliest such deadline (`recv_timeout`), and
   waits without one when none is outstanding; only the queue's end
   (`Received::Closed`) ends it, since a system wait can run out a clock

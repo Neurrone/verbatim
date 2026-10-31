@@ -126,6 +126,35 @@ guide maps those behaviors onto the crate's types and modules.
   are kept and given (`Spares`). Every time these take is in
   microseconds on the run's shared clock. `EndReason` is why a generation
   ended; `Received` is when verbatim.exe read a fact.
+- `requests::RequestTable<A>` and `RequestId`: the one owner of each
+  query Core sends an outpost and of its one outcome, generic over who
+  asked (below, "The request table").
+
+## The request table
+
+`RequestTable<A>` records every query Core sends an outpost, on the
+reducer thread, with a `RequestId` and the outpost generation it went to,
+and holds its asker `A` as a token it never calls. `verbatim-app` gives
+its `Asker` and carries each outcome out (`requests::deliver`,
+[verbatim-app](verbatim-app.md)).
+
+- `begin`, `begin_passive` and `begin_until(outpost, asker, deadline_us)`
+  record a request. A passive one, a caret watch's, gets its outcome but
+  is not counted by `outstanding`, the idle barrier's count. A deadline is
+  in microseconds on the run's shared clock.
+- Every ending hands the asker back with its outcome, so each asker leaves
+  the table exactly once: `finish(id, outpost, outcome)` only for the
+  generation asked and only the first time; `outpost_ended(outpost)`, each
+  outstanding request answered "gone"; `expire(now_us)`, each past its
+  deadline answered failed (`DEADLINE_PASSED`); and `withdraw(which)`, the
+  first request whose asker `which` picks, with no outcome, its asker
+  handed back for the caller to drop. `find(which)` names a request to
+  withdraw from its outpost while it keeps its one outcome.
+- Request ids are given in increasing order and kept in a `BTreeMap`, so
+  the outcomes `outpost_ended` and `expire` return together come in the
+  order the requests were made, and are spoken in that order.
+- `next_deadline` is the earliest deadline; a count of the timed requests
+  makes it and `expire` free while none is outstanding.
 
 ## The flight recorder
 

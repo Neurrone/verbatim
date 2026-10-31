@@ -1,23 +1,19 @@
-//! The request table: the single owner of "exactly one outcome per query"
-//! (`docs/crates/verbatim-app.md`, `requests::RequestTable`).
+//! Who asks Core's queries of outposts, and where each outcome goes
+//! (`docs/crates/verbatim-app.md`, `requests`).
 //!
-//! Every query Core sends an outpost is recorded here, on the reducer thread,
-//! with a request id and the outpost generation it went to. The first
-//! outcome removes the entry and goes to whoever asked; any later outcome
-//! for the same id is dropped, and so is an outcome arriving from a
-//! different outpost than the one asked. Core creates the outcome itself
-//! when a query cannot be sent ("failed") and for every query still
-//! outstanding when its outpost ends ("gone").
+//! The request table, the one owner of each query's outcome, is
+//! `verbatim-core`'s [`verbatim_core::requests::RequestTable`]: it holds
+//! each [`Asker`] as a token and hands it back with its one outcome, and
+//! [`deliver`] carries that outcome out, into the reducer's inputs, a
+//! control-plane reply or a dialog's responder.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use verbatim_model::protocol::{FocusNow, QueryOutcome, QueryResult, Responder};
 use verbatim_model::{
-    FetchResult, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, QueryKind,
-    TextReply, TraceId, TreeNode, WindowFacts,
+    FetchResult, Input, NodeSnapshot, NormalizedEvent, Pid, QueryId, QueryKind, TextReply, TraceId,
+    TreeNode, WindowFacts,
 };
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
@@ -38,10 +34,9 @@ impl DumpTicket {
     }
 }
 
-/// Names one query Core sent an outpost. Unique for the life of the table,
-/// so an old reply can never satisfy a newer request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct RequestId(pub(crate) u64);
+/// The request table, holding who asked each query
+/// ([`verbatim_core::requests::RequestTable`]).
+pub(crate) type RequestTable = verbatim_core::requests::RequestTable<Asker>;
 
 /// Who asked, and therefore where the outcome goes.
 pub(crate) enum Asker {
@@ -104,205 +99,6 @@ pub(crate) enum Asker {
     },
 }
 
-struct Entry {
-    outpost: OutpostId,
-    asker: Asker,
-    /// Whether the request only waits for the application to act, as a
-    /// caret watch waits for a caret key's evidence: it does not keep
-    /// Verbatim from being idle ([`RequestTable::outstanding`]).
-    passive: bool,
-    /// When Core ends the request itself if the outpost has not answered
-    /// ([`RequestTable::expire`]); `None` for a request only its outpost or
-    /// the outpost's end answers.
-    deadline: Option<Instant>,
-}
-
-/// Outstanding queries, keyed by request id. Owned by the reducer thread.
-#[derive(Default)]
-pub(crate) struct RequestTable {
-    next: u64,
-    entries: HashMap<RequestId, Entry>,
-    /// How many entries have a deadline, so the reducer thread's check for
-    /// one costs nothing while none is outstanding.
-    timed: usize,
-}
-
-impl RequestTable {
-    /// Records a query about to be sent to `outpost` and returns its id.
-    pub(crate) fn begin(&mut self, outpost: OutpostId, asker: Asker) -> RequestId {
-        self.insert(outpost, asker, false, None)
-    }
-
-    /// Records a query about to be sent to `outpost` that Core ends itself,
-    /// as failed, if no outcome has come by `deadline`
-    /// ([`expire`](Self::expire)), and returns its id.
-    pub(crate) fn begin_until(
-        &mut self,
-        outpost: OutpostId,
-        asker: Asker,
-        deadline: Instant,
-    ) -> RequestId {
-        self.insert(outpost, asker, false, Some(deadline))
-    }
-
-    /// Records a passive request about to be sent to `outpost`, one that
-    /// only waits for the application to act, as a caret watch does, and
-    /// returns its id: it gets its one outcome as any other does, but is not
-    /// counted [`outstanding`](Self::outstanding), so an open watch, which a
-    /// key that moved nothing leaves open until its bound, does not keep
-    /// Verbatim from being idle.
-    pub(crate) fn begin_passive(&mut self, outpost: OutpostId, asker: Asker) -> RequestId {
-        self.insert(outpost, asker, true, None)
-    }
-
-    fn insert(
-        &mut self,
-        outpost: OutpostId,
-        asker: Asker,
-        passive: bool,
-        deadline: Option<Instant>,
-    ) -> RequestId {
-        self.next += 1;
-        let id = RequestId(self.next);
-        self.timed += usize::from(deadline.is_some());
-        self.entries.insert(
-            id,
-            Entry {
-                outpost,
-                asker,
-                passive,
-                deadline,
-            },
-        );
-        id
-    }
-
-    /// Removes request `id`, keeping the count of those with a deadline.
-    fn remove(&mut self, id: RequestId) -> Option<Entry> {
-        let entry = self.entries.remove(&id)?;
-        self.timed -= usize::from(entry.deadline.is_some());
-        Some(entry)
-    }
-
-    /// Delivers the outcome of request `id`, reported by `outpost`. Returns
-    /// the reducer inputs it produces. Does nothing for an id that already
-    /// has its outcome, or for an outcome from an outpost other than the one
-    /// asked.
-    pub(crate) fn finish(
-        &mut self,
-        id: RequestId,
-        outpost: OutpostId,
-        outcome: QueryOutcome,
-    ) -> Vec<Input> {
-        if self
-            .entries
-            .get(&id)
-            .is_none_or(|entry| entry.outpost != outpost)
-        {
-            return Vec::new();
-        }
-        self.remove(id)
-            .map(|entry| deliver(entry.asker, outcome))
-            .unwrap_or_default()
-    }
-
-    /// Ends every request still outstanding at `outpost` with "gone",
-    /// returning the reducer inputs that produces.
-    pub(crate) fn outpost_ended(&mut self, outpost: OutpostId) -> Vec<Input> {
-        let ended: Vec<RequestId> = self
-            .entries
-            .iter()
-            .filter(|(_, entry)| entry.outpost == outpost)
-            .map(|(id, _)| *id)
-            .collect();
-        ended
-            .into_iter()
-            .filter_map(|id| self.remove(id))
-            .flat_map(|entry| deliver(entry.asker, QueryOutcome::Gone))
-            .collect()
-    }
-
-    /// Ends every request whose deadline is `now` or earlier as failed,
-    /// returning the reducer inputs that produces. A later answer from its
-    /// outpost finds no request and is dropped.
-    pub(crate) fn expire(&mut self, now: Instant) -> Vec<Input> {
-        if self.timed == 0 {
-            return Vec::new();
-        }
-        let expired: Vec<RequestId> = self
-            .entries
-            .iter()
-            .filter(|(_, entry)| entry.deadline.is_some_and(|deadline| deadline <= now))
-            .map(|(id, _)| *id)
-            .collect();
-        expired
-            .into_iter()
-            .filter_map(|id| self.remove(id))
-            .flat_map(|entry| {
-                deliver(
-                    entry.asker,
-                    QueryOutcome::Failed("no answer came by the request's deadline".to_owned()),
-                )
-            })
-            .collect()
-    }
-
-    /// The earliest deadline of an outstanding request
-    /// ([`begin_until`](Self::begin_until)).
-    pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        if self.timed == 0 {
-            return None;
-        }
-        self.entries
-            .values()
-            .filter_map(|entry| entry.deadline)
-            .min()
-    }
-
-    /// The outstanding tree dump named `ticket`, and the outpost it went
-    /// to: the request a control-plane caller who stopped waiting for it can
-    /// withdraw.
-    pub(crate) fn dump_tree_request(&self, ticket: DumpTicket) -> Option<(RequestId, OutpostId)> {
-        self.entries
-            .iter()
-            .find_map(|(id, entry)| match &entry.asker {
-                Asker::DumpTree { ticket: asked, .. } if *asked == ticket => {
-                    Some((*id, entry.outpost))
-                }
-                _ => None,
-            })
-    }
-
-    /// Ends Core's text request `query_id`, which Core gave up on, with no
-    /// outcome, so nothing waits for it and its outcome when it comes is
-    /// dropped: the request, and the outpost to withdraw it from.
-    pub(crate) fn withdraw_text(&mut self, query_id: QueryId) -> Option<(RequestId, OutpostId)> {
-        let id = self
-            .entries
-            .iter()
-            .find_map(|(id, entry)| match &entry.asker {
-                Asker::Text {
-                    query_id: asked, ..
-                } if *asked == query_id => Some(*id),
-                _ => None,
-            })?;
-        self.remove(id).map(|entry| (id, entry.outpost))
-    }
-
-    /// How many requests are outstanding.
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// How many requests are outstanding, for the end-to-end harness's
-    /// idle barrier: passive ones ([`begin_passive`](Self::begin_passive))
-    /// are not counted.
-    pub(crate) fn outstanding(&self) -> usize {
-        self.entries.values().filter(|entry| !entry.passive).count()
-    }
-}
-
 /// A short description of an outcome other than success, for logs and
 /// control-plane errors.
 fn describe(outcome: &QueryOutcome) -> String {
@@ -356,8 +152,10 @@ fn deliver_shell_items(
     Vec::new()
 }
 
-/// Hands one outcome to its asker.
-fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
+/// Hands one outcome to its asker, returning the reducer inputs it
+/// produces: an answer to a dialog or the control plane is given here, and
+/// produces none.
+pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
     match asker {
         Asker::Reducer {
             query_id,
@@ -520,9 +318,25 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
 mod tests {
     use crossbeam_channel::bounded;
     use verbatim_model::protocol::{DumpedTree, FocusedControl};
-    use verbatim_model::{Backend, FocusText, NodeDetails, NodeId, Role, StateSet, WindowHandle};
+    use verbatim_model::{
+        Backend, FocusText, NodeDetails, NodeId, OutpostId, Role, StateSet, WindowHandle,
+    };
 
     use super::*;
+
+    /// Ends request `id` of `table` with `outcome`, from `outpost`, and
+    /// carries the outcome out, as the reducer thread does.
+    fn finish(
+        table: &mut RequestTable,
+        id: verbatim_core::requests::RequestId,
+        outpost: OutpostId,
+        outcome: QueryOutcome,
+    ) -> Vec<Input> {
+        table
+            .finish(id, outpost, outcome)
+            .map(|(asker, outcome)| deliver(asker, outcome))
+            .unwrap_or_default()
+    }
 
     fn navigation(query: u64) -> Asker {
         Asker::Reducer {
@@ -552,41 +366,6 @@ mod tests {
     }
 
     #[test]
-    fn the_first_outcome_wins_and_a_second_is_dropped() {
-        let mut table = RequestTable::default();
-        let id = table.begin(OutpostId(1), navigation(7));
-
-        let first = table.finish(
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::Navigated(None)),
-        );
-        assert!(matches!(
-            first.as_slice(),
-            [Input::FetchCompleted {
-                query_id: QueryId(7),
-                result: FetchResult::NoNeighbor,
-                ..
-            }]
-        ));
-        assert_eq!(
-            table.finish(id, OutpostId(1), QueryOutcome::Gone),
-            [] as [verbatim_model::Input; 0]
-        );
-    }
-
-    #[test]
-    fn an_outcome_from_another_outpost_is_dropped() {
-        let mut table = RequestTable::default();
-        let id = table.begin(OutpostId(1), navigation(7));
-        assert_eq!(
-            table.finish(id, OutpostId(2), QueryOutcome::Gone),
-            [] as [verbatim_model::Input; 0]
-        );
-        assert_eq!(table.len(), 1, "the real answer can still arrive");
-    }
-
-    #[test]
     fn an_unanswered_navigation_reads_as_unanswered_and_only_a_gone_node_as_gone() {
         for outcome in [
             QueryOutcome::Abandoned,
@@ -596,7 +375,7 @@ mod tests {
             let mut table = RequestTable::default();
             let id = table.begin(OutpostId(1), navigation(7));
             assert!(matches!(
-                table.finish(id, OutpostId(1), outcome).as_slice(),
+                finish(&mut table, id, OutpostId(1), outcome).as_slice(),
                 [Input::FetchCompleted {
                     result: FetchResult::Unanswered,
                     ..
@@ -606,9 +385,7 @@ mod tests {
         let mut table = RequestTable::default();
         let id = table.begin(OutpostId(1), navigation(7));
         assert!(matches!(
-            table
-                .finish(id, OutpostId(1), QueryOutcome::Gone)
-                .as_slice(),
+            finish(&mut table, id, OutpostId(1), QueryOutcome::Gone).as_slice(),
             [Input::FetchCompleted {
                 result: FetchResult::Gone,
                 ..
@@ -632,7 +409,7 @@ mod tests {
                 },
             );
             assert!(matches!(
-                table.finish(id, OutpostId(1), outcome).as_slice(),
+                finish(&mut table, id, OutpostId(1), outcome).as_slice(),
                 [Input::ActivationCompleted { activated, .. }] if *activated == expected
             ));
         }
@@ -648,57 +425,13 @@ mod tests {
             },
         );
         assert_eq!(
-            table.finish(id, OutpostId(1), QueryOutcome::Abandoned),
+            finish(&mut table, id, OutpostId(1), QueryOutcome::Abandoned),
             [] as [verbatim_model::Input; 0]
         );
         assert_eq!(
             table.len(),
             0,
             "the abandoned outcome is still its one outcome"
-        );
-    }
-
-    #[test]
-    fn a_passive_request_is_not_outstanding_but_gets_its_outcome() {
-        let mut table = RequestTable::default();
-        let text = || Asker::Text {
-            query_id: QueryId(4),
-            trace_id: TraceId::mint(),
-        };
-        let watch = table.begin_passive(OutpostId(1), text());
-        let read = table.begin(OutpostId(1), text());
-        assert_eq!(table.outstanding(), 1, "the watch is not outstanding");
-        assert_eq!(
-            table.finish(watch, OutpostId(1), QueryOutcome::Gone).len(),
-            1
-        );
-        assert_eq!(table.outstanding(), 1);
-        assert_eq!(
-            table.finish(read, OutpostId(1), QueryOutcome::Gone).len(),
-            1
-        );
-        assert_eq!(table.outstanding(), 0);
-    }
-
-    #[test]
-    fn a_withdrawn_text_request_is_not_outstanding_and_its_late_outcome_is_dropped() {
-        let mut table = RequestTable::default();
-        let read = table.begin(
-            OutpostId(1),
-            Asker::Text {
-                query_id: QueryId(4),
-                trace_id: TraceId::mint(),
-            },
-        );
-        assert_eq!(table.outstanding(), 1);
-        assert_eq!(table.withdraw_text(QueryId(5)), None);
-        assert_eq!(table.withdraw_text(QueryId(4)), Some((read, OutpostId(1))));
-        assert_eq!(table.outstanding(), 0, "the idle condition is clear");
-        assert_eq!(
-            table
-                .finish(read, OutpostId(1), QueryOutcome::NotStarted)
-                .len(),
-            0
         );
     }
 
@@ -713,7 +446,7 @@ mod tests {
                     trace_id: TraceId::mint(),
                 },
             );
-            match table.finish(id, OutpostId(1), outcome).as_slice() {
+            match finish(&mut table, id, OutpostId(1), outcome).as_slice() {
                 [
                     Input::TextCompleted {
                         query_id: QueryId(4),
@@ -738,40 +471,27 @@ mod tests {
         }
     }
 
+    /// A shell items outcome reaches the dialog, and a request ended at its
+    /// deadline, failed, gives it nothing.
     #[test]
-    fn a_dump_request_is_found_by_its_ticket_and_by_nothing_else() {
+    fn a_shell_items_answer_reaches_the_dialog_and_a_passed_deadline_gives_none() {
+        let outcomes = std::sync::Arc::default();
         let mut table = RequestTable::default();
-        let (ticket, reply) = (DumpTicket::mint(), bounded(1).0);
-        let first = table.begin(OutpostId(1), Asker::DumpTree { ticket, reply });
-        table.begin(OutpostId(2), dump(bounded(1).0));
-        table.begin(OutpostId(1), navigation(7));
-
-        assert_eq!(table.dump_tree_request(ticket), Some((first, OutpostId(1))));
-        table.finish(first, OutpostId(1), QueryOutcome::NotStarted);
-        assert_eq!(table.dump_tree_request(ticket), None);
-    }
-
-    /// A generation's `Ended` answers its queries "gone", whether a next
-    /// generation follows or not: a ready generation that fails with a
-    /// backoff to wait reaches the app as `Ended` before the backoff runs
-    /// (the supervisor's generation tests), so its queries are answered
-    /// then, not when the replacement comes.
-    #[test]
-    fn an_ended_outpost_answers_its_outstanding_queries_gone() {
-        let mut table = RequestTable::default();
-        table.begin(OutpostId(1), navigation(7));
-        table.begin(OutpostId(2), navigation(8));
-
-        let inputs = table.outpost_ended(OutpostId(1));
-        assert!(matches!(
-            inputs.as_slice(),
-            [Input::FetchCompleted {
-                query_id: QueryId(7),
-                result: FetchResult::Gone,
-                ..
-            }]
-        ));
-        assert_eq!(table.len(), 1);
+        let answered = table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
+        table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
+        finish(
+            &mut table,
+            answered,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
+        );
+        for (asker, outcome) in table.expire(5_000_000) {
+            assert_eq!(deliver(asker, outcome), [] as [Input; 0]);
+        }
+        assert_eq!(
+            *outcomes.lock().expect("outcomes"),
+            vec![Some(Vec::new()), None]
+        );
     }
 
     /// A shell items request whose outcomes are recorded in order.
@@ -785,50 +505,12 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_items_request_answered_before_its_deadline_is_not_expired() {
-        let outcomes = std::sync::Arc::default();
-        let mut table = RequestTable::default();
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
-        let id = table.begin_until(OutpostId(1), shell_items(&outcomes), deadline);
-        assert_eq!(table.next_deadline(), Some(deadline));
-        table.finish(
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
-        );
-        assert_eq!(table.expire(deadline), [] as [verbatim_model::Input; 0]);
-        assert_eq!(table.next_deadline(), None);
-        assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(Vec::new())]);
-    }
-
-    #[test]
-    fn a_shell_items_request_unanswered_at_its_deadline_gets_nothing_and_its_late_answer_is_dropped()
-     {
-        let outcomes = std::sync::Arc::default();
-        let mut table = RequestTable::default();
-        let now = Instant::now();
-        let deadline = now + std::time::Duration::from_secs(5);
-        let id = table.begin_until(OutpostId(1), shell_items(&outcomes), deadline);
-        table.begin(OutpostId(1), navigation(7));
-        table.expire(now);
-        assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
-        table.expire(deadline);
-        table.finish(
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
-        );
-        assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
-        assert_eq!(table.len(), 1, "a request without a deadline is kept");
-    }
-
-    #[test]
     fn a_shell_item_position_answer_reaches_the_dialog_and_a_failure_gives_none() {
         let outcomes: std::sync::Arc<
             std::sync::Mutex<Vec<Option<verbatim_model::ShellCandidates>>>,
         > = std::sync::Arc::default();
         let mut table = RequestTable::default();
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = 5_000_000;
         let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
             let kept = std::sync::Arc::clone(outcomes);
             Asker::ShellItemPosition {
@@ -855,12 +537,14 @@ mod tests {
         };
         let answered = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
         let failed = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
-        table.finish(
+        finish(
+            &mut table,
             answered,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::ShellItemPosition(found.clone())),
         );
-        table.finish(
+        finish(
+            &mut table,
             failed,
             OutpostId(1),
             QueryOutcome::Failed("no client".into()),
@@ -880,7 +564,12 @@ mod tests {
         let new = table.begin(OutpostId(1), dump(new_tx));
 
         // The old request's late reply arrives first.
-        table.finish(old, OutpostId(1), QueryOutcome::Failed("old".to_owned()));
+        finish(
+            &mut table,
+            old,
+            OutpostId(1),
+            QueryOutcome::Failed("old".to_owned()),
+        );
         assert!(new_rx.try_recv().is_err(), "the newer request is untouched");
 
         let tree = DumpedTree {
@@ -891,7 +580,8 @@ mod tests {
             truncated: false,
             locations: false,
         };
-        table.finish(
+        finish(
+            &mut table,
             new,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Tree(tree)),
@@ -946,7 +636,8 @@ mod tests {
             }),
             observed_at_us: 1234,
         };
-        let inputs = table.finish(
+        let inputs = finish(
+            &mut table,
             id,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(answer)),
@@ -991,7 +682,8 @@ mod tests {
         let window = node(Role::Window, "Untitled - Notepad");
         let facts = notepad_facts(None);
         let id = begin(&mut table);
-        let inputs = table.finish(
+        let inputs = finish(
+            &mut table,
             id,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
@@ -1022,7 +714,8 @@ mod tests {
 
         let control = node(Role::Button, "OK");
         let id = begin(&mut table);
-        let inputs = table.finish(
+        let inputs = finish(
+            &mut table,
             id,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
@@ -1081,7 +774,8 @@ mod tests {
             }),
             observed_at_us: 1234,
         };
-        let inputs = table.finish(
+        let inputs = finish(
+            &mut table,
             id,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(answer)),
@@ -1137,7 +831,8 @@ mod tests {
                 }),
                 observed_at_us: 1_234_567,
             };
-            let inputs = table.finish(
+            let inputs = finish(
+                &mut table,
                 id,
                 OutpostId(1),
                 QueryOutcome::Done(QueryResult::Focus(answer)),
