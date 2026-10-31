@@ -12,7 +12,7 @@ This document is Verbatim's threat model, followed by the architectural mitigati
 4. **Installed state.** Settings, logs and dumps under the user's profile for installed copies, and beside the executable for portable copies, as NVDA does? Recommended: yes.
 5. **Synthesizer fallback.** After three crashes within a minute, switch to eSpeak NG for the session and say so? Recommended: yes.
 6. **Developer folder.** Watch the extension developer folder only in developer mode? Recommended: yes.
-7. **Behaviour users hear.** Three mitigations change what is spoken: a cue that only Verbatim's own prompts carry (S1), speaking text-direction override characters (S3), and playing through another audio device while the default refuses Verbatim (R5). Adopt them? Recommended: yes.
+7. **Behaviour users hear.** Two mitigations change what is heard: speaking text-direction override characters (S2), and playing through another audio device while the default refuses Verbatim (R5). Adopt them? Recommended: yes.
 
 ## 2. Method
 
@@ -54,7 +54,7 @@ The entry points, where data or control from outside Verbatim enters it:
 - **The audio device,** which another program can take away.
 - **The clipboard,** read and written.
 - **Named objects:** the startup mutex, the replacement event and the control pipe's name.
-- **Planned:** the updater and installer (M8), the secure-desktop launch (M8.1), Remote support (M12), braille devices over USB and Bluetooth (M15), and image description or OCR services.
+- **Planned:** the updater and installer (M8), the secure-desktop launch (M8.1), Remote support (M12), and image description or OCR services.
 
 ## 5. Adversaries
 
@@ -88,7 +88,7 @@ STRIDE: denial of service, and tampering with what is read.
 
 An application's accessibility tree and events are input of arbitrary shape and size. The threat is that their shape or volume makes Verbatim hang, exhaust memory or repeat itself, either in the process reading that application or, worse, in Core, which every application shares.
 
-- Entry points: accessibility APIs; text applications show; braille devices later.
+- Entry points: accessibility APIs; text applications show.
 - Examples: a parent that returns itself, cycles of parents, next and previous siblings that do not agree, a list of a million children, a name of 30 MB, a 100,000-character line, thousands of combining marks forming one grapheme, a flood of notifications, a provider that never answers, a program that starts many short-lived processes each raising events, a wide terminal row of distinct characters printed by a remote program.
 - Assets: availability first, then what the user hears.
 - Exposure today: walks are capped by hop count and time but detect no repeat, so a self-parent is reported as up to 64 identical ancestors. The classic UIA child listing fetches all children before capping. Names, values and descriptions are uncapped up to the 32 MiB frame, and the 64 KiB cut of a text read is silent. Terminal alignment in Core is quadratic in row width and allocates memory in proportion to distinct characters times width. The background flood cap is not built, Core's completion port has no count bound, nothing bounds the number of outposts, and Core has no memory cap.
@@ -102,18 +102,18 @@ Text from applications passes through components that interpret some text as com
 - Entry points: text applications show, flowing to the speech pipeline, dictionaries, dialogs and future recognition services.
 - Examples: SSML or an engine's command sequences in a web page changing the voice, rate or volume or reaching an engine's crash paths; a regular expression that backtracks catastrophically on a long line; NVDA's HTML message dialog turning web text into code run on two key presses (GHSA-xg6w-23rw-39r8); on-screen text instructing a model that describes the screen.
 - Assets: what the user hears, availability, the machine.
-- Exposure today: both built-in drivers escape XML, but differently: OneCore's escape replaces control characters, and eSpeak NG's does not. No dictionaries, rendered markup or models exist yet. The roadmap's M8 dictionary work mentions rules written with lookarounds, which Rust's linear-time `regex` crate does not support.
+- Exposure today: both built-in drivers escape XML, but differently: OneCore's escape replaces control characters, and eSpeak NG's does not. No dictionaries, rendered markup or models exist yet. The roadmap's M8 dictionary work mentions rules written with lookarounds, which the `regex` crate, linear-time because it never backtracks, does not support.
 
 ### 6.3 Class S: spoofed or altered speech
 
 STRIDE: spoofing.
 
-Everything Verbatim says sounds the same. A sighted user sees which window a prompt sits in; a blind user hears only the voice. The threat is that an application, an extension or crafted text makes the user believe something false, which no other kind of software is exposed to in this way.
+The threat is that an extension or crafted text changes what Verbatim says, so that the user hears something other than what the application presents. An application lying about its own controls is out of scope (section 7.3).
 
-- Entry points: background events (toasts, notifications), window titles, extensions' rules and hooks, Unicode in names and text.
-- Examples: a background toast saying "Windows Security: your session expired, type your password"; a window titled "Verbatim: install extension?" from another program; an extension that makes a Delete button speak as OK; a file name whose direction override makes an executable read as a PDF; zero-width characters hiding words from speech that the screen shows.
+- Entry points: extensions' rules and hooks, Unicode in names and text.
+- Examples: an extension that makes a Delete button speak as OK; a file name whose direction override makes an executable read as a PDF; zero-width characters hiding words from speech that the screen shows.
 - Assets: what the user hears, and through it every other asset.
-- Exposure today: background events from any application are spoken in Verbatim's voice with nothing marking their source, and Verbatim's own dialogs sound like any other window. Extensions do not exist yet; their design already refuses claims on Verbatim's own executables.
+- Exposure today: Unicode format and direction characters are spoken as the synthesizer handles them. Extensions do not exist yet; their design already refuses claims on Verbatim's own executables.
 
 ### 6.4 Class C: steering Verbatim through its control channels
 
@@ -184,20 +184,18 @@ Each mitigation states what holds, why, and its status today. Mitigations that a
 - **U6. Core verifies every outpost claim it can check (structural, mostly holds).** Node ids are re-stamped with the outpost the pipe belongs to, frames are capped at 32 MiB before allocation, the raw section's ranges are checked, and a malformed frame retires the outpost without a panic in Core. A spare's self-reported process id is forwarded unverified; use the one the supervisor holds from the spawn.
 - **U7. Every queue an application can fill has a stated bound and overload policy.** Status: the outpost's intake applies NVDA's limiter and terminal output waiting in Core is bounded at 10 MB; the background flood cap (architecture section 2) and a count bound on the outposts' outbound queues and Core's completion port are missing.
 - **U8. Outposts are bounded in number and spawn rate.** A global cap and a rate, past which events wait for an existing outpost to retire. Status: missing; two spares wait and one application's failures back off, but nothing bounds outposts across applications.
-- **U9. Device input is bounded like application input.** Braille displays (M15) reach native drivers over USB or Bluetooth, within radio range of anyone; the braille host gets the synthesizer host's sandbox, and its protocol caps every message as the synthesizer pipe does. Status: planned.
 
 ### 7.2 Against class J
 
 - **J1. Each synthesizer adapter neutralises its engine's whole in-band syntax in one tested function.** That covers SSML for OneCore and eSpeak NG, and command sequences for engines that read them from text, such as Eloquence's annotations. Status: both built-in drivers escape XML; eSpeak NG's escape passes control characters through, unlike OneCore's.
-- **J2. Pattern matching runs in linear time.** Only Rust's `regex` crate; rules that need lookaround are rewritten as two passes; patterns from users and extensions are compiled with a size limit. Status: no dictionaries yet (M8).
+- **J2. Pattern matching runs in linear time.** Only the `regex` crate, maintained by the Rust project though not part of the standard library, which never backtracks and so runs in time linear in the text; rules that need lookaround are rewritten as two passes; patterns from users and extensions are compiled with a size limit. Status: no dictionaries yet (M8).
 - **J3. No text from an application is ever rendered as markup or code.** Dialogs and viewers show application text as plain text. Status: holds; keep it as a review rule.
 - **J4. A language model's output is speech and synthetic nodes only.** Never commands, gestures or settings, because text on screen can instruct a model (prompt injection). Status: no models yet; a standing review rule.
 
 ### 7.3 Against class S
 
-- **S1. Verbatim's own prompts carry a cue no application can trigger.** Its security prompts (extension install, remote session requests) and windows of its own process are marked by a cue the reducer adds only for them, since the outpost knows the process each window belongs to. Background events get the flood cap of U7. Status: missing.
-- **S2. Extensions cannot change speech in Verbatim's own windows, elevated windows or secure screens.** Status: the extension design refuses claims on Verbatim's own executables and limits secure screens to an administrator-made copy; add elevated applications, unless the user allows a module there by name. Every overridden property names the layer and rule that set it (extensions design, section 7), so an alteration can be found.
-- **S3. Unicode cannot hide what text says.** Direction override and isolate characters in names, file names and link text are spoken (NVDA's handling is to be checked in the pinned source). Status: missing.
+- **S1. Extensions cannot change speech in Verbatim's own windows, elevated windows or secure screens.** Status: the extension design refuses claims on Verbatim's own executables and limits secure screens to an administrator-made copy; add elevated applications, unless the user allows a module there by name. Every overridden property names the layer and rule that set it (extensions design, section 7), so an alteration can be found.
+- **S2. Unicode cannot hide what text says.** Direction override and isolate characters in names, file names and link text are spoken (NVDA's handling is to be checked in the pinned source). Status: missing.
 - **Accepted risk.** An application can lie inside its own window, labelling a Delete button "OK", exactly as it can to a sighted user. Verbatim does not try to detect it.
 
 ### 7.4 Against class C
@@ -302,17 +300,16 @@ Ranked by severity, judged for today's development use; those marked as rising w
 ## 10. Where the work goes
 
 - Now, as a small build of its own: F1 (the agent, C4), F5 (the message filter, C7), and the configuration fallbacks of C3.
-- M5: L1 and L2, since M5 brings the log ring forward; C1's user endpoint, since the install request arrives with M5; S1's cue for the install confirmation; S2 for extensions.
+- M5: L1 and L2, since M5 brings the log ring forward; C1's user endpoint, since the install request arrives with M5; S1 for extensions.
 - M6: R3, X5 and J1, and the AppContainer as designed.
 - The M6.x developer-mode milestone (Dickson, 2026-10-31): C1's developer endpoint, C8's developer folder, L3's developer setting, and C2's per-session pipe name.
 - M6.3, the speech and audio pipeline: U4's cut reaching speech, and R5.
 - M6.4, terminal residuals: U5.
 - M7: X6 and J3, and U2 and U3 before the IA2 tree walks multiply.
-- M8, with the installer skeleton: X1, X2, X7, B2, L4, R1 and R2, the per-user state location, X8's signing key, and J2, S3 and L7 with dictionaries and the clipboard command.
+- M8, with the installer skeleton: X1, X2, X7, B2, L4, R1 and R2, the per-user state location, X8's signing key, and J2, S2 and L7 with dictionaries and the clipboard command.
 - M8.1: B1 first, then B3 to B8 and C5 and C6.
 - M9: L3 as file logging arrives.
 - M12: C9 and B9.
-- M15: U9.
 - Ongoing, from now: X8's audit and X10's fuzzing in `cargo xtask ci`; U7's background flood cap, U8 and R4 with the next focus or input build; J3, J4 and L6 as standing review rules.
 
 ## 11. Comparison with NVDA and other screen readers
