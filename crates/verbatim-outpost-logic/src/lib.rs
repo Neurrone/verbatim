@@ -9,8 +9,11 @@
 //! It holds the intake's order ([`intake`]), the gap record and its timer,
 //! the reports Core may hold ([`held`]), the follow state ([`follow`]),
 //! the hand-over's hold ([`hold`]), the arbitrator's verdicts
-//! ([`verdicts`]), the worker generation in charge with its deadline, the moved-on grace and the walk's bound, the program in
-//! flight, the queries not yet answered, and the idle barrier's round.
+//! ([`verdicts`]), the program in flight with the worker generation in
+//! charge, its deadline, its moved-on rule and its walk's bound, kept by
+//! the work in flight both readers share
+//! ([`verbatim_reader_rules::in_flight`]), the queries not yet answered,
+//! and the idle barrier's round.
 //! Programs, run by a worker on copies ([`Facts`]), make every call into
 //! the application; their commits come back as inputs, and the reducer
 //! applies a commit only while its request is live: its generation in
@@ -43,7 +46,7 @@ use verbatim_model::protocol::{
     EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
-use verbatim_reader_rules::MOVED_ON_GRACE;
+use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight};
 
 use self::watch::Reached;
 
@@ -83,13 +86,10 @@ const TEXT_DEADLINE: Duration = Duration::from_secs(2);
 
 /// One request of one worker generation: what a program's commits, the
 /// store's mint tags and the walk's slot name it by.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Request {
-    /// The worker generation the request belongs to.
-    pub generation: u64,
-    /// The request's number within its generation.
-    pub number: u64,
-}
+pub use verbatim_reader_rules::in_flight::Request;
+
+/// Why a program in flight was abandoned.
+pub use verbatim_reader_rules::in_flight::Reason;
 
 /// The time an input comes at: the shell's monotonic clock, from the
 /// outpost's start, and the observation clock events are stamped with, in
@@ -260,22 +260,15 @@ pub enum Effect {
     /// Let go of the UIA ranges the store keeps under these keys, by node,
     /// which no text fact names any more, for a worker to drop.
     ForgetRanges(Vec<(u64, RangeKey)>),
-    /// Mark the generation dead in its slot and start `replacement`;
-    /// `count` abandoned workers have not returned.
+    /// Mark the generation dead in its slot and start `replacement`: the
+    /// shell counts the abandoned workers that have not returned.
     Abandon {
         /// The generation marked dead.
         dead: u64,
         /// The generation started in its place.
         replacement: u64,
-        /// How many abandoned workers have not returned.
-        count: usize,
         /// Why the generation was abandoned, for the log.
         reason: &'static str,
-    },
-    /// An abandoned worker returned; `count` have not.
-    Returned {
-        /// How many abandoned workers have not returned.
-        count: usize,
     },
     /// The push-time copies of the intake's marks.
     Marks(Marks),
@@ -311,7 +304,7 @@ pub enum Effect {
         facts: Box<Facts>,
         /// Why the program is abandoned once the publication is
         /// committed, when an abandonment asked for it.
-        then_abandon: Option<&'static str>,
+        then_abandon: Option<Reason>,
     },
     /// A caret key's watch ended without evidence, for the log: why, and
     /// how long it waited.
@@ -396,8 +389,6 @@ pub enum Input {
         /// The caret read it cut at its value change check, for the reducer to decide and finish.
         cut: Option<Box<Cut>>,
     },
-    /// An abandoned worker returned from its call.
-    Returned,
     /// What a release let go of, nodes and anchors by number, and whether
     /// there are objects to drop.
     Released {
@@ -430,33 +421,19 @@ pub enum Input {
         change: Option<Box<Change>>,
         /// The abandonment the ask carried, completed once the publication
         /// is committed.
-        then_abandon: Option<&'static str>,
+        then_abandon: Option<Reason>,
     },
     /// The outpost is shutting down.
     Close,
 }
 
-/// What a program is doing, as the reducer follows it.
-#[cfg_attr(test, derive(Clone))]
-#[derive(Debug)]
+/// What the reducer keeps of the program in flight, beside what the work
+/// in flight keeps of it (its request, times, walk and moved-on rule).
+#[derive(Clone, Debug)]
 struct Current {
-    request: Request,
-    /// The deadline and when it started, and the window the moved-on rule
-    /// watches (0 for none).
-    deadline: Duration,
-    started: Duration,
-    window: isize,
     /// The query the program answers, if it answers one, which an
     /// abandonment or a program that ends without answering answers.
     running: Option<(u64, TraceId)>,
-    /// The bound of its walk, while armed.
-    walk: Option<Duration>,
-    /// Whether the moved-on rule was judged as the grace ended: from then
-    /// on only a foreground fact judges it again.
-    grace_judged: bool,
-    /// Whether its walk was published at its bound: nothing more of its
-    /// is applied.
-    claimed: bool,
     /// The focus group try it is, if it is one.
     group: Option<GroupTry>,
     /// Whether it does work the idle barrier's answer waits for, as it
@@ -467,8 +444,7 @@ struct Current {
 }
 
 /// One try of a focus group, and what is left of it.
-#[cfg_attr(test, derive(Clone))]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct GroupTry {
     number: u64,
     rank: u32,
@@ -487,11 +463,8 @@ pub struct Reducer {
     intake: intake::Intake,
     hold: hold::Hold,
     facts: Facts,
-    /// The worker generation in charge.
-    generation: u64,
-    /// The last request number given.
-    requests: u64,
-    current: Option<Current>,
+    /// The program in flight, and the worker generation in charge.
+    flight: InFlight<Current>,
     /// The tries left of a focus group whose try was abandoned, or the
     /// gap's read a dropped copy asked for, to run before anything else.
     after: VecDeque<(Entry, Option<GroupTry>)>,
@@ -503,8 +476,6 @@ pub struct Reducer {
     idle_query: Option<u64>,
     /// How many focus groups have been tried.
     focus_groups: u64,
-    /// Abandoned workers that have not returned.
-    abandoned: usize,
     /// When the gap record's bound passes, on the observation clock.
     gap_due: Option<u64>,
     /// Whether a test's timer times the gap record's bound in place of the
@@ -534,7 +505,7 @@ impl Reducer {
     /// The worker generation in charge.
     #[must_use]
     pub fn generation(&self) -> u64 {
-        self.generation
+        self.flight.generation()
     }
 
     /// The queries recorded and not yet answered, which the shell's tokens
@@ -555,7 +526,7 @@ impl Reducer {
     /// Whether a program is in flight.
     #[must_use]
     pub fn busy(&self) -> bool {
-        self.current.is_some()
+        self.flight.running().is_some()
     }
 
     /// Whether a commit of `request` is applied: it is the program in
@@ -563,30 +534,24 @@ impl Reducer {
     /// published at its bound.
     #[must_use]
     pub fn accepts(&self, request: Request) -> bool {
-        self.current
-            .as_ref()
-            .is_some_and(|current| current.request == request && !current.claimed)
+        self.flight.accepts(request)
     }
 
-    /// When the shell is next to call [`tick`](Self::tick): the program's
-    /// deadline, the end of its moved-on grace, its walk's bound, the
-    /// watch's due time while no program is in flight, no release is
-    /// pending and the outpost is not stopping (only then is it acted on),
-    /// and the gap record's bound, on the shell's clock.
+    /// When the shell is next to call [`tick`](Self::tick): what the
+    /// program in flight next has due (its deadline, its walk's bound, or
+    /// its next judgment of the moved-on rule), the watch's due time while
+    /// no program is in flight, no release is pending and the outpost is
+    /// not stopping (only then is it acted on), and the gap record's bound,
+    /// on the shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
-        if let Some(current) = &self.current
-            && !self.stopping
+        if !self.stopping
+            && let Some(due) = self.flight.next_wake()
         {
-            times.push(current.deadline);
-            let grace = current.started + MOVED_ON_GRACE;
-            if current.window != 0 && now.at < grace {
-                times.push(grace);
-            }
-            times.extend(current.walk);
+            times.push(Duration::from_micros(due));
         }
-        if self.current.is_none()
+        if !self.busy()
             && !self.releasing
             && !self.stopping
             && let Some(due_us) = self.facts.follow.watch.due()
@@ -609,7 +574,7 @@ impl Reducer {
                 entry,
                 source,
                 read_answer,
-            } => self.entry(entry, source, read_answer, now, &mut effects),
+            } => self.entry(entry, source, read_answer, &mut effects),
             Input::Hooked => self.hold.hooked(),
             Input::WithoutListener => {
                 let held = self.hold.without_listener();
@@ -636,18 +601,10 @@ impl Reducer {
                     self.commit(request, &change, now, &mut effects);
                 }
             }
-            Input::Armed { request, bound } => {
-                if let Some(current) = self.current_of(request) {
-                    current.walk = Some(bound);
-                }
-            }
+            Input::Armed { request, bound } => self.flight.armed(request, micros(bound)),
             Input::WalkReturned { request, past } => {
-                let armed = self
-                    .current_of(request)
-                    .is_some_and(|current| current.walk.take().is_some() && !current.claimed);
-                if armed && past {
-                    self.ask_publication(request, None, &mut effects);
-                }
+                let decision = self.flight.walk_returned(request, past);
+                self.decided(decision, now, &mut effects);
             }
             Input::Finished {
                 request,
@@ -655,12 +612,6 @@ impl Reducer {
                 panicked,
                 cut,
             } => self.finished(request, (reported, panicked), cut, now, &mut effects),
-            Input::Returned => {
-                self.abandoned = self.abandoned.saturating_sub(1);
-                effects.push(Effect::Returned {
-                    count: self.abandoned,
-                });
-            }
             Input::Released {
                 nodes,
                 anchors,
@@ -669,8 +620,9 @@ impl Reducer {
             Input::GapTimerGiven => self.gap_timer_given = true,
             Input::GapBound => self.gap_bound_entry(now),
             Input::MovedOn { request, moved_on } => {
-                if moved_on && !self.stopping && self.current_of(request).is_some() {
-                    self.abandonment("the user moved on from a slow window", now, &mut effects);
+                if !self.stopping {
+                    let decision = self.flight.moved_on(request, moved_on);
+                    self.decided(decision, now, &mut effects);
                 }
             }
             Input::Published {
@@ -694,7 +646,10 @@ impl Reducer {
     /// The shell's timed wait has ended at `now`: whatever is due is done.
     pub fn tick(&mut self, now: Now) -> Vec<Effect> {
         let mut effects = Vec::new();
-        self.judge(now, &mut effects);
+        if !self.stopping {
+            let decision = self.flight.tick(micros(now.at));
+            self.decided(decision, now, &mut effects);
+        }
         if !self.gap_timer_given && self.gap_due.is_some_and(|due_us| now.observed_us >= due_us) {
             self.gap_due = None;
             self.gap_bound_entry(now);
@@ -714,11 +669,18 @@ impl Reducer {
         }
     }
 
-    /// The program in flight, if it is `request`'s.
+    /// What the reducer keeps of the program in flight, if it is
+    /// `request`'s.
     fn current_of(&mut self, request: Request) -> Option<&mut Current> {
-        self.current
-            .as_mut()
-            .filter(|current| current.request == request)
+        if self
+            .flight
+            .running()
+            .is_some_and(|(running, ..)| running == request)
+        {
+            self.flight.item_mut()
+        } else {
+            None
+        }
     }
 
     /// Takes in `entry`, from `source`: held while the hand-over's hold
@@ -729,16 +691,8 @@ impl Reducer {
         entry: Entry,
         source: Source,
         read_answer: Option<GapAnswer>,
-        now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let foreground = matches!(
-            entry.item,
-            Item::Fact(
-                verbatim_model::protocol::DeliveredFact::Foreground { .. },
-                _
-            )
-        );
         match source {
             Source::Hook => {
                 if let Some(entry) = self.hold.hooked_copy(entry) {
@@ -762,11 +716,6 @@ impl Reducer {
                     self.push_all(released, effects);
                 }
             }
-        }
-        // A foreground fact judges again whether the user has moved on
-        // from the program's window.
-        if foreground {
-            self.judge_foreground(now, effects);
         }
     }
 
@@ -812,7 +761,7 @@ impl Reducer {
     fn send(&mut self, message: OutpostToCore, effects: &mut Vec<Effect>) {
         if let OutpostToCore::Reply { request_id, .. } = &message {
             self.queries.remove(request_id);
-            if let Some(current) = self.current.as_mut().filter(|current| {
+            if let Some(current) = self.flight.item_mut().filter(|current| {
                 current
                     .running
                     .is_some_and(|(running, _)| running == *request_id)
@@ -848,8 +797,12 @@ impl Reducer {
                 timing,
             });
         }
-        let mut applied =
-            follow::apply(&mut self.facts, self.generation, change, Some(now.wall_us));
+        let mut applied = follow::apply(
+            &mut self.facts,
+            self.flight.generation(),
+            change,
+            Some(now.wall_us),
+        );
         let ranges = std::mem::take(&mut applied.ranges);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
@@ -891,7 +844,7 @@ impl Reducer {
         change: &VerdictChange,
         effects: &mut Vec<Effect>,
     ) {
-        if generation != self.generation && !change.kept_from_any_generation() {
+        if generation != self.generation() && !change.kept_from_any_generation() {
             return;
         }
         if !Arc::make_mut(&mut self.facts.verdicts).apply(change) {
@@ -996,7 +949,7 @@ impl Reducer {
                 if dropped == CopyDropped::ReadNow {
                     // Read at once, in the copy's place, as part of the
                     // same try of its group.
-                    let group = self.current.as_mut().and_then(|current| {
+                    let group = self.flight.item_mut().and_then(|current| {
                         current.group.as_ref().map(|group| GroupTry {
                             number: group.number,
                             rank: group.rank,
@@ -1059,140 +1012,64 @@ impl Reducer {
         self.to_drop |= objects;
     }
 
-    /// The judgments of the program in flight at `now`, made by a tick and
-    /// by a publication's answer, in this order, the first that applies
-    /// deciding, so a transition makes at most one ask: its deadline,
-    /// which abandons it, publishing a walk armed first; its walk's bound,
-    /// which publishes the walk; and the end of its grace, judged once,
-    /// which asks whether the user has moved on from its window. Judged
-    /// the other way round, a late tick past both the bound and the
-    /// deadline would abandon before the publication's answer, losing the
-    /// focus read.
-    fn judge(&mut self, now: Now, effects: &mut Vec<Effect>) {
-        if self.stopping {
-            return;
-        }
-        let Some(current) = &mut self.current else {
-            return;
-        };
-        let request = current.request;
-        if now.at >= current.deadline {
-            self.abandonment("a call passed its deadline", now, effects);
-        } else if current.walk.is_some_and(|bound| now.at >= bound) {
-            self.ask_publication(request, None, effects);
-        } else if !current.grace_judged && now.at >= current.started + MOVED_ON_GRACE {
-            // The moved-on rule is judged once as the grace ends, and then
-            // at each foreground fact, never at every wake.
-            current.grace_judged = true;
-            if current.window != 0 {
-                effects.push(Effect::AskMovedOn {
-                    request,
-                    window: current.window,
-                });
+    /// Does what the work in flight decided at `now`: asks the shell, or
+    /// carries out an abandonment.
+    fn decided(&mut self, decision: Decision<Current>, now: Now, effects: &mut Vec<Effect>) {
+        match decision {
+            Decision::Nothing => {}
+            Decision::Ask(Ask::MovedOn { request, window }) => {
+                effects.push(Effect::AskMovedOn { request, window });
             }
+            Decision::Ask(Ask::Publish {
+                request,
+                then_abandon,
+            }) => effects.push(Effect::Publish {
+                request,
+                facts: Box::new(self.facts.clone()),
+                then_abandon,
+            }),
+            Decision::Abandon(abandoned) => self.abandoned(abandoned, now, effects),
         }
-    }
-
-    /// A foreground fact's judgment of the program in flight at `now`: its
-    /// deadline, then, past its grace, whether the user has moved on from
-    /// its window, asked of the shell.
-    fn judge_foreground(&mut self, now: Now, effects: &mut Vec<Effect>) {
-        if self.stopping {
-            return;
-        }
-        let Some(current) = &self.current else {
-            return;
-        };
-        if now.at >= current.deadline {
-            self.abandonment("a call passed its deadline", now, effects);
-        } else if current.window != 0 && now.at >= current.started + MOVED_ON_GRACE {
-            effects.push(Effect::AskMovedOn {
-                request: current.request,
-                window: current.window,
-            });
-        }
-    }
-
-    /// Asks the shell to publish the walk `request` armed, unless its
-    /// program is gone or already claimed: the walk's bound is cleared,
-    /// and the answer ([`Input::Published`]) commits the publication and
-    /// completes the abandonment `then_abandon` names.
-    fn ask_publication(
-        &mut self,
-        request: Request,
-        then_abandon: Option<&'static str>,
-        effects: &mut Vec<Effect>,
-    ) {
-        let Some(current) = self.current_of(request) else {
-            return;
-        };
-        if current.claimed {
-            return;
-        }
-        current.walk = None;
-        effects.push(Effect::Publish {
-            request,
-            facts: Box::new(self.facts.clone()),
-            then_abandon,
-        });
     }
 
     /// The shell's answer to a publication asked of `request`: its change,
     /// when the walk was still armed, is committed while `request` is the
-    /// program in flight and not claimed, and claims it, so nothing more
-    /// of its program is applied. Then, while `request` is still in
-    /// flight, the abandonment the ask carried is completed, or, with
-    /// none, what is left to judge at `now` is judged.
+    /// program in flight and not published, which publishes it, so nothing
+    /// more of its program is applied. Then the work in flight completes
+    /// the abandonment the ask carried, or, with none, judges what is left
+    /// at `now`.
     fn published(
         &mut self,
         request: Request,
         change: Option<Box<Change>>,
-        then_abandon: Option<&'static str>,
+        then_abandon: Option<Reason>,
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let unclaimed = self
-            .current_of(request)
-            .is_some_and(|current| !current.claimed);
-        if unclaimed && let Some(change) = change {
-            self.commit(request, &change, now, effects);
-            if let Some(current) = self.current_of(request) {
-                current.claimed = true;
+        let got = match change {
+            Some(change) if self.flight.accepts(request) => {
+                self.commit(request, &change, now, effects);
+                true
             }
-        }
-        if self.current_of(request).is_none() {
-            return;
-        }
-        match then_abandon {
-            Some(reason) => self.abandon(reason, now, effects),
-            None => self.judge(now, effects),
-        }
+            _ => false,
+        };
+        let decision = self
+            .flight
+            .published(request, got, then_abandon, micros(now.at));
+        self.decided(decision, now, effects);
     }
 
-    /// The program in flight is abandoned for `reason`: with a walk armed
-    /// and not claimed, its publication is asked for first, and the
-    /// abandonment is completed by its answer; otherwise at once.
-    fn abandonment(&mut self, reason: &'static str, now: Now, effects: &mut Vec<Effect>) {
-        let Some(current) = &self.current else {
-            return;
-        };
-        if current.walk.is_some() && !current.claimed {
-            let request = current.request;
-            self.ask_publication(request, Some(reason), effects);
-        } else {
-            self.abandon(reason, now, effects);
-        }
-    }
-
-    /// Abandons the worker in charge for `reason`: its generation ends, a
-    /// replacement takes charge, and its query and the caret key's watch it
-    /// held are answered.
-    fn abandon(&mut self, reason: &'static str, now: Now, effects: &mut Vec<Effect>) {
-        let Some(current) = self.current.take() else {
-            return;
-        };
-        let dead = self.generation;
-        self.generation += 1;
+    /// The worker in charge was abandoned: its replacement is started, and
+    /// the program's query, the owed work it attempted and the caret key's
+    /// watch it held are answered.
+    fn abandoned(&mut self, abandoned: Abandoned<Current>, now: Now, effects: &mut Vec<Effect>) {
+        let Abandoned {
+            dead,
+            replacement,
+            reason,
+            item: current,
+            published,
+        } = abandoned;
         if self
             .facts
             .follow
@@ -1202,12 +1079,13 @@ impl Reducer {
         {
             self.facts.follow.owed = None;
         }
-        self.abandoned += 1;
         effects.push(Effect::Abandon {
             dead,
-            replacement: self.generation,
-            count: self.abandoned,
-            reason,
+            replacement,
+            reason: match reason {
+                Reason::Deadline => "a call passed its deadline",
+                Reason::MovedOn => "the user moved on from a slow window",
+            },
         });
         if let Some(answer) = self.facts.follow.watch.abandoned() {
             self.answer_watch(answer, now, effects);
@@ -1218,7 +1096,7 @@ impl Reducer {
         // A focus group's older entries are tried by the replacement, unless
         // the abandoned try was published.
         if let Some(group) = current.group
-            && !current.claimed
+            && !published
         {
             self.continue_group(group);
         }
@@ -1234,15 +1112,22 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let Some(current) = self.current.take_if(|current| current.request == request) else {
+        let Some((_, _, published)) = self
+            .flight
+            .running()
+            .filter(|(running, ..)| *running == request)
+        else {
             return;
         };
-        if let Some(cut) = cut.filter(|_| !panicked && !current.claimed) {
-            self.dispatch_finish(current, cut, effects);
+        if let Some(cut) = cut.filter(|_| !panicked && !published) {
+            self.dispatch_finish(cut, effects);
             return;
         }
+        let Some((current, published)) = self.flight.end(request) else {
+            return;
+        };
         // A watch the program still holds, because it panicked, returned
-        // without its check's result or was claimed, ends; a query it left
+        // without its check's result or was published, ends; a query it left
         // unanswered still gets its one reply.
         if let Some(answer) = self.facts.follow.watch.program_ended() {
             self.answer_watch(answer, now, effects);
@@ -1258,7 +1143,7 @@ impl Reducer {
             );
         }
         if let Some(group) = current.group {
-            let ended = reported || current.claimed;
+            let ended = reported || published;
             let read_after = self
                 .after
                 .front()
@@ -1297,9 +1182,9 @@ impl Reducer {
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
         if self.hold.holding()
             || self
-                .current
-                .as_ref()
-                .is_some_and(|current| current.deferred)
+                .flight
+                .running()
+                .is_some_and(|(_, current, _)| current.deferred)
             || !self.facts.follow.watch.is_none()
             || self.intake.gap_open()
         {
@@ -1310,21 +1195,20 @@ impl Reducer {
         }
     }
 
-    /// A new request of the generation in charge.
-    fn next_request(&mut self) -> Request {
-        self.requests += 1;
-        Request {
-            generation: self.generation,
-            number: self.requests,
-        }
-    }
-
     /// The program that drops what the shell still holds as the outpost
     /// shuts down, with no program in flight: releasing an object can call
-    /// into the application, so a worker does it, as at runtime.
+    /// into the application, so a worker does it, as at runtime. Nothing
+    /// follows it, so it is numbered as a program and ended at once.
     pub fn shutdown_drop(&mut self) -> Program {
+        let current = Current {
+            running: None,
+            group: None,
+            deferred: false,
+        };
+        let request = self.flight.start(current, 0, None, 0);
+        let _ = self.flight.end(request);
         Program {
-            request: self.next_request(),
+            request,
             facts: Facts::default(),
             work: Work::Drop,
             waiting: Vec::new(),
@@ -1336,7 +1220,7 @@ impl Reducer {
     /// the intake's next entry; entries the reducer handles itself are
     /// handled on the way.
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
-        while self.current.is_none() && !self.stopping && !self.releasing {
+        while !self.busy() && !self.stopping && !self.releasing {
             if let Some(owed) = self
                 .facts
                 .follow
@@ -1344,7 +1228,7 @@ impl Reducer {
                 .as_mut()
                 .filter(|owed| owed.attempting.is_none())
             {
-                owed.attempting = Some(self.generation);
+                owed.attempting = Some(self.flight.generation());
                 let owed = owed.clone();
                 // Whatever the owed read observes must reach it.
                 if owed_clears_absorb(&owed) && self.facts.marks.absorbed.is_some() {
@@ -1378,7 +1262,7 @@ impl Reducer {
                         // answer: after its answer it reads the terminal
                         // under the key's trace.
                         self.dispatch(Work::PollRead, (TEXT_DEADLINE, 0, None), None, now, effects);
-                        if let Some(current) = &mut self.current {
+                        if let Some(current) = self.flight.item_mut() {
                             current.deferred = true;
                         }
                     }
@@ -1498,10 +1382,11 @@ impl Reducer {
     /// The live requests: the program in flight's, unless its walk was
     /// published.
     fn live(&self) -> Vec<Request> {
-        self.current
-            .iter()
-            .filter(|current| !current.claimed && current.request.generation == self.generation)
-            .map(|current| current.request)
+        self.flight
+            .running()
+            .filter(|(_, _, published)| !published)
+            .map(|(request, ..)| request)
+            .into_iter()
             .collect()
     }
 
@@ -1557,7 +1442,6 @@ impl Reducer {
         {
             self.answer_watch(answer, now, effects);
         }
-        let request = self.next_request();
         let waiting = self.waiting(&work);
         let deferred = matches!(
             &work,
@@ -1569,18 +1453,17 @@ impl Reducer {
                 ..
             }
         );
-        self.current = Some(Current {
-            request,
-            deadline: now.at + deadline,
-            started: now.at,
-            window,
+        let current = Current {
             running,
-            walk: None,
-            grace_judged: false,
-            claimed: false,
             group,
             deferred,
-        });
+        };
+        let request = self.flight.start(
+            current,
+            micros(deadline),
+            (window != 0).then_some(window),
+            micros(now.at),
+        );
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
             facts: self.facts.clone(),
@@ -1590,21 +1473,23 @@ impl Reducer {
     }
 
     /// Dispatches the program that finishes `cut`, the caret read the
-    /// program `read` cut at its value change check, before anything else
-    /// and even while the outpost shuts down, as the read's program would
-    /// have gone on: it takes over that program's deadline, its moved-on
-    /// grace and the query it answers. The check is decided here: every
+    /// program in flight cut at its value change check, before anything
+    /// else and even while the outpost shuts down, as the read's program
+    /// would have gone on: handed on to a new request, it takes over that
+    /// program's deadline, its walk, its moved-on rule and the query it
+    /// answers. The check is decided here: every
     /// value change the control raised before the read part's sync is
     /// ahead of its end in the mailbox, so among the entries not yet
     /// dispatched, in the intake or held.
-    fn dispatch_finish(&mut self, read: Current, cut: Box<Cut>, effects: &mut Vec<Effect>) {
+    fn dispatch_finish(&mut self, cut: Box<Cut>, effects: &mut Vec<Effect>) {
         let waiting = self.intake.value_change_waiting(cut.edit)
             || self
                 .hold
                 .held()
                 .any(|entry| edit_value_change(&entry.item) == Some(cut.edit));
-        let request = self.next_request();
-        self.current = Some(Current { request, ..read });
+        let Some(request) = self.flight.hand_on() else {
+            return;
+        };
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
             facts: self.facts.clone(),
@@ -1727,6 +1612,11 @@ fn clears_absorb(item: &Item) -> bool {
 /// first read.
 fn owed_clears_absorb(owed: &Owed) -> bool {
     matches!(owed.work, OwedWork::FirstRead(_))
+}
+
+/// `duration` in microseconds, the work in flight's times.
+fn micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// The deadline for an entry, and the query it answers, if it is one.

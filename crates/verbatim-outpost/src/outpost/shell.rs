@@ -272,6 +272,9 @@ pub(super) struct Shell {
     /// The generation in charge, and the threads of every worker started.
     generations: HashMap<u64, Generation>,
     threads: Vec<thread::JoinHandle<()>>,
+    /// The abandoned workers that have not returned: one more as the shell
+    /// carries out an abandonment, one fewer as one returns.
+    abandoned: usize,
     closing: bool,
 }
 
@@ -444,6 +447,7 @@ impl Shell {
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
+            abandoned: 0,
             closing: false,
         };
         shell.spawn_worker(0, warm);
@@ -603,7 +607,17 @@ impl Shell {
                 panicked,
                 cut,
             },
-            Posted::Returned => Input::Returned,
+            Posted::Returned => {
+                self.abandoned = self.abandoned.saturating_sub(1);
+                self.context
+                    .abandoned
+                    .store(self.abandoned, Ordering::Relaxed);
+                tracing::info!(
+                    abandoned = self.abandoned,
+                    "an abandoned worker returned; its result is discarded"
+                );
+                return;
+            }
             Posted::GapTimerGiven => Input::GapTimerGiven,
             Posted::GapBound => Input::GapBound,
             Posted::Close => {
@@ -714,23 +728,21 @@ impl Shell {
             Effect::Abandon {
                 dead,
                 replacement,
-                count,
                 reason,
             } => {
+                self.abandoned += 1;
                 tracing::warn!(
-                    abandoned = count,
+                    abandoned = self.abandoned,
                     reason,
                     "the worker is abandoned and replaced"
                 );
                 if let Some(generation) = self.generations.remove(&dead) {
                     generation.charge.abandon();
                 }
-                self.context.abandoned.store(count, Ordering::Relaxed);
+                self.context
+                    .abandoned
+                    .store(self.abandoned, Ordering::Relaxed);
                 self.spawn_worker(replacement, false);
-            }
-            Effect::Returned { count } => {
-                tracing::info!("an abandoned worker returned; its result is discarded");
-                self.context.abandoned.store(count, Ordering::Relaxed);
             }
             Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
             Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
@@ -1068,6 +1080,7 @@ mod tests {
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
+            abandoned: 0,
             closing: false,
         };
         shell.take(Posted::Entry {
@@ -1098,7 +1111,7 @@ mod tests {
         shell.apply(vec![Effect::Publish {
             request,
             facts: Box::default(),
-            then_abandon: Some("a call passed its deadline"),
+            then_abandon: Some(verbatim_outpost_logic::Reason::Deadline),
         }]);
         assert!(!shell.reducer.accepts(request), "abandoned by the answer");
         assert_eq!(shell.reducer.generation(), 1);

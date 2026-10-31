@@ -394,8 +394,8 @@ impl Gen {
                 })),
             ),
             Action::Deadline => {
-                let deadline = self.reducer.current.as_ref().expect("in flight").deadline;
-                self.at = u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX);
+                let deadline = self.reducer.flight.deadline().expect("in flight");
+                self.at = deadline / 1_000;
                 if self.model.held {
                     ended(&mut self.model, &mut expected, "abandoned");
                 }
@@ -563,9 +563,9 @@ impl Gen {
                             self.reducer.facts.follow.watch.is_none()
                                 && !self
                                     .reducer
-                                    .current
-                                    .as_ref()
-                                    .is_some_and(|current| current.deferred),
+                                    .flight
+                                    .running()
+                                    .is_some_and(|(_, current, _)| current.deferred),
                             "an idle answer with deferred work after {trail:?}"
                         );
                     }

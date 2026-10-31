@@ -648,7 +648,7 @@ fn a_walk_whose_worker_is_abandoned_is_published_first_and_its_sends_after_refus
 
 /// The deadline of the program dispatched at 1 ms, at which the tests
 /// below abandon it.
-const DEADLINE: &str = "a call passed its deadline";
+const DEADLINE: Reason = Reason::Deadline;
 
 /// What `effects` do, by kind, in order: a send, an abandonment, a
 /// dispatch, or an ask.
@@ -724,8 +724,8 @@ fn a_late_tick_past_the_bound_and_the_deadline_publishes_once_then_abandons() {
     assert!(!reducer.accepts(request));
 }
 
-/// A foreground fact past the grace asks whether the user moved on; a yes,
-/// with a walk armed, asks for the walk's publication carrying the
+/// The grace's end asks whether the user moved on; a yes, with a walk
+/// armed, asks for the walk's publication carrying the
 /// abandonment, and its answer, with nothing published, abandons. An
 /// answer whose request is no longer in flight changes nothing.
 #[test]
@@ -744,8 +744,9 @@ fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped(
         },
         now(2),
     );
-    let foreground = Item::Fact(DeliveredFact::Foreground { hwnd: 7 }, None);
-    let effects = reducer.input(entry_of(foreground, 600), now(600));
+    // An entry waits, for the replacement to take.
+    reducer.input(entry_of(name_change(2), 3), now(3));
+    let effects = reducer.tick(now(501));
     assert!(
         matches!(
             &effects[..],
@@ -753,7 +754,7 @@ fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped(
         ),
         "{effects:?}"
     );
-    let moved = "the user moved on from a slow window";
+    let moved = Reason::MovedOn;
     let effects = reducer.input(
         Input::MovedOn {
             request,
@@ -1491,22 +1492,28 @@ fn a_program_waiting_on_a_window_the_user_left_is_abandoned_once_its_grace_ends(
     assert!(abandons(&replay.tick(501)));
 }
 
+/// Past the grace, the moved-on rule is judged again every half second,
+/// with no foreground fact; a wake for anything else, or a foreground fact,
+/// judges nothing.
 #[test]
-fn a_foreground_fact_after_the_grace_judges_the_moved_on_rule_again() {
+fn the_moved_on_rule_is_judged_again_every_half_second() {
     let mut replay = Replay::new();
     replay.push(name_change(1), Source::Hook, 1);
     // At the grace's end the user has not moved on.
     assert!(!abandons(&replay.tick(501)));
-    // A wake for anything else judges nothing.
+    assert_eq!(
+        replay.reducer.next_timer(now(501)),
+        Some(Duration::from_millis(1_001))
+    );
     replay.answers.moved_on = true;
     assert!(!abandons(&replay.push(name_change(2), Source::Hook, 600)));
-    // A foreground fact does.
-    let effects = replay.push(
+    assert!(!abandons(&replay.push(
         Item::Fact(DeliveredFact::Foreground { hwnd: 8 }, None),
         Source::Listener,
         700,
-    );
-    assert!(abandons(&effects));
+    )));
+    assert!(!abandons(&replay.tick(1_000)));
+    assert!(abandons(&replay.tick(1_001)));
 }
 
 /// The probe of window 0x20, owned by thread 5, judging from 1 ms, that
@@ -1927,10 +1934,11 @@ fn the_watchs_wake_is_not_timed_while_a_program_or_a_release_is_in_flight() {
     let effects = replay.push(name_change(1), Source::Hook, 9_000);
     assert_eq!(handles(program(&effects)), (9_000, None));
     // The bound is due, but only with no program in flight is it acted
-    // on: the next timer is the program's deadline, not the past bound.
+    // on: the next timer is the program's own, its moved-on rule's
+    // judgment, not the past bound.
     assert_eq!(
         replay.reducer.next_timer(now(10_500)),
-        Some(Duration::from_secs(19))
+        Some(Duration::from_millis(9_500))
     );
     // A release waiting behind the program is asked for as it ends: until
     // its result is in, nothing is dispatched, so the bound is not timed.

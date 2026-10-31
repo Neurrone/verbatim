@@ -359,6 +359,12 @@ impl<T> InFlight<T> {
         })
     }
 
+    /// The deadline of the item running.
+    #[must_use]
+    pub fn deadline(&self) -> Option<u64> {
+        self.running.as_ref().map(|running| running.deadline)
+    }
+
     /// The item running, to change what the reader keeps in it.
     pub fn item_mut(&mut self) -> Option<&mut T> {
         self.running.as_mut().map(|running| &mut running.item)
