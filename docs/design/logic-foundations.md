@@ -1411,7 +1411,7 @@ An answer whose request is not running is dropped. With `then_abandon`, the aban
 - **Every listener focus read with a window** loses its moved-on call: `GetGUIThreadInfo`, the two owner reads, and for a console the provider read.
 - **A learned window** costs one uncontended readers' lock, and no wake.
 - **Measured before and after**, in test audio mode, debug build:
-  - wake-ups and processor time per thread on `measure_focus_text_box`, at most 20 runs;
+  - wake-ups and processor time per thread on `measure_focus_text_box`, five 12-second trace windows each side, 2026-11-01, per wake of the listener's UIA callback thread, since each window catches a different share of the workload: all processes 22.7 wakes after and 23.3 before (medians), the listener 4.40 after and 4.48 before, so no change was measured;
   - the listener watchdog's wakes in its held-read tests;
   - the timer calls per read go in `docs/performance.md`.
 
