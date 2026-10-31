@@ -13,6 +13,7 @@ use std::time::Duration;
 
 pub mod acceptance;
 pub mod class;
+pub mod in_flight;
 
 /// The console host's window class. A console window's provider is the
 /// console host, the process of the window's thread, while
