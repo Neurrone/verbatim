@@ -260,9 +260,14 @@ impl Settles {
         self.taken
     }
 
-    /// Settle `id` is dispatched as `request`: its worker's waiter.
+    /// Settle `id` is dispatched as `request`: its worker's waiter. A
+    /// different settle still in flight was abandoned, so it is let go of.
     fn dispatched(&mut self, request: Request, id: u64) -> Option<mpsc::Sender<()>> {
-        self.in_flight = Some((request, id));
+        if let Some((_, previous)) = self.in_flight.replace((request, id))
+            && previous != id
+        {
+            self.waiting.remove(&previous);
+        }
         self.waiting.get(&id).cloned()
     }
 
@@ -1098,5 +1103,36 @@ mod tests {
         drop(given);
         settles.finished(again);
         assert_eq!(waits.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+    }
+
+    /// A settle abandoned on its generation and replaced by another settle
+    /// on the next lets its waiter go once its dead worker drops its copy.
+    #[test]
+    fn an_abandoned_settle_replaced_by_another_lets_its_waiter_go() {
+        let mut settles = Settles::default();
+        let (done_a, waits_a) = mpsc::channel();
+        let (done_b, _waits_b) = mpsc::channel();
+        let a = settles.taken(done_a);
+        let b = settles.taken(done_b);
+        let dead = settles
+            .dispatched(
+                Request {
+                    generation: 0,
+                    number: 3,
+                },
+                a,
+            )
+            .expect("a's waiter");
+        let _given = settles
+            .dispatched(
+                Request {
+                    generation: 1,
+                    number: 4,
+                },
+                b,
+            )
+            .expect("b's waiter");
+        drop(dead);
+        assert_eq!(waits_a.try_recv(), Err(mpsc::TryRecvError::Disconnected));
     }
 }
