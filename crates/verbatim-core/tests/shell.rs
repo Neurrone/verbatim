@@ -360,6 +360,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
         Some(HookForeground {
             window: WindowHandle(7),
             holds_keys: true,
+            focus_has_text: false,
             keyboard_thread: Some(40),
         })
     );
@@ -368,6 +369,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
         Some(HookForeground {
             window: WindowHandle(7),
             holds_keys: true,
+            focus_has_text: false,
             keyboard_thread: None,
         }),
         "a console whose thread no event has named yet"
@@ -377,6 +379,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
         Some(HookForeground {
             window: WindowHandle(7),
             holds_keys: true,
+            focus_has_text: false,
             keyboard_thread: None,
         })
     );
@@ -403,6 +406,7 @@ fn the_latest_foreground_report_decides() {
         Some(HookForeground {
             window: WindowHandle(9),
             holds_keys: true,
+            focus_has_text: false,
             keyboard_thread: None,
         })
     );

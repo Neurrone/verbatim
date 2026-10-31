@@ -804,12 +804,13 @@ impl SrState {
     /// no higher than Verbatim's, since Windows drops a key Verbatim sends
     /// again to a window of higher integrity, and a key lost costs more
     /// than a key judged without its caret (`docs/design/key-holding.md`,
-    /// "Elevated windows"). A console host window's keys are translated
-    /// with the keyboard layout of the console host's own thread, named by
-    /// its event, since Windows names the console's first attached process
-    /// as the window's owner (`docs/crates/verbatim-input-windows.md`,
-    /// "Typed text"); any other window's with its owner's, which the hook
-    /// reads itself.
+    /// "Elevated windows"). Caret keys are held while the focus has text
+    /// ([`holds_caret_keys`](Self::holds_caret_keys)). A console host
+    /// window's keys are translated with the keyboard layout of the console
+    /// host's own thread, named by its event, since Windows names the
+    /// console's first attached process as the window's owner
+    /// (`docs/crates/verbatim-input-windows.md`, "Typed text"); any other
+    /// window's with its owner's, which the hook reads itself.
     #[must_use]
     pub fn hook_foreground(&self) -> Option<HookForeground> {
         let foreground = self.foreground.window()?;
@@ -819,6 +820,7 @@ impl SrState {
                 (foreground.integrity, foreground.own_integrity),
                 (Some(window), Some(own)) if window <= own
             ),
+            focus_has_text: self.holds_caret_keys(),
             keyboard_thread: (foreground.console && foreground.thread != 0)
                 .then_some(foreground.thread),
         })

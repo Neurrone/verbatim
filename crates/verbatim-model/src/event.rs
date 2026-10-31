@@ -127,6 +127,10 @@ pub struct HookForeground {
     /// read, since Windows drops a key Verbatim sends again to such a
     /// window (`docs/design/key-holding.md`, "Elevated windows").
     pub holds_keys: bool,
+    /// Whether the focus has text whose caret Verbatim reads, so that the
+    /// hook holds its caret keys back while `holds_keys` lets it
+    /// (`docs/design/key-holding.md`).
+    pub focus_has_text: bool,
     /// The thread whose keyboard layout translates the keys typed into
     /// this window, when it is not the thread Windows names as the
     /// window's owner: a console host window's own thread

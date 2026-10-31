@@ -446,6 +446,7 @@ mod tests {
         let console = HookForeground {
             window: WindowHandle(10),
             holds_keys: true,
+            focus_has_text: false,
             keyboard_thread: Some(100),
         };
         assert_eq!(keyboard_thread(WindowHandle(10), Some(console)), Some(100));

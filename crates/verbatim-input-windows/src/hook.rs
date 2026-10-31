@@ -26,8 +26,8 @@ use verbatim_input::{KeyDecision, KeyEvent};
 use verbatim_model::{HookForeground, KeySeq, TraceId};
 
 use crate::{
-    Effects, ForegroundView, HeldStroke, KeyHolding, KeyReport, KeyReportFn, OWN_INPUT_TAG,
-    SpeechEffectFn, passed_on_sequence, typed,
+    Effects, ForegroundView, HeldStroke, KeyReport, KeyReportFn, OWN_INPUT_TAG, SpeechEffectFn,
+    passed_on_sequence, typed,
 };
 
 /// Per-hook-thread state reached by the hook procedure.
@@ -41,8 +41,6 @@ pub(crate) struct HookState {
     speech: SpeechEffectFn,
     reports: KeyReportFn,
     typing: typed::Typing,
-    /// Whether caret keys are held now ([`KeyHolding`]).
-    holding: Arc<KeyHolding>,
     /// The last key number given out, to a key press: this thread is the
     /// one minter of key numbers.
     last_key: KeySeq,
@@ -57,7 +55,7 @@ impl HookState {
     /// A hook state with nothing held, deciding with `machine`.
     pub(crate) fn new(
         machine: DecisionMachine,
-        (speech, reports, holding, foreground): Effects,
+        (speech, reports, foreground): Effects,
         typing: typed::Typing,
     ) -> Self {
         Self {
@@ -65,7 +63,6 @@ impl HookState {
             speech,
             reports,
             typing,
-            holding,
             last_key: KeySeq::NONE_YET,
             foreground,
             front: || {
@@ -164,27 +161,28 @@ pub(crate) unsafe extern "system" fn keyboard_hook(
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
-/// What Core's `view` and holding switch (`text`) let the machine do with
-/// a key, and the window in front when it was read for that. The window is
-/// read only when the view lets keys be held and either holding is on or a
-/// key waits in the machine's line (`outstanding`); otherwise the permit is
+/// What Core's `view` lets the machine do with a key, and the window in
+/// front when it was read for that. The window is read only when the view
+/// lets keys be held and either the focus has text or a key waits in the
+/// machine's line (`outstanding`); otherwise the permit is
 /// [`HoldPermit::None`] with no call. The view applies only while the
 /// window it names is still in front: until Core catches up with a
 /// change, no key is held or deferred. A window whose process has higher
 /// integrity than Verbatim's is one where keys may not be held, since
 /// Windows would drop a key sent again to it ([`ForegroundView`]).
 fn permit(
-    (view, text): (Option<HookForeground>, bool),
+    view: Option<HookForeground>,
     outstanding: bool,
     front: fn() -> HWND,
 ) -> (HoldPermit, Option<HWND>) {
-    let Some(view) = view.filter(|view| view.holds_keys && (text || outstanding)) else {
+    let Some(view) = view.filter(|view| view.holds_keys && (view.focus_has_text || outstanding))
+    else {
         return (HoldPermit::None, None);
     };
     let window = front();
     let permit = if typed::window_handle(window) != view.window {
         HoldPermit::None
-    } else if text {
+    } else if view.focus_has_text {
         HoldPermit::HoldAndDefer
     } else {
         HoldPermit::Defer
@@ -260,8 +258,7 @@ pub(crate) fn decide(
     // report reuses it; the other reports read the time again.
     let now_us = unix_us();
     let view = state.foreground.get();
-    let text = state.holding.is_on();
-    let (permit, window) = permit((view, text), state.machine.has_outstanding(), state.front);
+    let (permit, window) = permit(view, state.machine.has_outstanding(), state.front);
     let decision = state.machine.on_key(KeyInput {
         event,
         now: now_us,
@@ -389,7 +386,6 @@ mod tests {
             (
                 Box::new(|_, _| {}),
                 Box::new(move |report| sink.lock().unwrap().push(report)),
-                Arc::new(KeyHolding::new()),
                 Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
@@ -432,14 +428,11 @@ mod tests {
         let sink = Arc::clone(reports);
         let foreground = Arc::new(ForegroundView::new());
         foreground.set(Some(IN_FRONT));
-        let holding = Arc::new(KeyHolding::new());
-        holding.set(true);
         let mut state = HookState::new(
             DecisionMachine::new(DecisionConfig::default(), map),
             (
                 Box::new(|_, _| {}),
                 Box::new(move |report| sink.lock().unwrap().push(report)),
-                holding,
                 foreground,
             ),
             typed::Typing::default(),
@@ -455,10 +448,12 @@ mod tests {
         HWND(7 as *mut core::ffi::c_void)
     }
 
-    /// Core's view of [`window_in_front`], whose keys may be held.
+    /// Core's view of [`window_in_front`], whose keys may be held, with
+    /// the focus in text.
     const IN_FRONT: HookForeground = HookForeground {
         window: WindowHandle(7),
         holds_keys: true,
+        focus_has_text: true,
         keyboard_thread: None,
     };
 
@@ -558,8 +553,10 @@ mod tests {
             decide(&mut state, right_arrow(true), 0x4D, 0),
             KeyDecision::Pass
         );
-        state.foreground.set(Some(IN_FRONT));
-        state.holding.set(false);
+        state.foreground.set(Some(HookForeground {
+            focus_has_text: false,
+            ..IN_FRONT
+        }));
         assert_eq!(
             decide(&mut state, right_arrow(true), 0x4D, 0),
             KeyDecision::Pass
@@ -572,7 +569,7 @@ mod tests {
                 "observed kb:rightarrow"
             ]
         );
-        state.holding.set(true);
+        state.foreground.set(Some(IN_FRONT));
         assert_eq!(
             decide(&mut state, right_arrow(true), 0x4D, 0),
             KeyDecision::Swallow

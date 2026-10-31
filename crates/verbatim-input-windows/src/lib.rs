@@ -7,8 +7,7 @@
 //! calling `CallNextHookEx` to pass, and reports what each key caused
 //! through one callback ([`KeyReport`]). The code that runs on the thread
 //! is in the `hook` module; this one holds what other threads call:
-//! [`InputHook`], and Core's views the thread reads ([`KeyHolding`],
-//! [`ForegroundView`]).
+//! [`InputHook`], and Core's view the thread reads ([`ForegroundView`]).
 //! The thread takes nothing else from another thread but the `WM_QUIT`
 //! that stops it: every input it numbers is a key.
 //!
@@ -53,7 +52,6 @@ mod hook;
 mod typed;
 
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 
@@ -104,40 +102,13 @@ pub(crate) fn passed_on_sequence(extra_info: usize) -> Option<u32> {
         .then(|| u32::try_from(extra_info & !PASSED_ON_MASK).unwrap_or(0))
 }
 
-/// Whether the hook holds caret keys back now, while the focus is text
-/// (`docs/design/key-holding.md`): set by the reducer's thread from the
-/// focus after each input ([`KeyHolding::set`]) and read by the hook
-/// procedure with one atomic load, so the hook never waits for it. The
-/// keys held are the gesture map's ([`GestureMap::with_held`]).
-#[derive(Debug, Default)]
-pub struct KeyHolding {
-    on: AtomicBool,
-}
-
-impl KeyHolding {
-    /// Holding switched off.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Switches holding on, while the focus is text whose caret Verbatim
-    /// reads, or off.
-    pub fn set(&self, on: bool) {
-        self.on.store(on, Ordering::Relaxed);
-    }
-
-    /// Whether holding is on.
-    fn is_on(&self) -> bool {
-        self.on.load(Ordering::Relaxed)
-    }
-}
-
 /// Core's view of the foreground window, as the keyboard hook needs it
 /// (architecture section 5): the focus listener learns which window is in
-/// front, Core decides from it whether keys may be held back for it and
-/// which thread's keyboard layout translates its keys, and the reducer's
-/// thread publishes that here after each input ([`ForegroundView::set`]). The hook reads it with one
+/// front, Core decides from it whether keys may be held back for it,
+/// whether the focus has text whose caret keys are held
+/// (`docs/design/key-holding.md`), and which thread's keyboard layout
+/// translates its keys, and the reducer's thread publishes that here after
+/// each input ([`ForegroundView::set`]). The hook reads it with one
 /// lock-free load per key and applies it only while the window it names is
 /// still the foreground window, as the hook reads it locally; until Core
 /// catches up with a change, no key is held or deferred and keys are
@@ -191,14 +162,9 @@ pub struct HeldStroke {
 pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect, KeySeq) + Send>;
 
 /// What the hook thread is given to act on and report keys through, and
-/// Core's views it reads: the speech effect, the key reports, whether keys
-/// are held, and the foreground.
-type Effects = (
-    SpeechEffectFn,
-    KeyReportFn,
-    Arc<KeyHolding>,
-    Arc<ForegroundView>,
-);
+/// Core's view it reads: the speech effect, the key reports, and the
+/// foreground.
+type Effects = (SpeechEffectFn, KeyReportFn, Arc<ForegroundView>);
 
 /// Receives what each key caused, in the order the hook thread handled
 /// them; called on the hook thread, so it must not
@@ -228,7 +194,7 @@ pub enum KeyReport {
         pressed_at_us: u64,
     },
     /// A caret key the hook held back from the application, because Core's
-    /// views let it be ([`KeyHolding`], [`ForegroundView`]): the reducer has the caret read, then
+    /// view lets it be ([`ForegroundView`]): the reducer has the caret read, then
     /// has the key sent again ([`HeldStroke`], tagged [`PASSED_ON_TAG`]).
     /// Its release is held back too.
     Held {
@@ -311,9 +277,8 @@ impl InputHook {
     /// pause and resume), before anything the press caused is reported, so
     /// speech it causes is never the speech it cancels. `reports` receives,
     /// after the speech effect, everything each key caused ([`KeyReport`]). Both run on the hook thread and must never
-    /// block (see the crate's never-block constraint). `holding` says when
-    /// caret keys are held back, and `foreground` is Core's view of the
-    /// window in front ([`ForegroundView`]).
+    /// block (see the crate's never-block constraint). `foreground` is Core's
+    /// view of the window in front ([`ForegroundView`]).
     ///
     /// # Errors
     ///
@@ -324,7 +289,6 @@ impl InputHook {
         map: GestureMap,
         speech: SpeechEffectFn,
         reports: KeyReportFn,
-        holding: Arc<KeyHolding>,
         foreground: Arc<ForegroundView>,
     ) -> io::Result<Self> {
         // The thread reports back either its id (hook installed) or the error
@@ -334,12 +298,7 @@ impl InputHook {
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
             .spawn(move || {
-                hook_thread(
-                    config,
-                    map,
-                    (speech, reports, holding, foreground),
-                    &ready_tx,
-                );
+                hook_thread(config, map, (speech, reports, foreground), &ready_tx);
             })?;
 
         match ready_rx.recv() {

@@ -44,7 +44,7 @@ use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
-use verbatim_input_windows::{ForegroundView, InputHook, KeyHolding};
+use verbatim_input_windows::{ForegroundView, InputHook};
 use verbatim_model::protocol::RequestId;
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
 use verbatim_model::{
@@ -310,21 +310,17 @@ fn run(
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
-    // Whether the keyboard hook holds caret keys back, while the focus is
-    // text, switched by the reducer thread from Core's focus
-    // (`docs/design/key-holding.md`).
-    let holding = Arc::new(KeyHolding::new());
-
     // Core's view of the window in front, for the keyboard hook: whether
-    // it may hold keys there, and which thread's layout translates them,
-    // published by the reducer thread (architecture section 5).
+    // it may hold keys there, whether the focus has text whose caret keys
+    // it holds (`docs/design/key-holding.md`), and which thread's layout
+    // translates them, published by the reducer thread (architecture
+    // section 5).
     let foreground = Arc::new(ForegroundView::new());
 
     // The reducer thread: normalized events and review commands in, speech,
     // fetches, text requests, activations, and clipboard copies out.
     {
         let context = ReducerContext {
-            holding: Arc::clone(&holding),
             foreground: Arc::clone(&foreground),
             clipboard: clipboard::Clipboard::start(command_tx.clone())?,
             manager: Arc::clone(&manager),
@@ -379,7 +375,6 @@ fn run(
             Arc::clone(&ledger),
             command_tx.clone(),
         ),
-        holding,
         foreground,
     )?;
 
@@ -878,9 +873,6 @@ fn foreground_pid() -> Option<Pid> {
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
 /// signature from growing an argument for every subsystem it touches.
 struct ReducerContext {
-    /// Whether the keyboard hook holds caret keys back, set from Core's
-    /// focus after each input.
-    holding: Arc<KeyHolding>,
     /// Core's view of the window in front for the keyboard hook, set after
     /// each input.
     foreground: Arc<ForegroundView>,
@@ -1613,7 +1605,6 @@ impl ReducerThread<'_> {
             self.context.readiness.notify();
         }
         self.context.ledger.reduced(trace_id);
-        self.context.holding.set(self.state.holds_caret_keys());
         self.context.foreground.set(self.state.hook_foreground());
         {
             let mut recorder = self
