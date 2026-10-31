@@ -119,10 +119,13 @@ Further follow-ups from the focus work and the ownership builds:
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
 - The audio thread's wake-ups roughly doubled under key load in the output
   ownership build, against the rule not to raise wake-ups on the speech
-  path (`docs/performance.md`, "Threads after the output build"). Waking it
-  only for a push to an empty lane removed about 5 percent; the cause of
-  the rest is not yet found, and comparing the old mixer's waits with the
-  new thread's device event is the next step.
+  path (`docs/performance.md`, "Threads after the output build"). Every
+  push of a synth chunk wakes the audio thread, where the old mixer woke it
+  only when the device was waiting for audio. Waking only for the first
+  record of an utterance needs no shared state, but must be shown not to
+  stall an utterance whose device ran dry and stopped; waking only for a
+  push to a non-empty lane lost wakes in the mixer tests. Open question for
+  Dickson: accept the cost or build the first-record wake.
 
 ### The ownership refactor
 

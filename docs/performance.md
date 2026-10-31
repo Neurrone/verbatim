@@ -1058,10 +1058,11 @@ The audio events thread is new in this build.
   1,954 ms before, 1,967 and 1,980 ms after; the audio events thread
   1,317 and 198 ms after.
 - The audio thread's wake-ups roughly doubled under key load, against
-  the rule not to raise wake-ups on the speech path. A push now wakes the
-  audio thread only when its lane was empty: `measure_keys_notepad` then
-  traced 11,420 wakes and 870 ms. The cause of the rest is not yet found
-  (`docs/roadmap.md`).
+  the rule not to raise wake-ups on the speech path: every push of a synth
+  chunk wakes the audio thread, where the old mixer woke it only when the
+  device was waiting for audio (`docs/roadmap.md`). These traces ran in
+  test audio mode, whose silent device wakes the audio thread every 10 ms
+  while playing.
 - Warnings "the device ran dry" per scenario run, one run before and three
   after: `settings_dialog_keys` 18, then 0, 0, 0; `theme_panel` 8, then 1,
   1, 1; `switch_to_onecore` 3, then 0, 0, 0; `menu_and_settings_dialog` 2,

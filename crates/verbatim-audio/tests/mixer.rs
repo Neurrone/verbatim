@@ -547,9 +547,11 @@ fn a_start_is_heard_when_the_devices_clock_passes_its_first_frame() {
 
 /// A source may hold 50 frames unplayed (the 10-frame queue and 40 ms
 /// beyond it). A producer that fills it waits on the source's room event,
-/// which the mixer sets only once at least half of that, 25 frames, is
-/// free: with 24 frames played the producer, which needs only 10 more,
-/// still waits; the 25th wakes it.
+/// which the mixer sets once at least half of that, 25 frames, is free, and
+/// also when the audio thread empties half the lane's records, so a wake
+/// alone does not let it on: it goes on only with room for what it needs.
+/// With 75 frames to write it needs 25 more after the first 50, so with 24
+/// frames played it still waits, and the 25th lets it on.
 #[test]
 fn a_producer_waiting_for_room_is_woken_when_half_its_room_is_free() {
     let mut harness = harness();
@@ -557,7 +559,7 @@ fn a_producer_waiting_for_room_is_woken_when_half_its_room_is_free() {
     let (done_tx, done_rx) = mpsc::channel();
     let mut lane = harness.lane;
     let writer = std::thread::spawn(move || {
-        let flow = lane.write(utterance(1), PCM, &samples(60, 1_000));
+        let flow = lane.write(utterance(1), PCM, &samples(75, 1_000));
         done_tx.send(flow).unwrap();
         lane
     });
