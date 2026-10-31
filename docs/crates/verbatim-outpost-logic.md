@@ -22,7 +22,7 @@ Public API:
   the `Effect`s in the order the shell applies them; `tick(now, locals)`,
   for a timer that came due; and `next_timer(now)`, the time of the
   shell's timed wait.
-- `Input`: an entry from a producer, a commit, a walk armed or returned, a
+- `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
   program finished, a release's answer, a worker returned, the gap
   record's bound, and the shell's close. `Effect`: dispatch a `Program`,
   send a message, release, move the subscription (`Subscription`), drop

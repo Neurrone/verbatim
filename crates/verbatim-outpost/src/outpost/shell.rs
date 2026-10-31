@@ -33,7 +33,7 @@ use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
     Change, Cut, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program, Reducer,
-    Request, Source, Subscription, Verdicts, Work,
+    Request, Source, Subscription, VerdictChange, Verdicts, Work,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -74,6 +74,12 @@ pub(super) enum Posted {
     ForwardingEnded(u32),
     /// Core withdraws a query.
     Cancel(u64),
+    /// A verdict a program of generation `generation` made, posted alone,
+    /// and taken after the mailbox closes, as a commit is.
+    Verdict {
+        generation: u64,
+        change: VerdictChange,
+    },
     /// A program's commit.
     Commit {
         request: Request,
@@ -383,10 +389,9 @@ pub(super) fn tag_of(request: Request) -> Tag {
 }
 
 /// The change the reducer is given for `effects`, a commit of `request`:
-/// for a commit it accepts, its writes made ([`write`]); for any other,
-/// only the verdicts the reducer records from any request, its writes not
-/// made and its objects let go of into `garbage`. `None` when the reducer
-/// is given nothing.
+/// for a commit it accepts, its writes made ([`write`]). Any other is
+/// refused whole, `None`: its writes are not made and its objects are let
+/// go of into `garbage`.
 fn admit(
     store: &Store,
     reducer: &Reducer,
@@ -397,13 +402,8 @@ fn admit(
     if reducer.accepts(request) {
         return Some(write(store, tag_of(request), effects, elements, garbage));
     }
-    let mut effects = effects;
-    let verdicts = std::mem::take(&mut effects.verdicts);
     discard(effects, garbage);
-    (!verdicts.is_empty()).then(|| Change {
-        verdicts,
-        ..Change::default()
-    })
+    None
 }
 
 /// Lets go of what a refused commit holds into `garbage`.
@@ -643,10 +643,10 @@ impl Shell {
             Posted::WithoutListener => Input::WithoutListener,
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
+            Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
-                // the reducer only the verdicts it records from any
-                // request, and its objects go to a worker.
+                // the reducer nothing, and its objects go to a worker.
                 let Some(change) = admit(
                     &self.context.store,
                     &self.reducer,

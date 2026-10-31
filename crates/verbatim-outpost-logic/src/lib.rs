@@ -333,7 +333,17 @@ pub enum Input {
     ForwardingEnded(u32),
     /// Core withdraws query `0` if it has not started.
     Cancel(u64),
-    /// A commit of a program's, its store writes made.
+    /// A verdict a program of generation `generation` probed, or a window
+    /// it found destroyed, posted alone as it was made, even from an
+    /// abandoned worker.
+    Verdict {
+        /// The worker generation of the program that made it.
+        generation: u64,
+        /// The verdict.
+        change: VerdictChange,
+    },
+    /// A commit of a program's, its store writes made: the shell gives
+    /// the reducer only a commit it accepts.
     Commit {
         /// The request the commit is of.
         request: Request,
@@ -564,8 +574,10 @@ impl Reducer {
                     );
                 }
             }
+            Input::Verdict { generation, change } => {
+                self.record_verdict(generation, &change, &mut effects);
+            }
             Input::Commit { request, change } => {
-                self.record_verdicts(request, &change.verdicts, &mut effects);
                 if self.accepts(request) {
                     self.commit(request, &change, now, &mut effects);
                 }
@@ -829,41 +841,33 @@ impl Reducer {
         }
     }
 
-    /// Records the verdicts a commit of `request` carries: each from the
+    /// Records a verdict of a program of `generation`'s: one from the
     /// generation in charge, and a probe that timed out or a window's
     /// forgetting from any generation, so a window whose probe timed out
     /// is not probed again within the negative verdict's lifetime even
     /// when the worker that probed it was abandoned. The push-time copy is
     /// replaced when the record changed, and the event thread nudged when
     /// a window was found to use UIA.
-    fn record_verdicts(
+    fn record_verdict(
         &mut self,
-        request: Request,
-        changes: &[VerdictChange],
+        generation: u64,
+        change: &VerdictChange,
         effects: &mut Vec<Effect>,
     ) {
-        let in_charge = request.generation == self.generation;
-        let mut replaced = false;
-        let mut narrow = false;
-        for change in changes {
-            if !in_charge && !change.kept_from_any_generation() {
-                continue;
-            }
-            if Arc::make_mut(&mut self.facts.verdicts).apply(change) {
-                replaced = true;
-                narrow |= matches!(
-                    change,
-                    VerdictChange::Probed(Probe {
-                        probed: Probed::Uia,
-                        ..
-                    })
-                );
-            }
+        if generation != self.generation && !change.kept_from_any_generation() {
+            return;
         }
-        if replaced {
-            effects.push(Effect::Verdicts(Arc::clone(&self.facts.verdicts)));
+        if !Arc::make_mut(&mut self.facts.verdicts).apply(change) {
+            return;
         }
-        if narrow {
+        effects.push(Effect::Verdicts(Arc::clone(&self.facts.verdicts)));
+        if matches!(
+            change,
+            VerdictChange::Probed(Probe {
+                probed: Probed::Uia,
+                ..
+            })
+        ) {
             effects.push(Effect::Narrow);
         }
     }

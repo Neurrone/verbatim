@@ -1118,11 +1118,16 @@ fn probe(probed: Probed) -> VerdictChange {
     })
 }
 
-/// The commit of `change` alone.
-fn verdict_commit(change: VerdictChange) -> Change {
-    Change {
-        verdicts: vec![change],
-        ..Change::default()
+impl Replay {
+    /// Posts `change`, a verdict of `request`'s program, at `at_ms`.
+    fn verdict(&mut self, request: Request, change: VerdictChange, at_ms: u64) -> Vec<Effect> {
+        self.input(
+            Input::Verdict {
+                generation: request.generation,
+                change,
+            },
+            at_ms,
+        )
     }
 }
 
@@ -1147,7 +1152,7 @@ fn a_probe_is_recorded_when_committed_and_reaches_the_event_thread_then_the_next
     let mut replay = Replay::new();
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let request = program(&effects).request;
-    let effects = replay.commit(request, verdict_commit(probe(Probed::Uia)), 2);
+    let effects = replay.verdict(request, probe(Probed::Uia), 2);
     assert_eq!(
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
         Some(Probed::Uia)
@@ -1183,7 +1188,7 @@ fn a_dead_generations_probe_is_not_recorded() {
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let dead = program(&effects).request;
     assert!(abandons(&replay.tick(1 + 10_000)));
-    let effects = replay.commit(dead, verdict_commit(probe(Probed::Uia)), 10_002);
+    let effects = replay.verdict(dead, probe(Probed::Uia), 10_002);
     assert_eq!(verdict_of(&replay.reducer.facts().verdicts, 1_000), None);
     assert!(effects.is_empty());
 }
@@ -1194,11 +1199,7 @@ fn a_dead_generations_timed_out_probe_is_recorded() {
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let dead = program(&effects).request;
     assert!(abandons(&replay.tick(1 + 10_000)));
-    let effects = replay.commit(
-        dead,
-        verdict_commit(probe(Probed::TimedOut(10_502_000))),
-        10_002,
-    );
+    let effects = replay.verdict(dead, probe(Probed::TimedOut(10_502_000)), 10_002);
     assert_eq!(
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
         Some(Probed::TimedOut(10_502_000))
@@ -1213,11 +1214,7 @@ fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
     let request = program(&effects).request;
     // The probe returns at 3 s, timed out, and is committed at once; the
     // program then hangs in its next call until its deadline.
-    replay.commit(
-        request,
-        verdict_commit(probe(Probed::TimedOut(3_501_000))),
-        3_001,
-    );
+    replay.verdict(request, probe(Probed::TimedOut(3_501_000)), 3_001);
     let effects = replay.tick(1 + 10_000);
     assert!(abandons(&effects));
     assert_eq!(

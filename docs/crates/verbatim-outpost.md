@@ -324,11 +324,11 @@ the same tables and code, which the arbitrator's own lists are built from.
   intake's marker barrier.
 - A program reads its own copy of the verdicts (`Facts::verdicts`, an
   `Arc` the reducer replaces on change, so a copy costs a reference count).
-  Each probe is committed as it returns, alone in its commit, and applied
-  to the program's copy, which it judges by for the rest of its walk. The
-  shell passes a commit's verdicts to the reducer even when it applies
-  nothing else of it, and the reducer records a probe only from the worker
-  generation in charge, but a timed-out probe and a destroyed window's
+  Each probe is posted as it returns, as a message of its own
+  (`Posted::Verdict`, `Input::Verdict`, taken even after the mailbox
+  closes, as a commit is), and applied to the program's copy, which it
+  judges by for the rest of its walk. The reducer records a probe only
+  from the worker generation in charge, but a timed-out probe and a destroyed window's
   forgetting from any generation, so a window is not probed again more
   often than NVDA probes it. A probe committed before its worker is
   abandoned stays recorded. When the record changes the reducer publishes
@@ -436,8 +436,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   each commit (`commit::Effects`) to the mailbox, applying its pure part
   to its own copies (`reducer::apply`), so what it reads after is what the
   reducer will hold. The shell applies a commit only while its request is
-  live, its generation in charge and its walk not published, but for its
-  verdicts ("The arbitrator"): first the
+  live, its generation in charge and its walk not published, and refuses
+  any other whole: first the
   writes only it makes, to the store and its table of the elements the
   subscription follows (`commit::Writes`), the program's text writes
   among them, then the reducer's change. A

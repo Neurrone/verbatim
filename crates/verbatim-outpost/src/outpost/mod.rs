@@ -539,32 +539,19 @@ impl crate::arbitration::Judgement for RequestContext<'_> {
         Arc::clone(&self.facts().verdicts)
     }
 
-    /// Keeps `change` in the program's copies and posts it at once, alone
-    /// in its commit, even from an abandoned worker: the reducer judges by
-    /// its generation whether to record it, and a probe that timed out is
-    /// recorded from any. A context that runs no program keeps it in its
-    /// copies only.
+    /// Keeps `change` in the program's copies and posts it at once, as a
+    /// message of its own, even from an abandoned worker: the reducer
+    /// judges by its generation whether to record it, and a probe that
+    /// timed out is recorded from any. A context that runs no program keeps
+    /// it in its copies only.
     fn record(&self, change: VerdictChange) {
-        let local = reducer::Change {
-            verdicts: vec![change],
-            ..reducer::Change::default()
-        };
-        let Some(program) = &self.program else {
-            reducer::apply_local(&mut self.facts.borrow_mut(), 0, &local);
-            return;
-        };
-        reducer::apply_local(
-            &mut self.facts.borrow_mut(),
-            program.request.generation,
-            &local,
-        );
-        self.mailbox.post(Posted::Commit {
-            request: program.request,
-            effects: Box::new(Effects {
-                verdicts: vec![change],
-                ..Effects::default()
-            }),
-        });
+        let _ = Arc::make_mut(&mut self.facts.borrow_mut().verdicts).apply(&change);
+        if let Some(program) = &self.program {
+            self.mailbox.post(Posted::Verdict {
+                generation: program.request.generation,
+                change,
+            });
+        }
     }
 }
 
