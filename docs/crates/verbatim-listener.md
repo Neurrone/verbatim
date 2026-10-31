@@ -288,9 +288,9 @@ because it judged the window UIA, with its window, top-level window
   gone (`sender_gone`); a late UIA focus of the same element is reported
   under the read's node, which Core takes as a duplicate.
 - The idle barrier's answer waits while the record is open
-  (`Reducer::answer_idle`); a drop that closes it as its marker resolves,
-  leaving the worker nothing to handle, pushes `Item::Wake` while a round
-  waits, so the answer still goes.
+  (`Reducer::answer_idle`); the reducer judges it again after every input,
+  so a drop that closes the record as its marker resolves, leaving the
+  worker nothing to handle, still lets the answer go.
 
 The verdicts. The outpost's verdict is the one verdict per window; the
 listener makes none (`docs/design/focus-pipeline-rework.md`, "Who owns

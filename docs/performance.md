@@ -1174,9 +1174,10 @@ no selection (`caret_moves_cost_exactly`).
 - Each foreground change costs the listener the integrity check's local
   calls and one message to Core, which publishes the hook's view with one
   lock-free store; the hook's thread is not woken.
-- A held key waiting for the key ahead's watch costs the reducer one
-  wake-up at the 100 ms bound (`Effect::BoundHeldKeyWait`), one of its
-  existing deadlines; the last of 15 auto-repeats of a key that moves
+- A held key costs the reducer at most one wake-up for its one deadline
+  (`Effect::BoundHeldKey`), at the 100 ms bound of its wait for the key
+  ahead's watch or the 150 ms bound of its read, one of its existing
+  deadlines, and none when the wait or the read ends sooner; the last of 15 auto-repeats of a key that moves
   nothing reached the text box 1.05 to 1.06 s after the release
   (`measure_held_repeat_text_box`).
 

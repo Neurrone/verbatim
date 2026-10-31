@@ -463,16 +463,26 @@ outpost to read the caret (`TextOp::ReadCaret`) and keeps the key
 handled as an `Input::CaretKey` pressed one millisecond after the read
 ended, then passed on (`Effect::PassHeldKey`) after its watch is asked
 for, so the watch reaches the outpost before the key reaches the
-application. Any other answer, or the shell's bound passing, passes the
+application. Any other answer, or the read's deadline passing, passes the
 key on with the hook's time; with no focus whose caret is read, it is
 passed at once.
+
+A held key has one deadline, which Core keeps for the key named in
+`HeldKeys::bounded`: `KEY_AHEAD_BOUND_MS` (100 ms) after the key ahead was
+passed on while the key waits for that key's watch, and
+`HELD_READ_BOUND_MS` (150 ms) after its read is asked while the read is
+in flight. `Effect::BoundHeldKey` sets the shell's one slot, or clears it
+when the wait or the read ends sooner, and `Input::HeldKeyDue` enters
+when it passes (`editing::held_key_due`): a key still waiting is read; a
+key still being read is passed on without the read, and the read is
+given up (`Effect::WithdrawText`), so its late answer finds nothing and
+is dropped.
 
 Every key input that comes while a held key waits waits behind it
 (`WaitingKey`) and is handled in order (`editing::next_held`): a held
 key's read is asked for once the watch of the key ahead has been answered
 (`HeldKeys::awaiting_watch`) or `KEY_AHEAD_BOUND_MS` (100 ms) after that
-key was passed on, which a waiting key asks the shell for once
-(`Effect::BoundHeldKeyWait`, answered by `Input::HeldKeyWaitEnded`). Other
+key was passed on, the held key's deadline. Other
 keys are handled as the input they came as (`reduce::key_input`). The
 watch of the key just passed is marked `later_key`, so its answer only
 keeps the caret current and says its selection's change. Each waiting
@@ -485,7 +495,7 @@ on is open, waits behind it too (`editing::queue_command`,
 queued: until the key ahead has had its caret read and been passed on,
 and until that key's watch is answered or 100 ms after the pass,
 whichever is first, the bound counted from the command's own press
-(`pressed_at_ms`); `HeldKeyWaitEnded` with its trace ends the wait. The
+(`pressed_at_ms`); `HeldKeyDue` with its trace ends the wait. The
 key ahead, its watch marked `later_key`, says nothing, and the command
 reads the line the key moved to, where NVDA reads the line before it
 (`docs/design/ownership.md`).

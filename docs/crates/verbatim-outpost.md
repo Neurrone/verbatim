@@ -1036,56 +1036,58 @@ the answers, within two seconds (`text`, the worker's `text_reads`).
 A caret key's watch (`AwaitCaret`) looks for the evidence NVDA's caret
 scripts wait for, without waiting:
 
-- The worker ends the watch it replaces, then checks the new one with one
-  read (`text_reads::check_watch`, `text::check_caret`): on evidence it
-  answers at once with the caret's line, the unit, and the selection's
-  changes; otherwise the watch stays open (`reducer::OpenWatch`, at most
-  one, in the follow state) and the program ends. Each later caret event, text
-  change, or text selection change of the node checks it again, unless
-  observed before the caret was last read; the answering event's own report
-  is not sent. A read that covers a waiting caret event observed after the
-  key's press counts it (`text_reads::Signal`), as the program's copy of
-  the waiting caret events says. While a check reads, the watch is taken
-  out of the follow state, and an abandonment answers its query.
-- A watch ends with `TextReply::WatchEnded`, which Core does not speak,
-  when the next key's watch replaces it, a focus on another node is
-  reported, or at `CARET_WATCH_BOUND` (10 s, `Item::Wake`, for a watch
-  that does not poll; a polling watch's wake is its next read). So a key that
-  moves nothing is silent (`docs/parity/text.md`, "TextInfo-equivalent
-  layer").
-- The console host's caret poll (`reducer::Poll`, a documented
+- The reducer ends the watch the key replaces as it dispatches the key's
+  program. The program checks the new watch with one read
+  (`text_reads::check_watch`, `text::check_caret`): on evidence it answers
+  at once with the caret's line, the unit, and the selection's changes;
+  otherwise it commits `WatchChange::Open` with whether the node is the
+  focused console host's text area, and the reducer holds the watch
+  (`reducer::Watch`, at most one, in the follow state). Each later caret
+  event, text change, or text selection change of the node checks it
+  again, unless observed before the caret was last read; the answering
+  event's own report is not sent. A read that covers a waiting caret event
+  observed after the key's press counts it (`text_reads::Signal`), as the
+  program's copy of the waiting caret events says. A check takes the watch
+  (`WatchChange::Take`, the watch `Checking` in the reducer and the
+  program's copy) and commits what it found (`WatchChange::Checked`): the
+  reducer sends the key's reply, built from the watch's timing and calls,
+  or puts the watch back as it stood.
+- The reducer decides every time of the watch, on the run's shared clock
+  (`Now::wall_us`), and the worker reads no clock for it. A watch ends
+  with `TextReply::WatchEnded`, which Core does not speak, when the next
+  key's dispatch replaces it, a focus on another node or a replaced node is
+  reported, its node is released, its holder panics, returns without a
+  result or is claimed by its walk's publication, or at
+  `CARET_WATCH_BOUND` (10 s after it opened, for a watch that does not
+  poll), acted on by the reducer with no program. A holder abandoned at
+  its deadline answers `Abandoned`. So a key that moves nothing is silent
+  (`docs/parity/text.md`, "TextInfo-equivalent layer").
+- The console host's caret poll (`reducer::Watch::Polling`, a documented
   workaround; `docs/design/key-holding.md`, "The console host's caret
   poll"): the console host raises caret events only on its cursor's blink
   timer, so in its focused text area a watch the first check leaves open
   re-reads the caret every 5 ms until a check finds evidence or 50 ms after
   the key's `pressed_at_ms`, and ends `WatchEnded` when that last re-read
   finds nothing. A watch without `pressed_at_ms` is bounded 50 ms after it
-  opened. Each re-read is a program of its own (`Item::Wake`,
-  `Worker::read_poll`), timed by the reducer: the watch's wake is its
-  poll's next read (`wake_for`), which the reducer takes, as any wake,
-  only when no program is in flight and nothing else is ready, so a
-  program that arrives during the poll waits for at most the one read in
-  flight. The read runs under `TEXT_DEADLINE`, its query the watch's, and
-  commits the answer, the watch removed by its request, the caret read and
-  the caret sent, then the terminal's read; or the watch ended at its last
-  read; or `WatchChange::Read`, the poll's next read and its calls so far,
-  which sets the next wake. A read abandoned at its deadline takes its
-  watch out and answers its query `Abandoned`; a read that panics, or
-  ends without committing, ends its watch, which answers its query, and
-  no `Failed` is sent. A program that took the watch out to check it has
-  already removed it, so neither rule fires for it. A read is work the
-  idle answer waits for, as a program that took the watch out is, since
-  after its answer it reads the terminal under the key's trace. A check
-  that takes the watch out takes its wake with it, and putting it back
-  sets the wake again, so a check abandoned or failed leaves no wake.
-  Each re-read wakes the shell for its timer, the worker, and the shell
-  for its commit and its end: wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after.
+  opened. Each re-read is a program of its own (`Work::PollRead`,
+  `Worker::poll_read`), which the reducer dispatches when its next read is
+  due, no program is in flight, no release is pending and nothing else is
+  ready, so a program that arrives during the poll waits for at most the
+  one read in flight. The read runs under `TEXT_DEADLINE` and the watch's
+  trace, holds the watch, and commits the evidence, then reads the
+  terminal, or that it found nothing, after which the reducer sets the
+  next read 5 ms on, or at the last, or ends the watch past its last read.
+  A read is work the idle answer waits for, as a program holding the watch
+  is, since after its answer it reads the terminal under the key's trace.
+  A held watch has no due time, so a check abandoned or failed leaves
+  none. Each re-read wakes the shell for its timer, the worker, and the
+  shell for its commit and its end: wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after.
   A console caret event for the watched node does not stop the poll when
   its check finds no evidence, because a blink tick left over from an
   earlier cursor set, such as `PSReadLine`'s set that moves nothing, can
-  come after the key and before its move. The poll's changes name its
-  watch by the request, not the node, so a poll of a replaced watch leaves
-  the newer one alone.
+  come after the key and before its move. A program's result names no
+  node or request: the reducer takes it only from the program in flight
+  holding the watch, so an abandoned read's late result is refused.
 - Evidence is the caret away from where it was known to be; the characters
   either side of it changed (only those, since a line can rewrap without a
   key); the text at the caret changed after Delete; the caret's line

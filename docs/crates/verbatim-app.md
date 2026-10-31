@@ -204,18 +204,19 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   character typed as Unicode (`VK_PACKET`) as Unicode again. Each
   pass-on logs how long the key was held (`verbatim::held_key`,
   `held_us`). `Effect::ForKey` is executed on the named key's trace.
-  `Effect::BoundHeldKeyWait` sets the one time at which a held key's wait
-  for the key ahead of it ends, kept beside the reducer thread's other
-  deadlines (`next_deadline`); when it passes, the thread enters
-  `Input::HeldKeyWaitEnded` with the key's trace ID.
+  `Effect::BoundHeldKey` sets or clears the held key's one deadline, for
+  its wait for the key ahead or for the read of its caret, kept beside the
+  reducer thread's other deadlines (`next_deadline`); when it passes, the
+  thread enters `Input::HeldKeyDue` with the key's trace ID.
+  `Effect::WithdrawText` ends Core's text request that Core gave up on,
+  removing it from the request table (`RequestTable::withdraw_text`), so
+  the harness's idle condition no longer counts it and its outcome is
+  dropped, and sends its outpost `CoreToOutpost::Cancel`, as a tree dump's
+  give-up does.
   `Effect::TerminalTimer` sets or clears the focused terminal's
   quiet-period timer, another of those deadlines, its due time on the
   shared clock turned into an instant; when it passes, the thread enters
   `Input::TerminalTimer` with that due time and a trace ID minted then.
-  The read of the caret
-  before the key (`TextOp::ReadCaret`) is a request with a deadline,
-  `HELD_KEY_BOUND`, 150 milliseconds: past it the request ends as
-  unanswered and Core passes the key on without it.
 - `Effect::Text` goes to the outpost of the node it names as
   `Query::Text`, recorded in the request table as `Asker::Text`; its one
   outcome comes back as `Input::TextCompleted` under the reducer's query

@@ -510,7 +510,7 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   [verbatim-input](verbatim-input.md)'s `caret_bindings` maps gestures to
   these.
 - `Input::HeldKey`, with the same fields: a caret key the hook held back.
-  `Input::HeldKeyWaitEnded { trace_id }` ends a held key's wait.
+  `Input::HeldKeyDue { trace_id }`: the held key's one deadline passed.
 - `Input::CharacterTyped { trace_id, key_seq, text, at_ms }`: text typed into the
   focused application, one character or an input method's committed
   composition, a tab as a tab and Enter as a carriage return.
@@ -532,9 +532,11 @@ exists), or `Unanswered` (no answer in time, or the read failed).
 - `Effect::PassHeldKey(trace_id)`: pass a held key on.
 - `Effect::ForKey(trace_id, effect)`: an effect executed on another key's
   trace.
-- `Effect::BoundHeldKeyWait { key, within_ms }`: send
-  `Input::HeldKeyWaitEnded` once `within_ms` have passed, a later one
-  replacing it.
+- `Effect::BoundHeldKey(Option<(TraceId, u64)>)`: send
+  `Input::HeldKeyDue` with that trace once the milliseconds given have
+  passed, a later one replacing it, `None` clearing it.
+- `Effect::WithdrawText(QueryId)`: end the text request Core gave up on
+  and withdraw it from its outpost.
 - `Effect::KeepDisplayOn(bool)`: keep the display on while say-all reads;
   every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
