@@ -61,6 +61,14 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
   - Cause: File Explorer can focus its "Working on it..." placeholder and raise no later focus; what it raises then, and what makes it constant, are not found.
   - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on this failure.
 
+## A new console host not responding at its outpost's first call
+
+Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release build, 2026-10-31, on main's code with temporary log lines).
+
+- How: setup fails with "no window titled ... opened within 30s"; the PowerShell console's window is hidden and not responding, or not shown at all. The outpost given the new `conhost.exe` starts watching it, and its worker's first call passes its 10 s deadline about 10 s later and finishes only at shutdown, 2 to 35 s after. 3 of 20 runs; in one, a crate split build's unit tests were running on the same desktop.
+- Cause: not found. Whether the outpost's first call holds the console host or only waits on it is not in the info-level logs.
+- Fix: none yet; a roadmap follow-up under M4.
+
 ## Mockapp tests under `cargo xtask ci`
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`

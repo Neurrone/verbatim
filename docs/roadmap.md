@@ -130,6 +130,11 @@ Further follow-ups from the focus work and the ownership builds:
   the window is spoken without its role; the rule is unbuilt, in
   [the remaining focus builds](design/focus-pipeline-rework-remaining.md),
   "A window past the bound that the outpost judges UIA".
+- A new console host's window can stay hidden and not responding while
+  the outpost's first call into it passes its deadline (3 of 20 measure
+  runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
+  host not responding at its outpost's first call"). Find which call it
+  is, at debug level, and whether it holds the console host.
 - After a voice change, NVDA refreshes the other settings controls from the
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
 

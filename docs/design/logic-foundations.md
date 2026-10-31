@@ -480,6 +480,15 @@ From each run, take:
 - re-reads per poll, as P50, P99 and maximum, which gives the third option's added wake-ups at three or four each;
 - the reducer's and the worker's wake-ups per key from a trace, as `docs/tooling/measuring.md` says, in one run of each workload.
 
+#### What it measured
+
+Today's code with the temporary log lines (branch `measure`, ac497e82, not merged), release build, test audio mode, on 2026-10-31: 9 of 10 runs of `measure_keys_conhost_unmoved` and 8 of 10 of `measure_keys_conhost` passed and were read; the three others failed in setup, before any measured key (`docs/flaky-tests.md`, "A new console host not responding at its outpost's first call"). The split of polls ending at the bound into keys that moved nothing and keys that moved late is not in the log lines; the unmoved workload's first three groups move nothing by construction. The wake-ups were not traced; the third option's are estimated at three or four per re-read and are measured in the build.
+
+- Ordinary console keys (`measure_keys_conhost`, 261 polls): 0.4% end at the bound; re-reads per poll P50 0, P99 2, maximum 7. 64 console update reads, the typed character's echo among them, arrived during a poll: today each ran in P50 1.0 ms, maximum 1.5 ms, through the yield; if the poll waited for nothing, each would wait for the poll's bound, P50 49 ms, maximum 50 ms.
+- Keys that move nothing (`measure_keys_conhost_unmoved`, 716 polls): 66.5% end at the bound, with re-reads per poll P50 9, maximum 10, so the third option adds about 27 to 40 wake-ups to each such key. 152 console update reads and 160 text queries arrived during a poll: today they ran within 0.5 ms and 1.2 ms; waiting for nothing, up to 50 ms and 43 ms.
+
+So the poll waiting for nothing would add about 50 ms to a typed character's echo in ordinary console typing, while each read as a program keeps today's latency and pays its wake-ups only on keys that move nothing.
+
 ### Part five: dropped
 
 Posting a program's last commit with its end is dropped. The hop has not been shown to cost. Posting the end before the program's drops would put a blocked release under the next program's deadline, and would let a settle or the idle round be answered while the worker still calls into the application. If a later wake-up measurement shows the hop costs, the end would carry the last commit and still be posted after the drops.
@@ -509,11 +518,7 @@ The commits, in order, each with its unit and replay tests, and the crate guide 
 
 Each scenario runs three times at the end of the build. `conhost_typing` is left out, since `docs/flaky-tests.md` records its failure.
 
-### Questions for Dickson
+### Decisions
 
-- The console poll. Should it keep today's yield, wait for nothing, or make each read a program?
-  - What is known: under today's yield, every caret key that moved the caret had its watch answered within 8 ms, partly by checks the yield let run. The workload had no key that moves nothing, and the cursor has been seen to move up to 54 ms after a key.
-  - What the measurement adds: how long programs that arrive during a poll would wait under the second option, how often a poll runs to its bound, and the third option's wake-ups per key.
-  - What the capture adds: whether the second option's change in order, the typed "a" read first as the Left Arrow's result, changes what is spoken.
-  - Recommended: each read a program. It removes the same states and the inbox's timer, keeps what Core receives exactly as today, and keeps the wait for any program to one read. Its cost is 3 to 4 wake-ups per re-read, paid only on console caret keys the first check finds unmoved. Choose the poll waits for nothing instead only if the measurement shows those wake-ups matter, the waits it adds are small, and the capture shows the order does not change what is heard.
-- A test's settle. Should it be answered as soon as it is reached, without the round's waits for an open watch, an open gap record or the hook's held copies, dividing batches as the round does? Recommended: yes. The caret watch tests settle with a watch open, and the round's waits would make each such settle wait 10 seconds.
+- The console poll: each read is a program of its own, timed by the reducer, which removes the poll's slot, the yield, the re-dispatch and the worker's carry, and keeps what Core receives and today's latency; its added wake-ups, on console keys that move nothing, are measured in the build (Dickson, 2026-10-31, on the figures in "What it measured").
+- A test's settle is answered as soon as it is reached, without the idle round's waits for an open caret watch, an open gap record or the hook's held copies, and divides batches as the round does (Dickson, 2026-10-31).
