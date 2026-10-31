@@ -1,0 +1,65 @@
+# Adversarial review: the crate split (`docs/design/logic-foundations.md`, "The crate split (the first build)")
+
+Reviewed on 2026-10-31 against the code at 62c340d1, read-only.
+
+Important findings: 2.
+
+## Important
+
+### The module map leaves the supervisor's hang check, and one helper of a moved window query, in `verbatim-outpost`
+
+`crates/verbatim-outpost/src/supervisor/process.rs` lines 240 to 245, and `crates/verbatim-outpost/src/outpost/window.rs` lines 53, 103, 353, 381 and 464.
+
+Defect: `application_is_hung` in the supervisor calls `top_level_windows`, `window_is_visible` and `window_is_hung` from `outpost::window`, but the design moves only `window_is_hung` to `verbatim-win32`. `top_level_windows` (and `served_by`, which it calls) and `window_is_visible` stay in `verbatim-outpost` under "the rest staying". The section "The two-way dependencies" also leaves this edge out: it lists `window_exists` as the supervisor's only use of `outpost::window`.
+
+Counterexample: commit 2 moves `supervisor/` to `verbatim-supervisor`, whose edges are `verbatim-core`, `verbatim-win32`, `verbatim-process` and `verbatim-model`. `process.rs:241` then names `top_level_windows` and `window_is_visible`, which only `verbatim-outpost` defines. The build can link only through a `verbatim-supervisor` to `verbatim-outpost` edge, which the role rule of the tier check forbids. Otherwise the builder must go beyond the brief, which `CLAUDE.md` says to stop and report.
+
+The same gap occurs inside `window.rs`. `window_belongs_to_hidden_frame`, which moves, calls `window_is_hidden_frame` (line 53), which is not listed and is also called by `main_window_of` (line 370), which stays. Moved as written, `verbatim-win32` would need `verbatim-outpost`, which would be a cycle.
+
+Fix: add `top_level_windows`, `served_by`, `window_is_visible` and `window_is_hidden_frame`, with its private `core_pid` and `parent_pid`, to the queries that move to `verbatim-win32`. Also name the helper `stem_of` (`supervisor/process.rs:259`), which both `Target::image_stem` (moving to `verbatim-process`) and `image_stem` (staying) call: it moves with `Target`, and the supervisor calls it from there.
+
+### `HeldFacts::hold` taking `now` adds a clock read per held fact and moves the first stamp, contrary to "at the same point"
+
+`crates/verbatim-outpost/src/supervisor/policy.rs:180`, and its callers `crates/verbatim-outpost/src/supervisor/owner.rs` lines 947 to 952, 1670 and 1906.
+
+Defect: today `self.first_held_at.get_or_insert_with(Instant::now)` reads the clock only while no fact is held, after the replacement `retain`. With `now` passed in, the two callers that have no `now` in scope (`route_fact`, line 1670, and `focus_reads_ended`, line 1906) must read `Instant::now()` before every `hold`. That is one read for each fact held while an outpost starts, where today there is one read for the first. The third caller (`start_outpost`) passes the `now` it read at line 947, before `check_served_by`'s local calls (`provider_process`, `IsWindow`), so `first_held_at` gets an earlier value.
+
+Counterexample: an application whose outpost is starting receives ten focus facts in a burst. Today `route_fact` causes one `Instant::now()`, for the first. As written, it causes ten, each on the relay thread and on the fact path. In `start_outpost`, the logged `first_fact_held_us` ("outpost ready, its application's first fact held until now") grows by the time `check_served_by` takes. The values differ by microseconds, but the claim that nothing on the fact path changes is false, and `REVIEW.md` counts an unstated call added on the event path as a failure.
+
+Fix: keep the read lazy. `hold(fact, now: impl FnOnce() -> Instant)` keeps today's reads exactly, and the closure is the owner's, so the core function still reads no clock. Alternatively, the owner reads the clock only when `first_held_at()` is `None`. `Received` is unaffected: `now`, `elapsed_us` and `stamp` keep their bodies and their order of reads, two clocks in `now` with the monotonic one first, as free functions in `verbatim-supervisor`.
+
+## Checked and found sound
+
+- The seal. Every lifecycle message the typestates make today (`generation.rs` lines 291, 481, 495 and 503) reaches the app only through the owner's `apply` (`owner.rs:985`), in order. With `Lifecycle`, the same loop seals each notice in the same order, and only the owner calls the transitions. Any stale-generation check (`ready` and `forwarding_target` comparing `OutpostId`s) stays inside the typestates, unchanged. No sequence delivers a notice for a dead generation, or one without a seal, that the old code refused. A `Lifecycle` that `verbatim-app` made from `verbatim-core` is data that never becomes an `OutpostMessage`. `OutpostMessage::Event`, `MenuOrSwitchEnded` and `ForegroundWindow` have no seal today either.
+- Two executables. Core tells its children apart by the `Role` it launched each with (`owner.rs` lines 2259 to 2276), never by image. The listener's `core_pid` (its parent) and its trace namespace are unchanged. A missing `verbatim-listener.exe` is retried at each heartbeat (`owner.rs` lines 1466 to 1469 and 1992), as a failed listener launch is today. The stand-in tests tell roles apart by `--listener` and never run the real binaries. The e2e, VM, perf, trace and CI lists the design names are all the places that name the image, apart from the dump name below.
+- Log filters. The moved shared modules log nothing at debug. `EnvFilter` matches a directive as a prefix of the target, so `verbatim_outpost=debug` already covers `verbatim_outpost_logic`, and `verbatim_listener=debug` covers `verbatim_listener_logic`.
+- Provenance. The only NVDA descriptions in code moving to `verbatim-core` are the two the design names (`policy.rs` lines 161 and 298). `generation.rs`, `EndReason` and `Received` name nothing of NVDA's. Both cited parity headings exist (`docs/parity/backends.md:272`, `docs/parity/focus-events.md:291`).
+- `cfg(test)` items. The reducer's test-only accessors (`Reducer::facts` and `Intake::marks`) are used only inside the reducer's own tests, so moving the reducer to its own crate hides nothing the outpost's tests use.
+
+## Nits
+
+- `crates/verbatim-outpost/src/focus_read.rs:1400`: `FocusReader`, which stays in `verbatim-listener`, uses `verbatim_core::SNAP_RESULTS_ACTIVITY`, but the design's edge list for `verbatim-listener` has no `verbatim-core`. The edge is allowed, but the design claims to list every edge.
+- Development dependencies the edge list leaves out: `verbatim-win32` needs `verbatim-test-console`, for `provider.rs`'s tests and `window.rs`'s console tests (window.rs test lines 86 and 145). `mockapp` needs `verbatim-win32` (`tests/arbitration.rs` lines 26 and 177 call `WindowClasses::of`, which becomes `window_classes`) and `verbatim-listener-logic`, unless `verbatim-listener` re-exports it. Third-party dependencies that move: `crossbeam-channel` to `verbatim-ia2` (`event_thread.rs`), and `tracing-subscriber` to `verbatim-process` (`init_tracing`), which the workspace-hack note does not list. The root `Cargo.toml` needs `[workspace.dependencies]` lines for the seven new crates.
+- The tier check does not class `workspace-hack`, and xtask. Every platform-neutral crate depends on `workspace-hack` normally. Classed as anything but platform-neutral, the rule "a platform-neutral crate reaches only platform-neutral workspace crates" fails all eight neutral crates. The design should class it as platform-neutral, its `windows-sys` covered by the existing exception.
+- `crates/verbatim-e2e/src/scenario.rs:2132` builds a crash's dump name from `OUTPOST_IMAGE`. Widening only the image filter, as the design says, would look for `verbatim-outpost.exe.<pid>.dmp` for a listener crash. The name should come from `exit.image`.
+- `xtask/src/ownership.rs` lines 59 to 71: the read scheduler's allow-list names `crate::focus_read` and `crate::protocol`, and needs whatever path the vocabulary takes in `verbatim-listener-logic`. The design names only the reducer's allow-list.
+- Making 339 `pub(in crate::outpost)` and `pub(crate)` items of the reducer public, and the `pub(super)` items of `policy.rs` and `generation.rs`, exposes them to `missing_docs` (a rough count finds about 50 with no doc comment above them) and to the exported-item lints of Clippy's pedantic group (`must_use_candidate`, `missing_panics_doc`), all denied in `cargo xtask ci`. The design does not mention this work. `pub(crate)` items such as `gap_record::BOUND_US` and `follow::Route` become public too, not only the `pub(in crate::outpost)` ones.
+- Commits 1 to 3 each fail `cargo xtask docs`, a step of `cargo xtask ci`. Commit 1 moves files that documents name in backticks (`crates/verbatim-uia/src/provider.rs` in `docs/design/focus-backend-ownership-study.md` and `docs/design/outpost-focused-element-study.md`, among others), and the documents change only in commit 4. Only the last commit is pushed, so GitHub never sees the failure, but a bisect does. The documents list also leaves out `docs/design/logic-foundations.md` itself, which names about forty paths that move.
+- Measurements: `verbatim-trace-waits` adds wake-ups and processor time up by image and thread name, never by pid (`crates/verbatim-trace-waits/src/main.rs` lines 880 to 905). In the before run, the listener's threads named `verbatim-event` and its I/O threads therefore merge with the outposts' threads of the same names, so "compared by process" cannot be read from the commands listed. Compare instead the before figure for `verbatim-outpost.exe` with the after sum of both images, or split by pid. A second before run with the new harness is refused too, because `xtask/src/perf.rs`'s `STAGED` will require `verbatim-listener.exe`.
+- Building gets more serial. `verbatim-uia` and `verbatim-ia2` reach `verbatim-core` (16,000 lines) through `verbatim-win32` and `verbatim-reader-rules`, for one struct, `ForegroundRelation`, so they can no longer compile alongside it. The design's measurement of `cargo xtask ci`'s time will show the effect. Moving `ForegroundRelation` into `verbatim-reader-rules`, or into the model, would avoid it.
+- The policy's documentation links (`super::MISSED_PONG_THRESHOLD`, `BACKOFF_FIRST`, `STAYED_UP` and others) and `FocusEvent`'s links to `FocusReader::check_fact` stop resolving once the code is split across crates. Only `cargo doc` reports that, and `ci` does not run it.
+
+## Facts the split puts in two places
+
+- `MOVED_ON_GRACE`: the reducer's copy (`reducer/mod.rs:81`) and `verbatim-reader-rules`' copy, both 500 ms. It is safe while they are equal, and the design records joining them as a follow-up. `verbatim-outpost-logic` may depend on `verbatim-reader-rules` (both are in the logic tier), so the two could be joined in this build.
+- `CONSOLE_WINDOW_CLASS`: the copy in `verbatim-reader-rules`, `provider.rs`'s private copy (`verbatim-uia/src/provider.rs:23`) moving to `verbatim-win32`, which depends on `verbatim-reader-rules` and could use that one, and the literal in `arbitration.rs:460`. It is safe, since the value is Windows' class name.
+- `NEAREST_FAILED_FAST_BOUND` (`focus_read.rs:750`, moving to `verbatim-listener-logic`) and `gap_record::BOUND_US` (moving to `verbatim-outpost-logic`). A comment says they are equal, and both are one second. After the split they sit in two role crates that may not depend on each other, so no test inside either can tie them. Only a third crate can, such as `verbatim-reader-rules` holding the bound. It is safe today, but nothing enforces it.
+- The window queries: `parent_window` exists in `provider.rs`, in `verbatim-ia2` (`parent`) and in the outpost's `window.rs`, and a class name reader exists as `window_class_name` (arbitration) and `class_name` (`verbatim-ia2`). The design merges `verbatim-ia2`'s and the outpost's, but `provider.rs`'s copy and the two class name readers all land in `verbatim-win32`. The duplicates behave identically, so this is safe, but they could be joined.
+- `stem_of`: shared by `Target` (moving to `verbatim-process`) and the log naming (staying in the supervisor). It should be moved, not copied.
+- `verbatim-listener.exe`: named in the supervisor's `Executables` and in eight runner files, the same pattern as `verbatim-outpost.exe` today. It is safe, since the staging tests and `require_artifact` fail on a missing file.
+- `--listener`: built in `verbatim-process`'s arguments and matched as a literal by the six stand-in tests. It is safe while it is kept, as the design says.
+- `Received`: its data lives in `verbatim-core` and its clock functions in `verbatim-supervisor`. It is safe, since one owner makes and reads it.
+
+## Pre-existing
+
+- `crates/verbatim-model/src/protocol/mod.rs` lines 484 to 499, in a platform-neutral crate, cite NVDA's source files (`eventRecord.h`, `orderedWinEventLimiter.py` 63) in `DeliveredFact::key`'s comment, against the provenance rule. This is not introduced by the split, but it is the same kind of comment the split's review checks.

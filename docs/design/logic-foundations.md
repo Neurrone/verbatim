@@ -4,7 +4,7 @@ This document holds the designs of M4.5's builds (`docs/roadmap.md`, "M4.5 — L
 
 ## The crate split (the first build)
 
-Status: proposed on 2026-10-31, before its adversarial review.
+Status: proposed on 2026-10-31, revised after its adversarial review (`experiments/logic-tests-study/crate-split-design-review.md`).
 
 The build splits `crates/verbatim-outpost`, which holds three programs (the outpost, the focus listener and Core's supervisor), into crates by role, makes the listener an executable of its own, and replaces the platform-neutral dependency check with a check of the crate tiers ([logic tests](logic-tests.md), "Crates by role"). It moves code and changes no behaviour: no thread, message, byte on a pipe or wake-up changes. Only the listener's image name and the log targets of the moved modules change. The reducer and the read scheduler move as they are; the program bookkeeping, the failure paths and determinism are later builds of M4.5.
 
@@ -12,9 +12,14 @@ The build splits `crates/verbatim-outpost`, which holds three programs (the outp
 
 The logic tier, in the GPL tier and with no Windows dependency:
 
-- `verbatim-outpost-logic`: the outpost's reducer, today's `crates/verbatim-outpost/src/outpost/reducer/` whole, as the crate's root. It depends on `verbatim-model` and on `verbatim-core` for `focus_rules`. Its `pub(in crate::outpost)` items become `pub`.
-- `verbatim-listener-logic`: the read scheduler and the menu end's grace (`crates/verbatim-outpost/src/read_schedule.rs`), the foreground watch (`crates/verbatim-outpost/src/foreground.rs`), and the pure vocabulary of `crates/verbatim-outpost/src/focus_read.rs` the scheduler is written in: `FocusEvent`, `Judged`, `Meta`, `Arrival`, `arrival_of`, `gap_answer` with its `VERDICTS` and `GAVE_UP` lists, every drop reason (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`, `NOT_FOCUSED`, `MSAA_CLASS`, the nearest window's three and the private ones the lists name), `nearest_timeout_reason` and `ABANDONED_LIMIT`. It depends on `verbatim-model` and `tracing`, which the scheduler logs through today.
-- `verbatim-reader-rules`: what both readers apply before reading. NVDA's class verdict and its tables from `crates/verbatim-outpost/src/arbitration.rs` (`ClassVerdict`, `class_verdict`, `WindowClasses` with `new`, and the good, bad and shell class lists); the class name normalization from `crates/verbatim-ia2/src/class.rs` (`normalize_class_name` and NVDA's class map); the acceptance test from `crates/verbatim-outpost/src/outpost/acceptance.rs` (`EventName`, `RequestedEvents`, `WindowQueries`, `accepts_event`, `foreground_relation`); `CONSOLE_WINDOW_CLASS` from `outpost/text_reads.rs`; and `MOVED_ON_GRACE` from `outpost/window.rs`. It depends on `verbatim-core` for `ForegroundRelation`.
+- `verbatim-outpost-logic`: the outpost's reducer, today's `crates/verbatim-outpost/src/outpost/reducer/` whole, as the crate's root. It depends on `verbatim-model`, on `verbatim-core` for `focus_rules`, and on `verbatim-reader-rules` for the two values it shares with the listener (below). Its `pub(in crate::outpost)` and `pub(crate)` items, such as `gap_record::BOUND_US` and `follow::Route`, become `pub`.
+- `verbatim-listener-logic`: the read scheduler and the menu end's grace (`crates/verbatim-outpost/src/read_schedule.rs`), the foreground watch (`crates/verbatim-outpost/src/foreground.rs`), and the pure vocabulary of `crates/verbatim-outpost/src/focus_read.rs` the scheduler is written in: `FocusEvent`, `Judged`, `Meta`, `Arrival`, `arrival_of`, `gap_answer` with its `VERDICTS` and `GAVE_UP` lists, every drop reason (`NOT_IN_TIME`, `MOVED_ON`, `WAITED_TOO_LONG`, `REPLACED`, `NO_WINDOW`, `NOT_FOCUSED`, `MSAA_CLASS`, the nearest window's three and the private ones the lists name), `nearest_timeout_reason`, `NEAREST_FAILED_FAST_BOUND` and `ABANDONED_LIMIT`. It depends on `verbatim-model`, on `verbatim-reader-rules` for the UIA focus wait, and on `tracing`, which the scheduler logs through today.
+- `verbatim-reader-rules`: what both readers apply before reading. NVDA's class verdict and its tables from `crates/verbatim-outpost/src/arbitration.rs` (`ClassVerdict`, `class_verdict`, `WindowClasses` with `new`, and the good, bad and shell class lists); the class name normalization from `crates/verbatim-ia2/src/class.rs` (`normalize_class_name` and NVDA's class map); the acceptance test from `crates/verbatim-outpost/src/outpost/acceptance.rs` (`EventName`, `RequestedEvents`, `WindowQueries`, `accepts_event`, `foreground_relation`); `CONSOLE_WINDOW_CLASS` from `outpost/text_reads.rs`; `MOVED_ON_GRACE` from `outpost/window.rs`; and a new constant for the UIA focus wait, one second. It depends on `verbatim-core` for `ForegroundRelation`.
+
+Two facts the split would otherwise leave in two role crates are joined in `verbatim-reader-rules`, because each is one rule both readers apply and no test could tie two copies in crates that may not depend on each other:
+
+- The moved-on grace. The reducer's own `MOVED_ON_GRACE` (`reducer/mod.rs`, 500 ms) is the same NVDA rule as `window.rs`'s, how long a call into a window is waited for before the user is taken to have moved on, so the reducer uses `verbatim-reader-rules`' constant and its copy goes.
+- The UIA focus wait. The gap record's bound (`gap_record::BOUND_US`, one second), how long an outpost waits for a UIA focus, and the listener's `NEAREST_FAILED_FAST_BOUND`, under which a nearest window's lookup that timed out counts as failing fast, are equal by definition: the latter's comment says a lookup that took that long has held its application's events as long as the record waits. Both are derived from the one constant.
 
 The supervisor's pure decisions go to a new `supervisor` module of `verbatim-core`, a platform-neutral crate: `crates/verbatim-outpost/src/supervisor/policy.rs` whole, `supervisor/generation.rs` whole, `EndReason`, and the data of `writer::Received`.
 
@@ -41,29 +46,31 @@ Each module of `crates/verbatim-outpost/src`:
 - `foreground.rs`, `read_schedule.rs`: to `verbatim-listener-logic`.
 - `integrity.rs`: to `verbatim-win32`; the listener and Core read it.
 - `listener.rs`: to `verbatim-listener`, but `HOOKS_IN_ARG`, `parse_hooks_in` and `format_hooks_in` to the launch arguments in `verbatim-process`.
-- `outpost/`: stays in `verbatim-outpost`, except `reducer/` to `verbatim-outpost-logic`; `alarm.rs` to `verbatim-process`; `acceptance.rs` to `verbatim-reader-rules`, but `SystemWindows` to `verbatim-win32` and `EventName::of_win_event` to a function in the outpost's worker, its one caller, since `WinEventKind` is `verbatim-ia2`'s; `OutpostOptions` from `mod.rs` to the launch arguments; the reader aliases `ForegroundReader` and `WindowReadabilityReader` with `window_unreadable` to `verbatim-win32`, since both readers take them; and from `window.rs` the queries another role makes to `verbatim-win32` (`top_level_of`, `window_belongs_to_hidden_frame`, `window_is_hung`, `front_is_another_thread_of_its_application`, `foreground_window_handle`, `focus_window`, `window_owner`, `window_exists`, `event_window_unreadable`), the rest staying.
-- `supervisor/`: to `verbatim-supervisor`, except `policy.rs` and `generation.rs` to `verbatim-core`; `ignored.rs` and `process.rs`'s `Target` to `verbatim-process`, which the listener, the outposts and the supervisor all hold processes through; and `IGNORE_PIDS_ARG` to the launch arguments.
+- `outpost/`: stays in `verbatim-outpost`, except `reducer/` to `verbatim-outpost-logic`; `alarm.rs` to `verbatim-process`; `acceptance.rs` to `verbatim-reader-rules`, but `SystemWindows` to `verbatim-win32` and `EventName::of_win_event` to a function in the outpost's worker, its one caller, since `WinEventKind` is `verbatim-ia2`'s; `OutpostOptions` from `mod.rs` to the launch arguments; the reader aliases `ForegroundReader` and `WindowReadabilityReader` with `window_unreadable` to `verbatim-win32`, since both readers take them; and from `window.rs` the queries another role makes to `verbatim-win32` (`top_level_of`, `window_belongs_to_hidden_frame` with the `window_is_hidden_frame`, `core_pid` and `parent_pid` it calls, `window_is_hung`, `front_is_another_thread_of_its_application`, `foreground_window_handle`, `focus_window`, `window_owner`, `window_exists`, `event_window_unreadable`, and for the supervisor's hang check `top_level_windows`, `window_is_visible` and `served_by`, which joins `provider.rs`'s function of the same name it wraps), the rest staying.
+- `supervisor/`: to `verbatim-supervisor`, except `policy.rs` and `generation.rs` to `verbatim-core`; `ignored.rs` and `process.rs`'s `Target`, with the `stem_of` that both `Target` and the log naming's `image_stem` call, to `verbatim-process`, which the listener, the outposts and the supervisor all hold processes through; and `IGNORE_PIDS_ARG` to the launch arguments. `application_is_hung` stays in the supervisor and calls `verbatim-win32`.
 - `tests/`: `target_exit.rs` stays, since it runs the real outpost binary; the other six drive a `Supervisor` against stand-ins of themselves and go to `verbatim-supervisor`, with the `lifecycle-for-tests` feature.
 
-From the other crates: `crates/verbatim-ia2/src/window.rs`'s general functions (`exists`, `is_visible`, `is_enabled`, `is_child`, `desktop`, `class_name`, `thread_of`, `style`, `rect`, `parent`, `top_child`, `related`, `is_multiline_edit`) go to `verbatim-win32`, one definition where the outpost's `window.rs` has its own copy; the list view and tree view messages stay. `normalized_class_of` stays in `verbatim-ia2` as one line over both crates. `crates/verbatim-uia/src/provider.rs` goes to `verbatim-win32`.
+From the other crates: `crates/verbatim-ia2/src/window.rs`'s general functions (`exists`, `is_visible`, `is_enabled`, `is_child`, `desktop`, `class_name`, `thread_of`, `style`, `rect`, `parent`, `top_child`, `related`, `is_multiline_edit`) go to `verbatim-win32`, one definition where the outpost's `window.rs` has its own copy; the list view and tree view messages stay. `normalized_class_of` stays in `verbatim-ia2` as one line over both crates. `crates/verbatim-uia/src/provider.rs` goes to `verbatim-win32`, its private console class name replaced by `verbatim-reader-rules`' constant.
 
 ### Every dependency edge
 
 The workspace crates each depends on, after the build:
 
-- `verbatim-outpost-logic`: `verbatim-model`, `verbatim-core`.
-- `verbatim-listener-logic`: `verbatim-model`.
+- `verbatim-outpost-logic`: `verbatim-model`, `verbatim-core`, `verbatim-reader-rules`.
+- `verbatim-listener-logic`: `verbatim-model`, `verbatim-reader-rules`.
 - `verbatim-reader-rules`: `verbatim-core`.
-- `verbatim-win32`: `verbatim-model`, `verbatim-reader-rules`.
+- `verbatim-win32`: `verbatim-model`, `verbatim-reader-rules`; for its tests, `verbatim-test-console`, which `provider.rs`'s and `window.rs`'s console tests use.
 - `verbatim-process`: `verbatim-model`.
 - `verbatim-ia2`: `verbatim-model`, `verbatim-text`, `verbatim-win32`, `verbatim-reader-rules`, `verbatim-process`.
 - `verbatim-uia`: `verbatim-model`, `verbatim-text`, `verbatim-win32`.
 - `verbatim-uia-rops`: unchanged, `verbatim-model` and `verbatim-uia`.
 - `verbatim-outpost`: `verbatim-outpost-logic`, `verbatim-reader-rules`, `verbatim-win32`, `verbatim-process`, `verbatim-ia2`, `verbatim-uia`, `verbatim-uia-rops`, `verbatim-core`, `verbatim-model`, `verbatim-text`.
-- `verbatim-listener`: `verbatim-listener-logic`, `verbatim-reader-rules`, `verbatim-win32`, `verbatim-process`, `verbatim-ia2`, `verbatim-uia`, `verbatim-uia-rops`, `verbatim-model`.
+- `verbatim-listener`: `verbatim-listener-logic`, `verbatim-reader-rules`, `verbatim-win32`, `verbatim-process`, `verbatim-ia2`, `verbatim-uia`, `verbatim-uia-rops`, `verbatim-model`, and `verbatim-core`, for the `SNAP_RESULTS_ACTIVITY` that `FocusReader` reads.
 - `verbatim-supervisor`: `verbatim-core`, `verbatim-win32`, `verbatim-process`, `verbatim-model`.
 - `verbatim-app`: `verbatim-supervisor` in place of `verbatim-outpost`, `verbatim-win32` for `provider_process`, `console_host_of` and `own_integrity`, and `verbatim-process` as today, now also for `now_us`.
-- `mockapp`, a test tool: `verbatim-outpost` and `verbatim-listener`, whose readers its tests drive.
+- `mockapp`, a test tool: `verbatim-outpost` and `verbatim-listener`, whose readers its tests drive, `verbatim-listener-logic` for `Judged` and the drop reasons its tests compare, and `verbatim-win32` for `window_classes`, which `tests/arbitration.rs` calls.
+
+Third-party dependencies that move with their code: `crossbeam-channel` to `verbatim-ia2` with the `WinEvent` thread; `serde`, `serde_json`, `simdutf8` and `tracing-subscriber` to `verbatim-process` with the message layer and `init_tracing`. The root `Cargo.toml` gains a `[workspace.dependencies]` line for each of the six new crates.
 
 So no edge joins `verbatim-outpost`, `verbatim-listener` and `verbatim-supervisor`, or the two logic crates of different roles; no logic crate reaches a Windows crate or the Windows bindings; and no platform-neutral crate gains an edge, `verbatim-core`'s new module using only the model and itself.
 
@@ -71,16 +78,18 @@ So no edge joins `verbatim-outpost`, `verbatim-listener` and `verbatim-superviso
 
 - The listener and the outpost. `focus_read.rs` uses `outpost::acceptance`, `outpost::alarm`, `outpost::window` and `outpost::text_reads::CONSOLE_WINDOW_CLASS`, while the outpost's `acceptance.rs` and `bound.rs` name `focus_read` only in comments. Broken by moving the acceptance test and the console class to `verbatim-reader-rules`, the alarm to `verbatim-process` and the shared window queries to `verbatim-win32`.
 - The listener and the supervisor. `listener.rs` uses `supervisor::IgnoredProcesses`; `supervisor/owner.rs` and `supervisor/process.rs` use `listener::format_hooks_in` and `HOOKS_IN_ARG`. Broken by moving both to `verbatim-process`.
-- The outpost and the supervisor. `outpost/mod.rs` uses `supervisor::Target`, `IgnoredProcesses` and `IGNORE_PIDS_ENV`; `supervisor/owner.rs` uses `outpost::window::window_exists`, and `supervisor/process.rs` `crate::OutpostOptions`. Broken by moving `Target`, the ignored processes and `OutpostOptions` to `verbatim-process`, and `window_exists` to `verbatim-win32`.
+- The outpost and the supervisor. `outpost/mod.rs` uses `supervisor::Target`, `IgnoredProcesses` and `IGNORE_PIDS_ENV`; `supervisor/owner.rs` uses `outpost::window::window_exists`, `supervisor/process.rs`'s `application_is_hung` uses `outpost::window`'s `top_level_windows`, `window_is_visible` and `window_is_hung`, and `supervisor/process.rs` uses `crate::OutpostOptions`. Broken by moving `Target` with `stem_of`, the ignored processes and `OutpostOptions` to `verbatim-process`, and the four window queries, with `served_by` under `top_level_windows`, to `verbatim-win32`.
 - The arbitration and the outpost. `arbitration.rs` re-exports the reducer's `Verdicts` and uses `outpost::window`; the outpost uses the `Arbitrator`. Broken by the split of `arbitration.rs` above: its outpost part stays in the outpost's crate and depends on `verbatim-outpost-logic` one way.
 - The read scheduler and the focus reads. `read_schedule.rs` uses `focus_read`'s types and constants, and `focus_read.rs` runs the scheduler. Broken by moving those types and constants into `verbatim-listener-logic` beside the scheduler.
 - The protocol. Every role uses it, and `fact_of_win_event` in it uses `verbatim-ia2`. Broken by the `message` module of `verbatim-process` and `fact_of_win_event` in `verbatim-ia2`.
 
 ### What is pure today, and the trait for window queries
 
-Pure today, and moved whole: the reducer, which the ownership scan (`xtask/src/ownership.rs`) holds to the pure rule; the read scheduler and the grace, held by the same scan; the foreground watch, which uses only its own types; the class verdict, a function of class names; and the supervisor's policy and generation, apart from two clock reads. `HeldFacts::hold` reads `Instant::now()`, so it takes `now` from its caller, the owner, at the same point on the same thread; `Received`'s `now`, `elapsed_us` and `stamp` read clocks, so `Received` moves as a plain value and those three become functions in `verbatim-supervisor`.
+Pure today, and moved whole: the reducer, which the ownership scan (`xtask/src/ownership.rs`) holds to the pure rule; the read scheduler and the grace, held by the same scan; the foreground watch, which uses only its own types; the class verdict, a function of class names; and the supervisor's policy and generation, apart from two clock reads. `HeldFacts::hold` reads `Instant::now()` only while no fact is held, so it takes a lazy clock, `now: impl FnOnce() -> Instant`, which it calls at that same point; its callers in the owner pass `Instant::now`, so the reads are today's exactly, one for an application's first held fact, and the core function reads no clock of its own. `Received`'s `now`, `elapsed_us` and `stamp` read clocks, so `Received` moves as a plain value and those three become functions in `verbatim-supervisor` with their bodies and their order of reads unchanged.
 
 The acceptance test's window queries come through the trait `WindowQueries`, which exists today in `outpost/acceptance.rs`: the window's class, process, parent, root and root owner, `IsChild`, the topmost style, the desktop window, the active window and the foreground window. It becomes public in `verbatim-reader-rules`; `SystemWindows` in `verbatim-win32` implements it with local calls, and the tests' fake desk moves with the decision.
+
+Items made public by the move need what `CLAUDE.md` asks of a public API. The reducer's `pub(in crate::outpost)` and `pub(crate)` items and fields, the `pub(super)` items of `policy.rs` and `generation.rs`, and the scheduler's and acceptance test's `pub(crate)` items number about 55 with no doc comment above them today, by a count of the items and fields in those files; the builder writes each one's comment, and meets Clippy's pedantic lints for exported items (`must_use_candidate`, `missing_panics_doc` and the rest), which `cargo xtask ci` denies. Intra-doc links that the split puts across crates, such as the policy's links to the supervisor's constants and `FocusEvent`'s to `FocusReader::check_fact`, are rewritten as plain text or as links into the crate that now holds the item; `cargo xtask ci` does not run `cargo doc`, so the builder runs it once.
 
 Left in the Windows crates although parts are pure: the `Arbitrator`'s keeping of verdicts, which holds a probe closure and `verbatim-ia2`'s `WindowCache`; the listener's checks before a read, until the rework's third build makes them pure functions; the transport's merges; and the supervisor's owner.
 
@@ -110,9 +119,9 @@ So no thread is added or removed in any process, the messages are the same bytes
 
 What names the executables, and changes with them:
 
-- `crates/verbatim-e2e/src/scenario.rs`: the build list, `STAGED_BINARIES` and its tests, `VERBATIM_IMAGES` for crash dumps, and `OUTPOST_IMAGE`, which `outposts_shut_down_cleanly` and `outpost_crashes` compare each exit with and which today covers the listener too, so both take both images. `DEFAULT_RUST_LOG` adds `verbatim_listener=debug`, `verbatim_listener_logic=debug` and `verbatim_supervisor=debug`, and any other crate that receives a module logging at debug, so the logs keep their lines.
+- `crates/verbatim-e2e/src/scenario.rs`: the build list, `STAGED_BINARIES` and its tests, `VERBATIM_IMAGES` for crash dumps, and `OUTPOST_IMAGE`, which `outposts_shut_down_cleanly` and `outpost_crashes` compare each exit with and which today covers the listener too, so both take both images, and a crash's dump name is built from the exit's own image (`outpost_crashes`, today `format!("{OUTPOST_IMAGE}.{}.dmp", ...)`), so a listener's crash finds `verbatim-listener.exe.<pid>.dmp`. `DEFAULT_RUST_LOG` adds `verbatim_listener=debug` and `verbatim_supervisor=debug`, so the logs keep their lines; a directive matches as a prefix of the target, so these cover the logic crates too, and the shared modules moved elsewhere log nothing at debug.
 - `crates/verbatim-agent`: nothing; it reports any exiting process's image by name.
-- `xtask/src/vm/deploy.rs`: the build list, `BuiltArtifacts`, the copied artifacts and the `Stop-Process` names; `xtask/src/vm/mod.rs`'s help; `xtask/src/perf.rs`'s `STAGED` and its tests; `xtask/src/ownership.rs`'s two paths and the reducer's allow-list, whose `crate::outpost::reducer` becomes `crate`. The golden image holds no Verbatim binary, since `cargo xtask vm deploy` copies them, so it is not rebuilt.
+- `xtask/src/vm/deploy.rs`: the build list, `BuiltArtifacts`, the copied artifacts and the `Stop-Process` names; `xtask/src/vm/mod.rs`'s help; `xtask/src/perf.rs`'s `STAGED` and its tests; `xtask/src/ownership.rs`'s two paths and both allow-lists: the reducer's `crate::outpost::reducer` becomes `crate` and it gains `verbatim_reader_rules`; the read scheduler's `crate::focus_read` and `crate::protocol` become the paths in `verbatim-listener-logic` that the scheduler's vocabulary takes, and it gains `verbatim_reader_rules`. The golden image holds no Verbatim binary, since `cargo xtask vm deploy` copies them, so it is not rebuilt.
 - `crates/verbatim-trace-waits/src/main.rs`: its default processes add `verbatim-listener.exe`, or a trace would leave the listener out.
 - `.cargo/config.toml`'s `verbatim-build` alias and `.github/workflows/ci.yml`'s build step.
 - `vm/scripts/Enable-VerbatimCrashDumps.ps1`: `verbatim-listener.exe` with the outposts' full dump flags. It needs elevation, so Dickson runs it once on this machine.
@@ -123,7 +132,7 @@ Today `check_platform_neutral_deps` in `xtask/src/main.rs` runs `cargo tree -e n
 
 It is replaced by a module of xtask, `xtask/src/tiers.rs` (planned), the first step of `ci` as today, which reads `cargo metadata` once with no target filter, over normal and build edges, dev edges left out, so an edge gated on `cfg(windows)` is read on every host:
 
-- Every workspace member is classed in one list: platform-neutral, logic, Windows, or tool. A member in no class fails, so a new crate is classed when it is added. Reason: the hole was a crate the check did not know.
+- Every workspace member is classed in one list: platform-neutral, logic, Windows, or tool. A member in no class fails, so a new crate is classed when it is added. Reason: the hole was a crate the check did not know. `workspace-hack` is classed platform-neutral, since every crate depends on it, its `windows-sys` covered by the exception below; `xtask` is a tool.
 - A platform-neutral crate reaches only platform-neutral workspace crates. Reason: it may depend on no GPL-tier crate, logic or Windows.
 - A logic crate reaches only platform-neutral and logic workspace crates.
 - Neither reaches `windows` or `windows-core` by any path, nor `windows-sys` or `winapi` from a workspace crate other than `workspace-hack`. Reason: third-party crates with target-gated bindings are cross-platform code, as today.
@@ -147,13 +156,14 @@ Its unit tests are one per rule, over a small graph written in the test; the err
 - `docs/architecture.md`: the process list adds the focus listener's process, decision D14's "Where the rules run" names `verbatim-reader-rules` with an amended-on line, and the crate list changes.
 - `docs/tooling/`: `e2e.md`, `inspect.md`, `measuring.md`, `troubleshooting.md` and `vm.md` for the build lists, the staged files and the images; `setup.md` for the check.
 - Every other document that names a moved path: `cargo xtask docs` finds the backticked paths, and a search for `verbatim-outpost` the rest, 47 Markdown files outside `experiments/` today.
-- The workspace-hack crate: `cargo hakari generate` and `cargo hakari manage-deps` after the new crates exist, since each needs its `workspace-hack` line and `verbatim-process` gains `serde`, `serde_json` and `simdutf8`; `cargo xtask ci` checks both.
+- This document: this section names about forty paths that move. Each commit updates the paths it moves; the last code commit reduces the section to its built form, the problem, the choices and their reasons, pointing to the crate guides for the mechanism, as `CLAUDE.md` asks of a built design.
+- The workspace-hack crate: `cargo hakari generate` and `cargo hakari manage-deps` after the new crates exist, since each needs its `workspace-hack` line and the third-party dependencies listed above move between crates; `cargo xtask ci` checks both.
 
 ### Measurements before and after
 
-Every figure names its mode. "Before" is the commit before the build's first, from a clean worktree named with `--verbatim-exe`; "after" is the build's last code commit.
+Every figure names its mode. "Before" is the commit before the build's first, run from a clean worktree of it with that worktree's own xtask, since the new harness refuses an old build (`xtask/src/perf.rs`'s `STAGED` will require `verbatim-listener.exe`); "after" is the build's last code commit.
 
-- Wake-ups and processor time: `cargo xtask trace scenario measure_keys_text_box --after 15 --seconds 8` and `cargo xtask trace scenario conhost_flood --after 8 --seconds 6`, debug build, `VERBATIM_E2E_RUST_LOG=info`, and idle Verbatim by hand, as `docs/tooling/measuring.md` gives them. Compared by process: before, the listener is the `verbatim-outpost.exe` whose pid verbatim.exe's `launched` line with `role=Listener` names. Expected equal within the spread of two runs of one build.
+- Wake-ups and processor time: `cargo xtask trace scenario measure_keys_text_box --after 15 --seconds 8` and `cargo xtask trace scenario conhost_flood --after 8 --seconds 6`, debug build, `VERBATIM_E2E_RUST_LOG=info`, and idle Verbatim by hand, as `docs/tooling/measuring.md` gives them. `by-name.txt` totals by image and thread name, so before the split the listener's `verbatim-event` and I/O threads merge there with the outposts' of the same names. The listener's before figure is therefore summed from `waits.txt`, whose rows name each thread's process id: the rows of the `verbatim-outpost.exe` whose pid verbatim.exe's `launched` line with `role=Listener` names. After, it is `verbatim-listener.exe`'s total. Compared: the listener's figure, the outposts' (before, the image's total less the listener's rows), and all children's total. Expected equal within the spread of two runs of one build.
 - Each child's memory: idle Verbatim started directly, read 12 seconds in, with Core's own outpost and both spares ready: each child's private bytes and working set (`Get-Process`, with the command line from `Win32_Process` to find the listener before), and their total, in a debug and a release build, with each executable's size. Expected: private bytes unchanged; the total working set may grow by the listener's code pages, no longer shared with the outposts'.
 - The listener's start: from `launched` to "focus listener ready" in verbatim.exe's log, over the full suite's runs.
 - `cargo xtask ci`'s time: wall time on this machine, twice each before and after: a rerun with nothing changed, and a run after a one-line change to `crates/verbatim-model/src/lib.rs`, which rebuilds every dependent.
@@ -162,29 +172,29 @@ Every figure names its mode. "Before" is the commit before the build's first, fr
 
 `outpost_crash_recovery` and `return_after_retirement`, which start, restart and retire outposts, run once during the build to check the launch path, and three times at its end; the full suite runs once at the end, since how the listener starts changes, leaving out the scenarios `docs/flaky-tests.md` records. Its time is the sum of the last full run's `finished in` lines. A listener's restart has no scenario; the supervisor's stand-in tests cover it.
 
-The build is four commits:
+The build is three commits, each passing `cargo xtask ci`, its documentation check included, so each changes the documents that describe its code:
 
-- Move the shared pieces out of `verbatim-outpost`: the message layer, launch arguments, alarm, clocks, held processes and the children's start and end to `verbatim-process`; `verbatim-reader-rules`; `verbatim-win32`, with `provider.rs` and `verbatim-ia2`'s window functions; the `WinEvent` thread and `fact_of_win_event` to `verbatim-ia2`. `verbatim-outpost` still holds the three programs, its cycles gone.
-- Split by role: `verbatim-outpost-logic`, `verbatim-listener-logic`, `verbatim-listener` with its executable, `verbatim-supervisor`, `verbatim-core`'s `supervisor` module, and every runner and script that names an executable, in one commit, since the executable and its staging change together.
-- The tier check in `cargo xtask ci`.
-- The documents.
+- Move the shared pieces out of `verbatim-outpost`: the message layer, launch arguments, alarm, clocks, held processes and the children's start and end to `verbatim-process`; `verbatim-reader-rules`, with the joined grace and UIA focus wait; `verbatim-win32`, with `provider.rs` and `verbatim-ia2`'s window functions; the `WinEvent` thread and `fact_of_win_event` to `verbatim-ia2`. `verbatim-outpost` still holds the three programs, its cycles gone. With it: the new crates' guides, `verbatim-process.md`, `verbatim-ia2.md`, `verbatim-uia.md`, the index, and every document naming a path it moves, this one included.
+- Split by role: `verbatim-outpost-logic`, `verbatim-listener-logic`, `verbatim-listener` with its executable, `verbatim-supervisor`, `verbatim-core`'s `supervisor` module, and every runner and script that names an executable, in one commit, since the executable and its staging change together. With it: the three role guides, `verbatim-core.md`, `docs/architecture.md`, `docs/tooling/`, the remaining documents naming moved paths, and this section reduced to its built form.
+- The tier check in `cargo xtask ci`, with `CLAUDE.md`'s tiers and commands and `docs/tooling/setup.md`.
 
-The measurements before are taken first; `cargo xtask ci` runs at the end, then the end-to-end runs and the measurements after.
+The builder runs targeted tests and `cargo xtask docs` while working and `cargo xtask ci` once at the end, checking each commit's tree with it before the next is made. The measurements before are taken first; then the end-to-end runs and the measurements after.
 
 ### Limitations
 
 - Splitting the image costs the listener its sharing of code pages with the outposts, measured above.
 - Logic that is pure in parts stays in the Windows crates, as listed above, outside the Linux build and the generated tests until moved.
-- The reducer keeps its own `MOVED_ON_GRACE` beside `verbatim-reader-rules`'s, and `provider.rs` keeps its own console class; joining each is a follow-up.
+- Window queries that behave alike stay as separate functions in `verbatim-win32`: `provider.rs`'s `parent_window` beside the general `parent`. Joining them is a follow-up.
+- `verbatim-uia` and `verbatim-ia2` reach `verbatim-core` through `verbatim-reader-rules` for one type, `ForegroundRelation`, so they no longer compile alongside it; `cargo xtask ci`'s measured time shows the cost, and moving that type out of `verbatim-core` is the remedy if it matters.
 
-### Questions for Dickson
+### Decisions
 
-- The seal. The typestates cannot make the `Sealed` token, as the section above shows. Recommended: they return a plain `Lifecycle` notice and `Sealed` stays in `verbatim-supervisor`, made only by the owner, which keeps the guarantee the seal gives. The other choice, an `OutpostMessage` without its frame in `verbatim-core` with a public way to seal, lets any crate seal and so ends the guarantee.
-- `provider.rs` to `verbatim-win32`, beyond the design's list. Recommended: move it, with `verbatim-uia` re-exporting it, so the window queries have one crate under both backends. Otherwise `verbatim-win32` depends on `verbatim-uia`, and `verbatim-ia2` on the UI Automation client through it.
-- The executables' layout. Recommended: both beside `verbatim.exe`, found as the outpost and the synthesizer host are found today, rather than in a folder of their own.
-- `verbatim-ext-api`'s tier. The logic-tests design names it among the crates that must not depend on a logic crate, but it is not on the platform-neutral list. Recommended: class it platform-neutral, since it has no dependency yet and an extension's SDK should not carry the GPL tier.
-- The `Arbitrator`'s pure decisions. Recommended: leave them in `verbatim-outpost` in this build, as the design names only the reducer for `verbatim-outpost-logic`, and decide in M4.6's design whether its tests need them.
-- The crash dump script needs your elevated run once after the build, for `verbatim-listener.exe`'s dumps.
+- The seal stays in `verbatim-supervisor`: the generation's typestates in `verbatim-core` return a plain `Lifecycle` notice, and only the owner makes `Sealed`, which keeps the guarantee the seal gives (Dickson, 2026-10-31).
+- `provider.rs` moves from `verbatim-uia` to `verbatim-win32`, re-exported by `verbatim-uia` under the same names, so the window queries have one crate under both backends (Dickson, 2026-10-31).
+- `verbatim-listener.exe` and `verbatim-outpost.exe` sit beside `verbatim.exe`, found as the outpost and the synthesizer host are found today (Dickson, 2026-10-31).
+- `verbatim-ext-api` is classed platform-neutral, so an extension's SDK never carries the GPL tier (Dickson, 2026-10-31).
+- The `Arbitrator`'s pure decisions stay in `verbatim-outpost` in this build; M4.6's design decides whether its tests need them (Dickson, 2026-10-31).
+- After the build, Dickson runs `vm\scripts\Enable-VerbatimCrashDumps.ps1` once, elevated, so `verbatim-listener.exe`'s crash dumps are kept.
 
 ## xtask on Linux and the Linux job (a build of its own)
 
@@ -266,3 +276,244 @@ So no obstacle is known in today's code. Whether `verbatim-text`'s and `verbatim
 - A builder may run a check-only `cargo check` or `cargo clippy` with `--target x86_64-unknown-linux-gnu` on this machine, and xtask's dependency check runs `cargo tree --target all`; both are stated exceptions to "no command names a target", since neither builds or tests (Dickson, 2026-10-31).
 - The Linux job builds and tests the whole platform-neutral tier (`verbatim-model`, `verbatim-text`, `verbatim-speech`, `verbatim-config`, `verbatim-i18n`, `verbatim-input`, `verbatim-audio`, `verbatim-core`) and xtask, and the logic crates once the split adds them (Dickson, 2026-10-31).
 - WSL is not installed; the GitHub run is the Linux build's check (Dickson, 2026-10-31).
+
+## The outpost's program bookkeeping (a build of its own)
+
+Status: proposed on 2026-10-31, and revised after its adversarial review (`experiments/logic-tests-study/bookkeeping-design-review.md`). The console poll's rule waits on a measurement, a capture and a question for Dickson. The rest does not depend on the answer except where said.
+
+The build removes lifecycle states from the outpost's programs ([logic tests](logic-tests.md), "The outpost's program bookkeeping simplified"). It comes after the crate split: the reducer's changes land in `verbatim-outpost-logic` (today's `crates/verbatim-outpost/src/outpost/reducer/`), and the shell, worker, inbox, commit and request context stay in `verbatim-outpost`. Paths and lines below are today's.
+
+### Where the code contradicts the logic-tests design
+
+- Programs already get fresh copies at dispatch: `Reducer::dispatch` (`reducer/mod.rs` line 1438), `dispatch_finish` (1488) and `dispatch_poll` (1507) each clone `self.facts`. The worker keeps nothing between programs but the console poll's carry (`worker.rs` lines 289 to 300, `carry` at 319, `RequestContext::take_program_text` in `outpost/mod.rs` at 570). `judged_focus` (`worker.rs` 4386) reads the program's dispatch-time copy of the reports, not a copy the worker holds. So that part is mostly a consequence of the console poll's rule, plus moving one judgement into the reducer.
+- Verdicts already travel alone: `RequestContext::record` (`outpost/mod.rs` 619) posts each verdict as a commit holding nothing else. The exception is in the types: `Effects::verdicts` (`commit.rs` 187), `Change::verdicts` (`reducer/follow.rs` 450), the verdicts branch of `admit` (`shell.rs` 391), and the reducer recording verdicts before it checks whether the commit is accepted (`reducer/mod.rs` 529). The change splits the type and changes no behaviour.
+- A program commits more than once, so only its last commit could travel with its end. That part is dropped (part five).
+- A test settle and the idle query differ in four ways:
+  - A settle waits for the whole intake to empty, later arrivals included (`reducer/mod.rs` 1357 requeues it while `Intake::busy`); the idle query waits only for what came before it.
+  - The idle answer waits for an open caret watch and an open gap record; a settle does not.
+  - A settle's program waits for the subscription's moves and the outbound writes.
+  - The idle query ends its batch; a settle does not.
+
+  The merge keeps one item and one way of reaching it, and answers a test's settle as soon as it is reached (part one).
+
+### Part one: test settles merged into the idle barrier
+
+Today: `Outpost::settle` (`outpost/mod.rs` 1314) posts `Posted::Settle(Sender)`. The shell numbers it in `Settles` (`shell.rs` 247: a `waiting` map and the `in_flight` slot) and pushes `Item::Settle(id)`. The reducer reaches it in `run` (`reducer/mod.rs` 1357), requeues it while the intake is busy, and dispatches `Work::Settle(id)` (137). The shell gives the job the waiter (`Job::settle`, `worker.rs` 101). The program calls `Registration::settle` and `Outbound::flush`, then sends on the waiter (`worker.rs` 416). The shell lets go of the waiter on the program's `Finished`. It also lets go through `Settles::in_charge` (`shell.rs` 791) when the program's generation is dead and the settle was not dispatched again. A settle dispatched behind the console poll is dispatched again if the poll is abandoned, and gets the same waiter; that re-dispatch is where the waiters were lost twice.
+
+Proposed:
+
+- One intake item, `Item::Barrier { asker, behind_noted }`, where `asker` is `Asker::Round(u64)` (Core's idle query) or `Asker::Settle(u64)` (a test's). The item ends a batch, and a noted caret goes just ahead of it (`Intake::push_ahead`), as the idle query does today. Reason: one way of reaching the barrier, one ordering rule.
+- A test's settle is answered when the reducer reaches it, with no program in flight: `Effect::Settled(id)`. A round is answered as it is today (`answer_idle`, `reducer/mod.rs` 1188). Reason: `crates/mockapp/tests/caret_watch.rs` settles 58 times, many with a watch open, and expects the settle to return while the watch stays open. With the round's conditions each such settle would wait 10 seconds (`CARET_WATCH_BOUND`) and then hear the watch end.
+- The shell keeps the waiters in a map under the settles' numbers. After each transition it asserts that the map's keys are the `Asker::Settle` items waiting in the intake, which the reducer lists from the intake, as the shell already checks its reply tokens. The reducer keeps no set of its own. Under the second and third poll options (part four), a settle is answered in the same transition that reaches it, so the intake's items are exactly the pending settles. Under today's yield a settle reached while the poll is in flight would wait for the poll's end, which needs a list of reached settles in the reducer. Reason: a second record of the same fact would be one more thing to keep equal.
+- `Outpost::settle` waits for the answer, then calls `Registration::settle`, `Outbound::flush` and the event thread's `sync` on the caller's thread. Every subscription move and message before the answer was handed to its thread before the shell applied `Settled`, so these calls come after them in their channels. Reason: waiting is the test thread's job, and a reducer thread that waited would stall the outpost.
+- Removed: `Work::Settle`, `Item::Settle`, the `Settles` slot and its `in_charge` cleanup, `Job::settle`, the requeue while busy, and the re-dispatch behind the poll. Added: none.
+
+Each request gets one answer:
+
+- Settle `s` is pushed while program `p` is in flight. `p` posts `Finished`, the pump plans the intake, and the reducer reaches `s` and emits `Settled(s)`. The shell removes `s`'s waiter and sends on it. No program runs for the settle, so nothing can strand it.
+- `p` is abandoned while `s` waits. `judge_abandonment` starts the replacement and the pump goes on, so `s` is reached and answered as above. A generation's death touches no settle.
+- A noted caret is pending when `s` is reached. The caret and `s` are put ahead (`behind_noted`), the caret's program runs, and `s` is reached again and answered. A caret noted by that program is not waited for, as with the round today. Today's settle took noted carets each time it was reached.
+- `Close` comes before `s` is reached. `Intake::close` drops the item, and the shell drops every waiter as it takes `Close`, so `Outpost::settle`'s receive fails and it returns, as it does today at shutdown. Dropping the waiter is its answer. A `Posted::Settle` after the mailbox has closed is dropped with its waiter (`shell.rs` 139 to 152).
+
+Behaviour: Core's round is unchanged, so production is unchanged. In tests a settle:
+
+- no longer waits for entries that arrive after it;
+- no longer returns early when a worker is abandoned;
+- divides batches, so events on either side of it are not merged or reordered across it;
+- leaves the objects the shell let go of to be dropped with the next program rather than with the settle's.
+
+Wake-ups and processor time: no change in production, since Core asks idle questions only of the harness. In tests each settle costs one shell wake and no worker wake. Today it costs a shell wake, a worker wake, and a shell wake for its `Finished`.
+
+Guarded by:
+
+- the replay tests `the_idle_answer_waits_for_nothing_that_arrived_after_its_query`, `a_noted_caret_is_read_with_its_events_timing`, `the_idle_answer_waits_for_the_hooks_copies_held_at_the_start`, and `a_gap_read_dispatched_again_after_an_abandoned_poll_still_holds_the_idle_answer`, which becomes "a gap read in flight holds the idle answer";
+- a new replay test, "a settle is answered as it is reached, and a close drops it".
+
+The shell tests `a_settle_dispatched_again_keeps_its_waiter` and `an_abandoned_settle_replaced_by_another_lets_its_waiter_go` go with the table. The settle's real path runs in the mockapp suites that settle: `caret_watch.rs`, `call_counts.rs`, `focus_reports.rs`, `msaa_events.rs`, `terminal_reading.rs`, `combo_box.rs`, `remote_ops.rs` and `idle_barrier.rs` under `crates/mockapp/tests/`. The end-to-end scenarios run only the round's path.
+
+### Part two: verdicts posted as a message of their own
+
+Today: a verdict is a `Change::verdicts` entry, posted alone by `RequestContext::record`. `admit` keeps it out of a refused commit, and `Input::Commit` records it before checking `accepts`. A dead generation's verdict is recorded only when it is a timed-out probe or a window's forgetting (`VerdictChange::kept_from_any_generation`).
+
+Proposed:
+
+- `Posted::Verdict { generation, change }` becomes `Input::Verdict { generation, change }`, recorded by `record_verdicts` under the same rule. `Effects` and `Change` lose `verdicts`.
+- `Posted::Verdict` is taken after the mailbox closes, as `Commit` is (`Mailbox::post`, `shell.rs` 137 to 156). Reason: a probe that timed out during shutdown is still a fact.
+- `admit` refuses whole any commit that is not accepted, and the reducer is given no `Input::Commit` for it. Reason: a refused commit is refused with no exception, so M4.6's model of commits needs no carve-out.
+- The program's copy still takes the verdict at once. A publication's context, which runs no program, still keeps the verdict in its copy only.
+- Removed: `admit`'s verdicts branch and the verdicts field. Added: one message kind and no state.
+
+Each verdict gets one answer. Worker generation `g` probes window `h`, times out, and posts `Verdict { g, change }`. If `g` is in charge, or the change is kept from any generation, the reducer records it, and `Effect::Verdicts` replaces the mailbox's copy. The program's next commit, request `r`, is applied if `accepts(r)`; if not, it is dropped whole and its objects go to the garbage. A probe committed before its worker's death keeps its mailbox order ahead of the abandonment's effects, as today.
+
+Wake-ups and processor time: unchanged, since the post is the same.
+
+Guarded by: `a_probe_is_recorded_when_committed_and_reaches_the_event_thread_then_the_next_program`, `a_dead_generations_probe_is_not_recorded`, `a_dead_generations_timed_out_probe_is_recorded`, `a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded`, and the shell test `a_refused_commits_text_writes_are_not_made`.
+
+### Part three: the worker keeps nothing between programs
+
+Today the worker keeps the carry described above. A program dispatched behind the console poll was copied before the poll's commits were applied. So the worker applies the poll's kept commits (`RequestContext::keep_commits`, `kept_commits`) to the next program's copies, and hands on the store text the poll held (`ProgramText`). Separately, `judged_focus` decides `entered_in_front` on the worker:
+
+- a foreground change sets it to its window;
+- any other focus inherits it from `Held::newest_in(top_level)` on the program's copy;
+- with nothing to inherit, it is set when the top-level window is the foreground window as read.
+
+That is a judgement written into the reducer's fact, made on the worker.
+
+Proposed:
+
+- The carry goes with the console poll's slot. Under the second and third options of part four, nothing is dispatched while a poll is in flight; today's yield keeps the carry. Removed: `carry`, `keep_commits`, `kept_commits`, `Program::kept`, `take_program_text`, and `for_program`'s text argument.
+- The program reports evidence, not the decision. `reducer::Focus` carries `in_front: InFront`, where `InFront::Foreground(isize)` is a foreground change's window, and `InFront::Read(Option<isize>)` is any other focus's top-level window when it was the foreground window as read. The reducer's rule, in `held.reported` (`follow::record`, `reducer/follow.rs` 841):
+  - a foreground change sets `entered_in_front` to its window;
+  - any other focus inherits it from the newest report in the same top-level window;
+  - otherwise it is set from the read.
+
+  These are today's three cases in today's order. A foreground change is named by its variant, not by its event address, since its address is the same as that of an MSAA focus on the window's client object (`foreground_event`, `worker.rs` 609). The same applies to the publication at a walk's bound (`worker.rs` 4630) and to `Report::Answered`. Reason: the decision becomes a pure function in the logic crate, where replay tests and M4.6's model check it.
+- The program's local apply runs the same pure function on its copy, so its later reads agree. It is still judged in two places, from the same evidence and the same function. The two agree at each commit, because the program's copy of the reports equals the reducer's then. The reports are written only by:
+  - the program in flight's own commits;
+  - the publication at its walk's bound, which claims the program, so none of its later commits is applied;
+  - `Input::Released`, which comes only while no program is in flight: `NodesHeld` is reached only with none in flight, and `releasing` holds dispatch until it is done.
+
+  The console poll writes no report.
+- What is heard does not change: each of today's three cases gives the same value. The roadmap's follow-up, a foreground change updating older reports in the window, stays an item of its own.
+- Cost: the foreground window is read on every non-foreground focus report whose top-level window is known, rather than only when nothing is inherited. This includes the shell thread's publication at a walk's bound. It is a local read with no wake. Its time is not measured; the build's before and after figures cover it.
+- Removed: the worker's state between programs. Added: none.
+
+Guarded by:
+
+- `a_programs_text_change_reaches_the_next_programs_copy`;
+- `a_walk_under_way_at_its_bound_is_published_and_its_programs_report_refused`;
+- `a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live`;
+- two new replay tests: "a focus inherits its window's entered-in-front at commit", and "a foreground change after a background focus in the same window sets it".
+
+### Part four: the console poll (a question for Dickson)
+
+Today (`reducer/mod.rs`): the poll is a long program (`Work::Poll`, line 143) in a slot of its own, `Reducer::poll` (398), dispatched when nothing else is ready.
+
+- A program dispatched meanwhile goes into the same worker's inbox behind the poll, its deadline held back (`Current::behind_poll`, 365).
+- The poll looks at its inbox before each read (`look`, `worker.rs` 335). It yields to anything but a release's drop (`poll_yields_to`, 328), commits `WatchChange::Yielded`, and is dispatched again afterwards.
+- When the poll is abandoned, its watch is taken, its query is answered `Abandoned`, and the program behind it is dispatched again to the replacement (`abandon_poll`, 1042). `poll_finished` (1152) starts that program's deadline.
+
+The states are the second slot, `behind_poll`, the re-dispatch after abandonment, the yield, the worker's held queue and the carry.
+
+NVDA, from the pinned source (`nvda/source/editableText.py`, `_hasCaretMoved`): the caret loop runs on the main thread until its timeout, 100 ms by default. It returns early only for a queued script or a pending focus event. In consoles, caret and text change events neither end it nor are handled during it, since `caretMovementDetectionUsesEvents` is false there.
+
+#### What is known
+
+- `docs/design/key-holding.md` ("The console host's caret poll", Costs) measured, under today's yield, that every watch the first check left open was answered within 8 ms. The answer came from one re-read, or from the check of a console update that ran because the poll yielded. The workload, `measure_keys_conhost`, presses only keys that move the caret: Left and Right over a typed line, Backspace, Escape and typing (`crates/verbatim-e2e/src/scenarios/measure.rs`, `terminal_keys`). So nothing is known of keys that move nothing, which pay the poll's whole 50 ms bound.
+- The blink-timer experiment saw the cursor move up to 54 ms after the key, past the bound. A slow move also pays the whole bound, then waits for the blink-timer caret event, 257 to 540 ms after the key.
+- How often a program arrives during a poll, and how long it would wait without the yield, is not measured.
+
+#### The order of reads when a character is typed during a poll
+
+Take this sequence in the console host:
+
+1. Left Arrow is pressed at the start of the line. Its first check finds nothing, and the watch `q` opens with a poll.
+2. At about 10 ms, "a" is typed. A key that is not held is not made to wait for the watch (`crates/verbatim-core/src/editing.rs`, `WaitingKey::Later`).
+3. The console inserts "a", and its caret moves one place right. The console update `U` arrives.
+
+What Core receives depends on the option:
+
+- Today's yield: `U`'s program checks the watch, finds the caret moved, and answers `q` as moved, with the caret after "a", under the key's trace. `U`'s read of the terminal, which holds the "a", is sent as an event under `U`'s own trace. One exception: when a poll read in flight at `U`'s arrival finds the move first, the terminal read goes under the key's trace.
+- The poll waits for nothing: `U` waits. The poll's next re-read finds the move and answers `q` the same way. The poll then reads the terminal under the key's trace (`terminal_output(node_id, open.trace, 0)`, `worker.rs` 1235 to 1237), so the "a" first reaches Core as part of the key's result. `U`'s read then finds nothing new. The order changes in every such case, not only in the exception.
+- Each read a program: `U` is planned before the next re-read, since a re-read is dispatched only when nothing else is ready. Core receives what it does today, the same exception included.
+
+How Core's terminal reading rules speak the "a" in either order is not established, and the expected speech must come from a capture. The capture needed is NVDA in the console host running cmd at an empty prompt: Left Arrow, then "a" 10 ms later, ten times, and the same after a Left Arrow that moves over typed text. No scenario types within the poll's bound after a key: `conhost_up_typing` types only after the recalled line is heard, and `conhost_typing` is recorded as flaky. A scenario of its own, `conhost_unmoved_key_typing`, would assert that capture's speech. It is built only if the poll waits for nothing is chosen, since under the other options Core receives what it does today.
+
+#### The options
+
+For each: the longest wait for a program that arrives during a poll (a focus, a console update's read, a release), the wake-ups, and what is removed.
+
+- Today's yield.
+  - Longest wait: one read in progress, then the program.
+  - Wake-ups: the worker once per re-read, plus one or two shell wakes per yield, and the re-dispatch.
+  - Removed: nothing. It keeps every state listed above, and part three's carry with it.
+- The poll waits for nothing: the poll is an ordinary program in the one slot, and whatever arrives waits for its end.
+  - Longest wait: until 50 ms after the key was passed on (`POLL_BOUND`), plus one read. That is paid in full after a key that moves nothing or moves later than the bound, and is otherwise unmeasured.
+  - Wake-ups: the worker once per re-read, and none for yields.
+  - What Core receives changes, as above.
+  - Removed: `Reducer::poll`, `behind_poll`, `abandon_poll`, `poll_finished`, `WatchChange::Yielded`, `look`, `poll_yields_to`, the worker's held queue and the carry.
+  - The poll still waits on its inbox's high-resolution timer, and needs a `try_take` after each wait to see that its inbox closed.
+- Each read a program: the watch's next read becomes its wake (`wake_for` returns `poll.next` for a polling watch). `Item::Wake` on a polling watch makes one read and commits the answer, the end, or `WatchChange::Read` with the next read's time. A wake taken before that time only sets the wake again, as `Worker::wake` does today. The re-read runs under the text deadline.
+  - Longest wait: one read in flight.
+  - Wake-ups: three or four per re-read, for the shell's timer, the worker, and the shell for the commit and the end, against one today. A key that moves nothing makes ten re-reads, so 30 to 40 more wakes.
+  - Processor time: one more copy of the facts per re-read.
+  - What Core receives does not change.
+  - Removed: everything the previous option removes, plus the long program and the inbox's timer, so the inbox becomes a plain channel and the worker waits on it with `recv`.
+
+With any option, a read can last until the program's deadline, 10 seconds, since the poll names no window for the moved-on rule. Today a program behind the poll waits the same way.
+
+Each request gets one answer: watch query `q` is opened by a check, and the poll's program `P`, or each re-read program under the third option, runs with `running = q`.
+
+- `P` finds evidence. Its commit carries `q`'s reply and `Answered(q)`, the reducer's `send` clears `running`, and `P` ends.
+- `P`'s last read finds nothing. `Ended(q)` ends the watch, and `subscription_effects` sends `q`'s `WatchEnded`.
+- Under the third option, a read that finds nothing before the bound commits `Read(q, next)`. That sets the watch's poll and wake, and `q` stays unanswered with the watch open. The idle round waits for it as for any open watch.
+- `P` is abandoned at its deadline. A new rule for every program, moved from `abandon_poll`: when the running query is the open watch's, the watch is taken out without a word and the query is answered `Abandoned`, once. `P`'s later commits are refused, since its slot is empty. An ordinary program that took the watch has already removed it from the reducer's facts, so the rule does not fire for it.
+- `P` panics. A rule in `finished`, moved from `poll_finished`: when the running query is the open watch's, the watch is ended, which answers `q`, and no `Failed` is sent. Otherwise the query is answered `Failed`, as today. Ending the watch and then sending `Failed` would answer `q` twice, so the order is fixed by this rule.
+- A newer key's query arrives. It is planned ahead of any wake, and its check ends a watch still open, as today. A wake left for the ended watch finds no polling watch and does nothing.
+- `Close` arrives. The shell lets go of the generation's inbox and `P` returns. Its end is taken as any program's.
+
+Guarded by:
+
+- kept: `the_console_poll_is_dispatched_only_when_nothing_else_is_ready`, `a_newer_keys_request_ends_the_old_watch_and_its_poll`, `the_poll_ends_its_watch_by_its_answer_or_at_its_last_read`, `a_query_is_answered_once_whatever_ends_it`, and `the_poll_ends_when_its_inbox_is_closed` under the second option;
+- rewritten: `a_program_is_dispatched_beside_the_poll_its_deadline_starting_when_the_poll_ends` becomes "a program waits for the poll's end" under the second option and "a program goes before the next read" under the third; `an_abandoned_poll_ends_its_watch_and_the_program_behind_it_goes_to_the_replacement` becomes "an abandoned poll answers its watch's query once";
+- deleted with their states: `the_poll_is_dispatched_again_after_it_yields`, `the_poll_holds_a_drop_and_goes_on_reading`, `the_poll_yields_to_a_caret_read_and_holds_it`, and `the_polls_text_changes_are_committed_with_its_yield`;
+- new: a replay test for a panicked poll, and under the third option "a read before the bound sets the next read's wake".
+
+#### The measurement that settles it
+
+Run it on today's code, in release builds and test audio mode, on the desktop. A builder makes two temporary changes, not committed:
+
+- A debug log line in the reducer for each poll. It gives the time the key was passed on and the poll's `until`. For each program dispatched behind the poll, it gives the program's kind, its offset from the key, and its offset to the poll's yield. For the watch, it gives the time it was answered or ended, and whether a poll re-read or another program's check did it. It also gives the number of re-reads.
+- A temporary workload, `measure_keys_conhost_unmoved`, in `crates/verbatim-e2e/src/scenarios/measure.rs`, against Windows PowerShell in the console host as `measure_keys_conhost` uses. Each round presses, each key 150 ms after the speech of the one before:
+  - Left Arrow 20 times at the start of an empty line;
+  - Home 20 times at the start of the line;
+  - Up Arrow 20 times in a fresh shell with no history;
+  - Left Arrow at the start of an empty line, then "a" 10 ms later and Backspace, 20 times;
+  - as a control, Left and Right Arrow 10 times each over a typed line.
+
+Run `measure_keys_conhost_unmoved` 10 times and `measure_keys_conhost` 10 times, and record each run's time from its log.
+
+From each run, take:
+
+- for each program that arrived during a poll: the time from its arrival to the poll's `until` (its wait if the poll waits for nothing, at most) and to the watch's answer (its wait if the answer comes first), as P50, P99 and maximum, by program kind;
+- the share of polls that end at the bound, split into keys that move nothing and keys whose caret moved later. The caret moved when the console's next caret event or the next key's before read shows a new caret position;
+- re-reads per poll, as P50, P99 and maximum, which gives the third option's added wake-ups at three or four each;
+- the reducer's and the worker's wake-ups per key from a trace, as `docs/tooling/measuring.md` says, in one run of each workload.
+
+### Part five: dropped
+
+Posting a program's last commit with its end is dropped. The hop has not been shown to cost. Posting the end before the program's drops would put a blocked release under the next program's deadline, and would let a settle or the idle round be answered while the worker still calls into the application. If a later wake-up measurement shows the hop costs, the end would carry the last commit and still be posted after the drops.
+
+### Facts with an owner in two places
+
+- The reducer's verdicts and marks, and the mailbox's push-time copies of them: unchanged, each still written only from the reducer's effects.
+- Pending settles: the barrier items in the intake, and the shell's waiters, checked against those items after every transition. The waiter is only the means of answering, as a reply token is.
+- The console poll's progress, under the second option: the watch in the reducer keeps the poll as it was at dispatch, while the program holds the live one. Nothing reads the reducer's copy while the poll is in flight, since `wake_for` gives no wake for a polling watch, and the program's end replaces the watch. Under the third option the progress lives only in the reducer.
+- `entered_in_front`: judged by the same pure function on the program's copy and in the reducer, from the same evidence, and equal at each commit by the argument in part three.
+
+### Measured before and after
+
+Wake-ups and processor time per thread, in release builds and test audio mode, at most 20 runs each:
+
+- the console poll's option on `measure_keys_conhost` and `measure_keys_conhost_unmoved`;
+- part three and the build as a whole on `measure_focus_text_box` and `measure_keys_notepad`.
+
+### End-to-end runs and the order of work
+
+The commits, in order, each with its unit and replay tests, and the crate guide updated where an API changes:
+
+- Verdicts as a message of their own. Scenarios: `quick_link_menu`, `menu_and_settings_dialog`.
+- The console poll by Dickson's answer, with the worker's carry removed and the one-answer rules for an abandoned or panicked poll. The ownership design's limit on a release waiting behind the poll is updated. Scenarios: `conhost_up_typing`, `conhost_editing`, `conhost_commands`, and `conhost_unmoved_key_typing` if the poll waits for nothing is chosen.
+- Test settles merged into the idle barrier. Its gate is the mockapp suites that settle, named in part one, which `cargo xtask ci` runs. Scenarios: `notepad_caret_keys`, `text_box_caret_keys`, for the round's path.
+- `entered_in_front` decided by the reducer. Scenarios: `second_application_and_verbatim_menu`, `rapid_tabbing_in_settings`.
+
+Each scenario runs three times at the end of the build. `conhost_typing` is left out, since `docs/flaky-tests.md` records its failure.
+
+### Questions for Dickson
+
+- The console poll. Should it keep today's yield, wait for nothing, or make each read a program?
+  - What is known: under today's yield, every caret key that moved the caret had its watch answered within 8 ms, partly by checks the yield let run. The workload had no key that moves nothing, and the cursor has been seen to move up to 54 ms after a key.
+  - What the measurement adds: how long programs that arrive during a poll would wait under the second option, how often a poll runs to its bound, and the third option's wake-ups per key.
+  - What the capture adds: whether the second option's change in order, the typed "a" read first as the Left Arrow's result, changes what is spoken.
+  - Recommended: each read a program. It removes the same states and the inbox's timer, keeps what Core receives exactly as today, and keeps the wait for any program to one read. Its cost is 3 to 4 wake-ups per re-read, paid only on console caret keys the first check finds unmoved. Choose the poll waits for nothing instead only if the measurement shows those wake-ups matter, the waits it adds are small, and the capture shows the order does not change what is heard.
+- A test's settle. Should it be answered as soon as it is reached, without the round's waits for an open watch, an open gap record or the hook's held copies, dividing batches as the round does? Recommended: yes. The caret watch tests settle with a watch open, and the round's waits would make each such settle wait 10 seconds.
