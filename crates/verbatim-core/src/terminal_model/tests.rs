@@ -3,14 +3,26 @@
 
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReport, EarlierElement, FocusText, Input, NodeDetails,
-    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, Role, StateSet, TextAnchor,
-    TextChunk, TextUnit, TraceId,
+    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, StateSet, TextAnchor, TextChunk,
+    TextUnit, TraceId,
 };
 use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
 
-use super::{Said, SaidItem, TerminalModel, rules_key, speech_of};
+use super::{Said, SaidItem, rules_key, speech_of};
+use crate::queries::Then;
 use crate::state::{PendingCaret, SrState};
+
+/// The node of the caret key waiting for evidence, if one waits.
+fn waiting_caret(state: &SrState) -> Option<NodeId> {
+    state
+        .queries
+        .find(|then| matches!(then, Then::Caret(_)))
+        .and_then(|(_, then)| match then {
+            Then::Caret(pending) => Some(pending.node),
+            _ => None,
+        })
+}
 use crate::terminal::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 #[test]
@@ -90,9 +102,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
             },
         },
     );
-    state
-        .terminals
-        .push(TerminalModel::new(node, Settings::default()));
+    state.terminals.add(node, Settings::default());
     let caret = |motion, at_ms| Input::CaretKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::from_raw(2),
@@ -220,28 +230,28 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
             None,
         ),
     );
-    state
-        .terminals
-        .push(TerminalModel::new(node, Settings::default()));
-    state.pending_caret = Some(PendingCaret {
-        query_id: QueryId(9),
-        node,
-        key: CaretKey {
-            motion: CaretMotion::PreviousCharacter,
-            select: false,
-        },
-        deleted: None,
-        before: None,
-        later_key_at_ms: None,
-        selected_before: false,
-        before_unknown: false,
-        heard: Vec::new(),
-    });
+    state.terminals.add(node, Settings::default());
+    let _ = state.queries.ask(
+        crate::queries::Asking::Text(node, verbatim_model::TextOp::ReadCaret),
+        Then::Caret(PendingCaret {
+            node,
+            key: CaretKey {
+                motion: CaretMotion::PreviousCharacter,
+                select: false,
+            },
+            deleted: None,
+            before: None,
+            later_key_at_ms: None,
+            selected_before: false,
+            before_unknown: false,
+            heard: Vec::new(),
+        }),
+    );
     assert_eq!(
         (
             state.caret.as_ref().map(|caret| caret.node),
             state.terminals.len(),
-            state.pending_caret.as_ref().map(|pending| pending.node)
+            waiting_caret(&state)
         ),
         (Some(node), 1, Some(node)),
         "the first element's caret, model and waiting caret key are kept"
@@ -252,7 +262,7 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
         (
             state.caret.as_ref().map(|caret| caret.node),
             state.terminals.len(),
-            state.pending_caret.as_ref().map(|pending| pending.node)
+            waiting_caret(&state)
         ),
         (None, 0, None)
     );

@@ -49,13 +49,14 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, QueryId, SegmentContent,
+    CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, SegmentContent,
     SpeechMark, SpeechPriority, TextOp, TextReply, TraceId, Utterance, UtteranceSegment,
 };
 
 use verbatim_text::terminal_rows::Text;
 
 use crate::editing;
+use crate::queries::{TerminalAsk, Then};
 use crate::state::{ReviewText, SrState};
 use crate::text;
 
@@ -96,24 +97,10 @@ pub(crate) struct TerminalSpeechState {
     /// Whether the outpost was told to hold ([`TextOp::TerminalHold`]).
     #[serde(default)]
     pub(crate) held: bool,
-    /// Core's request for what is new ([`TextOp::TerminalRead`]), not yet
-    /// answered.
-    #[serde(default)]
-    pub(crate) request: Option<QueryId>,
     /// The group's last line is playing, and the backlog is looked at once
     /// the request is answered.
     #[serde(default)]
     pub(crate) deciding: bool,
-    /// The cancel sent to the outpost ([`TextOp::TerminalCancel`]), not yet
-    /// answered.
-    #[serde(default)]
-    pub(crate) cancel: Option<QueryId>,
-    /// Core's request for what is new that a cancel overtook, not yet
-    /// answered. The outpost answers it before the cancel, from a read made
-    /// before it took the cancel, so its output was read before a cut, and
-    /// only its answers to keys are spoken.
-    #[serde(default)]
-    pub(crate) overtaken: Option<QueryId>,
     /// When speech was last cut off (milliseconds on the shared clock):
     /// output from a read that began before it was read before the cut,
     /// and is not spoken.
@@ -305,7 +292,7 @@ pub(crate) fn speech(
     state.terminal.node = Some(node);
     // Read before speech was last cut off, or before the outpost took the
     // cancel: the output pending then is dropped, as NVDA drops it.
-    let before_cut = state.terminal.cancel.is_some()
+    let before_cut = asked(state, TerminalAsk::Cancel)
         || (observed_at_ms != 0 && observed_at_ms < state.terminal.cut_at_ms);
     take(state, trace_id, speech, before_cut)
 }
@@ -392,17 +379,33 @@ fn waiting_lines(waiting: &VecDeque<Waiting>) -> usize {
     waiting.iter().filter(|item| is_line(item)).count()
 }
 
-/// A text request about the focused terminal.
-fn request(state: &mut SrState, op: TextOp) -> Option<(QueryId, Effect)> {
+/// A text request about the focused terminal, whose answer continues
+/// `then`.
+fn request(state: &mut SrState, op: TextOp, then: Then) -> Option<Effect> {
     let node = state.terminal.node?;
-    Some(state.queries.ask(crate::queries::Asking::Text(node, op)))
+    Some(
+        state
+            .queries
+            .ask(crate::queries::Asking::Text(node, op), then)
+            .1,
+    )
+}
+
+/// Whether Core's request `ask` of the focused terminal is unanswered: its
+/// request for what is new ([`TextOp::TerminalRead`]), its cancel
+/// ([`TextOp::TerminalCancel`]), or a request for what is new that a
+/// cancel overtook, which the outpost answers before the cancel, from a
+/// read made before it took the cancel, so its output was read before a
+/// cut, and only its answers to keys are spoken.
+fn asked(state: &SrState, ask: TerminalAsk) -> bool {
+    state.queries.has(|then| *then == Then::Terminal(ask))
 }
 
 /// Tells the outpost to hold once as many lines wait, or wait in speech to
 /// start playing, as a group speaks.
 fn hold_if_full(state: &mut SrState) -> Vec<Effect> {
     if state.terminal.held
-        || state.terminal.cancel.is_some()
+        || asked(state, TerminalAsk::Cancel)
         || waiting_lines(&state.terminal.waiting)
             + state
                 .terminal
@@ -414,7 +417,7 @@ fn hold_if_full(state: &mut SrState) -> Vec<Effect> {
     {
         return Vec::new();
     }
-    let Some((_, effect)) = request(state, TextOp::TerminalHold) else {
+    let Some(effect) = request(state, TextOp::TerminalHold, Then::Nothing) else {
         return Vec::new();
     };
     state.terminal.held = true;
@@ -424,22 +427,18 @@ fn hold_if_full(state: &mut SrState) -> Vec<Effect> {
 /// Asks the outpost for what is new, then to hold (`hold`) or read each
 /// change at once again.
 fn ask(state: &mut SrState, hold: bool) -> Vec<Effect> {
-    if state.terminal.request.is_some() || state.terminal.cancel.is_some() {
+    if asked(state, TerminalAsk::Read) || asked(state, TerminalAsk::Cancel) {
         return Vec::new();
     }
-    let Some((query_id, effect)) = request(state, TextOp::TerminalRead { hold }) else {
+    let Some(effect) = request(
+        state,
+        TextOp::TerminalRead { hold },
+        Then::Terminal(TerminalAsk::Read),
+    ) else {
         return Vec::new();
     };
-    state.terminal.request = Some(query_id);
     state.terminal.held = hold;
     vec![effect]
-}
-
-/// Whether `query_id` is a terminal request Core is waiting on.
-pub(crate) fn is_pending(state: &SrState, query_id: QueryId) -> bool {
-    state.terminal.request == Some(query_id)
-        || state.terminal.cancel == Some(query_id)
-        || state.terminal.overtaken == Some(query_id)
 }
 
 /// Handles the outpost's answer to a terminal request: what was new when
@@ -450,41 +449,37 @@ pub(crate) fn is_pending(state: &SrState, query_id: QueryId) -> bool {
 pub(crate) fn reply(
     state: &mut SrState,
     trace_id: TraceId,
-    query_id: QueryId,
+    ask: TerminalAsk,
     reply: &TextReply,
 ) -> Vec<Effect> {
     // The answer is a read Core's terminal model aligns, spoken under the
     // read's speech key.
     let (output, key, mut effects) =
         crate::terminal_model::answered_read(state, reply).unwrap_or_default();
-    effects.extend(answered(state, trace_id, query_id, output, key));
+    effects.extend(answered(state, trace_id, ask, output, key));
     effects
 }
 
-/// Takes in what the read answering terminal request `query_id` said,
+/// Takes in what the read answering terminal request `ask` said,
 /// `output`, spoken under the read's speech key `key` when it has one: see
 /// [`reply`].
 pub(crate) fn answered(
     state: &mut SrState,
     trace_id: TraceId,
-    query_id: QueryId,
+    ask: TerminalAsk,
     output: Said,
     key: Option<TraceId>,
 ) -> Vec<Effect> {
     let trace_id = key.unwrap_or(trace_id);
-    let spoken = if state.terminal.cancel == Some(query_id) {
-        state.terminal.cancel = None;
-        take(state, trace_id, output, true)
-    } else if state.terminal.overtaken == Some(query_id) {
-        state.terminal.overtaken = None;
-        take(state, trace_id, output, true)
-    } else {
-        state.terminal.request = None;
-        let mut spoken = take(state, trace_id, output, false);
-        if std::mem::take(&mut state.terminal.deciding) {
-            spoken.extend(decide_and_pump(state));
+    let spoken = match ask {
+        TerminalAsk::Cancel | TerminalAsk::Overtaken => take(state, trace_id, output, true),
+        TerminalAsk::Read => {
+            let mut spoken = take(state, trace_id, output, false);
+            if std::mem::take(&mut state.terminal.deciding) {
+                spoken.extend(decide_and_pump(state));
+            }
+            spoken
         }
-        spoken
     };
     crate::terminal_model::under(key, spoken)
 }
@@ -1061,13 +1056,14 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     }
     // Blank lines handed on without speech can end a group, or everything
     // waiting, with nothing sounding whose end would look at the backlog.
+    let reading = asked(state, TerminalAsk::Read);
     let terminal = &mut state.terminal;
     if terminal.sounding.is_none()
         && terminal.ahead.is_empty()
         && terminal.group.is_some()
         && (terminal.group == Some(0) || terminal.waiting.is_empty())
     {
-        if terminal.request.is_some() {
+        if reading {
             terminal.deciding = true;
         } else {
             effects.extend(decide_and_pump(state));
@@ -1085,6 +1081,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 /// already been written is still on its way (a burst's first line can
 /// start playing before its second line arrives).
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
+    let reading = asked(state, TerminalAsk::Read);
     let terminal = &mut state.terminal;
     let Some(trace_id) = terminal.trace else {
         return Vec::new();
@@ -1107,7 +1104,7 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
         && terminal.group.is_some()
         && (terminal.group == Some(0) || terminal.waiting.is_empty())
     {
-        if terminal.request.is_some() {
+        if reading {
             terminal.deciding = true;
             return Vec::new();
         }
@@ -1149,15 +1146,33 @@ pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
 /// still unanswered is overtaken: its answer still comes, ahead of the
 /// cancel's, and may hold typing the terminal showed after the cut.
 fn cancel(state: &mut SrState) -> Vec<Effect> {
-    if !state.terminal.held && state.terminal.request.is_none() {
+    if (!state.terminal.held && !asked(state, TerminalAsk::Read)) || state.terminal.node.is_none() {
         return Vec::new();
     }
-    let Some((query_id, effect)) = request(state, TextOp::TerminalCancel) else {
+    // The older cancel and the request it overtook are answered with
+    // nothing; the request still unanswered is overtaken.
+    state.queries.forget(|then| {
+        matches!(
+            then,
+            Then::Terminal(TerminalAsk::Cancel | TerminalAsk::Overtaken)
+        )
+    });
+    if let Some((query_id, _)) = state
+        .queries
+        .find(|then| *then == Then::Terminal(TerminalAsk::Read))
+    {
+        state
+            .queries
+            .replace(query_id, Then::Terminal(TerminalAsk::Overtaken));
+    }
+    let Some(effect) = request(
+        state,
+        TextOp::TerminalCancel,
+        Then::Terminal(TerminalAsk::Cancel),
+    ) else {
         return Vec::new();
     };
     state.terminal.held = false;
-    state.terminal.overtaken = state.terminal.request.take();
-    state.terminal.cancel = Some(query_id);
     vec![effect]
 }
 
@@ -1175,10 +1190,14 @@ pub(crate) fn utterance_cancelled(
     if waits { cut(state, at_ms) } else { Vec::new() }
 }
 
-/// The focus moved to `node`: another node's output is forgotten.
+/// The focus moved to `node`: another node's output is forgotten, and the
+/// answers to the requests Core made of it are taken by nothing.
 pub(crate) fn focus_moved(state: &mut SrState, node: NodeId) {
     if state.terminal.node.is_some_and(|terminal| terminal != node) {
         state.terminal = TerminalSpeechState::default();
+        state
+            .queries
+            .forget(|then| matches!(then, Then::Terminal(_)));
     }
 }
 

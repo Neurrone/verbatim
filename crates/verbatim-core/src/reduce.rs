@@ -16,7 +16,7 @@ use std::sync::Arc;
 use verbatim_model::{
     ActionName, Earcon, EarlierElement, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot,
     NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase, Pid, ProgressReading,
-    PropertyChange, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
+    PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
     StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
@@ -28,9 +28,9 @@ use crate::focus_rules::{
     is_sensitive_slider, meeting, repeats_focus, selection_target,
 };
 use crate::foreground::{Attention, ForegroundFact, LatestFocus};
-use crate::state::{
-    FocusContext, Navigator, NavigatorRead, PendingNavigation, SpokenRecord, SrState, TextFollowUp,
-};
+use crate::queries::Then;
+use crate::state::{FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState, TextFollowUp};
+use crate::state::{PendingCaret, PendingText};
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -119,7 +119,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // as NVDA runs scripts one at a time in the order queued
         // (`docs/design/ownership.md`).
         Input::Command { .. } | Input::Script { .. }
-            if state.held_keys.busy() || state.held_keys.awaiting_watch.is_some() =>
+            if state.held_busy() || state.held_keys.awaiting_watch.is_some() =>
         {
             editing::queue_command(state, input)
         }
@@ -128,7 +128,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // after it, so it is handled after it (`docs/design/key-holding.md`,
         // "Keys behind a held key").
         Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. }
-            if state.held_keys.busy() =>
+            if state.held_busy() =>
         {
             state
                 .held_keys
@@ -459,13 +459,9 @@ fn forget_text_of(state: &mut SrState, node: NodeId) {
     if state.caret.as_ref().is_some_and(|caret| caret.node == node) {
         state.forget_caret();
     }
-    if state
-        .pending_caret
-        .as_ref()
-        .is_some_and(|pending| pending.node == node)
-    {
-        state.pending_caret = None;
-    }
+    state
+        .queries
+        .forget(|then| matches!(then, Then::Caret(pending) if pending.node == node));
     state.drop_models(|model| model.node == node);
 }
 
@@ -540,69 +536,6 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<&Window
         }
         _ => source == attention.source,
     }
-}
-
-/// The answer `reply` to the text request `query_id`, a held key's read
-/// before the key, a caret key waiting for evidence, a focus's selected
-/// text, a review or text command, say-all, or a terminal's request:
-/// routed to what waits for it. An answer nothing waits for any more
-/// (superseded by a newer request, or a say-all's caret movement) is
-/// dropped.
-pub(crate) fn text_completed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query_id: QueryId,
-    reply: verbatim_model::TextReply,
-) -> Vec<Effect> {
-    if let Some(reading) = state
-        .held_keys
-        .reading
-        .take_if(|reading| reading.query_id == query_id)
-    {
-        // In a terminal Core reads, the read before the key is a read of
-        // the terminal, aligned first, whose caret answers it.
-        if let verbatim_model::TextReply::TerminalSnapshot(snapshot) = &reply {
-            let (mut effects, caret) =
-                terminal_model::before_key(state, trace_id, reading.node, snapshot);
-            effects.extend(editing::held_read(state, reading, caret));
-            return effects;
-        }
-        return editing::held_read(state, reading, reply);
-    }
-    if let Some(pending) = state
-        .pending_caret
-        .take_if(|pending| pending.query_id == query_id)
-    {
-        return editing::caret_reply(state, trace_id, &pending, reply);
-    }
-    if let Some((_, node)) = state
-        .superseded_caret
-        .take_if(|(superseded, _)| *superseded == query_id)
-    {
-        return editing::superseded_reply(state, trace_id, node, &reply);
-    }
-    if let Some(pending) = state
-        .pending_text
-        .take_if(|pending| pending.query_id == query_id)
-    {
-        if matches!(
-            pending.then,
-            TextFollowUp::NavigatorSelection(_) | TextFollowUp::NavigatorLine(_)
-        ) {
-            return editing::navigator_text_reply(state, trace_id, &pending, reply);
-        }
-        return review_text::reply(state, trace_id, pending, reply);
-    }
-    if say_all::is_pending(state, query_id) {
-        return say_all::reply(state, trace_id, reply);
-    }
-    if terminal_model::is_pending(state, query_id) {
-        return terminal_model::reply(state, trace_id, query_id, reply);
-    }
-    if terminal::is_pending(state, query_id) {
-        return terminal::reply(state, trace_id, query_id, &reply);
-    }
-    Vec::new()
 }
 
 /// Speaks what an activation did: the action's name, NVDA's "Activate" for
@@ -1074,11 +1007,10 @@ fn reduce_focus_changed(
 
     // The review cursor follows focus (roadmap M3): every focus change snaps
     // the navigator object to the new focus and resets the review cursor to
-    // its start. This deliberately does not touch `latest_navigation`: an
-    // app-initiated focus event is not newer user intent than an
-    // object-navigation command already in flight, so a completion for that
-    // command must still be free to apply once it lands (see
-    // `SrState::latest_navigation`).
+    // its start. This deliberately leaves a navigation still pending alone:
+    // an app-initiated focus event is not newer user intent than an
+    // object-navigation command already in flight, so its answer must still
+    // be free to apply once it lands ([`navigate_completed`]).
     let navigator = Navigator::on(report.node.clone());
     // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
     // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
@@ -1193,7 +1125,7 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     if cut || reading {
         effects.push(Effect::StopSpeech);
     }
-    state.pending_caret = None;
+    state.queries.forget(|then| matches!(then, Then::Caret(_)));
     state.typed_word.clear();
     crate::terminal::focus_moved(state, node);
     if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
@@ -1357,20 +1289,12 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     {
         state.forget_caret();
     }
-    if state
-        .pending_caret
-        .as_ref()
-        .is_some_and(|pending| pending.node.outpost() == outpost)
-    {
-        state.pending_caret = None;
-    }
-    if state
-        .pending_text
-        .as_ref()
-        .is_some_and(|pending| pending.node.outpost() == outpost)
-    {
-        state.pending_text = None;
-    }
+    state.queries.forget(|then| match then {
+        Then::Caret(PendingCaret { node, .. }) | Then::Text(PendingText { node, .. }) => {
+            node.outpost() == outpost
+        }
+        _ => false,
+    });
     terminal_model::outpost_ended(state, outpost);
     if state
         .start_marker
@@ -1385,12 +1309,9 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     {
         state.navigator = None;
     }
-    if state
-        .latest_navigation
-        .is_some_and(|pending| pending.from.outpost() == outpost)
-    {
-        state.latest_navigation = None;
-    }
+    state
+        .queries
+        .forget(|then| matches!(then, Then::Navigation { from, .. } if from.outpost() == outpost));
     effects
 }
 
@@ -1671,15 +1592,17 @@ fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand)
     if command == ReviewCommand::SayAllFromCaret {
         return say_all::start(state, node, true, verbatim_model::TextPoint::Caret);
     }
-    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(
-        node,
-        verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
-    ));
-    state.pending_text = Some(crate::state::PendingText {
-        query_id,
-        node,
-        then: crate::state::TextFollowUp::Location,
-    });
+    state.queries.forget(|then| matches!(then, Then::Text(_)));
+    let (_, effect) = state.queries.ask(
+        crate::queries::Asking::Text(
+            node,
+            verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
+        ),
+        Then::Text(PendingText {
+            node,
+            then: TextFollowUp::Location,
+        }),
+    );
     vec![effect]
 }
 
@@ -1724,7 +1647,12 @@ fn navigator_command(
         ReviewCommand::ReportObject => report_object(state, trace_id, repeat),
         ReviewCommand::Activate => {
             let node = navigator.object.id;
-            vec![state.queries.ask(crate::queries::Asking::Activate(node)).1]
+            vec![
+                state
+                    .queries
+                    .ask(crate::queries::Asking::Activate(node), Then::Activation)
+                    .1,
+            ]
         }
         ReviewCommand::Parent => navigate(state, trace_id, QueryKind::Parent),
         ReviewCommand::NextSibling => navigate(state, trace_id, QueryKind::NextSibling),
@@ -1741,14 +1669,16 @@ fn navigator_command(
 }
 
 /// Snaps the navigator (and review cursor) back to the current focus and
-/// reports it, and clears `latest_navigation` so a navigation still pending
+/// reports it, and turns a navigation still pending to nothing, so it
 /// cannot override this explicit return to focus. Does nothing else with
 /// nothing focused, or with a focus whose outpost has ended. Also reused to
 /// re-seed the navigator when a navigation fetch reports `FetchResult::Gone`
 /// (the outpost could not reach the navigator's node): the same "fall back to
 /// focus and announce it" behavior applies there too.
 fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    state.latest_navigation = None;
+    state
+        .queries
+        .forget(|then| matches!(then, Then::Navigation { .. }));
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return Vec::new();
     };
@@ -1924,24 +1854,22 @@ pub(crate) fn clipboard_text(node: &NodeSnapshot) -> String {
 }
 
 /// Emits a navigation fetch for the navigator object's neighbor in the
-/// direction `kind` names; the completion (`reduce_fetch_completed`) moves
-/// the navigator and announces the result, or reports the edge when there
-/// is no such neighbor. Records this fetch's query id as the latest
-/// navigation: a second navigation command issued before this one completes
-/// supersedes it here, so the first's eventual completion is dropped as
-/// stale (see `SrState::latest_navigation`).
+/// direction `kind` names; its answer ([`navigate_completed`]) moves the
+/// navigator and announces the result, or reports the edge when there is no
+/// such neighbor. A navigation still pending is turned to nothing: this
+/// newer one supersedes it, so its eventual answer runs nothing.
 fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Effect> {
     let Some(navigator) = state.navigator.as_ref() else {
         return Vec::new();
     };
-    let node_id = navigator.object.id;
-    let (query_id, effect) = state
+    let from = navigator.object.id;
+    state
         .queries
-        .ask(crate::queries::Asking::Navigate(node_id, kind));
-    state.latest_navigation = Some(PendingNavigation {
-        query_id,
-        from: node_id,
-    });
+        .forget(|then| matches!(then, Then::Navigation { .. }));
+    let (_, effect) = state.queries.ask(
+        crate::queries::Asking::Navigate(from, kind),
+        Then::Navigation { from, kind },
+    );
     vec![effect]
 }
 
@@ -2527,18 +2455,12 @@ fn reduce_description_changed(
     )]
 }
 
-/// Completes an object-navigation fetch.
-///
-/// Applied if and only if `query_id` is still [`SrState::latest_navigation`]
-/// — the most recently issued navigation command, tracked independently of
-/// the navigator's identity. A focus event arriving between the command and
-/// its completion snaps the navigator (review follows focus) but does not
-/// touch `latest_navigation`, so the user's own pending navigation still
-/// lands. A second navigation issued before the first completes replaces
-/// `latest_navigation`, so the first's late completion is dropped as stale;
-/// `ToFocus` clears it outright, so a late completion cannot override the
-/// user's explicit return to focus; and the end of the outpost it was sent
-/// to clears it too.
+/// Completes an object-navigation fetch, the answer to the navigation
+/// still pending: one a newer navigation superseded, `ToFocus` cleared, or
+/// its outpost's end cleared runs nothing ([`crate::queries`]). A focus
+/// event arriving between the command and its answer snaps the navigator
+/// (review follows focus) but leaves the navigation pending, so the user's
+/// own navigation still lands.
 ///
 /// On `FetchResult::Node`, moves the navigator to the returned neighbor and
 /// announces it. On `FetchResult::NoNeighbor`, leaves the navigator put and
@@ -2553,38 +2475,23 @@ fn reduce_description_changed(
 pub(crate) fn navigate_completed(
     state: &mut SrState,
     trace_id: TraceId,
-    query_id: QueryId,
     kind: QueryKind,
     result: &FetchResult,
 ) -> Vec<Effect> {
-    if state
-        .latest_navigation
-        .is_none_or(|pending| pending.query_id != query_id)
-    {
-        // Superseded by a newer navigation, or cleared by `ToFocus` or the
-        // outpost's end: this completion no longer describes user intent
-        // worth acting on.
-        return Vec::new();
-    }
     match result {
         FetchResult::Node(snapshot) => {
-            state.latest_navigation = None;
             state.navigator = Some(Navigator::on(snapshot.clone()));
             announce_navigator(state, trace_id, snapshot, Reason::Focus)
         }
         FetchResult::Gone => navigator_to_focus(state, trace_id),
         // The application did not answer: the navigator stays where it is,
         // and nothing is known to speak.
-        FetchResult::Unanswered => {
-            state.latest_navigation = None;
-            Vec::new()
-        }
+        FetchResult::Unanswered => Vec::new(),
         // A genuine tree edge: the navigator stays put and the edge is
         // spoken (NVDA's wording, chosen per direction). Any future
         // `FetchResult` variant added under `#[non_exhaustive]` stays
         // silent until given a meaning here.
         _ => {
-            state.latest_navigation = None;
             let Some(message) = edge_message_of(kind) else {
                 return Vec::new();
             };

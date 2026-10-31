@@ -40,6 +40,7 @@ use verbatim_model::{
 use verbatim_text::Segmenter;
 
 use crate::editing::{self, is_grid};
+use crate::queries::Then;
 use crate::state::{
     BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState, UnitStart,
 };
@@ -104,7 +105,6 @@ pub(crate) fn start(
         moves_caret,
         start: at,
         unit,
-        pending: None,
         last_chunk: None,
         queued: std::collections::VecDeque::new(),
         buffer: std::collections::VecDeque::new(),
@@ -121,6 +121,7 @@ pub(crate) fn start(
 /// Stops say-all, if it is running, leaving the cursor where reading got
 /// to.
 pub(crate) fn stop(state: &mut SrState) -> Vec<Effect> {
+    state.queries.forget(|then| matches!(then, Then::SayAll));
     match state.say_all.take() {
         Some(say_all) if say_all.display_held => vec![Effect::KeepDisplayOn(false)],
         _ => Vec::new(),
@@ -147,19 +148,10 @@ fn read_next(state: &mut SrState) -> Vec<Effect> {
         count: READ_AHEAD,
     });
     let node = say_all.node;
-    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(node, op));
-    if let Some(say_all) = state.say_all.as_mut() {
-        say_all.pending = Some(query_id);
-    }
+    let (_, effect) = state
+        .queries
+        .ask(crate::queries::Asking::Text(node, op), Then::SayAll);
     vec![effect]
-}
-
-/// Whether `query_id` is say-all's read in flight.
-pub(crate) fn is_pending(state: &SrState, query_id: verbatim_model::QueryId) -> bool {
-    state
-        .say_all
-        .as_ref()
-        .is_some_and(|say_all| say_all.pending == Some(query_id))
 }
 
 /// Handles the answer to say-all's read: buffers the chunks' pieces, hands
@@ -169,7 +161,6 @@ pub(crate) fn reply(state: &mut SrState, trace_id: TraceId, reply: TextReply) ->
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
     };
-    say_all.pending = None;
     let (moved, chunks) = match reply {
         TextReply::Chunks { moved, chunks } => (moved, chunks),
         TextReply::Read { moved, chunk } => (moved, vec![chunk]),
@@ -339,13 +330,14 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
 /// Ends say-all once everything is read and heard, or reads the next batch
 /// when fewer than [`LOW_WATER`] utterances are left to speak.
 fn read_on_or_end(state: &mut SrState) -> Vec<Effect> {
+    let reading = state.queries.has(|then| matches!(then, Then::SayAll));
     let Some(say_all) = &state.say_all else {
         return Vec::new();
     };
     if say_all.finished {
         return end_if_done(state);
     }
-    if say_all.pending.is_none() && unstarted(say_all) + say_all.buffer.len() < LOW_WATER {
+    if !reading && unstarted(say_all) + say_all.buffer.len() < LOW_WATER {
         return read_next(state);
     }
     Vec::new()
@@ -432,10 +424,10 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
     if let Some(unit) = reached.filter(|_| moves) {
         let position = unit.position();
         if moves_caret {
-            let (_, effect) = state.queries.ask(crate::queries::Asking::Text(
-                node,
-                TextOp::MoveCaret(TextPoint::At(position)),
-            ));
+            let (_, effect) = state.queries.ask(
+                crate::queries::Asking::Text(node, TextOp::MoveCaret(TextPoint::At(position))),
+                Then::Nothing,
+            );
             effects.push(effect);
             let line = TextChunk {
                 offset: unit.offset,

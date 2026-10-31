@@ -1,5 +1,6 @@
 //! Tests of Core's queries: each of their endings, and every sequence of
-//! three inputs from two start states, enumerated.
+//! up to three steps from two start states, enumerated, against the
+//! table's invariants.
 
 use std::collections::BTreeMap;
 
@@ -11,6 +12,7 @@ use verbatim_model::{
     TextReply, TextUnit, TraceId,
 };
 
+use crate::queries::{self, ModelAsk, Then};
 use crate::reduce;
 use crate::state::SrState;
 
@@ -126,32 +128,48 @@ fn snapshot_event(node_id: NodeId, read: u64, at_ms: u64) -> Input {
 
 /// The text box focused with its caret, on [`EDIT_OUTPOST`].
 fn text_box() -> SrState {
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &focus(
-            node(EDIT_OUTPOST, 5, Role::EditableText, "Notes"),
-            Some(FocusText::Caret {
-                caret: caret(100, 3),
-                selected_text: None,
-            }),
-            None,
-        ),
-    );
+    text_box_wired().0
+}
+
+/// [`text_box`], with the wire's view of the requests it made.
+fn text_box_wired() -> (SrState, Wire) {
+    let (state, wire) = started(&[focus(
+        node(EDIT_OUTPOST, 5, Role::EditableText, "Notes"),
+        Some(FocusText::Caret {
+            caret: caret(100, 3),
+            selected_text: None,
+        }),
+        None,
+    )]);
     assert!(state.caret.is_some(), "the text box has its caret");
-    state
+    (state, wire)
+}
+
+/// The state `inputs` make from the default, and the wire's view of the
+/// requests they made.
+fn started(inputs: &[Input]) -> (SrState, Wire) {
+    let mut state = SrState::new();
+    let mut wire = Wire::default();
+    for input in inputs {
+        let effects = reduce(&mut state, input);
+        wire.apply(input, &effects);
+    }
+    (state, wire)
 }
 
 /// The console Core reads, focused, with its model, on
 /// [`CONSOLE_OUTPOST`].
 fn console() -> SrState {
-    let mut state = SrState::new();
+    console_wired().0
+}
+
+/// [`console`], with the wire's view of the requests it made.
+fn console_wired() -> (SrState, Wire) {
     let terminal = node(CONSOLE_OUTPOST, 5, Role::Terminal, "Console");
     let id = terminal.id;
-    let _ = reduce(&mut state, &focus(terminal, None, None));
-    let _ = reduce(&mut state, &snapshot_event(id, 1, 10));
+    let (state, wire) = started(&[focus(terminal, None, None), snapshot_event(id, 1, 10)]);
     assert_eq!(state.terminals.len(), 1, "the console has its model");
-    state
+    (state, wire)
 }
 
 /// One step of the enumeration: an input, or several applied as one.
@@ -474,24 +492,20 @@ fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
     }
 }
 
-/// FNV-1a over `bytes`, folded into `hash`.
-fn fold(hash: u64, bytes: &[u8]) -> u64 {
-    bytes.iter().fold(hash, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
-    })
-}
-
-/// What one step of a sequence did, as the enumeration records it.
+/// What one input of a sequence did.
 struct Visit<'a> {
+    before: &'a SrState,
+    input: &'a Input,
     state: &'a SrState,
     effects: &'a [Effect],
+    wire: &'a Wire,
 }
 
 /// Runs every sequence of up to `depth` steps from `start`, calling
-/// `visit` after each step with its sequence; the state is cloned at each
+/// `visit` after each input with its sequence; the state is cloned at each
 /// step, so sequences sharing a prefix share its steps.
 fn enumerate(
-    start: &SrState,
+    (start, wire): &(SrState, Wire),
     outpost: OutpostId,
     depth: usize,
     visit: &mut dyn FnMut(&[usize], Visit<'_>),
@@ -513,74 +527,198 @@ fn enumerate(
             if inputs.is_empty() {
                 continue;
             }
+            path.push(index);
             let mut state = state.clone();
             let mut wire = wire.clone();
-            let mut effects = Vec::new();
             for input in &inputs {
-                let caused = reduce(&mut state, input);
-                wire.apply(input, &caused);
-                effects.extend(caused);
+                let before = state.clone();
+                let effects = reduce(&mut state, input);
+                wire.apply(input, &effects);
+                visit(
+                    path,
+                    Visit {
+                        before: &before,
+                        input,
+                        state: &state,
+                        effects: &effects,
+                        wire: &wire,
+                    },
+                );
             }
-            path.push(index);
-            visit(
-                path,
-                Visit {
-                    state: &state,
-                    effects: &effects,
-                },
-            );
             go(&state, &wire, outpost, path, depth, steps, visit);
             path.pop();
         }
     }
     let steps = steps();
-    let mut wire = Wire::default();
-    wire.take(&[]);
-    go(start, &wire, outpost, &mut Vec::new(), depth, &steps, visit);
+    go(start, wire, outpost, &mut Vec::new(), depth, &steps, visit);
 }
 
-/// The differential check's digest of every sequence of three steps from
-/// both start states: each sequence's effects and held nodes after each
-/// step, written one sequence a line to the file `QUERIES_DIGEST` names,
-/// or compared with that file when `QUERIES_DIGEST_COMPARE` is set.
-#[test]
-#[ignore = "the differential check of the query table build, run by hand"]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the differential check reads and writes its digests, once, by hand"
-)]
-fn digest_every_sequence() {
-    let Ok(path) = std::env::var("QUERIES_DIGEST") else {
-        return;
+/// The nodes `state` holds as the table says it should: the focus, its
+/// ancestors and last selection, the navigator, the caret, the start
+/// marker and say-all, with the node an open navigation starts from and
+/// the nodes of the open caret keys', text commands' and held keys'
+/// queries.
+fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet<NodeId>> {
+    let mut held: BTreeMap<OutpostId, std::collections::BTreeSet<NodeId>> = BTreeMap::new();
+    let mut insert = |id: NodeId| {
+        held.entry(id.outpost()).or_default().insert(id);
     };
-    let mut lines = Vec::new();
-    for (name, start, outpost) in [
-        ("text box", text_box(), EDIT_OUTPOST),
-        ("console", console(), CONSOLE_OUTPOST),
+    if let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) {
+        insert(focus.snapshot.id);
+        focus
+            .ancestors
+            .iter()
+            .for_each(|ancestor| insert(ancestor.id));
+        focus.last_selection.into_iter().for_each(&mut insert);
+    }
+    if let Some(navigator) = &state.navigator {
+        insert(navigator.object.id);
+    }
+    if let Some(caret) = &state.caret {
+        insert(caret.node);
+    }
+    if let Some(marker) = state.start_marker {
+        insert(marker.node());
+    }
+    if let Some(say_all) = &state.say_all {
+        insert(say_all.node);
+    }
+    for (_, open) in state.queries.entries() {
+        match &open.then {
+            Then::Navigation { from, .. } => insert(*from),
+            Then::Caret(pending) => insert(pending.node),
+            Then::Text(pending) => insert(pending.node),
+            Then::HeldRead(reading) => insert(reading.node),
+            _ => {}
+        }
+    }
+    held
+}
+
+/// Which kind of continuation `then` is, for the rule that at most one of
+/// each is open: `None` for those of which several may be.
+fn one_of(then: &Then) -> Option<String> {
+    match then {
+        Then::Navigation { .. } => Some("navigation".to_owned()),
+        Then::Caret(_) => Some("caret".to_owned()),
+        Then::Text(_) => Some("text".to_owned()),
+        Then::HeldRead(_) => Some("held read".to_owned()),
+        Then::SayAll => Some("say-all".to_owned()),
+        Then::Terminal(ask) => Some(format!("terminal {ask:?}")),
+        Then::TerminalModel {
+            node,
+            generation,
+            ask,
+        } => Some(format!(
+            "model {node:?} {generation} {}",
+            match ask {
+                ModelAsk::Whole | ModelAsk::HistoryBlock => "owed",
+                ModelAsk::Fresh => "fresh",
+                ModelAsk::History(_) => "history",
+                ModelAsk::Find { .. } => "find",
+            }
+        )),
+        Then::Activation | Then::SupersededCaret { .. } | Then::Nothing => None,
+    }
+}
+
+/// Checks the table's invariants after `visit`, against the wire's view.
+fn check(path: &[usize], visit: &Visit<'_>) {
+    let Visit {
+        before,
+        input,
+        state,
+        effects,
+        wire,
+    } = visit;
+    let at = format!("after {path:?}, {input:?}");
+    // The idle barrier waits for exactly the reads the wire has open.
+    let reads = wire
+        .open
+        .values()
+        .filter(|(_, asked)| !matches!(asked, Asked::Text(TextOp::AwaitCaret(_))))
+        .count();
+    assert_eq!(state.outstanding_queries(), reads, "{at}");
+    for (query_id, open) in state.queries.entries() {
+        // Every query an outpost answers is open on the wire.
+        if open.asked != queries::Asked::Memory {
+            assert!(wire.open.contains_key(&query_id), "{query_id:?} {at}");
+        }
+        // A query Core answers from memory is about a terminal it models.
+        if open.asked == queries::Asked::Memory
+            && let Then::Text(pending) = &open.then
+        {
+            assert!(
+                state
+                    .terminals
+                    .iter()
+                    .any(|model| model.node == pending.node),
+                "{query_id:?} {at}"
+            );
+        }
+    }
+    // An outpost's end leaves none of its queries open.
+    if let Input::OutpostEnded { outpost, .. } = input {
+        assert!(
+            state
+                .queries
+                .entries()
+                .all(|(_, open)| open.outpost != *outpost),
+            "{at}"
+        );
+    }
+    // An answer to no open query, or to one nothing waits for, changes
+    // nothing but the table, and the held keys' resume when it was their
+    // watch.
+    if let Input::Answered { query_id, .. } = input
+        && before.held_keys.awaiting_watch != Some(*query_id)
+        && before
+            .queries
+            .entries()
+            .find(|(open, _)| open == query_id)
+            .is_none_or(|(_, open)| open.then == Then::Nothing)
+    {
+        let mut after = (*state).clone();
+        after.queries = before.queries.clone();
+        assert_eq!(&after, *before, "{at}");
+        assert_eq!(*effects, [], "{at}");
+    }
+    // The watch the held keys wait on is an open watch.
+    if let Some(watch) = state.held_keys.awaiting_watch {
+        assert!(
+            state
+                .queries
+                .entries()
+                .any(|(open, entry)| open == watch && entry.asked == queries::Asked::Watch),
+            "{at}"
+        );
+    }
+    // At most one open query of each kind.
+    let mut kinds = std::collections::BTreeSet::new();
+    for (_, open) in state.queries.entries() {
+        if let Some(kind) = one_of(&open.then) {
+            assert!(kinds.insert(kind.clone()), "two open {kind} {at}");
+        }
+    }
+    assert_eq!(state.held_nodes(), nodes_held(state), "{at}");
+}
+
+/// Every sequence of up to three steps from a text box with its caret and
+/// from a console Core reads keeps the table's invariants after every
+/// input, against the wire's view of the requests.
+#[test]
+fn every_sequence_keeps_the_query_tables_invariants() {
+    let mut visited = 0_usize;
+    for (start, outpost) in [
+        (text_box_wired(), EDIT_OUTPOST),
+        (console_wired(), CONSOLE_OUTPOST),
     ] {
         enumerate(&start, outpost, 3, &mut |path, visit| {
-            let mut hash = 0xcbf2_9ce4_8422_2325;
-            hash = fold(hash, format!("{:?}", visit.effects).as_bytes());
-            hash = fold(hash, format!("{:?}", visit.state.held_nodes()).as_bytes());
-            lines.push(format!("{name} {path:?} {hash:016x}"));
+            visited += 1;
+            check(path, &visit);
         });
     }
-    let written = lines.join("\n");
-    if std::env::var("QUERIES_DIGEST_COMPARE").is_ok() {
-        let expected = std::fs::read_to_string(&path).expect("the digest file");
-        let differing: Vec<(&str, &str)> = expected
-            .lines()
-            .zip(written.lines())
-            .filter(|(expected, now)| expected != now)
-            .take(10)
-            .collect();
-        assert_eq!(
-            (expected.lines().count(), differing),
-            (written.lines().count(), Vec::new())
-        );
-    } else {
-        std::fs::write(&path, written).expect("the digest file is written");
-    }
+    assert_eq!(visited, 33_602, "the inputs of 11,762 sequences");
 }
 
 /// `command` pressed.
@@ -1039,7 +1177,7 @@ fn a_superseded_watchs_late_answer_does_not_resume_the_held_keys() {
             trace_id: TraceId::from_raw(81),
         },
     );
-    let read = state.held_keys.reading.expect("K2 is read").query_id;
+    let (read, _) = state.reading_held().expect("K2 is read");
     let _ = reduce(&mut state, &answered(read, EDIT_OUTPOST, read_answer()));
     let second_watch = state.held_keys.awaiting_watch.expect("W2 is waited on");
     assert_ne!(second_watch, first_watch);

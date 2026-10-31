@@ -37,6 +37,7 @@ use verbatim_model::{
     UtteranceSegment,
 };
 
+use crate::queries::{Asking, Then};
 use crate::state::{
     CARET_HISTORY, CaretContext, HeldKey, HeldRead, NavigatorRead, PendingCaret, PendingText,
     ReviewText, SrState, TextFollowUp, TimedCaret, WaitingKey,
@@ -193,35 +194,52 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     // A key still waiting on the same node is superseded: the change of
     // the selection its answer may yet carry, and the words of reports held
     // for it, are said with this key's (`superseded_reply`).
-    let held = match state.pending_caret.take() {
-        Some(old) if old.node == node => {
-            state.superseded_caret = Some((old.query_id, old.node));
-            old.heard
-        }
-        _ => Vec::new(),
-    };
-    let (query_id, request) = state.queries.ask(crate::queries::Asking::Text(
-        node,
-        TextOp::AwaitCaret(watch),
-    ));
+    let held = supersede_caret(state, node);
+    let (query_id, request) = state.queries.ask(
+        Asking::Text(node, TextOp::AwaitCaret(watch)),
+        Then::Caret(PendingCaret {
+            node,
+            key,
+            deleted,
+            before,
+            later_key_at_ms: None,
+            selected_before,
+            before_unknown,
+            heard: held,
+        }),
+    );
     // A held key waiting behind a held key's watch waits for the newest
     // watch: a key handled between them moves the caret after it.
     if state.held_keys.awaiting_watch.is_some() {
         state.held_keys.awaiting_watch = Some(query_id);
     }
-    state.pending_caret = Some(PendingCaret {
-        query_id,
-        node,
-        key,
-        deleted,
-        before,
-        later_key_at_ms: None,
-        selected_before,
-        before_unknown,
-        heard: held,
-    });
     effects.push(request);
     effects
+}
+
+/// Ends the wait of the caret key still waiting for evidence, as a newer
+/// key's watch replaces it, returning the words held for it to be said
+/// with the newer key's: on the same `node` it becomes the superseded key,
+/// whose answer may still carry a change of the selection
+/// (`superseded_reply`), and the key superseded before it is answered with
+/// nothing; on another node, nothing waits for its answer.
+fn supersede_caret(state: &mut SrState, node: NodeId) -> Vec<UtteranceSegment> {
+    let Some((query_id, _)) = state.queries.find(|then| matches!(then, Then::Caret(_))) else {
+        return Vec::new();
+    };
+    let Some(Then::Caret(old)) = state.queries.replace(query_id, Then::Nothing) else {
+        return Vec::new();
+    };
+    if old.node != node {
+        return Vec::new();
+    }
+    state
+        .queries
+        .forget(|then| matches!(then, Then::SupersededCaret { .. }));
+    state
+        .queries
+        .replace(query_id, Then::SupersededCaret { node });
+    old.heard
 }
 
 /// The focus whose caret keys are watched for evidence: alive, with a
@@ -278,7 +296,7 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
     let mut effects = Vec::new();
     // The key whose wait for the key ahead bounds the loop, if one does.
     let mut blocked = None;
-    while state.held_keys.reading.is_none() {
+    while state.reading_held().is_none() {
         let Some(front) = state.held_keys.waiting.front() else {
             break;
         };
@@ -350,7 +368,7 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
     }
     // A deadline kept for a wait or a read that has ended, with no new one
     // in its place, is cleared, so no timer fires for nothing.
-    if state.held_keys.reading.is_none()
+    if state.reading_held().is_none()
         && state.held_keys.bounded.is_some()
         && state.held_keys.bounded != blocked
     {
@@ -367,14 +385,10 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
     let Some(node) = text_focus(state) else {
         return pass_held(state, held, held.pressed_at_ms);
     };
-    let (query_id, request) = state
-        .queries
-        .ask(crate::queries::Asking::Text(node, TextOp::ReadCaret));
-    state.held_keys.reading = Some(HeldRead {
-        query_id,
-        node,
-        key: held,
-    });
+    let (_, request) = state.queries.ask(
+        Asking::Text(node, TextOp::ReadCaret),
+        Then::HeldRead(HeldRead { node, key: held }),
+    );
     state.held_keys.bounded = Some(held.trace_id);
     // The deadline first, so a read the shell answers at once ends it.
     vec![
@@ -414,7 +428,7 @@ fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
 /// ([`next_held`]): with only the open watch ahead of it, its wait is
 /// bounded now, or it runs at once when pressed past the bound.
 pub(crate) fn queue_command(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    let busy = state.held_keys.busy();
+    let busy = state.held_busy();
     state
         .held_keys
         .waiting
@@ -443,16 +457,12 @@ pub(crate) fn held_key_due(state: &mut SrState, trace_id: TraceId) -> Vec<Effect
     }
     // The shell's deadline has fired, and is kept no more.
     state.held_keys.bounded = None;
-    if let Some(reading) = state
-        .held_keys
-        .reading
-        .take_if(|reading| reading.key.trace_id == trace_id)
+    if let Some((query_id, reading)) = state
+        .reading_held()
+        .filter(|(_, reading)| reading.key.trace_id == trace_id)
+        && let Some((_, withdrawal)) = state.queries.withdraw(query_id)
     {
-        let mut effects: Vec<Effect> = state
-            .queries
-            .withdraw(reading.query_id)
-            .into_iter()
-            .collect();
+        let mut effects = vec![withdrawal];
         effects.extend(held_read(state, reading, TextReply::Unanswered));
         return effects;
     }
@@ -469,7 +479,7 @@ fn held_wait_ended(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         Some(WaitingKey::Command(input)) => input.trace_id(),
         _ => None,
     };
-    let waits = state.held_keys.reading.is_none()
+    let waits = state.reading_held().is_none()
         && state.held_keys.awaiting_watch.is_some()
         && front == Some(trace_id);
     if !waits {
@@ -884,7 +894,7 @@ fn reply_changes(reply: &CaretReply) -> Vec<UtteranceSegment> {
 }
 
 /// The answer to a caret key a later key on the same node superseded
-/// (`SrState::superseded_caret`), on `node`: its caret and words are not
+/// (`crate::queries::Then::SupersededCaret`), on `node`: its caret and words are not
 /// spoken, the later key's being the newer, but the selection's change it
 /// carries is, after the later key's own words, held as a caret report's
 /// is ([`PendingCaret::heard`]), or at once when no key waits: the
@@ -904,10 +914,9 @@ pub(crate) fn superseded_reply(
     if changed.is_empty() || !state.focus_matches(node) {
         return Vec::new();
     }
-    if let Some(pending) = state
-        .pending_caret
-        .as_mut()
-        .filter(|pending| pending.node == node)
+    if let Some(Then::Caret(pending)) = state
+        .queries
+        .find_mut(|then| matches!(then, Then::Caret(pending) if pending.node == node))
     {
         pending.heard.extend(changed);
         return Vec::new();
@@ -1212,10 +1221,9 @@ pub(crate) fn selection_changed(
     if changes.is_empty() || !state.focus_matches(node) {
         return Vec::new();
     }
-    if let Some(pending) = state
-        .pending_caret
-        .as_mut()
-        .filter(|pending| pending.node == node)
+    if let Some(Then::Caret(pending)) = state
+        .queries
+        .find_mut(|then| matches!(then, Then::Caret(pending) if pending.node == node))
     {
         pending.heard.extend(selection_segments(changes, general));
         return Vec::new();
@@ -1537,12 +1545,11 @@ fn navigator_request(
     op: TextOp,
     then: TextFollowUp,
 ) -> Vec<Effect> {
-    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(node, op));
-    state.pending_text = Some(PendingText {
-        query_id,
-        node,
-        then,
-    });
+    state.queries.forget(|then| matches!(then, Then::Text(_)));
+    let (_, effect) = state.queries.ask(
+        Asking::Text(node, op),
+        Then::Text(PendingText { node, then }),
+    );
     vec![effect]
 }
 
@@ -1687,7 +1694,9 @@ fn focus_speech(
 /// every key does): a caret key still watched was pressed before it, so
 /// an answer read from then on is not that key's alone.
 pub(crate) fn later_key(state: &mut SrState, at_ms: u64) {
-    if let Some(pending) = state.pending_caret.as_mut()
+    if let Some(Then::Caret(pending)) = state
+        .queries
+        .find_mut(|then| matches!(then, Then::Caret(_)))
         && pending.later_key_at_ms.is_none()
         && at_ms != 0
     {

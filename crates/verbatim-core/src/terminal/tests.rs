@@ -329,8 +329,10 @@ impl Playback {
     /// said, as the terminal model hands an answer's speech to the flood
     /// policy.
     fn answer_with(&mut self, state: &mut SrState, query_id: QueryId, output: TerminalSpeech) {
-        let mut effects =
-            super::answered(state, TraceId::from_raw(5), query_id, said_of(output), None);
+        let Some(crate::queries::Then::Terminal(ask)) = state.queries.end(query_id) else {
+            panic!("a terminal request of the flood policy's");
+        };
+        let mut effects = super::answered(state, TraceId::from_raw(5), ask, said_of(output), None);
         if effects.iter().any(super::cuts_speech) {
             effects.extend(super::cut(state, 0));
         }

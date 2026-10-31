@@ -25,6 +25,7 @@ use verbatim_model::{
 };
 
 use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
+use crate::queries::Then;
 use crate::state::{
     Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
     StartMarker, TextFollowUp,
@@ -142,13 +143,7 @@ pub(crate) fn command_mark(
         _ => (TextPoint::Caret, LandingPlace::Start),
     };
     let forward = command == ReviewCommand::NextCommandMark;
-    let Some((query_id, effects)) =
-        crate::terminal_model::command_mark(state, node, trace_id, (forward, from))
-    else {
-        return Vec::new();
-    };
-    state.pending_text = Some(PendingText {
-        query_id,
+    let then = PendingText {
         node,
         then: TextFollowUp::Land(Landing {
             place,
@@ -156,8 +151,9 @@ pub(crate) fn command_mark(
             edge: None,
             command,
         }),
-    });
-    effects
+    };
+    crate::terminal_model::command_mark(state, node, trace_id, (forward, from), then)
+        .unwrap_or_default()
 }
 
 /// A review position on `line` at byte `offset`, which may be on its line
@@ -175,12 +171,11 @@ fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition 
 /// Asks for a text read, to be followed up by `then`. A newer request
 /// supersedes this one.
 fn request(state: &mut SrState, node: NodeId, op: TextOp, then: TextFollowUp) -> Vec<Effect> {
-    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(node, op));
-    state.pending_text = Some(PendingText {
-        query_id,
-        node,
-        then,
-    });
+    state.queries.forget(|then| matches!(then, Then::Text(_)));
+    let (_, effect) = state.queries.ask(
+        crate::queries::Asking::Text(node, op),
+        Then::Text(PendingText { node, then }),
+    );
     vec![effect]
 }
 

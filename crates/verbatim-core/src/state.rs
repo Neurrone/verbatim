@@ -16,6 +16,7 @@ use verbatim_model::{
 };
 
 use crate::foreground::Foreground;
+use crate::queries::Then;
 
 /// The focused node and what the reducer knows about where it sits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,7 +316,6 @@ pub(crate) struct TimedCaret {
 /// evidence of what it did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PendingCaret {
-    pub(crate) query_id: QueryId,
     pub(crate) node: NodeId,
     pub(crate) key: CaretKey,
     /// What a Backspace deleted, worked out from the caret before the key:
@@ -367,7 +367,6 @@ pub(crate) struct HeldKey {
 /// A held key whose caret is being read before it is passed on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct HeldRead {
-    pub(crate) query_id: QueryId,
     pub(crate) node: NodeId,
     pub(crate) key: HeldKey,
 }
@@ -390,12 +389,12 @@ pub(crate) enum WaitingKey {
     Command(Box<verbatim_model::Input>),
 }
 
-/// The caret keys the hook held back: the one whose caret is being read,
-/// and the keys pressed while it was, each handled in the order pressed
-/// (`docs/design/key-holding.md`, "Keys behind a held key").
+/// The caret keys the hook held back and pressed while one's caret is
+/// read, each handled in the order pressed (`docs/design/key-holding.md`,
+/// "Keys behind a held key"); the read itself is a query
+/// ([`crate::queries::Then::HeldRead`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct HeldKeys {
-    pub(crate) reading: Option<HeldRead>,
     pub(crate) waiting: std::collections::VecDeque<WaitingKey>,
     /// When the last held key was passed on, on the outposts' clock: a key
     /// behind it reaches the application no earlier.
@@ -407,15 +406,26 @@ pub(crate) struct HeldKeys {
     pub(crate) awaiting_watch: Option<QueryId>,
     /// The held key whose one deadline the shell keeps
     /// ([`verbatim_model::Effect::BoundHeldKey`]): for its wait for
-    /// `awaiting_watch`, or for the read of its caret while `reading`.
+    /// `awaiting_watch`, or for the read of its caret.
     #[serde(default)]
     pub(crate) bounded: Option<TraceId>,
 }
 
-impl HeldKeys {
-    /// Whether a key pressed now waits behind a held key.
-    pub(crate) fn busy(&self) -> bool {
-        self.reading.is_some() || !self.waiting.is_empty()
+impl SrState {
+    /// Whether a key pressed now waits behind a held key: one's caret is
+    /// being read, or keys wait behind it.
+    pub(crate) fn held_busy(&self) -> bool {
+        self.reading_held().is_some() || !self.held_keys.waiting.is_empty()
+    }
+
+    /// The held key whose caret is being read, and its query.
+    pub(crate) fn reading_held(&self) -> Option<(QueryId, HeldRead)> {
+        self.queries
+            .find(|then| matches!(then, Then::HeldRead(_)))
+            .and_then(|(query_id, then)| match then {
+                Then::HeldRead(reading) => Some((query_id, *reading)),
+                _ => None,
+            })
     }
 }
 
@@ -423,7 +433,6 @@ impl HeldKeys {
 /// answer. A newer command's request supersedes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PendingText {
-    pub(crate) query_id: QueryId,
     pub(crate) node: NodeId,
     pub(crate) then: TextFollowUp,
 }
@@ -602,8 +611,6 @@ pub(crate) struct SayAll {
     pub(crate) start: verbatim_model::TextPoint,
     /// The unit asked for in each read.
     pub(crate) unit: TextUnit,
-    /// The read in flight, if any.
-    pub(crate) pending: Option<QueryId>,
     /// The start of the last chunk read and its unit, which the next read
     /// moves on from.
     pub(crate) last_chunk: Option<(TextPosition, TextUnit)>,
@@ -634,15 +641,7 @@ pub(crate) struct SayAll {
     pub(crate) display_held: bool,
 }
 
-/// The most recently issued object-navigation query whose completion has not
-/// landed yet, and the node it navigates from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct PendingNavigation {
-    pub(crate) query_id: QueryId,
-    pub(crate) from: NodeId,
-}
-
-/// Reducer state: focus, attention, navigator, and the latest navigation.
+/// Reducer state: focus, attention, navigator, and Core's queries.
 ///
 /// Small control state is held in plain fields; anything that grows with
 /// the application is held behind `Arc`, so a clone of the whole state
@@ -674,20 +673,6 @@ pub struct SrState {
     /// the first focus lands; from then it tracks focus unless an
     /// object-navigation command moves it away.
     pub(crate) navigator: Option<Navigator>,
-    /// The most recently issued object-navigation query, if its completion
-    /// has not landed yet.
-    ///
-    /// A completion is applied only when it answers this query: a later
-    /// navigation command supersedes an earlier still-pending one, so a
-    /// completion arriving after it is dropped rather than clobbering where
-    /// the user has since moved. A `FocusChanged` event snaps the navigator
-    /// to the new focus (review follows focus) but deliberately leaves this
-    /// field alone — an app-initiated focus event must not be able to
-    /// discard the user's own, more recent, in-flight navigation. `ToFocus`
-    /// clears it explicitly, since it is itself the user's explicit, newer
-    /// intent superseding whatever navigation was pending; so does the end of
-    /// the outpost it was sent to.
-    pub(crate) latest_navigation: Option<PendingNavigation>,
     /// The reader settings (milestone M4).
     #[serde(default)]
     pub(crate) settings: ReaderSettings,
@@ -702,14 +687,6 @@ pub struct SrState {
     /// (`editing::caret_moved_by_core`).
     #[serde(default)]
     pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
-    /// The caret key waiting for evidence.
-    #[serde(default)]
-    pub(crate) pending_caret: Option<PendingCaret>,
-    /// The query and node of the caret key a later key on the same node
-    /// superseded while it waited, whose answer may still carry a change
-    /// of the selection (`editing::superseded_reply`).
-    #[serde(default)]
-    pub(crate) superseded_caret: Option<(QueryId, NodeId)>,
     /// The caret keys the keyboard hook held back
     /// (`docs/design/key-holding.md`).
     #[serde(default)]
@@ -722,9 +699,6 @@ pub struct SrState {
     /// the order pressed (`Input::ToggleKeyPressed`).
     #[serde(default)]
     pub(crate) toggle_keys: std::collections::VecDeque<verbatim_model::LockKey>,
-    /// The review or text command's request in flight.
-    #[serde(default)]
-    pub(crate) pending_text: Option<PendingText>,
     /// The select-then-copy start marker.
     #[serde(default)]
     pub(crate) start_marker: Option<StartMarker>,
@@ -803,7 +777,7 @@ impl SrState {
     /// not idle while one does.
     #[must_use]
     pub fn holds_inputs_back(&self) -> bool {
-        self.held_keys.busy()
+        self.held_busy()
     }
 
     /// How many of Core's queries an outpost has yet to answer that the
@@ -933,7 +907,9 @@ impl SrState {
 
     /// Every node the state refers to, grouped by the outpost that issued
     /// it: the focus, its ancestors, its last announced selection, the
-    /// navigator, and the node the latest navigation starts from. The shell
+    /// navigator, and the nodes Core's open queries are about (the node a
+    /// navigation starts from, a caret key's, a text command's and a held
+    /// key's). The shell
     /// sends each outpost its own set, so the outpost keeps exactly these
     /// nodes' live objects. A dead focus contributes nothing.
     #[must_use]
@@ -954,21 +930,18 @@ impl SrState {
         if let Some(navigator) = &self.navigator {
             insert(navigator.object.id);
         }
-        if let Some(pending) = self.latest_navigation {
-            insert(pending.from);
+        for then in self.queries.continuations() {
+            match then {
+                Then::Navigation { from, .. } => insert(*from),
+                Then::Caret(PendingCaret { node, .. })
+                | Then::Text(PendingText { node, .. })
+                | Then::HeldRead(HeldRead { node, .. }) => insert(*node),
+                _ => {}
+            }
         }
         // Nodes whose text the state holds positions in or waits on.
         if let Some(caret) = &self.caret {
             insert(caret.node);
-        }
-        if let Some(pending) = &self.pending_caret {
-            insert(pending.node);
-        }
-        if let Some(pending) = &self.pending_text {
-            insert(pending.node);
-        }
-        if let Some(reading) = &self.held_keys.reading {
-            insert(reading.node);
         }
         if let Some(marker) = self.start_marker {
             insert(marker.node());
