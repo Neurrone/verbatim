@@ -436,7 +436,7 @@ The order of work:
 ### Decisions
 
 - Step two, the watch lent to a program at dispatch, is not in this build: `Take` stays, and the question is asked again after the caret and selection rework, which changes when the watch opens (Dickson, 2026-11-01).
-- The held key's one bound is built in this build, with its limitation: a key passed on at its read's bound leaves that read outstanding in Core's request table for up to 2 s, or about 12 s behind a program in flight, so the harness's idle check waits that long in that case, as Core's idle round already does today (Dickson, 2026-11-01; the figure corrected after the design review).
+- The held key's one bound is built in this build. When Core's deadline passes the key on during its read, Core ends the read's entry in the request table and withdraws the read from the outpost, so the harness's idle check does not wait for it; the design's first version left the entry outstanding, up to about 12 s behind a program in flight, and that is fixed rather than recorded as a limit (Dickson, 2026-11-01).
 
 ## Determinism (a build of its own)
 
