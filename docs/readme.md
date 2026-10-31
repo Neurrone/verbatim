@@ -73,6 +73,8 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [logic-tests.md](design/logic-tests.md) — the crates split by role,
     failure-path tests and the outpost's simplified bookkeeping (M4.5), and
     generated tests of the reducers against reference models (M4.6).
+  - [logic-foundations.md](design/logic-foundations.md) — the designs of
+    M4.5's builds, starting with the crate split by role.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
