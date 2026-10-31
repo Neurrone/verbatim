@@ -596,6 +596,7 @@ Each commit has its unit tests, and the crate guides are updated where an API ch
   - The gesture map is owned, the trace id is stamped by the hook, the time is in shared-clock microseconds, and its sets are `BTreeSet`s.
   - `verbatim-input` joins the covered crates, with its `clippy.toml`.
   - Scenarios: `notepad_typed_words` and `measure_keys_notepad`'s wake-ups and processor time, before and after.
+  - Measured, debug builds, test audio mode, five 12-second windows each side interleaved, 2026-11-01: wakes in all processes per input-hook wake, median 31.1 after and 32.2 before; processor time 2,937 ms after and 2,903 ms before (one before window, which caught half the typing, left out). No change was measured.
 - **The outbound backlog's `reported` as a `BTreeMap`.** Both `encode`s stay as they are. Scenario: `notepad_editing`.
 
 **The third build, simpler types:**
