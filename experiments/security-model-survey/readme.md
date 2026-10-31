@@ -1,6 +1,6 @@
 # Security model survey
 
-The evidence behind section 8 of [the security model](../../docs/design/security-model.md), gathered on 2026-10-31. NVDA's mechanisms were read from its source at the pinned commit `732d1ce2f0f051da3ef1e6a6247c64cf04596337`, with paths relative to that tree. Everything else comes from the public sources named beside each item. Entries marked unconfirmed could not be checked from a primary source.
+The evidence behind section 11 of [the security model](../../docs/design/security-model.md), gathered on 2026-10-31. NVDA's mechanisms were read from its source at the pinned commit `732d1ce2f0f051da3ef1e6a6247c64cf04596337`, with paths relative to that tree. Everything else comes from the public sources named beside each item. Entries marked unconfirmed could not be checked from a primary source.
 
 ## NVDA, from its source
 

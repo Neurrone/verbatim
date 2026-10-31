@@ -111,9 +111,10 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
     — the rule for Windows Terminal's second terminal identity.
   - [extensions.md](design/extensions.md) — the extension system.
-  - [security-model.md](design/security-model.md) — who Verbatim
-    defends against, what it protects, the rules that follow, and the
-    gaps in today's code, compared with NVDA and other screen readers.
+  - [security-model.md](design/security-model.md) — the threat model
+    (assets, trust boundaries, adversaries and classes of threat), the
+    architectural mitigations for each class, the gaps in today's code,
+    and a comparison with NVDA and other screen readers.
   - [m5-extensions-work.md](design/m5-extensions-work.md) and
     [m6-native-synth-work.md](design/m6-native-synth-work.md) — the order
     of work and the tests for M5 and M6.
