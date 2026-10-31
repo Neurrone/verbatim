@@ -31,7 +31,7 @@
 //! - The console updates of one window may be absorbed: dropped as they are
 //!   pushed, without waking the worker, while the worker has marked that
 //!   window's console terminal as held with its text changed and no caret
-//!   key's watch open ([`Intake::absorb_console_updates`]). The worker does
+//!   key's watch open ([`Marks::absorbed`]). The worker does
 //!   nothing for such an update, and the read that ends the hold covers
 //!   every update observed before it, as NVDA's console handler skips an
 //!   update while one is already pending.
@@ -109,7 +109,7 @@
 //!   before it. A read whose marker the intake never saw, as when the
 //!   outpost started after it, is taken in where it arrives.
 //! - When a UIA focus's read takes its marker's place and the focus last
-//!   reported ([`Intake::note_focus`]) is among the read's ancestors, the
+//!   reported ([`Marks::focused`]) is among the read's ancestors, the
 //!   old focus's own UIA state changes that the outpost's subscriptions
 //!   queued after the marker, up to the next marker or idle query, are
 //!   planned ahead of the read, in their order (`old_focus_events_first`).
@@ -180,18 +180,6 @@ const FOCUS_EVENTS_PER_BATCH: usize = 4;
 /// How many other MSAA events a batch keeps per thread that raised them
 /// (NVDA's `MAX_WINEVENTS_PER_THREAD`).
 const EVENTS_PER_THREAD: usize = 10;
-
-/// What the gap record's timer is to do after a change to the record: be
-/// set for a record opened, cancelled for one answered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TimerAction {
-    /// Nothing.
-    Keep,
-    /// Set it for this due time, on the observation clock.
-    Set(u64),
-    /// Cancel it.
-    Cancel,
-}
 
 /// The object and kind an entry concerns, for the one-per-object rule and for
 /// recognizing the focused object.
@@ -324,7 +312,6 @@ pub struct Intake {
     /// Numbers the batches, so a program can tell whether a focus was
     /// reported within the batch a menu opening belongs to.
     batch_number: u64,
-    marks: Marks,
     /// A noted caret ([`Item::NotedCaret`]), handed out only when nothing
     /// else is ready ([`Intake::when_idle`]).
     idle: Option<Entry>,
@@ -335,7 +322,9 @@ pub struct Intake {
 
 /// What the intake, and the programs it hands entries to, read of the
 /// focus last reported: set in one go by the commit that makes a focus
-/// followed ([`Intake::note_focus`]), and changed by later commits.
+/// followed, and changed by later commits. The reducer's facts hold them
+/// ([`super::Facts::marks`]), and the intake is given them where it reads
+/// them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Marks {
     /// The object last reported as the focus.
@@ -347,8 +336,12 @@ pub struct Marks {
     /// Whether `focused` was reached by redirecting a control's own focus
     /// event to its focused child, whose own event is still to come.
     pub focus_redirected: bool,
-    /// The console window whose updates are dropped as they are pushed
-    /// ([`Intake::absorb_console_updates`]).
+    /// The console window whose updates are dropped as they are pushed: a
+    /// program marks it while its focused console terminal's reading is
+    /// held with its text changed and no caret key's watch is open, when
+    /// it would do nothing for an update; it is cleared before anything
+    /// that changes that is handled, so an update observed after the read
+    /// that ends the hold begins is never dropped, and by a new focus.
     pub absorbed: Option<isize>,
     /// Whether the system caret's events are dropped as they are pushed:
     /// the focus last reported has caret events of its own
@@ -360,7 +353,7 @@ impl Marks {
     /// Whether `item` is dropped as it is pushed, waking nobody: a console
     /// update while its window's updates are absorbed, for which a program
     /// would do nothing and which the read that ends the hold covers
-    /// ([`Intake::absorb_console_updates`]), and the system caret's event
+    /// ([`Marks::absorbed`]), and the system caret's event
     /// while the focus's own caret events tell of the same moves
     /// (`Intake::drop_system_caret`). Judged by the mailbox as an entry
     /// is pushed, on its copy of these marks.
@@ -381,12 +374,10 @@ impl Marks {
     }
 }
 
-/// What one push did besides queuing its entry: what the gap record's
-/// timer is to do, and the objects parked for entries it removed, which a
-/// worker drops.
+/// What one push did besides queuing its entry: the objects parked for
+/// entries it removed, which a worker drops.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Pushed {
-    pub timer: Option<TimerAction>,
     pub unparked: Vec<u64>,
 }
 
@@ -411,25 +402,24 @@ impl Intake {
     }
 
     /// Applies `entry`, a UIA focus's outcome, to the gap record, a read's
-    /// answer being `read_answer`, and returns it with what the record's
-    /// timer is to do: a drop for no window that answered the open record
+    /// answer being `read_answer`, and returns it with the marker it
+    /// resolves: a drop for no window that answered the open record
     /// becomes the record's read ([`Item::GapRead`]), which takes the
     /// drop's marker's place, stamped with the record's stamp.
     fn apply_gap_outcome(
         &mut self,
         entry: Entry,
         read_answer: Option<GapAnswer>,
-    ) -> (Entry, TimerAction, Option<u64>) {
+    ) -> (Entry, Option<u64>) {
         let answer = match &entry.item {
             Item::Fact(DeliveredFact::UiaFocusDropped { answer, .. }, _) => *answer,
             _ => match read_answer {
                 Some(answer) => answer,
-                None => return (entry, TimerAction::Keep, None),
+                None => return (entry, None),
             },
         };
         match self.gap.outcome(answer, entry.observed_at_us) {
-            Outcome::Unchanged => (entry, TimerAction::Keep, None),
-            Outcome::Answered => (entry, TimerAction::Cancel, None),
+            Outcome::Unchanged | Outcome::Answered => (entry, None),
             Outcome::ReadNow(read) => match entry.item {
                 Item::Fact(DeliveredFact::UiaFocusDropped { marker, .. }, _) => (
                     Entry {
@@ -439,10 +429,9 @@ impl Intake {
                         observed_at_us: read.stamp_us,
                         ..entry
                     },
-                    TimerAction::Cancel,
                     Some(marker),
                 ),
-                item => (Entry { item, ..entry }, TimerAction::Cancel, None),
+                item => (Entry { item, ..entry }, None),
             },
         }
     }
@@ -463,9 +452,10 @@ impl Intake {
     /// A UIA focus's outcome is applied to the gap record as it resolves
     /// its marker: a focus's read placed by `read_answer`, the answer the
     /// mailbox found with one local call as the read was pushed, and a
-    /// drop by the answer it carries. Returns what the record's timer is to
-    /// do then, and the parked objects of the entries a newer one replaced.
-    pub fn push(&mut self, entry: Entry, read_answer: Option<GapAnswer>) -> Pushed {
+    /// drop by the answer it carries. A focus's read moving into a child of
+    /// the focus in `marks` is placed after the old focus's own events.
+    /// Returns the parked objects of the entries a newer one replaced.
+    pub fn push(&mut self, entry: Entry, read_answer: Option<GapAnswer>, marks: &Marks) -> Pushed {
         let mut pushed = Pushed::default();
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -484,10 +474,7 @@ impl Intake {
             pushed.unparked = entry.item.parked();
             return pushed;
         }
-        let (entry, action, gap_read_resolves) = self.apply_gap_outcome(entry, read_answer);
-        if action != TimerAction::Keep {
-            pushed.timer = Some(action);
-        }
+        let (entry, gap_read_resolves) = self.apply_gap_outcome(entry, read_answer);
         if self.resolves_without_read(&entry) {
             return pushed;
         }
@@ -524,7 +511,7 @@ impl Intake {
         // UIA events queued behind the marker are planned ahead of the read.
         if let (Some(at), Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _)) =
             (place.as_mut(), &entry.item)
-            && let Some(Object::Uia(old)) = &self.marks.focused
+            && let Some(Object::Uia(old)) = &marks.focused
             && read
                 .ancestors
                 .iter()
@@ -550,53 +537,57 @@ impl Intake {
     /// The gap record's bound has been reached at `now_us`, on the
     /// observation clock ([`GapRecord::bound_reached`]): its entry waits
     /// behind every marker queued before it, so a UIA focus already being
-    /// read decides first.
-    pub fn push_gap_bound(&mut self, entry: Entry) {
-        let _ = self.push(entry, None);
+    /// read decides first; the record notes its entry queued
+    /// ([`GapRecord::queue_bound`]).
+    pub fn push_gap_bound(&mut self, entry: Entry, marks: &Marks) {
+        self.gap.queue_bound();
+        let _ = self.push(entry, None, marks);
     }
 
     /// A program dropped a copy in `window`, of top-level window
     /// `top_level`, observed at `at_us`, because it judges the window UIA
-    /// ([`GapRecord::copy_dropped`]); with what the record's timer is to do.
+    /// ([`GapRecord::copy_dropped`]).
     pub fn gap_copy_dropped(
         &mut self,
         window: isize,
         top_level: isize,
         stamp: (u64, TraceId),
-    ) -> (CopyDropped, TimerAction) {
-        let was_open = self.gap.is_open();
-        let dropped = self.gap.copy_dropped(window, top_level, stamp);
-        let action = match dropped {
-            CopyDropped::Opened { due_us } => TimerAction::Set(due_us),
-            _ if was_open && !self.gap.is_open() => TimerAction::Cancel,
-            _ => TimerAction::Keep,
-        };
-        (dropped, action)
+    ) -> CopyDropped {
+        self.gap.copy_dropped(window, top_level, stamp)
     }
 
     /// A program accepted an event of `window`, of top-level window
     /// `top_level`, observed at `at_us`: a foreground change, which
     /// `restamps`, or a copy it handles through MSAA
-    /// ([`GapRecord::accepted`]); with what the record's timer is to do.
+    /// ([`GapRecord::accepted`]).
     pub fn gap_accepted(
         &mut self,
         window: isize,
         top_level: isize,
         stamp: (u64, TraceId),
         restamps: bool,
-    ) -> TimerAction {
-        match self.gap.accepted(window, top_level, stamp, restamps) {
-            Accepted::Answered => TimerAction::Cancel,
-            Accepted::Restamped | Accepted::Unchanged => TimerAction::Keep,
-        }
+    ) -> Accepted {
+        self.gap.accepted(window, top_level, stamp, restamps)
+    }
+
+    /// When the open gap record's bound passes ([`GapRecord::due_us`]).
+    pub fn gap_due_us(&self) -> Option<u64> {
+        self.gap.due_us()
+    }
+
+    /// When the open gap record's bound passes, while its entry is not
+    /// queued: what the reducer's timer waits for
+    /// ([`GapRecord::waiting_due_us`]).
+    pub fn gap_waiting_due_us(&self) -> Option<u64> {
+        self.gap.waiting_due_us()
     }
 
     /// The bound's entry is handled at `now_us`
     /// ([`GapRecord::bound_reached`]): the record's read, if its bound has
-    /// passed, or the due time to set the timer to again for a record
-    /// whose bound has not.
-    pub fn gap_bound_reached(&mut self, now_us: u64) -> Result<Option<GapRead>, u64> {
-        self.gap.bound_reached(now_us)
+    /// passed; none with no record open, or with its bound not passed,
+    /// which is then waited for again.
+    pub fn gap_bound_reached(&mut self, now_us: u64) -> Option<GapRead> {
+        self.gap.bound_reached(now_us).ok().flatten()
     }
 
     /// `hwnd` was destroyed: its answer as a top-level window goes.
@@ -618,8 +609,9 @@ impl Intake {
     /// The next entry to handle and the number of its batch, planning a new
     /// batch from everything waiting when the current one is done. With
     /// nothing else ready it gives the entry [`when_idle`](Self::when_idle)
-    /// kept, if any. `None` when nothing is ready.
-    pub fn next(&mut self) -> Option<(Planned, u64)> {
+    /// kept, if any. `None` when nothing is ready. A new batch is planned
+    /// by the focus in `marks`.
+    pub fn next(&mut self, marks: &Marks) -> Option<(Planned, u64)> {
         if let Some(planned) = self.batch.pop_front() {
             return Some((planned, self.batch_number));
         }
@@ -642,12 +634,8 @@ impl Intake {
             });
         if ready > 0 {
             let mut waiting: Vec<Waiting> = self.waiting.drain(..ready).collect();
-            caret_after_update(
-                &mut waiting,
-                self.marks.focused.as_ref(),
-                self.marks.terminal,
-            );
-            let batch = plan(waiting, self.marks.focused.as_ref());
+            caret_after_update(&mut waiting, marks.focused.as_ref(), marks.terminal);
+            let batch = plan(waiting, marks.focused.as_ref());
             self.batch = batch.into();
             self.batch_number += 1;
             if let Some(planned) = self.batch.pop_front() {
@@ -753,42 +741,6 @@ impl Intake {
         self.idle.take()
     }
 
-    /// Drops the console updates of `window` as they are pushed, from now
-    /// until the next call, or takes them in again with `None`. A program
-    /// marks the window while its focused console terminal's reading is
-    /// held with its text changed and no caret key's watch is open, when it
-    /// would do nothing for an update; it clears the mark before it handles
-    /// anything that changes that, so an update observed after the read
-    /// that ends the hold begins is never dropped. A new focus clears it
-    /// too ([`note_focus`](Self::note_focus)).
-    pub fn absorb_console_updates(&mut self, window: Option<isize>) {
-        self.marks.absorbed = window;
-    }
-
-    /// Records the object last reported as the focus, in one go, as the
-    /// commit that makes it followed does: its MSAA events other than focus
-    /// events are always kept; a terminal read through UIA, in window
-    /// `terminal` (0 when not known), has its caret event planned after its
-    /// text changes; with `drop_system_caret`, the system caret's events
-    /// are dropped, as for a console host's terminal, whose console caret
-    /// event is its caret event; and `redirected` says it was reached by
-    /// redirecting a control's own focus event to its focused child.
-    pub fn note_focus(
-        &mut self,
-        object: Option<Object>,
-        terminal: Option<isize>,
-        drop_system_caret: bool,
-        redirected: bool,
-    ) {
-        self.marks = Marks {
-            focused: object,
-            terminal,
-            focus_redirected: redirected,
-            absorbed: None,
-            system_caret_unused: drop_system_caret,
-        };
-    }
-
     /// The number of the batch being handed out.
     pub fn batch_number(&self) -> u64 {
         self.batch_number
@@ -833,13 +785,6 @@ impl Intake {
                 _ => None,
             })
             .collect()
-    }
-
-    /// What the planning reads of the focus, which programs are given a
-    /// copy of and the mailbox judges its drops by.
-    #[cfg(test)]
-    pub fn marks(&self) -> &Marks {
-        &self.marks
     }
 }
 
@@ -1392,6 +1337,55 @@ mod tests {
     use super::super::entry::UiaEvent;
     use super::*;
 
+    /// The intake with the focus's marks the reducer's facts would give it
+    /// where it reads them.
+    #[derive(Default)]
+    struct WithMarks {
+        intake: Intake,
+        marks: Marks,
+    }
+
+    impl WithMarks {
+        fn push(&mut self, entry: Entry, read_answer: Option<GapAnswer>) -> Pushed {
+            self.intake.push(entry, read_answer, &self.marks)
+        }
+
+        fn next(&mut self) -> Option<(Planned, u64)> {
+            self.intake.next(&self.marks)
+        }
+
+        fn push_gap_bound(&mut self, entry: Entry) {
+            self.intake.push_gap_bound(entry, &self.marks);
+        }
+    }
+
+    impl std::ops::Deref for WithMarks {
+        type Target = Intake;
+
+        fn deref(&self) -> &Intake {
+            &self.intake
+        }
+    }
+
+    impl std::ops::DerefMut for WithMarks {
+        fn deref_mut(&mut self) -> &mut Intake {
+            &mut self.intake
+        }
+    }
+
+    /// The intake with the marks of a focus on `object`, a terminal read
+    /// through UIA in window `terminal` when that is given.
+    fn focused(object: Option<Object>, terminal: Option<isize>) -> WithMarks {
+        WithMarks {
+            intake: Intake::default(),
+            marks: Marks {
+                focused: object,
+                terminal,
+                ..Marks::default()
+            },
+        }
+    }
+
     /// An MSAA event on child `child` of window `hwnd`, raised by `thread`
     /// and observed at `child` milliseconds.
     fn msaa_from(kind: WinKind, hwnd: isize, child: i32, thread: u32) -> Waiting {
@@ -1677,7 +1671,7 @@ mod tests {
 
     #[test]
     fn a_newer_notification_of_the_same_activity_replaces_one_waiting_whatever_its_text() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, notification_fact("progress", "10 percent"), 10);
         push_item(&mut intake, notification_fact("other", "saved"), 20);
         push_item(&mut intake, notification_fact("progress", "20 percent"), 30);
@@ -1832,7 +1826,7 @@ mod tests {
     /// added: the focus is gone, and the foreground change stays.
     #[test]
     fn a_foreground_change_removes_a_waiting_focus_on_its_windows_client_object() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         let stamp = Some(WinEventStamp {
             thread: 7,
             time: 200,
@@ -1872,7 +1866,7 @@ mod tests {
             id_object: OBJID_CLIENT,
             id_child: 0,
         };
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, Item::Fact(client_focus(), stamp(200)), 1);
         push_item(
             &mut intake,
@@ -1880,7 +1874,7 @@ mod tests {
             2,
         );
         assert_eq!(handed_out(&mut intake), vec![1, 2], "a tick earlier");
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(
             &mut intake,
             Item::Fact(DeliveredFact::Foreground { hwnd: 9 }, stamp(200)),
@@ -2084,8 +2078,8 @@ mod tests {
         assert_eq!(observed(&plan(waiting, None)), vec![1, 2, 3, 4]);
         // Arriving while a batch is in progress, after that batch's events
         // that have not started.
-        let mut intake = Intake::default();
-        let push = |intake: &mut Intake, item: Item, observed_at_us: u64| {
+        let mut intake = WithMarks::default();
+        let push = |intake: &mut WithMarks, item: Item, observed_at_us: u64| {
             intake.push(
                 Entry {
                     item,
@@ -2130,8 +2124,8 @@ mod tests {
 
     #[test]
     fn a_newer_event_for_the_same_object_replaces_the_waiting_one() {
-        let mut intake = Intake::default();
-        let push = |intake: &mut Intake, child: i32, observed_at_us: u64| {
+        let mut intake = WithMarks::default();
+        let push = |intake: &mut WithMarks, child: i32, observed_at_us: u64| {
             intake.push(
                 Entry {
                     item: Item::Msaa {
@@ -2165,8 +2159,8 @@ mod tests {
     /// thread as NVDA's limiter keys it, is neither replaced nor replaces.
     #[test]
     fn an_msaa_event_replaces_only_the_one_waiting_from_its_own_thread() {
-        let mut intake = Intake::default();
-        let push = |intake: &mut Intake, thread: u32, observed_at_us: u64| {
+        let mut intake = WithMarks::default();
+        let push = |intake: &mut WithMarks, thread: u32, observed_at_us: u64| {
             intake.push(
                 Entry {
                     item: Item::Msaa {
@@ -2196,8 +2190,8 @@ mod tests {
     /// raised first.
     #[test]
     fn an_msaa_focus_replaces_only_the_one_waiting_from_its_own_thread() {
-        let mut intake = Intake::default();
-        let push = |intake: &mut Intake, thread: u32, observed_at_us: u64| {
+        let mut intake = WithMarks::default();
+        let push = |intake: &mut WithMarks, thread: u32, observed_at_us: u64| {
             intake.push(
                 Entry {
                     item: Item::Fact(
@@ -2226,7 +2220,7 @@ mod tests {
 
     #[test]
     fn a_newer_list_of_held_nodes_replaces_the_waiting_one_and_is_never_limited() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         for acknowledged in [1, 2] {
             intake.push(
                 Entry {
@@ -2256,7 +2250,7 @@ mod tests {
         assert_eq!(category, Category::Exempt);
     }
 
-    fn push_fact(intake: &mut Intake, fact: DeliveredFact) {
+    fn push_fact(intake: &mut WithMarks, fact: DeliveredFact) {
         intake.push(
             Entry {
                 item: Item::Fact(fact, None),
@@ -2272,7 +2266,7 @@ mod tests {
     fn a_batch_holding_a_foreground_change_is_handed_out_at_once() {
         // Window 77 is not the foreground window, nor any window at all:
         // the batch is not held for it, and the worker judges the change.
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_fact(
             &mut intake,
             DeliveredFact::MsaaFocus {
@@ -2293,7 +2287,7 @@ mod tests {
 
     #[test]
     fn a_query_that_has_not_started_can_be_cancelled() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         intake.push(
             Entry {
                 item: Item::Query {
@@ -2318,7 +2312,7 @@ mod tests {
         );
     }
 
-    fn push_item(intake: &mut Intake, item: Item, observed_at_us: u64) {
+    fn push_item(intake: &mut WithMarks, item: Item, observed_at_us: u64) {
         intake.push(
             Entry {
                 item,
@@ -2346,7 +2340,7 @@ mod tests {
 
     /// Everything the intake hands out while it has something ready, by
     /// observation time.
-    fn handed_out(intake: &mut Intake) -> Vec<u64> {
+    fn handed_out(intake: &mut WithMarks) -> Vec<u64> {
         let mut order = Vec::new();
         while intake.ready_now() {
             let (planned, _) = intake.next().expect("an entry");
@@ -2357,7 +2351,7 @@ mod tests {
 
     #[test]
     fn what_arrives_after_a_focus_marker_waits_for_its_read_and_the_read_takes_its_place() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, name_change(1), 1);
         push_item(&mut intake, marker(7), 2);
         push_item(&mut intake, name_change(3), 3);
@@ -2382,7 +2376,7 @@ mod tests {
 
     #[test]
     fn a_marked_selection_takes_its_markers_place_as_itself() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, marker(8), 1);
         push_item(&mut intake, name_change(3), 2);
         assert_eq!(
@@ -2411,7 +2405,7 @@ mod tests {
 
     #[test]
     fn a_dropped_focus_releases_what_waited_behind_its_marker() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, marker(7), 1);
         push_item(&mut intake, marker(8), 2);
         push_item(&mut intake, name_change(3), 3);
@@ -2454,7 +2448,7 @@ mod tests {
     /// out first, so it decides before the bound's entry is handled.
     #[test]
     fn the_bounds_entry_waits_behind_a_marker() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, marker(7), 1);
         intake.push_gap_bound(Entry::own(Item::GapBound, TraceId::from_raw(12), 0));
         assert_eq!(handed_out(&mut intake), Vec::<u64>::new());
@@ -2490,7 +2484,7 @@ mod tests {
     /// record's read, stamped with the record's stamp.
     #[test]
     fn a_drops_answer_is_applied_as_its_marker_resolves() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         let dropped = |marker, answer| {
             Item::Fact(
                 DeliveredFact::UiaFocusDropped {
@@ -2501,49 +2495,36 @@ mod tests {
                 None,
             )
         };
-        let (opened, timer) = intake.gap_copy_dropped(0x11, 0x10, (1_000, TraceId::from_raw(1)));
-        assert_eq!(
-            (opened, timer),
-            (
-                CopyDropped::Opened { due_us: 1_001_000 },
-                TimerAction::Set(1_001_000)
-            )
-        );
+        let opened = intake.gap_copy_dropped(0x11, 0x10, (1_000, TraceId::from_raw(1)));
+        assert_eq!(opened, CopyDropped::Opened { due_us: 1_001_000 });
+        assert_eq!(intake.gap_due_us(), Some(1_001_000));
         push_item(&mut intake, marker(7), 1_500);
-        assert_eq!(
-            intake
-                .push(
-                    Entry {
-                        item: dropped(7, GapAnswer::Answers(Some(0x10))),
-                        trace: TraceId::from_raw(13),
-                        observed_at_us: 1_500,
-                        timing: verbatim_model::protocol::EventTiming::default(),
-                    },
-                    None
-                )
-                .timer,
-            Some(TimerAction::Cancel)
+        let _ = intake.push(
+            Entry {
+                item: dropped(7, GapAnswer::Answers(Some(0x10))),
+                trace: TraceId::from_raw(13),
+                observed_at_us: 1_500,
+                timing: verbatim_model::protocol::EventTiming::default(),
+            },
+            None,
         );
+        assert_eq!(intake.gap_due_us(), None);
         assert!(!intake.gap_open());
         assert!(!intake.busy(), "nothing for the worker");
 
         let _ = intake.gap_copy_dropped(0x11, 0x10, (500_000, TraceId::from_raw(2)));
         push_item(&mut intake, marker(8), 501_000);
         push_item(&mut intake, name_change(3), 502_000);
-        assert_eq!(
-            intake
-                .push(
-                    Entry {
-                        item: dropped(8, GapAnswer::ReadsNow),
-                        trace: TraceId::from_raw(14),
-                        observed_at_us: 501_000,
-                        timing: verbatim_model::protocol::EventTiming::default(),
-                    },
-                    None
-                )
-                .timer,
-            Some(TimerAction::Cancel)
+        let _ = intake.push(
+            Entry {
+                item: dropped(8, GapAnswer::ReadsNow),
+                trace: TraceId::from_raw(14),
+                observed_at_us: 501_000,
+                timing: verbatim_model::protocol::EventTiming::default(),
+            },
+            None,
         );
+        assert_eq!(intake.gap_due_us(), None);
         let (planned, _) = intake.next().expect("the record's read");
         assert!(
             matches!(
@@ -2561,7 +2542,7 @@ mod tests {
 
     #[test]
     fn the_end_of_the_listeners_reads_releases_every_marker() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, marker(7), 1);
         push_item(&mut intake, name_change(2), 2);
         push_item(&mut intake, marker(8), 3);
@@ -2589,8 +2570,7 @@ mod tests {
     #[test]
     fn a_focused_terminals_caret_event_is_planned_after_its_text_change() {
         let terminal = [42, 7];
-        let mut intake = Intake::default();
-        intake.note_focus(Some(Object::Uia(terminal.to_vec())), Some(7), false, false);
+        let mut intake = focused(Some(Object::Uia(terminal.to_vec())), Some(7));
         // The console host's text area, whose caret its console's caret
         // event tells of, and its output its console updates.
         push_item(
@@ -2628,7 +2608,7 @@ mod tests {
     }
 
     /// A console update of window `hwnd`, observed at `observed_at_us`.
-    fn push_console_update(intake: &mut Intake, hwnd: isize, observed_at_us: u64) {
+    fn push_console_update(intake: &mut WithMarks, hwnd: isize, observed_at_us: u64) {
         push_item(intake, console_update(hwnd), observed_at_us);
     }
 
@@ -2645,11 +2625,13 @@ mod tests {
 
     #[test]
     fn a_held_consoles_updates_are_dropped_at_push_until_the_mark_is_cleared() {
-        let mut intake = Intake::default();
-        intake.absorb_console_updates(Some(7));
-        assert!(intake.marks().drops_on_arrival(&console_update(7)));
+        let mut marks = Marks {
+            absorbed: Some(7),
+            ..Marks::default()
+        };
+        assert!(marks.drops_on_arrival(&console_update(7)));
         // Another window's update, and the held window's caret, still come.
-        assert!(!intake.marks().drops_on_arrival(&console_update(8)));
+        assert!(!marks.drops_on_arrival(&console_update(8)));
         let caret = Item::Msaa {
             kind: WinKind::ConsoleCaret,
             hwnd: 7,
@@ -2657,17 +2639,11 @@ mod tests {
             id_child: 9,
             raiser: 80,
         };
-        assert!(!intake.marks().drops_on_arrival(&caret));
-        intake.absorb_console_updates(None);
+        assert!(!marks.drops_on_arrival(&caret));
+        marks.absorbed = None;
         assert!(
-            !intake.marks().drops_on_arrival(&console_update(7)),
+            !marks.drops_on_arrival(&console_update(7)),
             "the next update comes through"
-        );
-        intake.absorb_console_updates(Some(7));
-        intake.note_focus(None, None, false, false);
-        assert!(
-            !intake.marks().drops_on_arrival(&console_update(7)),
-            "a new focus clears the mark"
         );
     }
 
@@ -2683,7 +2659,7 @@ mod tests {
     /// it, and is handled ahead of it.
     #[test]
     fn an_entry_waiting_before_an_idle_query_is_never_replaced_from_behind_it() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_console_update(&mut intake, 7, 1);
         push_item(&mut intake, idle_query(1), 2);
         push_console_update(&mut intake, 7, 3);
@@ -2698,7 +2674,7 @@ mod tests {
     /// it does not replace one that arrived before.
     #[test]
     fn a_batch_ends_at_an_idle_query_with_its_menu_opening_ahead_of_it() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_fact(
             &mut intake,
             DeliveredFact::MenuPopup {
@@ -2750,8 +2726,7 @@ mod tests {
     /// own value change keep their places behind it.
     #[test]
     fn the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first() {
-        let mut intake = Intake::default();
-        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
+        let mut intake = focused(Some(Object::Uia(vec![42, 1])), None);
         push_item(&mut intake, marker(7), 1);
         push_item(&mut intake, property_change(30070, &[42, 1]), 2);
         push_item(&mut intake, property_change(30005, &[42, 5]), 3);
@@ -2771,8 +2746,7 @@ mod tests {
     /// marker.
     #[test]
     fn the_old_focus_state_change_behind_the_next_marker_keeps_its_place() {
-        let mut intake = Intake::default();
-        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
+        let mut intake = focused(Some(Object::Uia(vec![42, 1])), None);
         push_item(&mut intake, marker(7), 1);
         push_item(&mut intake, property_change(30070, &[42, 1]), 2);
         push_item(&mut intake, marker(8), 3);
@@ -2796,8 +2770,7 @@ mod tests {
     /// focus's own state change behind them is still planned first.
     #[test]
     fn the_listener_facts_on_the_old_focus_keep_their_places_behind_a_focus_inside_it() {
-        let mut intake = Intake::default();
-        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
+        let mut intake = focused(Some(Object::Uia(vec![42, 1])), None);
         push_item(&mut intake, marker(7), 1);
         push_item(
             &mut intake,
@@ -2841,8 +2814,7 @@ mod tests {
     /// the old focus's later events.
     #[test]
     fn a_focus_outside_the_old_focus_keeps_its_place_before_its_events() {
-        let mut intake = Intake::default();
-        intake.note_focus(Some(Object::Uia(vec![42, 1])), None, false, false);
+        let mut intake = focused(Some(Object::Uia(vec![42, 1])), None);
         push_item(&mut intake, marker(7), 1);
         push_item(&mut intake, property_change(30070, &[42, 1]), 2);
         push_item(
@@ -2855,7 +2827,7 @@ mod tests {
 
     #[test]
     fn a_focus_read_whose_marker_never_came_is_taken_where_it_arrives() {
-        let mut intake = Intake::default();
+        let mut intake = WithMarks::default();
         push_item(&mut intake, name_change(1), 1);
         push_item(
             &mut intake,

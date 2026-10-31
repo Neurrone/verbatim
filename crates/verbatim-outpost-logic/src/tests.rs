@@ -455,8 +455,99 @@ fn a_drop_that_leaves_the_record_open_has_it_read_at_its_bound() {
     }
 }
 
+/// The bound's entry, queued behind a focus marker, is not waited for
+/// again while it waits; the read it makes closes the record, which cancels
+/// the timer given for it.
+#[test]
+fn a_queued_bound_is_not_waited_for_again_and_its_read_cancels_the_timer() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.commit(request, copy_dropped(), 2);
+    replay.finish(request, false, 3);
+    replay.push(
+        Item::Fact(DeliveredFact::UiaFocusMarker { marker: 4 }, None),
+        Source::Other,
+        4,
+    );
+    let effects = replay.tick(1_001);
+    assert!(
+        programs(&effects).is_empty(),
+        "the entry waits for the read"
+    );
+    assert_eq!(replay.reducer.next_timer(now(1_001)), None);
+    let effects = replay.push(
+        Item::Fact(
+            DeliveredFact::UiaFocusDropped {
+                marker: 4,
+                focus: true,
+                answer: GapAnswer::LeavesOpen,
+            },
+            None,
+        ),
+        Source::Other,
+        1_002,
+    );
+    assert!(matches!(
+        program(&effects).work,
+        Work::Entry {
+            entry: Entry {
+                item: Item::GapRead { window: 0x11 },
+                ..
+            },
+            ..
+        }
+    ));
+    assert!(matches!(effects.last(), Some(Effect::GapTimer(None))));
+}
+
+/// A held console's absorption cleared by a terminal read's dispatch
+/// reaches the mailbox ahead of the read's program, so no update observed
+/// after the read begins is dropped.
+#[test]
+fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    let effects = replay.commit(
+        request,
+        Change {
+            absorb: Some(7),
+            ..Change::default()
+        },
+        2,
+    );
+    assert!(matches!(
+        &effects[..],
+        [Effect::Marks(Marks {
+            absorbed: Some(7),
+            ..
+        })]
+    ));
+    replay.finish(request, false, 3);
+    let effects = replay.push(
+        Item::Query {
+            request_id: RequestId::shell(5),
+            query: Query::Text {
+                node_id: NodeId::new(1),
+                op: TextOp::TerminalHold,
+            },
+        },
+        Source::Other,
+        4,
+    );
+    assert!(matches!(
+        &effects[..],
+        [
+            Effect::Marks(Marks { absorbed: None, .. }),
+            Effect::Dispatch(_)
+        ]
+    ));
+}
+
 /// A copy that a drop for no window observed with it has read at once is
 /// read under the copy's own trace.
+
 #[test]
 fn a_copy_read_at_once_is_read_under_its_trace() {
     let mut replay = Replay::new();

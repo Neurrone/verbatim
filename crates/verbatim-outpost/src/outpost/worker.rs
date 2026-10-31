@@ -1408,7 +1408,7 @@ impl Worker<'_> {
     /// in window `hwnd`: while its reading is held with its text changed
     /// and no caret key's watch is open, the worker would do nothing for
     /// another update, so the intake drops the window's updates without
-    /// waking it ([`Intake::absorb_console_updates`]) until a request, a
+    /// waking it (`Marks::absorbed`) until a request, a
     /// cancel, a focus, or a caret key clears the mark. A held burst's
     /// updates, about one per line, otherwise woke the worker once each.
     fn absorb_while_held(&self, node_id: NodeId, hwnd: isize) {

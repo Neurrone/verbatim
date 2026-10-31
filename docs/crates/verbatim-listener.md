@@ -269,13 +269,14 @@ because it judged the window UIA, with its window, top-level window
   through either backend, or an accepted foreground change into one,
   answers it. Every answer is final.
 - The bound (`gap_record::BOUND_US`, one second from the first copy) is
-  one of the reducer's timers, set when the record opens and cancelled
-  when it is answered (`TimerAction`), in the order the record changes,
-  since one thread changes it; the shell's timed wait ends at it. When it
-  passes, `Item::GapBound` is pushed into the intake, behind every marker
-  queued before it. Handled with the record open and its bound passed by
+  one of the reducer's timers, read from the open record itself
+  (`GapRecord::waiting_due_us`), so no copy of it is kept; the shell's
+  timed wait ends at it. When it passes, `Item::GapBound` is pushed into
+  the intake, behind every marker queued before it, and the record notes
+  its entry queued, so the reducer is not woken again for it while the
+  entry waits. Handled with the record open and its bound passed by
   the observation clock (`Intake::gap_bound_reached`), the record closes
-  and is read; a bound reached early is set again for the rest. A test
+  and is read; a bound reached early is waited for again. A test
   sets a timer of its own (`Outpost::set_gap_timer`, behind the
   `GapTimer` trait) in place of the reducer's, and reaches the bound
   itself (`Outpost::gap_bound_reacher`).

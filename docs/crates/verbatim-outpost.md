@@ -1230,7 +1230,7 @@ Caret and text events:
   than the node's last caret read. A held terminal's caret event is noted
   (`Item::NotedCaret`, handed out by `Intake::when_idle`), and the console
   host's updates for it are dropped as pushed
-  (`Intake::absorb_console_updates`) while no watch is open, the mark
+  (`Marks::absorbed`) while no watch is open, the mark
   cleared before a terminal request, a caret key, or a new focus.
 - A focus-now answer's control has its caret read with it, is recorded
   among the reports (`reducer::held`), as NVDA's fake focus is, and then

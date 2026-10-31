@@ -58,7 +58,7 @@ pub use self::follow::{
 };
 pub use self::gap_record::{CopyDropped, GapRead};
 pub use self::held::{Evidence, Focus, Held, InFront};
-pub use self::intake::{Handling, Marks, Object, Planned, TimerAction};
+pub use self::intake::{Handling, Marks, Object, Planned};
 pub use self::text::{
     Anchor, AnswerCut, CaretSeen, CutLine, KeptSelection, NodeAnchors, RangeKey, ReportCut,
     TextChange,
@@ -271,7 +271,9 @@ pub enum Effect {
         /// Why the generation was abandoned, for the log.
         reason: &'static str,
     },
-    /// The push-time copies of the intake's marks.
+    /// The push-time copy of the facts' marks, given after a transition
+    /// that changed them, ahead of the transition's other effects so that
+    /// no program it dispatches runs before the mailbox judges by them.
     Marks(Marks),
     /// The push-time copy of the arbitrator's verdicts, replaced.
     Verdicts(Arc<Verdicts>),
@@ -281,7 +283,8 @@ pub enum Effect {
     /// A verdict of UIA for a window's lifetime was recorded: the event
     /// thread may narrow its hook (the outpost's `narrowing`).
     Narrow,
-    /// Set the gap record's timer for this observation time, or cancel it.
+    /// Set the gap record's timer for this observation time, or cancel it:
+    /// given after a transition that changed the open record's bound.
     GapTimer(Option<u64>),
     /// Ask whether the user has left `window`, the window of `request`'s
     /// program, for another thread of its application: answered by
@@ -477,8 +480,6 @@ pub struct Reducer {
     idle_query: Option<u64>,
     /// How many focus groups have been tried.
     focus_groups: u64,
-    /// When the gap record's bound passes, on the observation clock.
-    gap_due: Option<u64>,
     /// Whether a test's timer times the gap record's bound in place of the
     /// reducer's own.
     gap_timer_given: bool,
@@ -560,7 +561,11 @@ impl Reducer {
             let left = due_us.saturating_sub(now.wall_us);
             times.push(now.at + Duration::from_micros(left));
         }
-        if let Some(due_us) = self.gap_due.filter(|_| !self.gap_timer_given) {
+        if let Some(due_us) = self
+            .intake
+            .gap_waiting_due_us()
+            .filter(|_| !self.gap_timer_given)
+        {
             let left = due_us.saturating_sub(now.observed_us);
             times.push(now.at + Duration::from_micros(left));
         }
@@ -569,6 +574,7 @@ impl Reducer {
 
     /// Takes `input` at `now`.
     pub fn input(&mut self, input: Input, now: Now) -> Vec<Effect> {
+        let before = self.observed();
         let mut effects = Vec::new();
         match input {
             Input::Entry {
@@ -641,32 +647,64 @@ impl Reducer {
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
+        self.changed(before, &mut effects);
         effects
     }
 
     /// The shell's timed wait has ended at `now`: whatever is due is done.
     pub fn tick(&mut self, now: Now) -> Vec<Effect> {
+        let before = self.observed();
         let mut effects = Vec::new();
         if !self.stopping {
             let decision = self.flight.tick(micros(now.at));
             self.decided(decision, now, &mut effects);
         }
-        if !self.gap_timer_given && self.gap_due.is_some_and(|due_us| now.observed_us >= due_us) {
-            self.gap_due = None;
+        if !self.gap_timer_given
+            && self
+                .intake
+                .gap_waiting_due_us()
+                .is_some_and(|due_us| now.observed_us >= due_us)
+        {
             self.gap_bound_entry(now);
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
+        self.changed(before, &mut effects);
         effects
     }
 
+    /// What the shell keeps a copy of, before a transition: the facts'
+    /// marks, for the mailbox, and the open gap record's bound, for a
+    /// test's timer ([`changed`](Self::changed)).
+    fn observed(&self) -> (Marks, Option<u64>) {
+        (self.facts.marks.clone(), self.intake.gap_due_us())
+    }
+
+    /// Gives the shell what a transition changed of what it keeps a copy
+    /// of, from `before`: the marks ahead of every other effect, so that a
+    /// program the transition dispatched, which may read what a cleared
+    /// mark would drop, starts only once the mailbox judges by them, and
+    /// the gap record's bound.
+    fn changed(&self, (marks, gap_due_us): (Marks, Option<u64>), effects: &mut Vec<Effect>) {
+        if self.facts.marks != marks {
+            effects.insert(0, Effect::Marks(self.facts.marks.clone()));
+        }
+        let due_us = self.intake.gap_due_us();
+        if due_us != gap_due_us {
+            effects.push(Effect::GapTimer(due_us));
+        }
+    }
+
     /// The gap record's bound has been reached: its entry, under the
-    /// record's trace, waits behind every marker queued before it. With no
-    /// record open there is nothing for it to read, so none is queued.
+    /// record's trace, waits behind every marker queued before it, and the
+    /// record notes it queued. With no record open there is nothing for it
+    /// to read, so none is queued.
     fn gap_bound_entry(&mut self, now: Now) {
         if let Some(trace) = self.intake.gap_trace() {
-            self.intake
-                .push_gap_bound(Entry::own(Item::GapBound, trace, now.observed_us));
+            self.intake.push_gap_bound(
+                Entry::own(Item::GapBound, trace, now.observed_us),
+                &self.facts.marks,
+            );
         }
     }
 
@@ -734,27 +772,9 @@ impl Reducer {
         {
             self.queries.insert(request_id);
         }
-        let pushed = self.intake.push(entry, read_answer);
+        let pushed = self.intake.push(entry, read_answer, &self.facts.marks);
         if !pushed.unparked.is_empty() {
             effects.push(Effect::Unpark(pushed.unparked));
-        }
-        if let Some(action) = pushed.timer {
-            self.gap_timer(action, effects);
-        }
-    }
-
-    /// Does what a change to the gap record asks of its timer.
-    fn gap_timer(&mut self, action: TimerAction, effects: &mut Vec<Effect>) {
-        match action {
-            TimerAction::Keep => {}
-            TimerAction::Set(due_us) => {
-                self.gap_due = Some(due_us);
-                effects.push(Effect::GapTimer(Some(due_us)));
-            }
-            TimerAction::Cancel => {
-                self.gap_due = None;
-                effects.push(Effect::GapTimer(None));
-            }
         }
     }
 
@@ -786,7 +806,7 @@ impl Reducer {
             self.send(message, effects);
         }
         for note in &change.gap {
-            self.gap_note(*note, effects);
+            self.gap_note(*note);
         }
         if let Some((node_id, trace, observed_at_us, timing)) = change.noted_caret {
             // The event's timing goes with it: its read is skipped only
@@ -822,14 +842,7 @@ impl Reducer {
                 current.deferred = false;
             }
         }
-        let marks = applied.adopted.is_some()
-            || change.drop_system_caret
-            || change.absorb.is_some()
-            || change.clear_redirect;
         self.subscription_effects(applied, now, effects);
-        if marks {
-            self.sync_marks(effects);
-        }
     }
 
     /// Records a verdict of a program of `generation`'s: one from the
@@ -920,22 +933,8 @@ impl Reducer {
         self.send(message, effects);
     }
 
-    /// The intake's marks follow the follow state's, and the mailbox is
-    /// given a copy.
-    fn sync_marks(&mut self, effects: &mut Vec<Effect>) {
-        let marks = self.facts.marks.clone();
-        self.intake.note_focus(
-            marks.focused.clone(),
-            marks.terminal,
-            marks.system_caret_unused,
-            marks.focus_redirected,
-        );
-        self.intake.absorb_console_updates(marks.absorbed);
-        effects.push(Effect::Marks(marks));
-    }
-
     /// A program's judgement for the gap record.
-    fn gap_note(&mut self, note: GapNote, effects: &mut Vec<Effect>) {
+    fn gap_note(&mut self, note: GapNote) {
         match note {
             GapNote::CopyDropped {
                 window,
@@ -943,10 +942,9 @@ impl Reducer {
                 at_us,
                 trace,
             } => {
-                let (dropped, action) =
-                    self.intake
-                        .gap_copy_dropped(window, top_level, (at_us, trace));
-                self.gap_timer(action, effects);
+                let dropped = self
+                    .intake
+                    .gap_copy_dropped(window, top_level, (at_us, trace));
                 if dropped == CopyDropped::ReadNow {
                     // Read at once, in the copy's place, as part of the
                     // same try of its group.
@@ -969,10 +967,9 @@ impl Reducer {
                 trace,
                 restamps,
             } => {
-                let action = self
+                let _ = self
                     .intake
                     .gap_accepted(window, top_level, (at_us, trace), restamps);
-                self.gap_timer(action, effects);
             }
             GapNote::WindowDestroyed(hwnd) => self.intake.gap_window_destroyed(hwnd),
         }
@@ -1231,9 +1228,8 @@ impl Reducer {
                 owed.attempting = Some(self.flight.generation());
                 let owed = owed.clone();
                 // Whatever the owed read observes must reach it.
-                if owed_clears_absorb(&owed) && self.facts.marks.absorbed.is_some() {
+                if owed_clears_absorb(&owed) {
                     self.facts.marks.absorbed = None;
-                    self.sync_marks(effects);
                 }
                 self.dispatch(
                     Work::Owed(owed),
@@ -1252,7 +1248,7 @@ impl Reducer {
                 self.dispatch(Work::Drop, (WALK_DEADLINE, 0, None), None, now, effects);
                 continue;
             }
-            let Some((planned, batch)) = self.intake.next() else {
+            let Some((planned, batch)) = self.intake.next(&self.facts.marks) else {
                 // Nothing else is ready: the watch's due time is acted on.
                 match self.facts.follow.watch.reach(now.wall_us) {
                     Reached::Nothing => return,
@@ -1363,8 +1359,10 @@ impl Reducer {
                     live,
                 });
             }
-            Item::GapBound => match self.intake.gap_bound_reached(now.observed_us) {
-                Ok(Some(GapRead { window, stamp_us })) => {
+            Item::GapBound => {
+                if let Some(GapRead { window, stamp_us }) =
+                    self.intake.gap_bound_reached(now.observed_us)
+                {
                     let read = Entry {
                         item: Item::GapRead { window },
                         observed_at_us: stamp_us,
@@ -1372,9 +1370,7 @@ impl Reducer {
                     };
                     self.dispatch_entry(read, Handling::Run, batch, None, now, effects);
                 }
-                Ok(None) => {}
-                Err(due_us) => self.gap_timer(TimerAction::Set(due_us), effects),
-            },
+            }
             // A shell query reached at its walk's last call time is too
             // late to walk: a walk begun now would make its first call
             // regardless and could outlive the query's deadline, so it is
@@ -1427,10 +1423,10 @@ impl Reducer {
         let window = intake::window_of(&entry.item);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
-        if clears_absorb(&entry.item) && self.facts.marks.absorbed.is_some() {
+        if clears_absorb(&entry.item) {
             self.facts.marks.absorbed = None;
-            self.sync_marks(effects);
         }
+
         let group_place = group.as_ref().map(|group| FocusGroup {
             number: group.number,
             rank: group.rank,

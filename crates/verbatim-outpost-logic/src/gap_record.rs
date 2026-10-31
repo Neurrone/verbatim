@@ -80,6 +80,9 @@ struct Open {
     trace: TraceId,
     /// When its bound passes: a second from its first copy's observation.
     due_us: u64,
+    /// Whether its bound's entry is queued, so its bound is not waited for
+    /// again ([`GapRecord::queue_bound`]).
+    bound_queued: bool,
 }
 
 /// The read a record that closed is to be made with: the record's window
@@ -167,6 +170,28 @@ impl GapRecord {
         self.open.map(|open| open.trace)
     }
 
+    /// When the open record's bound passes, on the observation clock.
+    pub fn due_us(&self) -> Option<u64> {
+        self.open.map(|open| open.due_us)
+    }
+
+    /// When the open record's bound passes, while its bound's entry is not
+    /// queued: what a timer waits for.
+    pub fn waiting_due_us(&self) -> Option<u64> {
+        self.open
+            .filter(|open| !open.bound_queued)
+            .map(|open| open.due_us)
+    }
+
+    /// The open record's bound's entry is queued, so its bound is not
+    /// waited for again; the entry handled before its bound passes waits
+    /// for it again ([`bound_reached`](Self::bound_reached)).
+    pub fn queue_bound(&mut self) {
+        if let Some(open) = self.open.as_mut() {
+            open.bound_queued = true;
+        }
+    }
+
     /// The worker dropped a copy in `window`, of top-level window
     /// `top_level`, observed at `at_us`, because it judges the window UIA.
     /// With a record open in its top-level window it restamps it, when
@@ -217,6 +242,7 @@ impl GapRecord {
             stamp_us: at_us,
             trace,
             due_us,
+            bound_queued: false,
         });
         CopyDropped::Opened { due_us }
     }
@@ -301,17 +327,22 @@ impl GapRecord {
     /// The bound's entry is handled at `now_us`: the record still open, its
     /// bound passed, closes, and is to be read; `Err` with its due time
     /// when the bound has not passed yet, as when the timer fired a little
-    /// early, or for an earlier record; `Ok(None)` with no record open.
+    /// early, or for an earlier record, and the bound is waited for again;
+    /// `Ok(None)` with no record open.
     pub fn bound_reached(&mut self, now_us: u64) -> Result<Option<GapRead>, u64> {
-        match self.open {
+        match self.open.as_mut() {
             None => Ok(None),
-            Some(open) if now_us < open.due_us => Err(open.due_us),
+            Some(open) if now_us < open.due_us => {
+                open.bound_queued = false;
+                Err(open.due_us)
+            }
             Some(open) => {
-                self.open = None;
-                Ok(Some(GapRead {
+                let read = GapRead {
                     window: open.window,
                     stamp_us: open.stamp_us,
-                }))
+                };
+                self.open = None;
+                Ok(Some(read))
             }
         }
     }
@@ -382,6 +413,22 @@ mod tests {
             }))
         );
         assert!(!record.is_open());
+    }
+
+    /// A queued bound is not waited for, until its entry is handled before
+    /// the bound passes; a restamp keeps it queued.
+    #[test]
+    fn a_queued_bound_is_waited_for_again_when_handled_early() {
+        let mut record = GapRecord::default();
+        let _ = record.copy_dropped(WINDOW, TOP, at(1_000));
+        assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
+        record.queue_bound();
+        assert_eq!(record.waiting_due_us(), None);
+        let _ = record.copy_dropped(WINDOW, TOP, at(2_000));
+        assert_eq!(record.waiting_due_us(), None, "the restamp keeps it queued");
+        assert_eq!(record.due_us(), Some(1_000 + BOUND_US));
+        assert_eq!(record.bound_reached(BOUND_US), Err(1_000 + BOUND_US));
+        assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
     }
 
     /// A windowless sender's read is placed by the top-level window of its

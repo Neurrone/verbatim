@@ -29,8 +29,10 @@ Public API:
   release, move the subscription (`Subscription`), drop elements or
   objects, abandon a worker generation (`Abandon`, with the dead
   generation, its replacement and the reason in words; the shell alone
-  counts the abandoned workers that have not returned), publish the intake's marks or the
-  verdicts, set the gap record's timer, and two asks: `AskMovedOn`,
+  counts the abandoned workers that have not returned), publish the
+  facts' marks, given after a transition that changed them and ahead of
+  its other effects, or the verdicts, set the gap record's timer, given
+  after a transition that changed the open record's bound, and two asks: `AskMovedOn`,
   whether the user has left the program's window for another thread of
   its application, and `Publish`, the publication of a walk armed, with
   the facts it is judged against and `then_abandon`, the abandonment

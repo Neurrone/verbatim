@@ -455,8 +455,6 @@ pub struct Applied {
     pub subscribe: Option<Subscription>,
     /// The element tokens no longer followed, for the shell to drop.
     pub unfollowed: Vec<u64>,
-    /// The intake's marks for the focus adopted.
-    pub adopted: Option<Marks>,
     /// The UIA ranges no text fact names any more, by node and key, for
     /// the store to let go of.
     pub ranges: Vec<(u64, RangeKey)>,
@@ -617,15 +615,13 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
             // console host's terminal, whose console caret event is its
             // caret event, has the system caret's events dropped
             // (`docs/parity/text.md`).
-            let marks = Marks {
+            facts.marks = Marks {
                 focused: follow.object.clone(),
                 terminal: follow.terminal.then(|| follow.window.unwrap_or(0)),
                 focus_redirected: follow.redirected,
                 absorbed: None,
                 system_caret_unused: follow.terminal && follow.console,
             };
-            facts.marks = marks.clone();
-            applied.adopted = Some(marks);
             let tracking = &mut follow_state.tracking;
             tracking.role = Some(follow.role);
             tracking.focus = Some(follow.node);
