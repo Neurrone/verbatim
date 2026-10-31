@@ -20,7 +20,7 @@ Answered by Dickson on 2026-10-31:
 10. **Where extensions run: agreed.** Built-ins stay in outposts; each installed extension gets a locked-down process of its own (section 7.6.3), with the round trip measured in M5.
 11. **The extension surface's audit:** answered item by item (section 7.6.2).
 12. **Outposts' token:** a write-restricted token, if the experiment of section 7.9 shows UIA and MSAA work under it.
-13. **Braille drivers: open.** Core does the device I/O and drivers are protocol parsers fed bytes, Wasm by default; handles passed to a contained native driver only where that cannot work; vendor SDKs in a weaker container, opt-in (section 7.11)? Recommended: yes.
+13. **Braille drivers: decided.** Option A or B of section 7.11, chosen per driver; option C is built only when someone first needs a vendor SDK, not before.
 
 ## 2. Method
 
@@ -383,7 +383,7 @@ The options:
 - **B. Core does all device I/O, and the driver is a protocol parser fed bytes.** Chromium's model. The driver holds no handle at all, can be a Wasm component, memory-safe and the same on x64 and ARM64, and Core can refuse feature reports and control lines a driver has no reason to use. Core grows a typed I/O interface (serial settings and lines, HID input, output and feature reports, bulk endpoints, Bluetooth LE attributes), with a pipe hop that braille's timing tolerates.
 - **C. A vendor SDK in a weaker container.** An SDK that needs its own kernel driver, service or registry keys cannot work in the less privileged AppContainer, so it gets a restricted token at low integrity in a job, or only crash isolation. Little real containment, so opt-in per driver and labelled as trusted native code at install.
 
-Recommended: B by default, as Chromium does; A only for a native driver whose protocol B cannot express, after the handle-passing test; C only for vendor SDKs, opt-in. In every option the driver's parser treats the device's bytes as hostile, and a display's keys produce only the gestures the driver interface defines, never injected keystrokes. Decision 13.
+Decided (Dickson, 2026-10-31): A or B, chosen per driver, with B where it serves, as Chromium does, and A after the handle-passing test; C is built only when someone first needs a vendor SDK, then opt-in. In every option the driver's parser treats the device's bytes as hostile, and a display's keys produce only the gestures the driver interface defines, never injected keystrokes.
 
 ## 8. How well the architecture serves the goal
 
