@@ -84,6 +84,24 @@ Remote Access:
 - GHSA-42v6-wjv6-h3jj (2025, low): invalid certificates blocked another user's access.
 - GHSA-m268-mc77-j2cr (2026, critical): a manually trusted certificate was not checked again on reconnecting.
 
+## NVDA's issue tracker
+
+Searched through GitHub's issue search on 2026-10-31, not exhaustively (at most 100 results a query). Issue numbers are in `nvaccess/nvda`, each at https://github.com/nvaccess/nvda/issues/ followed by the number.
+
+- Echo of secrets that fails open: 14529 (Excel password dialog not marked protected, open), 5221 (Excel sheet protection, closed as not planned), 11554 (a `sudo` password echoed in WSL, fixed in 2022.3 by UIA consoles), with 13781 and 14047 on detecting typing that never appears.
+- Timing of the protected check: 7908 and 7792 (the sign-in PIN's last digit spoken, fixed by PR 7989), 20654 (a synchronous UIA query per typed character freezes NVDA on a slow provider, open), PR 20694 (deciding protection lazily, unmerged).
+- Typed words echoed outside edit fields: 10331.
+- Lock state and the lock screen: PR 20842 (an unreadable session state treated as unlocked, closed pending ADR 20843; that it is exploitable is the survey's inference), 18951 (keys stayed with a Remote peer after locking, fixed by PR 18973), 18357 (add-on updates installed from the lock screen, closed as not planned), 20399 (the "use during sign-in" setting rewritten at each launch, closed as intended).
+- The secure-desktop configuration copy: 20266 (whole folders copied, open), 19446 (choosing add-ons, merged), 12879 (disabling add-ons on secure screens), 1426 (the original concern).
+- Unsafe deserialisation: 19559 (add-on state read with pickle, moved to JSON by PR 19564 with a pickle fallback), 19560 (update state pickled, open), 19743 to 19745 (removing pickle, open).
+- Debug switches: 19687 (warn when `serviceDebug` is on, open), 18086.
+- Screen curtain: 10476 (turned off by a profile switch, fixed in 2026.1 by PR 19177), 21079, 20688 and 20108 (fails to enable in setup and after updates, open), 21084, 10265 and 10692 (no way to query its state without toggling).
+- Remote Access: 17784 (the relay can read and change traffic; end-to-end encryption planned, with design record 19868 and PR 19857).
+- Link destinations: 14535 (a command to report a link's address, added in 2023.1 by PR 14583).
+- Add-on supply chain: 18974 (VirusTotal results in the store), 19984 and 19956 (malformed scan data crashed the store), 20386 (an out-of-process add-on runtime's transport), 20491 (updates offered from unselected channels), 18986 (add-ons shipping executables).
+- Usage statistics: 16710 (an anonymous id with update checks), 18197, 8510 (show what is sent), 19296.
+- Injection footprint: 20667 (in-context hooks rejected because they inject into every process), 3609.
+
 ## Other screen readers and research
 
 - JAWS: in versions 13 and earlier, a service any user could reconfigure ran code as SYSTEM (https://seclists.org/bugtraq/2016/Apr/53). No other public advisory or CVE was found. Scripts are compiled code loaded per application (https://support.freedomscientific.com/Content/Documents/Other/ScriptManual/03-1_JAWSScriptsAndScriptFiles.htm).
