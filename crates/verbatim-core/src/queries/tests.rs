@@ -145,6 +145,39 @@ fn text_box_wired() -> (SrState, Wire) {
     (state, wire)
 }
 
+/// [`text_box_wired`] after a held key's read was answered, so the key is
+/// passed on and its watch waited on.
+fn held_key_passed_on_wired() -> (SrState, Wire) {
+    let (mut state, mut wire) = text_box_wired();
+    let held = Input::HeldKey {
+        trace_id: TraceId::from_raw(80),
+        key_seq: KeySeq::NONE_YET,
+        key: CaretKey {
+            motion: CaretMotion::NextCharacter,
+            select: false,
+        },
+        pressed_at_ms: 500,
+    };
+    let effects = reduce(&mut state, &held);
+    wire.apply(&held, &effects);
+    let asked = requests(&effects);
+    let [(read, Some(TextOp::ReadCaret))] = asked[..] else {
+        panic!("one read, not {asked:?}");
+    };
+    let answer = answered(
+        read,
+        EDIT_OUTPOST,
+        QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(TextOp::ReadCaret))),
+    );
+    let effects = reduce(&mut state, &answer);
+    wire.apply(&answer, &effects);
+    assert!(
+        state.held_keys.awaiting_watch.is_some(),
+        "its watch is waited on"
+    );
+    (state, wire)
+}
+
 /// The state `inputs` make from the default, and the wire's view of the
 /// requests they made.
 fn started(inputs: &[Input]) -> (SrState, Wire) {
@@ -622,8 +655,9 @@ fn one_of(then: &Then) -> Option<String> {
     }
 }
 
-/// Checks the table's invariants after `visit`, against the wire's view.
-fn check(path: &[usize], visit: &Visit<'_>) {
+/// Checks the table's invariants after `visit`, against the wire's view,
+/// returning whether it was an answer to the held keys' watch alone.
+fn check(path: &[usize], visit: &Visit<'_>) -> bool {
     let Visit {
         before,
         input,
@@ -667,21 +701,45 @@ fn check(path: &[usize], visit: &Visit<'_>) {
             "{at}"
         );
     }
-    // An answer to no open query, or to one nothing waits for, changes
-    // nothing but the table, and the held keys' resume when it was their
-    // watch.
-    if let Input::Answered { query_id, .. } = input
-        && before.held_keys.awaiting_watch != Some(*query_id)
-        && before
+    // An answer the table does not take, to no open query, from another
+    // outpost or to a query Core answers from memory, changes nothing; one
+    // to a query nothing waits for changes nothing but the table, and when
+    // it is the watch the held keys wait on, does only their resume.
+    let mut resumed = false;
+    if let Input::Answered {
+        query_id,
+        outpost,
+        trace_id,
+        ..
+    } = input
+    {
+        let open = before
             .queries
             .entries()
             .find(|(open, _)| open == query_id)
-            .is_none_or(|(_, open)| open.then == Then::Nothing)
-    {
-        let mut after = (*state).clone();
-        after.queries = before.queries.clone();
-        assert_eq!(&after, *before, "{at}");
-        assert_eq!(*effects, [], "{at}");
+            .map(|(_, open)| open);
+        let taken = open
+            .is_some_and(|open| open.outpost == *outpost && open.asked != queries::Asked::Memory);
+        let waited_for = open.is_some_and(|open| open.then != Then::Nothing);
+        let watch = before.held_keys.awaiting_watch == Some(*query_id);
+        if !taken || (!waited_for && !watch) {
+            let mut after = (*state).clone();
+            if taken {
+                after.queries = before.queries.clone();
+            }
+            assert_eq!(&after, *before, "{at}");
+            assert_eq!(*effects, [], "{at}");
+        } else if !waited_for {
+            let mut expected = (*before).clone();
+            let first = expected.queries.next();
+            expected.queries.end(*query_id);
+            expected.held_keys.awaiting_watch = None;
+            let resume = crate::editing::held_watch_answered(&mut expected);
+            expected.queries.set_traces(first, &resume, Some(*trace_id));
+            assert_eq!(*state, &expected, "{at}");
+            assert_eq!(*effects, resume, "{at}");
+            resumed = true;
+        }
     }
     // The watch the held keys wait on is an open watch.
     if let Some(watch) = state.held_keys.awaiting_watch {
@@ -701,24 +759,29 @@ fn check(path: &[usize], visit: &Visit<'_>) {
         }
     }
     assert_eq!(state.held_nodes(), nodes_held(state), "{at}");
+    resumed
 }
 
-/// Every sequence of up to three steps from a text box with its caret and
-/// from a console Core reads keeps the table's invariants after every
-/// input, against the wire's view of the requests.
+/// Every sequence of up to three steps from a text box with its caret,
+/// from the same with a held key's watch waited on, and from a console
+/// Core reads keeps the table's invariants after every input, against the
+/// wire's view of the requests.
 #[test]
 fn every_sequence_keeps_the_query_tables_invariants() {
     let mut visited = 0_usize;
+    let mut resumes = 0_usize;
     for (start, outpost) in [
         (text_box_wired(), EDIT_OUTPOST),
+        (held_key_passed_on_wired(), EDIT_OUTPOST),
         (console_wired(), CONSOLE_OUTPOST),
     ] {
         enumerate(&start, outpost, 3, &mut |path, visit| {
             visited += 1;
-            check(path, &visit);
+            resumes += usize::from(check(path, &visit));
         });
     }
-    assert_eq!(visited, 33_602, "the inputs of 11,762 sequences");
+    assert_eq!(visited, 47_259, "the inputs of 29,059 sequences");
+    assert_eq!(resumes, 408, "answers to the held keys' watch alone");
 }
 
 /// `command` pressed.

@@ -667,7 +667,7 @@ The answer updates the caret and speaks, queued:
   key's answer is awaited for the node, its words are held with the key
   (`PendingCaret::heard`) and spoken after the key's; a superseded key's
   selection change is said with the later key's
-  (`SrState::superseded_caret`, `editing::superseded_reply`). The
+  (`Then::SupersededCaret`, `editing::superseded_reply`). The
   superseded slot holds one key, so in a burst of three keys where the
   first answer arrives after the third press, the first answer's
   selection change is not said; speech is cut at each press, as with NVDA.

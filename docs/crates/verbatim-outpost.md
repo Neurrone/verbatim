@@ -1255,7 +1255,9 @@ Caret and text events:
   shared clock, whichever comes first (`walk_limit`), answering what they
   read, and read a failed step as no more items, logged as a warning. The
   reducer abandons either query at the `answer_by_us` it carries, Core's
-  times for the list dialog's wait, fixed when the dialog asked.
+  times for the list dialog's wait, fixed when the dialog asked, and
+  answers one it reaches at or after its `walk_until_us` with nothing,
+  never giving it to the worker.
 - `DumpTree { locations }` walks the foreground window (or the first
   visible top-level window): UIA with `verbatim_uia_rops::tree_dump`, MSAA
   with `verbatim_ia2::acquire::walk_tree`, capped at depth 64 and 4096

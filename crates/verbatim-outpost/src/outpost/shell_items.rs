@@ -47,7 +47,7 @@ use verbatim_uia::{Cached, Direction, Place, Request, ShellButton, Uia, element_
 use super::Context;
 use super::read::{Client, ReadError, serves};
 use crate::arbitration::time_limit;
-use verbatim_process::clock::Clock;
+use verbatim_process::clock::{Clock, now_us};
 
 /// Depth cap for the control-view walk; the shell trees of interest are
 /// shallow, so anything deeper is runaway recursion, not real items.
@@ -88,7 +88,7 @@ pub(super) fn shell_items(
         .uia()
         .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
     let clock = context.clock();
-    let out_of_time = walk_limit(&clock, || context.observed_now(), walk_until_us);
+    let out_of_time = walk_limit(&clock, now_us, walk_until_us);
     Ok(walk_surface(context, uia, kind, &out_of_time)?
         .found
         .into_iter()
@@ -117,7 +117,7 @@ pub(super) fn shell_item_position(
         .request_fixed::<Place>()
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
     let clock = context.clock();
-    let out_of_time = walk_limit(&clock, || context.observed_now(), walk_until_us);
+    let out_of_time = walk_limit(&clock, now_us, walk_until_us);
     let walked = walk_surface(context, uia, kind, &out_of_time)?;
     let mut complete = walked.complete;
     let mut candidates = Vec::new();

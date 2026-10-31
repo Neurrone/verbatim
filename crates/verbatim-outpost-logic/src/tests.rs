@@ -1383,6 +1383,61 @@ fn a_shell_items_query_is_abandoned_at_its_answer_by_time() {
     assert!(abandons(&effects));
 }
 
+/// A shell item position query reached at its walk's last call time is
+/// too late to walk: it is answered at once with no candidates and
+/// incomplete, the answer a walk out of time gives, and no program is
+/// dispatched for it, so no deadline abandons a worker.
+#[test]
+fn a_shell_query_reached_at_its_walk_until_time_is_answered_without_a_walk() {
+    let mut replay = Replay::new();
+    let busy = program(&replay.push(name_change(5), Source::Hook, 1)).request;
+    replay.push(
+        Item::Query {
+            request_id: RequestId::shell(4),
+            query: Query::ShellItemPosition {
+                kind: verbatim_model::ShellItemKind::Taskbar,
+                item: verbatim_model::ShellItem {
+                    name: "Mail".to_owned(),
+                    runtime_id: Vec::new(),
+                },
+                walk_until_us: 2_000_000,
+                answer_by_us: 2_500_000,
+            },
+        },
+        Source::Other,
+        2,
+    );
+    // The query is reached at 2 s, behind the event's program.
+    let effects = replay.finish(busy, false, 2_000);
+    assert!(programs(&effects).is_empty());
+    let answers: Vec<_> = sent(&effects)
+        .into_iter()
+        .filter_map(|message| match message {
+            OutpostToCore::Reply {
+                request_id,
+                outcome,
+                ..
+            } => Some((request_id.number, outcome.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        answers,
+        [(
+            4,
+            QueryOutcome::Done(QueryResult::ShellItemPosition(
+                verbatim_model::ShellCandidates {
+                    candidates: Vec::new(),
+                    complete: false,
+                }
+            ))
+        )]
+    );
+    let effects = replay.tick(2_500);
+    assert_eq!(replies(&effects), []);
+    assert!(!abandons(&effects));
+}
+
 #[test]
 fn a_focus_groups_older_entries_are_tried_after_an_abandoned_try() {
     let mut replay = Replay::new();

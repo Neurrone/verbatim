@@ -606,7 +606,7 @@ mod tests {
         // own, takes the first's.
         let flight = format!(
             "{{\"input\":{{\"CaretKey\":{{\"trace_id\":{trace},\"pressed_at_ms\":1791540000100}}}}}}\n\
-             {{\"input\":{{\"TextCompleted\":{{\"trace_id\":{trace}}}}}}}\n"
+             {{\"input\":{{\"Answered\":{{\"trace_id\":{trace}}}}}}}\n"
         );
         let sources = [
             ("flight-recorder.jsonl".to_owned(), flight),
@@ -620,7 +620,7 @@ mod tests {
                     "flight-recorder.jsonl: {{\"input\":{{\"CaretKey\":{{\"trace_id\":{trace},\"pressed_at_ms\":1791540000100}}}}}}"
                 ),
                 format!(
-                    "flight-recorder.jsonl: {{\"input\":{{\"TextCompleted\":{{\"trace_id\":{trace}}}}}}}"
+                    "flight-recorder.jsonl: {{\"input\":{{\"Answered\":{{\"trace_id\":{trace}}}}}}}"
                 ),
                 format!(
                     "outpost-conhost-7.log: 2026-10-09T10:00:00.200000Z DEBUG verbatim_outpost: a watch is open trace={trace}"

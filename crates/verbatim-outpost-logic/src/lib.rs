@@ -43,7 +43,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use verbatim_model::protocol::{
-    EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, RequestId, WALK_DEADLINE,
+    EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+    WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight};
@@ -1374,6 +1375,29 @@ impl Reducer {
                 Ok(None) => {}
                 Err(due_us) => self.gap_timer(TimerAction::Set(due_us), effects),
             },
+            // A shell query reached at its walk's last call time is too
+            // late to walk: a walk begun now would make its first call
+            // regardless and could outlive the query's deadline, so it is
+            // answered at once as a walk out of time answers it, with
+            // nothing read.
+            Item::Query {
+                request_id,
+                query: Query::ShellItems { walk_until_us, .. },
+            } if now.wall_us >= walk_until_us => {
+                let outcome = QueryOutcome::Done(QueryResult::ShellItems(Vec::new()));
+                self.send(reply(request_id, entry.trace, outcome), effects);
+            }
+            Item::Query {
+                request_id,
+                query: Query::ShellItemPosition { walk_until_us, .. },
+            } if now.wall_us >= walk_until_us => {
+                let none = verbatim_model::ShellCandidates {
+                    candidates: Vec::new(),
+                    complete: false,
+                };
+                let outcome = QueryOutcome::Done(QueryResult::ShellItemPosition(none));
+                self.send(reply(request_id, entry.trace, outcome), effects);
+            }
             _ => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
         }
     }

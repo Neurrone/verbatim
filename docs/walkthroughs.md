@@ -239,16 +239,17 @@ while focus is in Notepad's text area.
    `Input::Script`, and a lock key `Input::ToggleKeyPressed`, which Core
    turns into effects the reducer thread carries out.
 3. **The reducer asks for the neighbor.** `reduce_command` calls
-   `navigate`, which allocates a query id, records it as the latest
-   navigation (`SrState::latest_navigation`), and returns `Effect::Fetch`.
+   `navigate`, which turns any navigation still open to `Then::Nothing`
+   (`Queries::forget`), so its answer will run nothing, then records the
+   new one in Core's query table (`Queries::ask` in
+   `crates/verbatim-core/src/queries.rs`) as `Then::Navigation`, with the
+   outpost generation the node id names, and returns `Effect::Fetch`.
    Nothing is spoken yet.
-4. **The reducer thread sends a query.** `ReducerThread::execute` records
-   it in the request table (`RequestTable::begin` in
-   `crates/verbatim-core/src/requests.rs`) with a fresh request id, the
-   outpost generation the node id names, and `Asker::Reducer`, and queues
-   `CoreToOutpost::Query` with `Query::Navigate`
+4. **The reducer thread sends a query.** `ReducerThread::execute` queues
+   `CoreToOutpost::Query` with `Query::Navigate` under
+   `RequestId::reducer` of the reducer's query number
    (`Supervisor::send_to_outpost`). If the generation has ended or its
-   queue is full, the request fails at once.
+   queue is full, the query is answered at once as failed.
 5. **The outpost answers in order.** The outpost strips Core's stamp from
    the node id (`unstamped`) and queues the query behind any events, so
    the answer never overtakes an event the user caused earlier. The worker
@@ -257,12 +258,14 @@ while focus is in Notepad's text area.
    a window the other backend owns re-read through it (`corrected_backend`,
    NVDA's `correctAPIForRelation`). It publishes one `Reply`: the
    neighbor, no neighbor (a real edge), gone, or failed.
-6. **The outcome re-enters the reducer.** `RequestTable::finish` accepts
-   it only from the generation it was sent to and only once, handing back
-   its asker, and `requests::deliver` in `verbatim-app` makes it
-   `Input::FetchCompleted` with a `FetchResult`.
-7. **The reducer acts on it** (`reduce_navigate_completed`), only if its
-   query id is still the latest navigation. A node moves the navigator and
+6. **The outcome re-enters the reducer.** The reply's request id names
+   the reducer as its asker, so `requests::reply_input` in `verbatim-app`
+   makes it `Input::Answered`. The query table takes it only from the
+   generation asked and only while the query is open
+   (`queries::answered`), ending its entry, and the navigation's outcome
+   becomes a `FetchResult`.
+7. **The reducer acts on it** (`navigate_completed`), unless a newer
+   navigation turned the entry to nothing. A node moves the navigator and
    is announced; no neighbor speaks NVDA's edge message ("No next" and the
    like, `edge_message_of`); gone re-seeds the navigator from the focus;
    unanswered says nothing.
@@ -424,21 +427,26 @@ every query follows.
    sends `ShellCommand::DumpTreeGivenUp`, and the reducer thread sends the
    outpost `CoreToOutpost::Cancel`. A dump still queued answers "not
    started"; one already running finishes within its own budget.
-7. **Delivered.** `RequestTable::finish` drops an outcome for an id that
-   already has one, or from another generation. The first outcome goes to
-   its asker (`requests::deliver`): a tree to the control client; `Input::FetchCompleted` for
-   navigation; `Input::ActivationCompleted` for an activation, except that
-   an abandoned activation is only logged; for a focus-now query, a
-   foreground change and a focus.
+7. **Delivered.** A reply goes by its request id's asker
+   (`requests::reply_input`). A query of the shell's, as this dump is, goes
+   through the request table: `RequestTable::finish` drops an outcome for
+   an id that already has one, or from another generation, and the first
+   outcome goes to its asker (`requests::deliver`): a tree to the control
+   client; for a focus-now query, a foreground change and a focus; the
+   shell's items to the list dialog. A query of the reducer's, a
+   navigation, an activation or a text read, re-enters it as
+   `Input::Answered`, and Core's query table takes it only from the
+   generation asked and only once (`queries::answered`).
 8. **The outpost ends.** On `OutpostMessage::Ended` the reducer thread
-   removes the generation from the live set, applies
-   `Input::OutpostEnded`, and `RequestTable::outpost_ended` answers every
-   outstanding request for it "gone".
+   removes the generation from the live set and applies
+   `Input::OutpostEnded`, which ends the reducer's own queries of it
+   "gone"; then `RequestTable::outpost_ended` answers each of the shell's
+   outstanding requests for it "gone".
 
 Generations make this safe: every spawn gets a fresh `OutpostId`, Core's
 reader stamps it on every node id from the pipe, never from the message
-body, and the request table and the live set both check it, so nothing an
-old outpost said can reach the reducer or satisfy a query sent to its
+body, and the request table, Core's query table and the live set all
+check it, so nothing an old outpost said can reach the reducer or satisfy a query sent to its
 successor. The tests are in `crates/verbatim-app/src/requests.rs`,
 `live.rs`, `crates/verbatim-outpost/src/outpost/worker.rs`, and
 `crates/verbatim-core/tests/reduce.rs`.

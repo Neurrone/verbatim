@@ -39,8 +39,13 @@ Public API:
 - A program's deadline is its entry's (`budget`): its kind's from when
   the program begins, or, for a shell items or position query, the
   `answer_by_us` the query carries, on the run's shared clock, so a query
-  that waited behind other work has only what is left of it. A query's
-  `RequestId` is stored and echoed in its reply, and decides nothing.
+  that waited behind other work has only what is left of it. One reached
+  at or after the `walk_until_us` it carries is too late to walk: the
+  reducer answers it at once with nothing read, an empty list or no
+  candidates and incomplete, as a walk out of time answers, and dispatches
+  no program, since a walk makes its first call regardless and could
+  outlive the deadline, abandoning the worker. A query's `RequestId` is
+  stored and echoed in its reply, and decides nothing.
 - The program in flight is the reducer's work in flight
   (`InFlight<Current>`): its request, deadline, walk and moved-on rule
   are kept there, and the reducer keeps beside them only the query the
