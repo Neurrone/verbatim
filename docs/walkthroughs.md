@@ -402,13 +402,15 @@ every query follows.
 3. **Queued in the outpost.** The query waits in the intake queue, exempt
    from the batch limits; its deadline starts only when the worker starts
    it.
-4. **Run under a deadline.** The worker calls `Watch::start` with the
-   entry's budget (`budget` in `outpost/worker.rs`): five seconds for a
-   tree dump or ancestor walk, two for a text read, 400 ms for a
-   navigation step or activation, ten seconds for an event or a focus-now
-   query. The watchdog abandons the worker when the deadline passes, or,
-   after half a second, when the user has moved to a window of the same
-   application on another UI thread (`abandon_reason`).
+4. **Run under a deadline.** The outpost's reducer starts the query in
+   its work in flight with the entry's budget (`budget` in
+   `verbatim-outpost-logic`'s `src/lib.rs`): five seconds for a tree dump
+   or ancestor walk, two for a text read, 400 ms for a navigation step or
+   activation, ten seconds for a focus-now query, and for a shell item
+   query what is left of the due time it carries. The reducer abandons
+   the worker when the deadline passes, or, from half a second on, when
+   the shell answers its ask that the user has moved to a window of the
+   same application on another UI thread.
 5. **One reply, whichever way it goes.** Exactly one of these happens:
    - The worker finishes and publishes `Done`, `Gone`, or `Failed` under
      the watch lock.
