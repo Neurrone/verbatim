@@ -152,6 +152,10 @@ just before it. All five builds are built; the rules for the planned milestones 
 
 ### The caret and selection rework
 
+Follow-up from the reducers' simplification study: Core's
+`caret_history` makes the same caret-before-the-key judgement as the
+outpost, a fact judged in two places; the rework gives it one owner.
+
 The decisions, the design and the order of work are in
 [the caret and selection rework](design/caret-selection-rework.md), consolidated for building, the one
 source for them; its first step is NVDA's captures of the keys not yet
@@ -317,7 +321,20 @@ alternatives weighed and its limits are in
   standard hash map or set, whose order changes with each process, no
   clock, no randomness, no thread and no environment read, checked by
   Clippy's disallowed types and methods per crate and by the ownership
-  scan, after an audit of the 29 standard hash maps and sets there.
+  scan, after an audit of the standard hash maps and sets there.
+- The reducers simplified (Dickson, 2026-10-31), from
+  `experiments/logic-tests-study/radical-simplification-study.md` and the
+  purity audit beside it, in this order, each with its own design and
+  review: the caret watch decided wholly by the outpost's reducer, with
+  the held caret key's second bound, first, since the watch has had six
+  rounds of fixes; then the determinism builds of
+  [the logic foundations](design/logic-foundations.md), "Determinism",
+  with the outpost's three local reads made inputs; one pure worker
+  charge shared by the outpost and the listener, after the first; Core's
+  outstanding queries in one table owned by its reducer, with a shell
+  item's wait under two deadlines in a row, and the hook's hold decision
+  in the keyboard decision machine, after the second; the simpler
+  owners last. One child record in a pure supervisor is M6.2's.
 - `CLAUDE.md` updated for the third kind of crate and for the Linux job
   beside `cargo xtask ci` in its Commands section.
 - Before and after: wake-ups, processor time, each child's memory, and
@@ -650,6 +667,9 @@ so for up to `SHUTDOWN_LIMIT` a stuck outpost and its replacement can
 both be in the application, where two Verbatim processes' calls collide
 inside UIA (`docs/design/listener-without-connections.md`).
 
+- The supervisor checks an application's exit twice, from the outpost's
+  report and by polling the process; M6.2's single child record keeps
+  one (the reducers' simplification study).
 - A mockapp test that fails an outpost during a held remote operation and
   checks what its replacement reads.
 - The replacement started only once the old process has exited, and the
