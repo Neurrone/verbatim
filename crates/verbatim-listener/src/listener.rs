@@ -162,7 +162,6 @@ use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{decode_message, put_message};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_reader_rules::MOVED_ON_GRACE;
 use verbatim_win32::window::window_class_name;
 
 /// How long after a menu or the Alt+Tab switcher closes the listener waits
@@ -1011,7 +1010,6 @@ impl Listener {
                 forced_uia: Mutex::default(),
             },
             READ_DEADLINE,
-            MOVED_ON_GRACE,
         ));
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);

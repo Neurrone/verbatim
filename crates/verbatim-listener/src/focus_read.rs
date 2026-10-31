@@ -113,7 +113,7 @@
 
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -136,7 +136,7 @@ use verbatim_listener_logic::focus::{
     UNFOCUSED_OUT_OF_TIME, arrival_of, nearest_timeout_reason,
 };
 use verbatim_listener_logic::schedule::{
-    AlarmChange, Claim, QueuePlace, Schedule, ScheduleEffect, ScheduleInput, TickRead, Waking,
+    AlarmChange, QueuePlace, Request, Schedule, ScheduleEffect, ScheduleInput, Waking,
 };
 use verbatim_model::protocol::{
     AncestorsEnd, DeliveredFact, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
@@ -289,75 +289,49 @@ impl Drop for Budget {
     }
 }
 
-/// What a read does once its window becomes known
-/// ([`WatchedRead::learn`]), or as it starts with its window known from
-/// the event's cache ([`WatchedRead::known`]): judges, as the watchdog
-/// would, whether the window in front is already another thread's, and
-/// wakes the watchdog if it is.
-type OnLearn = Box<dyn Fn(&WatchedRead) + Send + Sync>;
+/// What a read does once it learns its window ([`WatchedRead::learn`]):
+/// tells the schedule, under the readers' lock.
+type OnLearn = Box<dyn Fn(isize) + Send + Sync>;
 
 /// What a read does once it has passed NVDA's checks and its bound is
-/// known ([`WatchedRead::arm`]): has the watchdog's alarm go off by that
-/// bound, by the system's clock, which wakes no thread.
+/// known ([`WatchedRead::arm`]): tells the schedule that bound, by the
+/// system's clock, under the readers' lock.
 type OnArm = Box<dyn Fn(Instant) + Send + Sync>;
 
-/// No one has claimed the outcome of a read: its reading thread sends it.
-const OPEN: u8 = 0;
-
-/// The watchdog has abandoned the read.
-const ABANDONED: u8 = 1;
-
-/// The watchdog has published the read at its bound from its progress
-/// ([`ReadProgress`]): the reading thread's result is discarded when it
-/// returns.
-const PUBLISHED: u8 = 2;
-
-/// One read as the reading threads' watchdog watches it, shared by the read
-/// and the watchdog. Each read has its own, so an abandoned read that finds
-/// its window later changes nothing the watchdog judges.
+/// One read as its thread and the readers' shell share it. Each read has
+/// its own, so an abandoned read that finds its window later changes
+/// nothing of another's.
 ///
-/// The window it is of, for the judgement of whether the user has moved on
-/// from it ([`MOVED_ON_GRACE`]): the
-/// sender's own window from the event's cache as the read starts, for a
-/// focus ([`Reading::window`]), and the sender's nearest window once the
-/// read of a focus whose sender is not a window has found it
-/// ([`learn`](Self::learn)); 0 while neither is known, and always for a
-/// selection or a notification, when the user cannot be judged to have
-/// moved on.
+/// Its request, by which the schedule's work in flight names it
+/// ([`Request`]): what it learns, its bound and its return are given to
+/// the schedule under it, and the schedule refuses them once the read is no
+/// longer the one under way.
 ///
-/// Whether the window in front was another thread of the application than
-/// the read's window when that became known ([`judge_front`](Self::judge_front)),
-/// which has the watchdog check the read when its grace ends, as a
-/// foreground event since its event does.
-///
-/// Its claim, which says who sends its outcome: its reading thread, unless
-/// the watchdog has abandoned it ([`abandon`](Self::abandon)) or published
-/// it at its bound ([`claim`](Self::claim)). A read that returns after
-/// either has its result discarded. Only the watchdog claims a read, under
-/// the readers' lock, as the schedule decides.
+/// The window it is of: the sender's own window from the event's cache as
+/// the read starts, for a focus ([`Reading::window`]), and the sender's
+/// nearest window once the read of a focus whose sender is not a window has
+/// found it ([`learn`](Self::learn)), which the schedule is told; 0 while
+/// neither is known, and always for a selection or a notification. The
+/// schedule judges from it whether the user has moved on
+/// ([`MOVED_ON_GRACE`]).
 ///
 /// And, once the read has passed every check NVDA makes before it queues a
 /// focus, its progress ([`ReadProgress`]): what it has read so far and its
-/// bound, from which the watchdog publishes it should a call of its walk
-/// still be under way at the bound (`docs/design/focus-pipeline-rework.md`,
-/// "A window's name, and the one fallback").
+/// bound, from which the shell publishes it, as the schedule asks, should a
+/// call of its walk still be under way at the bound
+/// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
+/// fallback"). The shell reads the progress and never takes it: the reading
+/// thread takes it once its walk ends.
 #[derive(Clone, Default)]
 pub(crate) struct WatchedRead(Arc<Watched>);
 
 #[derive(Default)]
 struct Watched {
+    request: Option<Request>,
     window: AtomicIsize,
     /// The top-level window of the read's window, once the read has found
     /// it, 0 before.
     top_level: AtomicIsize,
-    /// Who sends the read's outcome: [`OPEN`], [`ABANDONED`] or
-    /// [`PUBLISHED`].
-    claim: AtomicU8,
-    /// Whether the window in front has been judged against the read's
-    /// window since that became known.
-    front_judged: AtomicBool,
-    /// Whether it was then another thread's of the read's application.
-    front_elsewhere: AtomicBool,
     /// Whether the focus event the listener received before this one was
     /// another application's ([`Readers::push`]), so that this focus's
     /// top-level window is not that of the previous focus the listener
@@ -369,16 +343,18 @@ struct Watched {
 }
 
 impl WatchedRead {
-    /// A read of window `hwnd`, 0 for one not yet known, which does
-    /// `on_learn` once it learns its window, or as it starts with it known,
-    /// and `on_arm` once its bound is known; `after_elsewhere` says whether
-    /// the focus event before it was another application's.
+    /// The read `request` of window `hwnd`, 0 for one not yet known, which
+    /// does `on_learn` once it learns its window and `on_arm` once its bound
+    /// is known; `after_elsewhere` says whether the focus event before it
+    /// was another application's.
     fn new(
+        request: Request,
         hwnd: isize,
         (on_learn, on_arm): (Option<OnLearn>, Option<OnArm>),
         after_elsewhere: bool,
     ) -> Self {
         Self(Arc::new(Watched {
+            request: Some(request),
             window: AtomicIsize::new(hwnd),
             after_elsewhere,
             on_learn,
@@ -391,18 +367,13 @@ impl WatchedRead {
     pub(crate) fn learn(&self, hwnd: isize) {
         self.0.window.store(hwnd, Ordering::SeqCst);
         if let Some(on_learn) = &self.0.on_learn {
-            on_learn(self);
+            on_learn(hwnd);
         }
     }
 
-    /// The read starts with its window known from the event's cache: does
-    /// what learning it does, if it is.
-    fn known(&self) {
-        if self.window() != 0
-            && let Some(on_learn) = &self.0.on_learn
-        {
-            on_learn(self);
-        }
+    /// The request the read is, `None` for a read no schedule watches.
+    fn request(&self) -> Option<Request> {
+        self.0.request
     }
 
     /// The window the read is of, 0 for none known yet.
@@ -425,48 +396,13 @@ impl WatchedRead {
         self.0.after_elsewhere
     }
 
-    /// Whether the window in front was another thread of the read's
-    /// application than the read's window when that became known, as
-    /// `moved_on` says: asked once, by the watchdog or by the read's
-    /// [`learn`](Self::learn), whichever comes first once the window is
-    /// known, and `false` while it is not.
-    fn judge_front(&self, moved_on: impl FnOnce(isize) -> bool) -> bool {
-        let window = self.window();
-        if window != 0 && !self.0.front_judged.swap(true, Ordering::SeqCst) && moved_on(window) {
-            self.0.front_elsewhere.store(true, Ordering::SeqCst);
-        }
-        self.0.front_elsewhere.load(Ordering::SeqCst)
-    }
-
-    /// The watchdog claims the read, as the schedule decided: abandoned,
-    /// or published at its bound.
-    fn mark_claimed(&self, claim: Claim) {
-        match claim {
-            Claim::Abandon => self.0.claim.store(ABANDONED, Ordering::SeqCst),
-            Claim::Publish => {
-                let _ = self.0.claim.compare_exchange(
-                    OPEN,
-                    PUBLISHED,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                );
-            }
-        }
-    }
-
     /// Whether `other` is this read.
     fn same(&self, other: &WatchedRead) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
-    /// Whether the watchdog has abandoned the read or published it, so its
-    /// reading thread's result is discarded.
-    fn claimed(&self) -> bool {
-        self.0.claim.load(Ordering::SeqCst) != OPEN
-    }
-
     /// The read has passed NVDA's checks with `progress`, which says its
-    /// bound, and the watchdog is told when that is.
+    /// bound, and the schedule is told when that is.
     fn arm(&self, progress: ReadProgress) {
         let bound_at = progress.bound_at;
         *self.lock_progress() = Some(progress);
@@ -482,8 +418,8 @@ impl WatchedRead {
         }
     }
 
-    /// Takes the read's progress, ending it: the watchdog has nothing more
-    /// to publish from.
+    /// Takes the read's progress, ending it: the shell has nothing more to
+    /// publish from.
     fn take_progress(&self) -> Option<ReadProgress> {
         self.lock_progress().take()
     }
@@ -494,26 +430,12 @@ impl WatchedRead {
         *self.lock_progress() = Some(progress);
     }
 
-    /// The read's bound, by the system's clock, while it is armed and no
-    /// one has claimed it.
-    fn bound_at(&self) -> Option<Instant> {
-        if self.claimed() {
-            return None;
-        }
-        self.lock_progress()
-            .as_ref()
-            .map(|progress| progress.bound_at)
-    }
-
-    /// The read as the watchdog would publish it at its bound, from its
-    /// progress ([`read_at_bound`]); `None` when the read is claimed or has
-    /// no progress. Called under the readers' lock; the local calls that
-    /// complete the chain are made on the watchdog's thread, and the
-    /// schedule decides whether it is published ([`claim`](Self::claim)).
+    /// The read as it is published at its bound, from its progress
+    /// ([`read_at_bound`]), read and not taken; `None` when the read has no
+    /// progress, its walk having ended. Called under the readers' lock, as
+    /// the schedule asks ([`ScheduleEffect::Publish`]); the local calls
+    /// that complete the chain are made on the thread that asks.
     fn prepare_publish(&self) -> Option<UiaFocusRead> {
-        if self.claimed() {
-            return None;
-        }
         Some(read_at_bound(self.lock_progress().as_ref()?))
     }
 
@@ -1682,9 +1604,8 @@ pub(crate) trait Reading: Send + Sync + 'static {
 
 /// What the readers' shell keeps under its lock beside the schedule: the
 /// threads, the condition variable each application's thread waits on,
-/// the reads under way as the watchdog watches them, the idle waiters'
-/// closures, when the watchdog's alarm is set to go off, and the answer
-/// owed for each event the schedule holds, by marker.
+/// the reads under way, the idle waiters' closures, and the answer owed
+/// for each event the schedule holds, by marker.
 struct ReadersState<J, O> {
     schedule: Schedule<J>,
     owed: HashMap<u64, O>,
@@ -1693,7 +1614,6 @@ struct ReadersState<J, O> {
     watched: HashMap<Pid, WatchedRead>,
     idle_waiters: HashMap<u64, IdleWaiter>,
     next_waiter: u64,
-    alarm_due: Option<Instant>,
 }
 
 /// What [`Readers::when_idle`] runs.
@@ -1704,10 +1624,10 @@ struct Shared<R: Reading> {
     /// The time the schedule's microseconds count from.
     origin: Instant,
     state: Mutex<ReadersState<R::Job, R::Owed>>,
-    /// The watchdog's alarm: its timer set, under the readers' lock, to the
-    /// soonest time a read may need judging, which wakes no thread, and
-    /// cancelled once no read is under way; its event set when the
-    /// watchdog must look now (`docs/design/wake-ups.md`, item 3).
+    /// The watchdog's alarm: its timer set, under the readers' lock, as the
+    /// schedule says, to the soonest time anything is due, which wakes no
+    /// thread, and cancelled once nothing is; its event set at the
+    /// shutdown (`docs/design/wake-ups.md`, item 3).
     alarm: Alarm,
     /// The failed cached reads the reading threads have made
     /// (`verbatim_uia::calls`).
@@ -1743,7 +1663,12 @@ struct ThreadSide<'a, R: Reading> {
 
 /// Steps the schedule with `input` and applies its effects in order,
 /// under the readers' lock: for a reading thread, `thread` is that thread,
-/// and the event it is to read next is returned.
+/// and the event it is to read next is returned. The schedule's asks are
+/// set aside and, once every other effect of the step is applied, each is
+/// answered in order as a step of its own, which handles its own effects
+/// and asks the same way, all before the lock is let go: so every outcome
+/// of a step is sent before an answer's step runs, and what is owed
+/// matches the schedule at each step's end.
 fn step<R: Reading>(
     shared: &Arc<Shared<R>>,
     state: &mut ReadersState<R::Job, R::Owed>,
@@ -1752,6 +1677,7 @@ fn step<R: Reading>(
 ) -> Option<(Meta, R::Job, WatchedRead, QueuePlace)> {
     let effects = state.schedule.step(input, shared.now());
     let mut next = None;
+    let mut asks = Vec::new();
     for effect in effects {
         match effect {
             ScheduleEffect::Outcome {
@@ -1792,15 +1718,8 @@ fn step<R: Reading>(
                     wake.notify_all();
                 }
             }
-            ScheduleEffect::Claim { pid, claim } => {
-                if let Some(watched) = state.watched.remove(&pid) {
-                    watched.mark_claimed(claim);
-                    if claim == Claim::Publish {
-                        // Published, it is still under way, and watched
-                        // for its abandonment at the deadline.
-                        state.watched.insert(pid, watched);
-                    }
-                }
+            ScheduleEffect::Unwatch { pid } => {
+                state.watched.remove(&pid);
             }
             ScheduleEffect::ForgetLast => {
                 if let Some(ThreadSide {
@@ -1811,27 +1730,38 @@ fn step<R: Reading>(
                     shared.reading.forget_last(reader);
                 }
             }
-            ScheduleEffect::Alarm(change) => alarm(shared, state, change),
+            ScheduleEffect::Alarm(AlarmChange::Set(Some(due))) => {
+                shared.alarm.set(shared.instant(due));
+            }
+            ScheduleEffect::Alarm(AlarmChange::Set(None)) => shared.alarm.cancel(),
+            ScheduleEffect::Alarm(AlarmChange::Now) => shared.alarm.wake(),
             ScheduleEffect::RunIdle(waiter) => {
                 if let Some(waiter) = state.idle_waiters.remove(&waiter) {
                     waiter();
                 }
             }
             ScheduleEffect::Job(job) => {
-                // Only a judged read has its window judged, as it starts or
-                // once it learns it, so only it is given what to do then,
-                // and only it can reach its bound.
+                // Only a judged read is told its window or its bound, so
+                // only it is given what to do then.
+                let (pid, request) = (job.pid, job.request);
                 let watched = WatchedRead::new(
+                    request,
                     job.window.unwrap_or(0),
                     if job.window.is_some() {
-                        (Some(on_learn(shared)), Some(on_arm(shared)))
+                        (
+                            Some(on_learn(shared, pid, request)),
+                            Some(on_arm(shared, pid, request)),
+                        )
                     } else {
                         (None, None)
                     },
                     job.after_elsewhere,
                 );
-                state.watched.insert(job.pid, watched.clone());
+                state.watched.insert(pid, watched.clone());
                 next = Some((job.meta, job.work, watched, job.queue));
+            }
+            ask @ (ScheduleEffect::AskMovedOn { .. } | ScheduleEffect::Publish { .. }) => {
+                asks.push(ask);
             }
         }
     }
@@ -1842,33 +1772,51 @@ fn step<R: Reading>(
         owed.sort_unstable();
         debug_assert_eq!(owed, state.schedule.markers(), "the owed markers");
     }
+    for ask in asks {
+        let answer = answer(shared, state, &ask);
+        let more = step(shared, state, answer, None);
+        debug_assert!(more.is_none(), "an answer's step gives no job");
+    }
     next
 }
 
-/// Applies a change of the watchdog's alarm. Called under the readers'
-/// lock.
-fn alarm<R: Reading>(
+/// The answer to the schedule's ask `ask`, made under the readers' lock
+/// with local calls only: whether the user has moved on from a read's
+/// window ([`Reading::moved_on`]), or the read published from its
+/// progress, found by its request, not by its application's current entry.
+fn answer<R: Reading>(
     shared: &Shared<R>,
-    state: &mut ReadersState<R::Job, R::Owed>,
-    change: AlarmChange,
-) {
-    match change {
-        AlarmChange::By(at) => alarm_by(shared, state, shared.instant(at)),
-        AlarmChange::Set(due) => {
-            let due = due.map(|due| shared.instant(due));
-            match due {
-                Some(due) => shared.alarm.set(due),
-                None => shared.alarm.cancel(),
+    state: &ReadersState<R::Job, R::Owed>,
+    ask: &ScheduleEffect<R::Job>,
+) -> ScheduleInput<R::Job> {
+    match *ask {
+        ScheduleEffect::AskMovedOn {
+            pid,
+            request,
+            window,
+        } => ScheduleInput::MovedOn {
+            pid,
+            request,
+            moved_on: shared.reading.moved_on(window),
+        },
+        ScheduleEffect::Publish {
+            pid,
+            request,
+            then_abandon,
+        } => {
+            let watched = state
+                .watched
+                .get(&pid)
+                .filter(|watched| watched.request() == Some(request));
+            ScheduleInput::Published {
+                pid,
+                request,
+                read: watched.and_then(WatchedRead::prepare_publish).map(Box::new),
+                top: watched.map_or(0, WatchedRead::top_level),
+                then_abandon,
             }
-            state.alarm_due = due;
         }
-        AlarmChange::Settle => {
-            if state.alarm_due.is_some() {
-                shared.alarm.cancel();
-                state.alarm_due = None;
-            }
-        }
-        AlarmChange::Now => shared.alarm.wake(),
+        _ => unreachable!("only an ask is answered"),
     }
 }
 
@@ -1881,26 +1829,25 @@ pub(crate) struct Readers<R: Reading> {
 
 impl<R: Reading> Readers<R> {
     /// Readers doing `reading`, each read abandoned past `deadline`, or
-    /// past `grace` once the user has moved on from its window
-    /// ([`Reading::moved_on`]).
+    /// once the user has moved on from its window ([`Reading::moved_on`]),
+    /// judged at [`MOVED_ON_GRACE`] and every [`MOVED_ON_GRACE`] after.
     ///
     /// # Panics
     ///
     /// Panics if the watchdog's thread cannot be spawned, which means the
     /// process is out of OS thread resources.
-    pub(crate) fn new(reading: R, deadline: Duration, grace: Duration) -> Self {
+    pub(crate) fn new(reading: R, deadline: Duration) -> Self {
         let shared = Arc::new(Shared {
             reading,
             origin: Instant::now(),
             state: Mutex::new(ReadersState {
-                schedule: Schedule::new(deadline, grace),
+                schedule: Schedule::new(deadline),
                 owed: HashMap::new(),
                 threads: Vec::new(),
                 wakes: HashMap::new(),
                 watched: HashMap::new(),
                 idle_waiters: HashMap::new(),
                 next_waiter: 0,
-                alarm_due: None,
             }),
             alarm: Alarm::default(),
             failed_reads: AtomicU32::new(0),
@@ -1997,13 +1944,9 @@ impl<R: Reading> Readers<R> {
     }
 
     /// A foreground event of window `window` reached the listener's hook:
-    /// counted, so the watchdog knows which reads' events it came after,
-    /// and, while a read is under way that the watchdog has not yet looked
-    /// at or set to be checked when its grace ends, or one past its grace,
-    /// wakes the watchdog to judge again whether the user has moved on from
-    /// it. It moves away from each application whose last read, or read
-    /// under way, is of another top-level window, for menu currentness.
-    /// Never waits on a read.
+    /// it moves away from each application whose last read, or read under
+    /// way, is of another top-level window, for menu currentness, and
+    /// judges nothing else. Never waits on a read.
     pub(crate) fn foreground_changed(&self, window: isize) {
         // A local call, outside the lock.
         let top_level = self.shared.reading.top_level(window);
@@ -2111,10 +2054,6 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     while let Some((mut meta, job, window, queue)) =
         next_job(shared, pid, &mut reader, &mut generation)
     {
-        // A read whose window the event's cache gives has the window in
-        // front judged against it now, on this thread, as one that learns
-        // its window later does.
-        window.known();
         let judged = shared
             .reading
             .read(reader.as_mut(), meta, job, (&window, queue));
@@ -2135,6 +2074,9 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
             .failed_reads
             .fetch_add(verbatim_uia::calls::take_failed_reads(), Ordering::Relaxed);
         let top = window.top_level();
+        let request = window
+            .request()
+            .expect("a job's read is made with its request");
         let mut state = shared.lock();
         if state
             .watched
@@ -2148,7 +2090,7 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
             &mut state,
             ScheduleInput::Returned {
                 pid,
-                generation,
+                request,
                 meta,
                 judged,
                 placed,
@@ -2197,107 +2139,72 @@ fn next_job<R: Reading>(
     }
 }
 
-/// What a read does once it learns its window ([`WatchedRead::learn`]), or
-/// as it starts with its window known ([`WatchedRead::known`]):
-/// judges whether the window in front is already another thread of its
-/// application, with the local calls the watchdog's judgement makes
-/// ([`Reading::moved_on`]), and only if it is, wakes the watchdog to check
-/// the read when its grace ends. A read whose window is the front's own
-/// thread costs no wake-up. Never waits on a read.
-fn on_learn<R: Reading>(shared: &Arc<Shared<R>>) -> OnLearn {
+/// What `pid`'s read `request` does once it learns its window
+/// ([`WatchedRead::learn`]): steps the schedule, whose work in flight then
+/// judges the moved-on rule at the grace's end, or at once when the grace
+/// has passed. One uncontended lock and no wake. Never waits on a read.
+fn on_learn<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, request: Request) -> OnLearn {
     let shared = Arc::downgrade(shared);
-    Box::new(move |read: &WatchedRead| {
+    Box::new(move |window: isize| {
         let Some(shared) = shared.upgrade() else {
             return;
         };
-        if !read.claimed() && read.judge_front(|window| shared.reading.moved_on(window)) {
-            let _state = shared.lock();
-            shared.alarm.wake();
-        }
+        let mut state = shared.lock();
+        step(
+            &shared,
+            &mut state,
+            ScheduleInput::Learned {
+                pid,
+                request,
+                window,
+            },
+            None,
+        );
     })
 }
 
-/// What a read does once it has passed NVDA's checks and its bound is
-/// known ([`WatchedRead::arm`]): has the watchdog's alarm go off by the
-/// bound, a system call that wakes no thread, so the watchdog publishes the
-/// read at its bound should a call of its walk still be under way then.
-fn on_arm<R: Reading>(shared: &Arc<Shared<R>>) -> OnArm {
+/// What `pid`'s read `request` does once it has passed NVDA's checks and
+/// its bound is known ([`WatchedRead::arm`]): steps the schedule with the
+/// bound, which sets the watchdog's alarm by it, a system call that wakes
+/// no thread, so the read is published at its bound should a call of its
+/// walk still be under way then.
+fn on_arm<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, request: Request) -> OnArm {
     let shared = Arc::downgrade(shared);
     Box::new(move |bound_at: Instant| {
         let Some(shared) = shared.upgrade() else {
             return;
         };
         let mut state = shared.lock();
-        alarm_by(&shared, &mut state, bound_at);
+        let bound = shared.micros(bound_at);
+        step(
+            &shared,
+            &mut state,
+            ScheduleInput::Armed {
+                pid,
+                request,
+                bound,
+            },
+            None,
+        );
     })
 }
 
-/// Has the watchdog's alarm go off by `at`, setting its timer only when it
-/// is not already set to go off sooner. Called under the readers' lock.
-fn alarm_by<R: Reading>(
-    shared: &Shared<R>,
-    state: &mut ReadersState<R::Job, R::Owed>,
-    at: Instant,
-) {
-    if state.alarm_due.is_none_or(|due| at < due) {
-        shared.alarm.set(at);
-        state.alarm_due = Some(at);
-    }
-}
-
-/// The watchdog: each time its alarm goes off, gathers what the schedule
-/// needs of each read under way ([`TickRead`]) and steps the schedule,
-/// which abandons a thread whose read has run past the deadline, or past
-/// its grace once the user has moved on from its window, publishes at its
-/// bound a read that has passed NVDA's checks and whose walk is still in a
-/// call then, and drops an event that has waited the deadline since its
-/// application reached the abandoned limit.
-///
-/// Whether the user has moved on is asked only of a read past its grace
-/// with the evidence that the user may have left its window
-/// ([`Schedule::moved_on_wanted`]): a foreground event since the read's
-/// event was queued, or the window in front already another thread's when
-/// the read's window became known ([`WatchedRead::judge_front`]). The
-/// watchdog sleeps on its alarm ([`Shared::alarm`]), which a read sets as
-/// it starts, to its deadline, or to the end of its grace with that
-/// evidence, and again to its bound once it has passed NVDA's checks
-/// ([`on_arm`]), each only when the timer is not set sooner, and which a
-/// read that returns with no other under way cancels: so a read that
-/// returns before its bound costs the watchdog no wake-up.
+/// The watchdog: each time its alarm goes off, steps the schedule, whose
+/// reads under way judge what is due (a deadline, a bound, or the
+/// half-second judgment of whether the user has moved on) and whose events
+/// waiting past their application's bound at the abandoned limit are
+/// dropped; the schedule asks what it needs, answered in the same step
+/// ([`step`]). The watchdog sleeps on its alarm ([`Shared::alarm`]), which
+/// the schedule sets after every step to the soonest time anything is due:
+/// so a read that returns before its grace's end costs the watchdog no
+/// wake-up.
 fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
     loop {
         let mut state = shared.lock();
         if state.schedule.stopping() {
             return;
         }
-        let now = Instant::now();
-        let now_us = shared.micros(now);
-        let reads = state
-            .watched
-            .iter()
-            .map(|(&pid, watched)| {
-                let window = watched.window();
-                let front_elsewhere = watched.judge_front(|window| shared.reading.moved_on(window));
-                let moved_on = (window != 0
-                    && state.schedule.moved_on_wanted(pid, now_us, front_elsewhere))
-                .then(|| shared.reading.moved_on(window));
-                let bound = watched.bound_at();
-                TickRead {
-                    pid,
-                    window,
-                    window_after: watched.window(),
-                    front_elsewhere,
-                    moved_on,
-                    bound_us: bound.map(|bound| shared.micros(bound)),
-                    at_bound: bound
-                        .filter(|&bound| now >= bound)
-                        .and_then(|_| watched.prepare_publish())
-                        .map(Box::new),
-                    top: watched.top_level(),
-                }
-            })
-            .collect();
-        step(shared, &mut state, ScheduleInput::Tick { reads }, None);
+        step(shared, &mut state, ScheduleInput::Tick, None);
         // The alarm keeps a time set, or an event, from now until the wait
         // takes it, so nothing set once the lock is let go is lost.
         drop(state);
@@ -2407,7 +2314,6 @@ impl ReadingThreads {
                 outcomes: Mutex::new(outcomes),
             },
             READ_DEADLINE,
-            MOVED_ON_GRACE,
         );
         (
             Self {
@@ -2461,6 +2367,8 @@ mod tests {
     use std::thread::ThreadId;
     use verbatim_reader_rules::MOVED_ON_GRACE;
 
+    use verbatim_listener_logic::focus::{MOVED_ON, NOT_IN_TIME};
+
     use super::*;
     use verbatim_model::protocol::{EventTiming, GapAnswer, Responder};
 
@@ -2500,6 +2408,8 @@ mod tests {
         /// what reason.
         reads: Mutex<Option<&'static str>>,
         facts: Mutex<Sender<DeliveredFact>>,
+        /// Each outcome sent and each judgement asked, in the order made.
+        order: Mutex<Vec<String>>,
     }
 
     /// A read of a focus, for a stand-in read that reads its focus.
@@ -2595,6 +2505,10 @@ mod tests {
             // Read before the judgement is sent, so a test that changes the
             // answer once it has seen a judgement changes only later ones.
             let moved_on = self.moved_on.load(Ordering::SeqCst);
+            self.order
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(format!("asked {window}"));
             let _ = self
                 .asked
                 .lock()
@@ -2632,6 +2546,10 @@ mod tests {
                 }
             };
             owed.answer(judged.into_fact(meta.marker, meta.kind, placed));
+            self.order
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(format!("outcome {} {}", pid.0, meta.marker));
             let _ = self
                 .outcomes
                 .lock()
@@ -2696,24 +2614,19 @@ mod tests {
         }
     }
 
-    /// Readers abandoning a read past `deadline`, with the grace the
-    /// listener uses, and a user who never moves on.
+    /// Readers abandoning a read past `deadline`, or once the user has
+    /// moved on, judged at [`MOVED_ON_GRACE`] and every grace after, whose
+    /// events' senders are windows that their reads find no other window
+    /// for, and a user who has not moved on.
     fn fixture(deadline: Duration) -> Fixture {
-        fixture_with_grace(deadline, MOVED_ON_GRACE)
+        fixture_of(deadline, (WINDOW, 0))
     }
 
-    /// Readers abandoning a read past `deadline`, or past `grace` once the
-    /// user has moved on, whose events' senders are windows that their
-    /// reads find no other window for.
-    fn fixture_with_grace(deadline: Duration, grace: Duration) -> Fixture {
-        fixture_of(deadline, grace, (WINDOW, 0))
-    }
-
-    /// Readers abandoning a read past `deadline`, or past `grace` once the
-    /// user has moved on, whose events' senders are window `hwnd`, 0 for
-    /// senders that are not windows, and whose reads find the sender's
-    /// nearest window to be `nearest`, 0 for none.
-    fn fixture_of(deadline: Duration, grace: Duration, (hwnd, nearest): (isize, isize)) -> Fixture {
+    /// Readers abandoning a read past `deadline`, or once the user has
+    /// moved on, whose events' senders are window `hwnd`, 0 for senders
+    /// that are not windows, and whose reads find the sender's nearest
+    /// window to be `nearest`, 0 for none.
+    fn fixture_of(deadline: Duration, (hwnd, nearest): (isize, isize)) -> Fixture {
         let (outcomes_tx, outcomes) = mpsc::channel();
         let (read_tx, read_on) = mpsc::channel();
         let (finished_tx, finished) = mpsc::channel();
@@ -2734,9 +2647,9 @@ mod tests {
                     lasts: Mutex::new(lasts_tx),
                     reads: Mutex::new(Some("read")),
                     facts: Mutex::new(facts_tx),
+                    order: Mutex::new(Vec::new()),
                 },
                 deadline,
-                grace,
             ),
             outcomes,
             read_on,
@@ -2745,6 +2658,19 @@ mod tests {
             facts,
             lasts,
         }
+    }
+
+    /// Holds the readers' lock, so the watchdog judges nothing, until the
+    /// schedule's clock reaches `at`, read from the clock itself.
+    fn hold_until(
+        fixture: &Fixture,
+        at: Instant,
+    ) -> MutexGuard<'_, ReadersState<<Script as Reading>::Job, <Script as Reading>::Owed>> {
+        let state = fixture.readers.shared.lock();
+        while Instant::now() < at {
+            thread::yield_now();
+        }
+        state
     }
 
     fn meta(marker: u64) -> Meta {
@@ -2800,7 +2726,7 @@ mod tests {
             ((0, 0), None),
         ];
         for ((hwnd, nearest), placed) in cases {
-            let fixture = fixture_of(WAIT, MOVED_ON_GRACE, (hwnd, nearest));
+            let fixture = fixture_of(WAIT, (hwnd, nearest));
             fixture.set_reads(Some(HUNG));
             fixture.push(Pid(1), meta(1), (1, None, Vec::new()));
             assert_eq!(
@@ -3113,39 +3039,28 @@ mod tests {
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
     }
 
-    /// NVDA's watchdog rule: a read held past its grace is abandoned once
-    /// the user has moved on to another thread of its application, judged
-    /// again on a foreground change after the grace's own check, which a
-    /// foreground change since the read's event called for, found the user
-    /// had not; its event is dropped for that, and a new thread reads the
-    /// application's next event. The read's start judged the window in
-    /// front against the read's window first.
+    /// NVDA's watchdog rule: a read held past its grace is judged at the
+    /// grace's end and every grace after, with no foreground event, and
+    /// abandoned once the user has moved on to another thread of its
+    /// application; its event is dropped for that, and a new thread reads
+    /// the application's next event.
     #[test]
     fn a_held_read_is_abandoned_once_the_user_moves_on_past_its_grace() {
-        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
-        assert_eq!(
-            fixture
-                .asked
-                .recv_timeout(WAIT)
-                .expect("the start's judgement"),
-            WINDOW,
-            "the read's start judges the window in front against the read's window"
-        );
         fixture.push(Pid(5), meta(2), (2, None, Vec::new()));
-        fixture.readers.foreground_changed(WINDOW);
         assert_eq!(
             fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
             WINDOW,
             "the grace's end asks about the read's window"
         );
         fixture.set_moved_on(true);
-        fixture.readers.foreground_changed(WINDOW);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "the user moved on from a slow window")
+            (Pid(5), 1, MOVED_ON),
+            "the next half second's check found the user had moved on"
         );
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
@@ -3157,72 +3072,56 @@ mod tests {
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 2);
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
+        let asked: Vec<isize> = fixture.asked.try_iter().collect();
+        assert_eq!(asked, [WINDOW], "one more check, which abandoned it");
     }
 
-    /// Within its grace a held read is left alone though the user has
-    /// moved on, its start found so, and a foreground change says so:
-    /// nothing is asked after the start's judgement, and the read's own
-    /// outcome is sent once it returns.
+    /// A held read is not judged within its grace, and neither a
+    /// foreground change nor anything else asks: at the grace's end the
+    /// readers' lock is held, so the watchdog's first judgement waits for
+    /// it, and nothing has been asked.
     #[test]
     fn a_held_read_within_its_grace_is_left_alone_though_the_user_moved_on() {
-        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_secs(60));
+        let fixture = fixture(Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
+        let pushed = Instant::now();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        assert_eq!(
-            fixture
-                .asked
-                .recv_timeout(WAIT)
-                .expect("the start's judgement"),
-            WINDOW
-        );
         fixture.readers.foreground_changed(WINDOW);
-        open.send(()).expect("the held read waits");
+        {
+            let _state = hold_until(&fixture, pushed + MOVED_ON_GRACE);
+            assert_eq!(
+                fixture.asked.try_recv(),
+                Err(mpsc::TryRecvError::Empty),
+                "nothing asked within the grace"
+            );
+        }
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "read")
+            (Pid(5), 1, MOVED_ON),
+            "judged once the grace has passed"
         );
+        open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
-        assert_eq!(
-            fixture.asked.try_recv(),
-            Err(mpsc::TryRecvError::Empty),
-            "nothing more asked within the grace"
-        );
+        let asked: Vec<isize> = fixture.asked.try_iter().collect();
+        assert_eq!(asked, [WINDOW]);
     }
 
     /// Past its grace a held read is left alone while the user has not
-    /// moved on, both when the grace ends, after a foreground change since
-    /// the read's event, and on a later foreground change, so only the
-    /// deadline can abandon it
+    /// moved on, judged at the grace's end and every grace after, so only
+    /// the deadline could abandon it
     /// (`a_read_past_its_deadline_is_dropped_and_a_new_thread_reads_on`):
     /// the read's own outcome is sent once it returns.
     #[test]
     fn a_held_read_past_its_grace_is_left_alone_while_the_user_has_not_moved_on() {
-        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let fixture = fixture(Duration::from_secs(60));
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, read_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
-        assert_eq!(
-            fixture
-                .asked
-                .recv_timeout(WAIT)
-                .expect("the start's judgement"),
-            WINDOW
-        );
-        fixture.readers.foreground_changed(WINDOW);
-        assert_eq!(
-            fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
-            WINDOW
-        );
-        fixture.readers.foreground_changed(WINDOW);
-        assert_eq!(
-            fixture
-                .asked
-                .recv_timeout(WAIT)
-                .expect("the foreground change's check"),
-            WINDOW
-        );
+        for check in ["the grace's check", "the next half second's check"] {
+            assert_eq!(fixture.asked.recv_timeout(WAIT).expect(check), WINDOW);
+        }
         open.send(()).expect("the held read waits");
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
@@ -3238,23 +3137,18 @@ mod tests {
 
     /// A read held past its grace whose sender is not a window, before the
     /// read has found the sender's nearest window, is not judged, though
-    /// the user has moved on and a foreground change says so: only its
-    /// deadline abandons it, and nothing is asked.
+    /// the user has moved on: only its deadline abandons it, and nothing is
+    /// asked.
     #[test]
     fn a_windowless_sender_s_read_is_not_judged_before_its_window_is_known() {
-        let fixture = fixture_of(
-            Duration::from_millis(300),
-            Duration::from_millis(50),
-            (0, 0),
-        );
+        let fixture = fixture_of(Duration::from_millis(800), (0, 0));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        fixture.readers.foreground_changed(WINDOW);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "its read did not return in time")
+            (Pid(5), 1, NOT_IN_TIME)
         );
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
@@ -3262,70 +3156,147 @@ mod tests {
     }
 
     /// Once a read whose sender is not a window has found the sender's
-    /// nearest window, the read is judged by that window: the window in
-    /// front, already another thread's when it was found, has the read
-    /// checked when its grace ends with no foreground event, and abandoned.
-    /// That window is asked about twice, when it is found and when the
-    /// grace ends, and nothing else is asked.
+    /// nearest window, the read is judged by that window at its grace's
+    /// end, with no foreground event, and abandoned: that window is asked
+    /// about once, and nothing else is asked.
     #[test]
     fn a_read_that_found_its_sender_s_nearest_window_is_judged_by_it() {
-        let fixture = fixture_of(
-            Duration::from_secs(60),
-            Duration::from_millis(50),
-            (0, NEAREST),
-        );
+        let fixture = fixture_of(Duration::from_secs(60), (0, NEAREST));
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "the user moved on from a slow window")
+            (Pid(5), 1, MOVED_ON)
         );
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
         let asked: Vec<isize> = fixture.asked.try_iter().collect();
-        assert_eq!(asked, [NEAREST, NEAREST]);
+        assert_eq!(asked, [NEAREST]);
     }
 
-    /// An event queued after a foreground event, behind a read abandoned as
-    /// the user moved on, is checked at its own grace end with no further
-    /// foreground event, since the window in front was already another
-    /// thread's when its read began, and is abandoned as moved on too.
+    /// An event queued behind a read abandoned as the user moved on is
+    /// read by a new thread and judged at its own read's grace end, and
+    /// abandoned as moved on too.
     #[test]
-    fn a_read_begun_with_the_front_on_another_thread_is_judged_at_its_grace_end() {
-        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+    fn a_read_taken_by_a_new_thread_is_judged_at_its_own_grace_end() {
+        let fixture = fixture(Duration::from_secs(60));
+        fixture.set_moved_on(true);
         let (open_first, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        assert_eq!(
-            fixture
-                .asked
-                .recv_timeout(WAIT)
-                .expect("the start's judgement"),
-            WINDOW
-        );
-        fixture.set_moved_on(true);
-        fixture.readers.foreground_changed(WINDOW);
         let (open_second, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "the user moved on from a slow window")
+            (Pid(5), 1, MOVED_ON)
         );
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 2, "the user moved on from a slow window")
+            (Pid(5), 2, MOVED_ON)
         );
         open_first.send(()).expect("the first held read waits");
         open_second.send(()).expect("the second held read waits");
         assert_eq!(fixture.readers.stop(), 2);
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
-        // The first read's grace check, then the second's start judgement
-        // and grace check.
         let asked: Vec<isize> = fixture.asked.try_iter().collect();
-        assert_eq!(asked, [WINDOW, WINDOW, WINDOW]);
+        assert_eq!(asked, [WINDOW, WINDOW], "each read's grace check");
+    }
+
+    /// Each ask of the schedule's is answered once, after the step's other
+    /// effects, and before the readers' lock is let go: with the lock held
+    /// past a read's grace, the watchdog's tick is made by hand, and by its
+    /// return the user's moving on has been asked once and the read's drop
+    /// sent.
+    #[test]
+    fn each_ask_is_answered_once_before_the_lock_is_let_go() {
+        let fixture = fixture(Duration::from_secs(60));
+        fixture.set_moved_on(true);
+        let (open, gate) = mpsc::channel();
+        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        let started = Instant::now();
+        {
+            let mut state = hold_until(&fixture, started + MOVED_ON_GRACE);
+            step(
+                &fixture.readers.shared,
+                &mut state,
+                ScheduleInput::Tick,
+                None,
+            );
+            assert_eq!(fixture.asked.try_recv(), Ok(WINDOW), "asked once");
+            assert_eq!(fixture.asked.try_recv(), Err(mpsc::TryRecvError::Empty));
+            assert_eq!(fixture.outcomes.try_recv(), Ok((Pid(5), 1, MOVED_ON)));
+        }
+        open.send(()).expect("the held read waits");
+        assert_eq!(fixture.readers.stop(), 1);
+    }
+
+    /// A step that asks of one application and sends another's outcomes
+    /// sends those outcomes first, so what is owed matches the schedule
+    /// when the answer's step runs: application 6's read passes its
+    /// deadline in the tick that asks about application 5's, begun later.
+    #[test]
+    fn a_step_with_an_ask_and_another_applications_outcomes_keeps_the_owed_markers() {
+        let fixture = fixture(Duration::from_secs(1));
+        let (open_six, gate) = mpsc::channel();
+        fixture.push(Pid(6), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        let six_started = Instant::now();
+        assert_eq!(
+            fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
+            WINDOW
+        );
+        let (open_five, gate) = mpsc::channel();
+        fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
+        let five_started = Instant::now();
+        fixture
+            .readers
+            .shared
+            .reading
+            .order
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        {
+            // Past application 6's deadline and application 5's grace,
+            // before application 5's deadline.
+            let mut state = hold_until(
+                &fixture,
+                (six_started + Duration::from_secs(1)).max(five_started + MOVED_ON_GRACE),
+            );
+            step(
+                &fixture.readers.shared,
+                &mut state,
+                ScheduleInput::Tick,
+                None,
+            );
+        }
+        assert_eq!(
+            *fixture
+                .readers
+                .shared
+                .reading
+                .order
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            ["outcome 6 1".to_owned(), format!("asked {WINDOW}")],
+            "application 6's drop, then the answer to application 5's ask"
+        );
+        open_six.send(()).expect("the held read waits");
+        open_five.send(()).expect("the held read waits");
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(6), 1, NOT_IN_TIME)
+        );
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 2, "read")
+        );
+        assert_eq!(fixture.readers.stop(), 2);
     }
 
     /// With [`ABANDONED_LIMIT`] of an application's threads abandoned and
@@ -3336,21 +3307,21 @@ mod tests {
     /// arrived.
     #[test]
     fn an_event_at_the_abandoned_limit_waits_for_a_thread_that_returns() {
-        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let fixture = fixture(Duration::from_secs(60));
         fixture.set_moved_on(true);
         let (open_first, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "the user moved on from a slow window")
+            (Pid(5), 1, MOVED_ON)
         );
         let (open_second, gate) = mpsc::channel();
         fixture.push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 2, "the user moved on from a slow window")
+            (Pid(5), 2, MOVED_ON)
         );
         fixture.push(Pid(5), meta(3), (3, None, vec![42, 3]));
         fixture.push(Pid(5), meta(4), (4, None, vec![42, 4]));
@@ -3436,33 +3407,6 @@ mod tests {
             .map(|(marker, _)| marker)
             .collect();
         assert_eq!(read, [1, 2], "events 3, 4 and 5 were never read");
-    }
-
-    /// A read with no foreground event since its event, whose start found
-    /// the window in front on its window's own thread, is not judged when
-    /// its grace ends though the user has moved on since: only its
-    /// deadline abandons it, and nothing is asked after its start.
-    #[test]
-    fn a_read_with_no_foreground_event_since_its_event_is_not_judged_at_its_grace_end() {
-        let fixture = fixture_with_grace(Duration::from_millis(300), Duration::from_millis(50));
-        let (open, gate) = mpsc::channel();
-        fixture.push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
-        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        assert_eq!(
-            fixture
-                .asked
-                .recv_timeout(WAIT)
-                .expect("the start's judgement"),
-            WINDOW
-        );
-        fixture.set_moved_on(true);
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "its read did not return in time")
-        );
-        assert_eq!(fixture.asked.try_recv(), Err(mpsc::TryRecvError::Empty));
-        open.send(()).expect("the held read waits");
-        assert_eq!(fixture.readers.stop(), 1);
     }
 
     #[test]
