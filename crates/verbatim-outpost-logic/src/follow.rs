@@ -7,32 +7,14 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
-
 use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
-use verbatim_model::{
-    CallCounts, CaretReport, CaretWatch, NodeId, NodeSnapshot, Role, StateSet, TraceId,
-};
+use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
 
 use super::held::{self, Held};
 use super::intake::{Marks, Object};
 use super::text::{RangeKey, TextChange, TextFacts};
 use super::verdicts::Verdicts;
-
-/// The longest a caret key's watch stays open without evidence. It only
-/// frees the watch: ending it this way says nothing, as ending it any other
-/// way does. A key whose application raises its evidence later than this
-/// is not spoken. Ten seconds, the time a program allows an application
-/// that is busy, or starting up, to answer one event's reads.
-pub const CARET_WATCH_BOUND: Duration = Duration::from_secs(10);
-
-/// How long after one of the console poll's reads the next is made.
-pub const POLL_INTERVAL: Duration = Duration::from_millis(5);
-
-/// How long after the key was passed on the console poll's last read is
-/// made; a watch that has found no evidence by then ends, as at its own
-/// bound.
-pub const POLL_BOUND: Duration = Duration::from_millis(50);
+use super::watch::{Answer, Checked, Clock, OpenWatch, Watch};
 
 /// The focus-following subscription's event handler groups, as the
 /// reducer names them (`verbatim_uia::Group`, variant for variant).
@@ -132,82 +114,6 @@ pub enum OwedWork {
     /// A `SensitiveSlider`'s lookup, for a thumb published at its walk's
     /// bound, whose slider's element this outpost does not keep.
     Slider,
-}
-
-/// A caret key's watch for evidence, kept open between programs
-/// (`docs/design/key-holding.md`).
-#[derive(Clone, Debug)]
-pub struct OpenWatch {
-    /// The request it answers.
-    pub request_id: u64,
-    /// The key's trace.
-    pub trace: TraceId,
-    /// The node whose caret the key moves.
-    pub node_id: NodeId,
-    /// What the watch looks for, and what it has seen.
-    pub watch: CaretWatch,
-    /// When it was opened, on the reducer's clock, for
-    /// [`CARET_WATCH_BOUND`].
-    pub opened: Duration,
-    /// The request's timing, which its answer carries.
-    pub timing: EventTiming,
-    /// The calls its checks have made so far, none of which found evidence.
-    pub calls: CallCounts,
-    /// Its re-reads of the console host's caret, while they last.
-    pub poll: Option<Poll>,
-}
-
-/// A caret key's watch's poll of the console host's caret, kept in the
-/// watch it belongs to: a documented workaround to waiting only for
-/// evidence (`docs/design/key-holding.md`, "The console host's caret
-/// poll"), since the console host raises its caret events only on its
-/// cursor's blink timer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Poll {
-    /// When the next read is due, on the reducer's clock.
-    pub next: Duration,
-    /// When the last read is due.
-    pub until: Duration,
-}
-
-impl Poll {
-    /// The poll of a watch opened at `opened` for a key passed on at
-    /// `passed_at_ms`, by the clock of `now_ms` (0 when unknown, taken as
-    /// `opened`).
-    #[must_use]
-    pub fn new(opened: Duration, passed_at_ms: u64, now_ms: u64) -> Self {
-        let until = if passed_at_ms == 0 {
-            opened + POLL_BOUND
-        } else {
-            let bound_ms = u64::try_from(POLL_BOUND.as_millis()).unwrap_or(u64::MAX);
-            opened + Duration::from_millis((passed_at_ms + bound_ms).saturating_sub(now_ms))
-        };
-        Self {
-            next: (opened + POLL_INTERVAL).min(until),
-            until,
-        }
-    }
-
-    /// The poll after a read made at `now` found no evidence, or `None`
-    /// when that read was its last.
-    #[must_use]
-    pub fn after_read(self, now: Duration) -> Option<Self> {
-        (now < self.until).then(|| Self {
-            next: (now + POLL_INTERVAL).min(self.until),
-            until: self.until,
-        })
-    }
-}
-
-/// When the reducer is to wake for `open`: at its poll's next read when it
-/// polls, each read a program of its own, and otherwise at its bound
-/// ([`CARET_WATCH_BOUND`]).
-#[must_use]
-pub fn wake_for(open: &OpenWatch) -> Option<Duration> {
-    Some(
-        open.poll
-            .map_or(open.opened + CARET_WATCH_BOUND, |poll| poll.next),
-    )
 }
 
 /// The raw-view chain of the UIA focus the outpost last reported from the
@@ -342,42 +248,26 @@ pub struct Follow {
     pub adopt: bool,
 }
 
-/// A change of the caret key's watch ([`Change::watch`]).
+/// A change of the caret key's watch ([`Change::watch`]), a program's
+/// commit: the reducer decides every time.
 #[derive(Clone, Debug)]
 pub enum WatchChange {
-    /// A watch opened, the reducer to wake at the time given, if any; the
-    /// query it answers is no longer the program's.
-    Open(OpenWatch, Option<Duration>),
-    /// A watch taken out to be checked, put back with the query no longer
-    /// the program's, and its wake with it.
-    PutBack(OpenWatch),
-    /// The watch on this node taken out to be checked, its query made the
-    /// one an abandonment answers, and its wake cleared until it is put
-    /// back.
+    /// A caret key's first check found nothing: the watch opens, polling
+    /// when its node is the focused console host's text area (`console`),
+    /// and its query is no longer the program's.
+    Open {
+        /// The watch.
+        open: OpenWatch,
+        /// Whether its node is the focused console host's text area.
+        console: bool,
+    },
+    /// The watch on this node taken by the program to be checked.
     Take(NodeId),
+    /// The held watch's check found this.
+    Checked(Checked),
     /// The open watch ended with no evidence, answered `WatchEnded`; the
     /// reason is logged.
     End(&'static str),
-    /// A read of the console poll of the watch for this request found no
-    /// evidence before the poll's last read: the watch keeps the poll for
-    /// its next read, which the reducer wakes for, and the calls its checks
-    /// have made so far.
-    Read {
-        /// The request the watch answers.
-        request_id: u64,
-        /// The poll, its next read due.
-        poll: Poll,
-        /// The calls the watch's checks have made so far.
-        calls: CallCounts,
-    },
-    /// The watch for this request was answered by a read of its poll.
-    Answered(u64),
-    /// The watch for this request ended with no evidence, answered
-    /// `WatchEnded`; the reason is logged.
-    Ended(u64, &'static str),
-    /// The reducer is to wake at the time given for the open watch, or not
-    /// at all.
-    Wake(Option<Duration>),
 }
 
 /// The report to record among those the outpost reads changes for
@@ -430,9 +320,6 @@ pub enum GapNote {
 pub struct Change {
     /// The program's result, which ends its query.
     pub result: Option<OutpostToCore>,
-    /// An answer given outside its query's own program (a caret key's
-    /// watch), with its request.
-    pub aside: Option<(u64, OutpostToCore)>,
     /// The report to record for Core's judgement.
     pub report: Option<Report>,
     /// A focus becoming the followed one.
@@ -508,8 +395,8 @@ pub struct FollowState {
     /// the store releases their node, so the outpost hears the changes of
     /// every node it has not released (`docs/design/ownership.md`).
     pub kept_groups: Vec<(NodeId, Group, u64)>,
-    /// The caret key's watch for evidence kept open between programs.
-    pub caret_watch: Option<OpenWatch>,
+    /// The caret key's watch for evidence.
+    pub watch: Watch,
     /// The last committed read of a caret.
     pub caret_read: CaretRead,
     /// The raw-view chain the focus listener read for the UIA focus this
@@ -554,55 +441,33 @@ pub struct Subscription {
 /// itself.
 #[derive(Debug, Default)]
 pub struct Applied {
-    /// The caret key's watch taken out by [`WatchChange::Take`].
+    /// The caret key's watch taken by [`WatchChange::Take`].
     pub taken: Option<OpenWatch>,
-    /// Answers to send: an ended watch's `WatchEnded`, with why it ended.
-    pub ended: Vec<(OpenWatch, &'static str)>,
+    /// Whether [`WatchChange::Open`] opened the watch.
+    pub opened: bool,
+    /// Whether [`WatchChange::Checked`] found the watch held and found no
+    /// evidence.
+    pub resumed: bool,
+    /// The watch's answers to send.
+    pub answers: Vec<Answer>,
     /// The subscription's new targets, when it is to move.
     pub subscribe: Option<Subscription>,
     /// The element tokens no longer followed, for the shell to drop.
     pub unfollowed: Vec<u64>,
     /// The intake's marks for the focus adopted.
     pub adopted: Option<Marks>,
-    /// The watch's wake to set, or clear with `Some(None)`.
-    pub wake: Option<Option<Duration>>,
     /// The UIA ranges no text fact names any more, by node and key, for
     /// the store to let go of.
     pub ranges: Vec<(u64, RangeKey)>,
 }
 
 impl FollowState {
-    /// Ends the open caret key's watch, if there is one, with its
-    /// `WatchEnded` answer and its wake cancelled.
-    fn end_watch(&mut self, why: &'static str, applied: &mut Applied) {
-        if let Some(open) = self.caret_watch.take() {
-            applied.wake = Some(None);
-            applied.ended.push((open, why));
-        }
-    }
-
-    /// Ends the open caret key's watch, as [`end_watch`](Self::end_watch)
-    /// does, if it is the one for request `request_id`: a newer watch,
-    /// another key's, is left alone.
-    pub fn end_watch_of(&mut self, request_id: u64, why: &'static str, applied: &mut Applied) {
-        if self
-            .caret_watch
-            .as_ref()
-            .is_some_and(|open| open.request_id == request_id)
-        {
-            self.end_watch(why, applied);
-        }
-    }
-
-    /// Ends a caret key's watch on a node other than `node`, the new focus
-    /// or foreground window, as NVDA's wait gives way to a focus change.
+    /// Ends a caret key's watch, in any state, on a node other than
+    /// `node`, the new focus or foreground window, as NVDA's wait gives way
+    /// to a focus change.
     fn end_watch_elsewhere(&mut self, node: NodeId, applied: &mut Applied) {
-        if self
-            .caret_watch
-            .as_ref()
-            .is_some_and(|open| open.node_id != node)
-        {
-            self.end_watch("the focus moved", applied);
+        if self.watch.open().is_some_and(|open| open.node_id != node) {
+            applied.answers.extend(self.watch.end("the focus moved"));
         }
     }
 
@@ -719,9 +584,9 @@ impl FollowState {
 
 /// Applies the pure part of a commit of `generation`'s, `change`, but for
 /// its report and messages, which the caller records and sends first: to
-/// the reducer's follow state, reports and marks, or to a program's copies
-/// of them.
-pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
+/// the reducer's follow state, reports and marks, by the shared clock
+/// (`clock`), or to a program's copies of them, with no clock.
+pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) -> Applied {
     let mut applied = Applied::default();
     if !change.text.is_empty() {
         let text = Arc::make_mut(&mut facts.text);
@@ -732,11 +597,13 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     let follow_state = &mut facts.follow;
     if let Some(node) = change.replaced
         && follow_state
-            .caret_watch
-            .as_ref()
+            .watch
+            .open()
             .is_some_and(|open| open.node_id == node)
     {
-        follow_state.end_watch("the focus's element was replaced", &mut applied);
+        applied
+            .answers
+            .extend(follow_state.watch.end("the focus's element was replaced"));
     }
     if let Some(memo) = &change.dialog {
         follow_state.tracking.dialog.clone_from(memo);
@@ -820,73 +687,37 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
         let _ = facts.held.replace_states(node, states);
     }
     if let Some(watch) = &change.watch {
-        apply_watch(follow_state, watch, &mut applied);
+        apply_watch(&mut follow_state.watch, watch, clock, &mut applied);
     }
     applied
 }
 
-/// Applies `watch`, a commit's change of the caret key's watch, to
-/// `follow_state` ([`apply`]).
-fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mut Applied) {
-    match watch {
-        WatchChange::Open(open, wake) => {
-            applied.wake = Some(*wake);
-            follow_state.caret_watch = Some(open.clone());
+/// Applies `change`, a commit's change of the caret key's watch, to
+/// `watch` by `clock` ([`apply`]).
+fn apply_watch(watch: &mut Watch, change: &WatchChange, clock: Clock, applied: &mut Applied) {
+    match change {
+        WatchChange::Open { open, console } => {
+            applied.opened = watch.opened(open.clone(), *console, clock);
         }
-        WatchChange::PutBack(open) => {
-            applied.wake = Some(wake_for(open));
-            follow_state.caret_watch = Some(open.clone());
-        }
-        WatchChange::Take(node) => {
-            // Its wake goes with it, and comes back with it: a watch taken
-            // out and never put back leaves no wake.
-            applied.taken = follow_state
-                .caret_watch
-                .take_if(|open| open.node_id == *node);
-            if applied.taken.is_some() {
-                applied.wake = Some(None);
+        WatchChange::Take(node) => applied.taken = watch.take(*node),
+        WatchChange::Checked(checked) => {
+            if let Some(answer) = watch.checked(checked, clock) {
+                applied.resumed = answer.is_none() && matches!(checked, Checked::Watching { .. });
+                applied.answers.extend(answer);
             }
         }
-        WatchChange::End(why) => follow_state.end_watch(why, applied),
-        WatchChange::Read {
-            request_id,
-            poll,
-            calls,
-        } => {
-            if let Some(open) = follow_state
-                .caret_watch
-                .as_mut()
-                .filter(|open| open.request_id == *request_id)
-            {
-                open.poll = Some(*poll);
-                open.calls = *calls;
-                applied.wake = Some(Some(poll.next));
-            }
-        }
-        WatchChange::Answered(request_id) => {
-            if follow_state
-                .caret_watch
-                .take_if(|open| open.request_id == *request_id)
-                .is_some()
-            {
-                applied.wake = Some(None);
-            }
-        }
-        WatchChange::Ended(request_id, why) => {
-            follow_state.end_watch_of(*request_id, why, applied);
-        }
-        WatchChange::Wake(at) => applied.wake = Some(*at),
+        WatchChange::End(why) => applied.answers.extend(watch.end_kept(why)),
     }
 }
 
 /// Applies `change`, a program's commit of `generation`, to a program's
 /// copies `facts`, as the program's own commit does: its report recorded,
-/// then [`apply`].
+/// then [`apply`], with no clock.
 pub fn apply_local(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     if let Some(report) = &change.report {
         record(&mut facts.held, report);
     }
-    apply(facts, generation, change)
+    apply(facts, generation, change, None)
 }
 
 /// Records `report` among the reports changes are read for.
@@ -920,131 +751,30 @@ pub fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> h
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::TextUnit;
+    use verbatim_model::{CallCounts, CaretWatch, TextUnit};
 
     use super::*;
 
-    /// A watch for request `request_id` on node 1, opened at `opened`,
-    /// polling as `poll` says.
-    fn watch(request_id: u64, opened: Duration, poll: Option<Poll>) -> OpenWatch {
-        OpenWatch {
-            request_id,
-            trace: TraceId::mint(),
-            node_id: NodeId::new(1),
-            watch: CaretWatch {
-                since: None,
-                pressed_at_ms: 0,
-                unit: TextUnit::Character,
-                compare: None,
-                landing: false,
-                deletes: false,
-            },
-            opened,
-            timing: EventTiming::default(),
-            calls: CallCounts::default(),
-            poll,
-        }
-    }
-
-    #[test]
-    fn a_watch_wakes_the_reducer_at_its_polls_next_read_or_at_its_bound() {
-        let opened = Duration::from_secs(1);
-        let poll = Poll::new(opened, 0, 0);
-        assert_eq!(
-            wake_for(&watch(7, opened, Some(poll))),
-            Some(opened + POLL_INTERVAL)
-        );
-        assert_eq!(
-            wake_for(&watch(7, opened, None)),
-            Some(opened + CARET_WATCH_BOUND)
-        );
-    }
-
-    #[test]
-    fn a_polls_change_leaves_a_newer_watch_on_its_node_alone() {
-        let opened = Duration::from_secs(1);
-        let newer = Poll::new(opened, 0, 0);
-        let mut facts = Facts::default();
-        facts.follow.caret_watch = Some(watch(8, opened, Some(newer)));
-        // A read of request 7's poll, the older key's, finds nothing and
-        // then its last read ends it, after the newer key's watch on the
-        // same node opened.
-        let yielded = Change {
-            watch: Some(WatchChange::Read {
-                request_id: 7,
-                poll: Poll::new(opened + POLL_BOUND, 0, 0),
+    /// A watch for request `request_id` on node 1, waiting.
+    fn waiting(request_id: u64) -> Watch {
+        Watch::Waiting {
+            open: OpenWatch {
+                request_id,
+                trace: TraceId::mint(),
+                node_id: NodeId::new(1),
+                watch: CaretWatch {
+                    since: None,
+                    pressed_at_ms: 0,
+                    unit: TextUnit::Character,
+                    compare: None,
+                    landing: false,
+                    deletes: false,
+                },
+                timing: EventTiming::default(),
                 calls: CallCounts::default(),
-            }),
-            ..Change::default()
-        };
-        let applied = apply(&mut facts, 0, &yielded);
-        assert_eq!(applied.wake, None);
-        let ended = Change {
-            watch: Some(WatchChange::Ended(7, "its poll's bound passed")),
-            ..Change::default()
-        };
-        let applied = apply(&mut facts, 0, &ended);
-        assert!(applied.ended.is_empty());
-        let open = facts
-            .follow
-            .caret_watch
-            .expect("the newer watch stays open");
-        assert_eq!(open.request_id, 8);
-        assert_eq!(open.poll, Some(newer));
-    }
-
-    #[test]
-    fn a_read_keeps_the_polls_state_in_its_watch_and_wakes_for_the_next() {
-        let opened = Duration::from_secs(1);
-        let mut facts = Facts::default();
-        facts.follow.caret_watch = Some(watch(7, opened, Some(Poll::new(opened, 0, 0))));
-        let later = Poll {
-            next: opened + 2 * POLL_INTERVAL,
-            until: opened + POLL_BOUND,
-        };
-        let calls = CallCounts {
-            uia: 3,
-            ..CallCounts::default()
-        };
-        let read = Change {
-            watch: Some(WatchChange::Read {
-                request_id: 7,
-                poll: later,
-                calls,
-            }),
-            ..Change::default()
-        };
-        let applied = apply(&mut facts, 0, &read);
-        assert_eq!(applied.wake, Some(Some(opened + 2 * POLL_INTERVAL)));
-        let open = facts.follow.caret_watch.expect("the watch stays open");
-        assert_eq!(open.poll, Some(later));
-        assert_eq!(open.calls, calls);
-    }
-
-    #[test]
-    fn the_poll_ends_its_bound_after_the_key_was_passed_on() {
-        let opened = Duration::from_secs(1);
-        // Opened 3 ms after the key was passed on.
-        let poll = Poll::new(opened, 1_000, 1_003);
-        assert_eq!(poll.until, opened + Duration::from_millis(47));
-        assert_eq!(poll.next, opened + POLL_INTERVAL);
-    }
-
-    #[test]
-    fn a_poll_without_the_keys_time_ends_its_bound_after_it_opened() {
-        let opened = Duration::from_secs(1);
-        let poll = Poll::new(opened, 0, 1_003);
-        assert_eq!(poll.until, opened + POLL_BOUND);
-    }
-
-    #[test]
-    fn each_read_is_followed_by_the_next_until_the_bound() {
-        let opened = Duration::from_secs(1);
-        let poll = Poll::new(opened, 1_000, 1_000);
-        let read_at = opened + Duration::from_millis(47);
-        let next = poll.after_read(read_at).expect("a read before the bound");
-        assert_eq!(next.next, opened + POLL_BOUND);
-        assert!(next.after_read(opened + POLL_BOUND).is_none());
+            },
+            bound: 10_000,
+        }
     }
 
     #[test]
@@ -1181,33 +911,31 @@ mod tests {
 
     #[test]
     fn a_focus_whose_element_was_replaced_ends_the_caret_keys_watch_on_its_node() {
-        let opened = Duration::from_secs(1);
         let mut facts = Facts::default();
-        facts.follow.caret_watch = Some(watch(7, opened, None));
+        facts.follow.watch = waiting(7);
         // Another node replaced leaves the watch on node 1 alone.
         let elsewhere = Change {
             replaced: Some(NodeId::new(2)),
             ..Change::default()
         };
-        let applied = apply(&mut facts, 0, &elsewhere);
-        assert!(applied.ended.is_empty());
+        let applied = apply(&mut facts, 0, &elsewhere, Some(1));
+        assert_eq!(applied.answers, []);
         let replaced = Change {
             replaced: Some(NodeId::new(1)),
             ..Change::default()
         };
-        let applied = apply(&mut facts, 0, &replaced);
+        let applied = apply(&mut facts, 0, &replaced, Some(1));
         let ended: Vec<(u64, &str)> = applied
-            .ended
+            .answers
             .iter()
-            .map(|(open, why)| (open.request_id, *why))
+            .map(|answer| match answer {
+                Answer::Ended { open, why } => (open.request_id, *why),
+                answer => panic!("an end, not {answer:?}"),
+            })
             .collect();
         assert_eq!(
-            (ended, applied.wake, facts.follow.caret_watch.is_none()),
-            (
-                vec![(7, "the focus's element was replaced")],
-                Some(None),
-                true
-            )
+            (ended, facts.follow.watch.is_none()),
+            (vec![(7, "the focus's element was replaced")], true)
         );
     }
 }

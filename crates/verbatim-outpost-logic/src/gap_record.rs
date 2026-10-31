@@ -133,6 +133,7 @@ pub enum Outcome {
 }
 
 /// The record, and the answers kept for the look-back.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Default)]
 pub struct GapRecord {
     open: Option<Open>,

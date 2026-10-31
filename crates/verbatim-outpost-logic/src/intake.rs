@@ -161,7 +161,6 @@
 //! mailbox order.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
 
 use verbatim_model::protocol::{DeliveredFact, GapAnswer, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing};
@@ -263,6 +262,7 @@ enum Category {
 
 /// An entry with what the limiter needs to know about it, computed when it
 /// is pushed.
+#[cfg_attr(test, derive(Clone))]
 struct Waiting {
     key: Option<Key>,
     category: Category,
@@ -277,6 +277,7 @@ struct Waiting {
 }
 
 /// The order in which the worker handles a planned batch.
+#[cfg_attr(test, derive(Clone))]
 pub enum Planned {
     /// Handle the entry.
     Run(Entry),
@@ -315,6 +316,7 @@ impl Planned {
 /// The intake: what waits to be planned, the batch being handed out, and
 /// what the planning reads of the focus. One owner, the reducer, so it
 /// takes no lock.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Default)]
 pub struct Intake {
     waiting: VecDeque<Waiting>,
@@ -327,10 +329,6 @@ pub struct Intake {
     /// else is ready ([`Intake::when_idle`]).
     idle: Option<Entry>,
     closed: bool,
-    /// When a wake was asked for ([`Intake::wake_at`]), on the reducer's
-    /// clock: [`Item::Wake`] is handed out then if nothing else comes
-    /// first.
-    wake: Option<Duration>,
     /// The gap record and the answers it looks back on.
     gap: GapRecord,
 }
@@ -616,14 +614,8 @@ impl Intake {
     /// batch from everything waiting when the current one is done, with
     /// `window_is_hung` telling a hung window, a local read. With nothing
     /// else ready it gives the entry [`when_idle`](Self::when_idle) kept,
-    /// if any, and then [`Item::Wake`] once the time
-    /// [`wake_at`](Self::wake_at) named has come by `now`. `None` when
-    /// nothing is ready.
-    pub fn next(
-        &mut self,
-        now: Duration,
-        window_is_hung: impl Fn(isize) -> bool,
-    ) -> Option<(Planned, u64)> {
+    /// if any. `None` when nothing is ready.
+    pub fn next(&mut self, window_is_hung: impl Fn(isize) -> bool) -> Option<(Planned, u64)> {
         if let Some(planned) = self.batch.pop_front() {
             return Some((planned, self.batch_number));
         }
@@ -661,23 +653,9 @@ impl Intake {
         if self.closed {
             return None;
         }
-        if let Some(entry) = self.idle.take() {
-            return Some((Planned::Run(entry), self.batch_number));
-        }
-        if self.wake.is_some_and(|wake| now >= wake) {
-            self.wake = None;
-            return Some((
-                Planned::Run(Entry::own(Item::Wake, verbatim_model::TraceId::mint(), 0)),
-                self.batch_number,
-            ));
-        }
-        None
-    }
-
-    /// When the wake [`wake_at`](Self::wake_at) asked for is due, if one
-    /// is.
-    pub fn wake(&self) -> Option<Duration> {
-        self.wake
+        self.idle
+            .take()
+            .map(|entry| (Planned::Run(entry), self.batch_number))
     }
 
     /// Closes the queue for the outpost's shutdown: everything waiting and
@@ -686,7 +664,6 @@ impl Intake {
     /// what was dropped are returned, for a worker to drop.
     pub fn close(&mut self) -> Vec<u64> {
         self.closed = true;
-        self.wake = None;
         let mut dropped: Vec<Entry> = self
             .waiting
             .drain(..)
@@ -703,13 +680,6 @@ impl Intake {
             .iter()
             .flat_map(|entry| entry.item.parked())
             .collect()
-    }
-
-    /// Asks [`next`](Self::next) for an [`Item::Wake`] at `at` if nothing
-    /// else is to be done then, or for none, in place of any time asked for
-    /// before.
-    pub fn wake_at(&mut self, at: Option<Duration>) {
-        self.wake = at;
     }
 
     /// Withdraws query `request_id` if it has not started. Returns whether it
@@ -1055,7 +1025,6 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::Query { .. }
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
-        | Item::Wake
         | Item::GapBound
         | Item::GapRead { .. } => (None, Category::Exempt, 0),
     }
@@ -1743,7 +1712,7 @@ mod tests {
         push_item(&mut intake, notification_fact("progress", "20 percent"), 30);
         let mut order = Vec::new();
         for _ in 0..2 {
-            if let Some((Planned::Run(entry), _)) = intake.next(Duration::ZERO, never_hung) {
+            if let Some((Planned::Run(entry), _)) = intake.next(never_hung) {
                 order.push(entry.observed_at_us);
             }
         }
@@ -2190,7 +2159,7 @@ mod tests {
         push(&mut intake, name_change(2), 2);
         push(&mut intake, name_change(3), 3);
         let mut order = Vec::new();
-        let (first, _) = intake.next(Duration::ZERO, never_hung).expect("an entry");
+        let (first, _) = intake.next(never_hung).expect("an entry");
         order.extend(first.entries().iter().map(|entry| entry.observed_at_us));
         push(
             &mut intake,
@@ -2205,7 +2174,7 @@ mod tests {
             4,
         );
         while intake.busy() {
-            let (planned, _) = intake.next(Duration::ZERO, never_hung).expect("an entry");
+            let (planned, _) = intake.next(never_hung).expect("an entry");
             order.extend(planned.entries().iter().map(|entry| entry.observed_at_us));
         }
         assert_eq!(order, vec![1, 2, 3, 4]);
@@ -2236,7 +2205,7 @@ mod tests {
         push(&mut intake, 1, 30);
         let mut order = Vec::new();
         for _ in 0..2 {
-            if let Some((Planned::Run(entry), _)) = intake.next(Duration::ZERO, never_hung) {
+            if let Some((Planned::Run(entry), _)) = intake.next(never_hung) {
                 order.push(entry.observed_at_us);
             }
         }
@@ -2325,7 +2294,7 @@ mod tests {
                 None,
             );
         }
-        let Some((Planned::Run(entry), _)) = intake.next(Duration::ZERO, never_hung) else {
+        let Some((Planned::Run(entry), _)) = intake.next(never_hung) else {
             panic!("the list is planned");
         };
         assert!(matches!(
@@ -2365,7 +2334,7 @@ mod tests {
             },
         );
         push_fact(&mut intake, DeliveredFact::Foreground { hwnd: 77 });
-        let (planned, _) = intake.next(Duration::ZERO, never_hung).expect("an entry");
+        let (planned, _) = intake.next(never_hung).expect("an entry");
         assert_eq!(
             planned.entries().len(),
             2,
@@ -2424,7 +2393,7 @@ mod tests {
     fn handed_out(intake: &mut Intake) -> Vec<u64> {
         let mut order = Vec::new();
         while intake.ready_now() {
-            let (planned, _) = intake.next(Duration::ZERO, never_hung).expect("an entry");
+            let (planned, _) = intake.next(never_hung).expect("an entry");
             order.extend(planned.entries().iter().map(|entry| entry.observed_at_us));
         }
         order
@@ -2475,7 +2444,7 @@ mod tests {
             fact: Box::new(selection.clone()),
         };
         push_item(&mut intake, Item::Fact(marked, None), 3);
-        let (planned, _) = intake.next(Duration::ZERO, never_hung).expect("an entry");
+        let (planned, _) = intake.next(never_hung).expect("an entry");
         let entries = planned.entries();
         assert!(
             matches!(&entries[0].item, Item::Fact(fact, None) if *fact == selection),
@@ -2545,9 +2514,7 @@ mod tests {
             ),
             2,
         );
-        let (planned, _) = intake
-            .next(Duration::ZERO, never_hung)
-            .expect("the bound's entry");
+        let (planned, _) = intake.next(never_hung).expect("the bound's entry");
         assert!(
             matches!(
                 planned.entries()[..],
@@ -2621,9 +2588,7 @@ mod tests {
                 .timer,
             Some(TimerAction::Cancel)
         );
-        let (planned, _) = intake
-            .next(Duration::ZERO, never_hung)
-            .expect("the record's read");
+        let (planned, _) = intake.next(never_hung).expect("the record's read");
         assert!(
             matches!(
                 planned.entries()[..],

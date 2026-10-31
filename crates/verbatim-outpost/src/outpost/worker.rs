@@ -67,13 +67,13 @@ use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, CARET_WATCH_BOUND, Cut, Entry, Evidence, Finish, FocusPath, GapNote, GapRead, Handling,
-    Item, Object, OpenWatch, Owed, OwedWork, Poll, Program, Report, Request, UiaEvent, UiaKind,
-    VerdictChange, WatchChange, WinKind, Work, wake_for,
+    self, Cut, Entry, Evidence, Finish, FocusPath, GapNote, GapRead, Handling, Item, Object,
+    OpenWatch, Owed, OwedWork, Program, Report, Request, UiaEvent, UiaKind, VerdictChange,
+    WatchChange, WinKind, Work,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads;
-use super::window::{alt_is_held, console_client, now_ms, window_facts};
+use super::window::{alt_is_held, console_client, window_facts};
 use super::{Context, RequestContext};
 use crate::arbitration::Judgement as _;
 use crate::terminal::reading::{Action, Event, Reading};
@@ -342,6 +342,14 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             Worker::new(&request_context, client, 0, EventTiming::default()).attempt_owed(owed);
         }
         Work::Drop => {}
+        Work::PollRead => {
+            request_context.judge_at(context.observed_now());
+            let timing = EventTiming {
+                dequeued_at_us: now_us(),
+                ..EventTiming::default()
+            };
+            Worker::new(&request_context, client, 0, timing).poll_read();
+        }
         Work::Finish { cut, waiting } => {
             Worker::new(&request_context, client, 0, cut.timing).finish(*cut, waiting);
         }
@@ -397,6 +405,7 @@ fn describe(work: &Work) -> String {
         Work::Entry { entry, .. } => describe_item(&entry.item),
         Work::Owed(owed) => format!("owed work of {:?}", owed.node),
         Work::Drop => "drop".to_owned(),
+        Work::PollRead => "the console poll's read".to_owned(),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
     }
 }
@@ -422,7 +431,6 @@ fn describe_item(item: &Item) -> String {
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
         Item::Barrier { asker, .. } => format!("barrier of {asker:?}"),
-        Item::Wake => "wake".to_owned(),
         Item::GapBound => "the gap record's bound".to_owned(),
         Item::GapRead { window } => format!("the gap record's read, window {window}"),
     }
@@ -815,7 +823,6 @@ impl Worker<'_> {
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
-            Item::Wake => self.wake(),
             // The reducer's own: never a program's.
             Item::NodesHeld { .. } | Item::Barrier { .. } | Item::GapBound => {}
             Item::GapRead { window } => self.gap_read(
@@ -864,32 +871,27 @@ impl Worker<'_> {
             ),
             Checked::Done(Watched::Watching) => {
                 let calls = take_calls();
-                let opened = self.context.now();
                 // The console host raises its caret event only on its
-                // cursor's blink timer, so its caret is re-read meanwhile
-                // ([`reducer::Poll`]).
-                let poll = text_reads::console_focus(self.context, node_id)
-                    .then(|| Poll::new(opened, watch.pressed_at_ms, now_ms()));
+                // cursor's blink timer, so the reducer polls its caret
+                // meanwhile ([`reducer::Watch::Polling`]).
+                let console = text_reads::console_focus(self.context, node_id);
                 let open = OpenWatch {
                     request_id,
                     trace,
                     node_id,
                     watch: watch.clone(),
-                    opened,
                     timing: self.timing,
                     calls,
-                    poll,
                 };
-                let wake = wake_for(&open);
                 // The query is answered later, outside its entry, so an
                 // abandonment no longer answers it.
                 self.commit(Effects {
-                    watch: Some(WatchChange::Open(open, wake)),
+                    watch: Some(WatchChange::Open { open, console }),
                     caret_read,
                     ..Effects::default()
                 });
                 if !self.refused() {
-                    tracing::debug!(%trace, ?calls, polled = poll.is_some(), "a caret key's watch is open");
+                    tracing::debug!(%trace, ?calls, polled = console, "a caret key's watch is open");
                 }
             }
         }
@@ -953,9 +955,9 @@ impl Worker<'_> {
     /// and a terminal that moves its caret after its text raises no event
     /// for it (Windows Terminal, `PSReadLine`'s menu). The watch is taken
     /// out, its query made the one an abandonment answers, in one commit,
-    /// and put back or answered in another, or, when the check of an edit
-    /// control is cut at its value change check, answered by the program
-    /// that finishes it, which takes over that query.
+    /// and its result committed in another, or, when the check of an edit
+    /// control is cut at its value change check, by the program that
+    /// finishes it, which holds the watch in its place.
     fn check_watch_now(&mut self, node_id: NodeId, caret_event: bool) -> bool {
         let context = self.context;
         let (committed, taken) = context.commit(Effects {
@@ -965,7 +967,7 @@ impl Worker<'_> {
         if committed == Committed::Refused {
             self.refused.set(true);
         }
-        let Some(mut open) = taken else {
+        let Some(open) = taken else {
             return false;
         };
         let (watched, read_at) =
@@ -973,67 +975,58 @@ impl Worker<'_> {
         let caret_read = read_at.map(|at| (node_id, at));
         match watched {
             Checked::Done(Watched::Watching) => {
-                open.calls += take_calls();
                 self.commit(Effects {
-                    watch: Some(WatchChange::PutBack(open)),
+                    watch: Some(WatchChange::Checked(reducer::Checked::Watching {
+                        calls: take_calls(),
+                    })),
                     caret_read,
                     ..Effects::default()
                 });
                 false
             }
-            Checked::Done(Watched::Answered(reply)) => {
-                self.watch_answered(&open, node_id, reply, (caret_read, CallCounts::default()))
-            }
+            Checked::Done(Watched::Answered(reply)) => self.watch_answered(
+                open.trace,
+                node_id,
+                reply,
+                (caret_read, CallCounts::default()),
+                // The watch waited until the evidence was taken from the
+                // queue; the read after it is the answer's.
+                self.timing.dequeued_at_us,
+            ),
             Checked::Cut(cut) => {
                 self.cut_read(
                     node_id,
                     (cut.edit, cut.length, read_at),
-                    Finish::Watch {
-                        open: Box::new(open),
-                        read: cut.read,
-                    },
+                    Finish::Watch { read: cut.read },
                 );
                 true
             }
         }
     }
 
-    /// Answers `open`, the caret key's watch taken out to be checked, with
-    /// `reply`, the evidence found on `node_id`, committed with the read
-    /// noted (`caret_read`), carrying `calls`, made by an earlier part of
-    /// the check, with the calls since the last message. Whether the
-    /// answer was committed.
+    /// Answers the caret key's watch the program holds, of the key traced
+    /// `trace`, with `reply`, the evidence found on `node_id`, its waiting
+    /// ended at `awaited_at_us`, committed with the read noted
+    /// (`caret_read`), carrying `calls`, made by an earlier part of the
+    /// check, with the calls since the last message: the reducer sends the
+    /// key's reply. Whether the answer was committed.
     fn watch_answered(
         &mut self,
-        open: &OpenWatch,
+        trace: TraceId,
         node_id: NodeId,
         reply: TextReply,
         (caret_read, calls): (Option<(NodeId, u64)>, CallCounts),
+        awaited_at_us: u64,
     ) -> bool {
         let sent_caret = self.reply_caret(node_id, &reply);
         let calls = calls + take_calls();
-        tracing::debug!(
-            trace = %open.trace,
-            waited_ms = self.context.now().saturating_sub(open.opened).as_millis(),
-            "a caret key's watch is answered"
-        );
-        let answer = OutpostToCore::Reply {
-            trace_id: open.trace,
-            request_id: open.request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(reply)),
-            timing: EventTiming {
-                // The watch waited until the evidence was taken from the
-                // queue; the read after it is the answer's.
-                awaited_at_us: self.timing.dequeued_at_us,
-                awaited_calls: open.calls,
-                calls: open.calls + calls,
-                published_at_us: now_us(),
-                ..open.timing
-            },
-        };
+        tracing::debug!(%trace, "a caret key's watch is answered");
         self.commit(Effects {
-            aside: Some((open.request_id, answer)),
-            watch: Some(WatchChange::Wake(None)),
+            watch: Some(WatchChange::Checked(reducer::Checked::Answered {
+                reply,
+                calls,
+                awaited_at_us,
+            })),
             sent_caret,
             caret_read,
             ..Effects::default()
@@ -1045,7 +1038,7 @@ impl Worker<'_> {
     fn watched_edit(&self, hwnd: isize) -> Option<NodeId> {
         let node_id = self
             .context
-            .follow(|follow| follow.caret_watch.as_ref().map(|open| open.node_id))?;
+            .follow(|follow| follow.watch.kept().map(|open| open.node_id))?;
         (self.context.store.key_of(node_id) == Some((hwnd, OBJID_CLIENT.0, CHILDID_SELF)))
             .then_some(node_id)
     }
@@ -1061,102 +1054,41 @@ impl Worker<'_> {
         });
     }
 
-    /// [`Item::Wake`]: makes the next read of the open watch's console
-    /// poll when it polls ([`read_poll`](Self::read_poll)); otherwise ends
-    /// the watch once it has reached [`CARET_WATCH_BOUND`], which only
-    /// frees it and says nothing, and asks to be woken at its bound before
-    /// then.
-    fn wake(&mut self) {
-        let Some(open) = self.context.follow(|follow| follow.caret_watch.clone()) else {
+    /// [`Work::PollRead`]: one read of the console poll of the watch the
+    /// program's copy holds, with the check a caret event makes. On
+    /// evidence it answers the key and reads the terminal, as after a first
+    /// check that answers it; otherwise it reports finding nothing, and the
+    /// reducer decides the next read or the poll's end.
+    fn poll_read(&mut self) {
+        let context = self.context;
+        let Some(open) = context.follow(|follow| follow.watch.open().cloned()) else {
             return;
         };
-        if let Some(poll) = open.poll {
-            self.read_poll(&open, poll);
-        } else if self.context.now() >= open.opened + CARET_WATCH_BOUND {
-            self.end_watch("its bound passed");
-        } else {
-            self.commit(Effects {
-                watch: Some(WatchChange::Wake(wake_for(&open))),
-                ..Effects::default()
-            });
-        }
-    }
-
-    /// One read of `open`'s console poll ([`reducer::Poll`]), a program of
-    /// its own: re-reads the console host's caret with the check a caret
-    /// event makes. On evidence it answers the key, the watch removed, and
-    /// reads the terminal, as after a first check that answers it; at a
-    /// last read that finds nothing it ends the watch; and otherwise it
-    /// commits the poll's next read, which the reducer wakes for. A wake
-    /// taken before the read is due only sets the wake again.
-    fn read_poll(&mut self, open: &OpenWatch, poll: reducer::Poll) {
-        let context = self.context;
-        let request_id = open.request_id;
         let node_id = open.node_id;
-        if context.now() < poll.next {
-            self.commit(Effects {
-                watch: Some(WatchChange::Read {
-                    request_id,
-                    poll,
-                    calls: open.calls,
-                }),
-                ..Effects::default()
-            });
-            return;
-        }
-        let calls = open.calls;
         let awaited_at_us = now_us();
         let (watched, read_at) = text_reads::check_watch_uncut(context, node_id, &open.watch);
         let caret_read = read_at.map(|at| (node_id, at));
         match watched {
             Watched::Answered(reply) => {
-                let sent_caret = self.reply_caret(node_id, &reply);
-                let read_calls = take_calls();
-                tracing::debug!(
-                    trace = %open.trace,
-                    waited_ms = context.now().saturating_sub(open.opened).as_millis(),
-                    "a caret key's watch is answered"
+                let committed = self.watch_answered(
+                    open.trace,
+                    node_id,
+                    reply,
+                    (caret_read, CallCounts::default()),
+                    awaited_at_us,
                 );
-                let answer = OutpostToCore::Reply {
-                    trace_id: open.trace,
-                    request_id,
-                    outcome: QueryOutcome::Done(QueryResult::Text(reply)),
-                    timing: EventTiming {
-                        // The watch waited until this read began; the
-                        // read is the answer's.
-                        awaited_at_us,
-                        awaited_calls: calls,
-                        calls: calls + read_calls,
-                        published_at_us: now_us(),
-                        ..open.timing
-                    },
-                };
-                let committed = self.commit(Effects {
-                    aside: Some((request_id, answer)),
-                    watch: Some(WatchChange::Answered(request_id)),
-                    sent_caret,
-                    caret_read,
-                    ..Effects::default()
-                });
                 // Core's reading rules answer the key from a read that
                 // shows what it did, as after a first check that
                 // answers it.
-                if committed == Committed::Applied && self.focused_terminal(node_id) {
+                if committed && self.focused_terminal(node_id) {
                     self.terminal_output(node_id, open.trace, 0);
                 }
             }
             Watched::Watching => {
-                let calls = calls + take_calls();
-                let watch = match poll.after_read(context.now()) {
-                    Some(poll) => WatchChange::Read {
-                        request_id,
-                        poll,
-                        calls,
-                    },
-                    None => WatchChange::Ended(request_id, "its poll's bound passed"),
-                };
                 self.commit(Effects {
-                    watch: Some(watch),
+                    watch: Some(WatchChange::Checked(reducer::Checked::Watching {
+                        calls: take_calls(),
+                    })),
                     caret_read,
                     ..Effects::default()
                 });
@@ -1396,10 +1328,15 @@ impl Worker<'_> {
                     text_reads::finish_watch(self.context, node_id, (length, read), waiting);
                 self.key_answered((request_id, trace), node_id, reply, (caret_read, calls));
             }
-            Finish::Watch { open, read } => {
+            Finish::Watch { read } => {
                 let reply =
                     text_reads::finish_watch(self.context, node_id, (length, read), waiting);
-                self.watch_answered(&open, node_id, reply, (caret_read, calls));
+                let trace = self
+                    .context
+                    .follow(|follow| follow.watch.open().map(|open| open.trace))
+                    .unwrap_or_else(TraceId::mint);
+                let awaited_at_us = self.timing.dequeued_at_us;
+                self.watch_answered(trace, node_id, reply, (caret_read, calls), awaited_at_us);
             }
         }
     }
@@ -1480,7 +1417,7 @@ impl Worker<'_> {
     /// updates, about one per line, otherwise woke the worker once each.
     fn absorb_while_held(&self, node_id: NodeId, hwnd: isize) {
         if self.held_with_changes(node_id)
-            && self.context.follow(|follow| follow.caret_watch.is_none())
+            && self.context.follow(|follow| follow.watch.kept().is_none())
         {
             self.commit(Effects {
                 absorb: Some(hwnd),

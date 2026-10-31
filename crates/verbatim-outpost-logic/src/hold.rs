@@ -35,11 +35,13 @@ use verbatim_model::protocol::{DeliveredFact, WinEventStamp, tick_is_after};
 use super::entry::{Entry, Item};
 
 /// The hold's state in one outpost.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Default)]
 pub struct Hold {
     state: State,
 }
 
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Default)]
 enum State {
     /// No hook is in yet: nothing comes from it to hold.

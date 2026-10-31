@@ -131,9 +131,6 @@ impl Follow {
 pub(super) struct Effects {
     /// The program's result, which ends its query.
     pub(super) result: Option<OutpostToCore>,
-    /// An answer given outside its query's own program (a caret key's
-    /// watch), with its request.
-    pub(super) aside: Option<(u64, OutpostToCore)>,
     /// The report to record for Core's judgement.
     pub(super) report: Option<Report>,
     /// A focus becoming the followed one.
@@ -194,7 +191,6 @@ impl Effects {
     pub(super) fn local(&self) -> Change {
         Change {
             result: None,
-            aside: None,
             report: self.report.clone(),
             follow: self.follow.as_ref().map(Follow::pure),
             foreground: self.foreground,
@@ -230,7 +226,6 @@ impl Effects {
                 .map(|(node, target)| (*node, target.pure())),
             report: self.report,
             result: self.result,
-            aside: self.aside,
             foreground: self.foreground,
             dialog: self.dialog,
             value_from_selection: self.value_from_selection,

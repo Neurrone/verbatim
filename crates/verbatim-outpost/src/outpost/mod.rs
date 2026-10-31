@@ -60,7 +60,7 @@ use std::os::windows::io::OwnedHandle;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
@@ -463,11 +463,6 @@ impl<'a> RequestContext<'a> {
     /// The window of the last focus this outpost reported.
     fn tracked_window(&self) -> Option<isize> {
         self.follow(|follow| follow.tracking.window)
-    }
-
-    /// Now, on the reducer's clock.
-    fn now(&self) -> Duration {
-        self.context.epoch.elapsed()
     }
 
     /// The route to the element `runtime_id` names, when it is in the chain

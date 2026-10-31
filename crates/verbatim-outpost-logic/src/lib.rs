@@ -32,6 +32,7 @@ mod intake;
 mod tests;
 mod text;
 mod verdicts;
+mod watch;
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::sync::Arc;
@@ -43,11 +44,12 @@ use verbatim_model::protocol::{
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 use verbatim_reader_rules::MOVED_ON_GRACE;
 
+use self::watch::Reached;
+
 pub use self::entry::{Asker, Entry, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property};
 pub use self::follow::{
-    Applied, CARET_WATCH_BOUND, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, GapNote,
-    Group, OpenWatch, Owed, OwedWork, Poll, Report, Route, Subscription, Target, WatchChange,
-    apply_local, wake_for,
+    Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, GapNote, Group, Owed,
+    OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
 };
 pub use self::gap_record::{CopyDropped, GapRead};
 pub use self::held::{Evidence, Focus, Held, InFront};
@@ -57,6 +59,9 @@ pub use self::text::{
     TextChange,
 };
 pub use self::verdicts::{Probe, Probed, VerdictChange, Verdicts};
+pub use self::watch::{
+    Answer, CARET_WATCH_BOUND, Checked, OpenWatch, POLL_BOUND, POLL_INTERVAL, Resume, Watch,
+};
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -139,6 +144,9 @@ pub enum Work {
 
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
+    /// One read of the console poll of the caret key's watch, which the
+    /// program's copy holds (`Watch::Checking`).
+    PollRead,
     /// Finishes the caret read `cut`, cut at its value change check, with
     /// the reducer's decision: whether a value change of its edit control
     /// waited when the read part ended (`waiting`).
@@ -201,11 +209,9 @@ pub enum Finish {
         /// What the read part found.
         read: AnswerCut<u32>,
     },
-    /// A check of the open watch, which the read part took out of the
-    /// follow state, its query the program's to answer.
+    /// A check of the watch the read part took, which the program that
+    /// finishes it holds in its copy.
     Watch {
-        /// The open watch, taken out of the follow state.
-        open: Box<OpenWatch>,
         /// What the read part found.
         read: AnswerCut<u32>,
     },
@@ -402,6 +408,7 @@ pub enum Input {
 }
 
 /// What a program is doing, as the reducer follows it.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 struct Current {
     request: Request,
@@ -425,11 +432,13 @@ struct Current {
     group: Option<GroupTry>,
     /// Whether it does work the idle barrier's answer waits for, as it
     /// waits for an open watch or an open gap record: it reads the gap
-    /// record, or it took the caret key's watch from the facts.
+    /// record, or it holds the caret key's watch, or answered it and may
+    /// still read the terminal under the key's trace.
     deferred: bool,
 }
 
 /// One try of a focus group, and what is left of it.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 struct GroupTry {
     number: u64,
@@ -439,6 +448,7 @@ struct GroupTry {
 }
 
 /// The reducer.
+#[cfg_attr(test, derive(Clone))]
 #[derive(Default)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -531,9 +541,9 @@ impl Reducer {
 
     /// When the shell is next to call [`tick`](Self::tick): the program's
     /// deadline, the end of its moved-on grace, its walk's bound, the
-    /// watch's wake while no program is in flight and no release is
-    /// pending (only then does a tick take it), and the gap record's
-    /// bound, on the shell's clock.
+    /// watch's due time while no program is in flight, no release is
+    /// pending and the outpost is not stopping (only then is it acted on),
+    /// and the gap record's bound, on the shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
@@ -547,8 +557,13 @@ impl Reducer {
             }
             times.extend(current.walk);
         }
-        if self.current.is_none() && !self.releasing {
-            times.extend(self.intake.wake());
+        if self.current.is_none()
+            && !self.releasing
+            && !self.stopping
+            && let Some(due_us) = self.facts.follow.watch.due()
+        {
+            let left = due_us.saturating_sub(now.wall_us);
+            times.push(now.at + Duration::from_micros(left));
         }
         if let Some(due_us) = self.gap_due.filter(|_| !self.gap_timer_given) {
             let left = due_us.saturating_sub(now.observed_us);
@@ -629,6 +644,19 @@ impl Reducer {
                     effects.push(Effect::ForgetRanges(ranges));
                 }
                 let mut applied = Applied::default();
+                // A release comes with no program in flight, so the watch
+                // is never held then.
+                if self
+                    .facts
+                    .follow
+                    .watch
+                    .kept()
+                    .is_some_and(|open| nodes.contains(&open.node_id.number()))
+                {
+                    applied
+                        .answers
+                        .extend(self.facts.follow.watch.end("its node was released"));
+                }
                 self.facts.follow.release_groups(&nodes, &mut applied);
                 self.subscription_effects(applied, now, &mut effects);
                 self.to_drop |= objects;
@@ -805,18 +833,6 @@ impl Reducer {
             }
             self.send(message, effects);
         }
-        if let Some((_, message)) = change.aside.clone() {
-            // The query it answers stops being any slot's as it is sent.
-            self.send(message, effects);
-        }
-        if matches!(
-            change.watch,
-            Some(WatchChange::Open(..) | WatchChange::PutBack(_) | WatchChange::Read { .. })
-        ) && let Some(current) = self.current_of(request)
-        {
-            current.running = None;
-            current.deferred = false;
-        }
         for note in &change.gap {
             self.gap_note(*note, effects);
         }
@@ -830,16 +846,25 @@ impl Reducer {
                 timing,
             });
         }
-        let mut applied = follow::apply(&mut self.facts, self.generation, change);
+        let mut applied =
+            follow::apply(&mut self.facts, self.generation, change, Some(now.wall_us));
         let ranges = std::mem::take(&mut applied.ranges);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
         }
-        if let Some(open) = &applied.taken
-            && let Some(current) = self.current_of(request)
-        {
-            current.running = Some((open.request_id, open.trace));
-            current.deferred = true;
+        if let Some(current) = self.current_of(request) {
+            // An opened watch's query is no longer the program's; a
+            // program holding the watch is waited for until it gives it
+            // back, or, having answered it, until it ends.
+            if applied.opened {
+                current.running = None;
+            }
+            if applied.taken.is_some() {
+                current.deferred = true;
+            }
+            if applied.resumed {
+                current.deferred = false;
+            }
         }
         let marks = applied.adopted.is_some()
             || change.drop_system_caret
@@ -883,23 +908,16 @@ impl Reducer {
     }
 
     /// The shell's part of an [`Applied`]: the subscription moved, the
-    /// elements no longer followed dropped, ended watches answered, and the
-    /// watch's wake set.
+    /// elements no longer followed dropped, and the watch's answers sent.
     fn subscription_effects(&mut self, applied: Applied, now: Now, effects: &mut Vec<Effect>) {
         let Applied {
-            ended,
+            answers,
             subscribe,
             unfollowed,
-            wake,
             ..
         } = applied;
-        for (open, why) in ended {
-            effects.push(Effect::WatchEnded {
-                trace: open.trace,
-                why,
-                waited: now.at.saturating_sub(open.opened),
-            });
-            self.send(watch_ended(&open, now.wall_us), effects);
+        for answer in answers {
+            self.answer_watch(answer, now, effects);
         }
         if let Some(subscribe) = subscribe {
             effects.push(Effect::Subscribe(subscribe));
@@ -907,9 +925,43 @@ impl Reducer {
         if !unfollowed.is_empty() {
             effects.push(Effect::Unfollow(unfollowed));
         }
-        if let Some(wake) = wake {
-            self.intake.wake_at(wake);
-        }
+    }
+
+    /// Sends the watch's one answer, published now.
+    fn answer_watch(&mut self, answer: Answer, now: Now, effects: &mut Vec<Effect>) {
+        let message = match answer {
+            Answer::Ended { open, why } => {
+                effects.push(Effect::WatchEnded {
+                    trace: open.trace,
+                    why,
+                    waited: Duration::from_micros(
+                        now.wall_us.saturating_sub(open.timing.dequeued_at_us),
+                    ),
+                });
+                watch_ended(&open, now.wall_us)
+            }
+            Answer::Evidence {
+                open,
+                reply,
+                calls,
+                awaited_at_us,
+            } => OutpostToCore::Reply {
+                trace_id: open.trace,
+                request_id: open.request_id,
+                outcome: QueryOutcome::Done(verbatim_model::protocol::QueryResult::Text(reply)),
+                timing: EventTiming {
+                    awaited_at_us,
+                    awaited_calls: open.calls,
+                    calls: open.calls + calls,
+                    published_at_us: now.wall_us,
+                    ..open.timing
+                },
+            },
+            Answer::Abandoned { open } => {
+                reply(open.request_id, open.trace, QueryOutcome::Abandoned)
+            }
+        };
+        self.send(message, effects);
     }
 
     /// The intake's marks follow the follow state's, and the mailbox is
@@ -1049,20 +1101,10 @@ impl Reducer {
             count: self.abandoned,
             reason,
         });
+        if let Some(answer) = self.facts.follow.watch.abandoned() {
+            self.answer_watch(answer, now, effects);
+        }
         if let Some((request_id, trace)) = current.running {
-            // A read of the open watch's console poll leaves the watch in
-            // the facts: it is taken out without a word, its query answered
-            // here, once. A program that took the watch out to check it has
-            // already removed it.
-            if self
-                .facts
-                .follow
-                .caret_watch
-                .take_if(|open| open.request_id == request_id)
-                .is_some()
-            {
-                self.intake.wake_at(None);
-            }
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
         // A focus group's older entries are tried by the replacement, unless
@@ -1091,25 +1133,13 @@ impl Reducer {
             self.dispatch_finish(current, cut, effects);
             return;
         }
-        // A query its program left unanswered, because it panicked or
-        // returned without its reply, still gets its one reply. A read of
-        // the open watch's console poll that ended so ends the watch, which
-        // answers its query, so the watch is not read again as it stood.
+        // A watch the program still holds, because it panicked, returned
+        // without its check's result or was claimed, ends; a query it left
+        // unanswered still gets its one reply.
+        if let Some(answer) = self.facts.follow.watch.program_ended() {
+            self.answer_watch(answer, now, effects);
+        }
         if let Some((request_id, trace)) = current.running {
-            if self
-                .facts
-                .follow
-                .caret_watch
-                .as_ref()
-                .is_some_and(|open| open.request_id == request_id)
-            {
-                let mut applied = Applied::default();
-                self.facts
-                    .follow
-                    .end_watch_of(request_id, "its read failed", &mut applied);
-                self.subscription_effects(applied, now, effects);
-                return;
-            }
             self.send(
                 reply(
                     request_id,
@@ -1162,7 +1192,7 @@ impl Reducer {
                 .current
                 .as_ref()
                 .is_some_and(|current| current.deferred)
-            || self.facts.follow.caret_watch.is_some()
+            || !self.facts.follow.watch.is_none()
             || self.intake.gap_open()
         {
             return;
@@ -1230,10 +1260,23 @@ impl Reducer {
                 self.dispatch(Work::Drop, (WALK_DEADLINE, 0, None), None, now, effects);
                 continue;
             }
-            let Some((planned, batch)) =
-                self.intake.next(now.at, |hwnd| locals.window_is_hung(hwnd))
+            let Some((planned, batch)) = self.intake.next(|hwnd| locals.window_is_hung(hwnd))
             else {
-                return;
+                // Nothing else is ready: the watch's due time is acted on.
+                match self.facts.follow.watch.reach(now.wall_us) {
+                    Reached::Nothing => return,
+                    Reached::Ended(answer) => self.answer_watch(*answer, now, effects),
+                    Reached::Read => {
+                        // Under the text deadline, waited for by the idle
+                        // answer: after its answer it reads the terminal
+                        // under the key's trace.
+                        self.dispatch(Work::PollRead, (TEXT_DEADLINE, 0, None), None, now, effects);
+                        if let Some(current) = &mut self.current {
+                            current.deferred = true;
+                        }
+                    }
+                }
+                continue;
             };
             match planned {
                 Planned::Run(entry) => self.run(entry, batch, now, effects),
@@ -1341,37 +1384,6 @@ impl Reducer {
                 Ok(None) => {}
                 Err(due_us) => self.gap_timer(TimerAction::Set(due_us), effects),
             },
-            Item::Wake => {
-                // A read of the open watch's console poll is a program of
-                // its own, timed by the reducer's wake, under the text
-                // deadline, its query the watch's until the read commits.
-                let polled = self
-                    .facts
-                    .follow
-                    .caret_watch
-                    .as_ref()
-                    .filter(|open| open.poll.is_some())
-                    .map(|open| (open.request_id, open.trace));
-                match polled {
-                    Some(running) => {
-                        let work = Work::Entry {
-                            entry,
-                            handling: Handling::Run,
-                            batch,
-                            group: None,
-                        };
-                        self.dispatch(work, (TEXT_DEADLINE, 0, Some(running)), None, now, effects);
-                        // The idle answer waits for the read, as for a
-                        // program that took the watch out: after its
-                        // answer it reads the terminal under the key's
-                        // trace.
-                        if let Some(current) = &mut self.current {
-                            current.deferred = true;
-                        }
-                    }
-                    None => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
-                }
-            }
             _ => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
         }
     }
@@ -1508,8 +1520,8 @@ impl Reducer {
             _ => self
                 .facts
                 .follow
-                .caret_watch
-                .as_ref()
+                .watch
+                .open()
                 .map(|open| open.watch.pressed_at_ms),
         };
         self.intake.waiting_carets(pressed_ms)
@@ -1600,7 +1612,6 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Uia(_)
         | Item::NotedCaret { .. }
         | Item::Barrier { .. }
-        | Item::Wake
         | Item::GapBound
         | Item::GapRead { .. } => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
