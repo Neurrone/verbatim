@@ -28,7 +28,9 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
-use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
+use verbatim_model::protocol::{
+    DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+};
 use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, SelectionChange,
     TextOp, TextPoint, TextPosition, TextReply, TextUnit,
@@ -105,7 +107,7 @@ fn right_arrow(before: &CaretReport) -> TextOp {
 }
 
 /// The answer to caret key `key`, which must be the outpost's next message.
-fn answer_to(outpost: &OutpostUnderTest, key: u64) -> TextReply {
+fn answer_to(outpost: &OutpostUnderTest, key: RequestId) -> TextReply {
     match outpost.next() {
         OutpostToCore::Reply {
             request_id,

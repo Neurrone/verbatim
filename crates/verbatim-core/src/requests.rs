@@ -19,13 +19,7 @@
 use std::collections::BTreeMap;
 
 use verbatim_model::OutpostId;
-use verbatim_model::protocol::QueryOutcome;
-
-/// Names one query Core sent an outpost. Unique for the life of the table,
-/// so an old reply can never satisfy a newer request; a later request has a
-/// greater id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RequestId(pub u64);
+use verbatim_model::protocol::{QueryOutcome, RequestId};
 
 /// The reason a request whose deadline passed ends with, as failed.
 pub const DEADLINE_PASSED: &str = "no answer came by the request's deadline";
@@ -65,7 +59,10 @@ impl<A> Default for RequestTable<A> {
 }
 
 impl<A> RequestTable<A> {
-    /// Records a query about to be sent to `outpost` and returns its id.
+    /// Records a query about to be sent to `outpost` and returns its id,
+    /// tagged [`Requester::Shell`](verbatim_model::protocol::Requester::Shell)
+    /// and unique for the life of the table, so an old reply can never
+    /// satisfy a newer request; a later request has a greater number.
     pub fn begin(&mut self, outpost: OutpostId, asker: A) -> RequestId {
         self.insert(outpost, asker, false, None)
     }
@@ -96,7 +93,7 @@ impl<A> RequestTable<A> {
         deadline_us: Option<u64>,
     ) -> RequestId {
         self.next += 1;
-        let id = RequestId(self.next);
+        let id = RequestId::shell(self.next);
         self.timed += usize::from(deadline_us.is_some());
         self.entries.insert(
             id,

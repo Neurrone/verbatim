@@ -26,7 +26,7 @@ use verbatim_model::{
     TerminalSnapshot, TerminalText, TextReply, TraceId, WindowFacts,
 };
 
-use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, QueryResult};
+use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, QueryResult, RequestId};
 
 /// A place in the raw section: where it starts and how many bytes it
 /// takes, written `[start, length]`.
@@ -50,7 +50,7 @@ enum Wire<'a> {
     },
     Reply {
         trace_id: TraceId,
-        request_id: u64,
+        request_id: RequestId,
         outcome: WireOutcome<'a>,
         timing: EventTiming,
     },
@@ -634,7 +634,7 @@ mod tests {
     fn reply(reply: TextReply) -> OutpostToCore {
         OutpostToCore::Reply {
             trace_id: trace(8),
-            request_id: 4,
+            request_id: RequestId::reducer(4),
             outcome: QueryOutcome::Done(QueryResult::Text(reply)),
             timing: EventTiming::default(),
         }
@@ -823,7 +823,7 @@ mod tests {
     fn history(range: &str, raw: &[u8]) -> io::Result<OutpostToCore> {
         let timing = serde_json::to_string(&EventTiming::default()).expect("JSON");
         let body = format!(
-            r#"{{"Reply":{{"trace_id":8,"request_id":4,"outcome":{{"Done":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0,"read":0}}}}}}}},"timing":{timing}}}}}"#
+            r#"{{"Reply":{{"trace_id":8,"request_id":{{"asker":"Reducer","number":4}},"outcome":{{"Done":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0,"read":0}}}}}}}},"timing":{timing}}}}}"#
         );
         OutpostToCore::from_parts(Parts {
             body: body.as_bytes(),
@@ -855,7 +855,7 @@ mod tests {
         let timing = serde_json::to_string(&EventTiming::default()).expect("JSON");
         let found = |first: &str, second: &str| {
             let body = format!(
-                r#"{{"Reply":{{"trace_id":8,"request_id":4,"outcome":{{"Done":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}],"read":0}}}}}}}},"timing":{timing}}}}}"#
+                r#"{{"Reply":{{"trace_id":8,"request_id":{{"asker":"Reducer","number":4}},"outcome":{{"Done":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}],"read":0}}}}}}}},"timing":{timing}}}}}"#
             );
             OutpostToCore::from_parts(Parts {
                 body: body.as_bytes(),

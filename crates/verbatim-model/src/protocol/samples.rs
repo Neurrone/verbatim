@@ -3,7 +3,7 @@
 //! them from here, where a new variant must be given its sample, since the
 //! chain that makes them names every variant without a wildcard.
 
-use super::{EventTiming, OutpostToCore, QueryOutcome};
+use super::{EventTiming, OutpostToCore, QueryOutcome, RequestId};
 use crate::{Backend, NodeId, NormalizedEvent, Pid, TraceId};
 
 /// One sample of each [`OutpostToCore`] variant, in declaration order.
@@ -46,7 +46,7 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         OutpostToCore::SpareReady { .. } => event(),
         OutpostToCore::Event { .. } => OutpostToCore::Reply {
             trace_id: TraceId::from_raw(2),
-            request_id: 1,
+            request_id: RequestId::shell(1),
             outcome: QueryOutcome::Gone,
             timing: EventTiming::default(),
         },

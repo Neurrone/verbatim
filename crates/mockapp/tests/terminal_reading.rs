@@ -69,7 +69,9 @@ use std::time::{Duration, Instant};
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::protocol::DeliveredFact;
-use verbatim_model::protocol::{FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult};
+use verbatim_model::protocol::{
+    FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+};
 use verbatim_model::{
     CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalScope,
     TerminalSnapshot, TextOp, TextPosition, TextReply, TextUnit,
@@ -229,7 +231,7 @@ fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalSnapshot {
 
 /// The answer to request `request`, which must be the outpost's next
 /// message.
-fn answer_to(outpost: &OutpostUnderTest, request: u64) -> TextReply {
+fn answer_to(outpost: &OutpostUnderTest, request: RequestId) -> TextReply {
     match outpost.next() {
         OutpostToCore::Reply {
             request_id,
@@ -242,7 +244,7 @@ fn answer_to(outpost: &OutpostUnderTest, request: u64) -> TextReply {
 
 /// The read answering request `request`, which must be the outpost's next
 /// message.
-fn read_answer(outpost: &OutpostUnderTest, request: u64) -> TerminalSnapshot {
+fn read_answer(outpost: &OutpostUnderTest, request: RequestId) -> TerminalSnapshot {
     match answer_to(outpost, request) {
         TextReply::TerminalSnapshot(snapshot) => *snapshot,
         other => panic!("the outpost answered {other:?}, not with a read"),
@@ -292,7 +294,7 @@ fn focus_now(outpost: &mut OutpostUnderTest) -> FocusedControl {
 }
 
 /// Asks the outpost `op` about `node`.
-fn ask(outpost: &mut OutpostUnderTest, node: NodeId, op: TextOp) -> u64 {
+fn ask(outpost: &mut OutpostUnderTest, node: NodeId, op: TextOp) -> RequestId {
     outpost.ask(Query::Text { node_id: node, op })
 }
 
@@ -980,7 +982,7 @@ fn the_read_before_a_held_key_is_a_read_with_its_caret() {
 fn console_watch(
     name: &str,
     pressed_at_ms: u64,
-) -> (common::MockApp, OutpostUnderTest, NodeId, u64) {
+) -> (common::MockApp, OutpostUnderTest, NodeId, RequestId) {
     let (app, mut outpost, area) = start_with(
         name,
         "console_terminal.json",

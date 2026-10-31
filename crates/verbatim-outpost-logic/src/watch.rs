@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use verbatim_model::protocol::EventTiming;
+use verbatim_model::protocol::{EventTiming, RequestId};
 use verbatim_model::{CallCounts, CaretWatch, NodeId, TextReply, TraceId};
 
 /// The longest a caret key's watch stays open without evidence. It only
@@ -29,7 +29,7 @@ pub const POLL_BOUND: Duration = Duration::from_millis(50);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenWatch {
     /// The request it answers.
-    pub request_id: u64,
+    pub request_id: RequestId,
     /// The key's trace.
     pub trace: TraceId,
     /// The node whose caret the key moves.
@@ -381,7 +381,7 @@ mod tests {
     /// the shared clock.
     fn open(pressed_ms: u64) -> OpenWatch {
         OpenWatch {
-            request_id: 7,
+            request_id: RequestId::shell(7),
             trace: TraceId::from_raw(1),
             node_id: NodeId::new(1),
             watch: CaretWatch {

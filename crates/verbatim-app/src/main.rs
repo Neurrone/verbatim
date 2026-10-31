@@ -41,11 +41,11 @@ use verbatim_audio_wasapi::WasapiDevice;
 use verbatim_config::ConfigStore;
 use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, StatusInfo};
 use verbatim_control::server::{ControlServer, ServerHandlers};
-use verbatim_core::requests::RequestId;
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
 use verbatim_input_windows::{ForegroundView, InputHook, KeyHolding};
+use verbatim_model::protocol::RequestId;
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
@@ -1182,7 +1182,7 @@ impl ReducerThread<'_> {
             id,
             CoreToOutpost::Query {
                 trace_id,
-                request_id: id.0,
+                request_id: id,
                 query: Query::FocusNow,
                 timing: EventTiming::default(),
             },
@@ -1261,7 +1261,7 @@ impl ReducerThread<'_> {
             id,
             CoreToOutpost::Query {
                 trace_id,
-                request_id: id.0,
+                request_id: id,
                 query: Query::FocusNow,
                 timing: EventTiming::default(),
             },
@@ -1339,7 +1339,7 @@ impl ReducerThread<'_> {
                 if timing.dequeued_at_us != 0 {
                     self.context.ledger.event_received(trace_id, timing);
                 }
-                self.finish(RequestId(request_id), outpost, outcome);
+                self.finish(request_id, outpost, outcome);
             }
             OutpostToCore::Ready {
                 outpost_pid,
@@ -1752,7 +1752,7 @@ impl ReducerThread<'_> {
                 );
                 let command = CoreToOutpost::Query {
                     trace_id,
-                    request_id: id.0,
+                    request_id: id,
                     query: Query::Navigate {
                         node_id: query.node_id,
                         kind: query.kind,
@@ -1766,7 +1766,7 @@ impl ReducerThread<'_> {
                 let id = self.requests.begin(outpost, Asker::Activation { trace_id });
                 let command = CoreToOutpost::Query {
                     trace_id,
-                    request_id: id.0,
+                    request_id: id,
                     query: Query::Activate { node_id },
                     timing: EventTiming::default(),
                 };
@@ -1841,7 +1841,7 @@ impl ReducerThread<'_> {
         };
         let command = CoreToOutpost::Query {
             trace_id,
-            request_id: id.0,
+            request_id: id,
             query: Query::Text { node_id, op },
             timing: EventTiming::default(),
         };
@@ -1875,7 +1875,7 @@ impl ReducerThread<'_> {
             .begin(outpost, Asker::DumpTree { ticket, reply });
         let command = CoreToOutpost::Query {
             trace_id: TraceId::mint(),
-            request_id: id.0,
+            request_id: id,
             query: Query::DumpTree { locations },
             timing: EventTiming::default(),
         };
@@ -1932,7 +1932,7 @@ impl ReducerThread<'_> {
         let id = self.requests.begin_until(outpost, asker, deadline_us);
         let command = CoreToOutpost::Query {
             trace_id: TraceId::mint(),
-            request_id: id.0,
+            request_id: id,
             query,
             timing: EventTiming::default(),
         };
@@ -2049,7 +2049,7 @@ impl ReducerThread<'_> {
         else {
             return;
         };
-        let command = CoreToOutpost::Cancel { request_id: id.0 };
+        let command = CoreToOutpost::Cancel { request_id: id };
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             // The outpost is going away; nothing waits for its answer.
             tracing::debug!(%error, %outpost, "a text request could not be withdrawn");
@@ -2060,7 +2060,7 @@ impl ReducerThread<'_> {
         let Some((id, outpost)) = self.requests.find(|asker| asks_dump(asker, ticket)) else {
             return;
         };
-        let command = CoreToOutpost::Cancel { request_id: id.0 };
+        let command = CoreToOutpost::Cancel { request_id: id };
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             // The outpost is going away; its end answers the request.
             tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");

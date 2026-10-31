@@ -367,7 +367,7 @@ mod tests {
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
-    use verbatim_model::protocol::{EventTiming, QueryOutcome};
+    use verbatim_model::protocol::{EventTiming, QueryOutcome, RequestId};
     use verbatim_process::message::read_message;
 
     fn node(number: u64) -> NodeId {
@@ -402,7 +402,7 @@ mod tests {
     fn reply(request_id: u64) -> OutpostToCore {
         OutpostToCore::Reply {
             trace_id: TraceId::mint(),
-            request_id,
+            request_id: RequestId::shell(request_id),
             outcome: QueryOutcome::Abandoned,
             timing: EventTiming::default(),
         }
@@ -490,7 +490,7 @@ mod tests {
     fn summary(message: &OutpostToCore) -> String {
         match message {
             OutpostToCore::Event { event, .. } => format!("{event:?}"),
-            OutpostToCore::Reply { request_id, .. } => format!("reply {request_id}"),
+            OutpostToCore::Reply { request_id, .. } => format!("reply {}", request_id.number),
             other => format!("{other:?}"),
         }
     }

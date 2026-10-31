@@ -186,7 +186,7 @@ fn name_change(child: i32) -> Item {
 /// A focus-now query, request `request_id`.
 fn focus_now(request_id: u64) -> Item {
     Item::Query {
-        request_id,
+        request_id: RequestId::shell(request_id),
         query: Query::FocusNow,
     }
 }
@@ -240,7 +240,7 @@ fn replies(effects: &[Effect]) -> Vec<(u64, &'static str)> {
                 request_id,
                 outcome,
                 ..
-            } => Some((*request_id, outcome_name(outcome))),
+            } => Some((request_id.number, outcome_name(outcome))),
             _ => None,
         })
         .collect()
@@ -261,7 +261,7 @@ fn outcome_name(outcome: &QueryOutcome) -> &'static str {
 fn done(request_id: u64) -> OutpostToCore {
     OutpostToCore::Reply {
         trace_id: TraceId::from_raw(1),
-        request_id,
+        request_id: RequestId::shell(request_id),
         outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
         timing: EventTiming::default(),
     }
@@ -865,7 +865,7 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
 /// A caret key's watch for `request_id` on node 1, its key with no time.
 fn open_watch(request_id: u64) -> OpenWatch {
     OpenWatch {
-        request_id,
+        request_id: RequestId::shell(request_id),
         trace: TraceId::from_raw(4),
         node_id: NodeId::new(1),
         watch: CaretWatch {
@@ -884,7 +884,7 @@ fn open_watch(request_id: u64) -> OpenWatch {
 /// A caret key's query, request `request_id`, on node 1.
 fn caret_key(request_id: u64) -> Item {
     Item::Query {
-        request_id,
+        request_id: RequestId::shell(request_id),
         query: Query::Text {
             node_id: NodeId::new(1),
             op: TextOp::AwaitCaret(open_watch(request_id).watch),
@@ -990,7 +990,10 @@ fn the_console_poll_is_dispatched_only_when_nothing_else_is_ready() {
     assert_eq!(handles(name), (2, None));
     // The read was due at 8 ms; it goes once nothing else is ready.
     reads(&replay.finish(name.request, false, 10));
-    assert_eq!(*replay.reducer.queries(), [7].into_iter().collect());
+    assert_eq!(
+        *replay.reducer.queries(),
+        [RequestId::shell(7)].into_iter().collect()
+    );
 }
 
 #[test]
@@ -1094,7 +1097,10 @@ fn a_poll_read_that_found_nothing_is_followed_by_the_next_at_its_interval() {
             resume: Resume::Read { until: 52_000 },
         }
     );
-    assert_eq!(*replay.reducer.queries(), [7].into_iter().collect());
+    assert_eq!(
+        *replay.reducer.queries(),
+        [RequestId::shell(7)].into_iter().collect()
+    );
 }
 
 #[test]
@@ -1318,7 +1324,7 @@ fn a_caret_read_after_an_abandoned_text_call_waits_for_nothing() {
     let mut replay = Replay::new();
     let effects = replay.push(
         Item::Query {
-            request_id: 4,
+            request_id: RequestId::shell(4),
             query: Query::Text {
                 node_id: NodeId::new(1),
                 op: TextOp::ReadCaret,
@@ -1447,7 +1453,7 @@ fn a_query_is_answered_once_whatever_ends_it() {
     let effects = replay.push(name_change(1), Source::Hook, 10_020);
     let busy = program(&effects).request;
     replay.push(focus_now(4), Source::Other, 10_021);
-    let effects = replay.input(Input::Cancel(4), 10_022);
+    let effects = replay.input(Input::Cancel(RequestId::shell(4)), 10_022);
     assert_eq!(replies(&effects), [(4, "not started")]);
     assert!(
         matches!(
@@ -1471,10 +1477,13 @@ fn a_query_is_answered_once_whatever_ends_it() {
     let next = program(&effects);
     assert!(matches!(
         &next.work,
-        Work::Entry { entry, .. } if matches!(entry.item, Item::Query { request_id: 6, .. })
+        Work::Entry { entry, .. } if matches!(entry.item, Item::Query { request_id: RequestId { number: 6, .. }, .. })
     ));
     assert_eq!(replies(&effects), [(5, "watch ended")]);
-    assert_eq!(*replay.reducer.queries(), [6].into_iter().collect());
+    assert_eq!(
+        *replay.reducer.queries(),
+        [RequestId::shell(6)].into_iter().collect()
+    );
 }
 
 #[test]

@@ -34,7 +34,7 @@ mod common;
 use common::Delivered;
 use verbatim_model::protocol::{
     CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
-    OutpostToCore,
+    OutpostToCore, RequestId,
 };
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
@@ -109,7 +109,9 @@ fn stand_in(args: &[String]) -> ! {
                 written_at_us: 0,
             }),
             CoreToOutpost::Shutdown => std::process::exit(0),
-            CoreToOutpost::Cancel { request_id: 0 } => send(&ready),
+            CoreToOutpost::Cancel {
+                request_id: RequestId { number: 0, .. },
+            } => send(&ready),
             CoreToOutpost::DeliverFact { .. } => facts += 1,
             CoreToOutpost::IdleQuery { round } => {
                 send(&OutpostToCore::Fault {
@@ -270,7 +272,12 @@ fn facts_before(facts: u32, round: u64) -> OutpostToCore {
 /// is ready, which must be the next thing the supervisor says.
 fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target_pid: Pid) {
     supervisor
-        .send_to_outpost(outpost, CoreToOutpost::Cancel { request_id: 0 })
+        .send_to_outpost(
+            outpost,
+            CoreToOutpost::Cancel {
+                request_id: RequestId::shell(0),
+            },
+        )
         .expect("the stand-in's cue is queued");
     match next(events) {
         OutpostMessage::Event {

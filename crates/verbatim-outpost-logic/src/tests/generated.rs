@@ -170,7 +170,7 @@ fn untimed(watch: &Watch) -> Watch {
 fn kind_of(program: &Program) -> Kind {
     match &program.work {
         Work::Entry { entry, .. } => match &entry.item {
-            Item::Query { request_id, .. } => Kind::Key(*request_id),
+            Item::Query { request_id, .. } => Kind::Key(request_id.number),
             Item::Msaa { .. } => Kind::Event,
             _ => Kind::Other,
         },
@@ -538,10 +538,10 @@ impl Gen {
                         ..
                     } = &**message
                     {
-                        let count = self.replies.entry(*request_id).or_default();
+                        let count = self.replies.entry(request_id.number).or_default();
                         *count += 1;
                         assert_eq!(*count, 1, "a second reply to {request_id} after {trail:?}");
-                        let reply = (*request_id, outcome_name(outcome));
+                        let reply = (request_id.number, outcome_name(outcome));
                         if let Some(at) = expected.iter().position(|wanted| *wanted == reply) {
                             expected.remove(at);
                         } else {
@@ -549,7 +549,7 @@ impl Gen {
                             // ready.
                             assert!(
                                 reply.1 == "watch ended"
-                                    && self.model.open == Some(*request_id)
+                                    && self.model.open == Some(request_id.number)
                                     && !self.model.held
                                     && self.model.until.is_none()
                                     && self.at >= self.model.due,
@@ -578,7 +578,7 @@ impl Gen {
         let watch = &self.reducer.facts.follow.watch;
         assert_eq!(
             (
-                watch.open().map(|open| open.request_id),
+                watch.open().map(|open| open.request_id.number),
                 matches!(watch, Watch::Checking { .. })
             ),
             (self.model.open, self.model.held),
@@ -613,7 +613,7 @@ impl Gen {
         }
         for key in 1..=self.keys {
             let replied = self.replies.get(&key).copied().unwrap_or(0);
-            let left = self.reducer.queries().contains(&key);
+            let left = self.reducer.queries().contains(&RequestId::shell(key));
             assert!(
                 (replied == 1) != left,
                 "key {key} replied {replied} times, left to the end {left}, after {:?}",

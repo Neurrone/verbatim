@@ -26,7 +26,9 @@ use std::thread;
 use std::time::Instant;
 
 use verbatim_model::TraceId;
-use verbatim_model::protocol::{EventTiming, GapAnswer, OutpostToCore, QueryOutcome, Responder};
+use verbatim_model::protocol::{
+    EventTiming, GapAnswer, OutpostToCore, QueryOutcome, RequestId, Responder,
+};
 use verbatim_uia::{Agile, Kept};
 
 use super::commit::{Effects, Writes};
@@ -73,7 +75,7 @@ pub(super) enum Posted {
     /// The listener's "forwarding ended".
     ForwardingEnded(u32),
     /// Core withdraws a query.
-    Cancel(u64),
+    Cancel(RequestId),
     /// A verdict a program of generation `generation` made, posted alone,
     /// and taken after the mailbox closes, as a commit is.
     Verdict {
@@ -258,7 +260,7 @@ pub(super) struct Shell {
     context: Arc<Context>,
     reducer: Reducer,
     /// The reply tokens of the queries the reducer records, by request id.
-    tokens: HashMap<u64, Responder<OutpostToCore>>,
+    tokens: HashMap<RequestId, Responder<OutpostToCore>>,
     /// Who waits on each test's settle, by its number: kept while the
     /// settle waits in the intake ([`Reducer::settles`]), answered as the
     /// reducer reaches it, and dropped as the outpost closes, which ends
@@ -791,7 +793,7 @@ impl Shell {
             self.tokens
                 .keys()
                 .copied()
-                .collect::<std::collections::BTreeSet<u64>>(),
+                .collect::<std::collections::BTreeSet<RequestId>>(),
             *self.reducer.queries(),
             "a reply token for every query the reducer records, and no other"
         );
@@ -931,7 +933,11 @@ fn uia_group(group: Group) -> verbatim_uia::Group {
 /// is sent to Core, and dropped unanswered it answers "failed", the
 /// model's one outcome for a responder dropped unanswered on the outpost's
 /// wire, since the outpost's process lives.
-fn token(context: &Arc<Context>, request_id: u64, trace: TraceId) -> Responder<OutpostToCore> {
+fn token(
+    context: &Arc<Context>,
+    request_id: RequestId,
+    trace: TraceId,
+) -> Responder<OutpostToCore> {
     let context = Arc::clone(context);
     Responder::new(move |answer: Option<OutpostToCore>| {
         let message = answer.unwrap_or_else(|| OutpostToCore::Reply {
@@ -948,7 +954,7 @@ fn token(context: &Arc<Context>, request_id: u64, trace: TraceId) -> Responder<O
 mod tests {
     use std::collections::BTreeSet;
 
-    use verbatim_model::protocol::Query;
+    use verbatim_model::protocol::{Query, RequestId};
 
     use super::super::reducer::{Anchor, NodeAnchors, TextChange};
     use super::super::store::TextWrite;
@@ -991,7 +997,7 @@ mod tests {
         let mut reducer = Reducer::new();
         let entry = Entry::own(
             Item::Query {
-                request_id: 1,
+                request_id: RequestId::shell(1),
                 query: Query::FocusNow,
             },
             TraceId::mint(),
@@ -1086,7 +1092,7 @@ mod tests {
         shell.take(Posted::Entry {
             entry: Entry::own(
                 Item::Query {
-                    request_id: 1,
+                    request_id: RequestId::shell(1),
                     query: Query::FocusNow,
                 },
                 TraceId::from_raw(1),

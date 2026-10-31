@@ -25,6 +25,62 @@ use crate::{
     TextReply, TraceId, TreeNode, WindowFacts,
 };
 
+/// Names one query Core sent an outpost ([`CoreToOutpost::Query`]), echoed
+/// in its [`OutpostToCore::Reply`] and named by its
+/// [`CoreToOutpost::Cancel`]: who in Core asked, and that asker's own
+/// number for it. Outposts carry it opaquely, storing, comparing and
+/// echoing it, and decide nothing by it; Core routes a reply by its
+/// [`asker`](Self::asker).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct RequestId {
+    /// Who in Core asked, and so where its reply goes.
+    pub asker: Requester,
+    /// The asker's number for the query, unique among its queries.
+    pub number: u64,
+}
+
+impl RequestId {
+    /// The query numbered `number` by Core's reducer.
+    #[must_use]
+    pub const fn reducer(number: u64) -> Self {
+        Self {
+            asker: Requester::Reducer,
+            number,
+        }
+    }
+
+    /// The query numbered `number` by verbatim.exe's own request table.
+    #[must_use]
+    pub const fn shell(number: u64) -> Self {
+        Self {
+            asker: Requester::Shell,
+            number,
+        }
+    }
+}
+
+impl std::fmt::Display for RequestId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let asker = match self.asker {
+            Requester::Reducer => "reducer",
+            Requester::Shell => "shell",
+        };
+        write!(f, "{asker} {}", self.number)
+    }
+}
+
+/// Who in Core asked a query ([`RequestId`]). Open to later askers, such as
+/// extensions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Requester {
+    /// Core's reducer, whose query numbers are its `QueryId`s.
+    Reducer,
+    /// verbatim.exe's own request table: a tree dump, focus-now, the fake
+    /// focus, and the shell item queries.
+    Shell,
+}
+
 /// When an event reached each point on its way through the listener and
 /// the outpost, for the latency log Core writes for every announcement:
 /// microseconds since the Unix epoch, 0 for a point it did not pass. Also
@@ -583,10 +639,6 @@ pub enum FactKey {
 /// line, or, for a spare started before it had one, by
 /// [`CoreToOutpost::Assign`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a message is built once and moved, never stored in bulk"
-)]
 pub enum CoreToOutpost {
     /// Forces one backend for every window of the target application,
     /// overriding arbitration; used by tests. `None` restores normal
@@ -638,7 +690,7 @@ pub enum CoreToOutpost {
         /// Trace ID of the input that caused the query.
         trace_id: TraceId,
         /// Core's id for this request, echoed in the reply.
-        request_id: u64,
+        request_id: RequestId,
         /// What to do.
         query: Query,
         /// verbatim.exe's relay stamps (`EventTiming::core_received_at_us`
@@ -652,7 +704,7 @@ pub enum CoreToOutpost {
     /// running is not affected.
     Cancel {
         /// The query to withdraw.
-        request_id: u64,
+        request_id: RequestId,
     },
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
@@ -1094,7 +1146,7 @@ pub enum OutpostToCore {
         /// Trace ID carried through from the query.
         trace_id: TraceId,
         /// The request this answers.
-        request_id: u64,
+        request_id: RequestId,
         /// What became of it.
         outcome: QueryOutcome,
         /// When the query reached each point in the outpost, and the

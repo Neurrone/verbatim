@@ -58,7 +58,7 @@ use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query, QueryOutcome,
-    QueryResult, UiaFocusRead, UiaSnapshotFact,
+    QueryResult, RequestId, UiaFocusRead, UiaSnapshotFact,
 };
 use verbatim_process::clock::now_us;
 
@@ -850,7 +850,13 @@ impl Worker<'_> {
     /// text, or selection change brings later ([`check_open_watch`]).
     ///
     /// [`check_open_watch`]: Self::check_open_watch
-    fn caret_key(&mut self, request_id: u64, trace: TraceId, node_id: NodeId, watch: &CaretWatch) {
+    fn caret_key(
+        &mut self,
+        request_id: RequestId,
+        trace: TraceId,
+        node_id: NodeId,
+        watch: &CaretWatch,
+    ) {
         let (watched, read_at) =
             text_reads::check_watch(self.context, node_id, watch, (false, true));
         let caret_read = read_at.map(|at| (node_id, at));
@@ -904,7 +910,7 @@ impl Worker<'_> {
     /// the check, with the calls since the last message.
     fn key_answered(
         &mut self,
-        (request_id, trace): (u64, TraceId),
+        (request_id, trace): (RequestId, TraceId),
         node_id: NodeId,
         reply: TextReply,
         (caret_read, calls): (Option<(NodeId, u64)>, CallCounts),
@@ -1528,7 +1534,7 @@ impl Worker<'_> {
         &mut self,
         node_id: NodeId,
         event: Event,
-        request: Option<(u64, TraceId)>,
+        request: Option<(RequestId, TraceId)>,
         (trace, _): (TraceId, u64),
         sent_caret: Option<CaretReport>,
     ) {
@@ -1593,7 +1599,7 @@ impl Worker<'_> {
         &mut self,
         node_id: NodeId,
         mut terminal: crate::terminal::Terminal,
-        owed: Option<(u64, TraceId)>,
+        owed: Option<(RequestId, TraceId)>,
         (scope, waited): (Option<verbatim_model::TerminalScope>, bool),
         trace: TraceId,
     ) {
@@ -1707,7 +1713,7 @@ impl Worker<'_> {
     /// The answer `reply` to Core's request `request`.
     fn reply_text_message(
         &self,
-        (request_id, trace): (u64, TraceId),
+        (request_id, trace): (RequestId, TraceId),
         reply: TextReply,
     ) -> OutpostToCore {
         self.reply_message(
@@ -1718,7 +1724,7 @@ impl Worker<'_> {
     }
 
     /// Answers Core's request `request` with `reply`.
-    fn reply_text(&self, request: (u64, TraceId), reply: TextReply) {
+    fn reply_text(&self, request: (RequestId, TraceId), reply: TextReply) {
         let result = self.reply_text_message(request, reply);
         self.commit(Effects {
             result: Some(result),
@@ -1733,7 +1739,7 @@ impl Worker<'_> {
     /// state's mark that the text changed, since it reads what was held.
     fn terminal_read_now(
         &mut self,
-        request: (u64, TraceId),
+        request: (RequestId, TraceId),
         node_id: NodeId,
         scope: verbatim_model::TerminalScope,
     ) {
@@ -3961,7 +3967,7 @@ impl Worker<'_> {
     /// on-demand reading. Returns whether it answered.
     fn terminal_query(
         &mut self,
-        request_id: u64,
+        request_id: RequestId,
         trace: TraceId,
         node_id: NodeId,
         op: &TextOp,
@@ -4073,7 +4079,7 @@ impl Worker<'_> {
 
     /// A query from Core, answered with exactly one reply: at once, or, for
     /// a caret key's watch kept open, when its evidence comes or it ends.
-    fn query(&mut self, request_id: u64, query: &Query, trace: TraceId) {
+    fn query(&mut self, request_id: RequestId, query: &Query, trace: TraceId) {
         if let Query::Text {
             node_id,
             op: TextOp::AwaitCaret(watch),
@@ -4251,7 +4257,7 @@ impl Worker<'_> {
     /// last message.
     fn reply_message(
         &self,
-        request_id: u64,
+        request_id: RequestId,
         trace: TraceId,
         outcome: QueryOutcome,
     ) -> OutpostToCore {

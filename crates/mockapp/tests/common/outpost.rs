@@ -99,7 +99,7 @@ use verbatim_listener::focus_read::FocusReader;
 use verbatim_listener_logic::focus::{Arrival, FocusEvent, Judged};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
-    QueryOutcome, QueryResult, WinEventStamp,
+    QueryOutcome, QueryResult, RequestId, WinEventStamp,
 };
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
@@ -1162,8 +1162,8 @@ impl OutpostUnderTest {
 
     /// Asks the outpost `query`, as Core would, and returns its request id
     /// at once.
-    pub fn ask(&mut self, query: Query) -> u64 {
-        let request_id = self.next_request;
+    pub fn ask(&mut self, query: Query) -> RequestId {
+        let request_id = RequestId::shell(self.next_request);
         self.next_request += 1;
         self.outpost.handle_command(&CoreToOutpost::Query {
             trace_id: TraceId::mint(),

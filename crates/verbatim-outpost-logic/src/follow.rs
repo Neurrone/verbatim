@@ -751,6 +751,7 @@ pub fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> h
 
 #[cfg(test)]
 mod tests {
+    use verbatim_model::protocol::RequestId;
     use verbatim_model::{CallCounts, CaretWatch, TextUnit};
 
     use super::*;
@@ -759,7 +760,7 @@ mod tests {
     fn waiting(request_id: u64) -> Watch {
         Watch::Waiting {
             open: OpenWatch {
-                request_id,
+                request_id: RequestId::shell(request_id),
                 trace: TraceId::from_raw(1),
                 node_id: NodeId::new(1),
                 watch: CaretWatch {
@@ -929,7 +930,7 @@ mod tests {
             .answers
             .iter()
             .map(|answer| match answer {
-                Answer::Ended { open, why } => (open.request_id, *why),
+                Answer::Ended { open, why } => (open.request_id.number, *why),
                 answer => panic!("an end, not {answer:?}"),
             })
             .collect();

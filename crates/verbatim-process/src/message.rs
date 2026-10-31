@@ -243,8 +243,8 @@ mod tests {
     use super::*;
     use verbatim_model::protocol::{
         DeliveredFact, DumpedTree, EventTiming, FocusNow, FocusedControl, GapAnswer, ListenerFact,
-        Query, QueryOutcome, QueryResult, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, Urgent,
-        WinEventStamp,
+        Query, QueryOutcome, QueryResult, RequestId, UiaAncestorFact, UiaFocusRead,
+        UiaSnapshotFact, Urgent, WinEventStamp,
     };
     use verbatim_model::{
         Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
@@ -284,7 +284,7 @@ mod tests {
         // A completed reply too, which carries nodes.
         samples.push(OutpostToCore::Reply {
             trace_id: TraceId::mint(),
-            request_id: 1,
+            request_id: RequestId::shell(1),
             outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
             timing: EventTiming::default(),
         });
@@ -724,11 +724,13 @@ mod tests {
             .into_iter()
             .map(|query| CoreToOutpost::Query {
                 trace_id: TraceId::mint(),
-                request_id: 3,
+                request_id: RequestId::shell(3),
                 query,
                 timing: EventTiming::default(),
             })
-            .chain([CoreToOutpost::Cancel { request_id: 3 }])
+            .chain([CoreToOutpost::Cancel {
+                request_id: RequestId::shell(3),
+            }])
             .collect();
         for command in &commands {
             write_message(&mut buffer, command).expect("writes");
@@ -763,7 +765,7 @@ mod tests {
             .into_iter()
             .map(|outcome| OutpostToCore::Reply {
                 trace_id: TraceId::mint(),
-                request_id: 3,
+                request_id: RequestId::shell(3),
                 outcome,
                 timing: EventTiming {
                     dequeued_at_us: 10,

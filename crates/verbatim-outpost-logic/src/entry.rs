@@ -3,7 +3,7 @@
 //! are parked in the store as the entry is pushed, and the entry carries
 //! the key they are parked under (`docs/design/ownership.md`).
 
-use verbatim_model::protocol::{DeliveredFact, EventTiming, Query, UiaSnapshotFact};
+use verbatim_model::protocol::{DeliveredFact, EventTiming, Query, RequestId, UiaSnapshotFact};
 use verbatim_model::{NodeId, Notification, TraceId};
 
 /// The kind of an MSAA `WinEvent`, as the outpost's hook normalized it: the
@@ -170,7 +170,7 @@ pub enum Item {
     /// A query from Core.
     Query {
         /// The query's id, which its reply answers.
-        request_id: u64,
+        request_id: RequestId,
         /// The query.
         query: Query,
     },

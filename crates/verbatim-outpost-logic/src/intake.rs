@@ -163,7 +163,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use verbatim_model::protocol::{DeliveredFact, GapAnswer, WinEventStamp};
+use verbatim_model::protocol::{DeliveredFact, GapAnswer, RequestId, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
@@ -688,7 +688,7 @@ impl Intake {
 
     /// Withdraws query `request_id` if it has not started. Returns the trace
     /// it came with, Core's, when it was found.
-    pub fn cancel(&mut self, request_id: u64) -> Option<TraceId> {
+    pub fn cancel(&mut self, request_id: RequestId) -> Option<TraceId> {
         let is_it = |entry: &Entry| matches!(entry.item, Item::Query { request_id: id, .. } if id == request_id);
         let trace = self.entries().find(|entry| is_it(entry))?.trace;
         self.waiting.retain(|waiting| !is_it(&waiting.entry));
@@ -1485,7 +1485,7 @@ mod tests {
 
     fn query(request_id: u64) -> Waiting {
         let item = Item::Query {
-            request_id,
+            request_id: RequestId::shell(request_id),
             query: Query::FocusNow,
         };
         let (key, category, _) = classify(&item);
@@ -2297,7 +2297,7 @@ mod tests {
         intake.push(
             Entry {
                 item: Item::Query {
-                    request_id: 5,
+                    request_id: RequestId::shell(5),
                     query: Query::DumpTree { locations: false },
                 },
                 trace: TraceId::from_raw(7),
@@ -2306,8 +2306,16 @@ mod tests {
             },
             None,
         );
-        assert_eq!(intake.cancel(5), Some(TraceId::from_raw(7)), "Core's trace");
-        assert_eq!(intake.cancel(5), None, "already withdrawn");
+        assert_eq!(
+            intake.cancel(RequestId::shell(5)),
+            Some(TraceId::from_raw(7)),
+            "Core's trace"
+        );
+        assert_eq!(
+            intake.cancel(RequestId::shell(5)),
+            None,
+            "already withdrawn"
+        );
     }
 
     fn push_item(intake: &mut Intake, item: Item, observed_at_us: u64) {

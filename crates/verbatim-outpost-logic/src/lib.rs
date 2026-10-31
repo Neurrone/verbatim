@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use verbatim_model::protocol::{
-    EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, WALK_DEADLINE,
+    EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, RequestId, WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight};
@@ -188,7 +188,7 @@ pub enum Finish {
     /// `request_id`.
     Key {
         /// The query the check answers.
-        request_id: u64,
+        request_id: RequestId,
         /// The query's trace.
         trace: TraceId,
         /// What the read part found.
@@ -343,7 +343,7 @@ pub enum Input {
     /// The listener's "forwarding ended", through this tick.
     ForwardingEnded(u32),
     /// Core withdraws query `0` if it has not started.
-    Cancel(u64),
+    Cancel(RequestId),
     /// A verdict a program of generation `generation` probed, or a window
     /// it found destroyed, posted alone as it was made, even from an
     /// abandoned worker.
@@ -433,7 +433,7 @@ pub enum Input {
 struct Current {
     /// The query the program answers, if it answers one, which an
     /// abandonment or a program that ends without answering answers.
-    running: Option<(u64, TraceId)>,
+    running: Option<(RequestId, TraceId)>,
     /// The focus group try it is, if it is one.
     group: Option<GroupTry>,
     /// Whether it does work the idle barrier's answer waits for, as it
@@ -471,7 +471,7 @@ pub struct Reducer {
     /// Whether a release let go of objects for a worker to drop.
     to_drop: bool,
     /// The queries recorded and not yet answered.
-    queries: BTreeSet<u64>,
+    queries: BTreeSet<RequestId>,
     /// The idle barrier's round reached and not yet answered.
     idle_query: Option<u64>,
     /// How many focus groups have been tried.
@@ -511,7 +511,7 @@ impl Reducer {
     /// The queries recorded and not yet answered, which the shell's tokens
     /// match.
     #[must_use]
-    pub fn queries(&self) -> &BTreeSet<u64> {
+    pub fn queries(&self) -> &BTreeSet<RequestId> {
         &self.queries
     }
 
@@ -1427,7 +1427,7 @@ impl Reducer {
     fn dispatch(
         &mut self,
         work: Work,
-        (deadline, window, running): (Duration, isize, Option<(u64, TraceId)>),
+        (deadline, window, running): (Duration, isize, Option<(RequestId, TraceId)>),
         group: Option<GroupTry>,
         now: Now,
         effects: &mut Vec<Effect>,
@@ -1619,7 +1619,7 @@ fn micros(duration: Duration) -> u64 {
 }
 
 /// The deadline for an entry, and the query it answers, if it is one.
-fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
+fn budget(entry: &Entry) -> (Duration, Option<(RequestId, TraceId)>) {
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
@@ -1646,7 +1646,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
 }
 
 /// The reply to query `request_id`, traced `trace`, ending as `outcome`.
-fn reply(request_id: u64, trace: TraceId, outcome: QueryOutcome) -> OutpostToCore {
+fn reply(request_id: RequestId, trace: TraceId, outcome: QueryOutcome) -> OutpostToCore {
     OutpostToCore::Reply {
         trace_id: trace,
         request_id,

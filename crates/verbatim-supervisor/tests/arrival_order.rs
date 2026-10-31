@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, unbounded};
 use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, EventTiming, ListenerToCore, OutpostToCore,
+    CoreToListener, CoreToOutpost, EventTiming, ListenerToCore, OutpostToCore, RequestId,
 };
 use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
 use verbatim_process::arguments::OutpostOptions;
@@ -231,11 +231,11 @@ fn stand_in(args: &[String]) -> ! {
                 std::process::exit(0)
             }
             CoreToOutpost::Cancel { request_id } => {
-                if matches!(request_id, 8 | 9) {
+                if matches!(request_id.number, 8 | 9) {
                     send_unreadable(&mut messages);
                 }
-                farewell |= request_id == 9;
-                for message in script(request_id, &ready) {
+                farewell |= request_id.number == 9;
+                for message in script(request_id.number, &ready) {
                     match message {
                         Some(message) => send(&mut messages, &message),
                         None => std::process::exit(3),
@@ -430,7 +430,7 @@ impl Reducer {
             .send_to_outpost(
                 outpost,
                 CoreToOutpost::Cancel {
-                    request_id: request,
+                    request_id: RequestId::shell(request),
                 },
             )
             .expect("the cue is queued");

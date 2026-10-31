@@ -328,7 +328,7 @@ mod tests {
     /// carries the outcome out, as the reducer thread does.
     fn finish(
         table: &mut RequestTable,
-        id: verbatim_core::requests::RequestId,
+        id: verbatim_model::protocol::RequestId,
         outpost: OutpostId,
         outcome: QueryOutcome,
     ) -> Vec<Input> {

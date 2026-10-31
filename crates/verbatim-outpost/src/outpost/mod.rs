@@ -83,8 +83,8 @@ use verbatim_uia::{
 use crate::arbitration::{Arbitrator, EventWindows};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, UiaSnapshotFact,
-    Urgent, WinEventStamp,
+    CoreToOutpost, DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, RequestId,
+    UiaSnapshotFact, Urgent, WinEventStamp,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -1993,7 +1993,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     outpost.context.mailbox.post(Posted::WithoutListener);
     outpost.handle_command(&CoreToOutpost::Query {
         trace_id: TraceId::mint(),
-        request_id: 0,
+        request_id: RequestId::shell(0),
         query: Query::FocusNow,
         timing: EventTiming::default(),
     });

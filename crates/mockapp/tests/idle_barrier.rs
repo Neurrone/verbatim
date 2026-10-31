@@ -15,7 +15,7 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult,
+    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
     CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextPosition,
@@ -47,7 +47,7 @@ fn start(name: &str) -> (common::MockApp, HWND) {
 
 /// Asserts the outpost's next message is the answer to `request`, a read
 /// of the document's whole long text.
-fn whole_text(outpost: &OutpostUnderTest, request: u64) {
+fn whole_text(outpost: &OutpostUnderTest, request: RequestId) {
     match outpost.next() {
         OutpostToCore::Reply {
             request_id,

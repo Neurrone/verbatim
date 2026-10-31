@@ -527,7 +527,7 @@ mod tests {
         }
     }
     use crate::policy::HeldFact;
-    use verbatim_model::protocol::{DeliveredFact, UiaSnapshotFact};
+    use verbatim_model::protocol::{DeliveredFact, RequestId, UiaSnapshotFact};
 
     fn ping() -> Outgoing<CoreToOutpost> {
         Outgoing::Ping(CoreToOutpost::Ping {
@@ -540,7 +540,7 @@ mod tests {
         Outgoing::Other(
             CoreToOutpost::Query {
                 trace_id: TraceId::mint(),
-                request_id: 1,
+                request_id: RequestId::shell(1),
                 query: verbatim_model::protocol::Query::DumpTree { locations: false },
                 timing: EventTiming::default(),
             },
@@ -689,7 +689,7 @@ mod tests {
             names.push(match command {
                 CoreToOutpost::Ping { seq, .. } => format!("ping {seq}"),
                 CoreToOutpost::Query { request_id, .. } => {
-                    format!("query {request_id}")
+                    format!("query {}", request_id.number)
                 }
                 CoreToOutpost::NodesHeld { acknowledged, .. } => {
                     format!("held {acknowledged}")
@@ -713,7 +713,7 @@ mod tests {
             Outgoing::Other(
                 CoreToOutpost::Query {
                     trace_id: TraceId::mint(),
-                    request_id: id,
+                    request_id: RequestId::shell(id),
                     query: verbatim_model::protocol::Query::DumpTree { locations: false },
                     timing: EventTiming::default(),
                 },

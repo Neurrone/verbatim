@@ -10,7 +10,8 @@
 use serde_json::Value;
 use verbatim_core::SrState;
 use verbatim_model::protocol::{
-    EventTiming, Merge, OutpostToCore, QueryOutcome, QueryResult, event_input, merge_into,
+    EventTiming, Merge, OutpostToCore, QueryOutcome, QueryResult, RequestId, event_input,
+    merge_into,
 };
 use verbatim_model::{
     Backend, CaretReport, Earcon, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot,
@@ -181,7 +182,7 @@ impl Other {
                 let trace_id = TraceId::from_raw(2);
                 let message = OutpostToCore::Reply {
                     trace_id,
-                    request_id: 77,
+                    request_id: RequestId::shell(77),
                     outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
                     timing: EventTiming::default(),
                 };

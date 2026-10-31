@@ -45,11 +45,13 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
         CoreToOutpost::DeliverFact { .. } => CoreToOutpost::ForwardingEnded { through: 1 },
         CoreToOutpost::ForwardingEnded { .. } => CoreToOutpost::Query {
             trace_id: TraceId::from_raw(2),
-            request_id: 1,
+            request_id: RequestId::shell(1),
             query: Query::FocusNow,
             timing: timing(),
         },
-        CoreToOutpost::Query { .. } => CoreToOutpost::Cancel { request_id: 1 },
+        CoreToOutpost::Query { .. } => CoreToOutpost::Cancel {
+            request_id: RequestId::shell(1),
+        },
         CoreToOutpost::Cancel { .. } => CoreToOutpost::Ping {
             seq: 1,
             sent_at_us: 0,
@@ -99,7 +101,7 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
 fn reply(outcome: QueryOutcome) -> OutpostToCore {
     OutpostToCore::Reply {
         trace_id: TraceId::from_raw(3),
-        request_id: 1,
+        request_id: RequestId::shell(1),
         outcome,
         timing: timing(),
     }
@@ -425,11 +427,43 @@ fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
     }
 }
 
+/// A request id keeps its asker and number through the wire, in a query,
+/// its cancel and its reply, for each asker.
+#[test]
+fn a_request_id_round_trips_with_its_asker() {
+    for request_id in [RequestId::reducer(7), RequestId::shell(7)] {
+        let commands = [
+            CoreToOutpost::Query {
+                trace_id: TraceId::from_raw(2),
+                request_id,
+                query: Query::FocusNow,
+                timing: timing(),
+            },
+            CoreToOutpost::Cancel { request_id },
+        ];
+        for command in commands {
+            let json = serde_json::to_string(&command).expect("JSON");
+            let read: CoreToOutpost = serde_json::from_str(&json).expect("reads");
+            assert_eq!(read, command);
+        }
+        let reply = OutpostToCore::Reply {
+            trace_id: TraceId::from_raw(3),
+            request_id,
+            outcome: QueryOutcome::Gone,
+            timing: timing(),
+        };
+        let json = serde_json::to_string(&reply).expect("JSON");
+        let read: OutpostToCore = serde_json::from_str(&json).expect("reads");
+        assert_eq!(read, reply);
+    }
+}
+
 #[test]
 fn a_reply_or_timing_from_an_older_peer_reads_with_no_calls() {
-    let reply: OutpostToCore =
-        serde_json::from_str(r#"{"Reply":{"trace_id":7,"request_id":3,"outcome":"Gone"}}"#)
-            .expect("an older reply still reads");
+    let reply: OutpostToCore = serde_json::from_str(
+        r#"{"Reply":{"trace_id":7,"request_id":{"asker":"Shell","number":3},"outcome":"Gone"}}"#,
+    )
+    .expect("an older reply still reads");
     let OutpostToCore::Reply { timing, .. } = reply else {
         panic!("still a reply");
     };
