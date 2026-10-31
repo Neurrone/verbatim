@@ -558,15 +558,20 @@ pub struct Lane {
 }
 
 impl Lane {
-    /// Pushes `record` and wakes the audio thread.
+    /// Pushes `record`, waking the audio thread only when the lane was
+    /// empty: a record already in the lane means the audio thread has yet to
+    /// take it, and its pass takes this one with it.
     fn push(&mut self, record: Record) -> Result<(), Refused> {
         if self.shared.stopped() {
             return Err(Refused::Stopped);
         }
+        let was_empty = self.records.slots() == self.records.buffer().capacity();
         self.records.push(record).map_err(|error| match error {
             rtrb::PushError::Full(record) => Refused::Full(record),
         })?;
-        (self.shared.waker)();
+        if was_empty {
+            (self.shared.waker)();
+        }
         Ok(())
     }
 

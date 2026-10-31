@@ -117,12 +117,12 @@ Further follow-ups from the focus work and the ownership builds:
   "A window past the bound that the outpost judges UIA".
 - After a voice change, NVDA refreshes the other settings controls from the
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
-- Open question for Dickson, from the output ownership build: the audio
-  thread's wake-ups roughly doubled under key load, because every push
-  sets its wake event, against the rule not to raise wake-ups on the speech
-  path (`docs/performance.md`, "The output ownership's threads"). Fewer,
-  larger pushes from the synth thread are the direction that needs no
-  hand-written fences.
+- The audio thread's wake-ups roughly doubled under key load in the output
+  ownership build, against the rule not to raise wake-ups on the speech
+  path (`docs/performance.md`, "The output ownership's threads"). Waking it
+  only for a push to an empty lane removed about 5 percent; the cause of
+  the rest is not yet found, and comparing the old mixer's waits with the
+  new thread's device event is the next step.
 
 ### The ownership refactor
 
