@@ -909,7 +909,7 @@ Text and selection:
 Typing and keys:
 
 - Verbatim echoes a typed character from its keyboard hook, before the application handles the key, where NVDA echoes from the application's typed-character event; a letter typed within about 40 ms of Tab is not echoed (Dickson, 2026-10-10, for a later milestone).
-- Key holding's gaps: no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a held key whose release is never seen stays in `held_downs`; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
+- Key holding's gaps: no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a key whose release is never seen stays in the decision machine's record of the keys down; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
 
 Exit: each entry is matched (verified) by a scenario or a test, with a
 declared deviation where Dickson chose one.

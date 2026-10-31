@@ -15,9 +15,9 @@ locked modifier states are not yet built. Different, by decision
 "Spoken vocabulary and key layouts" in [the readme](readme.md)). NVDA
 treats Num Lock as a modifier of the numpad operator keys, so a binding
 of plain numpad plus (say all from the review cursor) does not take the
-plus sign from a user with Num Lock on: the decision machine implements
-this (`set_num_lock`), and the hook does not yet tell it the Num Lock
-state, so numpad plus is always the command.
+plus sign from a user with Num Lock on: the hook reads Num Lock with
+each key and gives it to the decision machine (`KeyInput::num_lock`),
+which implements this.
 
 ### Script repeat counting
 

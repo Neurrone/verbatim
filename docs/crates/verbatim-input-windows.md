@@ -5,8 +5,8 @@ never-blocking imperative shell around [verbatim-input](verbatim-input.md)'s
 pure `DecisionMachine`. It is a separate crate so that the machine, the key
 names, and the gesture tables carry no Windows dependency.
 
-Public API: `InputHook::start(config, map, speech, reports, holding,
-foreground)`, which installs `WH_KEYBOARD_LL` on a dedicated thread; drop
+Public API: `InputHook::start(config, map, speech, reports, foreground)`,
+which installs `WH_KEYBOARD_LL` on a dedicated thread; drop
 uninstalls. The hook thread takes nothing from another thread but the
 `WM_QUIT` that stops it: every input it numbers is a key. It hooks
 nothing else and sends nowhere but its two callbacks (architecture section 5): what it
@@ -14,9 +14,9 @@ needs to know of the window in front, `foreground`, is Core's.
 
 The code split follows who calls it (`docs/design/ownership.md`): the `hook` module holds everything
 that runs on the hook thread (`HookState`, the hook procedure, `decide`,
-`hold`, `report_passed` and the message loop), and `lib.rs` what other
-threads call: `InputHook` and its drop, the thread's start-up,
-`KeyHolding` and `ForegroundView`. `cargo xtask ci` checks `hook`,
+`permit`, `report_passed` and the message loop), and `lib.rs` what other
+threads call: `InputHook` and its drop, the thread's start-up, and
+`ForegroundView`. `cargo xtask ci` checks `hook`,
 `typed` and the app's `key_reports` by the hook rule
 (`xtask/src/ownership.rs`): they may name no lock, wait, log, I/O,
 `SendMessageW`, private message (`WM_APP`, `WM_USER`), message loop
@@ -86,8 +86,9 @@ dispatch sent messages. The app's callbacks post to the reducer's completion por
 and to the speech queue's, neither of which takes a lock or waits.
 `OWN_INPUT_TAG` is the `dwExtraInfo` Verbatim gives keys it injects for
 its own purposes (the GUI's Control tap that unlocks the foreground): the
-hook still decides them, but leaves speech alone and reports nothing, as
-NVDA ignores the keys it injects itself.
+hook gives them to the machine as `KeySource::Own`, which still decides
+them but holds and defers none, and gives no speech effect, observed
+gesture or typing to report, as NVDA ignores the keys it injects itself.
 
 ## The message loop
 
@@ -103,10 +104,12 @@ The hook thread runs at `THREAD_PRIORITY_HIGHEST`
 (`verbatim_process::scheduling`; `docs/design/communication.md`, section
 11, step 3). It keeps its state in a thread-local (the hook procedure is a
 bare callback with no user pointer, and only ever runs on the thread that
-installed it), tells the machine before each key whether Num Lock is on
-(`DecisionMachine::set_num_lock`, from the keyboard's own toggle state, a
-local read), calls `speech` with the decision's speech effect, reports,
-and returns 1 to swallow or calls `CallNextHookEx` to pass. The
+installed it), gathers each key's inputs for the machine (`KeyInput`: the
+time, Num Lock from the keyboard's own toggle state, a local read, the
+key's source from `dwExtraInfo`, and the permit, below), calls `speech`
+with the decision's speech effect, reports, and carries out the verdict:
+`CallNextHookEx` for `Pass`, and 1 for `Swallow`, `Hold` and `Defer`.
+The machine decides each key whole; the hook rewrites no decision. The
 never-block constraint is load-bearing: Windows silently removes
 low-level hooks whose procedure exceeds the system timeout, and the
 reader would go deaf to the keyboard with no error. So is the never-drop
@@ -120,70 +123,71 @@ Verbatim's. A re-entered hook procedure, should a callback ever dispatch
 sent messages, passes its key untouched rather than panicking on the
 state's borrow.
 
-`decide` is the decision for each key, which the hook procedure calls
-with the thread's state; unit tests drive it directly: a burst of a
-thousand Verbatim+V strokes, every gesture and every stroke's handled
-mark reported in order. The `hook_echo` example installs the real hook with
+`decide` handles each key, which the hook procedure calls with the
+thread's state; unit tests drive it directly: a burst of a thousand
+Verbatim+V strokes, every gesture and every stroke's handled mark
+reported in order, and each verdict carried out, its return value and its
+reports. The `hook_echo` example installs the real hook with
 two bound gestures and prints what each key reports, on its own thread;
 it needs an interactive desktop and is never run in CI.
 
 ## Holding caret keys
 
-`holding` is a `KeyHolding`: the caret keys the hook holds back (the
-whole caret table, `verbatim_input::caret_bindings`) and an atomic
-switch the app sets after every input from Core's focus
-(`SrState::holds_caret_keys`, true while the focus has text or may have,
-as for the caret keys whose evidence is watched); the hook reads it with
-one relaxed load, so it never waits (`docs/design/key-holding.md`). While
-it is on, a key-down that completes one of those gestures is swallowed and
+The machine decides which keys are held and deferred
+(`docs/design/key-holding.md`; the rules are in
+[verbatim-input](verbatim-input.md)); the hook gathers the permit and
+carries out the verdicts. The held keys are the gesture map's
+(`GestureMap::with_held`, the whole caret table,
+`verbatim_input::caret_bindings`). A `Hold(place)` is swallowed and
 reported as `KeyReport::Held`, with its press time and the stroke it came
-from (`HeldStroke`: virtual key, scan code, extended flag), after its
-effect on speech as before; the key's release is swallowed too, so the
-application never sees a release without its press. The clearing keys,
-typed characters, Enter and any other key are never held for a read.
-
-Keys behind a held key: while any key held back has not yet come back
-through the hook, every later transition the hook would pass, typed
-characters, modifiers and releases included, is swallowed too and
+from (`HeldStroke`: virtual key, scan code, extended flag, place), after
+its effect on speech as before. A `Defer(place)` is swallowed and
 reported as `KeyReport::Deferred` (its stroke and whether it is a press),
 after the reports it makes as before (a typed character is still
-reported `Typed`, translated with the deferred modifiers ahead of it
-taken as made), so the app sends it on after the held key, in the order
-pressed. Each key held or deferred gets a place in line
-(`HeldStroke::sequence`), kept by the hook (`HookState::outstanding`)
-until the key comes back carrying it: `dwExtraInfo` holds
+reported `Typed`, translated with the deferred modifiers ahead of it,
+read from the machine's line, taken as made), so the app sends it on
+after the held key, in the order pressed. The clearing keys, typed
+characters, Enter and any other key are never held for a read.
+
+A key held or deferred comes back carrying its place: `dwExtraInfo` holds
 `PASSED_ON_TAG` in its high half and the place in its low half
 (`passed_on_info`), 0 on the modifiers and releases sent around a held
-key. A key coming back clears its place and every place before it, so a
-key Windows dropped is waited for only until a later one arrives. A key
+key. The hook decodes it before reading anything and gives the place to
+the machine's `passed_on`, which clears it and every place before it, so
+a key Windows dropped is waited for only until a later one arrives. A key
 carrying the tag passes straight through, decided by nothing, numbered
 by nothing and reported to nobody, as NVDA ignores the keys its scripts
 send; a key the end-to-end harness injects carries its stroke number
-instead and is held like a typed one. The lock keys (Caps Lock, Num Lock,
-Scroll Lock) are never deferred: they pass at once, since their new state
-is announced from Windows' own and Windows translates numpad keys by Num
-Lock's state before the hook sees them.
+instead and is held like a typed one.
+
+The permit: the app publishes Core's view after every input in
+`foreground`, a `ForegroundView` (a lock-free `ArcSwapOption` of
+`verbatim_model::HookForeground`), which says whether keys may be held
+for the window in front (`holds_keys`) and whether the focus has text
+(`focus_has_text`, from `SrState::holds_caret_keys`, true while the focus
+has text or may have, as for the caret keys whose evidence is watched).
+The hook makes one load of it per key, so it never waits. It reads the
+window in front (`GetForegroundWindow`, a local read) only when the view
+lets keys be held and either the focus has text or a key waits in the
+machine's line, and the permit is `HoldAndDefer` or `Defer` only while
+that window is the one the view names; otherwise it is `None`, with no
+call. The same read serves the translation of typed text.
 
 Elevated windows: while the foreground window's process has higher
-integrity than Verbatim's, or its integrity cannot be read, nothing is
-held or deferred, since Windows drops input Verbatim sends to it; a held
-key's release is still swallowed. The hook does not work this out. The
-focus listener reports each window that comes to the front with its
-process's integrity level, Core decides whether keys may be held there
-(`SrState::hook_foreground`), and the reducer's thread publishes that
-after each input in `foreground`, a `ForegroundView` (a lock-free
-`ArcSwapOption` of `verbatim_model::HookForeground`). The hook reads it
-only for a key it would hold or defer, with one load and a
-`GetForegroundWindow`, and applies it only while the window it names is
-the one in front: until Core has caught up with a foreground change, or
-before Core has any view, nothing is held, a key judged without its
-caret costing less than a key lost. It is a temporary guard until
-uiAccess (`docs/roadmap.md`, M8.1). Unit tests drive `decide` with the
-hold on and off, with each tag, with keys deferred behind held ones and
-coming back in and out of order, with lock keys behind a held key, with
-Core's view forbidding holding, and with a view of another window or
-none; the tests fix the window in front (`HookState::front`), so nothing
-depends on the desktop they run on.
+integrity than Verbatim's, or its integrity cannot be read, the permit is
+`None`, so nothing is held or deferred, since Windows drops input
+Verbatim sends to it; a held key's release is still swallowed, and a
+release whose press is deferred still follows it. The hook does not work
+this out. The focus listener reports each window that comes to the front
+with its process's integrity level, and Core decides whether keys may be
+held there (`SrState::hook_foreground`). Until Core has caught up with a
+foreground change, or before Core has any view, nothing is held, a key
+judged without its caret costing less than a key lost. It is a temporary
+guard until uiAccess (`docs/roadmap.md`, M8.1). Unit tests drive `decide`
+with each tag, with Core's view forbidding holding, with the focus
+without text, and with a view of another window or none; the tests fix
+the window in front (`HookState::front`), so nothing depends on the
+desktop they run on.
 
 ## Typed text (the `typed` module)
 

@@ -992,12 +992,14 @@ machine's taskbar, from a separate process running the outpost's walk,
 
 ### A key through the keyboard hook
 
-- Minimum and today: no call into an application. A key that would be
-  held back or deferred behind a held one reads `GetForegroundWindow` and
-  one lock-free load of Core's `ForegroundView`; every press that reaches
-  the application and is not Verbatim's loads the view once more, to
-  learn which thread's keyboard layout a console window's keys take.
-  Neither waits or allocates. The hook posts each report, a gesture's
+- Minimum and today: no call into an application. Every key but one
+  Verbatim passes on makes one lock-free load of Core's `ForegroundView`;
+  a key Verbatim passes on reads nothing. `GetForegroundWindow` is read
+  for every transition while the view says the focus has text in a
+  window that may hold keys, or while a key waits in the decision
+  machine's line, and otherwise only for a press that may type, whose
+  translation needs it; one read serves both. Neither waits or
+  allocates. The hook posts each report, a gesture's
   included, to the reducer's completion port, one boxed packet each
   (`docs/crates/verbatim-input-windows.md`), and a key that cancels or
   pauses speech posts once to the speech queue's port: no lock is taken

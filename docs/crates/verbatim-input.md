@@ -8,8 +8,8 @@ Windows dependency.
 
 Public API:
 
-- `KeyEvent`, `KeyDecision` — one raw key transition, and the
-  swallow-or-pass verdict returned to Windows.
+- `KeyEvent`, `KeyDecision` — one raw key transition, and what the hook
+  tells Windows: swallow or pass.
 - `keys` — the NVDA-style key-name vocabulary: `vk_from_name` and
   `name_from_vk` (letters and digits resolve procedurally, everything else
   through a table where the extended flag distinguishes twins like insert
@@ -23,24 +23,37 @@ Public API:
   and names `VK_CLEAR` instead; `numpadminus`, `numpadplus`,
   `numpaddivide`, `numpadmultiply`, and `period` are ordinary untwinned
   keys.
-- `DecisionConfig`, `DecisionMachine`, `Decision`, `RaisedGesture`,
+- `DecisionConfig`, `DecisionMachine`, `KeyInput`, `KeySource`,
+  `HoldPermit`, `Decision`, `Verdict`, `PressReport`, `RaisedGesture`,
   `EmittedGesture` — the pure state machine, which owns its `GestureMap`,
   given at construction, and reads no clock, trace id or shared state.
-  `on_key(event, now)` takes the time in microseconds on the run's shared
-  clock, which the hook reads once for each key, so tests script entire
-  key streams with fake time. A `Decision` carries
-  the swallow-or-pass verdict, the gesture raised if any (a
-  `RaisedGesture`, which the hook stamps with a trace id as it reports it,
-  `stamped(trace_id)`, making an `EmittedGesture`), `speech`, the
-  transition's effect on speech, if any, and `observed`, an observed
-  gesture the passed key completed (milestone M4's caret keys). The
-  config's `interrupt_for_characters` and `interrupt_for_enter` are NVDA's
-  two speech interrupt settings, both on by default. `set_num_lock(on)`
-  tells the machine whether Num Lock is on: with it on, the numpad's
-  operator keys type their characters and complete no gesture, as NVDA
-  treats Num Lock as their modifier, so binding numpad plus does not take
-  the plus sign from a user typing numbers. The hook reports the state
-  before each key; it is off until it does.
+  It decides each key transition whole; the hook gathers its inputs,
+  carries out the verdict and reports (`docs/design/logic-foundations.md`,
+  "The hook's hold decision"). `on_key(input)` takes a `KeyInput`: the
+  event; the time in microseconds on the run's shared clock, which the
+  hook reads once for each key, so tests script entire key streams with
+  fake time; whether Num Lock is on, with which the numpad's operator keys
+  type their characters and complete no gesture, as NVDA treats Num Lock
+  as their modifier, so binding numpad plus does not take the plus sign
+  from a user typing numbers; the `source`, `User` or `Own` (the keys
+  Verbatim injects for itself); and the `permit` Core's view of the window
+  in front gives, `None`, `Defer` or `HoldAndDefer`, the last when the
+  focus also has text. A `Decision` carries the `verdict` (`Pass`,
+  `Swallow`, `Hold(place)` or `Defer(place)`), the gesture raised if any
+  (a `RaisedGesture`, which the hook stamps with a trace id as it reports
+  it, `stamped(trace_id)`, making an `EmittedGesture`), `speech`, the
+  transition's effect on speech, if any, `observed`, an observed gesture
+  the key completed (milestone M4's caret keys), `typing`, what a press
+  that reaches the application reports (the text it types, which the hook
+  translates, or, typing none, that it may have edited the text), and
+  `toggle`, a lock key passed to the operating system, whose new state is
+  announced. For `Own` input it gives no speech effect, observed gesture
+  or typing. `passed_on(place)` takes the line of keys held back up to a
+  key Core passed on, and changes nothing else; `has_outstanding()` and
+  `deferred_transitions()` read the line, for the hook's permit and its
+  translation of typed text. The config's `interrupt_for_characters` and
+  `interrupt_for_enter` are NVDA's two speech interrupt settings, both on
+  by default.
 - `KeySpeechEffect` — what a key press does to speech: `Cancel` (current
   and queued speech) or `TogglePause` (Shift on its own).
 - `GestureMap` — the bound-gesture set, a `BTreeSet`, which the decision
@@ -49,7 +62,8 @@ Public API:
   bound: the key is passed to the application as usual, and the
   `Decision` reports the gesture in `observed`, so the reducer can speak
   what the application did with it. A gesture both bound and observed is
-  bound.
+  bound. `with_held(gestures)` adds observed gestures that are also held,
+  the caret keys, and `holds(gesture)` says whether one is.
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
   `Laptop`, redeclared here decoupled from `verbatim_config::KeyboardLayout`
   like `DecisionConfig` already is from `VerbatimKeys`) and `ScriptAction`
@@ -112,12 +126,11 @@ Public API:
   Delete and the numpad's Delete, each alone and with Control or Shift
   (Shift deletes as the key alone does, and Shift+Delete cuts a
   selection); Alt with Up and Down Arrow, NVDA's sentence keys; and
-  Control+A. They are observed, never
-  bound: the shell adds them to the hook's map with `with_observed` and
+  Control+A. They are observed and held, never
+  bound: the shell adds them to the hook's map with `with_held` and
   turns each reported gesture into `Input::CaretKey`, or, while the focus
-  has text, the hook holds them back until the caret has been read and
-  the shell turns each into `Input::HeldKey` (`docs/design/key-holding.md`;
-  the hook's `KeyHolding` is built from this table).
+  has text, the machine holds them back until the caret has been read and
+  the shell turns each into `Input::HeldKey` (`docs/design/key-holding.md`).
 - `clearing_keys()` — the keys that end or clear the command line being
   typed: Escape, Control+C, Control+D, and Control+Break, both as NVDA
   binds it (Control+Pause) and as Windows reports it (the `break` key,
@@ -145,13 +158,34 @@ rules):
   toggles while acting as the modifier. In share mode the modifier's
   transitions pass down the hook chain instead, so a screen reader hooked
   behind Verbatim sees the modifier held and swallows it itself.
-- A key-down forming a bound gesture is swallowed, recorded in the
-  swallowed-downs set, and raised, for the hook to stamp with a freshly
-  minted `TraceId`. An
+- A key-down forming a bound gesture is swallowed and raised, for the
+  hook to stamp with a freshly minted `TraceId`. An
   unbound companion key falls through to the application as a bare
   keypress — NVDA behavior, so an unrecognized chord is not eaten.
-- Keys swallowed on the way down are swallowed on their key-up too, so an
-  application never sees the release of a key whose press it never saw.
+- One record of the keys down: every key the machine has seen go down and
+  not come up, with two facts. `reached`: a press of it has reached the
+  application, or is deferred to reach it, since it went down or since its
+  last held press, which Core sends with its own release.
+  `swallowed_gesture`: a press of it completed a bound gesture or was the
+  Verbatim modifier's, and was swallowed. A release is swallowed while
+  `reached` is false, so an application never sees the release of a key
+  whose press it never saw, and delivered once it is true, so a key one of
+  whose presses reached the application is seen to come up, where NVDA
+  leaves it down in Windows until it is next pressed. The entry goes with
+  the release.
+- Holding (`docs/design/key-holding.md`): a press completing a held
+  gesture, with the permit `HoldAndDefer` and the source `User`, is
+  `Hold(place)`. While a place waits in the line, any other transition
+  that would pass is `Defer(place)` when the permit is not `None`, unless
+  it is a lock key, whose state is announced from Windows' own, or
+  Verbatim's own key; a bound gesture is swallowed, never deferred. A
+  release whose key's press waits in the line is deferred whatever the
+  permit, since passed ahead of its press it would leave the key down. The
+  line's places count from 1; `passed_on(place)` takes the line up to that
+  place, since Core passes keys on in order and one Windows dropped is not
+  waited for once a later one arrives. Every short sequence of keys,
+  pass-ons and permit changes is checked against a reference model by
+  `tests/hold_sequences.rs`.
 - Double-tap passthrough: releasing the modifier with no other key pressed
   during the hold arms a window (`multi_press_timeout`, 500 ms). Pressing
   the same physical key again inside the window hands that whole press to the
@@ -195,7 +229,7 @@ rules):
   count, and every auto-repeated emission carries the same count as the
   genuine press that started the hold; NVDA counts auto-repeat as presses,
   so this is a deliberate difference. The machine detects auto-repeat as a
-  key-down of a key it swallowed and has not yet seen released. Any key
+  key-down of a key whose `swallowed_gesture` is set. Any key
   other than a modifier that completes no bound gesture ends the streak,
   as NVDA forgets its last script when an unbound gesture comes between.
   A test's gestures are pressed as keys, so they are counted as a

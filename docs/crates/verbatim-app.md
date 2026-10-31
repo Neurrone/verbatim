@@ -183,12 +183,11 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   settings from `keyboard.speech_interrupt_for_characters` and
   `keyboard.speech_interrupt_for_enter`. `key_reports` maps a script
   action to its reducer command with `ScriptAction::review_command`.
-- Held caret keys (`docs/design/key-holding.md`): the hook holds the
-  caret table's keys while a `KeyHolding` switch is on, which the reducer
-  thread sets after every input from `SrState::holds_caret_keys`, and
-  only where the hook's `ForegroundView`, which the reducer thread sets
-  after every input from `SrState::hook_foreground`, says the window in
-  front lets keys be held (not an elevated window's). A held
+- Held caret keys (`docs/design/key-holding.md`): the hook's gesture map
+  holds the caret table's keys (`GestureMap::with_held`), while the
+  hook's `ForegroundView`, which the reducer thread sets after every
+  input from `SrState::hook_foreground`, says the focus has text and the
+  window in front lets keys be held (not an elevated window's). A held
   key's report becomes `Input::HeldKey`, and its stroke joins one line
   (`held_keys`) with the transitions the hook deferred behind held keys
   (`KeyReport::Deferred`), in the order reported. A held key waits at the
