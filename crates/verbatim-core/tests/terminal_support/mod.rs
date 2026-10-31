@@ -629,9 +629,10 @@ impl Session {
                         op => self.pending.push_back((query_id, op)),
                     }
                 }
-                // Passing a held key on is the shell's; the focus's own
-                // effects are not these tests'.
+                // Passing a held key on and timing its deadline are the
+                // shell's; the focus's own effects are not these tests'.
                 Effect::PassHeldKey(_)
+                | Effect::BoundHeldKey(_)
                 | Effect::DropExpiredSpeech(_)
                 | Effect::Fetch(_)
                 | Effect::PlayEarcon(_) => {}

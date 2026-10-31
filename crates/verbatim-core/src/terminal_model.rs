@@ -1031,7 +1031,7 @@ pub(crate) fn input_trace(input: &Input) -> Option<TraceId> {
         | Input::TextCompleted { trace_id, .. }
         | Input::CaretKey { trace_id, .. }
         | Input::HeldKey { trace_id, .. }
-        | Input::HeldKeyWaitEnded { trace_id }
+        | Input::HeldKeyDue { trace_id }
         | Input::CharacterTyped { trace_id, .. }
         | Input::ClearingKey { trace_id, .. }
         | Input::TerminalTimer { trace_id, .. } => Some(*trace_id),

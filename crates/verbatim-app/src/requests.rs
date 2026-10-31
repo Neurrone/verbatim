@@ -273,6 +273,22 @@ impl RequestTable {
             })
     }
 
+    /// Ends Core's text request `query_id`, which Core gave up on, with no
+    /// outcome, so nothing waits for it and its outcome when it comes is
+    /// dropped: the request, and the outpost to withdraw it from.
+    pub(crate) fn withdraw_text(&mut self, query_id: QueryId) -> Option<(RequestId, OutpostId)> {
+        let id = self
+            .entries
+            .iter()
+            .find_map(|(id, entry)| match &entry.asker {
+                Asker::Text {
+                    query_id: asked, ..
+                } if *asked == query_id => Some(*id),
+                _ => None,
+            })?;
+        self.remove(id).map(|entry| (id, entry.outpost))
+    }
+
     /// How many requests are outstanding.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
@@ -662,6 +678,28 @@ mod tests {
             1
         );
         assert_eq!(table.outstanding(), 0);
+    }
+
+    #[test]
+    fn a_withdrawn_text_request_is_not_outstanding_and_its_late_outcome_is_dropped() {
+        let mut table = RequestTable::default();
+        let read = table.begin(
+            OutpostId(1),
+            Asker::Text {
+                query_id: QueryId(4),
+                trace_id: TraceId::mint(),
+            },
+        );
+        assert_eq!(table.outstanding(), 1);
+        assert_eq!(table.withdraw_text(QueryId(5)), None);
+        assert_eq!(table.withdraw_text(QueryId(4)), Some((read, OutpostId(1))));
+        assert_eq!(table.outstanding(), 0, "the idle condition is clear");
+        assert_eq!(
+            table
+                .finish(read, OutpostId(1), QueryOutcome::NotStarted)
+                .len(),
+            0
+        );
     }
 
     #[test]

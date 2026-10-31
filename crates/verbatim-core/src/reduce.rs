@@ -145,7 +145,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             pressed_at_ms,
             ..
         } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
-        Input::HeldKeyWaitEnded { trace_id } => editing::held_wait_ended(state, *trace_id),
+        Input::HeldKeyDue { trace_id } => editing::held_key_due(state, *trace_id),
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::MarkReached { mark } => {
             let mut effects = say_all::mark_reached(state, *mark);

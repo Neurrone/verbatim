@@ -877,12 +877,6 @@ fn foreground_pid() -> Option<Pid> {
     (pid != 0).then_some(Pid(pid))
 }
 
-/// The longest a held caret key waits for the read of the caret before it
-/// (`TextOp::ReadCaret`): past it the read is ended as unanswered and the
-/// key is passed on as the hook would have passed it
-/// (`docs/design/key-holding.md`, "The bound").
-const HELD_KEY_BOUND: Duration = Duration::from_millis(150);
-
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
 /// signature from growing an argument for every subsystem it touches.
 struct ReducerContext {
@@ -1019,10 +1013,11 @@ struct ReducerThread<'a> {
     frames: Frames,
     /// The caret keys the hook held back, until Core passes them on.
     held_keys: held_keys::HeldKeys,
-    /// The held key waiting for the watch of the key ahead of it, and when
-    /// its wait ends if no answer has come ([`Effect::BoundHeldKeyWait`]):
-    /// one of the reducer thread's deadlines, so it adds no wake-up source.
-    held_wait: Option<(TraceId, Instant)>,
+    /// The held key's one deadline, as Core set it
+    /// ([`Effect::BoundHeldKey`]): the key, and when its wait for the key
+    /// ahead or the read of its caret ends; one of the reducer thread's
+    /// deadlines, so it adds no wake-up source.
+    held_due: Option<(TraceId, Instant)>,
     /// The focused terminal's quiet-period timer, as Core armed it
     /// ([`Effect::TerminalTimer`]): when it is due on the shared clock, and
     /// as an instant, one of the reducer thread's deadlines.
@@ -1784,9 +1779,12 @@ impl ReducerThread<'_> {
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&mut self.token, earcon),
             Effect::ReadForegroundFocus => self.fake_focus(trace_id),
             Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
-            Effect::BoundHeldKeyWait { key, within_ms } => {
-                self.held_wait = Some((key, Instant::now() + Duration::from_millis(within_ms)));
+            Effect::BoundHeldKey(due) => {
+                self.held_due = due.map(|(key, within_ms)| {
+                    (key, Instant::now() + Duration::from_millis(within_ms))
+                });
             }
+            Effect::WithdrawText(query_id) => self.withdraw_text(query_id),
             Effect::TerminalTimer { due_ms } => {
                 self.terminal_timer = due_ms.map(|due_ms| {
                     let wait = due_ms.saturating_sub(latency::now_ms());
@@ -1828,11 +1826,6 @@ impl ReducerThread<'_> {
         // idle.
         let id = if matches!(op, verbatim_model::TextOp::AwaitCaret(_)) {
             self.requests.begin_passive(outpost, asker)
-        } else if op == verbatim_model::TextOp::ReadCaret {
-            // A held key waits for this read; past the bound it is passed
-            // on without it (`docs/design/key-holding.md`).
-            self.requests
-                .begin_until(outpost, asker, Instant::now() + HELD_KEY_BOUND)
         } else {
             self.requests.begin(outpost, asker)
         };
@@ -1989,14 +1982,14 @@ impl ReducerThread<'_> {
 
     /// The earliest time a shell items request is answered with nothing
     /// if it has had no outcome by then, a request with a deadline is
-    /// ended, a held key's wait for the key ahead of it ends, the focused
+    /// ended, the held key's one deadline passes, the focused
     /// terminal's quiet-period timer is due, or a lock key's state is read.
     fn next_deadline(&self) -> Option<Instant> {
         self.wanted
             .next_deadline()
             .into_iter()
             .chain(self.requests.next_deadline())
-            .chain(self.held_wait.map(|(_, due)| due))
+            .chain(self.held_due.map(|(_, due)| due))
             .chain(self.terminal_timer.map(|(_, due)| due))
             .chain(self.toggle_reads.front().map(|&(_, due)| due))
             .min()
@@ -2004,15 +1997,15 @@ impl ReducerThread<'_> {
 
     /// Answers every shell items request whose deadline is `now` or
     /// earlier, still waiting for its outpost or for the outpost's answer,
-    /// with nothing, ends every request whose deadline is past, and ends a
-    /// held key's wait for the key ahead of it once its bound is past.
+    /// with nothing, ends every request whose deadline is past, and tells
+    /// Core once the held key's one deadline is past.
     fn expire(&mut self, now: Instant) {
         self.wanted.expire(now);
         for input in self.requests.expire(now) {
             self.apply(input);
         }
-        if let Some((trace_id, _)) = self.held_wait.take_if(|(_, due)| *due <= now) {
-            self.apply(Input::HeldKeyWaitEnded { trace_id });
+        if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
+            self.apply(Input::HeldKeyDue { trace_id });
         }
         if let Some((at_ms, _)) = self.terminal_timer.take_if(|(_, due)| *due <= now) {
             self.apply(Input::TerminalTimer {
@@ -2032,6 +2025,21 @@ impl ReducerThread<'_> {
     /// waiting. The outpost answers "not started" if the dump was still
     /// queued; a dump already running finishes, within its own walk budget.
     /// Either way the request keeps its one outcome, which goes nowhere.
+    /// Ends Core's text request `query_id`, which Core gave up on
+    /// ([`Effect::WithdrawText`]), and withdraws it from its outpost: a
+    /// query not yet started is answered "not started", whose outcome, as
+    /// any later one, finds no request and is dropped.
+    fn withdraw_text(&mut self, query_id: verbatim_model::QueryId) {
+        let Some((id, outpost)) = self.requests.withdraw_text(query_id) else {
+            return;
+        };
+        let command = CoreToOutpost::Cancel { request_id: id.0 };
+        if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
+            // The outpost is going away; nothing waits for its answer.
+            tracing::debug!(%error, %outpost, "a text request could not be withdrawn");
+        }
+    }
+
     fn dump_tree_given_up(&mut self, ticket: DumpTicket) {
         let Some((id, outpost)) = self.requests.dump_tree_request(ticket) else {
             return;
@@ -2099,7 +2107,7 @@ fn reducer_loop(
         exiting: false,
         exit_sound: None,
         held_keys: held_keys::HeldKeys::default(),
-        held_wait: None,
+        held_due: None,
         terminal_timer: None,
         toggle_reads: VecDeque::new(),
         marks: idle::HeldMarks::default(),

@@ -750,12 +750,13 @@ pub enum Input {
         #[serde(default)]
         pressed_at_ms: u64,
     },
-    /// The bound on a held key's wait for the key ahead of it has passed
-    /// ([`Effect::BoundHeldKeyWait`]): if the held key with this trace ID
-    /// still waits for the watch of the key ahead to be answered, its caret
-    /// is read now, as if that watch had been answered.
-    HeldKeyWaitEnded {
-        /// The trace ID of the held key whose wait was bounded.
+    /// The held key's one deadline has passed ([`Effect::BoundHeldKey`]):
+    /// if the held key with this trace ID still waits for the watch of the
+    /// key ahead to be answered, its caret is read now, as if that watch
+    /// had been answered; if its caret is still being read, it is passed on
+    /// without the read.
+    HeldKeyDue {
+        /// The trace ID of the held key whose deadline passed.
         trace_id: TraceId,
     },
     /// Text was typed into the focused application: one character, or
@@ -1190,17 +1191,18 @@ pub enum Effect {
     /// this trace ID on to the application, re-sent as the user pressed
     /// it.
     PassHeldKey(TraceId),
-    /// The held key with this trace ID waits for the watch of the key ahead
-    /// of it to be answered: if it still waits `within_ms` from now, the
-    /// shell enters [`Input::HeldKeyWaitEnded`] with its trace ID. A later
-    /// one replaces it (`docs/design/key-holding.md`, "Keys behind a held
-    /// key").
-    BoundHeldKeyWait {
-        /// The waiting held key's trace ID.
-        key: TraceId,
-        /// How long from now the wait may last, in milliseconds.
-        within_ms: u64,
-    },
+    /// Sets the held key's one deadline, or clears it with `None`: the held
+    /// key with this trace ID waits for the watch of the key ahead of it,
+    /// or for the read of its caret, at most this many milliseconds from
+    /// now, when the shell enters [`Input::HeldKeyDue`] with its trace ID.
+    /// A later one replaces it (`docs/design/key-holding.md`, "Keys behind
+    /// a held key").
+    BoundHeldKey(Option<(TraceId, u64)>),
+    /// Core gave up on its text request with this query id: the shell ends
+    /// the request, so that nothing waits for it and its outcome is
+    /// dropped, and withdraws it from its outpost, which answers it "not
+    /// started" if it has not started.
+    WithdrawText(QueryId),
     /// The effect on behalf of the key with this trace ID, whatever input
     /// caused it: a key that waited behind a held key is handled while the
     /// reducer handles the held key's read (the read before a held key, or

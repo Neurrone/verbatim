@@ -56,6 +56,12 @@ pub(crate) const MAX_TYPED_WORD: usize = 256;
 /// (`docs/design/key-holding.md`, "Keys behind a held key").
 pub(crate) const KEY_AHEAD_BOUND_MS: u64 = 100;
 
+/// The longest a held caret key waits for the read of the caret before it
+/// (`TextOp::ReadCaret`), counted from when the read is asked: past it the
+/// key is passed on without the read, as the hook would have passed it
+/// (`docs/design/key-holding.md`, "The bound").
+pub(crate) const HELD_READ_BOUND_MS: u64 = 150;
+
 /// NVDA speaks a selection change of this many characters or more as a
 /// count rather than the text.
 const SELECTION_SPOKEN_AS_COUNT: u32 = 512;
@@ -258,7 +264,7 @@ pub(crate) fn held_key(
 /// its read comes after that key's effect, and that key's answer is read
 /// before the next key reaches the application, but no longer than
 /// [`KEY_AHEAD_BOUND_MS`] after that key was passed on: the shell is asked
-/// to end the wait then ([`Effect::BoundHeldKeyWait`]), and a key pressed
+/// to end the wait then ([`Effect::BoundHeldKey`]), and a key pressed
 /// later than that is read at once. A review command or script waiting
 /// behind a held key, or pressed while the watch of the held key last
 /// passed on is open, waits for the same watch and the same bound, from
@@ -271,6 +277,8 @@ pub(crate) fn held_key(
 /// key's effects carry its own trace ([`Effect::ForKey`]).
 fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
     let mut effects = Vec::new();
+    // The key whose wait for the key ahead bounds the loop, if one does.
+    let mut blocked = None;
     while state.held_keys.reading.is_none() {
         let Some(front) = state.held_keys.waiting.front() else {
             break;
@@ -310,11 +318,9 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
                 if state.held_keys.bounded != Some(trace_id) {
                     state.held_keys.bounded = Some(trace_id);
                     let now = pressed_at_ms.max(state.held_keys.passed_at_ms);
-                    effects.push(Effect::BoundHeldKeyWait {
-                        key: trace_id,
-                        within_ms: due - now,
-                    });
+                    effects.push(Effect::BoundHeldKey(Some((trace_id, due - now))));
                 }
+                blocked = Some(trace_id);
                 break;
             }
             state.held_keys.awaiting_watch = None;
@@ -343,11 +349,21 @@ fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
             None => effect,
         }));
     }
+    // A deadline kept for a wait or a read that has ended, with no new one
+    // in its place, is cleared, so no timer fires for nothing.
+    if state.held_keys.reading.is_none()
+        && state.held_keys.bounded.is_some()
+        && state.held_keys.bounded != blocked
+    {
+        state.held_keys.bounded = None;
+        effects.push(Effect::BoundHeldKey(None));
+    }
     effects
 }
 
-/// Starts the read of the caret before `held`, or passes it on at once
-/// when the focus has no caret to read.
+/// Starts the read of the caret before `held`, bounded by
+/// [`HELD_READ_BOUND_MS`] in the held key's one deadline, or passes it on
+/// at once when the focus has no caret to read.
 fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
     let Some(node) = text_focus(state) else {
         return pass_held(state, held, held.pressed_at_ms);
@@ -358,11 +374,15 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         node,
         key: held,
     });
-    vec![Effect::Text(TextRequest {
-        query_id,
-        node_id: node,
-        op: TextOp::ReadCaret,
-    })]
+    state.held_keys.bounded = Some(held.trace_id);
+    vec![
+        Effect::Text(TextRequest {
+            query_id,
+            node_id: node,
+            op: TextOp::ReadCaret,
+        }),
+        Effect::BoundHeldKey(Some((held.trace_id, HELD_READ_BOUND_MS))),
+    ]
 }
 
 /// Watches for `held`'s evidence as for a caret key the hook passed
@@ -414,11 +434,34 @@ pub(crate) fn held_watch_answered(state: &mut SrState) -> Vec<Effect> {
     next_held(state, true)
 }
 
+/// The held key's one deadline, for the held key or command `trace_id`,
+/// has passed ([`Effect::BoundHeldKey`]): a key whose caret is still being
+/// read is passed on without the read, the read given up so nothing waits
+/// for it and its late answer is dropped; one still waiting for the watch
+/// of the key ahead goes on as that wait's end says ([`held_wait_ended`]).
+pub(crate) fn held_key_due(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    if state.held_keys.bounded != Some(trace_id) {
+        return Vec::new();
+    }
+    // The shell's deadline has fired, and is kept no more.
+    state.held_keys.bounded = None;
+    if let Some(reading) = state
+        .held_keys
+        .reading
+        .take_if(|reading| reading.key.trace_id == trace_id)
+    {
+        let mut effects = vec![Effect::WithdrawText(reading.query_id)];
+        effects.extend(held_read(state, reading, TextReply::Unanswered));
+        return effects;
+    }
+    held_wait_ended(state, trace_id)
+}
+
 /// The bound on the wait of the held key or command `trace_id` for the
 /// watch of the key ahead has run out: if it still waits, its caret is
 /// read, or the command run, now, as if that watch had been answered, and
 /// the watch is left to end as it would ([`next_held`]).
-pub(crate) fn held_wait_ended(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+fn held_wait_ended(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let front = match state.held_keys.waiting.front() {
         Some(WaitingKey::Held(held)) => Some(held.trace_id),
         Some(WaitingKey::Command(input)) => input.trace_id(),
@@ -443,7 +486,7 @@ pub(crate) fn held_wait_ended(state: &mut SrState, trace_id: TraceId) -> Vec<Eff
 /// time, judged as a key the hook passed itself. The keys waiting behind
 /// it are handled after it was passed on: a held key's caret is read
 /// then, as NVDA's next caret script reads after the first's key was
-/// sent ([`next_held`]).
+/// sent ([`next_held`]), which replaces the read's deadline or clears it.
 pub(crate) fn held_read(state: &mut SrState, reading: HeldRead, reply: TextReply) -> Vec<Effect> {
     let held = reading.key;
     let at_ms = match reply {

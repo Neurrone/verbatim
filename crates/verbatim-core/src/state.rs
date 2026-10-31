@@ -405,8 +405,9 @@ pub(crate) struct HeldKeys {
     /// held key behind it has its caret read only then.
     #[serde(default)]
     pub(crate) awaiting_watch: Option<QueryId>,
-    /// The held key whose wait for `awaiting_watch` the shell was asked to
-    /// end at its bound, so that it is asked once.
+    /// The held key whose one deadline the shell keeps
+    /// ([`verbatim_model::Effect::BoundHeldKey`]): for its wait for
+    /// `awaiting_watch`, or for the read of its caret while `reading`.
     #[serde(default)]
     pub(crate) bounded: Option<TraceId>,
 }
