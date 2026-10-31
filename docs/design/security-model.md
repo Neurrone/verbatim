@@ -13,6 +13,8 @@ This document is Verbatim's threat model, followed by the architectural mitigati
 5. **Synthesizer fallback.** After three crashes within a minute, switch to eSpeak NG for the session and say so? Recommended: yes.
 6. **Developer folder.** Watch the extension developer folder only in developer mode? Recommended: yes.
 7. **Behaviour users hear.** Two mitigations change what is heard: speaking text-direction override characters (S2), and playing through another audio device while the default refuses Verbatim (R5). Adopt them? Recommended: yes.
+8. **Screen curtain across a crash.** Hold the screen curtain in the small guardian process that restarts Core (R1), so a crash of Core does not uncover the screen without the user knowing? Recommended: yes; the alternative is to re-apply it first thing on restart and accept the seconds between.
+9. **Engine files the user supplies.** Engines such as Eloquence are closed binaries users find wherever they can. Pin the SHA-256 of known engine releases and warn on an unknown one, still loading it in the sandbox? Recommended: yes.
 
 ## 2. Method
 
@@ -64,10 +66,11 @@ Each adversary is listed with whether a real boundary separates it from Verbatim
 - **A process of the same user at the same integrity level.** Windows offers no boundary here. Such a process can open Verbatim's process with full access, write its memory, load a DLL into it, inject input and read every window through UIA itself. Defending Verbatim's settings, logs or pipe against it gains nothing, since it can do directly whatever it would do through Verbatim.
 - **A lower-trust process.** Low integrity, AppContainers such as browser renderers and Store apps, and sandboxed code. A real boundary below Verbatim, which User Interface Privilege Isolation (UIPI, the Windows rule blocking window messages and injected input from a lower integrity level to a higher one) mostly enforces already.
 - **A higher-privilege context, reached through Verbatim.** Elevated applications and secure screens. Here the adversary is any of the above using Verbatim as its deputy.
-- **An extension's author.** Malicious, compromised or, most often, buggy. Section 9 of [extensions](extensions.md) holds this threat model in detail.
+- **An extension's author.** Malicious, compromised or, most often, buggy, including the author of a closed engine binary the user downloads for a native synthesizer. Section 9 of [extensions](extensions.md) holds the capability model; section 7.6.1 below says what a malicious extension can still do within it.
 - **A synthesizer engine.** Closed native code that crashes or hangs on particular text, such as Eloquence's known crash strings.
 - **A network attacker.** Today only the test agent listens. Later, the update channel and Remote support's relay and peers.
 - **A remote supporter,** in M12: someone the user lets in, who may be a scammer.
+- **Someone who can see the screen.** A person beside the user, or behind them in public, who reads the display without the user knowing. A blind user cannot tell what the screen shows or whether anyone is looking, so this is a real exposure, and the screen curtain NVDA offers exists for it.
 - **Whoever builds or ships Verbatim's code:** dependencies, the build machines and the release key.
 
 ### 5.1 Can Verbatim defend its configuration?
@@ -154,10 +157,11 @@ STRIDE: information disclosure, and repudiation in the sense of records the user
 
 A screen reader's diagnostics are a record of the screen and keyboard. The objection to Recall was a continuous, searchable record of the screen kept on disk by default; a flight recorder is a smaller version of the same thing. The threat is that what Verbatim stores or sends reaches someone the user did not intend.
 
-- Entry points (as exits): logs, crash dumps, the control pipe's speech stream and dumps, the clipboard, the network, the audio itself.
+- Entry points (as exits): logs, crash dumps, the control pipe's speech stream and dumps, the clipboard, the network, the audio itself, and the physical display.
 - Examples: a dump holding a password typed into a password field, attached to a public bug report; debug logging enabled on a secure screen (NVDA's GHSA-354r-wr4v-cx28); NVDA's IO log recording every utterance and key; copied speech kept in Windows' clipboard history and synced between devices; a cloud recognition service receiving the screen; VoiceOver reading saved passwords aloud.
 - Assets: the user's content.
-- Exposure today: logs carry no content at their default level. The flight recorder holds 1,024 inputs or 8 MiB and is written to `dumps` beside the executable on every panic, kept forever, with typed characters unmasked, including those in protected fields. Child logs keep 10 launches with no size cap. Verbatim makes no network connection outside the test agent.
+- More examples: a person reading the screen over the user's shoulder; a screen curtain that silently stops covering the display after Verbatim crashes or a monitor is connected, which the user cannot notice.
+- Exposure today: there is no screen curtain yet (roadmap M8). Logs carry no content at their default level. The flight recorder holds 1,024 inputs or 8 MiB and is written to `dumps` beside the executable on every panic, kept forever, with typed characters unmasked, including those in protected fields. Child logs keep 10 launches with no size cap. Verbatim makes no network connection outside the test agent.
 
 ### 6.8 Class R: losing speech through Verbatim's own components
 
@@ -228,12 +232,39 @@ Each mitigation states what holds, why, and its status today. Mitigations that a
 - **X2. DLL loading is pinned.** Each executable calls `SetDefaultDllDirectories` with the system folder and the application folder only, before anything else loads, and links rarely used system DLLs for delay loading; the installer does the same. Status: missing.
 - **X3. Configuration is data and never code (structural, holds).** The synthesizer is chosen from a fixed set, theme and sound names are plain names, and no setting names a DLL, an executable or a path. A native adapter is found by name among adapters in an administrator-owned folder.
 - **X4. Extensions are Wasm with capabilities derived from imports (structural, designed).** No WASI is offered, epoch deadlines bound compute, store limits bound memory, and the outpost's job caps the rest; NVDA's add-ons are unrestricted Python in its process. A runtime escape is contained by the outpost process, which cannot be an AppContainer, since Windows denies one UIA and MSAA client access to other processes; outposts are to get restricted tokens and process mitigations, measured for what UIA still allows. Wasmtime's compiler needs dynamic code, so the mitigation forbidding it cannot apply to an outpost hosting modules unless precompiled artifacts load as images.
-- **X5. Native code runs only in a contained synthesizer host (structural, partly built).** One process per engine (D18), with the AppContainer in its less privileged form planned for M6; until then the host has the user's full token. Native adapters load only from an administrator-owned folder in installed copies.
+- **X5. Native code runs only in a contained synthesizer host (structural, partly built).** One process per engine (D18), with the AppContainer in its less privileged form planned for M6; until then the host has the user's full token, and no third-party native code exists. Section 7.6.1 gives the detail.
+- **X11. No native code loads unless its container is confirmed.** The host checks its own token at start (an AppContainer, the less privileged form unless the engine's recorded workaround says otherwise, Low integrity or below, no UIAccess) and refuses to load an adapter otherwise, and Core checks the child's token after the contained launch, so a failure of the sandbox fails closed rather than running an engine with the user's rights. Status: M6.
+- **X12. The container can read only what the engine needs, and write nothing of the user's.** The access entries the contained launch grants on the host's folder and the bundle are read and execute only; an engine that must write, such as one that saves an INI file, gets a scratch folder of its own that holds nothing else. Status: M6; the extensions design grants access without stating it is read-only.
+- **X13. Native code is a property of one kind.** Only native synthesizer modules (and, in M15, braille drivers) may carry a DLL; the loader refuses a module of any other kind whose folder holds an executable file, and a Wasm component has no foreign-function interface. Status: designed.
+- **X14. Known engine binaries are pinned.** The SHA-256 of known releases of user-supplied engines, such as Eloquence's `ECI.DLL`, is listed with the adapter, and an unknown file is announced before it is used, still inside the sandbox. Question 9. Status: missing.
 - **X6. The injection helper (M7) is minimal, in Rust, loaded only from the installation, and treats the browser's side of its channel as hostile.** It runs inside browsers, so its defects are the user's browser's.
 - **X7. Updates are verified by Authenticode signature against Verbatim's own certificate before they run.** Status: no updater yet (M8).
 - **X8. The build and release are protected.** Dependencies audited with `cargo deny` in `cargo xtask ci`, which also serves the platform-neutral tier's licence rule; the release signing key in hardware or a cloud key service, used only by a protected release job; workflows that run code from pull requests get no secrets. Status: downloads and submodules are pinned; the rest is missing.
 - **X9. Memory safety (structural, holds).** Unsafe code stays in the Windows crates behind small safe wrappers: the platform-neutral crates forbid it, and it is concentrated in `verbatim-uia` (about 195 uses), `verbatim-outpost` (123), `verbatim-process` (96), `verbatim-ia2` (74) and `verbatim-app` (70). C and C++ that parse untrusted input run outside Core: eSpeak NG in the synthesizer host. Core does not panic on application data: `verbatim-core` and `verbatim-text` have no `unwrap` or `expect` outside tests.
 - **X10. Every parser and every algorithm that takes untrusted data is fuzzed.** Targets, all platform-neutral and so able to run on the Linux job: the frame and raw-section decoders, the control-plane reader, the configuration, theme and package readers, the synthesizer escapes, terminal alignment and segmentation, and the reducer fed generated inputs. A `mockapp` mode serves hostile trees (self-parents, cycles, a million children, multi-megabyte names, hanging providers) as end-to-end checks of U2 to U7. Status: missing; proptest covers only terminals.
+
+### 7.6.1 What a malicious extension can still do
+
+The defence against a malicious extension is that it has nowhere to send what it learns and no way to act outside the applications it claims; there is no review, signing or store yet, so installing an extension is trusting its author, as the install dialog says. Within that, a malicious extension can do the following, by kind.
+
+A Wasm app module:
+
+- **Reads** the controls and text of every application it claims. An installed extension can claim any application except Verbatim's own, browsers, mail and password managers included, and the install dialog names them. A password field's value is masked by its application, so it reads what Verbatim reads.
+- **Hears keys** for the commands it binds in those applications, which could be every key, and so sees the user's typing there.
+- **Cannot send** any of it anywhere: no network, files, clipboard, storage, process creation or WASI. Its exits are speech, which is audible, `browseable-message`, and `log`, which reaches Verbatim's log on disk, which the user may later attach to a bug report. So confidentiality rests on there being no exit, and the rule that follows is that a future import that is an exit (fetch to named hosts, clipboard writes, storage) is shown together with what the module reads, as one sentence, never as two unrelated warnings, and module log lines are capped in size and rate.
+- **Changes speech** in its applications: drops, rewrites or replaces events (S1), within them only.
+- **Degrades** its applications by faulting or using its whole deadline, never Core or other applications (X4).
+- **Escapes** only through a wasmtime defect, into its outpost, which runs with the user's token, restricted as X4 says. Once outposts have UIAccess to read elevated windows (M8.1), an escape gets that too, which raises the value of the restricted token and of keeping wasmtime on its long-term-support line with prompt updates.
+
+A native synthesizer, whose adapter and engine are native code:
+
+- **Hears everything Verbatim speaks,** which is most of what the user reads, since that is a synthesizer's job. The install dialog's warning should say so, as "Runs native code in a restricted process of its own, and receives all the text Verbatim speaks", rather than today's "outside Verbatim's sandbox", which is not accurate once the container exists.
+- **Cannot send** it anywhere, once contained: the less privileged AppContainer has no network, no registry writes, no other processes or windows, no clipboard and no files beyond those X12 grants. Its exits are the PCM it returns, which is played aloud, and the Windows kernel, whose attack surface from that container is what Chromium's renderers rely on.
+- **Speaks something else** than it is given. No sandbox prevents this; it is inherent in letting a component turn text into sound.
+- **Crashes or hangs,** which R3 answers.
+- Before M6's container exists, no third-party native code runs, so the window in which an adapter would have the user's full rights never opens, provided X11 holds from the first adapter.
+
+Developer folders and hot reload load modules without the install dialog, which C8 confines to developer mode, and the secure-desktop instance loads only the administrator-made copy (B5).
 
 ### 7.7 Against class L
 
@@ -243,6 +274,7 @@ Each mitigation states what holds, why, and its status today. Mitigations that a
 - **L4. Stored diagnostics have a home, an owner and an end.** Logs and dumps under the user's local application data, readable by that user only, capped in count and age. Status: beside the executable; dumps kept forever.
 - **L5. The speech stream and tree dumps are content,** exposed only through the developer endpoint (C1).
 - **L6. Verbatim makes no network connection except the updater and Remote (structural, holds).** No telemetry, no crash upload, no online lookup; a dump leaves the machine only by the user's hand. Cloud recognition, if ever offered, is opt-in per use.
+- **L8. The screen curtain is trustworthy to someone who cannot see it.** Built in M8 as NVDA builds it, with the Magnification API's full-screen colour effect, which darkens the display while leaving its content readable to Verbatim. Because the user cannot check it, Verbatim makes its state known and keeps it on: it says whether the curtain is on when toggled, at start and after any restart; a setting turns it on at startup; it is re-applied and confirmed after a display is added or changed, after unlocking and after a Remote Desktop reconnection; a failure to apply it is spoken; and a crash of Core does not lift it (question 8). Limits to measure and state: whether the effect also darkens what screen sharing, Remote Desktop and screenshots capture; the secure desktop is a different desktop, so the secure instance needs its own curtain (M8.1); and speech itself is audible to anyone nearby, which only headphones answer. Status: M8.
 - **L7. What Verbatim puts on the clipboard from a protected field stays out of clipboard history.** Copying the last spoken text (M8) marks such a copy with the clipboard formats Windows defines for excluding it from history and cloud sync.
 
 ### 7.8 Against class R
@@ -300,14 +332,14 @@ Ranked by severity, judged for today's development use; those marked as rising w
 ## 10. Where the work goes
 
 - Now, as a small build of its own: F1 (the agent, C4), F5 (the message filter, C7), and the configuration fallbacks of C3.
-- M5: L1 and L2, since M5 brings the log ring forward; C1's user endpoint, since the install request arrives with M5; S1 for extensions.
-- M6: R3, X5 and J1, and the AppContainer as designed.
+- M5: L1 and L2, since M5 brings the log ring forward; C1's user endpoint, since the install request arrives with M5; S1, X13 and the log cap of section 7.6.1 for extensions.
+- M6: R3, X5, X11, X12, X14 and J1, the AppContainer as designed, and the native synthesizer's install warning of section 7.6.1.
 - The M6.x developer-mode milestone (Dickson, 2026-10-31): C1's developer endpoint, C8's developer folder, L3's developer setting, and C2's per-session pipe name.
 - M6.3, the speech and audio pipeline: U4's cut reaching speech, and R5.
 - M6.4, terminal residuals: U5.
 - M7: X6 and J3, and U2 and U3 before the IA2 tree walks multiply.
-- M8, with the installer skeleton: X1, X2, X7, B2, L4, R1 and R2, the per-user state location, X8's signing key, and J2, S2 and L7 with dictionaries and the clipboard command.
-- M8.1: B1 first, then B3 to B8 and C5 and C6.
+- M8, with the installer skeleton: X1, X2, X7, B2, L4, R1 and R2, the per-user state location, X8's signing key, and J2, S2 and L7 with dictionaries and the clipboard command, and L8 with the screen curtain.
+- M8.1: B1 first, then B3 to B8, C5 and C6, and the secure instance's own screen curtain (L8).
 - M9: L3 as file logging arrives.
 - M12: C9 and B9.
 - Ongoing, from now: X8's audit and X10's fuzzing in `cargo xtask ci`; U7's background flood cap, U8 and R4 with the next focus or input build; J3, J4 and L6 as standing review rules.
