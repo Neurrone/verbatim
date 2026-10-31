@@ -776,7 +776,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   changes while its thumb is the focus (`docs/parity/focus-context.md`,
   "A slider that focuses its thumb"); the listener's read keeps no
   ancestor's element, so the worker finds the slider by the focus's path
-  (`sensitive_slider_parent`, `element_by_focus_path`) and keeps it under
+  (`sensitive_slider_of`, `element_by_focus_path`) and keeps it under
   the parent's node. Elements
   arrive as `Cached<PropertyEvent>` or `Cached<TextEvent>`, parked in the
   store (`store::Parked`) and resolved as `Kept` by the program that takes
@@ -1025,7 +1025,7 @@ section 6.3).
   many children ended cleanly, had exited, exited with an error, were killed
   at their time limit, or were killed because ending them failed.
 - `ensure_spawned(pid)` starts an outpost, from a spare when one waits.
-- `send_to_outpost(outpost_id, command)` queues a command without waiting,
+- `send_to_outpost(outpost, command)` queues a command without waiting,
   failing at once with a `QueueError` when the generation ended or its
   queue is full.
 - `note_views(attention, holding)`, `leave_nodes_held` (left in the
@@ -1294,7 +1294,7 @@ unredirected, never unspawned.
   a process the outpost inherits as ignored (`IGNORE_PIDS_ENV`) is not
   reported, and every focus report carries window facts.
   A child's own focus event from the same `SetFocus` as its control's
-  redirected one is dropped (`Intake::take_redirected_focus`).
+  redirected one is dropped (`Marks::focus_redirected`).
 - The reports (`reducer::held`;
   `docs/design/ownership-one-judge.md`, "The reports, from the store"):
   every focus or foreground report whose focus node the outpost has not
@@ -1462,7 +1462,7 @@ The subscriptions' cache requests are fixed, whatever the theme, so the
 details of a listener's selection that the theme does not report are taken
 out of its report (`gates::leave_out_unreported`). Text formatting is
 read only for indications that are on and attributes the control supports,
-learned from its answers and kept per node (`text_support`); spelling and
+learned from its answers and kept per node (`TextSupport`); spelling and
 grammar annotation types are never learned, since Notepad answers "not
 supported" without annotations, so the caret read asks a line first
 (`docs/crates/verbatim-uia-rops.md`, "The caret read"). `IsHidden` is never
@@ -1695,11 +1695,11 @@ Caret and text events:
   cleared before a terminal request, a caret key, or a new focus.
 - A focus-now answer's control has its caret read with it, is recorded
   among the reports (`reducer::held`), as NVDA's fake focus is, and then
-  becomes the followed focus (`adopt_focus`, as `emit_focus` does): another
-  node's watch ends, the intake is told (`note_focused`), and the tracking
-  takes it, unless it is already followed under the same node. It is
-  followed (`follow_text`) but not counted as reported
-  (`Tracking::reported`).
+  becomes the followed focus (`Worker::follow_answer`, as `emit_focus`
+  does): another node's watch ends, the intake is told through the
+  follow change it commits, and the tracking takes it, unless it is
+  already followed under the same node, which is followed again, not
+  adopted.
 
 ### Queries
 

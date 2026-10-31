@@ -1552,12 +1552,21 @@ fn the_watchs_wake_is_not_timed_while_a_program_or_a_release_is_in_flight() {
         10_500,
     );
     let effects = replay.finish(program(&effects).request, false, 10_600);
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Release { .. })),
-        "the release is asked for"
-    );
+    match effects.as_slice() {
+        [
+            Effect::Release {
+                nodes,
+                anchors,
+                acknowledged,
+                live,
+            },
+        ] => {
+            assert!(nodes.is_empty() && anchors.is_empty());
+            assert_eq!(*acknowledged, 0);
+            assert!(live.is_empty(), "no request is live");
+        }
+        effects => panic!("only the release, not {effects:?}"),
+    }
     assert_eq!(replay.reducer.next_timer(now(10_600)), None);
 }
 

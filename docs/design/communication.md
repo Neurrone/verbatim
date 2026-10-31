@@ -19,7 +19,7 @@ One model for every pipe between Verbatim's processes and for every thread an ev
 - Events keep passing through verbatim.exe. Every listener fact is read by verbatim.exe's relay thread and written by it to the outpost; every outpost message is read by the relay and handed to the reducer. No pipe joins two children.
 - The power plan stays Balanced. Only thread priorities are used (section 6.1).
 - Process isolation of D9, D13 and D18 stays: the listener, one outpost per application and one host per synthesizer.
-- No fixed waits, retries or polling in place of evidence. Every wait is on an I/O completion, an event or a channel. The deliberate waits stay (the listener's 50 ms menu-end grace, the 30 ms lock-key delay, the mixer's 10 ms start threshold), as do deadline timers that detect a hang (the outposts' watchdog, the host's 10 s `HANG_TIMEOUT`), which are not polls.
+- No fixed waits, retries or polling in place of evidence. Every wait is on an I/O completion, an event or a channel. The deliberate waits stay (the listener's 50 ms menu-end grace, the 30 ms lock-key delay, the mixer's 10 ms start threshold), as do deadline timers that detect a hang (the outposts' reducer timers, the host's 10 s `HANG_TIMEOUT`), which are not polls.
 - Platform-neutral crates stay free of Windows code. The transport, the completion ports, the I/O threads, the relay, the scheduling calls, MMCSS and WASAPI live in Windows crates; `verbatim-speech` gains only plain types (the cancellation token, the host protocol's messages), and `cargo xtask ci`'s dependency check enforces it. Decision 13 moves the outpost and listener message types into a platform-neutral crate.
 - Efficiency as well as latency: "We don't just want lowest latency at any cost, we also want efficiency as well, ideally as few wakeups as possible." Every change is judged on each thread's wake-ups and processor time as well as on latency (section 18).
 
@@ -165,7 +165,7 @@ The policy (`crates/verbatim-process/src/scheduling.rs`, decision 14):
 - A thread that only moves messages, microseconds per wake, then waits again, runs at `THREAD_PRIORITY_HIGHEST`: the keyboard hook thread, verbatim.exe's relay thread, each child's I/O thread, and the `WinEvent` threads. A thread made ready at normal priority waits for a running normal-priority thread's quantum, which matched the measured 2 to 30 ms tails; a higher-priority thread pre-empts at once. Measured (section 11, step 3), this took verbatim.exe's own stage's maximum from about 4 ms to under half a millisecond, with no measurable change in processor time or wake-ups.
 - A thread that computes on the path, sometimes for milliseconds, or calls into an application, runs at normal priority: the reducer, the speech queue and synth threads, each host's thread, each outpost's worker, and the listener's per-application reading threads. Raising them to above normal made typed echoes slower, and was withdrawn.
 - The audio thread keeps MMCSS "Pro Audio".
-- Everything else is normal (the GUI, the control plane, launch and retire helpers, the watchdogs, the router).
+- Everything else is normal (the GUI, the control plane, launch and retire helpers, the listener's watchdog).
 - No process or thread is opted out of power throttling: the measurement found no latency gain from it, and it costs energy for every unit of work. The power plan stays Balanced.
 - Timer resolution is not raised: nothing on the path waits on a timer.
 - Threads Verbatim does not own (UIA's callback threads) keep their priority. Verbatim does no lasting work on them: they encode and write one frame, or hand the event to an owned thread.
@@ -175,15 +175,15 @@ Starvation is not a risk of this policy: only threads that run for microseconds 
 
 ### 6.2 verbatim.exe
 
-- Keyboard hook thread (`verbatim-input-hook`), `HIGHEST`. Woken by the system's low-level hook for each key. Decides against the lock-free gesture snapshot; on a key that cancels speech it sends the cancel to the speech queue's channel, in order with every `Speak`; posts a key's typing, its caret key and its `SpeechCancelled` to the reducer's port, and every gesture to the router on an unbounded channel (section 16). It never blocks on a lock, a channel that can be full, or a pipe.
+- Keyboard hook thread (`verbatim-input-hook`), `HIGHEST`. Woken by the system's low-level hook for each key, and it takes nothing from another thread but the message that stops it. Decides against the lock-free gesture snapshot, numbers each key press, and on a key that cancels speech posts the cancel to the speech queue's completion port, in order with every `Speak`. Posts every key report (typing, caret key, bound gesture, lock key, `SpeechCancelled`, the harness mark) to the reducer's port in the order decided. It takes no lock of Verbatim's and waits on no channel or pipe; the ownership check holds its modules to that (`docs/design/ownership-input.md`). Each post allocates a box, so the allocator's own synchronisation stays on this thread.
 - Relay thread (`verbatim-relay`, the supervisor's owner), `HIGHEST`. Waits only on its port, with the next heartbeat or sweep as its timeout. Woken by a read completion on the listener's pipe or any outpost's pipe, a pended write's completion on any child's command pipe, or its mailbox (launch helpers, retirements, hang-check results, the idle round, the app's requests). It parses and routes the listener's facts and writes them inline; from an outpost's pipe it reads only the frame's kind, handles pongs, `Ready`, `TargetExited` and the pipe's end itself, and posts every other frame whole to the reducer's port, then re-arms that pipe's read. It never blocks on process waits, thread joins, hang detection or file I/O.
-- Reducer thread (`verbatim-reducer`), normal. Waits only on its own completion port. Parses each outpost frame in the order it arrives, reduces, writes requests to outposts inline, and speaks through the speech manager. It never blocks on a pipe.
-- Speech queue thread (`verbatim-speech-queue`), normal: the speech queue's logic, the hook's cancel in order with every `Speak`, and the reply to the idle barrier (section 8).
+- Reducer thread (`verbatim-reducer`), normal. Waits only on its own completion port. Parses each outpost frame in the order it arrives, reduces, writes requests to outposts inline, and speaks through the speech manager, the only thread that holds the speaking token. It also runs the effects that were the gesture router's: the clock read, the lock keys' 30 ms deadlines and `GetKeyState`, and the GUI commands. It never blocks on a pipe.
+- Speech queue thread (`verbatim-speech-queue`), normal: waits on its own completion port; the speech queue's logic, the hook's cancel in order with every `Speak`, and the reply to the idle barrier (section 8).
 - Synth thread (`verbatim-synth`), normal. Waits on its job channel between jobs; during a hosted job, on the host pipe's read event and the utterance's cancellation event together, and on its source's room event when the mixer's source is full. Writes `Speak` and `Cancel`, reads PCM, trims, converts and pushes it into its lane to the mixer.
 - Audio thread (`verbatim-audio`), MMCSS. Waits on the device's event and its wake event, which every push to the mixer sets, drains the lanes, and mixes; it takes no lock (`docs/design/ownership-output.md`, "Real-time audio").
 - Audio events delivery thread (`verbatim-audio-events`), `HIGHEST`. Waits on its event, which the audio thread sets after a pass that sent anything; runs the playback listeners, logs underruns, and frees what the audio thread is done with.
 - Settings saver (`verbatim-settings-saver`), normal: off the path, it writes `settings.toml` for the section owners.
-- Off the path: the router, the GUI threads, the control plane's threads, launch and retire helpers, the hang check, the shutdown thread.
+- Off the path: the GUI threads, the control plane's threads, launch and retire helpers, the hang check, the shutdown thread.
 
 ### 6.3 The listener
 
@@ -194,10 +194,10 @@ Starvation is not a risk of this policy: only threads that run for microseconds 
 
 ### 6.4 An outpost
 
-- I/O thread (its main thread), `HIGHEST`. Waits on its port. Woken by a frame from verbatim.exe, which it hands to the intake, and by a pended write's completion. Answers pings itself.
-- Event thread, `HIGHEST`, and UIA's callback threads: push into the intake.
-- Worker, normal: takes intake entries, calls into the application under its deadline, and publishes by writing inline. The write is overlapped and never waits; when one is in flight the message joins the backlog.
-- Watchdog, normal: woken only for deadlines, never per entry.
+- I/O thread (its main thread), `HIGHEST`. Waits on its port. Woken by a frame from verbatim.exe, which it appends to the mailbox, and by a pended write's completion. Answers pings itself.
+- Event thread (`verbatim-event`), `HIGHEST`, and UIA's callback threads: append to the mailbox.
+- Reducer thread (`verbatim-reducer`), normal: the outpost's pure state machine and its shell. Waits on the mailbox's alarm, set to its next timer, so deadlines need no thread of their own. Decides what each entry does, dispatches call programs, and sends messages by writing inline. The write is overlapped and never waits; when one is in flight the message joins the backlog. It calls into no application.
+- Worker (`verbatim-worker`), normal: runs one call program at a time on copies, calls into the application, and posts its commits and result to the mailbox. An abandoned worker finishes its call and exits.
 - Target-watch thread: off the path.
 
 ### 6.5 A synthesizer host
@@ -281,7 +281,7 @@ What it would have done, kept as the alternative should a later measurement call
 - Every speech event would be pushed as it happens into one ordered channel to a reporting thread, which broadcasts it to the control plane and answers the idle barrier, so utterances cut before they play are still broadcast as queued.
 - Index marks and `SpeechCancelled` would still reach the reducer's port directly; pause would be one atomic word applied and reported by the audio thread; the mixer lock would be released across every WASAPI call.
 
-Review and navigation keys likewise still go through the router (step 8, not adopted): if they went straight to the reducer, the router's own speech (the time, the date, the tray list) would have to be fenced by its key, so a later key's review is never cut off by it, as NVDA runs every gesture's script in key order.
+Review and navigation keys go to the reducer on the hook's own route, in key order (`docs/design/ownership-input.md`), so a later key's review is never cut off by an earlier command's speech, as NVDA runs every gesture's script in key order.
 
 ## 9. Wake-ups from the event or key to the first sample
 
@@ -351,7 +351,7 @@ The measure set, the end-to-end registry's `measure` group (`docs/tooling/e2e.md
 - Step 6, the children's side: `ChildIo`, inline writes in the listener and every outpost, one I/O thread each; the children's outbound threads and separate pipe-reading threads went; the menu-end grace became a threadpool timer.
 - Step 6a, the idle barrier through every child (section 6.7), built before step 7 because step 7 changed who reads the outposts' pipes and so what the old channel-length count counted.
 - Step 7, the relay reads the outposts' pipes and the reducer waits on its own port (decision 3); verbatim.exe's per-outpost reader threads and the channel between the hook and the reducer went. What the relay sends the app and the app's port refuses is kept, with everything sent after it, in the relay's outbox and delivered again in order, so a refused `Ended` is never lost.
-- Step 8, review keys straight to the reducer: not adopted. More commands are still to be implemented, and whether most of them should go straight to the reducer or through the router is reconsidered when the command set is settled (section 8).
+- Step 8, review keys straight to the reducer: built by the input build, which removed the gesture router (`docs/design/ownership-input.md`).
 - Step 9, the host protocol of section 7.
 - Step 10, the speech manager without its queue thread: not adopted, since it is not needed (section 8).
 - Step 11, the outpost's per-event costs: the watchdog woken only for deadlines; the entry's description formatted only when debug logging is on; logging out of the intake lock; and changed held nodes (`NodesHeld`) no longer sent on their own. The reducer leaves the latest changed list in a slot in each outpost's writer, a newer one replacing a list not yet sent, and the list goes in the next command's write to that outpost, after the command, whichever thread writes it: a request from the reducer, the relay's ping every 3 seconds, or any other command but the shutdown message. So a list is at most one ping interval late, never costs a write of its own, and a flood costs no extra round trip. A list is left whenever the held nodes, the anchors, or the position of the outpost's last message carrying node ids changed, so an outpost releases what it reported within one ping interval (`docs/crates/verbatim-outpost.md`, held objects).
@@ -388,7 +388,7 @@ Approved by Dickson between 2026-10-11 and 2026-10-15.
 4. Superseded by decision 14.
 5. The speech queue thread and lock-free cancel by generation (section 8): not adopted as step 10, since the speech path shows no noticeable delay.
 6. The host protocol of section 7: frames tagged by utterance, the next `Speak` right behind a `Cancel`, cancellation signalled by the command's arrival, one host thread.
-7. Review and navigation keys straight to the reducer, the router's speech fenced by its key (section 8): not adopted as step 8, reconsidered when the command set is settled.
+7. Review and navigation keys straight to the reducer, their speech fenced by their key (section 8): built by the input build.
 8. Whether outposts' merge rules may act because the reducer is behind: moot with decision 3. Under its alternative, events derived from UIA would never be merged, since NVDA's UIA flusher drains into a queue that never merges, while MSAA-derived events merge as NVDA's limiter does while its main thread is behind.
 9. The budget reading applies to every verbatim.exe stage of section 10, including the reducer's request writes and the speech stages inside verbatim.exe: each within 1 to 2 ms of its own work, each hop no worse than the platform floor, every exception attributed by trace.
 10. `measure_speech_real` reports distributions and becomes a gate (D15's budgets) only once its figures are known; it runs locally, not in hosted CI.
@@ -422,9 +422,8 @@ Current figures are in `docs/performance.md`; these are the ones the design's ch
 ## 16. Audio device recovery, the keyboard hook's channel, and limits
 
 - A failed open of the audio device waits for evidence. The mixer plays real-time silence in the device's place and opens the device again only when it asks (`needs_reopen`). The WASAPI device registers once, on the audio thread, for Windows' endpoint notifications and passes them to `DeviceNotices`: an open device is reopened when the default render device changes; after a failed open, also when a device arrives or becomes active. No render device (`E_NOTFOUND`) waits for those notifications alone, with no timer. Every other failure is also tried again a second later, because it can come from a device that is still there, whose recovery Windows sends no notification for: a device another program holds in exclusive mode (`AUDCLNT_E_DEVICE_IN_USE`) raises no notification when released, and `AUDCLNT_E_DEVICE_INVALIDATED` reports a device reconfigured in place, such as the default device's format changed, as well as one that went away, with only property changes raised and those before the failed open, so passing property changes on as a reason to reopen would not recover it. A retry asks for the default device afresh, so it reaches the new default, or gets `E_NOTFOUND` and then waits with no timer. The audio thread's wake-ups are unchanged in steady state (`docs/crates/verbatim-audio.md`, device recovery).
-- The keyboard hook never drops a gesture. It sends every gesture and harness mark to the router on an unbounded channel, whose send never waits, and `InputHook::start` refuses a bounded one, so the hook neither blocks nor loses a key. A backlog waits in memory in front of the router, as every backlog in this design waits in front of the reducer (section 4.8), at about 70 bytes a queued gesture.
+- The keyboard hook never drops a key report. It posts every report to the reducer's port, whose post never waits and has no bound, so the hook neither blocks nor loses a key. A backlog waits in memory in front of the reducer, as every backlog in this design does (section 4.8).
 - The reducer's port has no bound, and the relay drains every outpost's pipe whatever the reducer does, so a flood during a reducer stall grows memory for as long as it lasts; the stall watch only logs.
-- An abandoned outpost worker whose call into the application later returns publishes nothing, but still writes the outpost's shared state: the caret's stamps and anchor and the owed terminal reads. It matters only when an application freezes past the deadline and recovers. The fix, deferred by Dickson: a `commit(generation, write)` beside the watch's `publish`, with every write to shared state moved after its call and into a commit, after an audit of every piece of state the worker shares.
 - A large frame still costs the relay one copy, from the read slot into the reader's pending buffer. Reading the rest of a large frame straight into that buffer would remove it but changes the read slot's buffer ownership; deferred, since no traced workload carried a frame over 256 KiB.
 - PCM is copied about ten times between eSpeak NG and the device; each copy costs microseconds.
 - The control plane keeps its own overlapped pipe code.

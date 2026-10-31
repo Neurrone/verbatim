@@ -63,8 +63,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
   and the limits behind each piece of work:
   - [ownership.md](design/ownership.md) — one owner for every fact,
     the rules every component follows, and the order of the refactor.
-  - [ownership-builds.md](design/ownership-builds.md) — the starting
-    drafts of the refactor's builds, with the reviews' known traps.
+  - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
+    the ownership rules each planned milestone follows, and the evidence
+    behind them.
   - [ownership-one-judge.md](design/ownership-one-judge.md) — the
     one judge build's design: repeats judged in Core, the one foreground
     record, the followed focus and the listener's scheduler.

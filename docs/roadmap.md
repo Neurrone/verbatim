@@ -119,7 +119,7 @@ Further follow-ups from the focus work and the ownership builds:
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
 - The audio thread's wake-ups roughly doubled under key load in the output
   ownership build, against the rule not to raise wake-ups on the speech
-  path (`docs/performance.md`, "The output ownership's threads"). Waking it
+  path (`docs/performance.md`, "Threads after the output build"). Waking it
   only for a push to an empty lane removed about 5 percent; the cause of
   the rest is not yet found, and comparing the old mixer's waits with the
   new thread's device event is the next step.
@@ -131,7 +131,7 @@ effects, and no process holds a copy of another's state to judge against
 ([ownership](design/ownership.md), Dickson, 2026-10-30). It preserves what
 is heard, except the three changes the design names. Built in a session of
 its own, a few large builds, each designed against the code and reviewed
-just before it from [the build drafts](design/ownership-builds.md).
+just before it. All five builds are built; the rules for the planned milestones are in [the milestone rules](design/ownership-milestone-rules.md).
 
 ### The caret and selection rework
 

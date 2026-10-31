@@ -662,10 +662,14 @@ Counted from the code (`docs/design/ownership-outpost-reducer.md`,
 wake-ups and processor time per event.
 
 - Wake-ups: an event a program handles wakes the reducer's thread for
-  the event, the worker for its program, and the reducer's thread for the
-  program's commits and end, which arrive together when the shell is
-  already awake; where the worker alone woke once, three. An event the
-  push drops wakes nobody; one the reducer drops wakes only its thread.
+  the event, the worker for its program, and the reducer's thread for each
+  of the program's posts. Every `Commit` and the `Finished` are separate
+  posts, so an event with a commit usually costs four wakes (the event,
+  the program, the commit and the finish), where the worker alone woke
+  once; posts that arrive while the shell is awake share its wake.
+  Each verdict probe is posted in its own commit,
+  so a walk that probes adds a post for each. An event the push drops
+  wakes nobody; one the reducer drops wakes only its thread.
   Each further program of one entry, a run's next try, the gap's read a
   dropped copy asks for, the owed work, or the finish of an edit
   control's caret read cut at its value change check (only with a
@@ -1036,7 +1040,7 @@ that ends unheard.
   one of 4,410 in 0.28, and the host encodes them in 0.6 and 2.0 (release,
   best of 30, measured 2026-10-28).
 
-### The output ownership's threads
+### Threads after the output build
 
 Debug builds, 2026-10-31, before and after the output ownership build
 (`docs/design/ownership-output.md`), wakes and processor time per trace.
