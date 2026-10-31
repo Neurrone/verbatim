@@ -177,6 +177,8 @@ STRIDE: denial of service. Class U covers applications making Verbatim fail; thi
 - **B6. The secure instance's GUI and commands are an allowlist (structural).** A window or command needs a capability the secure instance does not grant, so no browser, file dialog, help file, URL, log viewer, error dialog or window that can start a process opens there. A denylist, checks scattered through each feature, is what each of NVDA's secure-screen advisories slipped past.
 - **B7. Nothing of the user's session follows them onto a secure screen:** speech history, the last braille text and viewers clear on the switch and at exit.
 - **B8. Every executable Windows starts for Verbatim on the secure desktop is administrator-owned and signed,** and the registration names an absolute path in the installation.
+- **B10. The secure instance's children never run as SYSTEM.** Windows starts the secure-desktop instance as SYSTEM, but the outposts it starts read text the requesting program chose, such as its name, publisher and path on a UAC prompt, so each child starts with the least privileged token that can still read the sign-in and UAC screens, measured in M8.1.
+- **B11. A switch to the secure desktop is announced.** Verbatim says "Secure Desktop" when Windows switches to it, as NVDA does, so a password prompt a program draws on the ordinary desktop, which cannot trigger the announcement, can be told from Windows' own.
 - **B9. Remote reaches a secure screen only with the local user's consent,** in both directions: no remote input there, and no speech from there mirrored to the peer, unless allowed; and no local program can stop a permitted session reaching it.
 
 ### 6.6 Against class X
@@ -227,7 +229,7 @@ What a malicious extension can still do inside these limits: a Wasm module reads
 
 ### 6.9 Sandboxing each process
 
-From how Chromium, Firefox, the Codex CLI and Windows' app isolation sandbox their processes (the survey, "Sandboxing"):
+Every process Verbatim starts gets the least privilege it can work with, on every desktop: a child is never given a right because its parent has it. From how Chromium, Firefox, the Codex CLI and Windows' app isolation sandbox their processes (the survey, "Sandboxing"):
 
 - **No process that reads applications can be an AppContainer or run below the user's ordinary integrity level.** UIA and MSAA begin every connection with a `WM_GETOBJECT` message, which UIPI drops from a lower level, and AppContainers cannot have UIAccess. So the listener and outposts run at the user's level, raised by UIAccess from M8.1, and are hardened by mitigations, not by token level.
 - **Outposts and the listener.** Control-flow guard, strict handle checks, the image load policy, no child processes, and the job's limits on the clipboard, atoms, system settings and desktop switching; never the job's limit on other processes' window handles, the removal of window-manager calls or the Microsoft-only image policy, which UIA, MSAA and IA2's proxy DLLs need. A write-restricted token, as the Codex CLI uses, is adopted if an experiment shows UIA events and reads, MSAA, a remote operation and later IA2 all work under it, against `mockapp` and Notepad. Outposts need no network, so the installer adds a filtering rule blocking it for `verbatim-outpost.exe`.
