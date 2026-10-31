@@ -1,0 +1,587 @@
+hash	category	pure	invariant	same_as	reason
+631ee56d	L1	crates/verbatim-audio/src/mixer/mod.rs	every push is eventually observed by the audio thread	-	Waking only for pushes to an empty lane lost wakes; restored wake on every push
+4d5c2c52	P	-	-	-	Reduces audio thread wake-ups (perf change; its lost wake is fixed in 631ee56d)
+e0092292	L1	crates/verbatim-outpost/src/outpost/shell.rs	every waiter answered exactly once	-	Settle replaced by another on a later generation never released its waiter
+17767cbf	L1	yes	every waiter answered once; no spin on past wake	-	Reducer review findings: past wake spin, settle waiter kept, idle answer held wrongly
+05104847	N	-	-	-	Removes mockapp tests replaced by replay tests
+680418ff	N	-	-	-	Documentation of the reducer
+5128836e	N	-	-	-	Feature: introduces the pure reducer
+6aacf121	L1	crates/verbatim-audio/src/mixer/delivery.rs	every utterance ends exactly once	-	Format change stranded an utterance that never ended
+894f9a34	L1	crates/verbatim-outpost/src/outpost/store/mod.rs	object written/released only while its request is live	-	Store review findings: writes after request gone, mint tag, drops on wrong thread
+276d2aa5	N	-	-	-	Feature: new object store
+2c6ed5c9	W	-	-	-	COM MTA hold release ended the shared UIA registering thread
+fb83a51a	N	-	-	-	Review nits and renames of messages build
+ede24c07	N	-	-	-	Feature/refactor: responders answer gone when dropped
+03a4f7ed	N	-	-	-	Test added
+93a10bd5	N	-	-	-	Refactor of injected input delivery (lock-free inbox)
+e0e8515c	W	-	-	-	Hook thread took any WM_APP from other processes as an injected box
+8be86807	N	-	-	-	Feature: input build refactor
+fef26576	W	-	-	-	Windows Forms form client via MSAA accParent not marked top-level
+1b45eb3e	W	-	-	fef26576	Same MSAA top-level client marking defect, first attempt
+c81ae13b	N	-	-	-	Design document
+b3af7641	N	-	-	-	Design document
+2cd08d08	L2	yes	-	-	Core spoke disabled state of foreground client as ancestor change
+25721008	N	-	-	-	Documentation
+715313ff	N	-	-	-	Refactor into pure Schedule
+81b79d25	L1	crates/verbatim-outpost/src/outpost/outbound.rs	anchor released only after acknowledged by a position at or after last carrier	-	Text anchors released by wrong rule, risking early release
+6f0d5ecd	N	-	-	-	Design document
+fc64bfe9	N	-	-	-	Design document
+a9d0b0ca	N	-	-	-	Design document
+93fb5831	N	-	-	-	Test's own flakiness
+0957795a	N	-	-	-	Process documentation
+9fd28a66	L2	yes	-	-	Empty chain cut speech inside one top-level window
+3abda293	N	-	-	-	Feature step: chain joining
+c47d57ae	L1	crates/verbatim-outpost/src/outpost/worker.rs	a published focus is adopted by exactly one worker	-	Focus published at bound lost when watchdog abandons worker before adoption
+45379c5c	N	-	-	-	Feature step: stuck walk publication
+38cab859	N	-	-	-	Feature step
+a9393c04	N	-	-	-	Feature step: stuck read publication
+e60a7a58	N	-	-	-	Study and design
+15def092	W	-	-	-	Hung UIA window handling in walks per NVDA correctAPIForRelation
+5f1c8e81	N	-	-	-	Design document
+1efdbc93	W	-	-	-	Walks must stop at hung or ghost windows, UIA behaviour
+161a7785	L2	yes	-	-	Spoken record moved wrongly so name change was silent
+f2f8209a	L1	crates/verbatim-outpost/src/outpost/intake.rs	timer set/cancel applied in order of record changes	-	Cancel could follow set for next record, leaving record open with no timer
+d5068b48	L2	yes	-	-	Repeat reading overwrote baseline so name change unspoken
+ff6c3944	L2	yes	-	-	Border and white space ancestors spoken as entered containers
+248f85d3	N	-	-	-	Design decision
+32db7700	N	-	-	-	Captures
+bef4d0e6	N	-	-	-	Study
+ad78f2a8	L1	crates/verbatim-outpost/src/focus_read.rs	gap closed only by matching event, one clock	-	Drops matched across processes by time could close a gap with nothing read
+538bdca3	W	-	-	-	Events from any process naming other windows must not be probed
+094a8dc8	N	-	-	-	Feature step: verdicts
+387bc484	N	-	-	-	Documentation
+0cd180ab	W	-	-	-	UIA timeout lookups treated as no window
+57b15952	N	-	-	-	Scratch tooling
+724d0550	N	-	-	-	Design document
+04a39579	N	-	-	-	Design document
+1c602377	N	-	-	-	Design document
+5b1e3d5a	N	-	-	-	Roadmap
+c8045284	N	-	-	-	Design document
+9afe4256	N	-	-	-	Design document
+f09abc25	N	-	-	-	Comment citations
+12216156	N	-	-	-	Documentation
+961cdde3	N	-	-	-	Documentation
+05743ae4	N	-	-	-	Documentation
+ffe025e7	N	-	-	-	Documentation
+570fa9ca	N	-	-	-	Removal of unauthorized helper thread, simplification
+544c58f1	N	-	-	-	End-to-end harness speech matcher
+cd797959	N	-	-	-	Revert of test expectation
+2190eb54	N	-	-	-	Test's own clock
+3d847104	N	-	-	-	Comments
+439bc99a	L1	yes	history rows kept in the frame of the memory's last read	-	Matching state diverged: rows off by distance moved, unanswered read followed unseen start
+c5fc046d	N	-	-	-	Agent waits and test removal
+1cfce959	N	-	-	-	End-to-end agent
+dd7021ce	L2	yes	-	-	Mark search from screen past place, limited to 20 matches
+c291dbed	L2	yes	-	-	Mark took first match not nearest; pending mark ended by older same text
+642fa178	N	-	-	-	Batch of nits
+fad163c2	N	-	-	-	Feature: command marks
+463f2ef9	L1	crates/verbatim-outpost/src/outpost/intake.rs	a tick is never lost; abandoned worker does not affect open watch	-	Caret poll tick lost via overwritten wake time and abandoned worker matching watch
+74b97797	N	-	-	-	Refactor
+81e16367	L1	yes	a colours grant is used only by the read after its key	-	Colours read after a key consumed by unsent or early read so echo lost
+449b0a81	N	-	-	-	Measurement
+ec7c88c8	N	-	-	-	Feature/refactor
+0dbf9ad2	P	-	-	-	Allocation and copying cost
+b04a4b8d	N	-	-	-	Measurement test
+433acfb2	P	-	-	-	Speed-up, nothing said changes
+79635d60	L2	crates/verbatim-text/src/terminal_rows.rs	-	-	Line written past homed caret not told from caret line (plus perf finding)
+c3f06aa9	N	-	-	-	Documentation
+6143eb7d	N	-	-	-	Scenario added
+c5a85917	L2	yes	-	-	Enter answered by caret line rule instead of only new output
+1766e1fe	L2	crates/verbatim-text/src/terminal_rows.rs	-	-	History printed again and cleared flood read wrongly
+bf6d3261	N	-	-	-	Scenarios added
+23e316dc	N	-	-	-	Model rework per Dickson decision
+945ca9e0	N	-	-	-	Refactor of decision location
+d7189852	N	-	-	-	Rule on cheap properties, feature
+db7c2fc6	N	-	-	-	Nits
+c0b0c0e5	N	-	-	-	Scenario script's write
+314f1b18	L2	yes	-	-	Lost read kind about/more than dropped by later skip
+a93e8744	L1	crates/verbatim-outpost/src/arbitration.rs	per-worker state not cleared by another worker	-	Shared timed-out list cleared or read across abandoned and current workers
+23884a3d	W	-	-	-	Probe timeouts repeated waiting; depends on UIA probe timing
+8df39492	N	-	-	-	Scenario script's write
+1c1359b9	L2	yes	-	314f1b18	Lost read mark dropped when starting a burst
+63ea08c1	N	-	-	-	Refactor of rule location
+9f502def	N	-	-	-	Lock scope change and docs
+c0bbf19b	N	-	-	-	Feature: Core holds focus judging
+5a17b17f	N	-	-	-	Feature/refactor
+b371f89f	L2	crates/verbatim-text/src/terminal_reading.rs	-	-	Lost-read mark given in a read reporting nothing
+2f13c0b1	N	-	-	-	Documentation
+506b09d6	N	-	-	-	Scenarios added
+c8b7973a	L2	crates/verbatim-text/src/terminal_rows.rs	property: no new line missed in random streams	-	Rows found lower taken for old, so a random stream missed three new lines
+b100638b	N	-	-	-	Model redesign
+56de0d23	N	-	-	-	Design document
+5810ddf3	N	-	-	-	Model rule change per decision
+363c8a63	N	-	-	-	Documentation
+48d8432d	L2	yes	-	-	Switcher refusal matched by window class, wrong versus NVDA
+6ab6b25d	L1	crates/verbatim-outpost/src/outpost/mod.rs	focus stamps ordered by event time	-	Hooked focus stamped after bookkeeping, mis-ordering focuses
+e9cd3b3e	L1	yes	older focus never replaces newer, ties included	-	Millisecond wall-clock compare and tie not stale announced switcher over console
+6b2ab866	N	-	-	-	Documentation-only changes
+63c92913	N	-	-	-	Documentation-only changes
+4a70de3e	N	-	-	-	Review nits and cost reductions
+96fe4f9c	N	-	-	-	Documentation
+7baa1ac6	L2	yes	-	-	Failed utterance reported as cut stopped say-all
+7015ae08	W	-	-	-	UIA location reads trigger WM_GETTITLEBARINFOEX stalls
+d509a240	N	-	-	-	Test oracle
+0bbf500b	N	-	-	-	Design document
+6e303a61	N	-	-	-	Feature/refactor
+f9ab3fd5	W	-	-	-	UIA off-screen read stalls on title bar
+d73dd00b	N	-	-	-	docs, harness, oracle, feature or test change
+e50f2be8	L2	crates/verbatim-text/src/terminal_rows.rs	-	-	row history moved only with its block; decided rule wrong
+eb235d58	L2	crates/verbatim-text/src/terminal_reading.rs	-	-	key answer and margin echo spoke wrong words, found by e2e
+966d2dbb	N	-	-	-	docs, harness, oracle, feature or test change
+9b9029df	L1	crates/verbatim-app/src/main.rs	key delivered to outpost before the read showing its echo	-	echo read reached outpost before the key report so echo was spoken as output
+5a08aa05	N	-	-	-	docs, harness, oracle, feature or test change
+f990119d	L2	crates/verbatim-text/src/terminal_reading.rs	-	-	review position dropped instead of going to caret; summary placed at wrong line
+8b77962f	N	-	-	-	docs, harness, oracle, feature or test change
+7610bcc7	N	-	-	-	docs, harness, oracle, feature or test change
+0381e70a	N	-	-	-	docs, harness, oracle, feature or test change
+1dd30d74	L2	crates/verbatim-text/src/terminal_rows.rs	property: review position row stays inside the document	-	review findings in row memory: rotation assumed without history, wrong position
+0b1dd73c	N	-	-	-	docs, harness, oracle, feature or test change
+c457942a	N	-	-	-	docs, harness, oracle, feature or test change
+f276db54	N	-	-	-	docs, harness, oracle, feature or test change
+d8408fcc	N	-	-	-	docs, harness, oracle, feature or test change
+b859f866	L2	crates/verbatim-text/src/terminal_rows.rs	property: every row unique in both reads maps to where its text went	-	moved row past others taken for gone and respoken
+0ac0fe5f	N	-	-	-	docs, harness, oracle, feature or test change
+e1cc9d1c	N	-	-	-	docs, harness, oracle, feature or test change
+9c56c22b	N	-	-	-	docs, harness, oracle, feature or test change
+3419baee	N	-	-	-	docs, harness, oracle, feature or test change
+685ed609	N	-	-	-	docs, harness, oracle, feature or test change
+6568b0b6	N	-	-	-	docs, harness, oracle, feature or test change
+697aeca7	N	-	-	-	docs, harness, oracle, feature or test change
+901b7d5b	N	-	-	-	docs, harness, oracle, feature or test change
+191a3ccf	N	-	-	-	docs, harness, oracle, feature or test change
+12fc0d1f	N	-	-	-	docs, harness, oracle, feature or test change
+b078ee81	L1	crates/verbatim-ia2/src/hook.rs	a sync returns only after its own marker	-	another event thread's marker satisfied a sync early (ticket collision)
+d7ec6b04	L1	yes	a held key waits at most the bound for the key ahead	-	held key waited for unanswered watch up to 10 s; lock keys deferred
+c04584db	N	-	-	-	docs, harness, oracle, feature or test change
+fafc7210	N	-	-	-	docs, harness, oracle, feature or test change
+96976bfb	N	-	-	-	docs, harness, oracle, feature or test change
+42478237	N	-	-	-	docs, harness, oracle, feature or test change
+1ad45f16	L2	crates/verbatim-outpost/src/text/mod.rs	-	-	caret line compared with a non-caret baseline taken as evidence
+8416923b	L1	crates/verbatim-outpost/src/outpost/worker.rs	reply sent before follow-up messages	-	follow-up could reach Core before the focus-now answer
+2a3c92f4	N	-	-	-	docs, harness, oracle, feature or test change
+505e3ad8	W	-	-	-	Notepad TextPattern2 caret is the active end, selection start needed
+b563c80c	L1	crates/verbatim-outpost/src/outpost/text_reads.rs	a text-change note is not consumed by an ignored report	-	ignored caret report consumed the changed note, race seen in live runs
+ecd5f901	L2	yes	-	-	removed text spoken for cut; value-change check ordering behind queue
+10882a97	N	-	-	-	docs, harness, oracle, feature or test change
+64cbe02b	N	-	-	-	docs, harness, oracle, feature or test change
+eaaafb8d	L2	yes	-	-	selection change after text change spoken not as NVDA does
+dd363ecc	L1	crates/verbatim-outpost/src/outpost/text_reads.rs	a report is never merged across a reply	-	caret report merged past a reply reached Core after the key's answer, spoken twice
+4304016c	N	-	-	-	docs, harness, oracle, feature or test change
+fff7a426	N	-	-	-	docs, harness, oracle, feature or test change
+cb82ba9b	N	-	-	-	docs, harness, oracle, feature or test change
+0d1e7802	L1	crates/verbatim-input-windows/src/lib.rs	every gesture is delivered	-	bounded try_send dropped keys when channel full
+f49cd3e3	W	-	-	-	console window thread owner differs from provider process
+486a4c98	P	-	-	-	wake/latency of cache refresh
+a9b3e727	N	-	-	-	docs, harness, oracle, feature or test change
+80da66af	N	-	-	-	docs, harness, oracle, feature or test change
+8c4d5df4	W	-	-	-	console host provider's window element has no handle or name; late UIA focus
+bd6e4a83	N	-	-	-	docs, harness, oracle, feature or test change
+fba1dfe8	L1	crates/verbatim-outpost/src/focus_read.rs	a gap closes only on focus evidence	-	gap closed on inconclusive drop
+c5be1bd2	N	-	-	-	docs, harness, oracle, feature or test change
+f05cdc6b	L1	crates/verbatim-outpost/src/outpost/gap.rs	idle answer never precedes an open gap's resolution	-	recovered focus spoken after the step's idle answer
+3b8fe9a1	N	-	-	-	docs, harness, oracle, feature or test change
+3d99e52c	W	-	-	-	UIA delivers focus late or never after a WinEvent focus
+889facfe	N	-	-	-	docs, harness, oracle, feature or test change
+3de02d37	N	-	-	-	docs, harness, oracle, feature or test change
+06256225	N	-	-	-	docs, harness, oracle, feature or test change
+89bbbc7c	L1	crates/verbatim-outpost/src/outpost/intake.rs	state keyed per thread never mixes events of two threads	-	foreground and MSAA focus keyed without thread
+7f3ccafb	L1	crates/verbatim-outpost/src/outpost/intake.rs	state keyed per thread never mixes events of two threads	-	MSAA events keyed without thread
+280213dc	L1	crates/verbatim-outpost/src/outpost/intake.rs	an older foreground change never replaces a newer one	-	older foreground change not dropped behind one already taken
+89f94d33	L2	crates/verbatim-outpost/src/outpost/handover.rs	property: tick comparison correct across wraparound	-	32-bit tick comparison wraps after 24.8 days, copies never pruned
+172ac80c	L1	crates/verbatim-outpost/src/outpost/intake.rs	events kept in raised order	-	late older foreground copy replaced a newer one
+ce5ff14e	W	-	-	-	Settings replaces list items as it opens, selection item not found
+7fe497b0	N	-	-	-	docs, harness, oracle, feature or test change
+5d179968	L1	crates/verbatim-outpost/src/outpost/intake.rs	events kept in raised order	-	focus raised before a foreground change not dropped once change was batched
+50d872a1	N	-	-	-	docs, harness, oracle, feature or test change
+7087c885	L2	crates/verbatim-outpost/src/outpost/worker.rs	-	-	system caret event routed to UIA focus instead of the open watch
+e22d3a4c	L1	crates/verbatim-outpost/src/outpost/intake.rs	events kept in raised order	-	focus before waiting foreground change not dropped, pending counted wrongly
+908b95e9	N	-	-	-	docs, harness, oracle, feature or test change
+c60bacb1	W	-	-	-	UIA selected item focus state and name read wrongly
+3b479e26	L1	crates/verbatim-outpost/src/outpost/intake.rs	per-focus mark cleared at the next focus	-	uia_caret_source never cleared, plain caret moves lost
+d40f97ac	L1	crates/verbatim-outpost/src/outpost/intake.rs	events kept in raised order	-	foreground change removed focus raised after it; hand-over copy order
+0ae5fc55	L2	crates/verbatim-outpost/src/outpost/mod.rs	-	-	System caret events were dropped for a UIA focus, unlike NVDA.
+61a4bfa1	L1	crates/verbatim-uia/src/subscribe.rs	handler registered is removed or tracked	-	A failed removal or failed setup forgot a live event handler.
+71126b8d	L1	crates/verbatim-outpost/src/focus_read.rs	events ordered by raise order despite equal timestamps	-	Sorting by a coarse clock tied and kept arrival order, misordering events.
+be0436e9	L2	crates/verbatim-outpost/src/outpost/intake.rs	-	-	Focus run split at entries NVDA's pump never receives, so result depended on arrival of NodesHeld.
+e8211d5a	L2	crates/verbatim-outpost/src/outpost/intake.rs	-	-	Missing two NVDA foreground tests lost a focus whose window was already in front.
+1bfb6f87	L1	crates/verbatim-uia/src/subscribe.rs	handler registered is removed or tracked	-	Failed removals forgotten, close self-waited on its own thread, restarts unserialized.
+0b5826cd	L1	crates/verbatim-outpost/src/focus_read.rs	every queued event is resolved within its deadline	-	A hung application's pending event held later events without bound and dropped others' menu openings.
+a8992c9a	W	-	-	-	Handlers added from several threads against Microsoft's UIA threading guidance.
+14a1e716	W	-	-	-	Raw WM_GETOBJECT probe never connected to a new Explorer window, measured on real Explorer.
+fa255063	L2	crates/verbatim-outpost/src/focus_read.rs	-	-	Failed-read focus report lacked the focused state and timed-out judgement was wrong.
+e46d4183	L1	crates/verbatim-outpost/src/focus_read.rs	no stale read result is accepted after the user moved on	-	Moved-on rule judged window 0, dropped waiting focuses and accepted stale results.
+5204f351	N	-	-	-	Feature port of NVDA's watchdog rule to the listener.
+2e0945b9	W	-	-	-	UiaHasServerSideProvider answers a false no for new windows while another process holds a handler.
+12f445a2	N	-	-	-	xtask measure option fix.
+847547f6	N	-	-	-	xtask measure option.
+30d808b2	L2	crates/verbatim-outpost/src/focus_read.rs	-	-	Native check dropped a focus for time though the window verdict was already known.
+1687d404	W	-	-	-	Taskbar window served only by UIA proxies, so the proxy rule gave Failed instead of Gone.
+0b61a379	N	-	-	-	xtask trace option.
+40bb693b	W	-	-	-	Read deadline derived from a wrong model of UIA timeout bounding each provider call.
+c5ed7259	N	-	-	-	Stale docs and comments.
+c7d04714	N	-	-	-	Stale docs and flag cleanup.
+8c235918	N	-	-	-	Test of a boundary check and a guard.
+e98cfd90	N	-	-	-	Test counters in mockapp.
+12b7421c	N	-	-	-	Test fixture and cleanup of a rule.
+1b5d3822	N	-	-	-	Removal of the lock as a refactor.
+96b6cfef	N	-	-	-	Documentation correction.
+54f929a8	L2	crates/verbatim-outpost/src/listener.rs	-	-	Console event was sent to the client when its host thread could not be opened.
+a40e8315	N	-	-	-	Doc count correction.
+c35219af	W	-	-	-	Console window ownership depends on how Windows reports the creating thread and host.
+95b2b012	N	-	-	-	Refactor moving provider_process and window filters.
+edbbb31c	N	-	-	-	Docs and test.
+05cd9267	N	-	-	-	Docs.
+784d8c8f	N	-	-	-	Mockapp harness revert.
+31d462fc	N	-	-	-	Test removal.
+64557420	N	-	-	-	Mockapp stall race, test fixture.
+1e8be0c6	N	-	-	-	Test removal.
+f51d64f1	N	-	-	-	Test fix.
+314fe14e	N	-	-	-	Mockapp harness.
+2b8c8ae6	N	-	-	-	Doc.
+052e6c2c	N	-	-	-	Test.
+d5939af4	N	-	-	-	Mockapp harness.
+cb08ebcc	N	-	-	-	Test.
+6d5654cc	N	-	-	-	Test.
+c4c67e6e	N	-	-	-	Docs.
+47c47fb1	N	-	-	-	Test.
+d725c73a	N	-	-	-	Test.
+b6597870	N	-	-	-	Test.
+21212a94	N	-	-	-	Test.
+2a390b13	N	-	-	-	Test.
+f0418e07	N	-	-	-	Test.
+3b782abc	N	-	-	-	Test.
+783566d6	N	-	-	-	Test.
+52efb046	N	-	-	-	Test.
+eb6a2f73	N	-	-	-	Test.
+cb69c5a9	N	-	-	-	Test.
+a405b362	N	-	-	-	Experiments committed.
+f9d8350e	N	-	-	-	Test move.
+bdcb7dcc	N	-	-	-	E2e agent harness.
+f9fb32f7	N	-	-	-	Debug logging.
+90830c65	N	-	-	-	E2e harness cleanup.
+8739ad5d	N	-	-	-	E2e test fixture race.
+7d0a0fb8	N	-	-	-	Design record.
+32948a4d	N	-	-	-	E2e expectation.
+bd69f532	N	-	-	-	E2e expectation.
+8531e7e7	N	-	-	-	Test console title.
+f258ce53	N	-	-	-	Docs.
+e0519bf8	N	-	-	-	E2e harness check.
+14017eb1	W	-	-	-	UIA fails new connections while another process's remote operation is queued.
+f730c511	N	-	-	-	Design docs.
+5252f735	N	-	-	-	E2e expectation.
+fe5252f2	N	-	-	-	Test.
+b982f307	N	-	-	-	Trace tool feature.
+6c8f4940	N	-	-	-	E2e scenario wait.
+a3b55aa1	L2	crates/verbatim-outpost/src/terminal/reading.rs	-	-	Terminal cancel read to the end and took text that a change should have spoken.
+c0dda2c6	N	-	-	-	Docs.
+0e1b0089	N	-	-	-	Design.
+bb76b272	N	-	-	-	Docs.
+9a643c7b	N	-	-	-	Trace tool.
+df4c15d9	L1	crates/verbatim-outpost/src/supervisor/owner.rs	every placed outpost is accounted for in the idle round	-	Failed spare's Ended let an idle round pass while held facts waited, and focus was read twice.
+878a586c	N	-	-	-	Feature.
+2d47a3da	N	-	-	-	Feature.
+c0b81555	W	-	-	-	Probe retried after a slow no; matching NVDA's single ask depends on UIA probe behaviour.
+fc720442	N	-	-	-	Compare-mode harness.
+c7be8580	N	-	-	-	Compare-mode harness.
+21e1a3a2	N	-	-	-	Docs.
+40c55dd1	N	-	-	-	Docs.
+b4391ae5	N	-	-	-	Skill docs.
+b191fa58	N	-	-	-	Docs.
+26cd11b4	N	-	-	-	Skill docs.
+1624d329	N	-	-	-	Docs.
+71ae5a04	L2	crates/verbatim-input-windows/src/lib.rs	-	-	Keys that never edit were reported as caret keys.
+75e4500f	L1	yes	every request is answered once and its answer used	-	Cancel forgot an outstanding read so typing it found was not echoed.
+1a3dc022	L1	crates/verbatim-outpost/src/supervisor/owner.rs	a refused message is delivered later in order	-	Relay dropped a refused Ended so the app never replaced the outpost.
+2bdfffb7	L1	crates/verbatim-synth-hosted/src/lib.rs	a hung host is judged hung whatever the cancel pattern	-	Hang timeout ran only within a wait, so cancelled drains never judged the host hung.
+de7f481e	L1	crates/verbatim-outpost/src/supervisor/frames.rs	a parse result is delivered exactly once	-	Refused delivery lost a parse result and stalled the stream and idle barrier.
+d6f627a5	L1	crates/verbatim-outpost/src/supervisor/relay.rs	every send is followed by a wake	-	Failed wake post left the waiting mark set, losing all later wakes.
+69c06239	L1	crates/verbatim-outpost/src/listener.rs	every end gets its full grace and is sent once	-	Grace callback racing a new end sent it with no grace.
+073d63b0	L1	crates/verbatim-outpost/src/focus_read.rs	an idle waiter completes once earlier events are done	-	Idle query counted events queued after it, starving the answer.
+d0ec3a89	L1	crates/verbatim-outpost/src/outpost/worker.rs	no waiter blocks without a deadline on a lock held by an abandoned owner	-	Replacement worker waited on a lock held by an abandoned worker with no deadline.
+93525cc0	L1	crates/verbatim-outpost/src/outpost/intake.rs	idle query is answered after only earlier work	-	Idle query placed behind later arrivals, never answered during a flood.
+fe5fa4eb	N	-	-	-	Feature step of communication redesign.
+f6e58829	N	-	-	-	Feature step of communication redesign.
+10f01254	N	-	-	-	Feature step of communication redesign.
+2037e627	N	-	-	-	Feature step of communication redesign.
+2699cba2	N	-	-	-	Measurement corrections.
+610f7775	P	-	-	-	Per-event cost cuts.
+9d7fe8cd	P	-	-	-	Drops updates without waking the worker.
+8ac783fe	W	-	-	-	Console host writes between non-atomic remote-operation calls.
+70b40f1f	P	-	-	-	Unhooks events to save wake-ups.
+492a3d5d	W	-	-	-	Console host puts data in object id, which NVDA's filter dropped.
+713a4dcc	P	-	-	-	Caret sent only when changed to cut traffic.
+6b0bf0d4	L1	crates/verbatim-outpost/src/outpost/text_reads.rs	a watch closes once its evidence is seen	-	Caret key watch stayed open though a covering read had seen its evidence.
+3f0b8002	P	-	-	-	Window class cached per window to cut calls.
+8f3b0161	N	-	-	-	Trace tooling.
+b6da1055	N	-	-	-	Trace tooling.
+19cf75e0	N	-	-	-	Instrumentation stamps.
+4a8a168b	N	-	-	-	Trace tool selector bug.
+0f59a8b9	N	-	-	-	Feature step of communication redesign.
+6577680f	N	-	-	-	Test and docs.
+94bddc18	N	-	-	-	Design proposal.
+8511cd19	N	-	-	-	xtask tooling.
+720f6692	P	-	-	-	Thread priority for latency.
+d26d97d1	N	-	-	-	Design doc.
+f4d097ed	N	-	-	-	Trace tooling.
+affd9054	N	-	-	-	Trace tooling.
+fc5b8837	N	-	-	-	Test removal.
+fac2f042	P	-	-	-	Wake-ups reduced.
+0e3b25e5	N	-	-	-	Thread naming and trace tooling.
+10eac8bf	P	-	-	-	hook thread woke 47k times; wake-ups only
+d77ee9d9	N	-	-	-	audit document and measure scenario
+a9cb7de7	N	-	-	-	trace tooling
+6d5836f7	P	-	-	-	mixer writer/audio thread mutual wake-ups for slivers, no wrong output
+64eaa2e1	N	-	-	-	trace tooling
+48108bae	N	-	-	-	rustfmt
+7a4fa1a7	N	-	-	-	xtask trace
+a36d7c03	N	-	-	-	latency ledger measurement timing
+0ed4ebfc	N	-	-	-	feature in process crate
+670ccff0	N	-	-	-	measure scenarios in registry
+67df10ee	N	-	-	-	latency ledger stages
+8fe59b1b	L1	crates/verbatim-outpost/src/focus_read.rs	listener's last-focus copy matches Core's last queued focus	-	listener's copy of last accepted focus disagreed with Core's, dropping a real focus as a repeat
+e4642b3b	N	-	-	-	logging
+32133bbe	N	-	-	-	comment corrections and test additions
+5bd8b480	N	-	-	-	roadmap
+ffacb9b5	N	-	-	-	port/rebuild of focus handler, refactor-like parity work
+dfd83897	N	-	-	-	test tolerance for Windows Terminal race
+85d39df2	W	-	-	-	UIA registration order determines whether Windows Terminal raises second identity
+f0dcd9df	W	-	-	-	UIA client registration behaviour with Windows Terminal
+d2c97f8d	W	-	-	-	UIA cache request affects Windows Terminal events
+f57bf70b	N	-	-	-	e2e harness shell startup
+5ba304c8	L2	crates/verbatim-app/src/requests.rs	-	-	startup announcement spoke the window unlike NVDA
+1b2e5420	W	-	-	-	window proxy from client side supplies title that in-provider read lacks
+972e6574	N	-	-	-	logging
+a46d8b53	N	-	-	-	feature: judge repeated focus in listener as NVDA
+d4019592	N	-	-	-	design doc
+a9f18403	N	-	-	-	roadmap
+c5af23c2	N	-	-	-	clippy and test pins
+5a2d7e3f	N	-	-	-	first-build fixes and mockapp tests
+a0cc6cd0	W	-	-	-	ancestor walk ends at process top element; needed knowledge of ApplicationFrameHost ancestry
+a17676f6	N	-	-	-	feature: announce windows from ancestry per design
+c068a974	N	-	-	-	lints and measured pins
+a4fcbcf1	N	-	-	-	feature: listener judges focus
+0cdc9f0f	N	-	-	-	logging
+152f09a9	N	-	-	-	feature per design
+0268e355	N	-	-	-	harness window cleanup
+38040503	N	-	-	-	doc
+1964d9f4	N	-	-	-	design doc
+29790d46	L1	crates/verbatim-outpost/src/terminal.rs	a change counts as covered only by a read that reported output	-	unsettled read advanced coverage time so queued change was dropped and output never read
+ff18b855	N	-	-	-	roadmap
+9bcfdfc6	N	-	-	-	lints and tests
+f9d067d2	N	-	-	-	logging
+ebb9d1a0	N	-	-	-	control-plane harness deadline
+91bb844a	N	-	-	-	recording check in harness
+dfa5bde4	W	-	-	-	console foreground event arrives before window is in front; NVDA doPreGainFocus parity
+31304c78	N	-	-	-	parity docs
+bae57d1a	N	-	-	-	recording harness
+f152fcf2	N	-	-	-	roadmap
+102a5d3f	P	-	-	-	cheaper MSAA selection reads
+9ef92159	P	-	-	-	read only named property, cheaper reads
+f7556c8c	N	-	-	-	harness window switching
+a40d3212	N	-	-	-	feature: message box for replacement
+0033e932	N	-	-	-	feature: terminate running instance as NVDA
+6a7266af	N	-	-	-	roadmap
+5cd388c6	N	-	-	-	roadmap
+8be22232	L2	crates/verbatim-outpost/src/outpost/worker.rs	-	-	tab left by Control+Tab was announced; rule for moved-on focus produced wrong speech
+5440c153	L1	crates/verbatim-outpost/src/outpost/intake.rs	batch limits never drop the newest foreground fact	-	batch limit kept newest four focus events and dropped a late foreground event
+4405c84c	N	-	-	-	feature: bound wait in single instance
+52db961d	N	-	-	-	new event report for tests
+f694dcab	N	-	-	-	e2e harness shell startup
+d06767f1	L2	crates/verbatim-outpost/src/outpost/worker.rs	-	-	owner decision; outpost sent NoText so blank was not spoken
+3e11bbf3	N	-	-	-	test registry check
+dd9114f1	L1	crates/verbatim-outpost/src/outpost/worker.rs	every reported focus has its element followed by subscriptions	-	focus reported from its event alone was never followed until another event
+1a1bc32f	N	-	-	-	harness
+edd0352c	W	-	-	-	File Explorer raises foreground event before showing the window
+4e45eaf5	W	-	-	-	measured Windows foreground event timing; waits removed
+65535ac8	N	-	-	-	build config
+90f60c31	L2	crates/verbatim-outpost/src/terminal.rs	-	-	flood-scrolled screen kept as main screen as if alternate screen
+359accdd	N	-	-	-	tests
+a399b4e5	L2	crates/verbatim-outpost/src/terminal.rs	-	-	moved-view read set aside when footer redrawn lower, losing flood lines
+e2834a03	L2	yes	-	-	blank rows and wrapped lines counted wrongly in screen read
+496daa22	N	-	-	-	feature: screen reader flag
+ea8baf65	N	-	-	-	feature: terminal line keys redesign
+4812fc32	N	-	-	-	test output
+8f1b2736	L2	yes	-	-	only first marker line spoken instead of every line gaining a marker
+1a6cd649	N	-	-	-	docs
+344072d4	N	-	-	-	comments
+ab53da5d	N	-	-	-	test output
+f853e257	N	-	-	-	tests
+8bf8ad2c	N	-	-	-	harness
+e4671b48	N	-	-	-	agent harness
+9b2aa658	L2	crates/verbatim-outpost/src/terminal.rs	-	a399b4e5	regression: read untrusted whenever view moved, same trusted-view defect as a399b4e5
+d598ca3b	N	-	-	-	agent handle inheritance in harness
+676d1275	W	-	-	-	edit control may handle key between two reads; application timing
+e07438d2	L2	yes	-	-	flood above redrawn footer unread; review cursor behaviour vs NVDA
+a58a7fce	L2	yes	-	-	selection list marker line not spoken when caret not on changed line
+469f9110	L2	yes	-	-	terminal comparison fixes for long lines and alternate screen
+9d80d177	N	-	-	-	merge of terminal package
+5ea92638	L2	yes	-	-	line cleared and retyped not echoed: diff compared against stale text
+37b24f9a	N	-	-	-	mockapp stack use
+d8d906d8	N	-	-	37b24f9a	duplicate mockapp stack fix
+049c850b	N	-	-	-	revert
+515322bd	N	-	-	-	mockapp stack
+891eae28	N	-	-	-	harness
+17538d02	W	-	-	-	console host WinEvents continue where UIA text changes stop
+7d804d33	W	-	-	-	console host window element reports keyboard focus and raises focus events
+023e2ed5	W	-	-	7d804d33	duplicate commit of console host window focus fix
+b74a8851	N	-	-	-	harness foreground
+9b1c7941	N	-	-	-	feature: terminal reading redesign
+b4f84d01	N	-	-	-	test isolation and misc
+fd90a816	N	-	-	-	merge
+cef8587b	N	-	-	-	feature: ignore pids in e2e
+510b7f82	N	-	-	-	merge of feature work
+a6b36cb8	N	-	-	-	feature: clean shutdown, suspected cause only
+94dfe107	N	-	-	-	harness portable terminal
+e0b32fad	N	-	-	-	refactor for clippy
+fc899340	L1	crates/verbatim-outpost/src/outpost/mod.rs	command reader never blocks on locks held by worker	-	reader thread waited on locks held across a slow text read, stalling commands
+56808c3e	P	-	-	-	worker slept up to 250 ms; latency only
+6a59bdfc	L2	crates/verbatim-outpost/src/outpost/worker.rs	-	-	foreground window's state change spoken as unavailable unlike NVDA
+f8d23cb2	P	-	-	-	worker waited for caret evidence, delaying other events; latency
+df31f6a8	L2	crates/verbatim-outpost/src/outpost/worker.rs	-	6a59bdfc	same ancestor state change defect, second round
+df33f2ed	W	-	-	-	oleacc COM identity of accParent objects
+54f9a26e	L1	crates/verbatim-outpost/src/outpost/worker.rs	window announced before its focus whatever the arrival order of outpost reports	-	two outposts' reports unordered so window announcement was lost
+aed6e459	N	-	-	-	feature decision: drop start message
+3fd2a7fb	N	-	-	-	e2e scenario
+6975a84b	W	-	-	-	Common Controls v6 edit control returns zero-extended -1
+04eb7d62	N	-	-	-	test harness cleanup
+2e89a0ce	W	-	-	-	Win32 group box is sibling not parent; z-order container
+d0578e90	N	-	-	-	feature: progress indication
+e6dcfcff	W	-	-	-	console host raises caret events on its own schedule
+51fdda00	N	-	-	-	e2e scenarios
+0ce18bd9	L2	crates/verbatim-uia/src/client.rs	-	-	failed UIA call mapped to None, read as nothing selected
+240ae908	N	-	-	-	harness Notepad race
+f1f3a2a5	N	-	-	-	feature: text attributes
+d15ad1dc	W	-	-	-	Windows 11 Notepad resets client name on activation
+92b2bb1d	N	-	-	-	harness Notepad
+49507be6	W	-	-	-	UIA mixed sentinel and Windows Terminal format units
+bf4fbedb	L1	crates/verbatim-speech/src/manager.rs	speech caused by an earlier key never audible after a later key's cancel	-	a cancel overtook the earlier key's queued speech, so it was heard in full
+ca393ca9	N	-	-	-	test harness standard
+82f08cd5	L1	crates/verbatim-outpost/src/outpost/intake.rs	a focus overtaken by a newer focus in the same window is never announced	-	stale focus applied after a newer one in the queue
+475ebaef	N	-	-	-	test only
+42d9caaf	L1	crates/verbatim-outpost/src/outpost/intake.rs	a focus change is handled before other objects' events in a batch	-	batch order delayed a focus behind unrelated reads
+8dfb5fd1	N	-	-	-	test strengthening
+6070d78d	N	-	-	-	merge of test fixes
+5c2ae2cf	N	-	-	-	merge of test fixes
+be63c189	N	-	-	-	mockapp test harness
+a75fdd64	N	-	-	-	removes ignored test
+963f8427	L2	crates/verbatim-i18n/src/lib.rs	property: no resolved message contains bidi isolation marks	-	locale-folder languages loaded with isolation on put U+2068/2069 into speech
+d76d2caa	N	-	-	-	test temp folders
+abc24e61	L2	yes	-	-	recorded foreground stayed on previous window when focus arrived without foreground fact
+4aefb9d5	N	-	-	-	test exactness
+a2126cf7	N	-	-	-	test exactness
+22ef6c87	N	-	-	-	test exactness
+38769632	N	-	-	-	docs
+8f2f16eb	L2	crates/verbatim-outpost/src/terminal.rs	-	-	set-aside read counting from a full scrollback anchor took an empty fingerprint and screen diff spoke last lines twice
+c4f90408	N	-	-	-	CI
+e180f14a	L1	yes	review command reads the caret after earlier key's caret script finished	-	review read used key press time caret instead of live caret ordering
+6869c298	N	-	-	-	startup stand-in theme logging
+7680d51b	N	-	-	-	agent test input
+00e73cca	N	-	-	-	scenario marking
+dd78ed35	N	-	-	-	test expectation from live run
+b75c29c5	N	-	-	-	scenario harness
+ff25f3dd	L1	crates/verbatim-app/src/main.rs	ready reported only after Core knows the focus	-	first focus report raced with a client acting right after ready
+de784260	W	-	-	-	label recognition depends on hidden/disabled child windows in dialogs
+9415db48	P	-	-	-	extra MSAA calls, counts only
+ab2cebe8	N	-	-	-	xtask demo
+ebe7c460	L1	yes	state change spoken only while its object is the focus, in event order	-	button state change delivered before the slower focus event
+643e25cc	N	-	-	-	feature
+a39cbf9d	N	-	-	-	demo scenarios
+4bb45a0f	N	-	-	-	latency measurement
+d18608e7	N	-	-	-	docs
+dfce88ba	N	-	-	-	videos docs
+3c12b58e	L1	crates/verbatim-outpost/src/terminal.rs	a set-aside read restarts from fresh anchor	-	stale anchor matched an earlier flood so second flood never spoken
+76180512	L1	crates/verbatim-gui/src/shell_items.rs	every started enumeration gets an outcome	-	in-flight flag never cleared when guard thread failed to start
+ff176ab6	N	-	-	-	scenario timing
+9112c4f1	W	-	-	-	terminal text scrolls beneath ranges between provider calls
+3ffca195	L2	yes	-	-	prompt trailing space made echo mismatch typed text
+3f4dbb44	W	-	-	-	console host window handle not supplied by provider
+d1a16c4e	N	-	-	-	agent launch harness
+2f198243	N	-	-	-	scenarios
+3616b7b6	N	-	-	-	feature flood policy
+71acde7c	N	-	-	-	feature
+e0411528	N	-	-	-	build config
+c8b5c33c	N	-	-	-	packaging
+d3e06da4	N	-	-	-	feature saving calls
+9670e392	N	-	-	-	audit hardening
+b42338f0	N	-	-	-	comments
+638db32f	N	-	-	-	mockapp
+e80cee36	N	-	-	-	mockapp
+a227cd8a	N	-	-	-	agent
+640cfd23	N	-	-	-	agent
+b70e5ecc	N	-	-	-	unsafe audit
+b2f69959	W	-	-	-	other process can replace clipboard data
+2527d6d9	W	-	-	-	WinEvent hooks share thread-local callback
+f0283bcb	W	-	-	-	hook reentrancy via sent messages
+b0f61b68	W	-	-	-	comctl32 tree item handle semantics
+2204385d	N	-	-	-	setting feature
+d0ff6b64	W	-	-	-	window property settable by any process
+2a2b1454	W	-	-	-	thread message queue creation in Windows
+f052395f	W	-	-	-	window handle reuse and missed destroy events
+f8adeb61	N	-	-	-	test
+fe53a2bd	W	-	-	-	COM boundary and SAFEARRAY from other process
+a8523db2	W	-	-	-	loader lock on thread-local destructor
+340a7930	L2	yes	-	-	Tab spelled in typed-character echo
+53c93c49	N	-	-	-	scenarios
+b79053d2	N	-	-	-	feature
+dcee82d0	N	-	-	-	feature
+92a0182f	N	-	-	-	feature
+82fb4de8	N	-	-	-	feature
+fab5ce46	W	-	-	-	WASAPI GetBuffer behaviour
+848dcc77	W	-	-	-	named pipe squatting
+42f14a34	W	-	-	-	application returns huge child count
+20901603	N	-	-	-	GUI port
+88a901f9	N	-	-	-	refactor wrappers
+77308d06	N	-	-	-	build
+555f5ec5	N	-	-	-	ledger
+6e8ab4c8	N	-	-	-	reporting
+8f568261	N	-	-	-	reporting
+7fc1c439	N	-	-	-	tests
+b94d5754	N	-	-	-	harness waits
+46b993fa	L1	crates/verbatim-app/src/main.rs	ready only after all event registrations installed	-	Ready announced before hooks installed so early menu events were missed
+b780a958	P	-	-	-	bounds ledger memory
+1ce819ee	N	-	-	-	scenario
+9532254c	N	-	-	-	scenario
+0c3ac72b	N	-	-	-	scenarios
+4c1f1502	L2	yes	-	-	window title never spoken when foreground fact dropped
+b8ea103d	N	-	-	-	submodule and docs
+f974d643	N	-	-	-	NVDA add-on
+5d78aa24	W	-	-	-	mixed follow-ups on MSAA nav and reused window handles
+45241432	N	-	-	-	docs
+9e250d2b	L1	yes	focus accepted only against the foreground at the time, in event order	-	focus judged against stale attention record before foreground report arrived
+b1917eed	L1	yes	foreground changes ordered by observation time across outposts	-	stale rule dropped the earlier observed foreground change
+59d707fb	N	-	-	-	build
+fc641a83	W	-	-	-	transient UIA/MSAA failures
+2da170b7	N	-	-	-	docs
+4d07d573	N	-	-	-	leftovers
+737fb05c	L1	crates/verbatim-app/src/requests.rs	every abandoned request is withdrawn or answered once	-	abandoned tree dump not withdrawn from outpost
+453460cf	N	-	-	-	logging
+08a82ec2	N	-	-	-	logging
+3baec603	N	-	-	-	logging
+ec40ca4b	N	-	-	-	logging
+d49f585c	N	-	-	-	merge
+21fb0e51	L1	crates/verbatim-speech/src/manager.rs	a cancel forgets all speech handed on, late endings do not expire later speech	-	late mixer endings expired speech handed on after cancel
+39b31fdf	N	-	-	-	feature
+1494088e	N	-	-	-	feature
+3dfce624	N	-	-	-	scenarios
+fed532be	W	-	-	-	UIAutomationCore detach code hangs
+3b67510e	W	-	-	-	UIA first-time setup race on threads
+7c402534	W	-	-	3b67510e	UIA first-time setup race on threads
+77049fb6	L2	yes	-	-	notifications judged by attended app instead of focus app
+60de4e41	L2	crates/verbatim-outpost/src/arbitration.rs	-	-	window class names not normalized before arbitration
+13dcd2db	W	-	-	-	Windows timeout taken for real answer from busy app
+d5abcafd	N	-	-	-	CI
+799264ad	N	-	-	-	CI
+47d2df6f	N	-	-	-	feature
+ff75d2ac	L2	yes	-	-	states and values spoken differently from NVDA
+2865ac1f	N	-	-	-	harness
+d9da0359	L2	yes	-	-	ancestry and repeated focus compared differently from NVDA
+018e62d5	W	-	-	-	starting app raises foreground event before it is foreground
+7f39c40b	N	-	-	-	logging
+d4b3a844	N	-	-	-	redesign step
+38bb0eb0	N	-	-	-	redesign step
+429d50f0	N	-	-	-	redesign step
+2d1fab88	N	-	-	-	harness
+d47a94d2	N	-	-	-	harness
+706a77be	N	-	-	-	docs
+df98ef98	N	-	-	-	xtask
+4667f43a	N	-	-	-	xtask

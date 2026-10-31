@@ -144,7 +144,7 @@ On 2026-10-30:
 - A repeat focus is read in full and judged in Core; no reader holds a copy of Core's focus. The application rules stay where they are until M5.
 - The reducer runs on a thread of its own; its cost is in `docs/performance.md`.
 - The refactor includes the settings saver, real-time audio, the synthesizer's display name, the key number on the input and review commands on the key reports' route. The message types live in `verbatim_model::protocol`.
-- The gap record is kept as built, and the supervisor's owner thread is not made a pure state machine.
+- The gap record is kept as built, and the supervisor's owner thread becomes a pure state machine in M6.2, after the refactor (`docs/roadmap.md`). Amended on 2026-10-31.
 - The title rule belongs to the focus pipeline rework; the refactor preserves behaviour except the kept speech changes.
 - The version rule's configuration instance is built in M5: the rule tables and the fetch configuration get a version published by Core alone, named by every judgement made under them.
 - The listener skips a UIA focus whose window's class is on NVDA's MSAA list before any read; the outpost's verdict owns every other window.

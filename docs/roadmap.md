@@ -12,7 +12,9 @@ VM), and M3 (desktop usability core) are complete, and what each
 delivered is in [Completed milestones](roadmap-done.md). M4 is in
 progress; its completed parts, M4.1 (stability) among them, are listed
 there too, and M4.1's open follow-ups are under M4, "Follow-ups from
-M4.1".
+M4.1". Next: the keep-id fix, the focus pipeline rework's first step;
+M4.5 (logic foundations); the rework's second build; M4.6 (generated
+tests); then the rework's third build (Dickson, 2026-10-31).
 
 ## M4 — Text, editing, and terminals
 
@@ -68,8 +70,15 @@ against mockapp's `object_equality.json` fixture.
 Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
 between processes' copies of one fact, so the ownership refactor below
 comes first. The rework then resumes with the keep-id review's fix, half
-built and uncommitted in the worktree `verbatim-wt-fix2`, and its remaining
-steps in [the remaining builds](design/focus-pipeline-rework-remaining.md).
+built and uncommitted in the worktree `verbatim-wt-fix2`; then M4.5,
+then the second of the remaining builds in
+[the remaining builds](design/focus-pipeline-rework-remaining.md), then
+M4.6, then the third (Dickson, 2026-10-31). The second build's design,
+written against today's `intake.rs` and `focus_read.rs`, is restated
+after M4.5, which moves and simplifies that code. The third build updates
+M4.6's generators for the inputs it changes, adds invariants for its new
+mechanisms, and writes the listener's checks before reading as pure
+functions of what its calls return.
 
 Follow-up, not established from the code alone: Core refuses a foreground
 report of the window holding its focus (`crates/verbatim-core/src/reduce.rs`,
@@ -127,10 +136,6 @@ is heard, except the three changes the design names. Built in a session of
 its own, a few large builds, each designed against the code and reviewed
 just before it. All five builds are built; the rules for the planned milestones are in [the milestone rules](design/ownership-milestone-rules.md).
 
-### Invariant tests for the reducers
-
-Once the focus pipeline rework is built, generated tests (the `proptest` crate) drive Core's reducer and the outpost's reducer, each pure, with random sequences of their inputs and check after every step what must always hold: for the outpost, every query answered once, every waiter answered or let go, no idle answer while anything is deferred, no change from a dead generation's commit, no object released on the reducer's thread, and no timer in the past; for Core, each held focus's line consistent, nothing of a stale generation spoken, each node released once, and nodes of different backends never one object. Every defect found after the outpost reducer build broke one of the first list, and the `explorer_folder_window` failure on GitHub's runner breaks the last (`docs/flaky-tests.md`). No behaviour changes.
-
 ### The caret and selection rework
 
 The decisions, the design and the order of work are in
@@ -175,6 +180,9 @@ The decisions, in brief:
 - The judgement of a key's evidence stays in the outpost, named in D14 as
   the one read-time decision outside Core, since it bounds reads on text
   changes.
+- M4.6's generated tests of the outpost's reducer extended to the text
+  facts this rework keeps, among them one baseline per text node, once it
+  has removed the second layer, so no test is written for a removed state.
 
 ### Deferred
 
@@ -195,7 +203,7 @@ is kept in the repository.
 
 Tests and tooling:
 
-- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause (failure recorded in [the known failures](flaky-tests.md)).
+- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause (failure recorded in [the known failures](flaky-tests.md)). The hypothesis to test first, unconfirmed: `cargo test` runs a file's tests as threads of one process, these tests make UIA calls from that process, and UIA keeps state per process (`docs/uia-bugs.md`, "The connection timeout applies to the whole process"); run each alone ten times and with its file ten times, and if only the second fails, run the files whose tests call UIA one process per test.
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s). `measure_focus_explorer`'s key waits end on their key's item, which two keys share ("alpha 2 of 4" for Down 1 and Up 1), so a late repeat can end the next key's wait; the targets are `explorer_folder_window`'s, so renaming cannot fix it.
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
@@ -245,6 +253,107 @@ Text and selection:
 
 - `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. The caret and selection rework removes the first check and runs the scenario ten times; if it still fails, the likely cause, unconfirmed, is Core comparing "alpha" while the outpost's word unit reads "alpha " with its white space.
 - The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it; the caret and selection rework's captures settle it.
+
+## M4.5 — Logic foundations
+
+Built after the keep-id fix and before the focus pipeline rework's
+remaining builds (Dickson, 2026-10-31). The design, its rules, the
+alternatives weighed and its limits are in
+[logic tests](design/logic-tests.md); the evidence and the review are in
+`experiments/logic-tests-study/readme.md`.
+
+- `verbatim-outpost` split by role: `verbatim-outpost` and
+  `verbatim-listener`, each its own executable, and `verbatim-supervisor`,
+  with one-way dependencies; their logic in `verbatim-outpost-logic`,
+  `verbatim-listener-logic` and `verbatim-reader-rules` (the rules both
+  readers apply before reading), in the GPL tier with no Windows
+  dependency, and the supervisor's pure decisions in `verbatim-core`; the
+  shared window code in `verbatim-win32`, and the message layer, launch
+  arguments and alarm in `verbatim-process`. A `cargo xtask ci` check that
+  the logic crates depend on no Windows crate, and that no
+  platform-neutral crate depends on a GPL-tier crate, closing the holes
+  the platform-neutral check has (build dependencies, `winapi`, and
+  Windows-only workspace crates). The full end-to-end suite runs once at
+  the end, since how the listener starts changes.
+- The outpost's program bookkeeping simplified, moved from M6.1 (Dickson,
+  2026-10-31): test settles merged into the idle query, so one barrier
+  remains; verdicts posted as a message of their own, so a dead
+  generation's commits are refused with no exception; each program given
+  fresh copies of the reducer's facts at dispatch, so the worker keeps
+  none between programs; whether the console poll must yield to other
+  programs, or a simpler rule, such as a program waiting behind it for at
+  most its 50 ms, removes its slot and the re-dispatch behind it (the poll
+  itself stays, since the console host raises caret events only on its
+  cursor's blink); and a program's one commit and its end posted as one
+  message, if a measurement shows the hop costs. Each part is judged on
+  wake-ups and latency as well as on the states it removes.
+- Fault injection at the six hand-off operations whose failure paths held
+  defects (de7f481e, d6f627a5, 76180512, 1bfb6f87, 61a4bfa1, 0d1e7802),
+  each with a test that the request is still answered, the work still
+  taken and the shutdown finished.
+- Flags shared between threads that decide a wake, such as the relay
+  mailbox's `posted`, removed, the wake decided by reading the state; a
+  mark used within one thread made a guard that clears it when dropped.
+- A debug-build check that fails when a call into an application is
+  counted while one of the outpost's locks is held (d0ec3a89, fc899340),
+  its cost stated in the performance ledger.
+- `xtask` built on any platform, its Windows-only commands applying only on
+  Windows, and a Linux job in CI that builds and tests the logic crates
+  and `verbatim-core` and runs `cargo xtask docs` and the scans.
+- Determinism enforced in the pure crates (Dickson, 2026-10-31): no
+  standard hash map or set, whose order changes with each process, no
+  clock, no randomness, no thread and no environment read, checked by
+  Clippy's disallowed types and methods per crate and by the ownership
+  scan, after an audit of the 29 standard hash maps and sets there.
+- `CLAUDE.md` updated for the third kind of crate and for the Linux job
+  beside `cargo xtask ci` in its Commands section.
+- Before and after: wake-ups, processor time, each child's memory, and
+  `cargo xtask ci`'s time.
+
+Exit: `cargo xtask ci` and the Linux job pass; the full end-to-end suite
+passes once; each fault point has a test.
+
+## M4.6 — Generated tests
+
+Built after the focus pipeline rework's second build, so the tests are
+written once against the code that stays (Dickson, 2026-10-31); the design
+is [logic tests](design/logic-tests.md), "M4.6".
+
+- The invariants, reference models and postconditions designed first, from
+  the designs and the parity docs rather than from the defects already
+  fixed, reviewed adversarially, and each shown to fail its test when the
+  rule it guards is broken.
+- Generated state-machine tests (`proptest-state-machine`) for the
+  outpost's reducer first, then Core's reducer, the listener's scheduler
+  and Core's request table, each compared with a far simpler reference
+  model, its effects checked against postconditions and its invariants
+  after every step; generators valid by construction, weighted toward
+  lifecycle operations, with counts of the states reached.
+- Fixed seeds and case counts in `cargo xtask ci` (Dickson, 2026-10-31); a
+  separate exploration job with new seeds, whose failures become fixed
+  cases.
+- A recorder of reducer inputs in end-to-end and NVDA capture sessions,
+  and replay tests comparing what is spoken, exactly, with the captures,
+  after checking whether the captures hold enough of the inputs.
+- `cargo-mutants` on the reducer crates, limited to changed code.
+- Each generated case run twice in the gate and its effects compared, so a
+  leak of nondeterminism fails at once.
+- The judgement, with thresholds set in this milestone's design and
+  accepted by Dickson before any test is written: the mutants the
+  generated tests kill that the replay tests miss, and the ordering
+  defects found in later builds against the time spent on generators and
+  models. If they are not met, the tests stop growing and the simulation
+  is not built.
+- The simulation deferred until the judgement is met, the transport's
+  merge, priority and overflow rules are pure code, and a recorder of the
+  worker's commits exists; if it is built and shows value, a simulated
+  application follows, its conformance checked against mockapp and
+  recorded sessions as the simulated terminal's is against the real
+  terminals ([logic tests](design/logic-tests.md), "Toward a simulated
+  application"; Dickson, 2026-10-31).
+
+Exit: each pure owner listed has its generated test in the gate; the
+thresholds are recorded with their first measurement.
 
 ## M4.2 — Parity small items
 
@@ -348,6 +457,12 @@ tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md).
 This entry keeps the scope and the exit criteria. M4.4, which gave the
 messages the extension surface exposes their final home, is done.
 
+Before step 1, the design is restated against the outpost's reducer,
+which postdates it, and reviewed adversarially (the work plan's step 0b;
+Dickson, 2026-10-31). Each step adds its invariants and model checks to
+M4.6's generated tests, and the rules, the derived capabilities and the
+package reader get generated tests of their own.
+
 - Modules as folders: a module is a `module.toml` beside a Wasm component;
   a built-in is a module folder under `extensions/builtin/` (planned), never listed
   and never disabled by the user; an extension is a `.vext` bundle of
@@ -360,8 +475,10 @@ messages the extension surface exposes their final home, is done.
   outpost before any hook runs, refused at load when two rules of one module
   contradict.
 - The component host on wasmtime with the component model (D6, decided
-  2026-10-22): epoch deadlines re-armed per hook from the outpost's
-  watchdog, node reading as bindings over the outpost's own readers, speech
+  2026-10-22): epoch deadlines kept by the worker's own timer, never the
+  reducer's alarm, within the program's deadline the reducer keeps
+  (Dickson, 2026-10-31), with each hook's deadline judged by its own
+  store, since the epoch is the engine's (the work plan's step 0b), node reading as bindings over the outpost's own readers, speech
   enforced by attention, hooks `on-load`, `on-unload`, `on-event` with
   `pass`, `drop`, `replace`, `rewrite` and `adopt`, `on-node`, `status-bar`
   and `on-command`. The `ci-arm64` job ratifies Cranelift on ARM64 and
@@ -375,7 +492,17 @@ messages the extension surface exposes their final home, is done.
 - Binding by application identity (executable, console client, hosted app,
   WebView2 parent) resolved by the supervisor, one module instance per
   outpost; hot reload of installed, developer and built-in module folders
-  by validate-then-swap.
+  by validate-then-swap, the folder watch starting from the `notify` crate
+  with `notify-debouncer-full`, adopted only once its source and its idle
+  wake-ups are checked.
+- Global modules (Dickson, 2026-10-31, reversing the decision of
+  2026-10-22 that left them out): the tray list, the taskbar list and
+  reading the current time move from core code to global modules. A
+  global module runs on a Core thread of its own, never the reducer's;
+  its reads of an application go to the owning outpost as queries in
+  Core's request table, as a module command's do, and its speech is an
+  effect Core's reducer judges. Designed in step 0b, with the thread and
+  hop each adds measured, and a clock import for reading the time.
 - The minimal log ring, the log viewer window and the Verbatim+F1 focus
   report, pulled forward from M9 because module failures and rule
   provenance need somewhere to be read.
@@ -423,7 +550,7 @@ messages the extension surface exposes their final home, is done.
 
 Out of M5 by decision (Dickson, 2026-10-22): module settings and storage,
 the utterance, settings-changed, timer and response hooks, asynchronous
-imports, global modules, updating or reordering installed extensions,
+imports, updating or reordering installed extensions,
 scripted modules and the interpreter console (M10), and the
 `verbatim:synth` world with its tone synthesizer (M6, where the host work
 is).
@@ -462,7 +589,20 @@ and D18; the order of work, with its tests, is
   `eloquence_` scenarios run by Dickson by hand with the engine files,
   never in CI.
 - A shared-memory PCM ring only if the pipe path misses the budget for
-  Eloquence; pipes until numbers prove otherwise (D18).
+  Eloquence; pipes until numbers prove otherwise (D18). A ring, if built,
+  is a well-tested crate or has a `loom` model before it is used, since it
+  would be a lock-free structure shared between processes.
+- The host's command handling as one pure module both host builds share
+  (commands in; speaking, stopping, answering an utterance cancelled
+  before it began and applying a setting out), and `HostedSynth`'s view
+  of the host as a pure state: what the host owes, what drains, and the
+  hang rule, a host hung once it has owed a message for the timeout with
+  nothing sent (2bdfffb7). Generated tests against a model of the pair
+  check that every `Speak` ends once, nothing of a cancelled utterance
+  plays, and a host that stops answering is judged hung within the
+  timeout. The adapters' mark tables get generated tests: every mark
+  reported once and in order, and the PCM length exact (Dickson,
+  2026-10-31).
 
 Exit: Eloquence speaks through Verbatim under the sandbox; the latency
 scenario is green in Dickson's run of the `eloquence_` scenarios, recorded
@@ -474,8 +614,6 @@ Scheduled after M6 and before M7, whose IAccessible2 work adds many COM
 calls into browsers (Dickson, 2026-10-29). Separate from the focus
 pipeline rework, since cancelling a stuck call frees a thread that is now
 abandoned but changes nothing spoken.
-
-First, the outpost's program bookkeeping is simplified, in one design and one build, before cancellation adds to the abandonment path, each part judged on wake-ups and latency as well as on the states it removes (`docs/design/ownership.md`): test settles merged into the idle query, so one barrier remains; verdicts posted as a message of their own, so a dead generation's commits are refused with no exception; each program given fresh copies of the reducer's facts at dispatch, so the worker keeps none between programs; whether the console poll must yield to other programs, or a simpler rule, such as a program waiting behind it for at most its 50 ms, removes its slot and the re-dispatch behind it (the poll itself stays, since the console host raises caret events only on its cursor's blink); and a program's one commit and its end posted as one message, if a measurement shows the hop costs.
 
 `CoCancelCall` ends no UIA client call, because UIA waits on its own
 channel rather than in a COM call
@@ -508,6 +646,15 @@ inside UIA (`docs/design/listener-without-connections.md`).
   of 20 seconds, which Verbatim lowered to 5 seconds on 2026-10-10, and a
   timeout bounds each provider call, not an operation; its bound is
   settled with the order above.
+- The supervisor's owner thread as a pure state machine, with the clock
+  and I/O completions as inputs (Dickson, 2026-10-31, revisiting the
+  ownership refactor's default of 2026-10-30;
+  `experiments/ownership-study/audit-structure.md`, item 7), in
+  `verbatim-core` beside the decisions M4.5 moved, built with the order
+  above, since this milestone rewrites it; and readiness as one of its
+  decisions, announced only once every hook is installed and Core knows
+  the focus (ff25f3dd, 46b993fa). A generated test against a model checks
+  that at most one outpost serves an application at any time.
 
 ## M6.3 — Speech and audio pipeline
 
@@ -570,6 +717,14 @@ second real engine (Dickson, 2026-10-29).
   at them with the audio step.
 - The audio device awake time setting, with the awake period above.
 - What Verbatim does for a user whose first OneCore activation after logon takes longer than the synthesizer host's ten-second hang bound is open (Dickson, 2026-10-21).
+- The speech queue thread's decisions as a pure reducer, built with the
+  `drop_expired` fix, since both rewrite the queue (Dickson, 2026-10-31), with a generated test
+  against a model of the queue: every utterance ends exactly once, a
+  cancel ends only older utterances, a cull keeps every utterance still
+  valid.
+- Generated tests for OneCore's WAV and mark parsing (any bytes: no panic
+  and no read past the end) and eSpeak NG's mark splitting (every sample
+  delivered once, marks in order).
 
 ## M6.4 — Terminal residuals
 
@@ -734,7 +889,10 @@ declared deviation where Dickson chose one.
   process. Either way Core's state stays cheap to clone (agreed
   2026-10-06): a buffer held in Core keeps its text in a rope and its
   nodes in a persistent map, both sharing memory when cloned, so the
-  flight recorder's checkpoints stay affordable.
+  flight recorder's checkpoints stay affordable. Starting points: `imbl`
+  for the map, whose MPL-2.0 licence is checked against the
+  platform-neutral tier first, and `ropey` or `crop` for the rope (Dickson,
+  2026-10-31).
 - IA2 lands here, deferred from M3 because browsers are what motivate it:
   interface acquisition (`IServiceProvider::QueryService` from the
   WinEvent's `IAccessible` to `IAccessible2` and the IA2 text, hypertext,
@@ -944,6 +1102,11 @@ theme's output is unchanged from before M11.
 
 - Pairing/auth UX on the control plane; speech mirroring out, input in;
   secure-desktop and permission rules applied to remote sessions.
+- The TLS WebSocket transport starting from the synchronous `tungstenite`
+  and `rustls` on a thread of their own, handing messages to the rest of
+  Verbatim as the control plane does, with no async runtime
+  ([logic tests](design/logic-tests.md), "Alternatives weighed"; Dickson,
+  2026-10-31).
 
 Exit: control a second Verbatim instance (between the VM and the host)
 end-to-end.

@@ -64,7 +64,7 @@ Every design brief and review checks these; the ownership refactor (`docs/design
 - A COM object is released only on a thread allowed to block, never on one that must stay responsive, because a release can call into a slow application.
 - A loop never times a wake it will not act on, because the outpost's reducer spun at full processor time on a past wake.
 - Every request and waiter has exactly one answer path, including after abandonment and re-dispatch, best a token whose drop answers it, because the settle waiters were lost twice that way.
-- A pure state machine with many lifecycle paths gets generated invariant tests, because hand-written tests covered none of the outpost reducer's bookkeeping defects.
+- A pure state machine with many lifecycle paths gets generated tests that compare it with a much simpler reference model and check exact postconditions and invariants after every step, because hand-written tests covered none of the outpost reducer's bookkeeping defects, and in Hughes's measurement invariants alone caught 38% of injected bugs, against 100% for a model.
 
 ## NVDA provenance
 
