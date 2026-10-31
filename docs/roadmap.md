@@ -117,15 +117,6 @@ Further follow-ups from the focus work and the ownership builds:
   "A window past the bound that the outpost judges UIA".
 - After a voice change, NVDA refreshes the other settings controls from the
   driver (`gui/settingsDialogs.py`, lines 1601 to 1619); Verbatim does not.
-- The audio thread's wake-ups roughly doubled under key load in the output
-  ownership build, against the rule not to raise wake-ups on the speech
-  path (`docs/performance.md`, "Threads after the output build"). Every
-  push of a synth chunk wakes the audio thread, where the old mixer woke it
-  only when the device was waiting for audio. Waking only for the first
-  record of an utterance needs no shared state, but must be shown not to
-  stall an utterance whose device ran dry and stopped; waking only for a
-  push to a non-empty lane lost wakes in the mixer tests. Open question for
-  Dickson: accept the cost or build the first-record wake.
 
 ### The ownership refactor
 
@@ -536,7 +527,15 @@ second real engine (Dickson, 2026-10-29).
   2026-10-08): the audio stream stays awake after speech, writing silence,
   for a configurable period, 30 seconds by default as in NVDA, because
   Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or
-  delay the next speech; cancelling keeps Stop and Reset, as NVDA does,
+  delay the next speech; with it, the device keeps running, writing
+  silence, while an utterance is unfinished, and a lane push wakes the
+  audio thread only for an utterance's first record, a cancel or a pause,
+  the device's own period waking it for the rest, which brings back the
+  wake-ups the output build added by waking on every synth chunk
+  (`docs/performance.md`, "Threads after the output build"), with no state
+  shared between threads; the silence written keeps waking the audio
+  thread every device period while the stream stays awake, a cost the
+  period setting weighs; cancelling keeps Stop and Reset, as NVDA does,
   since shared mode has no other way to discard queued audio; the engine
   period trial; and the earcon re-mix, where speech that starts while an
   earcon plays is mixed into audio not yet played, re-mixing what was
