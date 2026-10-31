@@ -43,7 +43,9 @@ This answers the question of a program editing Verbatim's configuration:
 - **Settings in the user's profile cannot be protected** from that user's programs, and need not be. The rule is that configuration is data and never code (rule C2), so editing it can change how Verbatim behaves but cannot run code or cross a boundary.
 - **Files under Program Files are protected already.** Only an administrator can write there, and a non-elevated program cannot. The defence is free as long as Verbatim never makes any folder of its installation writable by the user. Today Verbatim writes `settings.toml`, `logs` and `dumps` beside its executable, so an installed copy must move them to the user's profile. Making the installation folder writable instead would let any program plant a DLL or replace a binary that Windows later starts with UIAccess, or as SYSTEM on the sign-in screen.
 
-The one exception is UIAccess. Windows starts a UIAccess process at a slightly raised integrity level, so programs at the user's ordinary level cannot write its memory. Once Verbatim has UIAccess, everything that steers it (its pipe, injected keys, window messages, configuration and extensions) becomes a way for those programs to borrow its reach into elevated windows. That is why sections 4.4 and 4.6 tighten as M8.1 approaches. Whether Windows treats UIAccess as a security boundary has been disputed, so M8.1 starts by measuring what an ordinary process can still do to a UIAccess Verbatim on the target Windows build (rule S5).
+The one exception is UIAccess. Windows starts a UIAccess process at a raised integrity level: the caller's level plus 16 for a standard user, and High for an administrator's split token, so programs at the user's ordinary level cannot write its memory. Once Verbatim has UIAccess, everything that steers it (its pipe, injected keys, window messages, configuration and extensions) becomes a way for those programs to borrow its reach into elevated windows. That is why sections 4.4 and 4.6 tighten as M8.1 approaches.
+
+These rules are defence in depth, not a boundary Verbatim can promise. James Forshaw showed in 2019 that an ordinary process can duplicate the token of any running UIAccess process, such as the on-screen keyboard, and start its own UIAccess process, and he called UIAccess "not a security boundary". Microsoft's servicing criteria do not list UAC as a boundary either. So the goal is that Verbatim adds no easier path than the ones Windows already has. M8.1 starts by measuring what an ordinary process can still do to a UIAccess Verbatim on the target Windows build (rule S5).
 
 ### 3.3 Lower-trust processes
 
@@ -82,7 +84,7 @@ Each rule states what holds, then why, then where it stands today.
 ### 4.2 Availability
 
 - **A1. Recovery is structural.** Today this is Verbatim's strongest property. Per-application outposts (D9) confine a hang or crash in one application's accessibility code to that application. The listener's callbacks make no cross-process call (D13). Every call has a deadline, abandoned workers are replaced, and failing outposts are killed and restarted with backoff. A hostile application therefore costs reading that application, not the screen reader. NVDA, whose one main thread runs everything, cannot offer this.
-- **A2. Core restarts itself after a crash.** Reason: Core is the one process whose loss silences everything. Today: a panic writes a flight dump, and then Verbatim is gone. Register with Windows' restart manager (`RegisterApplicationRestart`), or keep a small guardian process, so a crash is followed by speech within seconds, and announce the restart.
+- **A2. Core restarts itself after a crash, with a breaker.** Reason: Core is the one process whose loss silences everything. Today: a panic writes a flight dump, and then Verbatim is gone. Register with Windows' restart manager (`RegisterApplicationRestart`), or keep a small guardian process, so a crash is followed by speech within seconds, and announce the restart. Stop restarting after a few crashes in a short window, as NVDA's crash handler does, so a crash at startup does not loop.
 - **A3. Nothing at lower integrity can end Verbatim.** Today: `allow_quit_across_integrity_levels` in `crates/verbatim-app/src/single_instance.rs` calls `ChangeWindowMessageFilter(WM_QUIT, MSGFLT_ADD)`, which is process-wide, so any Low-integrity process can post `WM_QUIT` to Verbatim's windows and silence it. A replacing instance always runs at the same or a higher level, so remove the call, or use `ChangeWindowMessageFilterEx` on the one hidden window if a case is found that needs it.
 - **A4. A synthesizer failure costs one utterance, and a repeated one costs the synthesizer, never speech.** Today: a host that crashes or stays silent for 10 seconds fails the utterance in flight and is started again on the next request, and the utterance is not retried. Falling back to another synthesizer happens only at startup, and nothing caps restarts. So a crash string the user keeps arrowing onto costs a restart each time, and a host that crashes at every start costs silence. Proposed: after three crashes within a minute, switch to eSpeak NG for the session and say why in eSpeak's voice. If eSpeak itself fails, switch to OneCore, as the fallback order already goes at startup. Native adapters for engines with known crash strings filter them in the adapter, where the knowledge belongs. A host that has said nothing for 10 seconds is a long silence, so measure whether a shorter time, counted from the first audio owed, holds without false alarms.
 
@@ -116,9 +118,14 @@ UIAccess and the SYSTEM instance turn every rule above from good practice into a
 - **S1. The installation is administrator-owned, signed and contains no writable folder.** Per-user state lives in the profile (rule C2 and rule P4). Every binary is signed, which UIAccess requires anyway.
 - **S2. DLL loading is pinned.** Each Verbatim executable calls `SetDefaultDllDirectories` with the system folder and the application folder only, before anything else loads, and links its rarely used system DLLs for delay loading. Reason: a portable copy run from a Downloads folder otherwise loads any DLL planted beside it. Today: no executable restricts its DLL search.
 - **S3. The secure-desktop instance reads nothing a user can write.** It reads a configuration copy and the chosen extensions that an elevated step put in an administrator-owned folder ([extensions](extensions.md), section 2.4), runs no control plane, no developer folder, no console and no install path, and writes nothing.
-- **S4. No escape hatch on secure screens.** The secure instance never opens a browser, a file or folder dialog, a help file, a URL, the log viewer or any window that can start a process. Reason: every escape NVDA has had to fix on secure screens went through such a hatch (section 8). Enforce it as a capability the GUI must hold to open such a window, not as checks scattered through each feature as NVDA does.
+- **S4. No escape hatch on secure screens.** The secure instance never opens a browser, a file or folder dialog, a help file, a URL, the log viewer or any window that can start a process. Reason: about half of NVDA's published advisories are escapes from a secure screen, each through such a hatch: the log viewer, the wx inspection tool, context help, a clipboard error dialog, and a formatting dialog that reached a SYSTEM shell (section 8). Build the secure instance's GUI and commands from an allowlist, as a capability a window or command must hold, not as checks scattered through each feature, which is NVDA's denylist and what each of those advisories slipped past. Windows' own error dialogs count too: NVDA had to turn off wx's logging dialogs because one led to a file dialog.
 - **S5. Measure the UIAccess boundary first.** On the target Windows build, record what an ordinary process can do to a UIAccess Verbatim: open its process, duplicate its token, send it window messages, and whether its injected keys reach Verbatim's hook with `LLKHF_LOWER_IL_INJECTED` set. The record goes in `experiments/`, and these rules are adjusted to the result.
-- **S6. Remote support (M12) on secure screens follows the same rules.** No remote input reaches a secure screen unless the local user allowed it there.
+- **S6. Remote support (M12) on secure screens follows the same rules.** No remote input reaches a secure screen unless the local user allowed it there, and no local program can stop a permitted remote session from reaching it (NVDA's GHSA-vr27-g5ph-xvq2 let a planted file do that).
+- **S7. Whether Windows is locked is asked of Windows when it is decided, and an unknown answer counts as locked.** Reason: NVDA judged the lock from the foreground process, which another window could take over (GHSA-rmq3-vvhq-gp32), assumed an unlocked session when it started on the lock screen (GHSA-72mj-mqhj-qh4w), and today treats an object as safe when its check raises an error. Read the session state from Windows' session notifications and query it at startup.
+- **S8. On the lock screen in the user's own session, only an allowlist of commands runs, and navigation stays inside the lock screen.** Reason: NVDA's first lock-screen advisory was object navigation walking out of the lock screen onto the desktop (GHSA-x2c3-c6j2-87w4). Its answer, an allowlist of safe commands and objects whose neighbours outside the lock screen read as absent, is the right shape; Verbatim's reducer is the one place every command passes, so the allowlist lives there.
+- **S9. Nothing of the user's session follows them onto a secure screen.** The speech history, the last braille text and any viewer clear on the switch and at exit. Reason: NVDA leaked its speech viewer's text and the braille display's contents this way (GHSA-grvr-j2h8-3qm4, GHSA-8f8q-2jc3-6rf4).
+- **S10. Verbatim never runs elevated on the user's desktop.** Started from an elevated prompt, it restarts itself with the user's ordinary token or refuses to start. Reason: NVDA started elevated after an install from an elevated prompt, which made its console an administrator's (GHSA-cq78-fjp7-3rp5). Today Verbatim's manifest asks to run as the invoker, which inherits an elevated invoker's token.
+- **S11. Every executable Windows starts for Verbatim on the secure desktop is administrator-owned and signed.** Reason: the accessibility tools Windows starts at sign-in are a known route to a SYSTEM shell, by replacing the binary or redirecting it through the "Image File Execution Options" key (MITRE ATT&CK T1546.008). The registration Verbatim writes names an absolute path inside the installation.
 
 ### 4.7 Extensions and native code
 
@@ -128,14 +135,16 @@ UIAccess and the SYSTEM instance turn every rule above from good practice into a
 - **E4. Nothing installs or loads an extension without the user's confirmation in Verbatim's own dialog.** Today the design watches the developer folder always, so any program can drop a module there and it loads with no prompt, bypassing the install dialog. Proposed: watch it only in developer mode (question 6).
 - **E5. A Wasm runtime escape is contained by the outpost process.** Outposts cannot run in an AppContainer, because Windows denies such a process UIA and MSAA client access to other processes. They are to get restricted tokens and process mitigations, measured for what UIA still allows. Wasmtime's compiler needs dynamic code, so the mitigation that forbids it cannot apply to an outpost hosting modules unless precompiled artifacts are loaded as images; record that trade-off when the mitigations are chosen.
 
-### 4.8 Memory safety and crash safety
+### 4.8 Hardening: memory safety, crash safety and the supply chain
 
-- **M1. Unsafe code stays in the Windows crates, behind small safe wrappers.** Today the platform-neutral crates forbid unsafe code at the crate level, except where a crate's guide says otherwise. Unsafe is concentrated in `verbatim-uia` (about 195 uses), `verbatim-outpost` (123), `verbatim-process` (96), `verbatim-ia2` (74) and `verbatim-app` (70). The test tools `verbatim-agent` and `mockapp` hold most of the rest and never ship.
-- **M2. C and C++ that parse untrusted input run outside Core.** eSpeak NG parses text from applications and runs in the synthesizer host, which is the right place, and it gains the sandbox in M6. wxWidgets in Core displays Verbatim's own data, and extension names and log lines, which are short and Verbatim-controlled.
-- **M3. Core code does not panic on application data.** Today `verbatim-core` and `verbatim-text` have no `unwrap` or `expect` outside tests. The remaining slice and index sites in the reducer and terminal code are candidates for fuzzing rather than audit by eye (rule M4).
-- **M4. Every parser and every algorithm that takes application data is fuzzed.** Reason: tests written by hand cover the cases their author thought of. Proposed targets, all platform-neutral and so able to run on the Linux job: the frame and raw-section decoders, the control-plane message reader, the configuration, theme and package readers, terminal alignment and segmentation, and the reducer fed generated inputs. Add a `mockapp` mode serving hostile trees (self-parents, cycles, a million children, multi-megabyte names, providers that hang) as end-to-end checks of rules T1 to T6.
-- **M5. Dependencies are audited.** Add `cargo deny` (advisories, licences, sources) to `cargo xtask ci`. The licence check also serves the platform-neutral tier's licensing rule.
-- **M6. The injection helper (M7) is the most sensitive code Verbatim will ship.** It runs inside browsers, so a defect in it crashes or compromises the user's browser. It is to be minimal, in Rust, loaded only from the administrator-owned installation, and its channel to the outpost treats the browser's side as hostile.
+- **H1. Unsafe code stays in the Windows crates, behind small safe wrappers.** Today the platform-neutral crates forbid unsafe code at the crate level, except where a crate's guide says otherwise. Unsafe is concentrated in `verbatim-uia` (about 195 uses), `verbatim-outpost` (123), `verbatim-process` (96), `verbatim-ia2` (74) and `verbatim-app` (70). The test tools `verbatim-agent` and `mockapp` hold most of the rest and never ship.
+- **H2. C and C++ that parse untrusted input run outside Core.** eSpeak NG parses text from applications and runs in the synthesizer host, which is the right place, and it gains the sandbox in M6. wxWidgets in Core displays Verbatim's own data, and extension names and log lines, which are short and Verbatim-controlled.
+- **H3. Core code does not panic on application data.** Today `verbatim-core` and `verbatim-text` have no `unwrap` or `expect` outside tests. The remaining slice and index sites in the reducer and terminal code are candidates for fuzzing rather than audit by eye (rule H4).
+- **H4. Every parser and every algorithm that takes application data is fuzzed.** Reason: tests written by hand cover the cases their author thought of. Proposed targets, all platform-neutral and so able to run on the Linux job: the frame and raw-section decoders, the control-plane message reader, the configuration, theme and package readers, terminal alignment and segmentation, and the reducer fed generated inputs. Add a `mockapp` mode serving hostile trees (self-parents, cycles, a million children, multi-megabyte names, providers that hang) as end-to-end checks of rules T1 to T6.
+- **H5. Dependencies are audited.** Add `cargo deny` (advisories, licences, sources) to `cargo xtask ci`. The licence check also serves the platform-neutral tier's licensing rule.
+- **H6. The injection helper (M7) is the most sensitive code Verbatim will ship.** It runs inside browsers, so a defect in it crashes or compromises the user's browser. It is to be minimal, in Rust, loaded only from the administrator-owned installation, and its channel to the outpost treats the browser's side as hostile.
+- **H7. No text from an application is ever rendered as markup or code.** Message dialogs and viewers show application text as plain text. Reason: NVDA's HTML message dialog turned web text into code run on two key presses (GHSA-xg6w-23rw-39r8).
+- **H8. Updates are verified by signature, not only by hash.** The installer and updater (M8) check the download's Authenticode signature against Verbatim's own certificate before running it, and the installer pins its DLL search as rule S2 says. Reason: NVDA's updater checks a SHA-1 hash supplied by the same server, and its installer loaded DLLs planted beside it (GHSA-qf5h-qw92-rx2f).
 
 ## 5. How well the architecture serves the goal
 
@@ -177,7 +186,8 @@ Ranked by severity. Severity is judged for today's development use; the items ma
 - **F11, low.** No repeat detection in walks; a self-parent is spoken up to 64 times. The classic UIA child listing is capped only after fetching. Rules T1 and T2.
 - **F12, low.** Name, value and description strings are uncapped up to 32 MiB, and the 64 KiB text cut is silent. Rule T3.
 - **F13, low.** The control pipe's and configuration's readers have no size limit. Rule C3.
-- **F14, process.** No fuzzing, no `cargo deny`. Rules M4 and M5.
+- **F14, medium, rising with UIAccess.** Started from an elevated prompt, Verbatim runs elevated. Rule S10.
+- **F15, process.** No fuzzing, no `cargo deny`. Rules H4 and H5.
 
 ## 7. Where the work goes
 
@@ -186,16 +196,56 @@ Ranked by severity. Severity is judged for today's development use; the items ma
 - M6: rules A4 and E2, and the AppContainer as designed.
 - M6.3, the speech and audio pipeline: rule T3's flag reaching speech.
 - M6.4, terminal residuals: rule T4.
-- M7: rule M6, and rules T1 and T2 before the IA2 tree walks multiply.
-- M8, with the installer skeleton: rules S1, S2, P4 and A2, and the per-user state location.
-- M8.1: rules S3 to S6 and I1 to I3, starting with the measurement of rule S5.
+- M7: rules H6 and H7, and rules T1 and T2 before the IA2 tree walks multiply.
+- M8, with the installer skeleton: rules S1, S2, S10, P4, A2 and H8, and the per-user state location.
+- M8.1: rules S3 to S9 and S11, and I1 to I3, starting with the measurement of rule S5.
 - M9: rule P3 as file logging arrives.
 - M12: rule S6 and the remote transport's pairing.
-- Ongoing, from now: rules M4 and M5 in `cargo xtask ci`, and rule T6's background flood cap with the next focus build.
+- Ongoing, from now: rules H4 and H5 in `cargo xtask ci`, and rule T6's background flood cap with the next focus build.
 
 ## 8. Comparison with NVDA and other screen readers
 
-To be completed from the pinned NVDA source and published advisories.
+NVDA's mechanisms below were read from its source at the pinned commit. Its advisories come from its GitHub advisory list, which held 24 entries on 2026-10-31. The other readers' history comes from NVD, vendors' documentation and published research. The detailed survey with its sources is in [the security comparison](../../experiments/security-model-survey/readme.md).
+
+### 8.1 NVDA's record
+
+About half of NVDA's advisories are escapes from secure screens or the lock screen, several rated critical: the Python console, the log viewer, context help, a clipboard error dialog and a formatting dialog each led to code running as SYSTEM, and object navigation walked out of the lock screen. The rest are information left behind across that boundary (debug logging, the speech viewer, braille contents), code execution (DLL planting in the installer, web text run through an HTML dialog, an add-on able to patch NVDA's elevation code, which NV Access treats as a consequence of add-ons being unrestricted), and Remote Access flaws, the worst a missed certificate check on reconnecting.
+
+The lesson Verbatim takes is that the secure-desktop instance, not the everyday one, is where a screen reader is attacked, and that a denylist of features there fails one feature at a time.
+
+### 8.2 Mechanism by mechanism
+
+- **Isolation from hostile applications.** NVDA runs its logic on one main thread, and its watchdog cancels COM calls and `SendMessage` after a stall. Verbatim isolates each application in its own process (D9). Verbatim is ahead. Both cap ancestor walks (NVDA at 100 hops, then it jumps to the desktop; Verbatim at 64), and neither detects a repeat (rule T1).
+- **Control surface.** NVDA's controller is a local RPC endpoint whose access list grants full access to Everyone and to every AppContainer, with no authentication, and carries both the public speech functions and internal ones, including an add-on install request and a Remote Access link handler. Its injected helper reports through the same endpoint. Verbatim's pipe admits only the owning user and refuses remote clients, so it is ahead on reach, but it offers key injection, which NVDA's controller does not (rule C1).
+- **Logs and dumps.** NVDA's log at its IO level records every utterance and every key, including keys typed in password fields. It lives in the temporary folder, and only its startup configuration dump is redacted. In secure mode its logging is off. Verbatim logs no content today, which is ahead, but its crash dumps keep typed characters and the clipboard in readable form (rules P1 and P2). NVDA's crash handler writes a minidump of its memory, which holds whatever it was reading, so neither keeps content out of crash data.
+- **Protected fields.** Both echo a star for each typed character and suppress typed-word echo.
+- **Injected input.** Both treat injected keys as gestures. NVDA lets the user turn that off, and neither looks at the injector's integrity level (rule I1).
+- **Extensions.** NVDA's add-ons are unrestricted Python in its process. Its store pins each release by SHA-256 and scans it, but nobody reviews the code and nothing is signed. Verbatim's Wasm modules with derived capabilities are ahead by design (rule E1). NVDA's copy of add-ons to the secure screens, chosen by the user and made by an elevated step, is the model Verbatim's design already follows.
+- **Configuration.** NVDA keeps it in the user's profile for installed copies, beside the executable for portable ones, and in an administrator-owned copy for secure screens; it validates the file against a specification and resets a corrupt one to defaults. Verbatim matches this only once rules C3 and S1 are done.
+- **Recovery from its own crash.** NVDA's crash handler restarts NVDA, with a breaker that stops after too many crashes in a short window. Verbatim does not restart (rule A2), and should copy the breaker.
+- **Synthesizers.** NVDA runs most synthesizers in its own process. A failure to load falls back from OneCore to eSpeak NG to silence, but a crash at runtime takes NVDA with it, and only 32-bit SAPI voices run in a separate host. Verbatim's host per synthesizer (D18) is ahead. Neither falls back after a runtime crash (rule A4).
+- **Secure mode.** NVDA's is mature, built from twenty advisories. Verbatim has none yet. It has the chance to build one from an allowlist from the start (rules S3 to S11).
+- **Updates.** NVDA checks a SHA-1 hash from its own update server and runs the launcher; no signature check was found. Verbatim has no updater yet (rule H8).
+- **Injection.** NVDA injects its helper DLL into every process that raises a focus or foreground event, through global in-context hooks. Verbatim injects nothing until M7, and then only through one helper (D2).
+
+### 8.3 Other screen readers
+
+- **JAWS.** Its scripts are compiled code loaded per application. Its one public vulnerability found is a service, in versions 13 and earlier, that any user could reconfigure to run code as SYSTEM. No other advisory or CVE was found, which may reflect disclosure practice rather than an absence of flaws.
+- **Narrator.** It was the route of a BitLocker lock-screen bypass (CVE-2020-1398), and NVD lists several privilege-escalation entries for Narrator's braille support and for the accessibility broker, `ATBroker.exe`, in 2026, chiefly untrusted search paths. Even Windows' own screen reader is attacked at the sign-in screen and through DLL search order.
+- **Orca and AT-SPI.** The Linux accessibility bus has no access control, and any client can see every other's events. GNOME's recent work moves keyboard capture into the compositor and sends keys only to an allowlisted screen reader, so that no process can act as a keylogger. The lesson for Verbatim is that a screen reader's input path is a keylogger by design, and must not be readable by others (rule C1's speech stream, rule P1).
+- **VoiceOver.** Apple's fixes include VoiceOver reading secure input fields, saved passwords and the passcode aloud, and a login window bypass. macOS asks the user to grant accessibility access per application. The lesson is that protected text must never be spoken by any path, including paths added later (rule P2).
+- **Android accessibility services.** Banking malware uses accessibility services to read the screen and inject input, which is why Android 13 restricts them for sideloaded apps, a restriction droppers have bypassed. Any API that grants a screen reader's reach is a malware target: Verbatim's extension imports must not hand that reach to an extension the user did not knowingly install (rule E4).
+- **Research.** Jang and others (CCS 2014, "A11y Attacks") bypassed UAC and the sandboxes of four systems through accessibility. On Windows, speech synthesized by a process drove Speech Recognition, which runs at High integrity, and UI Automation clicked a password field's reveal button. Their recommendation, that an assistive technology check that its input comes from the user, is rule I1.
+
+### 8.4 Where Verbatim can do better
+
+- Build secure mode from an allowlist before the secure instance first runs, rather than after advisories.
+- Decide lock state from Windows, failing closed.
+- Give the control surface the least reach, and none on secure screens.
+- Keep content out of every file by default, including crash dumps.
+- Refuse lower-integrity injected input, which no surveyed screen reader does.
+- Fall back to another synthesizer after runtime crashes, which neither NVDA nor Verbatim does today.
+- Verify updates by signature.
 
 ## 9. Questions for Dickson
 
