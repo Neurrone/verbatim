@@ -18,10 +18,13 @@
 //!   crates, since that tier may depend on no GPL-tier crate.
 //! - A logic crate reaches only platform-neutral and logic workspace
 //!   crates.
-//! - Neither reaches [`WINDOWS_BINDINGS`] by any path, nor
-//!   [`RAW_WINDOWS_BINDINGS`] directly from a workspace crate other than
-//!   [`WORKSPACE_HACK`]: third-party crates with target-gated bindings are
-//!   cross-platform code.
+//! - Neither reaches [`WINDOWS_BINDINGS`] by any path, nor a raw Windows
+//!   binding ([`is_raw_windows_binding`]) directly from a workspace crate
+//!   other than [`WORKSPACE_HACK`]: third-party crates with target-gated
+//!   bindings are cross-platform code.
+//!
+//! The graph is read with every feature on, so an optional dependency
+//! behind a feature no member enables is checked too.
 //! - A role's crates ([`ROLES`]) reach no other role's, the rule of
 //!   one-way dependencies.
 
@@ -124,15 +127,23 @@ pub const ROLES: &[&[&str]] = &[
 /// platform-neutral or logic crate may reach by any path.
 pub const WINDOWS_BINDINGS: &[&str] = &["windows", "windows-core"];
 
-/// The raw Windows bindings, which no workspace crate a platform-neutral or
-/// logic crate reaches may depend on directly. Beneath a third-party
-/// library they are cross-platform code, as they are beneath
+/// Whether `name` is a raw Windows binding, which no workspace crate a
+/// platform-neutral or logic crate reaches may depend on directly:
+/// `winapi`, or any `windows-` or `windows_` crate but
+/// [`WINDOWS_BINDINGS`], which no path may reach at all. Named by prefix,
+/// since each of them (`windows-sys`, `windows-link`, `windows-targets`
+/// and the rest) can declare and call Win32 functions. Beneath a
+/// third-party library they are cross-platform code, as they are beneath
 /// [`WORKSPACE_HACK`], which only unifies those libraries' features.
-pub const RAW_WINDOWS_BINDINGS: &[&str] = &["windows-sys", "winapi"];
+#[must_use]
+pub fn is_raw_windows_binding(name: &str) -> bool {
+    !WINDOWS_BINDINGS.contains(&name)
+        && (name == "winapi" || name.starts_with("windows-") || name.starts_with("windows_"))
+}
 
 /// The generated crate that unifies third-party features across the
 /// workspace (`docs/tooling/setup.md`), exempt from
-/// [`RAW_WINDOWS_BINDINGS`].
+/// [`is_raw_windows_binding`].
 pub const WORKSPACE_HACK: &str = "workspace-hack";
 
 /// The dependency graph the rules read: each package by its id, with its
@@ -323,7 +334,7 @@ pub fn offences(graph: &Graph, tiers: &[(Tier, &[&str])], roles: &[&[&str]]) -> 
                 }
                 for dep in graph.edges.get(at).map_or(&[][..], Vec::as_slice) {
                     let dep_name = graph.name(dep);
-                    if RAW_WINDOWS_BINDINGS.contains(&dep_name) {
+                    if is_raw_windows_binding(dep_name) {
                         let mut full = path.clone();
                         full.push(dep.clone());
                         offences.push(format!(
@@ -374,7 +385,7 @@ fn tier_name(tier: Option<Tier>) -> &'static str {
 /// every offence and its path.
 pub fn check(root: &Path) -> Result<(), String> {
     let output = Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1"])
+        .args(["metadata", "--format-version", "1", "--all-features"])
         .current_dir(root)
         .output()
         .map_err(|error| format!("could not run cargo metadata: {error}"))?;
@@ -503,6 +514,28 @@ mod tests {
             [
                 "listener-logic, a logic crate, reaches windows-sys through listener-logic, a workspace crate: listener-logic -> windows-sys",
                 "model, a platform-neutral crate, reaches windows-core: model -> chrono -> windows-core",
+            ]
+        );
+    }
+
+    #[test]
+    fn every_raw_windows_binding_is_named_by_its_prefix() {
+        let graph = graph(
+            ALL,
+            &["windows-link", "windows-targets", "winapi", "windows-core"],
+            &[
+                ("model", "windows-link"),
+                ("outpost-logic", "windows-targets"),
+                ("core", "winapi"),
+                (WORKSPACE_HACK, "windows-link"),
+            ],
+        );
+        assert_eq!(
+            offences(&graph, TEST_TIERS, TEST_ROLES),
+            [
+                "core, a platform-neutral crate, reaches winapi through core, a workspace crate: core -> winapi",
+                "model, a platform-neutral crate, reaches windows-link through model, a workspace crate: model -> windows-link",
+                "outpost-logic, a logic crate, reaches windows-targets through outpost-logic, a workspace crate: outpost-logic -> windows-targets",
             ]
         );
     }
