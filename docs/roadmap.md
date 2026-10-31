@@ -535,7 +535,17 @@ second real engine (Dickson, 2026-10-29).
   (`docs/performance.md`, "Threads after the output build"), with no state
   shared between threads; the silence written keeps waking the audio
   thread every device period while the stream stays awake, a cost the
-  period setting weighs; cancelling keeps Stop and Reset, as NVDA does,
+  period setting weighs; first measure key press to first audio heard for
+  NVDA and Verbatim on one machine, then try a larger device buffer, which
+  gives more margin against running dry and should add no latency while a
+  cancel still discards the queue at once (NVDA's WASAPI player asks for
+  400 ms, `nvda/nvdaHelper/local/wasapi.cpp`, against Verbatim's 40 ms),
+  and the 10 ms start threshold, which NVDA does not have; the synth
+  thread writing to the device itself, as NVDA's does, is not pursued,
+  because with the synthesizer in its own process (decision D18) and the
+  mixer the one place for mixing, recording and recovery (decision D17)
+  it would make the synth thread the mixer and put its blocking work on
+  the real-time path; cancelling keeps Stop and Reset, as NVDA does,
   since shared mode has no other way to discard queued audio; the engine
   period trial; and the earcon re-mix, where speech that starts while an
   earcon plays is mixed into audio not yet played, re-mixing what was
