@@ -31,7 +31,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 
@@ -45,7 +45,7 @@ use verbatim_process::message::put_message;
 
 /// Something a message may carry that the outpost keeps until Core has
 /// seen it and does not hold it: a node, or a text anchor, by number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Carried {
     /// A node.
     Node(u64),
@@ -99,7 +99,7 @@ pub(crate) struct Pending {
     /// position of the last one, as Core counts them.
     position: u64,
     /// When each node and anchor was reported.
-    reported: HashMap<Carried, Report>,
+    reported: BTreeMap<Carried, Report>,
 }
 
 impl Pending {
@@ -108,7 +108,7 @@ impl Pending {
             urgent: VecDeque::new(),
             ordinary: VecDeque::new(),
             position: 0,
-            reported: HashMap::new(),
+            reported: BTreeMap::new(),
         }
     }
 
@@ -179,7 +179,8 @@ impl Pending {
         self.position
     }
 
-    /// The nodes a message still waiting to be written may carry.
+    /// The nodes a message still waiting to be written may carry, in
+    /// increasing number.
     fn waiting_nodes(&self) -> Vec<u64> {
         self.reported
             .iter()
@@ -298,8 +299,9 @@ impl Outbound {
         sent(&self.sender.send(Outgoing::Message(message, carried)));
     }
 
-    /// The nodes a message still waiting to be written may carry, which the
-    /// outpost reads changes for as for the nodes of its reports.
+    /// The nodes a message still waiting to be written may carry, in
+    /// increasing number, which the outpost reads changes for as for the
+    /// nodes of its reports.
     pub(crate) fn waiting_nodes(&self) -> Vec<u64> {
         self.sender.with_backlog(|pending| pending.waiting_nodes())
     }
@@ -695,6 +697,17 @@ mod tests {
         assert_eq!(pending.waiting_nodes(), vec![7]);
         assert_eq!(write(&mut pending).len(), 1);
         assert_eq!(pending.waiting_nodes(), Vec::<u64>::new());
+    }
+
+    /// The waiting nodes come in increasing number, whatever order they
+    /// were reported in, so the worker's candidates for a state change, and
+    /// the first of them that matches, are the same on every run.
+    #[test]
+    fn the_waiting_nodes_come_in_increasing_number() {
+        let mut pending = pending();
+        push(&mut pending, text_changed(1), &[9, 3]);
+        push(&mut pending, text_changed(2), &[7]);
+        assert_eq!(pending.waiting_nodes(), vec![3, 7, 9]);
     }
 
     /// An outbound queue writing to a pipe with a 4 KiB buffer, its writes
