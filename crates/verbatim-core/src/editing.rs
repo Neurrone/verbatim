@@ -200,7 +200,10 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         }
         _ => Vec::new(),
     };
-    let query_id = state.allocate_query_id();
+    let (query_id, request) = state.queries.ask(crate::queries::Asking::Text(
+        node,
+        TextOp::AwaitCaret(watch),
+    ));
     // A held key waiting behind a held key's watch waits for the newest
     // watch: a key handled between them moves the caret after it.
     if state.held_keys.awaiting_watch.is_some() {
@@ -217,11 +220,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         before_unknown,
         heard: held,
     });
-    effects.push(Effect::Text(TextRequest {
-        query_id,
-        node_id: node,
-        op: TextOp::AwaitCaret(watch),
-    }));
+    effects.push(request);
     effects
 }
 
@@ -368,7 +367,9 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
     let Some(node) = text_focus(state) else {
         return pass_held(state, held, held.pressed_at_ms);
     };
-    let query_id = state.allocate_query_id();
+    let (query_id, request) = state
+        .queries
+        .ask(crate::queries::Asking::Text(node, TextOp::ReadCaret));
     state.held_keys.reading = Some(HeldRead {
         query_id,
         node,
@@ -378,11 +379,7 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
     // The deadline first, so a read the shell answers at once ends it.
     vec![
         Effect::BoundHeldKey(Some((held.trace_id, HELD_READ_BOUND_MS))),
-        Effect::Text(TextRequest {
-            query_id,
-            node_id: node,
-            op: TextOp::ReadCaret,
-        }),
+        request,
     ]
 }
 
@@ -451,7 +448,11 @@ pub(crate) fn held_key_due(state: &mut SrState, trace_id: TraceId) -> Vec<Effect
         .reading
         .take_if(|reading| reading.key.trace_id == trace_id)
     {
-        let mut effects = vec![Effect::WithdrawText(reading.query_id)];
+        let mut effects: Vec<Effect> = state
+            .queries
+            .withdraw(reading.query_id)
+            .into_iter()
+            .collect();
         effects.extend(held_read(state, reading, TextReply::Unanswered));
         return effects;
     }
@@ -1536,17 +1537,13 @@ fn navigator_request(
     op: TextOp,
     then: TextFollowUp,
 ) -> Vec<Effect> {
-    let query_id = state.allocate_query_id();
+    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(node, op));
     state.pending_text = Some(PendingText {
         query_id,
         node,
         then,
     });
-    vec![Effect::Text(TextRequest {
-        query_id,
-        node_id: node,
-        op,
-    })]
+    vec![effect]
 }
 
 /// Ends what [`navigator_text`] started with the answer it asked for: the

@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::settings::ReaderSettings;
 use crate::shell::ShellItemKind;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{
-    CaretKey, CaretReport, FocusText, SelectionChange, TextPosition, TextReply, TextRequest,
-};
+use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange, TextPosition, TextRequest};
 use crate::tree::{Backend, NodeSnapshot, Rect, StateSet};
 use crate::{KeySeq, NodeId, OutpostId, TraceId};
 
@@ -136,8 +134,11 @@ pub struct HookForeground {
     pub keyboard_thread: Option<u32>,
 }
 
-/// Identifies one in-flight fetch so its completion can re-enter the reducer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Names one query Core's reducer asked, an outpost's or one Core answers
+/// from a terminal's memory, so its answer re-enters the reducer as
+/// [`Input::Answered`]. It is the number of the request id the query goes
+/// out under (`protocol::RequestId::reducer`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct QueryId(pub u64);
 
 /// A property change carried by [`NormalizedEvent::PropertyChanged`].
@@ -608,20 +609,28 @@ pub enum Input {
         /// The event itself.
         event: NormalizedEvent,
     },
-    /// A previously requested fetch finished.
-    FetchCompleted {
-        /// Trace ID of the input that caused the fetch.
+    /// An outpost answered a query the reducer asked ([`Effect::Fetch`],
+    /// [`Effect::Text`] or [`Effect::Activate`]), or the shell could not
+    /// send it: the protocol's outcome, which the reducer turns into the
+    /// result its query's kind takes.
+    Answered {
+        /// Trace ID the reply carries, the request's.
         trace_id: TraceId,
-        /// The request this result answers.
+        /// The query this answers.
         query_id: QueryId,
-        /// What the request asked for, echoed by the outpost.
-        kind: QueryKind,
-        /// What the outpost found.
-        result: FetchResult,
+        /// The outpost that answered: an answer from another outpost than
+        /// the one asked is dropped.
+        outpost: OutpostId,
+        /// What became of the query.
+        outcome: crate::protocol::QueryOutcome,
     },
     /// An outpost generation ended: it exited, was killed, or was retired.
-    /// Every node id it issued is dead from now on.
+    /// Every node id it issued is dead from now on, and every query the
+    /// reducer asked of it and has not had answered ends "gone".
     OutpostEnded {
+        /// A trace the shell mints for the end, which an ended query asked
+        /// with no trace of its own is answered under.
+        trace_id: TraceId,
         /// The generation that ended.
         outpost: OutpostId,
     },
@@ -685,32 +694,10 @@ pub enum Input {
         /// Milliseconds on the run's shared clock when the hook saw it.
         pressed_at_ms: u64,
     },
-    /// An activation the reducer asked for finished: `activated` is whether
-    /// the navigator object, or one of its ancestors, was activated, and
-    /// `action` the name of the action performed, if it has one. The
-    /// reducer speaks the action's name, NVDA's "Activate" for an action
-    /// with none, or "No action".
-    ActivationCompleted {
-        /// Trace ID of the command that asked for the activation.
-        trace_id: TraceId,
-        /// Whether anything was activated.
-        activated: bool,
-        /// The name of the action performed; `None` for an unnamed one.
-        action: Option<ActionName>,
-    },
     /// Periodic timer tick, for time-based policies. Unused by M1 logic but
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.
     Tick,
-    /// A text request the reducer made ([`Effect::Text`]) was answered.
-    TextCompleted {
-        /// Trace ID of the input that caused the request.
-        trace_id: TraceId,
-        /// The request this answers.
-        query_id: QueryId,
-        /// The answer.
-        reply: TextReply,
-    },
     /// A caret key was pressed and passed to the application, which moves
     /// the caret itself (milestone M4). The keyboard hook reports it as it
     /// passes it on; the reducer waits for evidence of what it did and
@@ -972,11 +959,11 @@ impl Input {
     pub fn trace_id(&self) -> Option<TraceId> {
         match self {
             Self::Event { trace_id, .. }
-            | Self::FetchCompleted { trace_id, .. }
+            | Self::Answered { trace_id, .. }
+            | Self::OutpostEnded { trace_id, .. }
             | Self::Command { trace_id, .. }
             | Self::Script { trace_id, .. }
             | Self::ToggleKeyPressed { trace_id, .. }
-            | Self::TextCompleted { trace_id, .. }
             | Self::CaretKey { trace_id, .. }
             | Self::HeldKey { trace_id, .. }
             | Self::CharacterTyped { trace_id, .. }
@@ -1158,16 +1145,18 @@ pub enum Effect {
     /// longer valid ([`crate::FocusValidity`]), and judge waiting focus
     /// speech against this focus when its turn comes.
     DropExpiredSpeech(crate::FocusNow),
-    /// Ask an outpost for more data; completion re-enters as
-    /// [`Input::FetchCompleted`].
+    /// Ask an outpost for more data; the answer re-enters as
+    /// [`Input::Answered`].
     Fetch(Query),
     /// Indicate an event at once, as the active theme reports it: a sound
     /// on its own mixer source, words, both, or nothing.
     PlayEarcon(Earcon),
     /// Activate a node — invoke, toggle, or its default action — in the
-    /// application that owns it. Fire-and-forget from the reducer's view;
-    /// the shell routes it to the outpost.
+    /// application that owns it; the answer re-enters as
+    /// [`Input::Answered`], and the reducer speaks what was done.
     Activate {
+        /// Correlates the answer with this request.
+        query_id: QueryId,
         /// The node to activate. Its outpost is the one asked.
         node_id: NodeId,
     },
@@ -1178,7 +1167,7 @@ pub enum Effect {
     /// the report-object triple-press emits this rather than doing the copy.
     CopyToClipboard(String),
     /// Ask an outpost to read or act on a node's text; the answer re-enters
-    /// as [`Input::TextCompleted`] (milestone M4).
+    /// as [`Input::Answered`] (milestone M4).
     Text(TextRequest),
     /// Keep the display on (true) while say-all reads, or let it turn off
     /// again (false), NVDA's "Prevent display from turning off during say
@@ -1198,11 +1187,15 @@ pub enum Effect {
     /// A later one replaces it (`docs/design/key-holding.md`, "Keys behind
     /// a held key").
     BoundHeldKey(Option<(TraceId, u64)>),
-    /// Core gave up on its text request with this query id: the shell ends
-    /// the request, so that nothing waits for it and its outcome is
-    /// dropped, and withdraws it from its outpost, which answers it "not
-    /// started" if it has not started.
-    WithdrawText(QueryId),
+    /// Core gave up on its query `query_id` to `outpost`, which it no longer
+    /// records, so its outcome is dropped: the shell withdraws it from its
+    /// outpost, which answers it "not started" if it has not started.
+    Withdraw {
+        /// The outpost asked.
+        outpost: OutpostId,
+        /// The query withdrawn.
+        query_id: QueryId,
+    },
     /// The effect on behalf of the key with this trace ID, whatever input
     /// caused it: a key that waited behind a held key is handled while the
     /// reducer handles the held key's read (the read before a held key, or

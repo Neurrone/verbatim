@@ -34,8 +34,8 @@ use std::sync::Arc;
 
 use verbatim_model::{
     Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextRequest, TextUnit,
-    TraceId, Utterance, UtteranceSegment,
+    TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextUnit, TraceId,
+    Utterance, UtteranceSegment,
 };
 use verbatim_text::Segmenter;
 
@@ -130,8 +130,7 @@ pub(crate) fn stop(state: &mut SrState) -> Vec<Effect> {
 /// Asks for the next batch: the first at the starting point, each later one
 /// a unit on from the last chunk read.
 fn read_next(state: &mut SrState) -> Vec<Effect> {
-    let query_id = state.allocate_query_id();
-    let Some(say_all) = state.say_all.as_mut() else {
+    let Some(say_all) = state.say_all.as_ref() else {
         return Vec::new();
     };
     let (at, movement) = match say_all.last_chunk {
@@ -141,17 +140,18 @@ fn read_next(state: &mut SrState) -> Vec<Effect> {
             Some(TextMovement { unit, count: 1 }),
         ),
     };
-    say_all.pending = Some(query_id);
-    vec![Effect::Text(TextRequest {
-        query_id,
-        node_id: say_all.node,
-        op: TextOp::ReadAhead(TextReadAhead {
-            at,
-            movement,
-            unit: say_all.unit,
-            count: READ_AHEAD,
-        }),
-    })]
+    let op = TextOp::ReadAhead(TextReadAhead {
+        at,
+        movement,
+        unit: say_all.unit,
+        count: READ_AHEAD,
+    });
+    let node = say_all.node;
+    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(node, op));
+    if let Some(say_all) = state.say_all.as_mut() {
+        say_all.pending = Some(query_id);
+    }
+    vec![effect]
 }
 
 /// Whether `query_id` is say-all's read in flight.
@@ -432,12 +432,11 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
     if let Some(unit) = reached.filter(|_| moves) {
         let position = unit.position();
         if moves_caret {
-            let query_id = state.allocate_query_id();
-            effects.push(Effect::Text(TextRequest {
-                query_id,
-                node_id: node,
-                op: TextOp::MoveCaret(TextPoint::At(position)),
-            }));
+            let (_, effect) = state.queries.ask(crate::queries::Asking::Text(
+                node,
+                TextOp::MoveCaret(TextPoint::At(position)),
+            ));
+            effects.push(effect);
             let line = TextChunk {
                 offset: unit.offset,
                 ..TextChunk::clone(&unit.chunk)

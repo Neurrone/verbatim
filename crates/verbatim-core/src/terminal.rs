@@ -50,8 +50,7 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, QueryId, SegmentContent,
-    SpeechMark, SpeechPriority, TextOp, TextReply, TextRequest, TraceId, Utterance,
-    UtteranceSegment,
+    SpeechMark, SpeechPriority, TextOp, TextReply, TraceId, Utterance, UtteranceSegment,
 };
 
 use verbatim_text::terminal_rows::Text;
@@ -396,15 +395,7 @@ fn waiting_lines(waiting: &VecDeque<Waiting>) -> usize {
 /// A text request about the focused terminal.
 fn request(state: &mut SrState, op: TextOp) -> Option<(QueryId, Effect)> {
     let node = state.terminal.node?;
-    let query_id = state.allocate_query_id();
-    Some((
-        query_id,
-        Effect::Text(TextRequest {
-            query_id,
-            node_id: node,
-            op,
-        }),
-    ))
+    Some(state.queries.ask(crate::queries::Asking::Text(node, op)))
 }
 
 /// Tells the outpost to hold once as many lines wait, or wait in speech to

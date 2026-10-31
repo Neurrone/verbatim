@@ -20,6 +20,7 @@ pub mod flight_recorder;
 pub mod focus_rules;
 mod foreground;
 mod keys;
+mod queries;
 mod recorder;
 mod reduce;
 pub mod requests;

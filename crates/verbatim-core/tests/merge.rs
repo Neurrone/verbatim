@@ -14,11 +14,11 @@ use verbatim_model::protocol::{
     merge_into,
 };
 use verbatim_model::{
-    Backend, CaretReport, Earcon, Effect, FetchResult, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, ProgressReading, PropertyChange, QueryId, QueryKind,
-    Rect, Role, SegmentContent, SelectionChange, SelectionText, SpeechPriority, State, StateSet,
-    TextAnchor, TextChunk, TextPosition, TextUnit, TraceId, Utterance, UtteranceSegment,
-    WindowFacts, WindowHandle,
+    Backend, CaretReport, Earcon, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
+    NormalizedEvent, OutpostId, Phrase, Pid, ProgressReading, PropertyChange, QueryId, Rect, Role,
+    SegmentContent, SelectionChange, SelectionText, SpeechPriority, State, StateSet, TextAnchor,
+    TextChunk, TextPosition, TextUnit, TraceId, Utterance, UtteranceSegment, WindowFacts,
+    WindowHandle,
 };
 
 /// The application, and its outpost.
@@ -182,15 +182,15 @@ impl Other {
                 let trace_id = TraceId::from_raw(2);
                 let message = OutpostToCore::Reply {
                     trace_id,
-                    request_id: RequestId::shell(77),
+                    request_id: RequestId::reducer(77),
                     outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
                     timing: EventTiming::default(),
                 };
-                let input = Input::FetchCompleted {
+                let input = Input::Answered {
                     trace_id,
                     query_id: QueryId(77),
-                    kind: QueryKind::NextSibling,
-                    result: FetchResult::NoNeighbor,
+                    outpost: OUTPOST,
+                    outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
                 };
                 (message, Some(input))
             }

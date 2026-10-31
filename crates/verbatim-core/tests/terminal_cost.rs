@@ -91,8 +91,13 @@ fn read_of(input: &Input) -> Option<&TerminalSnapshot> {
             event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
             ..
         }
-        | Input::TextCompleted {
-            reply: TextReply::TerminalSnapshot(snapshot),
+        | Input::Answered {
+            outcome:
+                verbatim_model::protocol::QueryOutcome::Done(
+                    verbatim_model::protocol::QueryResult::Text(TextReply::TerminalSnapshot(
+                        snapshot,
+                    )),
+                ),
             ..
         } => Some(snapshot),
         _ => None,

@@ -1,19 +1,24 @@
-//! Who asks Core's queries of outposts, and where each outcome goes
-//! (`docs/crates/verbatim-app.md`, `requests`).
+//! Who asks the shell's own queries of outposts, and where each outcome
+//! goes (`docs/crates/verbatim-app.md`, `requests`).
 //!
-//! The request table, the one owner of each query's outcome, is
-//! `verbatim-core`'s [`verbatim_core::requests::RequestTable`]: it holds
-//! each [`Asker`] as a token and hands it back with its one outcome, and
-//! [`deliver`] carries that outcome out, into the reducer's inputs, a
-//! control-plane reply or a dialog's responder.
+//! A reply is routed by its request id's asker ([`reply_input`]): one to a
+//! query of Core's reducer, which records its own queries, re-enters the
+//! reducer as `Input::Answered`; one to a query of the shell's goes to the
+//! request table, `verbatim-core`'s
+//! [`verbatim_core::requests::RequestTable`], the one owner of each of the
+//! shell's queries' outcome. It holds each [`Asker`] as a token and hands
+//! it back with its one outcome, and [`deliver`] carries that outcome out,
+//! into the reducer's inputs, a control-plane reply or a dialog's
+//! responder.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
-use verbatim_model::protocol::{FocusNow, QueryOutcome, QueryResult, Responder};
+use verbatim_model::protocol::{
+    FocusNow, QueryOutcome, QueryResult, RequestId, Requester, Responder,
+};
 use verbatim_model::{
-    FetchResult, Input, NodeSnapshot, NormalizedEvent, Pid, QueryId, QueryKind, TextReply, TraceId,
-    TreeNode, WindowFacts,
+    Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, TraceId, TreeNode, WindowFacts,
 };
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
@@ -38,24 +43,8 @@ impl DumpTicket {
 /// ([`verbatim_core::requests::RequestTable`]).
 pub(crate) type RequestTable = verbatim_core::requests::RequestTable<Asker>;
 
-/// Who asked, and therefore where the outcome goes.
+/// Who in the shell asked, and therefore where the outcome goes.
 pub(crate) enum Asker {
-    /// The reducer's object-navigation query; its outcome re-enters the
-    /// reducer as `Input::FetchCompleted` under the reducer's own query id.
-    Reducer {
-        /// The reducer's id for the query.
-        query_id: QueryId,
-        /// What it asked for, echoed back to the reducer.
-        kind: QueryKind,
-        /// The trace the query belongs to.
-        trace_id: TraceId,
-    },
-    /// An activation: the reducer does not wait for it, but it gets exactly
-    /// one outcome, which it speaks.
-    Activation {
-        /// The command's trace.
-        trace_id: TraceId,
-    },
     /// A control-plane tree dump, answered on `reply`. The channel is
     /// bounded with room for the one answer, so sending never blocks; a
     /// requester that already gave up has dropped its receiver.
@@ -88,15 +77,52 @@ pub(crate) enum Asker {
         /// Where the outcome goes.
         deliver: Responder<verbatim_model::ShellCandidates>,
     },
-    /// The reducer's text request (`Effect::Text`): its outcome re-enters
-    /// the reducer as `Input::TextCompleted` under the reducer's own query
-    /// id, a failure of any kind as the protocol's "unanswered".
-    Text {
-        /// The reducer's id for the request.
-        query_id: QueryId,
-        /// The trace the request belongs to.
-        trace_id: TraceId,
-    },
+}
+
+/// Where a reply goes, by its request id's asker.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Routed {
+    /// To Core's reducer, which records its own queries.
+    Reducer(Input),
+    /// To the shell's request table, with its outcome.
+    Shell(QueryOutcome),
+    /// To no asker this shell knows.
+    Nobody,
+}
+
+/// Routes the outcome of query `id`, traced `trace_id`, from `outpost`, by
+/// its asker: a query of Core's reducer re-enters it as `Input::Answered`
+/// under the reply's trace, a failed outcome logged first, since Core does
+/// no logging; one of the shell's goes to its request table.
+pub(crate) fn reply_input(
+    trace_id: TraceId,
+    id: RequestId,
+    outpost: OutpostId,
+    outcome: QueryOutcome,
+) -> Routed {
+    match id.asker {
+        Requester::Reducer => {
+            if !matches!(outcome, QueryOutcome::Done(_)) {
+                tracing::debug!(
+                    reason = describe(&outcome),
+                    %id,
+                    %outpost,
+                    "a query of Core's was not answered"
+                );
+            }
+            Routed::Reducer(Input::Answered {
+                trace_id,
+                query_id: QueryId(id.number),
+                outpost,
+                outcome,
+            })
+        }
+        Requester::Shell => Routed::Shell(outcome),
+        _ => {
+            tracing::warn!(%id, "a reply to an asker the shell does not know is dropped");
+            Routed::Nobody
+        }
+    }
 }
 
 /// A short description of an outcome other than success, for logs and
@@ -157,51 +183,6 @@ fn deliver_shell_items(
 /// produces none.
 pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
     match asker {
-        Asker::Reducer {
-            query_id,
-            kind,
-            trace_id,
-        } => {
-            let result = match outcome {
-                QueryOutcome::Done(QueryResult::Navigated(Some(node))) => FetchResult::Node(node),
-                QueryOutcome::Done(QueryResult::Navigated(None)) => FetchResult::NoNeighbor,
-                QueryOutcome::Gone => FetchResult::Gone,
-                other => {
-                    tracing::warn!(reason = describe(&other), "a navigation query failed");
-                    FetchResult::Unanswered
-                }
-            };
-            vec![Input::FetchCompleted {
-                trace_id,
-                query_id,
-                kind,
-                result,
-            }]
-        }
-        Asker::Activation { trace_id } => {
-            let (activated, action) = match outcome {
-                QueryOutcome::Done(QueryResult::Activated(action)) => (true, action),
-                // The activation started and passed its deadline: whether it
-                // happened is unknown, so nothing is said either way.
-                // Whatever it caused, such as a dialog taking focus,
-                // announces itself.
-                QueryOutcome::Abandoned => {
-                    tracing::warn!(
-                        "activation passed its deadline; whether it happened is unknown"
-                    );
-                    return Vec::new();
-                }
-                other => {
-                    tracing::warn!(reason = describe(&other), "activation did not complete");
-                    (false, None)
-                }
-            };
-            vec![Input::ActivationCompleted {
-                trace_id,
-                activated,
-                action,
-            }]
-        }
         Asker::DumpTree { reply, .. } => {
             let answer = match outcome {
                 QueryOutcome::Done(QueryResult::Tree(dumped)) => {
@@ -222,21 +203,6 @@ pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
                 Vec::new()
             }
         },
-        Asker::Text { query_id, trace_id } => {
-            let reply = match outcome {
-                QueryOutcome::Done(QueryResult::Text(reply)) => reply,
-                QueryOutcome::Gone => TextReply::Gone,
-                other => {
-                    tracing::debug!(reason = describe(&other), "a text request was not answered");
-                    TextReply::Unanswered
-                }
-            };
-            vec![Input::TextCompleted {
-                trace_id,
-                query_id,
-                reply,
-            }]
-        }
         Asker::FakeFocus { source, trace_id } => match outcome {
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
                 focus,
@@ -338,14 +304,6 @@ mod tests {
             .unwrap_or_default()
     }
 
-    fn navigation(query: u64) -> Asker {
-        Asker::Reducer {
-            query_id: QueryId(query),
-            kind: QueryKind::Parent,
-            trace_id: TraceId::mint(),
-        }
-    }
-
     fn dump(reply: Sender<DumpTreeResult>) -> Asker {
         Asker::DumpTree {
             ticket: DumpTicket::mint(),
@@ -362,112 +320,6 @@ mod tests {
             value: None,
             states: StateSet::new(),
             details: NodeDetails::default(),
-        }
-    }
-
-    #[test]
-    fn an_unanswered_navigation_reads_as_unanswered_and_only_a_gone_node_as_gone() {
-        for outcome in [
-            QueryOutcome::Abandoned,
-            QueryOutcome::NotStarted,
-            QueryOutcome::Failed("the read failed".to_owned()),
-        ] {
-            let mut table = RequestTable::default();
-            let id = table.begin(OutpostId(1), navigation(7));
-            assert!(matches!(
-                finish(&mut table, id, OutpostId(1), outcome).as_slice(),
-                [Input::FetchCompleted {
-                    result: FetchResult::Unanswered,
-                    ..
-                }]
-            ));
-        }
-        let mut table = RequestTable::default();
-        let id = table.begin(OutpostId(1), navigation(7));
-        assert!(matches!(
-            finish(&mut table, id, OutpostId(1), QueryOutcome::Gone).as_slice(),
-            [Input::FetchCompleted {
-                result: FetchResult::Gone,
-                ..
-            }]
-        ));
-    }
-
-    #[test]
-    fn an_activation_outcome_reaches_the_reducer() {
-        for (outcome, expected) in [
-            (QueryOutcome::Done(QueryResult::Activated(None)), true),
-            (QueryOutcome::Failed("no action".to_owned()), false),
-            (QueryOutcome::NotStarted, false),
-            (QueryOutcome::Gone, false),
-        ] {
-            let mut table = RequestTable::default();
-            let id = table.begin(
-                OutpostId(1),
-                Asker::Activation {
-                    trace_id: TraceId::mint(),
-                },
-            );
-            assert!(matches!(
-                finish(&mut table, id, OutpostId(1), outcome).as_slice(),
-                [Input::ActivationCompleted { activated, .. }] if *activated == expected
-            ));
-        }
-    }
-
-    #[test]
-    fn an_activation_that_passed_its_deadline_is_not_reported_either_way() {
-        let mut table = RequestTable::default();
-        let id = table.begin(
-            OutpostId(1),
-            Asker::Activation {
-                trace_id: TraceId::mint(),
-            },
-        );
-        assert_eq!(
-            finish(&mut table, id, OutpostId(1), QueryOutcome::Abandoned),
-            [] as [verbatim_model::Input; 0]
-        );
-        assert_eq!(
-            table.len(),
-            0,
-            "the abandoned outcome is still its one outcome"
-        );
-    }
-
-    #[test]
-    fn a_text_reply_reaches_the_reducer_and_any_failure_reads_as_unanswered() {
-        let text = |outcome| {
-            let mut table = RequestTable::default();
-            let id = table.begin(
-                OutpostId(1),
-                Asker::Text {
-                    query_id: QueryId(4),
-                    trace_id: TraceId::mint(),
-                },
-            );
-            match finish(&mut table, id, OutpostId(1), outcome).as_slice() {
-                [
-                    Input::TextCompleted {
-                        query_id: QueryId(4),
-                        reply,
-                        ..
-                    },
-                ] => reply.clone(),
-                other => panic!("one text completion, not {other:?}"),
-            }
-        };
-        assert_eq!(
-            text(QueryOutcome::Done(QueryResult::Text(TextReply::NoText))),
-            TextReply::NoText
-        );
-        assert_eq!(text(QueryOutcome::Gone), TextReply::Gone);
-        for failure in [
-            QueryOutcome::Abandoned,
-            QueryOutcome::NotStarted,
-            QueryOutcome::Failed("the read failed".to_owned()),
-        ] {
-            assert_eq!(text(failure), TextReply::Unanswered);
         }
     }
 
@@ -560,6 +412,37 @@ mod tests {
         );
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(found), None]);
         assert_eq!(table.next_deadline(), None);
+    }
+
+    /// A reply to a query of Core's reducer re-enters it as its answer,
+    /// under the reply's trace and the reducer's own number; one to a query
+    /// of the shell's goes to the request table.
+    #[test]
+    fn a_reducer_reply_goes_to_the_reducer_and_a_shell_reply_to_the_table() {
+        let trace_id = TraceId::from_raw(9);
+        assert_eq!(
+            reply_input(
+                trace_id,
+                RequestId::reducer(7),
+                OutpostId(2),
+                QueryOutcome::Gone
+            ),
+            Routed::Reducer(Input::Answered {
+                trace_id,
+                query_id: QueryId(7),
+                outpost: OutpostId(2),
+                outcome: QueryOutcome::Gone,
+            })
+        );
+        assert_eq!(
+            reply_input(
+                trace_id,
+                RequestId::shell(7),
+                OutpostId(2),
+                QueryOutcome::Gone
+            ),
+            Routed::Shell(QueryOutcome::Gone)
+        );
     }
 
     #[test]

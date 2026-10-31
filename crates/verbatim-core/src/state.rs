@@ -666,7 +666,10 @@ pub struct SrState {
     /// stale rule drops it instead.
     #[serde(default)]
     pub(crate) group_taken: Option<(OutpostId, verbatim_model::FocusGroup)>,
-    pub(crate) next_query_id: u64,
+    /// Core's queries not yet ended, each from its request to its one
+    /// ending (`crate::queries`).
+    #[serde(default)]
+    pub(crate) queries: crate::queries::Queries,
     /// The navigator object and review cursor (roadmap M3). `None` until
     /// the first focus lands; from then it tracks focus unless an
     /// object-navigation command moves it away.
@@ -752,7 +755,7 @@ pub struct SrState {
     /// at most 16 (`crate::terminal_model`): none until an outpost sends a
     /// terminal snapshot.
     #[serde(default)]
-    pub(crate) terminals: Vec<crate::terminal_model::TerminalModel>,
+    pub(crate) terminals: crate::terminal_model::Terminals,
     /// The number of the last text anchor Core minted for a terminal's
     /// review answers, in a range no outpost mints from
     /// (`crate::terminal_model::TERMINAL_ANCHORS`).
@@ -801,6 +804,15 @@ impl SrState {
     #[must_use]
     pub fn holds_inputs_back(&self) -> bool {
         self.held_keys.busy()
+    }
+
+    /// How many of Core's queries an outpost has yet to answer that the
+    /// idle barrier waits for: a caret key's watch, which waits for the
+    /// application, and a request Core answers from a terminal's memory are
+    /// not counted.
+    #[must_use]
+    pub fn outstanding_queries(&self) -> usize {
+        self.queries.outstanding()
     }
 
     /// Whether a lock key's new state is still to be announced: Verbatim is
@@ -1042,11 +1054,15 @@ impl SrState {
             .is_some_and(|focus| focus.alive && focus.snapshot.id == node_id)
     }
 
-    /// Allocates a fresh, process-unique-within-this-state `QueryId`.
-    pub(crate) fn allocate_query_id(&mut self) -> QueryId {
-        let id = self.next_query_id;
-        self.next_query_id += 1;
-        QueryId(id)
+    /// Removes every terminal model `which` picks, and with each the
+    /// review commands waiting for its answer, whose queries end with no
+    /// answer: the one way a model goes.
+    pub(crate) fn drop_models(
+        &mut self,
+        which: impl Fn(&crate::terminal_model::TerminalModel) -> bool,
+    ) {
+        let reviews = self.terminals.remove_where(which);
+        self.queries.forget_memory(reviews);
     }
 }
 

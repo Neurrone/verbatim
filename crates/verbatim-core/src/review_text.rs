@@ -21,8 +21,7 @@ use std::sync::Arc;
 
 use verbatim_model::{
     Effect, Message, NodeId, Phrase, ReviewCommand, SegmentContent, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextThrough, TextUnit, TraceId,
-    UtteranceSegment,
+    TextPoint, TextPosition, TextRead, TextReply, TextThrough, TextUnit, TraceId, UtteranceSegment,
 };
 
 use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
@@ -142,10 +141,9 @@ pub(crate) fn command_mark(
         ),
         _ => (TextPoint::Caret, LandingPlace::Start),
     };
-    let query_id = state.allocate_query_id();
     let forward = command == ReviewCommand::NextCommandMark;
-    let Some(effects) =
-        crate::terminal_model::command_mark(state, node, trace_id, (query_id, forward, from))
+    let Some((query_id, effects)) =
+        crate::terminal_model::command_mark(state, node, trace_id, (forward, from))
     else {
         return Vec::new();
     };
@@ -177,17 +175,13 @@ fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition 
 /// Asks for a text read, to be followed up by `then`. A newer request
 /// supersedes this one.
 fn request(state: &mut SrState, node: NodeId, op: TextOp, then: TextFollowUp) -> Vec<Effect> {
-    let query_id = state.allocate_query_id();
+    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(node, op));
     state.pending_text = Some(PendingText {
         query_id,
         node,
         then,
     });
-    vec![Effect::Text(TextRequest {
-        query_id,
-        node_id: node,
-        op,
-    })]
+    vec![effect]
 }
 
 /// Reads the line at `at` to place the review cursor there, then runs the

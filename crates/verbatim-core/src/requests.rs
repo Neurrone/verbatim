@@ -1,7 +1,8 @@
 //! The request table: the single owner of "exactly one outcome per query"
-//! (`docs/crates/verbatim-core.md`, "The request table").
+//! for the shell's own queries (`docs/crates/verbatim-core.md`, "The
+//! request table"); the reducer's are recorded in its own state.
 //!
-//! Every query Core sends an outpost is recorded here, on the reducer
+//! Every query the shell sends an outpost is recorded here, on the reducer
 //! thread, with a request id and the outpost generation it went to. The
 //! first outcome removes the entry and hands it back with whoever asked;
 //! any later outcome for the same id is dropped, and so is an outcome
@@ -27,10 +28,6 @@ pub const DEADLINE_PASSED: &str = "no answer came by the request's deadline";
 struct Entry<A> {
     outpost: OutpostId,
     asker: A,
-    /// Whether the request only waits for the application to act, as a
-    /// caret watch waits for a caret key's evidence: it does not keep
-    /// Verbatim from being idle ([`RequestTable::outstanding`]).
-    passive: bool,
     /// When Core ends the request itself, in microseconds on the run's
     /// shared clock, if the outpost has not answered
     /// ([`RequestTable::expire`]); `None` for a request only its outpost or
@@ -56,9 +53,6 @@ pub struct Expired<A> {
 pub struct RequestTable<A> {
     next: u64,
     entries: BTreeMap<RequestId, Entry<A>>,
-    /// How many entries have a deadline, so the reducer thread's check for
-    /// one costs nothing while none is outstanding.
-    timed: usize,
 }
 
 impl<A> Default for RequestTable<A> {
@@ -66,7 +60,6 @@ impl<A> Default for RequestTable<A> {
         Self {
             next: 0,
             entries: BTreeMap::new(),
-            timed: 0,
         }
     }
 }
@@ -77,7 +70,7 @@ impl<A> RequestTable<A> {
     /// and unique for the life of the table, so an old reply can never
     /// satisfy a newer request; a later request has a greater number.
     pub fn begin(&mut self, outpost: OutpostId, asker: A) -> RequestId {
-        self.insert(outpost, asker, false, None)
+        self.insert(outpost, asker, None)
     }
 
     /// Records a query about to be sent to `outpost` that Core ends itself,
@@ -85,46 +78,26 @@ impl<A> RequestTable<A> {
     /// on the run's shared clock ([`expire`](Self::expire)), and returns its
     /// id.
     pub fn begin_until(&mut self, outpost: OutpostId, asker: A, deadline_us: u64) -> RequestId {
-        self.insert(outpost, asker, false, Some(deadline_us))
+        self.insert(outpost, asker, Some(deadline_us))
     }
 
-    /// Records a passive request about to be sent to `outpost`, one that
-    /// only waits for the application to act, as a caret watch does, and
-    /// returns its id: it gets its one outcome as any other does, but is not
-    /// counted [`outstanding`](Self::outstanding), so an open watch, which a
-    /// key that moved nothing leaves open until its bound, does not keep
-    /// Verbatim from being idle.
-    pub fn begin_passive(&mut self, outpost: OutpostId, asker: A) -> RequestId {
-        self.insert(outpost, asker, true, None)
-    }
-
-    fn insert(
-        &mut self,
-        outpost: OutpostId,
-        asker: A,
-        passive: bool,
-        deadline_us: Option<u64>,
-    ) -> RequestId {
+    fn insert(&mut self, outpost: OutpostId, asker: A, deadline_us: Option<u64>) -> RequestId {
         self.next += 1;
         let id = RequestId::shell(self.next);
-        self.timed += usize::from(deadline_us.is_some());
         self.entries.insert(
             id,
             Entry {
                 outpost,
                 asker,
-                passive,
                 deadline_us,
             },
         );
         id
     }
 
-    /// Removes request `id`, keeping the count of those with a deadline.
+    /// Removes request `id`.
     fn remove(&mut self, id: RequestId) -> Option<Entry<A>> {
-        let entry = self.entries.remove(&id)?;
-        self.timed -= usize::from(entry.deadline_us.is_some());
-        Some(entry)
+        self.entries.remove(&id)
     }
 
     /// Ends request `id` with `outcome`, reported by `outpost`, returning
@@ -170,9 +143,6 @@ impl<A> RequestTable<A> {
     /// requests were made. A later answer from its outpost finds no request
     /// and is dropped.
     pub fn expire(&mut self, now_us: u64) -> Vec<Expired<A>> {
-        if self.timed == 0 {
-            return Vec::new();
-        }
         let expired: Vec<RequestId> = self
             .entries
             .iter()
@@ -195,9 +165,6 @@ impl<A> RequestTable<A> {
     /// the run's shared clock ([`begin_until`](Self::begin_until)).
     #[must_use]
     pub fn next_deadline(&self) -> Option<u64> {
-        if self.timed == 0 {
-            return None;
-        }
         self.entries
             .values()
             .filter_map(|entry| entry.deadline_us)
@@ -225,24 +192,23 @@ impl<A> RequestTable<A> {
             .map(|entry| (id, entry.outpost, entry.asker))
     }
 
-    /// How many requests are outstanding, passive ones included.
+    /// How many requests are outstanding.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Whether no request is outstanding, passive ones included.
+    /// Whether no request is outstanding.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// How many requests are outstanding, for the end-to-end harness's
-    /// idle barrier: passive ones ([`begin_passive`](Self::begin_passive))
-    /// are not counted.
+    /// idle barrier.
     #[must_use]
     pub fn outstanding(&self) -> usize {
-        self.entries.values().filter(|entry| !entry.passive).count()
+        self.entries.len()
     }
 }
 
@@ -281,21 +247,6 @@ mod tests {
         let id = table.begin(OutpostId(1), "navigation");
         assert_eq!(table.finish(id, OutpostId(2), QueryOutcome::Gone), None);
         assert_eq!(table.len(), 1, "the real answer can still arrive");
-    }
-
-    #[test]
-    fn a_passive_request_is_not_outstanding_but_gets_its_outcome() {
-        let mut table = RequestTable::<Asker>::default();
-        let watch = table.begin_passive(OutpostId(1), "watch");
-        let read = table.begin(OutpostId(1), "read");
-        assert_eq!(table.outstanding(), 1, "the watch is not outstanding");
-        assert_eq!(
-            table.finish(watch, OutpostId(1), QueryOutcome::Gone),
-            Some(("watch", QueryOutcome::Gone))
-        );
-        assert_eq!(table.outstanding(), 1);
-        table.finish(read, OutpostId(1), QueryOutcome::Gone);
-        assert_eq!(table.outstanding(), 0);
     }
 
     #[test]

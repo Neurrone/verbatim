@@ -1118,10 +1118,13 @@ fn say_all_step<S: TextSource>(
                         step.caret_moves.push(point);
                     }
                     let reply = perform(source, anchors, &request.op);
-                    inputs.push(Input::TextCompleted {
+                    inputs.push(Input::Answered {
                         trace_id: TraceId::mint(),
                         query_id: request.query_id,
-                        reply,
+                        outpost: request.node_id.outpost(),
+                        outcome: verbatim_model::protocol::QueryOutcome::Done(
+                            verbatim_model::protocol::QueryResult::Text(reply),
+                        ),
                     });
                 }
                 Effect::KeepDisplayOn(false) => step.display_released = true,

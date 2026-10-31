@@ -703,7 +703,7 @@ pub enum TextOp {
 }
 
 /// A text request from Core to the outpost that owns `node_id`; the answer
-/// comes back as `Input::TextCompleted` with the same `query_id`.
+/// comes back as `Input::Answered` with the same `query_id`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextRequest {
     /// Correlates the answer with this request.

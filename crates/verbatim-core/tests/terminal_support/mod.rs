@@ -572,10 +572,13 @@ impl Session {
     }
 
     fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
-        self.step(Input::TextCompleted {
+        self.step(Input::Answered {
             trace_id: TraceId::from_raw(2),
             query_id,
-            reply,
+            outpost: OUTPOST,
+            outcome: verbatim_model::protocol::QueryOutcome::Done(
+                verbatim_model::protocol::QueryResult::Text(reply),
+            ),
         })
     }
 

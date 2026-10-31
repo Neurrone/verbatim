@@ -26,6 +26,19 @@ use crate::reduce::reduce;
 use crate::state::SrState;
 
 const OUTPOST: OutpostId = OutpostId(1);
+
+/// The outpost's answer `reply` to the text request `query_id`, traced
+/// `trace_id`.
+fn answered(trace_id: TraceId, query_id: QueryId, reply: TextReply) -> Input {
+    Input::Answered {
+        trace_id,
+        query_id,
+        outpost: OUTPOST,
+        outcome: verbatim_model::protocol::QueryOutcome::Done(
+            verbatim_model::protocol::QueryResult::Text(reply),
+        ),
+    }
+}
 const TERMINAL: u64 = 12;
 
 fn id(number: u64) -> NodeId {
@@ -301,14 +314,7 @@ impl Playback {
 
     /// Answers request `query_id` with `reply`.
     fn reply(&mut self, state: &mut SrState, query_id: QueryId, reply: TextReply) {
-        let effects = reduce(
-            state,
-            &Input::TextCompleted {
-                trace_id: TraceId::from_raw(4),
-                query_id,
-                reply,
-            },
-        );
+        let effects = reduce(state, &answered(TraceId::from_raw(4), query_id, reply));
         self.take(state, effects);
     }
 
@@ -457,6 +463,47 @@ fn a_held_flood_is_read_when_the_group_s_last_line_is_handed_to_speech() {
     let mut heard = std::mem::take(&mut playback.heard);
     heard.extend(playback.play_all(&mut state));
     assert_eq!(heard, expected);
+}
+
+/// A read Core asked of the focused console, answered after the focus
+/// moved to another console, is not taken into the other's output.
+#[test]
+fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
+    let mut state = terminal();
+    let mut playback = Playback {
+        answer_late: true,
+        ..Playback::default()
+    };
+    playback.feed(&mut state, &output(lines(1..=30)));
+    for _ in 0..28 {
+        assert!(playback.play_one(&mut state));
+    }
+    let read = playback.late.take().expect("a read request held back");
+    let other = event(NormalizedEvent::FocusChanged {
+        node: NodeSnapshot {
+            id: id(TERMINAL + 1),
+            backend: Backend::Uia,
+            role: Role::Terminal,
+            name: Some("Other".to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        },
+        foreground: false,
+        ancestors: Vec::new(),
+        selected_child: None,
+        text: None,
+        earlier: None,
+        group: None,
+    });
+    let _ = reduce(&mut state, &other);
+    assert_eq!(
+        reduce(
+            &mut state,
+            &answered(TraceId::from_raw(4), read, TextReply::TerminalUnchanged)
+        ),
+        []
+    );
 }
 
 #[test]
@@ -1219,11 +1266,11 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     };
     let effects = reduce(
         &mut state,
-        &Input::TextCompleted {
-            trace_id: TraceId::from_raw(8),
-            query_id: request.query_id,
-            reply: TextReply::Read { moved: 0, chunk },
-        },
+        &answered(
+            TraceId::from_raw(8),
+            request.query_id,
+            TextReply::Read { moved: 0, chunk },
+        ),
     );
     assert_eq!(spoken(&effects), ["ready>"]);
     // In a terminal every review command reads the line again first, at

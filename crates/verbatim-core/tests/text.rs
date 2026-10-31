@@ -162,10 +162,19 @@ fn command(command: ReviewCommand, repeat: u8) -> Input {
 }
 
 fn completed(query_id: QueryId, reply: TextReply) -> Input {
-    Input::TextCompleted {
-        trace_id: TraceId::from_raw(4),
+    text_answer(TraceId::from_raw(4), query_id, reply)
+}
+
+/// The outpost's answer `reply` to the text request `query_id`, traced
+/// `trace_id`.
+fn text_answer(trace_id: TraceId, query_id: QueryId, reply: TextReply) -> Input {
+    Input::Answered {
+        trace_id,
         query_id,
-        reply,
+        outpost: OUTPOST,
+        outcome: verbatim_model::protocol::QueryOutcome::Done(
+            verbatim_model::protocol::QueryResult::Text(reply),
+        ),
     }
 }
 
@@ -3100,7 +3109,13 @@ fn a_duplicate_focus_takes_its_caret_without_speaking() {
 fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
     let mut state = SrState::new();
     let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
-    let _ = reduce(&mut state, &Input::OutpostEnded { outpost: OUTPOST });
+    let _ = reduce(
+        &mut state,
+        &Input::OutpostEnded {
+            trace_id: TraceId::from_raw(90),
+            outpost: OUTPOST,
+        },
+    );
     // The replacement numbers its nodes and anchors afresh and reports the
     // focus the user already heard: nothing is said, and its caret is
     // Core's.
@@ -4198,11 +4213,13 @@ fn navigate_to(state: &mut SrState, object: NodeSnapshot) -> Vec<Effect> {
     };
     reduce(
         state,
-        &Input::FetchCompleted {
+        &Input::Answered {
             trace_id: TraceId::from_raw(11),
             query_id: query.query_id,
-            kind: query.kind,
-            result: verbatim_model::FetchResult::Node(object),
+            outpost: query.node_id.outpost(),
+            outcome: verbatim_model::protocol::QueryOutcome::Done(
+                verbatim_model::protocol::QueryResult::Navigated(Some(object)),
+            ),
         },
     )
 }
@@ -4899,14 +4916,17 @@ fn a_held_keys_read_past_its_deadline_is_given_up_and_the_key_passed_on() {
     // watched as a key the hook passed itself, from the hook's time.
     let effects = reduce(&mut state, &Input::HeldKeyDue { trace_id: trace });
     let [
-        Effect::WithdrawText(withdrawn),
+        Effect::Withdraw {
+            outpost,
+            query_id: withdrawn,
+        },
         Effect::Text(watched),
         Effect::PassHeldKey(passed),
     ] = effects.as_slice()
     else {
         panic!("expected the read given up, then the key's watch and pass-on: {effects:?}");
     };
-    assert_eq!((*withdrawn, *passed), (reading, trace));
+    assert_eq!((*outpost, *withdrawn, *passed), (OUTPOST, reading, trace));
     let TextOp::AwaitCaret(watch) = &watched.op else {
         panic!("expected the key's watch: {watched:?}");
     };
@@ -5009,14 +5029,14 @@ fn answer_the_commands_read(
     );
     let effects = reduce(
         state,
-        &Input::TextCompleted {
-            trace_id: current,
-            query_id: read.query_id,
-            reply: TextReply::Read {
+        &text_answer(
+            current,
+            read.query_id,
+            TextReply::Read {
                 moved: 0,
                 chunk: line("line two\n", 101, 0),
             },
-        },
+        ),
     );
     let [Effect::Speak(utterance, key)] = effects.as_slice() else {
         panic!("expected the line spoken alone: {effects:?}");
@@ -5077,11 +5097,7 @@ fn speech_is_stamped_with_the_number_of_the_key_on_whose_behalf_it_is_spoken() {
     assert_eq!(reduce(&mut state, &typed_c), []);
     let effects = reduce(
         &mut state,
-        &Input::TextCompleted {
-            trace_id: backspace,
-            query_id: reading,
-            reply: read_before(line("ab", 101, 2), 410),
-        },
+        &text_answer(backspace, reading, read_before(line("ab", 101, 2), 410)),
     );
     assert_eq!(stamps(&effects), [Some(verbatim_model::KeySeq::new(2))]);
 }

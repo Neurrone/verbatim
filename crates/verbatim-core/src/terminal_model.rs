@@ -240,6 +240,65 @@ pub(crate) struct TerminalModel {
     due_ms: Option<u64>,
 }
 
+/// Core's models of the terminals it reads, the most recently read last,
+/// at most [`MODELS`]. A model goes only through
+/// [`SrState::drop_models`], which ends the queries of the review commands
+/// waiting for its answer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct Terminals(Vec<TerminalModel>);
+
+impl std::ops::Deref for Terminals {
+    type Target = [TerminalModel];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Terminals {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Terminals {
+    /// Adds `model`, the most recently read.
+    pub(crate) fn push(&mut self, model: TerminalModel) {
+        self.0.push(model);
+    }
+
+    /// Makes the model at `at` the most recently read.
+    fn move_to_back(&mut self, at: usize) {
+        self.0[at..].rotate_left(1);
+    }
+
+    /// Removes every model `which` picks, returning the queries of the
+    /// review commands that waited for their answers
+    /// ([`SrState::drop_models`]).
+    pub(crate) fn remove_where(&mut self, which: impl Fn(&TerminalModel) -> bool) -> Vec<QueryId> {
+        let mut reviews = Vec::new();
+        self.0.retain(|model| {
+            if !which(model) {
+                return true;
+            }
+            reviews.extend(
+                model
+                    .reviews
+                    .iter()
+                    .filter_map(|waiting| match waiting.review {
+                        Review::Text { query_id, .. } | Review::Mark { query_id, .. } => {
+                            Some(query_id)
+                        }
+                        Review::StatusBar { .. } => None,
+                    }),
+            );
+            false
+        });
+        reviews
+    }
+}
+
 /// The reader held behind an `Arc`, serialized as itself.
 mod shared {
     use std::sync::Arc;
@@ -440,15 +499,16 @@ fn model_of(state: &SrState, node: NodeId) -> Option<&TerminalModel> {
 /// The model of terminal `node`, made with its first snapshot; the least
 /// recently read model is forgotten past [`MODELS`].
 fn model_or_new(state: &mut SrState, node: NodeId) -> &mut TerminalModel {
-    let at = state.terminals.iter().position(|model| model.node == node);
-    let model = match at {
-        Some(at) => state.terminals.remove(at),
-        None => TerminalModel::new(node, settings_of(state)),
-    };
-    if state.terminals.len() >= MODELS {
-        state.terminals.remove(0);
+    if let Some(at) = state.terminals.iter().position(|model| model.node == node) {
+        state.terminals.move_to_back(at);
+    } else {
+        if state.terminals.len() >= MODELS {
+            let oldest = state.terminals[0].node;
+            state.drop_models(|model| model.node == oldest);
+        }
+        let model = TerminalModel::new(node, settings_of(state));
+        state.terminals.push(model);
     }
-    state.terminals.push(model);
     let last = state.terminals.len() - 1;
     &mut state.terminals[last]
 }
@@ -460,15 +520,7 @@ fn focused(state: &SrState) -> Option<NodeId> {
 
 /// A text request about terminal `node`.
 fn request(state: &mut SrState, node: NodeId, op: TextOp) -> (QueryId, Effect) {
-    let query_id = state.allocate_query_id();
-    (
-        query_id,
-        Effect::Text(TextRequest {
-            query_id,
-            node_id: node,
-            op,
-        }),
-    )
+    state.queries.ask(crate::queries::Asking::Text(node, op))
 }
 
 /// The timer effect for the focused terminal when its due time is no
@@ -1017,7 +1069,7 @@ fn abandon(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> 
     };
     model.reviews.pop_front();
     let trace = trace.unwrap_or(trace_id);
-    let caused = crate::reduce::text_completed(state, trace, query_id, reply);
+    let caused = crate::queries::answer_from_memory(state, trace, query_id, reply);
     queue_only(state, caused, trace)
 }
 
@@ -1025,10 +1077,8 @@ fn abandon(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> 
 pub(crate) fn input_trace(input: &Input) -> Option<TraceId> {
     match input {
         Input::Event { trace_id, .. }
-        | Input::FetchCompleted { trace_id, .. }
+        | Input::Answered { trace_id, .. }
         | Input::Command { trace_id, .. }
-        | Input::ActivationCompleted { trace_id, .. }
-        | Input::TextCompleted { trace_id, .. }
         | Input::CaretKey { trace_id, .. }
         | Input::HeldKey { trace_id, .. }
         | Input::HeldKeyDue { trace_id }
@@ -1073,6 +1123,7 @@ pub(crate) fn intercept(
             kept.push(effect);
             continue;
         };
+        state.queries.answer_from_memory_later(query_id);
         kept.extend(queue(
             state,
             node,
@@ -1137,10 +1188,11 @@ pub(crate) fn command_mark(
     state: &mut SrState,
     node: NodeId,
     trace_id: TraceId,
-    (query_id, forward, from): (QueryId, bool, TextPoint),
-) -> Option<Vec<Effect>> {
+    (forward, from): (bool, TextPoint),
+) -> Option<(QueryId, Vec<Effect>)> {
     model_of(state, node)?;
-    Some(queue(
+    let query_id = state.queries.ask_memory(node);
+    let effects = queue(
         state,
         node,
         Waiting {
@@ -1151,7 +1203,8 @@ pub(crate) fn command_mark(
                 from,
             },
         },
-    ))
+    );
+    Some((query_id, effects))
 }
 
 /// What "Report status bar" says of `footer`, its lines, on press
@@ -1229,7 +1282,8 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                         }
                         // No mark that way: the line move says nothing.
                         let reply = reply.unwrap_or(TextReply::NoText);
-                        let caused = crate::reduce::text_completed(state, trace, query_id, reply);
+                        let caused =
+                            crate::queries::answer_from_memory(state, trace, query_id, reply);
                         effects.extend(queue_only(state, caused, trace));
                         continue;
                     }
@@ -1251,7 +1305,7 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                 if let Some(model) = model_mut(state, node) {
                     model.reviews.pop_front();
                 }
-                let caused = crate::reduce::text_completed(state, trace, query_id, reply);
+                let caused = crate::queries::answer_from_memory(state, trace, query_id, reply);
                 effects.extend(queue_only(state, caused, trace));
             }
             // The history read for this request does not hold the row it
@@ -1298,6 +1352,7 @@ fn queue_only(state: &mut SrState, effects: Vec<Effect>, trace: TraceId) -> Vec<
     for effect in effects {
         match answerable(state, &effect) {
             Some((query_id, node, op)) => {
+                state.queries.answer_from_memory_later(query_id);
                 if let Some(model) = model_mut(state, node) {
                     model.reviews.push_back(Waiting {
                         trace: Some(trace),
@@ -1381,7 +1436,7 @@ pub(crate) fn sync_settings(state: &mut SrState) -> Vec<Effect> {
     let settings = settings_of(state);
     let focus = focused(state);
     let mut effects = Vec::new();
-    for model in &mut state.terminals {
+    for model in state.terminals.iter_mut() {
         if model.reader.settings() != settings {
             let before = model.due_ms;
             let step = model.rules().set_settings(settings);
@@ -1398,9 +1453,7 @@ pub(crate) fn sync_settings(state: &mut SrState) -> Vec<Effect> {
 
 /// An outpost ended: the terminals it read are forgotten.
 pub(crate) fn outpost_ended(state: &mut SrState, outpost: OutpostId) {
-    state
-        .terminals
-        .retain(|model| model.node.outpost() != outpost);
+    state.drop_models(|model| model.node.outpost() == outpost);
 }
 
 #[cfg(test)]

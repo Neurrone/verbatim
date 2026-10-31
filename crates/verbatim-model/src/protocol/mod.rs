@@ -1011,7 +1011,7 @@ pub enum Query {
 pub const WALK_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The one outcome of a query.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::large_enum_variant,
     reason = "a reply is built once and moved, never stored in bulk"
@@ -1032,7 +1032,7 @@ pub enum QueryOutcome {
 }
 
 /// What a finished query found.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::large_enum_variant,
     reason = "a reply is built once and moved, never stored in bulk"
@@ -1062,7 +1062,7 @@ pub enum QueryResult {
 }
 
 /// The answer to [`Query::FocusNow`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusNow {
     /// The application's top-level window and its facts, when it is the
     /// system's foreground window.
@@ -1080,7 +1080,7 @@ pub struct FocusNow {
 }
 
 /// The focused control in a [`FocusNow`] answer.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusedControl {
     /// The control.
     pub node: NodeSnapshot,

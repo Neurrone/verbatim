@@ -3,6 +3,7 @@
 //! determinism.
 
 use verbatim_core::{ReducerRecorder, SrState, replay};
+use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
     Backend, Earcon, EarlierElement, Effect, FetchResult, FocusGroup, Input, NodeDetails, NodeId,
     NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, QueryKind,
@@ -1321,11 +1322,11 @@ fn states_changed_for_non_focused_node_is_ignored() {
 #[test]
 fn fetch_completed_for_unknown_query_id_is_ignored() {
     let state = SrState::new();
-    let completed = Input::FetchCompleted {
+    let completed = Input::Answered {
         trace_id: TraceId::from_raw(46),
         query_id: QueryId(9999),
-        kind: QueryKind::Parent,
-        result: FetchResult::Gone,
+        outpost: OutpostId(1),
+        outcome: QueryOutcome::Gone,
     };
     let (state, effects) = reduce(&state, &completed);
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
@@ -2309,6 +2310,23 @@ fn command(trace_id: TraceId, cmd: ReviewCommand, repeat: u8) -> Input {
 }
 
 /// The query of the one fetch that is all of `effects`.
+/// The outpost's answer to navigation `query`, traced `trace`, as Core
+/// takes it: `result` as the protocol carries it.
+fn fetched(trace: u64, query: &verbatim_model::Query, result: FetchResult) -> Input {
+    let outcome = match result {
+        FetchResult::Node(node) => QueryOutcome::Done(QueryResult::Navigated(Some(node))),
+        FetchResult::NoNeighbor => QueryOutcome::Done(QueryResult::Navigated(None)),
+        FetchResult::Gone => QueryOutcome::Gone,
+        _ => QueryOutcome::Abandoned,
+    };
+    Input::Answered {
+        trace_id: TraceId::from_raw(trace),
+        query_id: query.query_id,
+        outpost: query.node_id.outpost(),
+        outcome,
+    }
+}
+
 fn only_fetch(effects: &[Effect]) -> verbatim_model::Query {
     match effects {
         [Effect::Fetch(query)] => *query,
@@ -2399,12 +2417,7 @@ fn navigate_to_parent_fetches_then_moves_and_announces() {
 
     // The completion moves the navigator to the parent and announces it.
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(92),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Node(parent),
-    };
+    let completion = fetched(92, &query, FetchResult::Node(parent));
     let (_, effects) = reduce(&state, &completion);
     assert_eq!(
         said(&effects),
@@ -2638,32 +2651,16 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
     );
     let query = only_fetch(&effects);
     let window = node(10, Role::Window, Some("App"), None, StateSet::new());
-    let (state, _) = reduce(
-        &state,
-        &Input::FetchCompleted {
-            trace_id: TraceId::from_raw(108),
-            query_id: query.query_id,
-            kind: query.kind,
-            result: FetchResult::Node(window),
-        },
-    );
+    let (state, _) = reduce(&state, &fetched(108, &query, FetchResult::Node(window)));
     let (state, effects) = reduce(
         &state,
         &command(TraceId::from_raw(109), ReviewCommand::FirstChild, 0),
     );
     let query = only_fetch(&effects);
     // The outpost answers with the id it gave the focus.
-    let mut fetched = node(45, Role::Button, Some("Disconnect"), None, StateSet::new());
-    fetched.assign_outpost(outpost_of(source));
-    let (state, effects) = reduce(
-        &state,
-        &Input::FetchCompleted {
-            trace_id: TraceId::from_raw(110),
-            query_id: query.query_id,
-            kind: query.kind,
-            result: FetchResult::Node(fetched),
-        },
-    );
+    let mut found = node(45, Role::Button, Some("Disconnect"), None, StateSet::new());
+    found.assign_outpost(outpost_of(source));
+    let (state, effects) = reduce(&state, &fetched(110, &query, FetchResult::Node(found)));
     assert_eq!(
         said(&effects),
         vec![UtteranceSegment::label("Disconnect"), role(Role::Button)]
@@ -3643,12 +3640,7 @@ fn reporting_the_object_speaks_the_role_and_navigating_to_it_does_not() {
     );
     let query = only_fetch(&effects);
     let next = node(11, Role::ListItem, Some("beta.txt"), None, StateSet::new());
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(127),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Node(next),
-    };
+    let completion = fetched(127, &query, FetchResult::Node(next));
     let (_, effects) = reduce(&state, &completion);
     assert_eq!(said(&effects), vec![UtteranceSegment::label("beta.txt")]);
 }
@@ -3664,12 +3656,7 @@ fn navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put() {
         &command(TraceId::from_raw(128), ReviewCommand::Parent, 0),
     );
     let query = only_fetch(&effects);
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(129),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::NoNeighbor,
-    };
+    let completion = fetched(129, &query, FetchResult::NoNeighbor);
     let (after, effects) = reduce(&state, &completion);
     assert_eq!(
         said(&effects),
@@ -3704,12 +3691,7 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
         let state = focused(source, root);
         let (state, effects) = reduce(&state, &command(TraceId::from_raw(131), command_kind, 0));
         let query = only_fetch(&effects);
-        let completion = Input::FetchCompleted {
-            trace_id: TraceId::from_raw(132),
-            query_id: query.query_id,
-            kind: query.kind,
-            result: FetchResult::NoNeighbor,
-        };
+        let completion = fetched(132, &query, FetchResult::NoNeighbor);
         let (_, effects) = reduce(&state, &completion);
         assert_eq!(
             said(&effects),
@@ -3743,12 +3725,7 @@ fn navigate_completion_after_an_intervening_focus_event_still_applies() {
     );
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(135),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Node(parent),
-    };
+    let completion = fetched(135, &query, FetchResult::Node(parent));
     let (_, effects) = reduce(&state, &completion);
     assert_eq!(
         said(&effects),
@@ -3777,12 +3754,7 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
 
     // The first (now stale) completion is dropped.
     let stale_parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let stale_completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(138),
-        query_id: first_query.query_id,
-        kind: first_query.kind,
-        result: FetchResult::Node(stale_parent),
-    };
+    let stale_completion = fetched(138, &first_query, FetchResult::Node(stale_parent));
     let (state, effects) = reduce(&state, &stale_completion);
     assert!(
         effects.is_empty(),
@@ -3791,12 +3763,7 @@ fn a_second_navigation_supersedes_the_first_pending_one() {
 
     // The second completion applies.
     let sibling = node(12, Role::Button, Some("Cancel"), None, StateSet::new());
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(139),
-        query_id: second_query.query_id,
-        kind: second_query.kind,
-        result: FetchResult::Node(sibling),
-    };
+    let completion = fetched(139, &second_query, FetchResult::Node(sibling));
     let (_, effects) = reduce(&state, &completion);
     assert_eq!(
         said(&effects),
@@ -3824,12 +3791,7 @@ fn to_focus_after_a_navigation_drops_its_late_completion() {
     );
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(142),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Node(parent),
-    };
+    let completion = fetched(142, &query, FetchResult::Node(parent));
     let (_, effects) = reduce(&state, &completion);
     assert!(
         effects.is_empty(),
@@ -3852,12 +3814,7 @@ fn navigate_completion_gone_reseeds_the_navigator_to_focus() {
     // The outpost could not re-acquire the navigator's node: distinct from
     // a tree edge, so this must not stay silent. It falls back to
     // announcing whatever is currently focused.
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(144),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Gone,
-    };
+    let completion = fetched(144, &query, FetchResult::Gone);
     let (_, effects) = reduce(&state, &completion);
     assert_eq!(
         said(&effects),
@@ -3878,6 +3835,7 @@ fn activate_emits_activate_for_the_navigator_object() {
     assert_eq!(
         effects,
         vec![Effect::Activate {
+            query_id: QueryId(0),
             node_id: NodeId::in_outpost(outpost_of(source), 10)
         }]
     );
@@ -3965,15 +3923,7 @@ fn navigator_follows_focus_and_returns_to_focus() {
     );
     let query = only_fetch(&effects);
     let parent = node(11, Role::Group, Some("Group"), None, StateSet::new());
-    let (state, _) = reduce(
-        &state,
-        &Input::FetchCompleted {
-            trace_id: TraceId::from_raw(154),
-            query_id: query.query_id,
-            kind: query.kind,
-            result: FetchResult::Node(parent),
-        },
-    );
+    let (state, _) = reduce(&state, &fetched(154, &query, FetchResult::Node(parent)));
 
     // A new focus event snaps the navigator back to focus.
     let second = node(
@@ -4808,7 +4758,10 @@ fn reduce_from(state: &SrState, input: &Input, outpost: OutpostId) -> (SrState, 
 }
 
 fn ended(outpost: OutpostId) -> Input {
-    Input::OutpostEnded { outpost }
+    Input::OutpostEnded {
+        trace_id: TraceId::from_raw(1_000),
+        outpost,
+    }
 }
 
 #[test]
@@ -4857,12 +4810,11 @@ fn a_pending_navigation_to_an_ended_outpost_is_dropped() {
     let query = only_fetch(&effects);
 
     let (state, _) = reduce(&state, &ended(outpost_of(source)));
-    let completion = Input::FetchCompleted {
-        trace_id: TraceId::from_raw(168),
-        query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Node(node(6, Role::Group, Some("Buttons"), None, StateSet::new())),
-    };
+    let completion = fetched(
+        168,
+        &query,
+        FetchResult::Node(node(6, Role::Group, Some("Buttons"), None, StateSet::new())),
+    );
     let (_, effects) = reduce(&state, &completion);
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
@@ -4902,6 +4854,7 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     assert_eq!(
         effects,
         vec![Effect::Activate {
+            query_id: QueryId(0),
             node_id: NodeId::in_outpost(OutpostId(2), 2)
         }],
         "the navigator follows the re-read focus"
@@ -6347,15 +6300,7 @@ fn a_navigation_the_application_did_not_answer_leaves_the_navigator_put() {
         &command(TraceId::from_raw(182), ReviewCommand::Parent, 0),
     );
     let query = only_fetch(&effects);
-    let (state, effects) = reduce(
-        &state,
-        &Input::FetchCompleted {
-            trace_id: TraceId::from_raw(183),
-            query_id: query.query_id,
-            kind: query.kind,
-            result: FetchResult::Unanswered,
-        },
-    );
+    let (state, effects) = reduce(&state, &fetched(183, &query, FetchResult::Unanswered));
     assert!(effects.is_empty(), "nothing is spoken: {effects:?}");
     let (_, effects) = reduce(
         &state,
@@ -6659,36 +6604,59 @@ fn the_current_line_pressed_twice_is_spelled_and_a_character_thrice_gives_its_co
 
 #[test]
 fn an_activation_says_its_action_activate_or_no_action() {
-    let outcome = |activated, action| {
-        let (_, effects) = reduce(
-            &SrState::new(),
-            &Input::ActivationCompleted {
-                trace_id: TraceId::from_raw(193),
-                activated,
-                action,
-            },
-        );
-        said(&effects)
+    let source = Pid(7);
+    let state = focused(
+        source,
+        node(10, Role::Button, Some("OK"), None, StateSet::new()),
+    );
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::from_raw(192), ReviewCommand::Activate, 0),
+    );
+    let [Effect::Activate { query_id, .. }] = effects[..] else {
+        panic!("one activation, not {effects:?}");
     };
+    let answered = |outcome| {
+        reduce(
+            &state,
+            &Input::Answered {
+                trace_id: TraceId::from_raw(193),
+                query_id,
+                outpost: outpost_of(source),
+                outcome,
+            },
+        )
+        .1
+    };
+    let outcome = |outcome| said(&answered(outcome));
+    let activated = |action| QueryOutcome::Done(QueryResult::Activated(action));
     assert_eq!(
-        outcome(true, None),
+        outcome(activated(None)),
         vec![message(verbatim_model::Message::Activate)]
     );
     assert_eq!(
-        outcome(true, Some(verbatim_model::ActionName::Invoke)),
+        outcome(activated(Some(verbatim_model::ActionName::Invoke))),
         vec![message(verbatim_model::Message::Invoke)]
     );
     assert_eq!(
-        outcome(
-            true,
-            Some(verbatim_model::ActionName::Named("Press".to_owned()))
-        ),
+        outcome(activated(Some(verbatim_model::ActionName::Named(
+            "Press".to_owned()
+        )))),
         vec![UtteranceSegment::text("Press")]
     );
-    assert_eq!(
-        outcome(false, None),
-        vec![message(verbatim_model::Message::NoAction)]
-    );
+    for failure in [
+        QueryOutcome::Failed("no action".to_owned()),
+        QueryOutcome::NotStarted,
+        QueryOutcome::Gone,
+    ] {
+        assert_eq!(
+            outcome(failure),
+            vec![message(verbatim_model::Message::NoAction)]
+        );
+    }
+    // The activation started and passed its deadline: whether it happened
+    // is unknown, so nothing is said either way.
+    assert_eq!(answered(QueryOutcome::Abandoned), []);
 }
 
 /// When speech is cut off (`docs/nvda/speech.md`, "Cancellation"): a

@@ -16,8 +16,8 @@ use std::sync::Arc;
 use verbatim_model::{
     ActionName, Earcon, EarlierElement, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot,
     NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase, Pid, ProgressReading,
-    PropertyChange, Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority,
-    State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
+    PropertyChange, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
+    StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
     Backend, FocusGroup, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle,
@@ -48,6 +48,7 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     let focus = state.focus.as_ref().map(|focus| focus.snapshot.id);
+    let first_query = state.queries.next();
     // A user input's number, recorded by its trace before anything it
     // causes is spoken (`crate::keys`).
     crate::keys::record(state, input);
@@ -74,6 +75,11 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         let cut = terminal::cut(state, 0);
         effects.extend(cut);
     }
+    // The queries asked run under the trace the shell runs their requests
+    // under (`crate::queries`).
+    state
+        .queries
+        .set_traces(first_query, &effects, input.trace_id());
     // Speech caused by a key carries the key's number, last of all.
     crate::keys::stamp(state, input, &mut effects);
     effects
@@ -97,13 +103,17 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             window.as_ref(),
             event,
         ),
-        Input::FetchCompleted {
+        Input::Answered {
             trace_id,
             query_id,
-            kind,
-            result,
-        } => reduce_navigate_completed(state, *trace_id, *query_id, *kind, result),
-        Input::OutpostEnded { outpost } => outpost_ended(state, *outpost),
+            outpost,
+            outcome,
+        } => crate::queries::answered(state, *trace_id, *query_id, *outpost, outcome),
+        Input::OutpostEnded { trace_id, outpost } => {
+            let mut effects = outpost_ended(state, *outpost);
+            effects.extend(crate::queries::outpost_gone(state, *trace_id, *outpost));
+            effects
+        }
         // A command or script pressed while a held key waits, or while
         // the watch of the held key last passed on is open, runs after it,
         // as NVDA runs scripts one at a time in the order queued
@@ -114,16 +124,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             editing::queue_command(state, input)
         }
         Input::Command { .. } | Input::Script { .. } => command_input(state, input),
-        Input::ActivationCompleted {
-            trace_id,
-            activated,
-            action,
-        } => reduce_activation_completed(*trace_id, *activated, action.as_ref()),
-        Input::TextCompleted {
-            trace_id,
-            query_id,
-            reply,
-        } => reduce_text_completed(state, *trace_id, *query_id, reply.clone()),
         // A key pressed while a held key waits reaches the application
         // after it, so it is handled after it (`docs/design/key-holding.md`,
         // "Keys behind a held key").
@@ -466,7 +466,7 @@ fn forget_text_of(state: &mut SrState, node: NodeId) {
     {
         state.pending_caret = None;
     }
-    state.terminals.retain(|model| model.node != node);
+    state.drop_models(|model| model.node == node);
 }
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
@@ -542,34 +542,12 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<&Window
     }
 }
 
-/// Speaks an activation's outcome, as NVDA's review activate does: the
-/// action ("Activate") when something was activated, else "No action".
-/// Routes the answer to a text request to whatever made it: a caret key
-/// waiting for evidence, a focus's selected text, a review or text command,
-/// or say-all. An answer
-/// nothing waits for any more (superseded by a newer request, or a
-/// say-all's caret movement) is dropped.
-fn reduce_text_completed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query_id: QueryId,
-    reply: verbatim_model::TextReply,
-) -> Vec<Effect> {
-    // The watch of the held key last passed on has its answer, whatever it
-    // is: the held key waiting behind it may have its caret read now.
-    let resume = state.held_keys.awaiting_watch == Some(query_id);
-    if resume {
-        state.held_keys.awaiting_watch = None;
-    }
-    let mut effects = text_completed(state, trace_id, query_id, reply);
-    if resume {
-        effects.extend(editing::held_watch_answered(state));
-    }
-    effects
-}
-
-/// [`reduce_text_completed`]'s dispatch, by the request answered; also
-/// how Core answers a request for a terminal's text from its memory.
+/// The answer `reply` to the text request `query_id`, a held key's read
+/// before the key, a caret key waiting for evidence, a focus's selected
+/// text, a review or text command, say-all, or a terminal's request:
+/// routed to what waits for it. An answer nothing waits for any more
+/// (superseded by a newer request, or a say-all's caret movement) is
+/// dropped.
 pub(crate) fn text_completed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -627,7 +605,9 @@ pub(crate) fn text_completed(
     Vec::new()
 }
 
-fn reduce_activation_completed(
+/// Speaks what an activation did: the action's name, NVDA's "Activate" for
+/// an action with none, or "No action" when nothing was `activated`.
+pub(crate) fn activation_completed(
     trace_id: TraceId,
     activated: bool,
     action: Option<&ActionName>,
@@ -1691,17 +1671,16 @@ fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand)
     if command == ReviewCommand::SayAllFromCaret {
         return say_all::start(state, node, true, verbatim_model::TextPoint::Caret);
     }
-    let query_id = state.allocate_query_id();
+    let (query_id, effect) = state.queries.ask(crate::queries::Asking::Text(
+        node,
+        verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
+    ));
     state.pending_text = Some(crate::state::PendingText {
         query_id,
         node,
         then: crate::state::TextFollowUp::Location,
     });
-    vec![Effect::Text(verbatim_model::TextRequest {
-        query_id,
-        node_id: node,
-        op: verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
-    })]
+    vec![effect]
 }
 
 /// Runs a command on the navigator object and its review cursor.
@@ -1743,9 +1722,10 @@ fn navigator_command(
     match command {
         ReviewCommand::ToFocus => unreachable!("handled above"),
         ReviewCommand::ReportObject => report_object(state, trace_id, repeat),
-        ReviewCommand::Activate => vec![Effect::Activate {
-            node_id: navigator.object.id,
-        }],
+        ReviewCommand::Activate => {
+            let node = navigator.object.id;
+            vec![state.queries.ask(crate::queries::Asking::Activate(node)).1]
+        }
         ReviewCommand::Parent => navigate(state, trace_id, QueryKind::Parent),
         ReviewCommand::NextSibling => navigate(state, trace_id, QueryKind::NextSibling),
         ReviewCommand::PreviousSibling => navigate(state, trace_id, QueryKind::PreviousSibling),
@@ -1955,16 +1935,14 @@ fn navigate(state: &mut SrState, _trace_id: TraceId, kind: QueryKind) -> Vec<Eff
         return Vec::new();
     };
     let node_id = navigator.object.id;
-    let query_id = state.allocate_query_id();
+    let (query_id, effect) = state
+        .queries
+        .ask(crate::queries::Asking::Navigate(node_id, kind));
     state.latest_navigation = Some(PendingNavigation {
         query_id,
         from: node_id,
     });
-    vec![Effect::Fetch(Query {
-        query_id,
-        node_id,
-        kind,
-    })]
+    vec![effect]
 }
 
 /// `text` spelled character by character, a space spoken as "space".
@@ -2572,7 +2550,7 @@ fn reduce_description_changed(
 /// the navigator from the current focus and announces it (via
 /// [`navigator_to_focus`]) rather than staying silent; if nothing live is
 /// focused either, that stays silent too.
-fn reduce_navigate_completed(
+pub(crate) fn navigate_completed(
     state: &mut SrState,
     trace_id: TraceId,
     query_id: QueryId,

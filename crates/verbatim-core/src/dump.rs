@@ -27,8 +27,10 @@ use crate::state::SrState;
 /// snapshot versions are gone. Version 2: the line after the header is the
 /// reducer state the inputs start from. Version 3: a select then copy's
 /// pending read names the start marker it was made for. Version 4: events
-/// and the state's focus times are stamped in microseconds only.
-pub const DUMP_FORMAT_VERSION: u32 = 4;
+/// and the state's focus times are stamped in microseconds only. Version 5:
+/// the state records Core's queries in one table, and an outpost's answer
+/// to any of them is one input.
+pub const DUMP_FORMAT_VERSION: u32 = 5;
 
 /// The first line of a dump: format version, the crate version that wrote
 /// it, and a caller-supplied timestamp string.

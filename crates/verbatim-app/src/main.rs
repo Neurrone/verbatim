@@ -1178,6 +1178,7 @@ impl ReducerThread<'_> {
             },
         );
         self.send(
+            trace_id,
             outpost,
             id,
             CoreToOutpost::Query {
@@ -1257,6 +1258,7 @@ impl ReducerThread<'_> {
             .requests
             .begin(outpost, Asker::FocusNow { source, trace_id });
         self.send(
+            trace_id,
             outpost,
             id,
             CoreToOutpost::Query {
@@ -1339,7 +1341,7 @@ impl ReducerThread<'_> {
                 if timing.dequeued_at_us != 0 {
                     self.context.ledger.event_received(trace_id, timing);
                 }
-                self.finish(request_id, outpost, outcome);
+                self.finish(trace_id, request_id, outpost, outcome);
             }
             OutpostToCore::Ready {
                 outpost_pid,
@@ -1489,7 +1491,7 @@ impl ReducerThread<'_> {
         if let Some(round) = self.barrier.start(self.handled_input, clear) {
             self.context.supervisor.query_idle(round);
         }
-        let requests = self.requests.outstanding();
+        let requests = self.requests.outstanding() + self.state.outstanding_queries();
         let starting = self.live.starting();
         let focus_wanted = self.wanted.focus_now_count();
         let standing = match self.barrier.standing() {
@@ -1531,6 +1533,7 @@ impl ReducerThread<'_> {
     /// spoken when it ends.
     fn idle_conditions_clear(&self) -> bool {
         self.requests.outstanding() == 0
+            && self.state.outstanding_queries() == 0
             && self.held_keys.is_empty()
             && !self.state.holds_inputs_back()
             && !self.state.announces_toggle_key()
@@ -1549,9 +1552,16 @@ impl ReducerThread<'_> {
         self.context.reader.changed(settings);
     }
 
-    /// Delivers a query's outcome through the request table, applying the
-    /// reducer input it produces, if any.
-    fn finish(&mut self, id: RequestId, outpost: OutpostId, outcome: QueryOutcome) {
+    /// Delivers a query's outcome, traced `trace_id`, by its request id's
+    /// asker: to the reducer as `Input::Answered`, or through the request
+    /// table, applying the reducer input it produces, if any.
+    fn finish(
+        &mut self,
+        trace_id: TraceId,
+        id: RequestId,
+        outpost: OutpostId,
+        outcome: QueryOutcome,
+    ) {
         // A query the outpost's watchdog abandoned passed its deadline in
         // a cross-process call: the application is not responding, which
         // is reported once per stall.
@@ -1564,8 +1574,14 @@ impl ReducerThread<'_> {
             QueryOutcome::Done(_) | QueryOutcome::Gone => self.live.answered(outpost),
             _ => {}
         }
-        if let Some((asker, outcome)) = self.requests.finish(id, outpost, outcome) {
-            self.deliver(asker, outcome);
+        match requests::reply_input(trace_id, id, outpost, outcome) {
+            requests::Routed::Reducer(input) => self.apply(input),
+            requests::Routed::Shell(outcome) => {
+                if let Some((asker, outcome)) = self.requests.finish(id, outpost, outcome) {
+                    self.deliver(asker, outcome);
+                }
+            }
+            requests::Routed::Nobody => {}
         }
     }
 
@@ -1740,40 +1756,32 @@ impl ReducerThread<'_> {
             }
             Effect::StopSpeech => self.context.manager.control().cancel(),
             Effect::DropExpiredSpeech(now) => self.context.manager.control().drop_expired(now),
-            Effect::Fetch(query) => {
-                let outpost = query.node_id.outpost();
-                let id = self.requests.begin(
-                    outpost,
-                    Asker::Reducer {
-                        query_id: query.query_id,
-                        kind: query.kind,
-                        trace_id,
-                    },
-                );
-                let command = CoreToOutpost::Query {
-                    trace_id,
-                    request_id: id,
-                    query: Query::Navigate {
-                        node_id: query.node_id,
-                        kind: query.kind,
-                    },
-                    timing: EventTiming::default(),
-                };
-                self.send(outpost, id, command);
-            }
-            Effect::Activate { node_id } => {
-                let outpost = node_id.outpost();
-                let id = self.requests.begin(outpost, Asker::Activation { trace_id });
-                let command = CoreToOutpost::Query {
-                    trace_id,
-                    request_id: id,
-                    query: Query::Activate { node_id },
-                    timing: EventTiming::default(),
-                };
-                self.send(outpost, id, command);
-            }
+            Effect::Fetch(query) => self.ask_for_reducer(
+                trace_id,
+                query.query_id,
+                query.node_id.outpost(),
+                Query::Navigate {
+                    node_id: query.node_id,
+                    kind: query.kind,
+                },
+            ),
+            Effect::Activate { query_id, node_id } => self.ask_for_reducer(
+                trace_id,
+                query_id,
+                node_id.outpost(),
+                Query::Activate { node_id },
+            ),
             Effect::CopyToClipboard(text) => self.context.clipboard.copy(trace_id, text),
-            Effect::Text(request) => self.text_request(trace_id, request),
+            Effect::Text(TextRequest {
+                query_id,
+                node_id,
+                op,
+            }) => self.ask_for_reducer(
+                trace_id,
+                query_id,
+                node_id.outpost(),
+                Query::Text { node_id, op },
+            ),
             Effect::KeepDisplayOn(on) => keep_display_on(on),
             Effect::SettingsChanged(settings) => self.context.reader.changed(settings),
             // The exit sound is heard before Verbatim exits: the main thread
@@ -1794,7 +1802,15 @@ impl ReducerThread<'_> {
                     (key, Instant::now() + Duration::from_millis(within_ms))
                 });
             }
-            Effect::WithdrawText(query_id) => self.withdraw_text(query_id),
+            Effect::Withdraw { outpost, query_id } => {
+                let command = CoreToOutpost::Cancel {
+                    request_id: RequestId::reducer(query_id.0),
+                };
+                if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
+                    // The outpost is going away; nothing waits for its answer.
+                    tracing::debug!(%error, %outpost, "a query of Core's could not be withdrawn");
+                }
+            }
             Effect::TerminalTimer { due_ms } => {
                 self.terminal_timer = due_ms.map(|due_ms| {
                     let wait = due_ms.saturating_sub(latency::now_ms());
@@ -1821,39 +1837,43 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Sends a text request to the outpost of the node it names; the answer
-    /// re-enters the reducer as `Input::TextCompleted`.
-    fn text_request(&mut self, trace_id: TraceId, request: TextRequest) {
-        let TextRequest {
-            query_id,
-            node_id,
-            op,
-        } = request;
-        let outpost = node_id.outpost();
-        let asker = Asker::Text { query_id, trace_id };
-        // A caret watch waits for the application, possibly until its bound
-        // when the key moved nothing: it does not keep Verbatim from being
-        // idle.
-        let id = if matches!(op, verbatim_model::TextOp::AwaitCaret(_)) {
-            self.requests.begin_passive(outpost, asker)
-        } else {
-            self.requests.begin(outpost, asker)
-        };
+    /// Sends the reducer's query `query_id`, which Core's reducer records,
+    /// to `outpost` under its own number; the answer re-enters the reducer
+    /// as `Input::Answered`.
+    fn ask_for_reducer(
+        &mut self,
+        trace_id: TraceId,
+        query_id: verbatim_model::QueryId,
+        outpost: OutpostId,
+        query: Query,
+    ) {
+        let id = RequestId::reducer(query_id.0);
         let command = CoreToOutpost::Query {
             trace_id,
             request_id: id,
-            query: Query::Text { node_id, op },
+            query,
             timing: EventTiming::default(),
         };
-        self.send(outpost, id, command);
+        self.send(trace_id, outpost, id, command);
     }
 
-    /// Sends request `id` to `outpost`, failing it at once when it cannot be
-    /// sent, so it still gets its one outcome.
-    fn send(&mut self, outpost: OutpostId, id: RequestId, command: CoreToOutpost) {
+    /// Sends request `id`, traced `trace_id`, to `outpost`, failing it at
+    /// once when it cannot be sent, so it still gets its one outcome.
+    fn send(
+        &mut self,
+        trace_id: TraceId,
+        outpost: OutpostId,
+        id: RequestId,
+        command: CoreToOutpost,
+    ) {
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             tracing::warn!(%error, %outpost, "a query could not reach its outpost");
-            self.finish(id, outpost, QueryOutcome::Failed(error.to_string()));
+            self.finish(
+                trace_id,
+                id,
+                outpost,
+                QueryOutcome::Failed(error.to_string()),
+            );
         }
     }
 
@@ -1873,13 +1893,14 @@ impl ReducerThread<'_> {
         let id = self
             .requests
             .begin(outpost, Asker::DumpTree { ticket, reply });
+        let trace_id = TraceId::mint();
         let command = CoreToOutpost::Query {
-            trace_id: TraceId::mint(),
+            trace_id,
             request_id: id,
             query: Query::DumpTree { locations },
             timing: EventTiming::default(),
         };
-        self.send(outpost, id, command);
+        self.send(trace_id, outpost, id, command);
     }
 
     /// Asks the outpost of the process that owns the taskbar `ask` of the
@@ -1942,13 +1963,14 @@ impl ReducerThread<'_> {
         let id = self
             .requests
             .begin_until(outpost, asker, times.answer_by_us());
+        let trace_id = TraceId::mint();
         let command = CoreToOutpost::Query {
-            trace_id: TraceId::mint(),
+            trace_id,
             request_id: id,
             query,
             timing: EventTiming::default(),
         };
-        self.send(outpost, id, command);
+        self.send(trace_id, outpost, id, command);
     }
 
     /// Handles the end of `outpost`, which watched `target_pid`, for
@@ -1995,7 +2017,10 @@ impl ReducerThread<'_> {
                 .expect("outposts lock")
                 .remove(&target_pid);
         }
-        self.apply(Input::OutpostEnded { outpost });
+        self.apply(Input::OutpostEnded {
+            trace_id: TraceId::mint(),
+            outpost,
+        });
         for (asker, outcome) in self.requests.outpost_ended(outpost) {
             self.deliver(asker, outcome);
         }
@@ -2065,23 +2090,6 @@ impl ReducerThread<'_> {
     /// waiting. The outpost answers "not started" if the dump was still
     /// queued; a dump already running finishes, within its own walk budget.
     /// Either way the request keeps its one outcome, which goes nowhere.
-    /// Ends Core's text request `query_id`, which Core gave up on
-    /// ([`Effect::WithdrawText`]), and withdraws it from its outpost: a
-    /// query not yet started is answered "not started", whose outcome, as
-    /// any later one, finds no request and is dropped.
-    fn withdraw_text(&mut self, query_id: verbatim_model::QueryId) {
-        let Some((id, outpost, _asker)) =
-            self.requests.withdraw(|asker| asks_text(asker, query_id))
-        else {
-            return;
-        };
-        let command = CoreToOutpost::Cancel { request_id: id };
-        if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-            // The outpost is going away; nothing waits for its answer.
-            tracing::debug!(%error, %outpost, "a text request could not be withdrawn");
-        }
-    }
-
     fn dump_tree_given_up(&mut self, ticket: DumpTicket) {
         let Some((id, outpost)) = self.requests.find(|asker| asks_dump(asker, ticket)) else {
             return;
@@ -2092,11 +2100,6 @@ impl ReducerThread<'_> {
             tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");
         }
     }
-}
-
-/// Whether `who` is Core's text request `query_id`.
-fn asks_text(who: &Asker, query_id: verbatim_model::QueryId) -> bool {
-    matches!(who, Asker::Text { query_id: asked, .. } if *asked == query_id)
 }
 
 /// Whether `who` is the tree dump named `ticket`.
@@ -2457,18 +2460,6 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Withdrawing a text request finds the request with Core's query id
-    /// and no other.
-    #[test]
-    fn a_text_withdrawal_matches_only_its_query_id() {
-        let asker = Asker::Text {
-            query_id: verbatim_model::QueryId(7),
-            trace_id: TraceId::mint(),
-        };
-        assert!(asks_text(&asker, verbatim_model::QueryId(7)));
-        assert!(!asks_text(&asker, verbatim_model::QueryId(8)));
-    }
 
     /// Giving up a tree dump finds the dump with that ticket and no other.
     #[test]

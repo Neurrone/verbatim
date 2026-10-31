@@ -21,9 +21,9 @@ use std::cell::Cell;
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, Effect, FetchResult, Input,
-    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, ReviewCommand, Role, StateSet,
-    TextAnchor, TextChunk, TextReply, TextUnit, TraceId,
+    Backend, CaretKey, CaretMotion, CaretReply, CaretReport, Effect, Input, NodeDetails, NodeId,
+    NodeSnapshot, NormalizedEvent, Pid, ReviewCommand, Role, StateSet, TextAnchor, TextChunk,
+    TextReply, TextUnit, TraceId,
 };
 
 /// The system allocator, counting the bytes requested on each thread.
@@ -173,11 +173,13 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
     let Some(Effect::Fetch(query)) = small_effects.first() else {
         panic!("expected a navigation fetch, got {small_effects:?}");
     };
-    let completion = Input::FetchCompleted {
+    let completion = Input::Answered {
         trace_id: TraceId::from_raw(3),
         query_id: query.query_id,
-        kind: query.kind,
-        result: FetchResult::Node(node(6, Role::Pane, "Toolbar")),
+        outpost: query.node_id.outpost(),
+        outcome: verbatim_model::protocol::QueryOutcome::Done(
+            verbatim_model::protocol::QueryResult::Navigated(Some(node(6, Role::Pane, "Toolbar"))),
+        ),
     };
     let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &completion));
     let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &completion));
@@ -265,24 +267,27 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
     let Some(Effect::Text(request)) = effects.first() else {
         panic!("expected a caret wait, got {effects:?}");
     };
-    let _ = same(&Input::TextCompleted {
+    let _ = same(&Input::Answered {
         trace_id: TraceId::from_raw(6),
         query_id: request.query_id,
-        reply: TextReply::Caret(Box::new(CaretReply {
-            same_line: None,
-            removed: None,
-            moved: true,
-            read_at_ms: 101,
-            caret: CaretReport {
-                line: long_line(10, 1),
-                selection: None,
-                selection_line: None,
-            },
-            unit: None,
-            selection_changes: Vec::new(),
-            content_changed: false,
-            new_selection: None,
-        })),
+        outpost: request.node_id.outpost(),
+        outcome: verbatim_model::protocol::QueryOutcome::Done(
+            verbatim_model::protocol::QueryResult::Text(TextReply::Caret(Box::new(CaretReply {
+                same_line: None,
+                removed: None,
+                moved: true,
+                read_at_ms: 101,
+                caret: CaretReport {
+                    line: long_line(10, 1),
+                    selection: None,
+                    selection_line: None,
+                },
+                unit: None,
+                selection_changes: Vec::new(),
+                content_changed: false,
+                new_selection: None,
+            }))),
+        ),
     });
     let _ = same(&Input::Command {
         pressed_at_ms: 0,

@@ -258,7 +258,7 @@ impl Session<'_> {
                 }
                 op => panic!("Core asked the terminal {op:?}"),
             }
-            .into_input(request.query_id),
+            .into_input(request.query_id, request.node_id.outpost()),
             Effect::Speak(utterance, _) => {
                 self.spoken.push(
                     utterance
@@ -278,15 +278,18 @@ impl Session<'_> {
 
 /// An answer as the input that brings it to Core.
 trait IntoInput {
-    fn into_input(self, query_id: verbatim_model::QueryId) -> Input;
+    fn into_input(self, query_id: verbatim_model::QueryId, outpost: OutpostId) -> Input;
 }
 
 impl IntoInput for TextReply {
-    fn into_input(self, query_id: verbatim_model::QueryId) -> Input {
-        Input::TextCompleted {
+    fn into_input(self, query_id: verbatim_model::QueryId, outpost: OutpostId) -> Input {
+        Input::Answered {
             trace_id: TraceId::mint(),
             query_id,
-            reply: self,
+            outpost,
+            outcome: verbatim_model::protocol::QueryOutcome::Done(
+                verbatim_model::protocol::QueryResult::Text(self),
+            ),
         }
     }
 }
