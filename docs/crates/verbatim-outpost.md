@@ -1248,12 +1248,16 @@ unredirected, never unspawned.
   listener read that the earlier element under it lost the focus or is
   gone, the report carries that evidence (`FocusChanged::earlier`) and its
   commit evicts the element kept for the node, if still kept
-  (`commit::Stale`, `NodeIdRegistry::evict_element_if`), not moving the
-  subscription to it; for one gone, the node's text is dropped from the
-  store before the caret read, while the entry's request is live
-  (`Store::forget_text`), and its terminal entry goes in the commit. The subscription's target is
-  compared by node, group and element, so a node whose element was
-  replaced is followed again. Its
+  (`commit::Stale`, `Store::evict_element_if`), not moving the
+  subscription to it; the node's text is dropped from the program's
+  copies and the store before the caret read, while the entry's request
+  is live (`text_reads::forget_text`), so the caret read takes the new
+  element's pattern, and the commit drops the node's terminal entry and
+  ends a caret key's watch on the node (`Change::replaced`). The
+  subscription's target is compared by node, group, element and slider
+  element, each element by the shell's token for it, which the shell keeps
+  while it is followed, so a node or slider whose element was replaced is
+  followed again. Its
   ancestors are the listener's chain, filtered, spliced at the previous
   chain, and completed above as the listener's walk ended
   (`read::uia_chain_from_read`). Every UIA

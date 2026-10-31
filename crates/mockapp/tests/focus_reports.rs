@@ -195,6 +195,204 @@ fn a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic() {
     reused_runtime_id(false);
 }
 
+/// The mockapp command that gives node `second` the runtime id of node
+/// `first`, and the evidence the focus listener's reader then reads of
+/// `first`: gone when `first` dies (`take-runtime-id`), not focused when it
+/// lives on (`share-runtime-id`).
+fn reuse_of_first(alive: bool) -> (&'static str, EarlierElement) {
+    if alive {
+        ("share-runtime-id second first", EarlierElement::NotFocused)
+    } else {
+        ("take-runtime-id second first", EarlierElement::Gone)
+    }
+}
+
+/// The line of a focus's caret, when its report carries one.
+fn caret_line(reported: &common::outpost::Reported) -> Option<&str> {
+    match &reported.text {
+        Some(FocusText::Caret { caret, .. }) => Some(caret.line.text.as_str()),
+        _ => None,
+    }
+}
+
+/// An outpost reading text classically, whose caret read takes the text
+/// pattern kept for the node, where the remote read fetches it from the
+/// node's element inside its program.
+fn classic_outpost(app: &common::MockApp) -> OutpostUnderTest {
+    OutpostUnderTest::with_options(
+        app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    )
+}
+
+/// A text field focused, then a second whose application gave it the
+/// first's runtime id: the second is reported under the first's node with
+/// the evidence its reader read of the first, and with its own line, read
+/// from its own element, since the node's text read from the first, its
+/// pattern among it, is dropped before the caret read
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression"); the
+/// second's own element, found before its report, stays kept for the node
+/// while the first's is evicted, so its changes are followed.
+fn a_text_focus_under_a_reused_runtime_id_reads_its_own_line(alive: bool) {
+    let (reuse, earlier) = reuse_of_first(alive);
+    let title = common::unique_title("mockapp-reuse-text");
+    let mut app = common::spawn("reuse_text.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = classic_outpost(&app);
+
+    app.send("set-focus first");
+    let first = client.focused();
+    let reported = outpost.uia_focus(&first);
+    assert_eq!(
+        (reported.node.name.as_deref(), caret_line(&reported)),
+        (
+            Some("First"),
+            Some(
+                "alpha line
+"
+            )
+        )
+    );
+    let node = reported.node.id;
+
+    app.send(reuse);
+    app.send("set-focus second");
+    let second = client.focused();
+    assert_eq!(
+        second.runtime_id(),
+        first.runtime_id(),
+        "mockapp gave the second field the first's runtime id"
+    );
+    let reported = outpost.uia_focus(&second);
+    assert_eq!(
+        (
+            reported.node.name.as_deref(),
+            reported.node.id,
+            reported.earlier,
+            caret_line(&reported)
+        ),
+        (
+            Some("Second"),
+            node,
+            Some(earlier),
+            Some(
+                "beta line
+"
+            )
+        )
+    );
+    assert_followed(&mut app, &outpost, "second", &reported.node);
+
+    drop(outpost);
+    app.quit();
+}
+
+fn a_text_focus_under_the_runtime_id_of_a_field_that_lost_the_focus_reads_its_own_line() {
+    a_text_focus_under_a_reused_runtime_id_reads_its_own_line(true);
+}
+
+fn a_text_focus_under_the_runtime_id_of_a_field_gone_reads_its_own_line() {
+    a_text_focus_under_a_reused_runtime_id_reads_its_own_line(false);
+}
+
+/// A text field focused, then a second given the first's runtime id while
+/// the first lives on, whose own element the outpost cannot find, its
+/// group dying as the outpost's walk down asks for its first child: the
+/// node still keeps the first field's element, whose text is not the
+/// second's, so the focus is reported with its text not read, never the
+/// first field's line.
+fn a_text_focus_whose_element_is_not_found_under_a_reused_runtime_id_is_not_read() {
+    let title = common::unique_title("mockapp-reuse-text-unfound");
+    let mut app = common::spawn("reuse_text.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = classic_outpost(&app);
+
+    app.send("set-focus first");
+    let reported = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        caret_line(&reported),
+        Some(
+            "alpha line
+"
+        )
+    );
+    let node = reported.node.id;
+
+    app.send("share-runtime-id second first");
+    app.send("set-focus second");
+    let second = client.focused();
+    app.send("disconnect-at-first-child right");
+    let reported = outpost.uia_focus(&second);
+    assert_eq!(
+        (
+            reported.node.name.as_deref(),
+            reported.node.id,
+            reported.earlier,
+            reported.text
+        ),
+        (
+            Some("Second"),
+            node,
+            Some(EarlierElement::NotFocused),
+            Some(FocusText::NotRead)
+        )
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A terminal focused and read, then a second whose application gave it
+/// the first's runtime id while the first lives on: the second is
+/// reported under the first's node, not focused the evidence, and its
+/// first read is the first of a terminal of its own, numbered 1, since the
+/// node's terminal entry went with the first's element in the report's
+/// commit.
+fn a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh() {
+    let title = common::unique_title("mockapp-reuse-terminal");
+    let mut app = common::spawn("reuse_terminal.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    let focus_and_first_read = |earlier: Option<EarlierElement>| {
+        outpost.deliver(outpost.listener_fact(&client.focused()));
+        let node = match outpost.next() {
+            OutpostToCore::Event {
+                event:
+                    NormalizedEvent::FocusChanged {
+                        node, earlier: e, ..
+                    },
+                ..
+            } if e == earlier => node,
+            other => panic!("the outpost said {other:?}, not the terminal's focus"),
+        };
+        let read = match outpost.next() {
+            OutpostToCore::Event {
+                event: NormalizedEvent::TerminalSnapshot { node_id, snapshot },
+                ..
+            } if node_id == node.id => snapshot.read,
+            other => panic!("the outpost said {other:?}, not the terminal's first read"),
+        };
+        outpost.settled();
+        (node.role, node.id, read)
+    };
+
+    app.send("set-focus first");
+    let (role, node, read) = focus_and_first_read(None);
+    assert_eq!((role, read), (Role::Terminal, 1));
+
+    app.send("share-runtime-id second first");
+    app.send("set-focus second");
+    assert_eq!(
+        focus_and_first_read(Some(EarlierElement::NotFocused)),
+        (Role::Terminal, node, 1)
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// File Explorer, going back from a subfolder, raised Inner's focus event
 /// before it selected Inner, so the event's states said "not selected".
 /// NVDA reads a focus's states when it handles the focus, not from the
@@ -4101,6 +4299,22 @@ fn main() {
         (
             "a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic",
             a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic,
+        ),
+        (
+            "a_text_focus_under_the_runtime_id_of_a_field_that_lost_the_focus_reads_its_own_line",
+            a_text_focus_under_the_runtime_id_of_a_field_that_lost_the_focus_reads_its_own_line,
+        ),
+        (
+            "a_text_focus_under_the_runtime_id_of_a_field_gone_reads_its_own_line",
+            a_text_focus_under_the_runtime_id_of_a_field_gone_reads_its_own_line,
+        ),
+        (
+            "a_text_focus_whose_element_is_not_found_under_a_reused_runtime_id_is_not_read",
+            a_text_focus_whose_element_is_not_found_under_a_reused_runtime_id_is_not_read,
+        ),
+        (
+            "a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh",
+            a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh,
         ),
         (
             "a_focus_reports_the_states_read_when_it_is_handled",

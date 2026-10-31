@@ -541,7 +541,11 @@ Each file's module comment says exactly what it asserts; in outline:
   Explorer folder and its subfolder): with remote operations and without,
   a focus on an item whose runtime id `take-runtime-id` gave it from a
   dead item is reported under that item's node with the evidence that
-  the element it named is gone, a repeated focus keeps that node, and each costs exactly the calls pinned there; a focus captured
+  the element it named is gone, a repeated focus keeps that node, and each costs exactly the calls pinned there; over
+  `reuse_text.json` and `reuse_terminal.json`, a text field or terminal
+  given the runtime id of another, gone (`take-runtime-id`) or alive
+  without the focus (`share-runtime-id`), reads its own line or is read
+  afresh as a terminal of its own, and its changes are followed; a focus captured
   before its item was selected is reported with the item selected; a
   foreground event for a UIA-read window is dropped and the focus that
   follows reported alone; and over `described_group.json` an unnamed

@@ -231,6 +231,19 @@ impl Tree {
         Ok(())
     }
 
+    /// Node `id` takes node `from`'s runtime id, `from` living on where it
+    /// is (`share-runtime-id`).
+    pub(crate) fn share_runtime_id(&mut self, id: &str, from: &str) -> Result<(), String> {
+        let unknown = |name: &str| format!("no node has the id {name}");
+        let taker = self.index_of(id).ok_or_else(|| unknown(id))?;
+        let giver = self.index_of(from).ok_or_else(|| unknown(from))?;
+        if taker == giver || giver == 0 || self.nodes[giver].dead {
+            return Err(format!("{from} cannot share its runtime id with {id}"));
+        }
+        self.nodes[taker].runtime_id = self.nodes[giver].runtime_id;
+        Ok(())
+    }
+
     /// Node `id` dies where it stands, its parent still listing it
     /// (`disconnect`). The root cannot die.
     pub(crate) fn disconnect(&mut self, id: &str) -> Result<(), String> {
@@ -506,6 +519,27 @@ mod tests {
         assert!(
             tree.take_runtime_id("b", "b1").is_err(),
             "b1 is already dead"
+        );
+    }
+
+    #[test]
+    fn a_node_shares_a_live_nodes_runtime_id() {
+        let mut tree = Tree::build(sample());
+        let a = tree.index_of("a").unwrap();
+        let b1 = tree.index_of("b1").unwrap();
+        tree.share_runtime_id("a", "b1").unwrap();
+        assert_eq!(
+            (
+                tree.nodes[a].runtime_id,
+                tree.nodes[b1].runtime_id,
+                tree.nodes[b1].dead
+            ),
+            (b1, b1, false)
+        );
+        assert_eq!(
+            tree.nodes[tree.index_of("b").unwrap()].children,
+            vec![b1],
+            "b1 stays in the tree"
         );
     }
 

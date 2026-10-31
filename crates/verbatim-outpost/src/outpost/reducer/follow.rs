@@ -448,6 +448,12 @@ pub(in crate::outpost) struct Change {
     /// destroyed, in order: recorded by the reducer whether or not it
     /// applies the rest of the commit ([`VerdictChange::kept_from_any_generation`]).
     pub(in crate::outpost) verdicts: Vec<VerdictChange>,
+    /// The node of a UIA focus whose earlier element, by the focus
+    /// listener's evidence, lost the focus or is gone, so a new element
+    /// stands under it: a caret key's watch on it ends, as Core forgets
+    /// the key's query (`docs/parity/focus-events.md`, "Duplicate focus
+    /// suppression").
+    pub(in crate::outpost) replaced: Option<NodeId>,
     /// The program's changes of text facts, in order, applied before the
     /// rest: a program applies each to its own copies as its text call
     /// makes it, so its own commit carries them only for the reducer, and
@@ -468,6 +474,9 @@ pub(in crate::outpost) struct FollowState {
     /// The token of the element the subscription was last moved to, so a
     /// node whose element was replaced is followed again.
     pub(in crate::outpost) followed_element: Option<u64>,
+    /// The token of the slider followed with it for its value changes, so
+    /// a slider whose element was replaced is followed again too.
+    pub(in crate::outpost) followed_slider: Option<u64>,
     /// The elements of the outpost's older UIA reports, each with its node
     /// and the group it was given, by token, which keep their groups until
     /// the store releases their node, so the outpost hears the changes of
@@ -578,17 +587,23 @@ impl FollowState {
     }
 
     /// Moves the focus-following subscription's newest focus to `target`,
-    /// unless it is already there. The focus it followed before keeps its
-    /// group on its element, among [`kept_groups`](Self::kept_groups),
-    /// until its node is released; a focus that returns to an element
-    /// that kept its group is not given it again.
+    /// unless it is already there, on the same elements. The focus it
+    /// followed before keeps its group on its element, among
+    /// [`kept_groups`](Self::kept_groups), until its node is released; a
+    /// focus that returns to an element that kept its group is not given
+    /// it again.
     fn retarget(&mut self, target: &Target, applied: &mut Applied) {
-        if self.followed == target.wanted && self.followed_element == target.element {
-            applied.unfollowed.extend(target.slider);
+        if self.followed == target.wanted
+            && self.followed_element == target.element
+            && self.followed_slider == target.slider
+        {
             return;
         }
         let before = std::mem::replace(&mut self.followed, target.wanted);
         let before_element = std::mem::replace(&mut self.followed_element, target.element);
+        let mut dropped: Vec<u64> = std::mem::replace(&mut self.followed_slider, target.slider)
+            .into_iter()
+            .collect();
         if let (Some((node, group, _)), Some(element)) = (before, before_element) {
             let kept = self
                 .kept_groups
@@ -597,9 +612,7 @@ impl FollowState {
             if let Some(kept) = kept {
                 let (_, _, replaced) =
                     std::mem::replace(&mut self.kept_groups[kept], (node, group, element));
-                if replaced != element {
-                    applied.unfollowed.push(replaced);
-                }
+                dropped.push(replaced);
             } else {
                 self.kept_groups.push((node, group, element));
             }
@@ -609,21 +622,36 @@ impl FollowState {
             let mut index = 0;
             while index < self.kept_groups.len() {
                 if self.kept_groups[index].0 == node {
-                    let (_, _, removed) = self.kept_groups.remove(index);
-                    if Some(removed) != self.followed_element {
-                        applied.unfollowed.push(removed);
-                    }
+                    dropped.push(self.kept_groups.remove(index).2);
                 } else {
                     index += 1;
                 }
             }
         }
-        applied.subscribe = Some(self.subscription(target.slider));
+        self.unfollow(dropped, applied);
+        applied.subscribe = Some(self.subscription());
     }
 
-    /// Where the subscription follows now, with `slider` followed for its
-    /// value changes.
-    fn subscription(&self, slider: Option<u64>) -> Subscription {
+    /// Whether `token` names an element the subscription still follows.
+    fn follows(&self, token: u64) -> bool {
+        self.followed_element == Some(token)
+            || self.followed_slider == Some(token)
+            || self.kept_groups.iter().any(|&(_, _, kept)| kept == token)
+    }
+
+    /// Lets go of `tokens`, each once, but those the subscription still
+    /// follows: the shell gives one element one token, whatever it is
+    /// followed as.
+    fn unfollow(&self, tokens: impl IntoIterator<Item = u64>, applied: &mut Applied) {
+        for token in tokens {
+            if !self.follows(token) && !applied.unfollowed.contains(&token) {
+                applied.unfollowed.push(token);
+            }
+        }
+    }
+
+    /// Where the subscription follows now.
+    fn subscription(&self) -> Subscription {
         let kept = self
             .kept_groups
             .iter()
@@ -635,26 +663,25 @@ impl FollowState {
         };
         Subscription {
             newest,
-            slider: slider.filter(|_| newest.is_some()),
+            slider: self.followed_slider.filter(|_| newest.is_some()),
             kept,
         }
     }
 
     /// The store released `released`, by node number: the elements of
-    /// those nodes lose their groups, the newest focus's too when its node
-    /// is released, and the subscription is moved once if anything
-    /// changed.
+    /// those nodes lose their groups, the newest focus's too, with its
+    /// slider's, when its node is released, and the subscription is moved
+    /// once if anything changed.
     pub(in crate::outpost) fn release_groups(
         &mut self,
         released: &HashSet<u64>,
         applied: &mut Applied,
     ) {
-        let mut changed = false;
+        let mut dropped = Vec::new();
         let mut index = 0;
         while index < self.kept_groups.len() {
             if released.contains(&self.kept_groups[index].0.number()) {
-                applied.unfollowed.push(self.kept_groups.remove(index).2);
-                changed = true;
+                dropped.push(self.kept_groups.remove(index).2);
             } else {
                 index += 1;
             }
@@ -664,11 +691,12 @@ impl FollowState {
             .is_some_and(|(node, _, _)| released.contains(&node.number()))
         {
             self.followed = None;
-            applied.unfollowed.extend(self.followed_element.take());
-            changed = true;
+            dropped.extend(self.followed_element.take());
+            dropped.extend(self.followed_slider.take());
         }
-        if changed {
-            applied.subscribe = Some(self.subscription(None));
+        if !dropped.is_empty() {
+            self.unfollow(dropped, applied);
+            applied.subscribe = Some(self.subscription());
         }
     }
 }
@@ -686,6 +714,14 @@ pub(in crate::outpost) fn apply(facts: &mut Facts, generation: u64, change: &Cha
         }
     }
     let follow_state = &mut facts.follow;
+    if let Some(node) = change.replaced
+        && follow_state
+            .caret_watch
+            .as_ref()
+            .is_some_and(|open| open.node_id == node)
+    {
+        follow_state.end_watch("the focus's element was replaced", &mut applied);
+    }
     if let Some(memo) = &change.dialog {
         follow_state.tracking.dialog.clone_from(memo);
     }
@@ -738,9 +774,10 @@ pub(in crate::outpost) fn apply(facts: &mut Facts, generation: u64, change: &Cha
         if follow_state.tracking.focus == Some(*node) {
             follow_state.retarget(target, &mut applied);
         } else {
-            applied
-                .unfollowed
-                .extend(target.element.into_iter().chain(target.slider));
+            follow_state.unfollow(
+                target.element.into_iter().chain(target.slider),
+                &mut applied,
+            );
         }
     }
     if let Some(node) = change.owed_done
@@ -1005,5 +1042,123 @@ mod tests {
         assert!(read.covers(1, 100));
         assert!(read.covers(1, 90));
         assert!(!read.covers(2, 90));
+    }
+
+    /// A target following node 2, a slider's thumb, on element `element`
+    /// with its slider, node 3, on element `slider`.
+    fn thumb(element: u64, slider: u64) -> Target {
+        Target {
+            wanted: Some((NodeId::new(2), Group::Base, Some(NodeId::new(3)))),
+            element: Some(element),
+            slider: Some(slider),
+        }
+    }
+
+    #[test]
+    fn a_focus_whose_element_was_replaced_is_followed_again() {
+        let mut facts = Facts::default();
+        facts.follow.retarget(&thumb(5, 6), &mut Applied::default());
+        // The same node, group and slider, the thumb's node now a new
+        // element: it is followed, and the old one let go of.
+        let mut replaced = Applied::default();
+        facts.follow.retarget(&thumb(8, 6), &mut replaced);
+        assert_eq!(
+            (replaced.subscribe, replaced.unfollowed),
+            (
+                Some(Subscription {
+                    newest: Some((8, Group::Base)),
+                    slider: Some(6),
+                    kept: Vec::new(),
+                }),
+                vec![5]
+            )
+        );
+    }
+
+    #[test]
+    fn a_focus_whose_slider_element_was_replaced_is_followed_again() {
+        let mut facts = Facts::default();
+        let mut applied = Applied::default();
+        facts.follow.retarget(&thumb(5, 6), &mut applied);
+        // The same thumb and slider again: nothing moves.
+        let mut same = Applied::default();
+        facts.follow.retarget(&thumb(5, 6), &mut same);
+        assert_eq!((same.subscribe, same.unfollowed), (None, Vec::new()));
+        // The same thumb, its slider's node now a new element.
+        let mut replaced = Applied::default();
+        facts.follow.retarget(&thumb(5, 7), &mut replaced);
+        assert_eq!(
+            (replaced.subscribe, replaced.unfollowed),
+            (
+                Some(Subscription {
+                    newest: Some((5, Group::Base)),
+                    slider: Some(7),
+                    kept: Vec::new(),
+                }),
+                vec![6]
+            )
+        );
+    }
+
+    #[test]
+    fn the_followed_focus_released_lets_go_of_its_element_and_slider() {
+        let mut facts = Facts::default();
+        facts.follow.retarget(&thumb(5, 6), &mut Applied::default());
+        let mut applied = Applied::default();
+        facts
+            .follow
+            .release_groups(&HashSet::from([2]), &mut applied);
+        assert_eq!(
+            (
+                facts.follow.followed,
+                facts.follow.followed_element,
+                facts.follow.followed_slider,
+                applied.subscribe,
+                applied.unfollowed
+            ),
+            (
+                None,
+                None,
+                None,
+                Some(Subscription {
+                    newest: None,
+                    slider: None,
+                    kept: Vec::new(),
+                }),
+                vec![5, 6]
+            )
+        );
+    }
+
+    #[test]
+    fn a_focus_whose_element_was_replaced_ends_the_caret_keys_watch_on_its_node() {
+        let opened = Duration::from_secs(1);
+        let mut facts = Facts::default();
+        facts.follow.caret_watch = Some(watch(7, opened, None));
+        // Another node replaced leaves the watch on node 1 alone.
+        let elsewhere = Change {
+            replaced: Some(NodeId::new(2)),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &elsewhere);
+        assert!(applied.ended.is_empty());
+        let replaced = Change {
+            replaced: Some(NodeId::new(1)),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &replaced);
+        let ended: Vec<(u64, &str)> = applied
+            .ended
+            .iter()
+            .map(|(open, why)| (open.request_id, *why))
+            .collect();
+        assert_eq!(
+            (ended, applied.wake, facts.follow.caret_watch.is_none()),
+            (
+                vec![(7, "the focus's element was replaced")],
+                Some(None),
+                true
+            )
+        );
     }
 }

@@ -236,9 +236,11 @@ code is in `reduce.rs` unless named.
   when its `earlier` evidence says the element its reader held under that
   node still has the focus, or, with no evidence, while the node is alive.
   A report whose evidence says that element lost the focus or is gone is
-  a new element under the node: the lines meet above it, and, for one
-  gone, Core first forgets the node's caret, its waiting caret key and its
-  terminal's model. `HeldNode` carries a window's handle as
+  no duplicate, and Core first forgets the node's caret, its waiting caret
+  key and its terminal's model, so the new element's text is taken
+  afresh; for one gone the lines meet above it, a new element, and for
+  one that only lost the focus they meet at it, as UI Automation compares
+  two elements by runtime id. `HeldNode` carries a window's handle as
   the snapshot does, so an outpost's own use of the rule, for a dialog's
   text, judges by `already_entered`.
 - The window in front. `SrState::hook_foreground()`

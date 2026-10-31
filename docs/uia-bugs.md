@@ -510,7 +510,7 @@ Not established.
 
 #### Workarounds that worked
 
-- Verbatim's choice, as NVDA judges a duplicate: before reporting a UIA focus whose runtime id already names a node, the outpost reads whether that node's element still has the keyboard focus, in the remote operation that reads the focus's ancestry (one call of its own when it reads classically), and when it has not, or cannot be read, gives the id a new node (c67806c5). UIA fails a whole remote operation whose imported element is gone before its first instruction, so the operation is run once more without the held element and answered as not focused.
+- Verbatim's choice, as NVDA judges a duplicate: before reporting a UIA focus whose runtime id already names a node, the focus listener reads whether the element it held under that id still has the keyboard focus, in the remote operation that reads the focus's ancestry (one call of its own when it reads classically): focused, not focused, or gone when the read fails. The id keeps its node, and the report carries that evidence to Core, which takes the focus as a duplicate only when the earlier element is still focused. On not focused or gone the outpost evicts the element it kept for the node, if still kept, and drops the node's text and terminal entry, so the new element's text is read afresh, and Core forgets the node's caret and terminal model; on gone Core also enters the focus's ancestors anew, since a new element is not the focus before it. UIA fails a whole remote operation whose imported element is gone before its first instruction, so the operation is run once more without the held element and the element answered as gone.
 
 #### Workarounds that didn't work
 
@@ -522,7 +522,7 @@ NVDA treats a focus event as a duplicate only while the last focus still has the
 
 #### Reproduction test
 
-No test reproduces File Explorer's fault. mockapp's `take-runtime-id` command imitates it, and `a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote` and `a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic` in `crates/mockapp/tests/focus_reports.rs` test Verbatim's handling of it.
+No test reproduces File Explorer's fault. mockapp's `take-runtime-id` command imitates it, and `share-runtime-id` gives a live element's runtime id to another; `a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote`, `a_reused_runtime_id_keeps_its_node_with_its_element_gone_classic`, the two `a_text_focus_under_the_runtime_id_of_` tests and `a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh` in `crates/mockapp/tests/focus_reports.rs` test Verbatim's handling of it.
 
 #### Evidence
 

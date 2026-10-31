@@ -477,9 +477,7 @@ fn write(
             }
         }
         garbage.elements.extend(evicted);
-        if stale.gone {
-            garbage.store.push(store.remove_terminal(stale.node));
-        }
+        garbage.store.push(store.remove_terminal(stale.node));
     }
     if let Some((node, terminal, sent, target)) = follow {
         // A terminal gaining the focus has its caret reported afresh: the
@@ -887,8 +885,9 @@ impl Shell {
     }
 
     /// Moves the focus-following subscription as `subscription` says. The
-    /// subscription keeps references of its own; a slider's element is
-    /// let go of once it is moved.
+    /// subscription keeps references of its own; the elements stay kept
+    /// under their tokens until the reducer unfollows them, so an element
+    /// given again is known by its token.
     fn subscribe(&mut self, subscription: &Subscription) {
         let reference = |token: u64| self.elements.kept.get(&token).map(Agile::reference);
         let kept: Vec<_> = subscription
@@ -924,11 +923,6 @@ impl Shell {
                 ),
                 None => registration.retarget(verbatim_uia::Scope::Nothing),
             }
-        }
-        if let Some(slider) = subscription.slider
-            && let Some(element) = self.elements.kept.remove(&slider)
-        {
-            self.garbage.elements.push(element);
         }
     }
 }

@@ -56,8 +56,15 @@ Core judges it in the order the focuses were observed.
   still has the keyboard focus, as NVDA checks it: the node keeps its id,
   and the report carries what was read, so Core takes it as a duplicate
   only when that element still has the focus, and announces it when it
-  lost the focus or is gone. Mockapp's `focus_reports` tests and Core's
-  `a_reused_runtime_id_whose_element_is_gone_is_announced_and_its_selection_follows`.
+  lost the focus or is gone. Either way the focus's text is taken afresh,
+  its caret and terminal state forgotten, as for a new object. An element
+  that is gone is not the focus before it, so the focus line meets above
+  it and its ancestors are entered as for any new focus; one that only
+  lost the focus is still the same object, as UI Automation compares two
+  elements by runtime id, so the line meets at the focus and no ancestor
+  is spoken again. Mockapp's `focus_reports` tests and Core's
+  `a_reused_runtime_id_whose_element_is_gone_is_announced_and_its_selection_follows`
+  and `a_reused_runtime_id_whose_element_lost_the_focus_speaks_no_ancestors`.
 
 ### A focus when a read's time is up
 

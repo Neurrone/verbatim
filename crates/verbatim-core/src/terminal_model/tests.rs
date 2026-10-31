@@ -2,8 +2,9 @@
 //! the flood policy's speech, and each key input becomes the rules' key.
 
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, Role, StateSet, TraceId,
+    Backend, CaretKey, CaretMotion, CaretReport, EarlierElement, FocusText, Input, NodeDetails,
+    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, StateSet, TextAnchor, TextChunk,
+    TextUnit, TraceId,
 };
 use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
@@ -154,4 +155,99 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
             at_ms: 42,
         }
     );
+}
+
+/// A focus on terminal `node`, carrying `text` and what its reader read of
+/// the element it held before under the node's runtime id, `earlier`.
+fn terminal_focus(node: NodeId, text: Option<FocusText>, earlier: Option<EarlierElement>) -> Input {
+    Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_us: 0,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::FocusChanged {
+            node: NodeSnapshot {
+                id: node,
+                backend: Backend::Uia,
+                role: Role::Terminal,
+                name: None,
+                value: None,
+                states: StateSet::new(),
+                details: NodeDetails::default(),
+            },
+            foreground: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: text.map(Box::new),
+            earlier,
+            group: None,
+        },
+    }
+}
+
+/// A terminal focused with its caret and modelled, then focused again under
+/// the same node, whose report says the element its reader held under that
+/// runtime id is `earlier`: Core forgets the node's caret and its model, so
+/// the new element's text is taken afresh, as a new object's is
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement) {
+    let node = NodeId::in_outpost(OutpostId(1), 12);
+    let mut state = SrState::new();
+    let caret = CaretReport {
+        line: TextChunk {
+            unit: TextUnit::Line,
+            text: "ready> ".to_owned(),
+            start: TextAnchor(1),
+            offset: 7,
+            languages: Vec::new(),
+            first: false,
+            last: true,
+            truncated: false,
+            formats: Vec::new(),
+        },
+        selection: None,
+        selection_line: None,
+    };
+    let _ = crate::reduce(
+        &mut state,
+        &terminal_focus(
+            node,
+            Some(FocusText::Caret {
+                caret,
+                selected_text: None,
+            }),
+            None,
+        ),
+    );
+    state
+        .terminals
+        .push(TerminalModel::new(node, Settings::default()));
+    assert_eq!(
+        (
+            state.caret.as_ref().map(|caret| caret.node),
+            state.terminals.len()
+        ),
+        (Some(node), 1),
+        "the first element's caret and model are kept"
+    );
+
+    let _ = crate::reduce(&mut state, &terminal_focus(node, None, Some(earlier)));
+    assert_eq!(
+        (
+            state.caret.as_ref().map(|caret| caret.node),
+            state.terminals.len()
+        ),
+        (None, 0)
+    );
+}
+
+#[test]
+fn an_element_that_lost_the_focus_under_the_same_node_forgets_its_caret_and_model() {
+    a_replaced_element_forgets_its_nodes_caret_and_model(EarlierElement::NotFocused);
+}
+
+#[test]
+fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
+    a_replaced_element_forgets_its_nodes_caret_and_model(EarlierElement::Gone);
 }

@@ -15,7 +15,8 @@
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
 //! `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
 //! `fail-acc-location <id>`, `recreate <id>`, `report-window <id>`,
-//! `take-runtime-id <id> <from>`, `replace-items <id>`, `disconnect <id>`,
+//! `take-runtime-id <id> <from>`, `share-runtime-id <id> <from>`,
+//! `replace-items <id>`, `disconnect <id>`,
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
@@ -248,6 +249,11 @@ pub(crate) enum Command {
     /// `id` takes its runtime id, as File Explorer gives a new item the
     /// runtime id of one it destroyed. Raises no event. UIA-only.
     TakeRuntimeId(String, String),
+    /// `share-runtime-id <id> <from>`: node `id` takes node `from`'s
+    /// runtime id while `from` lives on where it is, so two live elements
+    /// have one runtime id, the one `from` had without the keyboard focus.
+    /// Raises no event. UIA-only.
+    ShareRuntimeId(String, String),
     /// `replace-items <id>`: every child of node `id`, with everything
     /// under it, dies, as `take-runtime-id`'s node does, and a copy of
     /// each, with a runtime id of its own, takes its place under the same
@@ -442,16 +448,17 @@ fn parent_step(verb: &str, rest: &str) -> Option<Command> {
     }
 }
 
-/// `take-runtime-id`'s arguments, the node that takes the runtime id and
-/// the node it is taken from.
-fn take_runtime_id(rest: &str) -> Option<Command> {
+/// The arguments of `take-runtime-id` and `share-runtime-id`, the node
+/// that takes the runtime id and the node it is taken from, as `command`
+/// takes them.
+fn runtime_id_from(rest: &str, command: fn(String, String) -> Command) -> Option<Command> {
     let mut parts = rest.split_whitespace();
     let id = parts.next()?;
     let from = parts.next()?;
     parts
         .next()
         .is_none()
-        .then(|| Command::TakeRuntimeId(id.to_owned(), from.to_owned()))
+        .then(|| command(id.to_owned(), from.to_owned()))
 }
 
 /// `write-on-read`'s arguments, a node's id and the text to write.
@@ -516,7 +523,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             Some(Command::Recreate(rest.to_owned()))
         }
         "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
-        "take-runtime-id" => take_runtime_id(rest),
+        "take-runtime-id" => runtime_id_from(rest, Command::TakeRuntimeId),
+        "share-runtime-id" => runtime_id_from(rest, Command::ShareRuntimeId),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
         "disconnect" if !rest.is_empty() => Some(Command::Disconnect(rest.to_owned())),
         "disconnect-at-first-child" if !rest.is_empty() => {
@@ -767,6 +775,12 @@ mod tests {
             _ => panic!("expected TakeRuntimeId"),
         }
         assert!(parse_command("take-runtime-id inner").is_none());
+        match parse_command("share-runtime-id second first") {
+            Some(Command::ShareRuntimeId(id, from)) => {
+                assert_eq!((id.as_str(), from.as_str()), ("second", "first"));
+            }
+            _ => panic!("expected ShareRuntimeId"),
+        }
     }
 
     #[test]

@@ -147,6 +147,69 @@ fn start(name: &str) -> (common::MockApp, HWND, OutpostUnderTest) {
     (app, hwnd, outpost)
 }
 
+/// A caret key's watch open on a text field when the application gives
+/// the field's runtime id to another field, the first one gone, and moves
+/// the focus there: the focus is reported under the same node, and its
+/// commit ends the watch, answered with nothing, as Core forgets the key's
+/// query for a new element (`docs/parity/focus-events.md`, "Duplicate focus
+/// suppression"). A caret move in the new field afterwards is the field's
+/// own caret event, not evidence for the key, which a watch left open would
+/// take it for.
+fn a_caret_watch_ends_when_its_nodes_element_is_replaced() {
+    common::init_com();
+    let title = common::unique_title("mockapp-caret-watch-reuse");
+    let mut app = common::spawn("reuse_text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut outpost = OutpostUnderTest::new(&app);
+    outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "first"));
+    let (node, before) = match outpost.next() {
+        OutpostToCore::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
+            ..
+        } => match *text {
+            FocusText::Caret { caret, .. } => (node.id, caret),
+            other => panic!("the first field's focus came with {other:?}, not its caret"),
+        },
+        other => panic!("the outpost said {other:?}, not the first field's focus"),
+    };
+    outpost.settled();
+    // Right Arrow, which the application ignores.
+    let key = outpost.ask(Query::Text {
+        node_id: node,
+        op: right_arrow(&before),
+    });
+    // The watch is open, its first read made.
+    outpost.settled();
+    app.send("take-runtime-id second first");
+    outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "second"));
+    match outpost.next() {
+        OutpostToCore::Event {
+            event: NormalizedEvent::FocusChanged { node: second, .. },
+            ..
+        } => assert_eq!((second.id, second.name.as_deref()), (node, Some("Second"))),
+        other => panic!("the outpost said {other:?}, not the second field's focus"),
+    }
+    app.send("caret second 2");
+    app.send("caret-event second");
+    heard_caret_event(&outpost);
+    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
+    match outpost.next() {
+        OutpostToCore::Event {
+            event: NormalizedEvent::CaretMoved { node_id, .. },
+            ..
+        } => assert_eq!(node_id, node),
+        other => panic!("the outpost said {other:?}, not the second field's caret"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// A focus change that arrives while a caret key's watch is open is
 /// reported first: the worker does not wait for the key's evidence before
 /// handling it. The watch then ends with the focus, answered with nothing.
@@ -1328,8 +1391,13 @@ fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
+#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_caret_watch_ends_when_its_nodes_element_is_replaced",
+            a_caret_watch_ends_when_its_nodes_element_is_replaced,
+        ),
         (
             "a_focus_now_text_fields_caret_event_is_reported",
             a_focus_now_text_fields_caret_event_is_reported,

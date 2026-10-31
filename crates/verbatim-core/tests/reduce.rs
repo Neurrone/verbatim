@@ -6908,6 +6908,53 @@ fn a_reused_runtime_id_whose_element_is_gone_is_announced_and_its_selection_foll
     assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
 }
 
+/// A focus under the node Core holds whose report says the element its
+/// reader held under that runtime id is alive but lost the focus is no
+/// duplicate, so it is spoken, but UI Automation counts the two as one
+/// element, so the focus line meets at the focus and keeps the line it
+/// had: the list in the report, a new node here, is neither entered nor
+/// spoken (`docs/parity/focus-events.md`, "Duplicate focus suppression");
+/// were the line to meet above the focus, as for one gone, the list would
+/// be entered and spoken.
+#[test]
+fn a_reused_runtime_id_whose_element_lost_the_focus_speaks_no_ancestors() {
+    let app = Pid(1);
+    let list = |id| node(id, Role::List, Some("Items View"), None, StateSet::new());
+    let frame = window_node(23, Backend::Uia, Role::Window, "", 7000);
+    let item_states = [State::Focused, State::Focusable, State::Selectable];
+    let delta = explorer_item(28, "delta.txt", &item_states, 1, 1);
+    let (state, _) = reduce(
+        &SrState::new(),
+        &focus_in(app, window(7000), delta, vec![frame.clone(), list(24)]),
+    );
+
+    let inner = explorer_item(28, "Inner", &item_states, 1, 4);
+    let (_, effects) = reduce(
+        &state,
+        &focus_in_after(
+            app,
+            window(7000),
+            inner,
+            vec![frame, list(29)],
+            EarlierElement::NotFocused,
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        focus_heard(
+            focus_now(OutpostId(1), 28, &[23, 24], None),
+            vec![vec![
+                UtteranceSegment::label("Inner"),
+                not(State::Selected),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 1,
+                    set_size: Some(4),
+                }),
+            ]]
+        )
+    );
+}
+
 /// The same return to the parent folder with the states the outpost reads
 /// when it handles the focus, after Explorer selected Inner: "Items View
 /// list", "Inner 1 of 4", as NVDA says it, and the selection and repeated focus that follow are

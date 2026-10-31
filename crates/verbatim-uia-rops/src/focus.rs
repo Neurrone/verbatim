@@ -254,8 +254,8 @@ impl Path {
 /// when remote operations are unavailable or the program fails, and the
 /// classic walk alone when `remote` is false. A run that fails because an
 /// element is gone, when the query holds a previous element, is run once
-/// more without it, and the previous element answered as not focused when
-/// that run succeeds. Says which path answered, and
+/// more without it, and the previous element answered as gone when that
+/// run succeeds. Says which path answered, and
 /// for a fallback, why, so the caller can stop trying the remote program
 /// for a window whose import failed.
 ///

@@ -61,9 +61,15 @@ on 2026-10-30, ahead of its later steps: the outpost's commit point, the
 one identity rule for Core and the speech manager, and MSAA object
 equality, and the reused UIA runtime id keeping its node, with the gone
 element's text caches dropped before the caret read (Fable, 2026-10-30,
-pending Dickson's acceptance). Follow-ups found: a focus group's older entries are
+pending Dickson's acceptance), and, after its review, on not focused as
+well. Follow-ups found: a focus group's older entries are
 lost with an abandoned worker, and the text anchors' locks are held
-across text calls; neither is made direct by the commit point. NVDA's
+across text calls; neither is made direct by the commit point. The
+keep-id review noted that the earlier element's step took the UIA and
+edit anchors' locks before a gone focus was reported; since the
+ownership refactor's store (276d2aa5) that step
+(`Worker::note_earlier`, through `text_reads::forget_text`) writes only
+the program's copies and its commit, and takes no lock of its own. NVDA's
 speech for the equality's edge cases waits for one capture session
 against mockapp's `object_equality.json` fixture.
 

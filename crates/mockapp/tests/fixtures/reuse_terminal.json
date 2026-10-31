@@ -1,0 +1,37 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Reuse Terminal Fixture",
+  "children": [
+    {
+      "id": "left",
+      "role": "group",
+      "name": "Left",
+      "children": [
+        {
+          "id": "first",
+          "role": "editable_text",
+          "name": "First",
+          "class_name": "TermControl",
+          "states": ["focusable"],
+          "text": "one                 \r\nready>              \r\n"
+        }
+      ]
+    },
+    {
+      "id": "right",
+      "role": "group",
+      "name": "Right",
+      "children": [
+        {
+          "id": "second",
+          "role": "editable_text",
+          "name": "Second",
+          "class_name": "TermControl",
+          "states": ["focusable"],
+          "text": "two                 \r\nready>              \r\n"
+        }
+      ]
+    }
+  ]
+}

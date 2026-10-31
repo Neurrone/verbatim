@@ -1947,12 +1947,21 @@ impl Worker<'_> {
     /// [`FocusText::NoText`], and Core speaks its value; one whose text
     /// could not be read now is [`FocusText::NotRead`], and Core speaks
     /// neither, never the value, which for a document is all of its text.
+    /// So is a focus whose node still keeps the element the listener's
+    /// evidence says is no longer its own ([`Stale`]), its own not found:
+    /// that element's text is not the focus's.
     fn read_focus_text(&self, node_id: NodeId, role: Role) -> (Option<FocusText>, Option<u64>) {
         let context = self.context;
         text_reads::forget_no_text(context, node_id);
         let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
         if !role_has_text && !text_reads::may_have_text(context, node_id, role) {
             return (None, None);
+        }
+        if self.keeps_stale_element(node_id) {
+            tracing::debug!(
+                "the focus's node still keeps the element its runtime id named before; its text is not read"
+            );
+            return (Some(FocusText::NotRead), None);
         }
         let started = Instant::now();
         let (read, read_at) =
@@ -3847,29 +3856,42 @@ impl Worker<'_> {
         // new element (`docs/design/focus-pipeline-rework.md`, "One object,
         // one identity"): on the listener's evidence that the element it
         // stood for lost the focus or is gone, the element kept for it is
-        // evicted by the report's commit, if still kept then; for one gone,
-        // its text is forgotten now in the program's copies, and from the
-        // store with its next commit, so the focus's caret read fetches the
-        // new element's pattern, and its terminal entry goes in the commit.
+        // evicted by the report's commit, if still kept then, and its
+        // terminal entry goes in the commit; its text is forgotten now, in
+        // the program's copies, and from the store with its next commit, so
+        // the focus's caret read fetches the new element's pattern, never
+        // the earlier element's (`docs/parity/focus-events.md`, "Duplicate
+        // focus suppression").
         self.earlier = read.same_as_last;
-        if let Some(earlier @ (EarlierElement::NotFocused | EarlierElement::Gone)) =
-            read.same_as_last
+        if let Some(EarlierElement::NotFocused | EarlierElement::Gone) = read.same_as_last
             && let Some(node) = self.context.nodes().existing(runtime_id)
         {
-            let gone = earlier == EarlierElement::Gone;
             tracing::debug!(
-                gone,
-                "UIA focus: its runtime id named an element that lost the focus or is gone; the node's element is evicted"
+                earlier = ?read.same_as_last,
+                "UIA focus: its runtime id named an element that lost the focus or is gone; the node's element and text are dropped"
             );
-            if gone {
-                text_reads::forget_text(self.context, node);
-            }
+            text_reads::forget_text(self.context, node);
             self.stale = Some(Stale {
                 node,
                 element: self.context.store.element_of(node),
-                gone,
             });
         }
+    }
+
+    /// Whether `node_id` still keeps the element the listener's evidence
+    /// says is no longer its own ([`note_earlier`](Self::note_earlier)),
+    /// compared by agile reference: the focus's own element was not found
+    /// to replace it before the report's commit evicts it.
+    fn keeps_stale_element(&self, node_id: NodeId) -> bool {
+        self.stale.as_ref().is_some_and(|stale| {
+            stale.node == node_id
+                && stale.element.as_ref().is_some_and(|element| {
+                    self.context
+                        .store
+                        .element_of(node_id)
+                        .is_some_and(|kept| kept.same_as(element))
+                })
+        })
     }
 
     /// Finds this outpost's own copy of the focus `runtime_id` names, from

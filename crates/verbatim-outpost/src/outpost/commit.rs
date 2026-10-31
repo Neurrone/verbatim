@@ -53,14 +53,14 @@ impl Target {
 /// evidence says is no longer the node's element: the runtime id names a
 /// new element, the one it named having lost the focus or gone
 /// (`docs/design/focus-pipeline-rework.md`, "One object, one identity").
+/// The node's terminal entry goes with it, and the caret key's watch on the
+/// node ends (`Change::replaced`).
 pub(super) struct Stale {
     /// The node.
     pub(super) node: NodeId,
     /// The element kept for it before the focus was read, evicted only if
     /// it is still the one kept, compared by agile reference.
     pub(super) element: Option<Agile<Kept>>,
-    /// Whether the earlier element is gone: its terminal entry goes too.
-    pub(super) gone: bool,
 }
 
 /// A focus becoming the followed one ([`Effects::follow`]).
@@ -218,6 +218,7 @@ impl Effects {
             gap: self.gap.clone(),
             noted_caret: self.noted_caret,
             verdicts: self.verdicts.clone(),
+            replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
         }
     }
@@ -266,6 +267,7 @@ impl Effects {
             gap: self.gap,
             noted_caret: self.noted_caret,
             verdicts: self.verdicts,
+            replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
         };
         let writes = Writes {

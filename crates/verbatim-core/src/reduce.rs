@@ -450,10 +450,11 @@ fn is_duplicate_focus(
     })
 }
 
-/// Forgets what Core keeps of the text of `node`, whose element is gone
-/// though its node lives on in a new element: its caret, a caret key
-/// waiting on it, and its terminal's model, so the new element's text is
-/// taken afresh.
+/// Forgets what Core keeps of the text of `node`, whose reader read that
+/// the element it held under that node lost the focus or is gone: its
+/// caret, a caret key waiting on it, and its terminal's model, so the
+/// focus's text is taken afresh, as a new object's is
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
 fn forget_text_of(state: &mut SrState, node: NodeId) {
     if state.caret.as_ref().is_some_and(|caret| caret.node == node) {
         state.forget_caret();
@@ -677,7 +678,10 @@ fn focus_dropped_first(
     else {
         return false;
     };
-    if *earlier == Some(EarlierElement::Gone) {
+    if matches!(
+        earlier,
+        Some(EarlierElement::NotFocused | EarlierElement::Gone)
+    ) {
         forget_text_of(state, node.id);
     }
     if group.is_some_and(|group| older_than_taken(state, node.id.outpost(), group)) {
@@ -986,13 +990,11 @@ struct FocusReport<'a> {
 impl FocusReport<'_> {
     /// Whether it is a new element under the node of the previous focus,
     /// `previous`: its reader read that the element it held before under
-    /// that node lost the focus or is gone.
+    /// that node is gone. One that only lost the focus is still the same
+    /// object, so the lines meet at it (`docs/parity/focus-events.md`,
+    /// "Duplicate focus suppression").
     fn replaces(&self, previous: &NodeSnapshot) -> bool {
-        self.node.id == previous.id
-            && matches!(
-                self.earlier,
-                Some(EarlierElement::NotFocused | EarlierElement::Gone)
-            )
+        self.node.id == previous.id && self.earlier == Some(EarlierElement::Gone)
     }
 }
 
@@ -2704,8 +2706,8 @@ fn focus_line<'a>(
             .iter()
             .chain(std::iter::once(&previous.snapshot))
     };
-    // A new element under the previous focus's node is not that focus: the
-    // lines meet above it, if anywhere.
+    // A new element under the previous focus's node, the one it stood for
+    // gone, is not that focus: the lines meet above it, if anywhere.
     let met = if report.replaces(&previous.snapshot) {
         previous
             .ancestors

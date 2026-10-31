@@ -1,0 +1,35 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Reuse Text Fixture",
+  "children": [
+    {
+      "id": "left",
+      "role": "group",
+      "name": "Left",
+      "children": [
+        {
+          "id": "first",
+          "role": "editable_text",
+          "name": "First",
+          "states": ["focusable"],
+          "text": "alpha line\n"
+        }
+      ]
+    },
+    {
+      "id": "right",
+      "role": "group",
+      "name": "Right",
+      "children": [
+        {
+          "id": "second",
+          "role": "editable_text",
+          "name": "Second",
+          "states": ["focusable"],
+          "text": "beta line\n"
+        }
+      ]
+    }
+  ]
+}

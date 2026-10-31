@@ -192,6 +192,10 @@ parses them.
   `UIA_E_ELEMENTNOTAVAILABLE`, and gives node `id` its runtime id, as File
   Explorer gives a new item the runtime id of one it destroyed. It raises
   no event.
+- `share-runtime-id <id> <from>` (UIA only) gives node `id` the runtime id
+  of node `from`, which lives on where it is, so two live elements have
+  one runtime id and the one that does not have the keyboard focus reads
+  as not focused. It raises no event.
 - `replace-items <id>` (UIA only) replaces every child of that node, with
   everything under it, by a copy with a runtime id of its own, under the
   same fixture id and with the same states, so the copy of the selected

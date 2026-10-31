@@ -174,7 +174,9 @@ pub enum PropertyChange {
 pub enum EarlierElement {
     /// It still has the keyboard focus: the focus is that element.
     Focused,
-    /// It no longer has the keyboard focus: the focus is another element.
+    /// It was read as not having the keyboard focus, or, in a remote
+    /// program, its keyboard-focus read answered no boolean: it is not
+    /// taken as the focus, though it may be alive.
     NotFocused,
     /// Its keyboard focus could not be read, other than by time: it is
     /// gone, and the focus is another element.
