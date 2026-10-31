@@ -1982,6 +1982,29 @@ fn a_poll_read_that_answers_its_watch_holds_the_idle_answer_until_it_ends() {
 }
 
 #[test]
+fn a_take_that_answers_its_watch_holds_the_idle_answer_until_it_ends() {
+    let mut replay = Replay::new();
+    let key = program(&replay.push(caret_key(7), Source::Other, 1)).request;
+    replay.commit(key, opens(7, false), 2);
+    replay.finish(key, false, 3);
+    let effects = replay.push(round(5), Source::Other, 4);
+    assert_eq!(
+        sent(&effects),
+        [] as [&OutpostToCore; 0],
+        "the watch is open"
+    );
+    let check = program(&replay.push(edit_caret(), Source::Hook, 5)).request;
+    replay.commit(check, takes(), 6);
+    // The check answers the key, and may read on under the key's trace:
+    // the round waits for its end.
+    let effects = replay.commit(check, answered(), 7);
+    assert_eq!(replies(&effects), [(7, "done")]);
+    assert_eq!(answers_and_dispatches(&effects), [] as [&str; 0]);
+    let effects = replay.finish(check, false, 8);
+    assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
+}
+
+#[test]
 fn a_check_abandoned_with_the_polling_watch_leaves_no_due_time() {
     let mut replay = polling();
     // A console update's check takes the watch, then hangs.

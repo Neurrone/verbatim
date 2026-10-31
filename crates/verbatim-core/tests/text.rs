@@ -4601,7 +4601,7 @@ fn a_held_key_is_passed_on_once_its_caret_is_read_and_judged_from_that_caret() {
     let asked = request(&effects);
     assert_eq!(asked.op, TextOp::ReadCaret);
     assert_eq!(
-        effects[1..],
+        effects[..1],
         [Effect::ForKey(
             trace,
             Box::new(Effect::BoundHeldKey(Some((trace, 150))))
@@ -4679,8 +4679,8 @@ fn held_keys_are_passed_on_in_order_whatever_their_reads_answer() {
     );
     // The second key's read is made on its own key's behalf, though the
     // first key's answer asked for it, so its answer and speech are its own.
-    let [Effect::ForKey(key, read), Effect::ForKey(_, deadline)] = effects.as_slice() else {
-        panic!("expected the second key's read and its deadline: {effects:?}");
+    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the second key's deadline and its read: {effects:?}");
     };
     assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
     let Effect::Text(read) = &**read else {
@@ -4766,8 +4766,8 @@ fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
         &mut state,
         &completed(request_of(&effects), TextReply::WatchEnded),
     );
-    let [Effect::ForKey(key, read), Effect::ForKey(_, deadline)] = effects.as_slice() else {
-        panic!("expected Right Arrow's read and its deadline: {effects:?}");
+    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected Right Arrow's deadline and its read: {effects:?}");
     };
     assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
     assert_eq!(*key, right);
@@ -4812,8 +4812,8 @@ fn a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound() {
     );
     // At the bound, the second key's caret is read, on its own trace.
     let effects = reduce(&mut state, &Input::HeldKeyDue { trace_id: second });
-    let [Effect::ForKey(key, read), Effect::ForKey(_, deadline)] = effects.as_slice() else {
-        panic!("expected the second key's read and its deadline: {effects:?}");
+    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the second key's deadline and its read: {effects:?}");
     };
     assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
     assert_eq!(*key, second);
@@ -4863,8 +4863,8 @@ fn a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound() {
         &mut state,
         &held_at(second, CaretMotion::NextCharacter, 511),
     );
-    let [Effect::ForKey(key, read), Effect::ForKey(_, deadline)] = effects.as_slice() else {
-        panic!("expected the second key's read and its deadline: {effects:?}");
+    let [Effect::ForKey(_, deadline), Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the second key's deadline and its read: {effects:?}");
     };
     assert_eq!(**deadline, Effect::BoundHeldKey(Some((*key, 150))));
     assert_eq!(*key, second);

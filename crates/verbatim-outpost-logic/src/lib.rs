@@ -311,7 +311,8 @@ pub enum Effect {
         trace: TraceId,
         /// Why the watch ended.
         why: &'static str,
-        /// How long the watch waited.
+        /// How long the watch waited, from when its key's program was
+        /// taken from the queue.
         waited: Duration,
     },
 }

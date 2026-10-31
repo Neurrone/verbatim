@@ -375,13 +375,14 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
         key: held,
     });
     state.held_keys.bounded = Some(held.trace_id);
+    // The deadline first, so a read the shell answers at once ends it.
     vec![
+        Effect::BoundHeldKey(Some((held.trace_id, HELD_READ_BOUND_MS))),
         Effect::Text(TextRequest {
             query_id,
             node_id: node,
             op: TextOp::ReadCaret,
         }),
-        Effect::BoundHeldKey(Some((held.trace_id, HELD_READ_BOUND_MS))),
     ]
 }
 

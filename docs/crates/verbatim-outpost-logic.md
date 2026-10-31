@@ -72,7 +72,8 @@ every sequence of up to six steps of the inputs that move it, enumerated
 without randomness (104,682 sequences, about 1.5 s in a debug build),
 compared after each step with a reference model, the open query and
 whether a program holds it, and checked for four invariants: each key's
-query answered at most once and exactly once by the sequence's end, no
+query answered at most once, and by the sequence's end answered once or
+left to the outpost's end, no
 time for the watch while a program or a release is in flight, the
 program's copy equal to the reducer's watch apart from times at each
 accepted commit, and no idle answer while the watch is open or the
