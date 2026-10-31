@@ -1073,9 +1073,13 @@ scripts wait for, without waiting:
   watch out and answers its query `Abandoned`; a read that panics, or
   ends without committing, ends its watch, which answers its query, and
   no `Failed` is sent. A program that took the watch out to check it has
-  already removed it, so neither rule fires for it. Each re-read costs the
-  shell's timer wake, the worker's wake, and the shell's wakes for its
-  commit and its end.
+  already removed it, so neither rule fires for it. A read is work the
+  idle answer waits for, as a program that took the watch out is, since
+  after its answer it reads the terminal under the key's trace. A check
+  that takes the watch out takes its wake with it, and putting it back
+  sets the wake again, so a check abandoned or failed leaves no wake.
+  Each re-read wakes the shell for its timer, the worker, and the shell
+  for its commit and its end: wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after.
   A console caret event for the watched node does not stop the poll when
   its check finds no evidence, because a blink tick left over from an
   earlier cursor set, such as `PSReadLine`'s set that moves nothing, can

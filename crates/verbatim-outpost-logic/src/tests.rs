@@ -1059,9 +1059,15 @@ fn a_query_is_answered_once_whatever_ends_it() {
     replay.commit(key, opens(&polling_watch(5, 10_030)), 10_031);
     let effects = replay.finish(key, false, 10_032);
     assert_eq!(replies(&effects), []);
-    // The next key goes ahead of the poll's read, due at 10 035 ms.
+    // The next key goes ahead of the poll's read, due at 10 035 ms and
+    // past due as the key arrives.
     let effects = replay.push(caret_key(6), Source::Other, 10_040);
-    let next = program(&effects).request;
+    let next = program(&effects);
+    assert!(matches!(
+        &next.work,
+        Work::Entry { entry, .. } if matches!(entry.item, Item::Query { request_id: 6, .. })
+    ));
+    let next = next.request;
     let effects = replay.commit(
         next,
         Change {
@@ -1807,4 +1813,64 @@ fn a_foreground_change_after_a_background_focus_in_the_same_window_sets_it() {
         4,
     );
     assert_eq!(entered, Some(7));
+}
+
+#[test]
+fn a_poll_read_that_answers_its_watch_holds_the_idle_answer_until_it_ends() {
+    let mut replay = polling();
+    let effects = replay.push(
+        Item::Barrier {
+            asker: Asker::Round(5),
+            behind_noted: false,
+        },
+        Source::Other,
+        4,
+    );
+    assert_eq!(
+        sent(&effects),
+        [] as [&OutpostToCore; 0],
+        "the watch is open"
+    );
+    let read = reads(&replay.tick(6));
+    let answer = OutpostToCore::Reply {
+        trace_id: TraceId::mint(),
+        request_id: 7,
+        outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+        timing: EventTiming::default(),
+    };
+    // The read answers the key, then reads the terminal under the key's
+    // trace: the round waits for that too.
+    let effects = replay.commit(
+        read,
+        Change {
+            aside: Some((7, answer)),
+            watch: Some(WatchChange::Answered(7)),
+            ..Change::default()
+        },
+        7,
+    );
+    assert_eq!(answers_and_dispatches(&effects), [] as [&str; 0]);
+    let effects = replay.finish(read, false, 8);
+    assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
+}
+
+#[test]
+fn a_check_abandoned_with_the_polling_watch_leaves_no_wake() {
+    let mut replay = polling();
+    // A console update's check takes the watch out, then hangs.
+    let update = program(&replay.push(console_caret(), Source::Hook, 4)).request;
+    replay.commit(
+        update,
+        Change {
+            watch: Some(WatchChange::Take(NodeId::new(1))),
+            ..Change::default()
+        },
+        5,
+    );
+    let effects = replay.tick(4 + 10_000);
+    assert!(abandons(&effects));
+    assert_eq!(replies(&effects), [(7, "abandoned")]);
+    // No wake is left for a watch that is gone.
+    assert_eq!(replay.reducer.next_timer(now(4 + 10_000)), None);
+    assert!(programs(&replay.tick(4 + 10_001)).is_empty());
 }

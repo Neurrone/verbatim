@@ -1361,6 +1361,13 @@ impl Reducer {
                             group: None,
                         };
                         self.dispatch(work, (TEXT_DEADLINE, 0, Some(running)), None, now, effects);
+                        // The idle answer waits for the read, as for a
+                        // program that took the watch out: after its
+                        // answer it reads the terminal under the key's
+                        // trace.
+                        if let Some(current) = &mut self.current {
+                            current.deferred = true;
+                        }
                     }
                     None => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
                 }

@@ -147,7 +147,7 @@ So no obstacle is known in today's code. Whether `verbatim-text`'s and `verbatim
 
 ## The outpost's program bookkeeping (a build of its own)
 
-Status: built on 2026-10-31, after its adversarial review (`experiments/logic-tests-study/bookkeeping-design-review.md`); its measurements on the desktop are pending.
+Status: built on 2026-10-31, after its adversarial review (`experiments/logic-tests-study/bookkeeping-design-review.md`), and its implementation review.
 
 The problem: the outpost's programs carried lifecycle states the logic-tests design asks to remove ([logic tests](logic-tests.md), "The outpost's program bookkeeping simplified"). The console poll was a long program in a slot of its own beside the program in flight, yielding to whatever was dispatched behind it, dispatched again afterwards, and carrying its commits to the next program's copies; a test's settle was a program of its own with a waiter slot and a cleanup for an abandoned worker, dispatched again behind an abandoned poll, where its waiters were lost twice; a refused commit still gave the reducer its verdicts; and the worker decided `entered_in_front`, a fact of the reducer's. The mechanism of each part is in [verbatim-outpost](../crates/verbatim-outpost.md) ("Text and caret", "The arbitrator", "The outpost" and the idle barrier) and [verbatim-outpost-logic](../crates/verbatim-outpost-logic.md).
 
@@ -166,7 +166,7 @@ NVDA's caret loop runs on the main thread until its timeout, 100 ms by default, 
 
 - Today's yield kept every state above.
 - The poll waiting for nothing, an ordinary program in the one slot, would have made whatever arrives wait up to its 50 ms bound, and changed what Core receives: a character typed during an unanswered poll would first reach Core as the key's result rather than its own echo, with no capture of the speech that order gives.
-- Each read a program, chosen, keeps today's latency and what Core receives, at three or four wake-ups per re-read.
+- Each read a program, chosen, keeps today's latency and what Core receives, at more wake-ups on keys that move nothing (below).
 
 Measured on the code before the build, release build, test audio mode, on 2026-10-31 (9 of 10 runs of a temporary `measure_keys_conhost_unmoved` workload and 8 of 10 of `measure_keys_conhost`; the others failed in setup, as `docs/flaky-tests.md` records under "A new console host not responding at its outpost's first call"):
 
@@ -188,7 +188,7 @@ Measured on the code before the build, release build, test audio mode, on 2026-1
 
 ### Measured before and after
 
-Pending, on the desktop: wake-ups and processor time per thread, in release builds and test audio mode, of `measure_keys_conhost` and the temporary `measure_keys_conhost_unmoved` workload (branch `measure`) for the console poll's rule, and of `measure_focus_text_box` and `measure_keys_notepad` for the build as a whole.
+Wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after. The unmoved workload is a temporary one (branch `measure`). So the rule's cost falls on keys that move nothing, about a fifth more wake-ups per key, and ordinary console and Notepad keys are within a few percent. Processor time and `measure_focus_text_box` were not measured.
 
 ### Decisions
 

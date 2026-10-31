@@ -349,10 +349,11 @@ pub enum WatchChange {
     /// query it answers is no longer the program's.
     Open(OpenWatch, Option<Duration>),
     /// A watch taken out to be checked, put back with the query no longer
-    /// the program's.
+    /// the program's, and its wake with it.
     PutBack(OpenWatch),
     /// The watch on this node taken out to be checked, its query made the
-    /// one an abandonment answers.
+    /// one an abandonment answers, and its wake cleared until it is put
+    /// back.
     Take(NodeId),
     /// The open watch ended with no evidence, answered `WatchEnded`; the
     /// reason is logged.
@@ -832,11 +833,19 @@ fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mu
             applied.wake = Some(*wake);
             follow_state.caret_watch = Some(open.clone());
         }
-        WatchChange::PutBack(open) => follow_state.caret_watch = Some(open.clone()),
+        WatchChange::PutBack(open) => {
+            applied.wake = Some(wake_for(open));
+            follow_state.caret_watch = Some(open.clone());
+        }
         WatchChange::Take(node) => {
+            // Its wake goes with it, and comes back with it: a watch taken
+            // out and never put back leaves no wake.
             applied.taken = follow_state
                 .caret_watch
                 .take_if(|open| open.node_id == *node);
+            if applied.taken.is_some() {
+                applied.wake = Some(None);
+            }
         }
         WatchChange::End(why) => follow_state.end_watch(why, applied),
         WatchChange::Read {

@@ -677,9 +677,9 @@ wake-ups and processor time per event.
   wake where the watchdog took two (its own, then a post), and the gap
   record's threadpool timer is gone. Each 5 ms re-read of the console
   host's caret poll is a program of its own, timed by the shell's
-  high-resolution timer: three or four wakes per re-read (the shell's
-  timer, the worker, and the shell for its commit and end), up to ten
-  re-reads on a key that moves nothing.
+  high-resolution timer, waking the shell for its timer, the worker, and
+  the shell for its commit and end, up to ten re-reads on a key that
+  moves nothing. Wake-ups in all processes per input-hook wake, debug builds, test audio mode, one 12-second trace window each (2026-10-31): `measure_keys_conhost` 17.9 before and 18.1 after; `measure_keys_conhost_unmoved`, keys that move nothing, 14.6 before and 17.5 after, the outpost's share 6.6 and 8.0; `measure_keys_notepad` 32.5 before and 33.5 after.
 - Latency: two thread hand-offs per program, each an `SetEvent` and a
   wait's return, expected at tens of microseconds.
 - Processor time: per program, a copy of the facts it reads: the reports'
