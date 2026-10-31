@@ -2259,3 +2259,33 @@ fn a_check_abandoned_with_the_polling_watch_leaves_no_due_time() {
     assert_eq!(replay.reducer.next_timer(now(4 + 10_000)), None);
     assert!(programs(&replay.tick(4 + 10_001)).is_empty());
 }
+
+/// While the outpost stops nothing is judged: a walk that returns past its
+/// bound after its deadline is published, and its answer abandons nothing.
+#[test]
+fn a_publication_answered_while_stopping_judges_nothing() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.input(
+        Input::Armed {
+            request,
+            bound: Duration::from_millis(500),
+        },
+        2,
+    );
+    replay.input(Input::Close, 3);
+    replay
+        .answers
+        .publications
+        .push_back(focus_change(1, false));
+    let effects = replay.input(
+        Input::WalkReturned {
+            request,
+            past: true,
+        },
+        20_000,
+    );
+    assert_eq!(kinds(&effects), ["publish", "send"]);
+    assert!(replay.reducer.busy(), "the program runs on");
+}

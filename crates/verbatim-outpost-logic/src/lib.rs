@@ -1053,9 +1053,12 @@ impl Reducer {
             }
             _ => false,
         };
-        let decision = self
-            .flight
-            .published(request, got, then_abandon, micros(now.at));
+        // While the outpost stops nothing is judged, as `tick` judges
+        // nothing then: the answer is given a time before anything of the
+        // program's can be due, so it makes only the abandonment it
+        // carried.
+        let at = if self.stopping { 0 } else { micros(now.at) };
+        let decision = self.flight.published(request, got, then_abandon, at);
         self.decided(decision, now, effects);
     }
 

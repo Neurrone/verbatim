@@ -507,7 +507,11 @@ impl<J> Schedule<J> {
                 request,
                 window,
             } => {
-                if let Some(app) = self.apps.get_mut(&pid) {
+                // Nothing is judged once the listener stops, as a tick
+                // judges nothing then.
+                if !self.stopping
+                    && let Some(app) = self.apps.get_mut(&pid)
+                {
                     let decision = app.flight.learned(request, window, now);
                     self.decided(&mut effects, now, pid, decision);
                 }
@@ -1803,6 +1807,41 @@ mod tests {
         assert_eq!(
             grace.step(GraceInput::IdleAnswer(5), 1_400),
             [GraceEffect::SendIdleAnswer(5)]
+        );
+    }
+    /// Once the listener stops nothing is judged: a window a read learns
+    /// past its grace asks nothing.
+    #[test]
+    fn a_window_learned_while_stopping_is_not_judged() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, push(1, 1, FocusEvent::Focus), 0);
+        let _ = step(
+            &mut schedule,
+            ScheduleInput::Push {
+                pid: Pid(1),
+                meta: meta(2, FocusEvent::Focus),
+                job: 2,
+                kind: FocusEvent::Focus,
+                key: None,
+                window: Some(0),
+            },
+            0,
+        );
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 1);
+        let _ = step(&mut schedule, next(1, 1), 1);
+        let _ = step(&mut schedule, ScheduleInput::Stop, 2);
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::Learned {
+                    pid: Pid(1),
+                    request: request(1, 2),
+                    window: WINDOW,
+                },
+                DEADLINE,
+            ),
+            []
         );
     }
 }
