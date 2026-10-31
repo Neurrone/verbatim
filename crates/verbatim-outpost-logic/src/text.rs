@@ -328,6 +328,12 @@ pub enum TextChange {
     /// The edit control's text changed, its value change handled, so its
     /// next comparison of selections is made in general terms.
     ContentChanged(u64),
+    /// A caret event of the edit control that a caret read made after it
+    /// already covered was handled: the note of its text's changes
+    /// ([`TextChange::ContentChanged`]) is cleared, as the comparison NVDA
+    /// makes at each caret event clears it, and kept while there is no
+    /// selection to compare with, as NVDA's comparison keeps it then.
+    ContentCounted(u64),
     /// Everything of the node's text is forgotten: its runtime id names a
     /// new element, or its window was destroyed.
     Forget(u64),
@@ -342,6 +348,7 @@ impl TextChange {
             | Self::Edit { node, .. }
             | Self::ForgetSelection { node, .. }
             | Self::ContentChanged(node)
+            | Self::ContentCounted(node)
             | Self::Forget(node) => *node,
         }
     }
@@ -415,6 +422,14 @@ impl TextFacts {
             }
             TextChange::ContentChanged(_) => {
                 Arc::make_mut(self.edit.entry(node).or_default()).content_changed = true;
+            }
+            TextChange::ContentCounted(_) => {
+                if let Some(anchors) = self.edit.get_mut(&node)
+                    && anchors.content_changed
+                    && anchors.selection.is_some()
+                {
+                    Arc::make_mut(anchors).content_changed = false;
+                }
             }
             TextChange::Forget(_) => {
                 self.uia.remove(&node);

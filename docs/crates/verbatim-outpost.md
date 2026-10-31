@@ -1170,7 +1170,10 @@ layer"):
   `text::general_changes`: ends only, `content_changed`, and the new
   selection's text in `new_selection`) when the node's note is set (NVDA's
   `hasContentChangedSinceLastSelection`, set by a classic edit control's
-  value change, `text_reads::note_value_change`); when the kept selection's
+  value change, `text_reads::note_value_change`, and cleared by each
+  comparison and by a caret event of the control that a caret read made
+  after it already covered, as NVDA's comparison at that event would,
+  `text_reads::note_caret_event_counted`); when the kept selection's
   text no longer matches what its ends hold (through UIA,
   `CaretRequest::read_selection_text`, `KeptSelection::text`,
   `CaretRequest::read_previous_text`); or when the control's value change

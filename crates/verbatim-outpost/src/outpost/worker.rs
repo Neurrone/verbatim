@@ -2464,7 +2464,14 @@ impl Worker<'_> {
             WinEventKind::Caret | WinEventKind::TextSelectionChange => {
                 if of_focus {
                     let node_id = self.context.nodes().client(hwnd);
-                    if !self.check_open_watch(node_id, true) {
+                    if self
+                        .context
+                        .caret_read_since(node_id, self.timing.observed_at_us)
+                    {
+                        // The read that covers it made the comparison NVDA
+                        // makes at this event, which clears the note.
+                        text_reads::note_caret_event_counted(self.context, node_id);
+                    } else if !self.check_watch_now(node_id, true) {
                         self.caret_of(node_id, trace, observed_at_us);
                     }
                 } else if let Some(node_id) = self.watched_edit(hwnd) {

@@ -1165,6 +1165,66 @@ fn an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general
     app.quit();
 }
 
+/// "x" typed over the selected "alpha" in a classic edit control, all its
+/// events raised behind a key's watch before the watch reaches the worker,
+/// as the Windows Forms text box raises them for Control+Z: its value
+/// change, its caret event, the client's value change and a last caret
+/// event, each replacing the waiting one of its kind. The watch's
+/// read covers both caret events and finds the value change waiting, so the
+/// answer says its change in general terms; the value change then handled
+/// is counted by that answer, as NVDA's comparison at the last caret event
+/// clears its note (`detectPossibleSelectionChange`), so the next
+/// comparison, as "x" is selected, is specific.
+fn an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change_specific() {
+    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-counted");
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    let key = outpost.ask(Query::Text {
+        node_id: node,
+        op: right_arrow(&before),
+    });
+    app.send(r"set-text doc x beta\ngamma\n");
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    app.send("text-changed doc");
+    app.send("caret-event doc");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::ValueChange),
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::Msaa(WinEventKind::ValueChange),
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+    ]);
+    outpost.release_worker();
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        (
+            reply.selection_changes,
+            reply.content_changed,
+            reply.new_selection
+        ),
+        (vec![unselected_in_general()], true, None)
+    );
+    text_changed(&outpost, node);
+    outpost.settled();
+    app.send("caret doc 0 1");
+    app.send("caret-event doc");
+    outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (
+            vec![SelectionChange {
+                selected: true,
+                text: "x".to_owned(),
+                characters: 1,
+            }],
+            false,
+            None
+        )
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Delete's watch over the selection `before` reports, with the character
 /// at its caret to compare, as Core sends it: no selection of its own, the
 /// answer comparing with the selection the outpost kept.
@@ -1477,6 +1537,10 @@ fn main() {
         (
             "an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms",
             an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms,
+        ),
+        (
+            "an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change_specific",
+            an_edit_controls_value_change_counted_by_a_keys_answer_leaves_the_next_change_specific,
         ),
         (
             "an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms",

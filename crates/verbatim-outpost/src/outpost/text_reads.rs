@@ -1049,6 +1049,31 @@ pub(super) fn note_value_change(context: &RequestContext<'_>, node_id: NodeId) {
     );
 }
 
+/// Clears the note of edit control `node_id`'s text changes at a caret
+/// event that a caret read made after it already covered
+/// ([`TextChange::ContentCounted`]): that read's comparison counted every
+/// value change observed before it, those handled since included, as
+/// NVDA's comparison at the caret event, made after the value changes
+/// before it, clears `hasContentChangedSinceLastSelection`
+/// (`nvda/source/NVDAObjects/behaviors.py` 346 to 349;
+/// `nvda/source/editableText.py` 449 to 450). Records nothing when nothing
+/// would change, so a covered caret event commits nothing.
+pub(super) fn note_caret_event_counted(context: &RequestContext<'_>, node_id: NodeId) {
+    let node = node_id.number();
+    let noted = context
+        .facts()
+        .text
+        .edit(node)
+        .is_some_and(|anchors| anchors.content_changed && anchors.selection.is_some());
+    if noted {
+        record(
+            context,
+            TextChange::ContentCounted(node),
+            (Vec::new(), Vec::new()),
+        );
+    }
+}
+
 /// The window of the edit control whose client area `node_id` is, if it is
 /// one: the node whose caret reads are cut at their value change check
 /// ([`value_change_cut`]). A UIA text's change is never checked for.
