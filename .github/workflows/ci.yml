@@ -5,8 +5,9 @@
 #
 # The nvda/ submodule is reference material only and is deliberately not
 # checked out here (actions/checkout does not fetch submodules by default).
-# The third_party/espeak-ng submodule is fetched by each job: eSpeak NG is
-# built from it as part of the workspace.
+# The third_party/espeak-ng submodule is fetched by each job that builds
+# the Windows workspace (ci, ci-arm64, e2e): eSpeak NG is built from it.
+# ci-linux, docs and changes build no crate that needs it.
 
 name: CI
 

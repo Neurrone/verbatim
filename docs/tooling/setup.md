@@ -76,12 +76,12 @@ cargo hakari manage-deps
 `cargo xtask ci` is the standard check and exactly what GitHub Actions
 runs, in its `ci`, `ci-arm64` and `ci-linux` jobs. On Windows its steps are
 the platform-neutral dependency check, the scans below, the documentation
-check, the workspace-hack check above, rustfmt, and pedantic clippy with
+check, the workspace-hack check above, rustfmt, and pedantic Clippy with
 warnings denied and unit tests for the whole workspace, all for the host's
 own architecture into `target/debug`; no build names a target, so an ARM64
 machine checks ARM64. On Linux, where the `ci-linux` job runs it on
 `ubuntu-latest`, it runs the dependency check, the scans and the
-documentation check, then clippy and unit tests only for the crates in
+documentation check, then Clippy and unit tests only for the crates in
 `LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier and xtask.
 rustfmt and the workspace-hack checks run only on Windows, since they read
 source and metadata the same way on every host. On Linux xtask builds only

@@ -76,7 +76,7 @@ The Windows-specific crates are GPL like NVDA and may port NVDA code freely. Por
 
 We use Rust 2024 edition.
 
-Arm64 is a first-class target. Builds and tests always use the host's own architecture (no command names a target), so ARM64 is built and tested on an ARM64 machine, which GitHub Actions provides (the `ci-arm64` job); this machine is x64. Two stated exceptions, since neither builds a binary or runs a test: a check-only `cargo check` or `cargo clippy` with `--target x86_64-unknown-linux-gnu` on this machine, to check xtask's Linux build, and the platform-neutral dependency check's `cargo tree --target all`, which reads every target's graph so its answer does not depend on the host.
+Arm64 is a first-class target. Builds and tests always use the host's own architecture (no command names a target), so ARM64 is built and tested on an ARM64 machine, which GitHub Actions provides (the `ci-arm64` job); this machine is x64. Two stated exceptions, since neither builds a binary or runs a test: a check-only `cargo check` or `cargo clippy` with `--target x86_64-unknown-linux-gnu` on this machine, to check a crate's Linux build, and the platform-neutral dependency check's `cargo tree --target all`, which reads every target's graph so its answer does not depend on the host.
 
 Use Clippy with the pedantic lint group from the start. Public Rust APIs should have doc comments so the workspace can be browsed with Rustdoc.
 
