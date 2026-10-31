@@ -33,8 +33,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether anything other than documentation changed: a push or pull
+  # request that changes only Markdown files and docs/ runs the docs job
+  # alone, since building and testing would test nothing new. A run started
+  # by hand, or a push whose base is unknown, counts as a code change.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: classify
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "$EVENT" in
+            push) base="$BEFORE" ;;
+            pull_request) base="$BASE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" "$GITHUB_SHA" | grep -qvE '(\.md$|^docs/)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The documentation check alone, for a change that touches nothing else;
+  # `cargo xtask ci` runs the same check when code changed.
+  docs:
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the documents' links and paths
+        run: cargo xtask docs
+
   ci:
-    if: github.event_name != 'workflow_dispatch'
+    needs: changes
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -82,7 +129,8 @@ jobs:
   # The same checks on an ARM64 runner: nothing names a target, so this
   # job builds and tests ARM64, as `ci` does x64.
   ci-arm64:
-    if: github.event_name != 'workflow_dispatch'
+    needs: changes
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v7
@@ -142,6 +190,8 @@ jobs:
   # an interactive session, which is what lets SendInput-based key
   # injection and real window focus work here.
   e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
