@@ -2054,20 +2054,18 @@ impl ReducerThread<'_> {
     fn expire(&mut self, now: Instant) {
         let shared = now_us();
         self.wanted.expire(shared);
-        if self.requests.next_deadline().is_some() {
-            for expired in self.requests.expire(shared) {
-                let command = CoreToOutpost::Cancel {
-                    request_id: expired.id,
-                };
-                if let Err(error) = self
-                    .context
-                    .supervisor
-                    .send_to_outpost(expired.outpost, command)
-                {
-                    tracing::debug!(%error, outpost = %expired.outpost, "an expired request could not be withdrawn");
-                }
-                self.deliver(expired.asker, expired.outcome);
+        for expired in self.requests.expire(shared) {
+            let command = CoreToOutpost::Cancel {
+                request_id: expired.id,
+            };
+            if let Err(error) = self
+                .context
+                .supervisor
+                .send_to_outpost(expired.outpost, command)
+            {
+                tracing::debug!(%error, outpost = %expired.outpost, "an expired request could not be withdrawn");
             }
+            self.deliver(expired.asker, expired.outcome);
         }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyDue { trace_id });

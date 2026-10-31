@@ -501,6 +501,36 @@ fn a_queued_bound_is_not_waited_for_again_and_its_read_cancels_the_timer() {
     assert!(matches!(effects.last(), Some(Effect::GapTimer(None))));
 }
 
+/// The bound's entry handled before the bound has passed reads nothing,
+/// and the bound is waited for again: the reducer's timer is due at it,
+/// and the record is read then.
+#[test]
+fn a_bound_entry_handled_before_its_bound_is_waited_for_again() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.commit(request, copy_dropped(), 2);
+    replay.finish(request, false, 3);
+    let effects = replay.input(Input::GapBound, 500);
+    assert!(programs(&effects).is_empty(), "the bound has not passed");
+    assert_eq!(
+        replay.reducer.next_timer(now(500)),
+        Some(Duration::from_millis(1_001)),
+        "the record's bound, waited for again"
+    );
+    let effects = replay.tick(1_001);
+    assert!(matches!(
+        program(&effects).work,
+        Work::Entry {
+            entry: Entry {
+                item: Item::GapRead { window: 0x11 },
+                ..
+            },
+            ..
+        }
+    ));
+}
+
 /// A held console's absorption cleared by a terminal read's dispatch
 /// reaches the mailbox ahead of the read's program, so no update observed
 /// after the read begins is dropped.
@@ -735,6 +765,51 @@ fn a_walk_whose_worker_is_abandoned_is_published_first_and_its_sends_after_refus
     // What the abandoned worker sends afterwards is refused.
     assert!(!replay.reducer.accepts(request));
     assert_eq!(followed(&replay), Some(NodeId::new(1)));
+}
+
+/// A focus adopted in the transition that dispatches its owed work gives
+/// the mailbox its marks ahead of every other effect of that transition,
+/// so the program dispatched starts only once the mailbox judges by them.
+#[test]
+fn an_adopted_focus_gives_its_marks_ahead_of_the_dispatch() {
+    let mut replay = Replay::new();
+    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let request = program(&effects).request;
+    replay.input(
+        Input::Armed {
+            request,
+            bound: Duration::from_secs(20),
+        },
+        2,
+    );
+    replay.answers.publications.push_back(focus_change(1, true));
+    // The deadline publishes the walk; the publication's answer adopts the
+    // terminal's focus, abandons the worker and dispatches its owed read.
+    let effects = replay.tick(10_001);
+    let order: Vec<&str> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Publish { .. } => Some("publish"),
+            Effect::Marks(_) => Some("marks"),
+            Effect::Send(_) => Some("send"),
+            Effect::Abandon { .. } => Some("abandon"),
+            Effect::Dispatch(_) => Some("dispatch"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["publish", "marks", "send", "abandon", "dispatch"]);
+    let marks = effects.iter().find_map(|effect| match effect {
+        Effect::Marks(marks) => Some(marks),
+        _ => None,
+    });
+    assert_eq!(
+        marks,
+        Some(&Marks {
+            focused: Some(Object::Msaa(9, -4, 1)),
+            terminal: TerminalMark::In(Window::new(9).unwrap()),
+            ..Marks::default()
+        })
+    );
 }
 
 /// The deadline of the program dispatched at 1 ms, at which the tests

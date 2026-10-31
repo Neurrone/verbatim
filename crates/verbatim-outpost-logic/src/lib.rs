@@ -59,7 +59,7 @@ pub use self::follow::{
 };
 pub use self::gap_record::{CopyDropped, GapRead};
 pub use self::held::{Evidence, Focus, Held, InFront};
-pub use self::intake::{Handling, Marks, Object, Planned};
+pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
 pub use self::text::{
     Anchor, AnswerCut, CaretSeen, CutLine, KeptSelection, NodeAnchors, RangeKey, ReportCut,
     TextChange,

@@ -13,7 +13,7 @@ use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId}
 use verbatim_reader_rules::Window;
 
 use super::held::{self, Held};
-use super::intake::{Marks, Object};
+use super::intake::{Marks, Object, TerminalMark};
 use super::text::{RangeKey, TextChange, TextFacts};
 use super::verdicts::Verdicts;
 use super::watch::{Answer, Checked, Clock, OpenWatch, Watch};
@@ -621,7 +621,11 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change, clock: Clock) 
             // (`docs/parity/text.md`).
             facts.marks = Marks {
                 focused: follow.object.clone(),
-                terminal: follow.terminal.then(|| follow.window.and_then(Window::new)),
+                terminal: if follow.terminal {
+                    TerminalMark::of(follow.window.and_then(Window::new))
+                } else {
+                    TerminalMark::None
+                },
                 focus_redirected: follow.redirected,
                 absorbed: None,
                 system_caret_unused: follow.terminal && follow.console,

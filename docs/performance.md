@@ -696,6 +696,13 @@ wake-ups and processor time per event.
   waiting, a scan of the intake when a caret key's watch is open or a
   caret key is dispatched; and a scan of the intake for an edit control's
   value change when a caret read is cut at its value change check.
+  Per input and timer tick, a copy of the marks to compare them after the
+  transition, one small allocation while the focus is a UIA element; with
+  debug builds in test audio mode, `measure_keys_notepad`, three
+  12-second windows after and four before (2026-11-01), the outpost's
+  processor time per input-hook wake was 1.39 ms after and 1.39 ms before
+  (median), and wake-ups in all processes per hook wake 31.7 after and
+  31.8 before: no change measured.
 - Locks: the watch lock and the commit's nested locks are gone. The
   reducer's thread takes the mailbox's lock to drain it, the store's for
   a commit's writes, a worker's charge for a publication, and the

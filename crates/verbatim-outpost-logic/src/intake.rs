@@ -330,10 +330,10 @@ pub struct Intake {
 pub struct Marks {
     /// The object last reported as the focus.
     pub focused: Option<Object>,
-    /// When `focused` is a terminal read through UIA, its window, `None`
-    /// when not known: its caret event is planned after its text changes
+    /// Whether `focused` is a terminal read through UIA, and its window
+    /// when known: its caret event is planned after its text changes
     /// waiting with it ([`caret_after_update`]).
-    pub terminal: Option<Option<Window>>,
+    pub terminal: TerminalMark,
     /// Whether `focused` was reached by redirecting a control's own focus
     /// event to its focused child, whose own event is still to come.
     pub focus_redirected: bool,
@@ -348,6 +348,28 @@ pub struct Marks {
     /// the focus last reported has caret events of its own
     /// (`Intake::drop_system_caret`).
     pub system_caret_unused: bool,
+}
+
+/// Whether the focus is a terminal read through UIA, and in which window
+/// ([`Marks::terminal`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TerminalMark {
+    /// The focus is not such a terminal.
+    #[default]
+    None,
+    /// The focus is such a terminal whose window is not known.
+    WindowUnknown,
+    /// The focus is such a terminal in this window.
+    In(Window),
+}
+
+impl TerminalMark {
+    /// A terminal in `window`, or one whose window is not known when
+    /// `window` is `None`.
+    #[must_use]
+    pub fn of(window: Option<Window>) -> Self {
+        window.map_or(Self::WindowUnknown, Self::In)
+    }
 }
 
 impl Marks {
@@ -990,16 +1012,17 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
 /// Terminal raises its caret event after its text change, but the intake
 /// moves a newer change that replaces a waiting one to the back, behind the
 /// caret event; the console host raises the two in either order.
-#[expect(
-    clippy::option_option,
-    reason = "the marks' terminal: no terminal, one whose window is not known, or one in a window"
-)]
 fn caret_after_update(
     waiting: &mut Vec<Waiting>,
     focused: Option<&Object>,
-    terminal: Option<Option<Window>>,
+    terminal: TerminalMark,
 ) {
-    let (Some(Object::Uia(runtime_id)), Some(window)) = (focused, terminal) else {
+    let window = match terminal {
+        TerminalMark::None => return,
+        TerminalMark::WindowUnknown => None,
+        TerminalMark::In(window) => Some(window),
+    };
+    let Some(Object::Uia(runtime_id)) = focused else {
         return;
     };
     let uia_caret = Key::Uia(2, 0, runtime_id.clone());
@@ -1385,7 +1408,9 @@ mod tests {
             intake: Intake::default(),
             marks: Marks {
                 focused: object,
-                terminal: terminal.map(Window::new),
+                terminal: terminal.map_or(TerminalMark::None, |hwnd| {
+                    TerminalMark::of(Window::new(hwnd))
+                }),
                 ..Marks::default()
             },
         }

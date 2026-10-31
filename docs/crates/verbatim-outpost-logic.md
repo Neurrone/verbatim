@@ -74,7 +74,7 @@ Public API:
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
 - The vocabulary of its state, used by the shell and the worker: the
-  intake's `Entry`, `Item`, `Source`, `Marks` and `Object`; the follow
+  intake's `Entry`, `Item`, `Source`, `Marks` (with `TerminalMark`) and `Object`; the follow
   state (`Follow`, `FollowState`, `Target`, `Owed`); the caret key's
   watch (`Watch`, `OpenWatch`, `Checked`, below); the
   reports Core may hold (`Held`, `Focus`, `Evidence`, `InFront`); the verdicts
