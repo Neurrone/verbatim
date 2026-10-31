@@ -1649,6 +1649,22 @@ impl<R: Reading> Shared<R> {
         u64::try_from(at.saturating_duration_since(self.origin).as_micros()).unwrap_or(u64::MAX)
     }
 
+    /// The system time `at` in the schedule's microseconds: as far from
+    /// the schedule's now as `at` is from the system's now, so a clock the
+    /// schedule was given is not mixed with the system's.
+    fn micros_of_system_instant(&self, at: Instant) -> u64 {
+        let system_now = Instant::now();
+        let now = self.now();
+        let apart = |from: Instant, to: Instant| {
+            u64::try_from(to.saturating_duration_since(from).as_micros()).unwrap_or(u64::MAX)
+        };
+        if at >= system_now {
+            now.saturating_add(apart(system_now, at))
+        } else {
+            now.saturating_sub(apart(at, system_now))
+        }
+    }
+
     /// The system's time at which the schedule's clock reaches `us`, for
     /// the alarm: as long from now as the schedule's clock has left.
     fn alarm_at(&self, us: u64) -> Instant {
@@ -2189,7 +2205,7 @@ fn on_arm<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, request: Request) -> On
             return;
         };
         let mut state = shared.lock();
-        let bound = shared.micros(bound_at);
+        let bound = shared.micros_of_system_instant(bound_at);
         step(
             &shared,
             &mut state,

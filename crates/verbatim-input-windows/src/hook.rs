@@ -364,8 +364,8 @@ pub(crate) fn decide(
     // SAFETY: GetKeyState takes any virtual-key code.
     let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
     state.machine.set_num_lock(num_lock);
-    // The key's one time, which the machine decides by and a passed key's
-    // report carries.
+    // The key's time, which the machine decides by. Only a passed key's
+    // report reuses it; the other reports read the time again.
     let now_us = unix_us();
     let mut decision = state.machine.on_key(event, now_us);
     let own = extra_info == OWN_INPUT_TAG;

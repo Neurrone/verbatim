@@ -575,8 +575,9 @@ impl<J> Schedule<J> {
     }
 
     /// Sets the watchdog's alarm to the soonest time anything is due, when
-    /// that differs from the time it is set to (none once it went off): each read's next wake ([`InFlight::next_wake`]),
-    /// and the end of each application's wait at the abandoned limit.
+    /// that differs from the time it is set to (none once it went off):
+    /// each read's next wake ([`InFlight::next_wake`]), and the end of each
+    /// application's wait at the abandoned limit.
     fn set_alarm(&mut self, effects: &mut Vec<ScheduleEffect<J>>) {
         if self.stopping {
             return;

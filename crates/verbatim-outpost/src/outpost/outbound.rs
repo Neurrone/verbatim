@@ -705,9 +705,13 @@ mod tests {
     #[test]
     fn the_waiting_nodes_come_in_increasing_number() {
         let mut pending = pending();
-        push(&mut pending, text_changed(1), &[9, 3]);
-        push(&mut pending, text_changed(2), &[7]);
-        assert_eq!(pending.waiting_nodes(), vec![3, 7, 9]);
+        let keys = [41, 5, 97, 12, 3, 66, 20, 88, 1, 54, 31, 7];
+        for (message, key) in (1..).zip(keys) {
+            push(&mut pending, text_changed(message), &[key]);
+        }
+        let mut sorted = keys.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(pending.waiting_nodes(), sorted);
     }
 
     /// An outbound queue writing to a pipe with a 4 KiB buffer, its writes

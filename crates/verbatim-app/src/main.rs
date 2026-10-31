@@ -2013,8 +2013,10 @@ impl ReducerThread<'_> {
     /// Core once the held key's one deadline is past.
     fn expire(&mut self, now: Instant) {
         self.wanted.expire(now);
-        for (asker, outcome) in self.requests.expire(now_us()) {
-            self.deliver(asker, outcome);
+        if self.requests.next_deadline().is_some() {
+            for (asker, outcome) in self.requests.expire(now_us()) {
+                self.deliver(asker, outcome);
+            }
         }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyDue { trace_id });
@@ -2042,9 +2044,9 @@ impl ReducerThread<'_> {
     /// query not yet started is answered "not started", whose outcome, as
     /// any later one, finds no request and is dropped.
     fn withdraw_text(&mut self, query_id: verbatim_model::QueryId) {
-        let Some((id, outpost, _asker)) = self.requests.withdraw(
-            |asker| matches!(asker, Asker::Text { query_id: asked, .. } if *asked == query_id),
-        ) else {
+        let Some((id, outpost, _asker)) =
+            self.requests.withdraw(|asker| asks_text(asker, query_id))
+        else {
             return;
         };
         let command = CoreToOutpost::Cancel { request_id: id.0 };
@@ -2055,9 +2057,7 @@ impl ReducerThread<'_> {
     }
 
     fn dump_tree_given_up(&mut self, ticket: DumpTicket) {
-        let Some((id, outpost)) = self.requests.find(
-            |asker| matches!(asker, Asker::DumpTree { ticket: asked, .. } if *asked == ticket),
-        ) else {
+        let Some((id, outpost)) = self.requests.find(|asker| asks_dump(asker, ticket)) else {
             return;
         };
         let command = CoreToOutpost::Cancel { request_id: id.0 };
@@ -2066,6 +2066,16 @@ impl ReducerThread<'_> {
             tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");
         }
     }
+}
+
+/// Whether `who` is Core's text request `query_id`.
+fn asks_text(who: &Asker, query_id: verbatim_model::QueryId) -> bool {
+    matches!(who, Asker::Text { query_id: asked, .. } if *asked == query_id)
+}
+
+/// Whether `who` is the tree dump named `ticket`.
+fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
+    matches!(who, Asker::DumpTree { ticket: asked, .. } if *asked == ticket)
 }
 
 /// Posts the supervisor's messages to the reducer thread's port, in line
@@ -2421,6 +2431,28 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Withdrawing a text request finds the request with Core's query id
+    /// and no other.
+    #[test]
+    fn a_text_withdrawal_matches_only_its_query_id() {
+        let asker = Asker::Text {
+            query_id: verbatim_model::QueryId(7),
+            trace_id: TraceId::mint(),
+        };
+        assert!(asks_text(&asker, verbatim_model::QueryId(7)));
+        assert!(!asks_text(&asker, verbatim_model::QueryId(8)));
+    }
+
+    /// Giving up a tree dump finds the dump with that ticket and no other.
+    #[test]
+    fn a_dump_given_up_matches_only_its_ticket() {
+        let (reply, _answer) = crossbeam_channel::bounded(1);
+        let ticket = DumpTicket::mint();
+        let asker = Asker::DumpTree { ticket, reply };
+        assert!(asks_dump(&asker, ticket));
+        assert!(!asks_dump(&asker, DumpTicket::mint()));
+    }
 
     /// A wait for a deadline that runs out with no command wakes the
     /// reducer thread to check its deadlines rather than ending it, however
