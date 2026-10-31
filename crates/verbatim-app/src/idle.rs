@@ -239,7 +239,7 @@ impl<W> IdleBarrier<W> {
 /// The harness's marks of handled input that came while a lock key's
 /// announcement was still to come, which the reducer thread hands on, in
 /// order, once it has been made, so the harness reads no speech before it
-/// (`docs/design/ownership-input.md`, "The router's work as effects").
+/// (`docs/design/ownership.md`).
 #[derive(Debug, Default)]
 pub(crate) struct HeldMarks(Vec<u64>);
 

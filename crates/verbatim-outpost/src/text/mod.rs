@@ -570,7 +570,7 @@ pub trait CaretSignal {
 /// the result, or, when the caller asked for the cut and the comparison
 /// needs to know, what the read found, for [`finish_report`] or
 /// [`finish_answer`] to finish once the caller knows
-/// (`docs/design/ownership-outpost-reducer.md`, "The value change check").
+/// (`docs/design/ownership.md`).
 #[derive(Debug)]
 pub(crate) enum Checked<T, C> {
     /// The read's result.

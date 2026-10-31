@@ -349,21 +349,9 @@ Windows Terminal its image ships.
 Some scenarios are local-only, marked `local_only` in the registry, because
 GitHub's Windows Server runner cannot run them as this machine does:
 
-- The `notepad_` scenarios test Windows 11 Notepad, which the runner lacks
-  (it has classic Notepad, a Win32 edit control); editing is also covered
-  in the harness's Windows Forms text box, which runs everywhere.
-- `settings_search_suggestions`: the runner's Settings raises no selection
-  event for a first suggestion as the list opens, so "Suggestions
-  available" plays to completion there, while the scenario expects the
-  first suggestion, which this machine's Settings selects as the list
-  opens, to cut it off.
-- `settings_combo_box_expanded`: the runner's Settings opens its Date and
-  time page with the focus on "Location Settings link", where this
-  machine's opens it on "Region button", which the scenario's opening
-  speech asserts. The opening is not read from the agent, as the
-  suggestions' names are, because the agent reads no role, and composing
-  the spoken role word in the scenario would copy Verbatim's role
-  vocabulary into it.
+- The `notepad_` scenarios, `settings_search_suggestions` and
+  `settings_combo_box_expanded`; why each fails on the runner is in
+  [the known failures](../flaky-tests.md).
 
 The registry's `LOCAL_ONLY_FILTERS` lists the filters, and only
 local-only scenarios' names start with them. A local-only scenario is part
@@ -454,6 +442,8 @@ mechanism: a failed scenario is reported failed exactly once, and nothing
 re-runs it.
 
 ## Reading a failure
+
+Match a failure to [the known failures](../flaky-tests.md) before rerunning it or debugging it.
 
 Once the run's logs are collected, a speech-assertion failure prints
 three things. First, the expected and actual sequences, escaped (`{:?}`),

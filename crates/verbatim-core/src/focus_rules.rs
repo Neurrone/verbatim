@@ -11,7 +11,7 @@
 //! Automation element cannot pass to another process. Those judgments
 //! never guess Core's focus: an outpost reads changes for every node it has
 //! not released, and Core's targeting decides what is spoken
-//! (`docs/design/ownership-one-judge.md`, "The rule").
+//! (`docs/design/ownership.md`).
 //!
 //! The behaviour is specified in `docs/parity/focus-events.md` ("Event
 //! acceptance", "Duplicate focus suppression"), from which these are

@@ -804,7 +804,7 @@ fn raise_focus_on(app: &mut common::MockApp, id: &str) -> (DeliveredFact, WinEve
 /// forwarding ends; the listener's copy is reported as it comes, and the
 /// hook's copy, raised at or before the tick the forwarding ended at, is
 /// dropped then: the focus is reported once
-/// (`docs/design/ownership-outpost-reducer.md`, "The hand-over's hold").
+/// (`docs/design/ownership.md`).
 fn a_focus_the_outposts_own_hook_took_in_is_reported_once() {
     use verbatim_outpost::Heard;
     common::init_com();
@@ -849,8 +849,7 @@ fn a_focus_raised_before_the_outposts_hook_is_reported_from_the_listener() {
 /// focus its own hook took in is held, reported from the listener's copy,
 /// and dropped from the hook's when the forwarding ends; and once the
 /// listener's forwarding has ended, a focus from its own hook is reported,
-/// once (`docs/design/ownership-outpost-reducer.md`, "The hand-over's
-/// hold").
+/// once (`docs/design/ownership.md`).
 fn a_spare_given_to_an_application_reports_each_focus_once() {
     use verbatim_outpost::Heard;
     common::init_com();

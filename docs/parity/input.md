@@ -36,8 +36,7 @@ a review command, or the time, menu or tray-list gesture, pressed while
 a caret key is held for its caret read runs after that key has been
 passed on and its watch answered, or 100 ms after the pass, whichever is
 first; the caret key says nothing, and a reading command reads the line
-the key moved to (`docs/design/ownership-input.md`, "Commands behind held
-keys"; Core's `a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch`).
+the key moved to (`docs/design/ownership.md`; Core's `a_review_command_pressed_while_a_caret_key_is_held_runs_after_its_read_pass_and_watch`).
 A command pressed while the watch of a caret key already passed on is
 still open waits for it in the same way. Different, by decision
 (Dickson, 2026-10-30): the wait for the watch is Verbatim's own, so the

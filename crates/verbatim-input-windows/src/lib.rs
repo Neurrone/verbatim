@@ -28,7 +28,7 @@
 //! - It touches no lock, and makes no call that dispatches sent messages,
 //!   which would deliver the next key while this one is half handled.
 //!   `cargo xtask ci` checks the hook thread's modules for both
-//!   (`docs/design/ownership-input.md`, "The ownership check on the hook").
+//!   (`docs/design/ownership.md`).
 //!
 //! Besides bound gestures the hook reports what a passed key did that the
 //! reducer needs to know: an observed gesture (a caret key) and the text a

@@ -1,6 +1,6 @@
 //! The outpost's object store: the one owner of every application object the
 //! outpost keeps, and of the identity it gives each
-//! (`docs/design/ownership-outpost-reducer.md`, "The store").
+//! (`docs/design/ownership.md`).
 //!
 //! It owns, as private fields, the UIA and MSAA node registries, the text
 //! objects (each node's text patterns, and the UIA ranges of its text
@@ -200,7 +200,7 @@ struct State {
 
 /// An application object a UIA event came with, parked in the store as the
 /// event is pushed, so the mailbox's entry and the reducer hold only its
-/// key (`docs/design/ownership-outpost-reducer.md`, "The mailbox"): taken
+/// key (`docs/design/ownership.md`): taken
 /// by the program that handles the entry, or let go of into a worker's
 /// drop when the entry is removed unhandled.
 pub(super) enum Parked {

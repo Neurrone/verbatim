@@ -1,5 +1,4 @@
-//! The delivery thread (`docs/design/ownership-output.md`, "Real-time
-//! audio"): it takes the audio thread's records from the outbound ring,
+//! The delivery thread (`docs/design/ownership.md`): it takes the audio thread's records from the outbound ring,
 //! runs each source's playback listener with the time the audio thread
 //! read, logs the underrun warning, and frees what the audio thread is done
 //! with, so that none of this runs on the audio thread.

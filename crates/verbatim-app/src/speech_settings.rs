@@ -1,6 +1,5 @@
 //! The speech section of the settings as the synth thread owns it
-//! (`docs/design/ownership-output.md`, "One saver, one writer per
-//! section"): read whenever a synthesizer starts, and saved through the
+//! (`docs/design/ownership.md`): read whenever a synthesizer starts, and saved through the
 //! section's writer on a commit, with the values the driver has.
 
 use verbatim_config::{ConfigValue, SpeechConfig};

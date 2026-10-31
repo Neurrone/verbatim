@@ -386,8 +386,7 @@ pub(crate) enum WaitingKey {
     /// pressed while a held key waited: run once the key ahead of it has
     /// been passed on and its watch answered, or the bound since the pass
     /// has run out, as NVDA runs scripts one at a time in the order
-    /// queued (`docs/design/ownership-input.md`, "Commands behind held
-    /// keys").
+    /// queued (`docs/design/ownership.md`).
     Command(Box<verbatim_model::Input>),
 }
 

@@ -1,7 +1,7 @@
 //! The mixer (decision D17): one audio thread that sums every source into
 //! the device and reports when each utterance and index mark is heard.
 //!
-//! Ownership (`docs/design/ownership-output.md`, "Real-time audio"). The
+//! Ownership (`docs/design/ownership.md`). The
 //! audio thread owns the mixer's state, and nothing outside it reads or
 //! writes that state. Everything it takes in comes through queues built
 //! before it starts: each producing thread has a lane of its own, a
@@ -176,7 +176,7 @@ pub(crate) struct SourceShared {
     /// or discarded, in the lane's count.
     released: AtomicU64,
     /// Set when the source or its lane has room again
-    /// (`docs/design/ownership-output.md`, "Real-time audio").
+    /// (`docs/design/ownership.md`).
     room: Arc<dyn Signal>,
 }
 

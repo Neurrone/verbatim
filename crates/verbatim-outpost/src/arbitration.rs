@@ -20,7 +20,7 @@
 //! The verdicts probes found are the outpost reducer's state ([`Verdicts`]):
 //! a program reads its own copy and commits each probe as it returns, and
 //! the event thread reads the push-time copy
-//! (`docs/design/ownership-outpost-reducer.md`, "Verdicts"). The arbitrator
+//! (`docs/design/ownership.md`). The arbitrator
 //! holds the configuration they are read with: the class lists, the
 //! override and the clocks.
 //!
@@ -173,7 +173,7 @@ fn classify_with(
 
 /// What a judgement of window backends reads and records verdicts through:
 /// a program's copy of the reducer's verdicts, at its entry's observation
-/// (`docs/design/ownership-outpost-reducer.md`, "Verdicts").
+/// (`docs/design/ownership.md`).
 pub(crate) trait Judgement {
     /// The observation the judgement is made at: its entry's event's, or
     /// now on the arbitrator's observation clock for a judgement with no

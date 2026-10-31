@@ -194,8 +194,7 @@ The Speech page is generated from the settings host's descriptors; every
 control change applies live, OK and Apply persist, and Cancel reverts.
 The page numbers each change it sends and keeps it as outstanding until
 the synth thread answers it with the driver's values (`SpeechControls`,
-`docs/design/ownership-output.md`, "The mirror follows the synth
-thread"); it takes from an answer only the settings with no later change
+`docs/design/ownership.md`); it takes from an answer only the settings with no later change
 of its own outstanding, so an older answer never overwrites a newer
 request, and when the driver refused or clamped a value, the changed
 control snaps back to the driver's value at once (`set_speech_control`,

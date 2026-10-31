@@ -1,6 +1,6 @@
 //! The audio thread's store: each source's frames, pending events,
 //! utterances and voices, allocated before the audio thread starts and
-//! never grown on it (`docs/design/ownership-output.md`, "Real-time audio").
+//! never grown on it (`docs/design/ownership.md`).
 //! The audio thread takes a record from a lane only when the store has
 //! room for it ([`SourceState::admits`]), and nothing here allocates or
 //! frees: memory the store is done with leaves through the outbound ring.

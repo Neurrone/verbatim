@@ -151,7 +151,7 @@ source. A voice played to its end ends its utterance once its last frame
 has played. Gains are applied as the frames are summed, before the mix
 is clamped.
 
-Ownership (`docs/design/ownership-output.md`, "Real-time audio"). The
+Ownership (`docs/design/ownership.md`). The
 audio thread owns the mixer's state, and nothing outside it reads or
 writes that state. It takes in records through lanes, single-producer,
 single-consumer rings of the `rtrb` crate whose push and pop are a

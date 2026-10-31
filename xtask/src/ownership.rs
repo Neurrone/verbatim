@@ -1,17 +1,16 @@
 //! The `cargo xtask ci` checks that the owners keep their rules, by two
 //! rules over named modules:
 //!
-//! - The pure rule (`docs/design/ownership-one-judge.md`, "The listener"):
+//! - The pure rule (`docs/design/ownership.md`):
 //!   a module whose transitions are replayed in tests may name nothing that
 //!   blocks, shares, spawns, reads a clock or calls out of the process.
 //!   The outpost's reducer is held to it as a directory, every file in it
-//!   (`docs/design/ownership-outpost-reducer.md`, "The ownership check"),
+//!   (`docs/design/ownership.md`),
 //!   with an allow-list of its own: the module's own items, the model,
 //!   Core's focus rules, `std`'s collections, `cmp`, `mem`, `Arc` and
 //!   `Duration`; its `#[cfg(test)]` modules, inline or in files of their
 //!   own, are skipped.
-//! - The hook rule (`docs/design/ownership-input.md`, "The ownership check
-//!   on the hook"): the modules whose code runs on the keyboard hook's
+//! - The hook rule (`docs/design/ownership.md`): the modules whose code runs on the keyboard hook's
 //!   thread may name nothing that takes a lock, waits, logs, does I/O or
 //!   dispatches sent messages, and nothing that would have the thread take
 //!   work from another thread as a message: the hook thread takes only
@@ -19,8 +18,7 @@
 //!   skipped. The hook thread's start-up in `lib.rs`, `hook_thread`, is
 //!   read alone by the same rule, but may report on a channel and log once
 //!   before the loop, and may not run a message loop of its own.
-//! - The audio rule (`docs/design/ownership-output.md`, "The ownership
-//!   check on the audio loop"): the module of the audio thread's pass may
+//! - The audio rule (`docs/design/ownership.md`): the module of the audio thread's pass may
 //!   name nothing that takes a lock, waits, allocates, formats or logs, and
 //!   may use only atomics, `Arc`, time, `VecDeque`, `rtrb` and the audio
 //!   crate's own device, record and store types. A method that allocates
@@ -307,8 +305,7 @@ const HOOK_START_FORBIDDEN: [&str; 24] = [
 /// What a pure module may not name: identifiers, matched whole, and paths,
 /// matched as written. A responder answers its asker when it is dropped,
 /// so one held in a pure module would answer as a replay drops its state
-/// (`docs/design/ownership-messages.md`, "Responders and the endings of a
-/// query").
+/// (`docs/design/ownership.md`).
 const FORBIDDEN: [&str; 17] = [
     "thread",
     "Mutex",
@@ -344,7 +341,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "a checked module names something outside its rule (the pure rule, docs/design/ownership-one-judge.md; the hook rule, docs/design/ownership-input.md):\n{report}"
+            "a checked module names something outside its rule (the pure rule, docs/design/ownership.md; the hook rule, docs/design/ownership.md):\n{report}"
         ))
     }
 }

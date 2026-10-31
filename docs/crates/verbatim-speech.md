@@ -108,7 +108,7 @@ Public API:
   in one call. Every ending passes the manager's own waiters on its way to the
   configured observer.
 - `SpeechInbox`, `SpeechInboxTaker` and `QueueItem` — the queue thread's
-  inbox (`docs/design/ownership-input.md`, "The speech queue's inbox"):
+  inbox (`docs/design/ownership.md`):
   every event the queue thread takes, from the manager, `SpeechControl`,
   the settings host, the synth thread and the playback listener, is an
   opaque `QueueItem` posted to one `Arc<dyn SpeechInbox>`
@@ -132,8 +132,7 @@ Public API:
   told, so audio arriving afterwards is ordered after the pause or
   resume.
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
-  GUI's live handle (`docs/design/ownership-output.md`, "The mirror
-  follows the synth thread"): list synthesizers, switch the active one
+  GUI's live handle (`docs/design/ownership.md`): list synthesizers, switch the active one
   (`switch_synthesizer`, which returns at once and hands the outcome to a
   `SwitchDone` callback on the synth thread, after the mirror describes
   the new synthesizer; a synthesizer that cannot start, its host's time
@@ -345,7 +344,7 @@ cancelled, raises the speech source's cancel generation
 (`SourceControl::cancel`), which ends every utterance the mixer holds as
 cancelled and discards its unplayed audio, and then sets the in-flight
 job's flag. The order is the rule that makes a cancel exact
-(`docs/design/ownership-output.md`, "Real-time audio"): the generation
+(`docs/design/ownership.md`): the generation
 is raised before the token is cancelled, so the records the synth thread
 pushes after it sees the token, such as the finish of a driver the
 cancel woke, reach the mixer behind the raised generation, and the cut

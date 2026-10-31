@@ -1,5 +1,4 @@
-//! One pass of the audio thread (`docs/design/ownership-output.md`,
-//! "Real-time audio"): it drains every lane, then reads each source's
+//! One pass of the audio thread (`docs/design/ownership.md`): it drains every lane, then reads each source's
 //! cancel generation and pause, then fires events, then mixes and writes
 //! the device. It takes no lock, waits on nothing, allocates nothing and
 //! frees nothing; `cargo xtask ci` holds this module to the audio rule

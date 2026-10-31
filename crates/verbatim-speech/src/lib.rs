@@ -53,8 +53,7 @@ pub struct SettingsAnswer {
 pub type SettingsAnswered = Box<dyn Fn(SettingsAnswer) + Send + Sync>;
 
 /// The live handle the settings GUI uses to inspect and adjust speech
-/// (`docs/design/ownership-output.md`, "The mirror follows the synth
-/// thread").
+/// (`docs/design/ownership.md`).
 ///
 /// Set calls apply to the running synthesizer as soon as the synth thread
 /// takes them, so slider drags are audible as they happen (NVDA behavior);

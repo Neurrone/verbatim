@@ -216,7 +216,7 @@ Rules that hold for every UIA focus:
   button or the list and 22 for a list item; and the sender's keyboard
   focus read plainly (`CurrentHasKeyboardFocus`, NVDA's last check), 3
   provider calls. The listener makes no duplicate test: Core judges a
-  repeat (`docs/design/ownership-one-judge.md`, "Repeats"), so no focus
+  repeat (`docs/design/ownership.md`), so no focus
   pays the comparison with an earlier focus (`CompareElements`, which
   reaches no provider but is a client call). A menu opening is compared
   with its thread's last read while that read is current, one call. It is read plainly because inside a remote program
@@ -655,8 +655,7 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
 
 ### The outpost's reducer
 
-Counted from the code (`docs/design/ownership-outpost-reducer.md`,
-"Cost"), not yet measured: `measure_focus_explorer`,
+Counted from the code (`docs/design/ownership.md`), not yet measured: `measure_focus_explorer`,
 `measure_focus_text_box`, `measure_keys_windows_terminal` and
 `measure_keys_conhost` before and after give the hop's latency and the
 wake-ups and processor time per event.
@@ -699,8 +698,7 @@ wake-ups and processor time per event.
 
 ### The outpost's object store
 
-Counted from the code (`docs/design/ownership-outpost-reducer.md`, "The
-store"), not measured. No wake-up and no call into an application is
+Counted from the code (`docs/design/ownership.md`), not measured. No wake-up and no call into an application is
 added: every walk makes the calls it made before.
 
 - Each node a walk issues or looks up takes the store's lock with the
@@ -987,7 +985,7 @@ machine's taskbar, from a separate process running the outpost's walk,
   included, to the reducer's completion port, one boxed packet each
   (`docs/crates/verbatim-input-windows.md`), and a key that cancels or
   pauses speech posts once to the speech queue's port: no lock is taken
-  on the hook thread (`docs/design/ownership-input.md`, "Cost"). A bound
+  on the hook thread (`docs/design/ownership.md`). A bound
   gesture wakes the reducer once, where it woke the router and then the
   reducer; a lock key wakes the reducer for its press and for its
   deadline, which applies the announcement in the same step, two wakes
@@ -1043,7 +1041,7 @@ that ends unheard.
 ### Threads after the output build
 
 Debug builds, 2026-10-31, before and after the output ownership build
-(`docs/design/ownership-output.md`), wakes and processor time per trace.
+(`docs/design/ownership.md`), wakes and processor time per trace.
 The audio events thread is new in this build.
 
 - `measure_speech_real` with audible output, traced over 60 s: the audio
@@ -1225,7 +1223,7 @@ performance counter, in microseconds, for every event kind.
 ### One judge: reading for every node the outpost has not released
 
 An outpost reads changes for every node it has not released, and Core
-alone judges focuses (`docs/design/ownership-one-judge.md`); no message
+alone judges focuses (`docs/design/ownership.md`); no message
 carries Core's focus to the listener or the outposts.
 
 - An MSAA repeat of the focus is read in full: 23 MSAA calls in
@@ -2309,8 +2307,7 @@ moved forward on a line starting where it did.
 
 Each UIA focus event the listener queues for its reading thread carries
 the answer owed for its marker (`MarkerOwed`,
-`docs/design/ownership-messages.md`, "Responders and the endings of a
-query"): one boxed closure and one `Arc<Outgoing>` clone as the callback
+`docs/design/ownership.md`): one boxed closure and one `Arc<Outgoing>` clone as the callback
 queues it (`MarkerOwed::new` in `crates/verbatim-outpost/src/listener.rs`),
 and one insert into the readers' map of owed markers at `Readers::push`
 and one removal when the event's outcome consumes it

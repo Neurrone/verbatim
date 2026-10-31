@@ -1,7 +1,6 @@
 //! The [`SpeechSettingsHost`] implementation backed by the running
 //! [`SpeechManager`](crate::SpeechManager), and the mirror it reads
-//! (`docs/design/ownership-output.md`, "The mirror follows the synth
-//! thread").
+//! (`docs/design/ownership.md`).
 //!
 //! The synth thread owns the driver's setting values, the committed values
 //! and whether the active synthesizer is the user's choice, and it alone
@@ -24,8 +23,7 @@ use crate::settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, S
 use crate::{SettingsAnswer, SettingsAnswered, SpeechSettingsHost, SwitchDone};
 
 /// The speech section of the settings, owned by the synth thread
-/// (`docs/design/ownership-output.md`, "One saver, one writer per
-/// section"): what a synthesizer starts with, and where a commit saves.
+/// (`docs/design/ownership.md`): what a synthesizer starts with, and where a commit saves.
 pub trait SpeechSettingsStore: Send {
     /// The saved setting values of `synth`, applied whenever it starts, at
     /// startup or on a switch. A value the synthesizer refuses is skipped

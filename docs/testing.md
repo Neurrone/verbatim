@@ -64,6 +64,8 @@ The approved uses:
 
 ## Failures are never hidden
 
+A test known to fail is listed with its cause and fix in [the known failures](flaky-tests.md); it is not skipped or loosened to pass.
+
 - A skipped test is reported as skipped, never as passed.
 - Cleanup closes what the test opened, by process ID or by its window, and fails the test when it cannot. When the test started the program, the process that owned the window must exit. Nothing is killed by image name.
 - Any of Verbatim's own processes that exits unexpectedly during a scenario fails it, and the crash dump, when crash dumps are configured, is kept with the scenario's artifacts.

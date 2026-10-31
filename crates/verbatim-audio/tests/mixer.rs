@@ -683,8 +683,7 @@ fn cancelling_ends_every_unheard_utterance_and_spares_later_ones() {
 /// An utterance handed on before a cancel and registered after it, under
 /// the generation before the cancel, ends cancelled with nothing of it
 /// written; one handed on after the cancel, under its generation, plays in
-/// full (`docs/design/ownership-output.md`, "Sequences that would break
-/// it").
+/// full (`docs/design/ownership.md`).
 #[test]
 fn an_utterance_registered_under_a_generation_before_a_cancel_ends_cancelled_unheard() {
     let mut harness = harness();
@@ -1296,7 +1295,7 @@ fn exercise(harness: &mut Harness, first: u64) {
 }
 
 /// The audio thread allocates and frees nothing once the device is open
-/// (`docs/design/ownership-output.md`, "Real-time audio"): after a warm-up
+/// (`docs/design/ownership.md`): after a warm-up
 /// that plays everything once, 200 more passes that play speech with marks,
 /// a sound in an utterance, an earcon, a cancel, a pause and a resume, all
 /// recorded by the WAV tap, add no allocation and no free on it.

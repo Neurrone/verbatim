@@ -17,7 +17,7 @@
 //! headers, allocated when the device first opens and holding a second of
 //! its audio; a block that finds them full is dropped and counted, its time
 //! becomes silence in the file as any gap does, and the writer logs the
-//! count (`docs/design/ownership-output.md`, "Real-time audio").
+//! count (`docs/design/ownership.md`).
 
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};

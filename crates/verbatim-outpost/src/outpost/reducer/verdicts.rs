@@ -1,5 +1,5 @@
 //! The arbitrator's record of probed verdicts
-//! (`docs/design/ownership-outpost-reducer.md`, "Verdicts"): each window's
+//! (`docs/design/ownership.md`): each window's
 //! kept verdicts, held by the reducer and given to every program, and to
 //! the event thread through the push-time copies, as an immutable snapshot
 //! the reducer replaces on change, so a copy costs a reference count.

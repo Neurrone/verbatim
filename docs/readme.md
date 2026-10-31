@@ -50,6 +50,8 @@ suite, the VM harness, NVDA captures and troubleshooting.
 - [Tooling](tooling/readme.md) — which command to type, one guide per
   purpose.
 - [The testing standard](testing.md) — what every test must meet.
+- [Known failing and flaky tests](flaky-tests.md) — each test known to fail,
+  with its cause and the work that fixes it.
 - [Performance](performance.md) — the operation ledger: what counts as a
   call, and for each operation and backend the call counts CI asserts
   and the measured costs.
@@ -61,26 +63,13 @@ suite, the VM harness, NVDA captures and troubleshooting.
 - [Glossary](glossary.md) — Verbatim's invented vocabulary.
 - Design records — the problem, the alternatives weighed, the reasons
   and the limits behind each piece of work:
-  - [ownership.md](design/ownership.md) — one owner for every fact,
-    the rules every component follows, and the order of the refactor.
+  - [ownership.md](design/ownership.md) — one owner for every fact, the
+    rules every component follows, and the five builds that applied them:
+    the one judge, input, messages, output, and the outpost store and
+    reducer.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.
-  - [ownership-one-judge.md](design/ownership-one-judge.md) — the
-    one judge build's design: repeats judged in Core, the one foreground
-    record, the followed focus and the listener's scheduler.
-  - [ownership-input.md](design/ownership-input.md) — the input
-    build's design: one key-number minter and one ordered route for
-    user input.
-  - [ownership-output.md](design/ownership-output.md) — the output
-    build's design: one settings saver with one writer per section, the
-    settings mirror following the synthesizer, and real-time audio.
-  - [ownership-messages.md](design/ownership-messages.md) — the
-    messages build's design: the wire types in the model, their kinds,
-    the merges, responders and the supervisor's typestates.
-  - [ownership-outpost-reducer.md](design/ownership-outpost-reducer.md) —
-    the outpost's reducer build's design: the object store, the pure
-    reducer on its own thread, call programs and reply tokens.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events

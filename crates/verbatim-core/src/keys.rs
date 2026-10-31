@@ -1,6 +1,5 @@
 //! The key numbers of user inputs, and the stamp that puts them on speech
-//! (`docs/design/ownership-input.md`, "Key numbers in Core, not in a side
-//! table"): every user input arrives numbered by the keyboard hook's
+//! (`docs/design/ownership.md`): every user input arrives numbered by the keyboard hook's
 //! thread, Core keeps the newest pairs of trace and number, and every
 //! utterance an input's step speaks is stamped with the number of the key
 //! that caused it, so a later key's cancel fences it off in the speech

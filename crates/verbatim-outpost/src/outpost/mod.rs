@@ -1511,8 +1511,7 @@ impl Outpost {
 
     /// Tells the outpost that no focus listener forwards its application's
     /// `WinEvent`s to it: its own hook's copies are handled as they come,
-    /// never held for the hand-over (`docs/design/ownership-outpost-reducer.md`,
-    /// "The hand-over's hold"), as for an outpost run alone
+    /// never held for the hand-over (`docs/design/ownership.md`), as for an outpost run alone
     /// ([`run_attach`]) or one a test hands facts to itself.
     pub fn without_listener(&self) {
         self.context.mailbox.post(Posted::WithoutListener);

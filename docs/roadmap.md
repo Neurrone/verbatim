@@ -127,6 +127,10 @@ is heard, except the three changes the design names. Built in a session of
 its own, a few large builds, each designed against the code and reviewed
 just before it. All five builds are built; the rules for the planned milestones are in [the milestone rules](design/ownership-milestone-rules.md).
 
+### Invariant tests for the reducers
+
+Once the focus pipeline rework is built, generated tests (the `proptest` crate) drive Core's reducer and the outpost's reducer, each pure, with random sequences of their inputs and check after every step what must always hold: for the outpost, every query answered once, every waiter answered or let go, no idle answer while anything is deferred, no change from a dead generation's commit, no object released on the reducer's thread, and no timer in the past; for Core, each held focus's line consistent, nothing of a stale generation spoken, each node released once, and nodes of different backends never one object. Every defect found after the outpost reducer build broke one of the first list, and the `explorer_folder_window` failure on GitHub's runner breaks the last (`docs/flaky-tests.md`). No behaviour changes.
+
 ### The caret and selection rework
 
 The decisions, the design and the order of work are in
@@ -191,7 +195,7 @@ is kept in the repository.
 
 Tests and tooling:
 
-- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause. The first's counts hold with a 1.5 s pause between each of its steps, so UIA's lapsing element state is not its cause.
+- Two mockapp tests fail intermittently under `cargo xtask ci`, a defect by `docs/testing.md`: `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`. Find each cause (failure recorded in [the known failures](flaky-tests.md)).
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s). `measure_focus_explorer`'s key waits end on their key's item, which two keys share ("alpha 2 of 4" for Down 1 and Up 1), so a late repeat can end the next key's wait; the targets are `explorer_folder_window`'s, so renaming cannot fix it.
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
@@ -221,8 +225,8 @@ Focus and File Explorer:
   item to "Installed apps Alt, p1 of 17" where the scenario has "p 1 of
   17", so the step is judged "differs"; find whether the compare tool
   joins NVDA's speech parts without a space or NVDA runs them together.
-- File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view. On 2026-10-29 it failed this way in 22 of 23 runs in a row on the development machine, on builds before and after that day's changes, while `explorer_folder_window` passed, after a "Low disk space" dialog had taken the foreground during a batch; the state that makes it constant is not found.
-- `explorer_folder_window` fails on GitHub's runner (runs 41157849900 and 41163500778): "Items View list" is not spoken after "Working on it...". The placeholder's UIA read fails there (0x80040201), so its chain is filled in from window handles starting at its own nearest window, an MSAA pane on the window that is the items view list's own; `ObjectKey::is_same_object` (`crates/verbatim-model/src/tree.rs`) treats two nodes on one window handle as one object whatever their backend, so delta's chain meets the old line at the list and nothing is entered. NVDA differs on both points: two objects of different types are never equal (`NVDAObject.__eq__`), and a failed UIA parent falls back to the parent window (`GA_PARENT`), so the list's window is not in its line. From the focus pipeline rework's chain commits (10c9e83a, 3abda293, b94d2ea2, c7c7c6dc, 9fd28a66); it passes locally only because the placeholder's read does not fail there.
+- File Explorer can focus its "Working on it..." placeholder and raise no later focus, UIA or `WinEvent`, so `measure_focus_explorer` times out, which decision 11's wait cannot recover; find what File Explorer raises then, beyond a name change and three state changes on the items view. The failure is recorded in [the known failures](flaky-tests.md).
+- `explorer_folder_window` fails on GitHub's runner ([the known failures](flaky-tests.md)). The placeholder's UIA read fails there (0x80040201), so its chain is filled in from window handles starting at its own nearest window, an MSAA pane on the window that is the items view list's own; `ObjectKey::is_same_object` (`crates/verbatim-model/src/tree.rs`) treats two nodes on one window handle as one object whatever their backend, so delta's chain meets the old line at the list and nothing is entered. NVDA differs on both points: two objects of different types are never equal (`NVDAObject.__eq__`), and a failed UIA parent falls back to the parent window (`GA_PARENT`), so the list's window is not in its line. From the focus pipeline rework's chain commits (10c9e83a, 3abda293, b94d2ea2, c7c7c6dc, 9fd28a66); it passes locally only because the placeholder's read does not fail there.
 - In one runner run the `delta` item inside Inner still carried the parent folder's window title; check whether File Explorer's title lags or an ancestor name is stale (`explorer_folder_window`).
 - The listener's read in File Explorer scenarios once came 285 ms late, locally mostly the first nearest-window lookup waiting on a busy File Explorer; confirm on GitHub's runner (deferred, Dickson, 2026-10-21).
 - On a fresh GitHub runner the first Verbatim start can say "Start toggle button not pressed" instead of "Desktop list", because the taskbar rehosts the Start button in a new PopupHost window and raises a UIA focus NVDA would accept too; the choice between a throwaway warm-up start and an experiment to find the trigger is deferred (Dickson, 2026-10-21).
@@ -471,6 +475,8 @@ calls into browsers (Dickson, 2026-10-29). Separate from the focus
 pipeline rework, since cancelling a stuck call frees a thread that is now
 abandoned but changes nothing spoken.
 
+First, the outpost's program bookkeeping is simplified, in one design and one build, before cancellation adds to the abandonment path, each part judged on wake-ups and latency as well as on the states it removes (`docs/design/ownership.md`): test settles merged into the idle query, so one barrier remains; verdicts posted as a message of their own, so a dead generation's commits are refused with no exception; each program given fresh copies of the reducer's facts at dispatch, so the worker keeps none between programs; whether the console poll must yield to other programs, or a simpler rule, such as a program waiting behind it for at most its 50 ms, removes its slot and the re-dispatch behind it (the poll itself stays, since the console host raises caret events only on its cursor's blink); and a program's one commit and its end posted as one message, if a measurement shows the hop costs.
+
 `CoCancelCall` ends no UIA client call, because UIA waits on its own
 channel rather than in a COM call
 (`experiments/cocancelcall-does-not-end-a-uia-client-call/`, 2026-10-30),
@@ -531,7 +537,10 @@ second real engine (Dickson, 2026-10-29).
   silence, while an utterance is unfinished, and a lane push wakes the
   audio thread only for an utterance's first record, a cancel or a pause,
   the device's own period waking it for the rest, which brings back the
-  wake-ups the output build added by waking on every synth chunk
+  wake-ups the output build added by waking on every synth chunk, with
+  generated invariant tests for the mixer driven pass by pass on the fake
+  device (every utterance ends once, a cancel ends only older ones, nothing
+  plays after its cancel, marks in order, a waiting producer always woken)
   (`docs/performance.md`, "Threads after the output build"), with no state
   shared between threads; the silence written keeps waking the audio
   thread every device period while the stream stays awake, a cost the
@@ -573,6 +582,7 @@ pushed until the last. The model in `verbatim-text`, its move into Core's
 reducer, "Report status bar" and moving by command are built. What
 remains, in order:
 
+- Generated invariant tests for the terminal's line comparison, if it is pure: the comparison of an old and a new screen must give back the new one exactly; `conhost_full_screen`'s whole changed line and the scrollback overflows' torn line (`docs/flaky-tests.md`) are the defects it would judge.
 - Pi's regular mode in the moving-by-command and "Report status bar"
   scenarios, once Pi is installed on the test machine.
 - Recordings for the conformance corpus, after checking that the NVDA pin
@@ -613,9 +623,9 @@ Related items, each to be settled within the redesign or after it:
   the same gap.
 - An unsettled terminal read with nothing queued behind it is never
   retried; `conhost_leave_flood` once heard no "blank" for an empty new
-  console window, its first read giving nothing within 15 seconds.
+  console window ([the known failures](flaky-tests.md)).
 - Windows Terminal sometimes raises no TextChanged event for a typed
-  character, only caret moves, so about 5% of runs do not echo it; settle
+  character ([the known failures](flaky-tests.md)); settle
   whether Windows Terminal or UIA loses the event, with about 60 runs and
   a second, independent UIA client listening. The model's reading on
   caret events (its "Reading rules", rule 1) comes back with the outpost
@@ -631,16 +641,14 @@ Related items, each to be settled within the redesign or after it:
   comparison inside the existing remote program, judged by a fake-source
   unit test, a mockapp provider whose expansion clamps, and a console host
   scenario step from a fresh NVDA capture.
-- `conhost_full_screen` races its program: a read taken before
-  `altscreen.ps1` parks the cursor speaks "row N changed", on the base
-  build too.
+- `conhost_full_screen` fails ([the known failures](flaky-tests.md)); a
+  read taken before `altscreen.ps1` parks the cursor may be the cause.
 - A lost read was seen to ask twice for the whole document, where one
   whole-document read should answer it.
 - "hellook1" is heard in the recorded hand streams.
 - Windows Terminal's launch focus sometimes speaks "... terminal" without
-  "... window", and the desktop's announcement is sometimes cancelled
-  (the `*_up_typing`, `*_typing` and `*_commands` scenarios).
-- `conhost_typing` missed a typed "o" in 2 of 6 runs on the base build.
+  "... window", and `conhost_typing` misses a typed "o" sometimes
+  ([the known failures](flaky-tests.md)).
 - The reader's fix for a caret ahead of the typing covers only a line
   showing none of the pending typing: with "a" and "b" typed, a line
   showing "a" with the caret one cell ahead gives Gained "a" and then
@@ -990,7 +998,7 @@ commands, with no fidelity regression anywhere else.
 - A braille display's gestures are user inputs that are not keys, so
   they need key numbers ordered against the keyboard's: the keyboard
   hook's thread is the one minter and takes only keys
-  (`docs/design/ownership-input.md`, "Decisions"), so M15's design
+  (`docs/design/ownership.md`), so M15's design
   decides how a braille gesture is numbered, as NVDA queues its speech
   cancel behind what is already queued.
 

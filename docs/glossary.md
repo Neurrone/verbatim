@@ -150,7 +150,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Responder** — a value that answers an asker once; answering
   consumes it, and dropping it unanswered answers "gone". It lives in a
   thread's shell, never in a pure reducer's state.
-  [ownership-messages](design/ownership-messages.md).
+  [the ownership model](design/ownership.md).
 - **Reducer** — the pure functional core: `reduce(state, input)`
   returns the next state and effects, no I/O, no clocks (architecture
   section 2). [verbatim-core](crates/verbatim-core.md).

@@ -1,6 +1,6 @@
 //! The foreground record: where the user's attention is, which window and
 //! object are in front, and the stamps that order focuses
-//! (`docs/design/ownership-one-judge.md`, "One foreground record").
+//! (`docs/design/ownership.md`).
 //!
 //! Every fact of the record has one writer, a variant of
 //! [`ForegroundFact`], applied through [`Foreground::apply`]; the reducer

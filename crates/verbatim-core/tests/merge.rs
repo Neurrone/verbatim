@@ -1,5 +1,4 @@
-//! The outpost's outbound merge against Core (`docs/design/ownership-messages.md`,
-//! "The equivalence test"): for every kind of event the outbound queue
+//! The outpost's outbound merge against Core (`docs/design/ownership.md`): for every kind of event the outbound queue
 //! merges, every sequence of the older report, up to two other messages
 //! from a fixed set, and the newer report is reduced in order on one side,
 //! and on the other with the others first and the merged report at the

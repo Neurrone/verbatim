@@ -613,7 +613,7 @@ impl Supervisor {
     /// ([`leave_nodes_held`](Self::leave_nodes_held)): the app writes it
     /// after it handled a focus report, or a message that changed the nodes
     /// Core holds there, so the outpost releases what Core let go of within
-    /// one pipe hop (`docs/design/ownership-one-judge.md`, "Manageability").
+    /// one pipe hop (`docs/design/ownership.md`).
     /// Nothing happens if the generation has ended.
     pub fn send_nodes_held(
         &self,

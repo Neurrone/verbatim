@@ -107,7 +107,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // A command or script pressed while a held key waits, or while
         // the watch of the held key last passed on is open, runs after it,
         // as NVDA runs scripts one at a time in the order queued
-        // (`docs/design/ownership-input.md`, "Commands behind held keys").
+        // (`docs/design/ownership.md`).
         Input::Command { .. } | Input::Script { .. }
             if state.held_keys.busy() || state.held_keys.awaiting_watch.is_some() =>
         {

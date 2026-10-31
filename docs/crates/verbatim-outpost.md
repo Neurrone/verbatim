@@ -66,7 +66,7 @@ first events start its outpost:
   (`WinEventStamp`). The reducer holds the hook's whole stream from the
   hook's install until `ForwardingEnded`, and handles the listener's
   copies as they come (`reducer::hold`;
-  `docs/design/ownership-outpost-reducer.md`, "The hand-over's hold"). At
+  `docs/design/ownership.md`). At
   `ForwardingEnded` it drops the held copies of the kinds the listener
   forwards raised at or before the named tick, which the listener
   forwarded, and releases the rest in the hook's order, as one batch,
@@ -120,8 +120,7 @@ receives the event's own element, judges and reads a UIA focus
   listener makes no other backend verdict, no probe and no console check,
   which are its outpost's. A shell window that only stages a switch is read
   and Core drops it. The listener makes no duplicate test and keeps no
-  judgement of Core's (`docs/design/ownership-one-judge.md`, "The
-  listener"): a focus that passes the other checks is read in full, and
+  judgement of Core's (`docs/design/ownership.md`): a focus that passes the other checks is read in full, and
   Core judges a repeat. A menu opening is compared (`CompareElements`) with
   the reading thread's own last read (`LastFocus`) while that read is
   current for it: nothing moved away from the application since that
@@ -693,7 +692,7 @@ the class lists alone, from the same tables and code.
   own handlers and hook take in, as a `Heard`, once queued.
 
 Inside an outpost (`docs/design/communication.md`, section 6.4;
-`docs/design/ownership-outpost-reducer.md`):
+`docs/design/ownership.md`):
 
 - The mailbox (`outpost::shell::Mailbox`): the hook callbacks
   (`APP_SUBSCRIPTIONS`), the subscription's callbacks, routed facts,
@@ -1296,7 +1295,7 @@ unredirected, never unspawned.
   A child's own focus event from the same `SetFocus` as its control's
   redirected one is dropped (`Marks::focus_redirected`).
 - The reports (`reducer::held`;
-  `docs/design/ownership-one-judge.md`, "The reports, from the store"):
+  `docs/design/ownership.md`):
   every focus or foreground report whose focus node the outpost has not
   released, added at a program's commit and removed by a release, one
   per node and line. Core's focus line is always among them. With each
@@ -1385,7 +1384,7 @@ foreground application for its focus unless a newer focus was applied.
   the gap record's answer kept for it (through its program's commit), its
   classic mark, and its MSAA nodes.
 - Held objects: the object store (`outpost::store`;
-  `docs/design/ownership-outpost-reducer.md`, "The store") owns both
+  `docs/design/ownership.md`) owns both
   registries, each node's text patterns and anchors, the terminals' kept
   ranges, and every node's and anchor's mint tag, the requests that issued
   or looked it up. Its API returns owned clones and owned removed objects
@@ -1658,8 +1657,7 @@ layer"):
   part's calls in its message. So "x" typed over a selection in Notepad
   says "selection removed" where NVDA says "x unselected". What the design
   weighed, and what may come between the two parts, is in
-  [its design](../design/ownership-outpost-reducer.md), "The value change
-  check".
+  [its design](../design/ownership.md).
 - Two waiting caret reports merge with both reports' changes in order
   (`Merge for OutpostToCore` in `verbatim_model::protocol`); one with
   changes never merges across a reply or with a report in general terms.

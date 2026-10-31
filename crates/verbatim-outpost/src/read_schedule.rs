@@ -1,5 +1,5 @@
 //! The focus listener's read scheduler as a pure transition
-//! (`docs/design/ownership-one-judge.md`, "The listener"): which reading
+//! (`docs/design/ownership.md`): which reading
 //! thread reads which application's UIA event, when a read is abandoned or
 //! published at its bound, when an event waiting behind abandoned reads is
 //! dropped, which idle waiters may run, and whether a menu opening's

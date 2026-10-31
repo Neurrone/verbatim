@@ -118,8 +118,7 @@ impl Client {
 /// runtime id it has, but the dead one's keyboard focus cannot be read, so
 /// the focus is no repeat (section 16.3); a focus event repeated on the new
 /// element, which still has the focus, is read in full and reported under
-/// the same node, for Core to judge (`docs/design/ownership-one-judge.md`,
-/// "Repeats"). Both ways the reader reads a focus: with remote operations
+/// the same node, for Core to judge (`docs/design/ownership.md`). Both ways the reader reads a focus: with remote operations
 /// and without.
 ///
 /// The calls each read makes are pinned, the outpost's own included, which
@@ -288,7 +287,7 @@ fn a_controls_own_focus_reports_its_focused_child() {
 /// An MSAA focus event at the address of the focus last reported is read
 /// in full and reported again, a full object under the same node and a
 /// simple child too, since whether it repeats the focus is Core's verdict
-/// (`docs/design/ownership-one-judge.md`, "Repeats"). Both events are
+/// (`docs/design/ownership.md`). Both events are
 /// raised before the outpost is made, so its own hook has neither.
 fn a_repeated_msaa_focus_is_read_in_full() {
     let title = common::unique_title("mockapp-msaa-duplicate");
@@ -565,7 +564,7 @@ fn a_focus_is_found_by_its_path_and_followed() {
 /// focus elements, which are in no tree, have none, is reported from the
 /// listener's read, and nothing is followed. A focus event repeated on it
 /// while it keeps the keyboard focus is read in full too, for Core to
-/// judge (`docs/design/ownership-one-judge.md`, "Repeats"); once the focus
+/// judge (`docs/design/ownership.md`); once the focus
 /// has been elsewhere and comes back, its focus event is read in full and
 /// finds the element: the focus is reported under its node, now with its
 /// ancestors, and its changes are followed from then on.
@@ -1926,7 +1925,7 @@ fn the_idle_answer_waits_for_the_wait_for_a_uia_focus() {
 
 /// A focus event repeated on the element the listener last read, which
 /// still has the keyboard focus, is read in full and reported, and Core
-/// judges the repeat (`docs/design/ownership-one-judge.md`, "Repeats"):
+/// judges the repeat (`docs/design/ownership.md`):
 /// the listener makes five calls, the windowless sender's nearest window
 /// for NVDA's native check, the sender's keyboard focus, and the read,
 /// whose runtime id is its last read's: whether that element still has

@@ -28,7 +28,7 @@ i18n-embed-fl = "0.10"
 # "embedded English must load" assertion for exactly this reason.
 rust-embed = { version = "8", features = ["debug-embed"] }
 # The audio thread's single-producer, single-consumer rings
-# (docs/design/ownership-output.md, "Real-time audio"), pinned because the
+# (docs/design/ownership.md), pinned because the
 # design read this release's push and pop.
 rtrb = "=0.4.1"
 # Sample-rate conversion in the audio mixer (decision D17). The FFT

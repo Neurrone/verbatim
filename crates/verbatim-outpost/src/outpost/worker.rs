@@ -1,5 +1,4 @@
-//! The workers (`docs/design/ownership-outpost-reducer.md`, "Workers and
-//! call programs"): the threads that call into the application.
+//! The workers (`docs/design/ownership.md`): the threads that call into the application.
 //!
 //! One worker generation is in charge. It takes one program at a time from
 //! its inbox, which the reducer's shell fills, runs it on the copies the
@@ -1673,8 +1672,7 @@ impl Worker<'_> {
     /// output is read whether or not it is the newest focus, since Core
     /// speaks output only for its own focus, and Core's focus is among the
     /// nodes the outpost has not released
-    /// (`docs/design/ownership-one-judge.md`, "Readers that decide what to
-    /// read").
+    /// (`docs/design/ownership.md`).
     fn focused_terminal(&self, node_id: NodeId) -> bool {
         self.context.store.runtime_id_of(node_id).is_some()
             && self.context.store.has_terminal(node_id)
@@ -3412,8 +3410,7 @@ impl Worker<'_> {
     /// Every change in front is read and reported: whether the focus is
     /// already in its window, NVDA's two tests against its last queued
     /// focus, is Core's verdict, which refuses a foreground change of the
-    /// window its focus is in (`docs/design/ownership-one-judge.md`, "Focus
-    /// groups").
+    /// window its focus is in (`docs/design/ownership.md`).
     ///
     /// Within a focus group, a change dropped lets the next older entry be
     /// tried, newest first ([`super::reducer`]), as NVDA's `pumpAll`
@@ -3568,8 +3565,7 @@ impl Worker<'_> {
         // A repeat of the focus is read in full and judged in Core, whose
         // duplicate rule compares it with the last focus it took, of any
         // application, as NVDA's `isDuplicateIAccessibleEvent` compares
-        // with its last queued focus (`docs/design/ownership-one-judge.md`,
-        // "Repeats").
+        // with its last queued focus (`docs/design/ownership.md`).
         let resolved_child = candidate.resolved_child();
         // NVDA accepts an MSAA focus only when the object or one of its
         // ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`),

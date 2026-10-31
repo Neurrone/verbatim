@@ -1,8 +1,7 @@
 //! The audio thread's recovery path, kept out of the loop's module: opening
 //! the device, reopening it after an error or a request, and stopping at
 //! shutdown. Here the audio thread may log and allocate, since it runs only
-//! when the device opens or fails (`docs/design/ownership-output.md`,
-//! "Real-time audio").
+//! when the device opens or fails (`docs/design/ownership.md`).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

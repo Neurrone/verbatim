@@ -12,8 +12,7 @@ uninstalls. The hook thread takes nothing from another thread but the
 nothing else and sends nowhere but its two callbacks (architecture section 5): what it
 needs to know of the window in front, `foreground`, is Core's.
 
-The code split follows who calls it (`docs/design/ownership-input.md`,
-"The ownership check on the hook"): the `hook` module holds everything
+The code split follows who calls it (`docs/design/ownership.md`): the `hook` module holds everything
 that runs on the hook thread (`HookState`, the hook procedure, `decide`,
 `hold`, `report_passed` and the message loop), and `lib.rs` what other
 threads call: `InputHook` and its drop, the thread's start-up,
@@ -34,7 +33,7 @@ The hook thread is the one minter of key numbers
 out: a key press takes the next and a release the last, in the order the
 thread handles them. Every report of a press carries its number. The
 control plane injects no gestures: a harness presses a gesture's keys
-(`docs/design/ownership-input.md`, "Gestures as real keys"). Speech is fenced by key order: the
+(`docs/design/ownership.md`). Speech is fenced by key order: the
 key's cancel names its number (`SpeechControl::cancel_through`), Core
 stamps the speech each input causes with its number, and the speech
 queue drops speech of an earlier number that arrives after a later

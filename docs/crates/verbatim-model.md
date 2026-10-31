@@ -113,7 +113,7 @@ recorder unchanged. What the reducer does with each type is in
     kind, processing hint, and optional display string and activity id.
   - The text events, under "The text protocol".
 - `KeySeq`: the number of a user input, ordered by press, which fences
-  speech (`docs/design/ownership-input.md`). Only the keyboard hook's
+  speech (`docs/design/ownership.md`). Only the keyboard hook's
   thread mints one (`KeySeq::after`), a review rule since the type is in
   this platform-neutral crate; tests construct them with `KeySeq::new`.
   Every user input carries it as `key_seq`.
@@ -232,7 +232,7 @@ recorder unchanged. What the reducer does with each type is in
 
 `protocol` holds the messages between verbatim.exe and its children, the
 focus listener and the outposts, and the types they carry
-(`docs/design/ownership-messages.md`). They are pure data; the framing
+(`docs/design/ownership.md`). They are pure data; the framing
 that carries them on the pipes, `Message`, is
 [verbatim-outpost](verbatim-outpost.md)'s.
 

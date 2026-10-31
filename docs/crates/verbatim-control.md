@@ -93,7 +93,7 @@ Public API:
   `timeout_ms` runs out, which is always before a client's read timeout.
   Version 3 removed the request that injected a gesture into the
   keyboard hook's thread, so that the thread takes only keys
-  (`docs/design/ownership-input.md`, "Gestures as real keys"): a client
+  (`docs/design/ownership.md`): a client
   presses a gesture's keys with `SendKeys`. An older client that sends
   the removed request has its connection closed, as for any malformed
   request. Version 3 also added `OpenMenu`, which opens Verbatim's menu

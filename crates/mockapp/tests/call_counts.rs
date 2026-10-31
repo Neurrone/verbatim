@@ -374,7 +374,7 @@ fn msaa_focus_changes_cost_exactly() {
 
     // The same focus event again: read in full and reported, since whether
     // it repeats the focus is Core's verdict
-    // (`docs/design/ownership-one-judge.md`, "Repeats").
+    // (`docs/design/ownership.md`).
     let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     ratchet.check(
@@ -1356,7 +1356,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// `ProviderOptions`, 6 `GetPropertyValue`, 4 `HostRawElementProvider`, 5
 /// `Navigate`, and 1 `FragmentRoot`, and for the list's item 1, 10, 4, 3,
 /// 3, and 1. The listener compares a focus with no earlier focus: Core
-/// judges repeats (`docs/design/ownership-one-judge.md`, "Repeats"), which
+/// judges repeats (`docs/design/ownership.md`), which
 /// took the comparison with the last focus accepted (`CompareElements`,
 /// one call, which mockapp answers nothing for) out of every focus after
 /// the first.
@@ -1516,7 +1516,7 @@ fn uia_focus_changes_cost_exactly_classic() {
 
 /// A focus event repeated on the element the listener last read, which
 /// still has the keyboard focus, is read in full, and Core judges the
-/// repeat (`docs/design/ownership-one-judge.md`, "Repeats"): the listener
+/// repeat (`docs/design/ownership.md`): the listener
 /// finds the windowless sender's nearest window, for NVDA's native check
 /// (one call, `NormalizeElementBuildCache`, the window's verdict already
 /// kept), reads the sender's keyboard focus, then reads it as any focus,

@@ -1,6 +1,6 @@
 //! What crosses into and out of the audio thread: the records a lane
 //! carries in, and the records the outbound ring carries out to the
-//! delivery thread (`docs/design/ownership-output.md`, "Real-time audio").
+//! delivery thread (`docs/design/ownership.md`).
 
 use std::sync::Arc;
 use std::time::Instant;

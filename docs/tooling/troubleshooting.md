@@ -240,15 +240,9 @@ measurably shorten the waits. No test times or tightly bounds such a read
 (`docs/testing.md`, "Waits are for evidence"), because it would fail from
 load elsewhere in the session rather than from its own code.
 
-**Minimizing a console after a flood takes 30 to 45 seconds, and
-`conhost_leave_flood` fails at "brings the first window back".** On the
-development VM, which renders the desktop in software (WARP), the Desktop
-Window Manager works through a flooded console's repaints for about 40
-seconds after the flood, using up to two cores, and a minimize waits for
-it in `win32kfull!DwmSyncNotifyMinimizing` while the console's own window
-thread is idle. It happens with no Verbatim running and a restart does
-not clear it, so it is not Verbatim's to fix, and Dickson decided to
-leave the scenario's failure on this VM unaddressed.
+**Minimizing a console after a flood takes 30 to 45 seconds.** The
+Desktop Window Manager's backlog on the development VM; the failure it
+causes in `conhost_leave_flood` is in [the known failures](../flaky-tests.md).
 
 **A scenario run soon after a flood fails its setup with "no window
 titled ... opened within 30s", the foreground being that very window,

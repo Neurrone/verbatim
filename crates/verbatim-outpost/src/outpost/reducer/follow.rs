@@ -1,6 +1,5 @@
 //! What the outpost follows, and what a program's commit changes of it
-//! (`docs/design/ownership-outpost-reducer.md`, "The reducer and its
-//! thread"): the follow state, the focus line's paths, the caret key's
+//! (`docs/design/ownership.md`): the follow state, the focus line's paths, the caret key's
 //! watch and owed work, all reducer state with no application object. A
 //! program is given a copy ([`Facts`]) and applies its own commits to it
 //! with the same function the reducer applies them with ([`apply`]), so
@@ -472,8 +471,7 @@ pub(in crate::outpost) struct FollowState {
     /// The elements of the outpost's older UIA reports, each with its node
     /// and the group it was given, by token, which keep their groups until
     /// the store releases their node, so the outpost hears the changes of
-    /// every node it has not released (`docs/design/ownership-one-judge.md`,
-    /// "UIA: one focus-following group per unreleased report").
+    /// every node it has not released (`docs/design/ownership.md`).
     pub(in crate::outpost) kept_groups: Vec<(NodeId, Group, u64)>,
     /// The caret key's watch for evidence kept open between programs.
     pub(in crate::outpost) caret_watch: Option<OpenWatch>,

@@ -1,8 +1,7 @@
 //! What the mailbox carries to the reducer: an entry, with no application
 //! object in it. A UIA event's element and an active text position's range
 //! are parked in the store as the entry is pushed, and the entry carries
-//! the key they are parked under (`docs/design/ownership-outpost-reducer.md`,
-//! "The mailbox").
+//! the key they are parked under (`docs/design/ownership.md`).
 
 use verbatim_model::protocol::{DeliveredFact, EventTiming, Query, UiaSnapshotFact};
 use verbatim_model::{NodeId, Notification, TraceId};

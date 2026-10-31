@@ -26,8 +26,7 @@ use crate::saver::ThemeWriter;
 
 /// The settings dialog's Theme page's view of Verbatim: where themes are,
 /// the theme section of the settings, which the GUI thread owns
-/// (`docs/design/ownership-output.md`, "One saver, one writer per
-/// section"), the GUI's lane to the mixer for the sounds the page plays,
+/// (`docs/design/ownership.md`), the GUI's lane to the mixer for the sounds the page plays,
 /// and the speech manager and reducer for making a theme active.
 pub(crate) struct AppThemeHost {
     pub(crate) themes_dir: PathBuf,

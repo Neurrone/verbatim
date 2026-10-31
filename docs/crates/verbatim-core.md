@@ -468,12 +468,11 @@ whichever is first, the bound counted from the command's own press
 (`pressed_at_ms`); `HeldKeyWaitEnded` with its trace ends the wait. The
 key ahead, its watch marked `later_key`, says nothing, and the command
 reads the line the key moved to, where NVDA reads the line before it
-(`docs/design/ownership-input.md`, "Decisions").
+(`docs/design/ownership.md`).
 
 ## Key numbers
 
-(`docs/design/ownership-input.md`, "Key numbers in Core, not in a side
-table".) Every user input carries the number the keyboard hook's thread
+(`docs/design/ownership.md`.) Every user input carries the number the keyboard hook's thread
 gave it (`verbatim_model::KeySeq`), as `key_seq` on all seven:
 `CaretKey`, `HeldKey`, `CharacterTyped`, `ClearingKey`, `Command`,
 `Script` and `ToggleKeyPressed`. `reduce` records the input's trace and

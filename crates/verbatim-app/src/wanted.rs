@@ -1,6 +1,5 @@
 //! The requests the app holds for an application whose outpost is not
-//! ready yet (`docs/design/ownership-messages.md`, "Responders and the
-//! endings of a query"): a focus-now request, asked of the replacement once
+//! ready yet (`docs/design/ownership.md`): a focus-now request, asked of the replacement once
 //! it is ready, and the list dialogs' requests for the shell's items or for
 //! where a clicked item is, asked of the taskbar's process. One owner holds
 //! both, keyed by the process whose outpost they wait for, and each entry

@@ -10,7 +10,7 @@ Each step is reviewed as `REVIEW.md` says: one adversarial review of the step's 
 
 ### Step 0: M4.4, the precondition
 
-The roadmap places M4.4 (message types in their final home) before M5 because the extension API exposes events and commands. It is done: the messages are `verbatim_model::protocol`'s ([the messages build](ownership-messages.md)), so the WIT event types and the rule tables are defined against the types in their final home.
+The roadmap places M4.4 (message types in their final home) before M5 because the extension API exposes events and commands. It is done: the messages are `verbatim_model::protocol`'s ([the messages build](ownership.md)), so the WIT event types and the rule tables are defined against the types in their final home.
 
 ### Step 1: snapshot properties and application identity
 

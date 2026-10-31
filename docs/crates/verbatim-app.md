@@ -143,8 +143,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   reducer's own settings (`SrState::settings`), so a toggle key pressed
   meanwhile is kept, given to the reducer as `Input::Settings`,
   published, and saved.
-- The saver (`saver.rs`, `docs/design/ownership-output.md`, "One saver,
-  one writer per section") is the one thread, `verbatim-settings-saver`,
+- The saver (`saver.rs`, `docs/design/ownership.md`) is the one thread, `verbatim-settings-saver`,
   that owns `settings.toml` and writes it whole. Each section has one
   owner, which hands the saver its new value through the section's
   writer, a non-`Clone` handle whose save is one post to the saver's
@@ -243,7 +242,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   when the node set changed, or after a focus report of that outpost was
   handled, taken or refused, so the outpost releases what Core let go of
   within one pipe hop and reads changes for no more than it must
-  (`docs/design/ownership-one-judge.md`, "Manageability"). Any other change
+  (`docs/design/ownership.md`). Any other change
   (`Live::held_changed` answers `HeldChange::Other`: the anchors, or the
   position of the outpost's last message handled alone) is left in that
   outpost's writer (`Supervisor::leave_nodes_held`), and the next command

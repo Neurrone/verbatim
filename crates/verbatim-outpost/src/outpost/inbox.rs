@@ -1,5 +1,4 @@
-//! A worker's inbox (`docs/design/ownership-outpost-reducer.md`, "The caret
-//! watch and the console poll"): a channel of jobs with the worker's own
+//! A worker's inbox (`docs/design/ownership.md`): a channel of jobs with the worker's own
 //! [`Alarm`] as its doorbell, so the worker can wait for its next job and
 //! for a time of its own in one high-resolution wait.
 //!

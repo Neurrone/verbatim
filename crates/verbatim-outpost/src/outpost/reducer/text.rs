@@ -1,6 +1,5 @@
 //! Text support per node, as the reducer remembers it
-//! (`docs/design/ownership-outpost-reducer.md`, "The reducer and its
-//! thread"): each node's anchors with their chunks' text, the positions the
+//! (`docs/design/ownership.md`): each node's anchors with their chunks' text, the positions the
 //! outpost reported, the carets it reported and how many reports it made,
 //! the selection the next report compares with and its text, and the note
 //! that the node's text changed. A position is a fact of its own kind: an
@@ -240,8 +239,7 @@ impl<P: Clone> NodeAnchors<P> {
 }
 
 /// A caret event's report of an edit control cut at its value change
-/// check (`docs/design/ownership-outpost-reducer.md`, "The value change
-/// check"): what the read part found, which the part that finishes it
+/// check (`docs/design/ownership.md`): what the read part found, which the part that finishes it
 /// compares and reports from. `P` is a position, an offset.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReportCut<P> {

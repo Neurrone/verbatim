@@ -1,5 +1,4 @@
-//! The reducer's replay tests (`docs/design/ownership-outpost-reducer.md`,
-//! "Tests"): recorded inputs given to the reducer, with recorded local
+//! The reducer's replay tests (`docs/design/ownership.md`): recorded inputs given to the reducer, with recorded local
 //! reads, and the effects it answers with asserted. Each replays one
 //! ordering the outpost's threads can produce, at the times given, so an
 //! ordering that once needed a real bound, a real deadline or a race to

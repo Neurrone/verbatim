@@ -1,5 +1,4 @@
-//! The outpost's reducer (`docs/design/ownership-outpost-reducer.md`, "The
-//! reducer and its thread"): the pure state machine that holds every
+//! The outpost's reducer (`docs/design/ownership.md`): the pure state machine that holds every
 //! remembered fact of the outpost's application, with no Windows type and
 //! no application object. Inputs come in mailbox order; effects go out.
 //! The shell (`super::shell`) runs it on a thread of its own, applies its
@@ -139,8 +138,7 @@ pub(in crate::outpost) enum Work {
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
     /// The console poll of the open caret key's watch for request `0`
-    /// (`docs/design/ownership-outpost-reducer.md`, "The caret watch and the
-    /// console poll"): reads until it answers, reaches its last read, or
+    /// (`docs/design/ownership.md`): reads until it answers, reaches its last read, or
     /// yields to the next program, which the reducer dispatches beside it.
     Poll(u64),
     /// Finishes the caret read `cut`, cut at its value change check, with
@@ -150,8 +148,7 @@ pub(in crate::outpost) enum Work {
 }
 
 /// A caret read of an edit control's client area cut at its value change
-/// check (`docs/design/ownership-outpost-reducer.md`, "The value change
-/// check"): the read part read the caret and synced with the `WinEvent`
+/// check (`docs/design/ownership.md`): the read part read the caret and synced with the `WinEvent`
 /// thread, so every value change the control raised before the sync waits
 /// ahead of the read part's end in the mailbox. The part that finishes it
 /// makes the comparison and the rest of the read's calls.

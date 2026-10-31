@@ -1,5 +1,5 @@
 //! The answering side of a request within one process
-//! (`docs/design/ownership.md`, "Queries have exactly one answer"): a
+//! (`docs/design/ownership.md`): a
 //! [`Responder`] answers its asker once, and a responder dropped unanswered
 //! answers "gone", so no path that loses a request leaves its asker
 //! waiting. Across processes a killed child runs no `Drop`, so there the

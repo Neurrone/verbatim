@@ -17,8 +17,7 @@ use verbatim_model::ReaderSettings;
 use crate::ShellCommand;
 
 /// The reader settings as the reducer thread last set them, which it alone
-/// writes and the Terminal page reads (`docs/design/ownership-output.md`,
-/// "One saver, one writer per section"): each a copy under a lock never
+/// writes and the Terminal page reads (`docs/design/ownership.md`): each a copy under a lock never
 /// held across a call.
 pub(crate) struct ReaderView(Mutex<ReaderSettings>);
 

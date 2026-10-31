@@ -1,7 +1,7 @@
 //! The code that runs on the hook thread: the hook procedure, the decision
 //! of each key, the holding of caret keys, and the thread's one message
 //! loop
-//! (`docs/design/ownership-input.md`, "The ownership check on the hook").
+//! (`docs/design/ownership.md`).
 //!
 //! Nothing here blocks or takes a lock: `cargo xtask ci` checks that this
 //! module names nothing that does (`xtask/src/ownership.rs`, the hook

@@ -1065,8 +1065,7 @@ fn edit_client(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
 }
 
 /// Ends the read part of a caret read of an edit control's client area
-/// cut at its value change check (`docs/design/ownership-outpost-reducer.md`,
-/// "The value change check"): waits for the `WinEvent` thread to take
+/// cut at its value change check (`docs/design/ownership.md`): waits for the `WinEvent` thread to take
 /// every event raised before now (`Nudger::sync`), up to two wakes of that
 /// thread and no call to the application, since the control may have
 /// raised its value change while it answered the read just made. Every

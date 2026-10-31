@@ -1,5 +1,4 @@
-//! Merging waiting messages (`docs/design/ownership.md`, "Merging only for
-//! kinds that declare it"): a message type that may be merged while it
+//! Merging waiting messages (`docs/design/ownership.md`): a message type that may be merged while it
 //! waits to be written declares how, once, by [`Merge`], and every queue
 //! that merges it places a newer message with [`merge_into`].
 //!

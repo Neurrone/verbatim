@@ -1,6 +1,6 @@
 //! The messages between verbatim.exe and its children, the focus listener
 //! and the outposts, and the types they carry (milestone M4.4,
-//! `docs/design/ownership-messages.md`): one enum for each direction and
+//! `docs/design/ownership.md`): one enum for each direction and
 //! role ([`CoreToOutpost`], [`CoreToListener`], [`OutpostToCore`] and
 //! [`ListenerToCore`]), each variant of a declared kind ([`Kind`]). The
 //! framing that carries them on the pipes is the outpost crate's own;
@@ -1616,7 +1616,7 @@ impl ListenerToCore {
 }
 
 /// What kind of message a variant of a direction enum is
-/// (`docs/design/ownership.md`, "Messages are of declared kinds"), as its
+/// (`docs/design/ownership.md`), as its
 /// `kind` method says, one exhaustive match per enum, so a new variant is
 /// given a kind where it is added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

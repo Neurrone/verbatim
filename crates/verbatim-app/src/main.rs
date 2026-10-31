@@ -241,8 +241,7 @@ fn run(
     let (themes_dir, sounds_dir) = (config.themes_dir(), config.sounds_dir());
 
     // The saver owns `settings.toml` from here on, and each section of it
-    // moves to its one owner (`docs/design/ownership-output.md`, "One
-    // saver, one writer per section"): the speech section to the synth
+    // moves to its one owner (`docs/design/ownership.md`): the speech section to the synth
     // thread, the reader section to the reducer thread, the theme section
     // to the GUI thread.
     let (saver, speech_writer, reader_writer, theme_writer) =
@@ -490,8 +489,7 @@ fn run(
     // settles first, speech cancelled so a commit does not wait behind an
     // utterance, then the saver writes what it was given, the synth
     // thread's commit included, both within one bound
-    // (`docs/design/ownership-output.md`, "One saver, one writer per
-    // section").
+    // (`docs/design/ownership.md`).
     let deadline = Instant::now() + EXIT_SAVE_TIMEOUT;
     if !manager.settle(deadline) {
         tracing::warn!(
@@ -673,8 +671,7 @@ fn build_speech_manager(
         );
     }));
     // The speech queue's inbox is a completion port, so the keyboard hook's
-    // cancel takes no lock (`docs/design/ownership-input.md`, "The speech
-    // queue's inbox").
+    // cancel takes no lock (`docs/design/ownership.md`).
     let (inbox, taker) = port_queue::<QueueItem>()
         .map_err(|error| verbatim_speech::SynthError::Unavailable(error.to_string()))?;
     let (manager, token, gui_sounds) = SpeechManager::new(SpeechManagerConfig {
@@ -1638,7 +1635,7 @@ impl ReducerThread<'_> {
     /// The held nodes are written to an outpost when the set Core holds
     /// there changed, or after a focus report of its was handled, so the
     /// outpost releases what Core let go of within one pipe hop
-    /// (`docs/design/ownership-one-judge.md`, "Manageability"). Any other
+    /// (`docs/design/ownership.md`). Any other
     /// change, of the held anchors or of the position of the last message
     /// handled alone, is left for the outpost, and the next command written
     /// to it, a request or the relay's ping within three seconds, carries

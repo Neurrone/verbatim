@@ -17,7 +17,7 @@ has no test for a foreground or menu focus
 Verbatim: **matched (verified)**, with one rule of its own; the
 difference is the next entry. The rule is defined once
 (`verbatim_core::focus_rules::repeats_focus`), and only Core applies it
-(`docs/design/ownership-one-judge.md`, "Repeats"): a focus repeats when
+(`docs/design/ownership.md`): a focus repeats when
 its event names the node of the focus Core holds, whose element still
 has the focus. Every reader reads a repeat in full and reports it, and
 Core judges it in the order the focuses were observed.

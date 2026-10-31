@@ -1,6 +1,5 @@
 //! An application's outpost generation as the supervisor's owner thread
-//! knows it (`docs/design/ownership-messages.md`, "Lifecycles as
-//! typestates"): one state per stage of its life, each holding only what
+//! knows it (`docs/design/ownership.md`): one state per stage of its life, each holding only what
 //! that stage has, and each transition a method that consumes the state
 //! and returns the next with the notices to send, in order. Leaving
 //! `Ready` emits the listener's `HookRemoved` in the same step, so no path

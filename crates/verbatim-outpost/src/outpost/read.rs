@@ -1400,7 +1400,7 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// already inside, a superset of Core's line, is given the text that
 /// report carried for it, with no call, so Core, which speaks it only when
 /// its own line enters the dialog, always has it
-/// (`docs/design/ownership-one-judge.md`, "The reports, from the store").
+/// (`docs/design/ownership.md`).
 ///
 /// `memo` is taken: a dialog it names is given its text without reading it
 /// again. With `remember`, the last text read is kept in it for the next

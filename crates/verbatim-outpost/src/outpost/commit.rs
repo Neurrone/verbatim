@@ -1,5 +1,4 @@
-//! A program's commit (`docs/design/ownership-outpost-reducer.md`,
-//! "Workers and call programs"): what one step of a program changes, built
+//! A program's commit (`docs/design/ownership.md`): what one step of a program changes, built
 //! with every call it needs already made, and posted to the mailbox. The
 //! reducer applies it only while the program's request is live; until
 //! then the program applies its pure part to its own copies

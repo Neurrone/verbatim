@@ -1,5 +1,5 @@
 //! The key number: the order of the user's inputs, which fences speech
-//! (`docs/design/ownership-input.md`, "One minter, on the hook thread").
+//! (`docs/design/ownership.md`).
 
 use serde::{Deserialize, Serialize};
 

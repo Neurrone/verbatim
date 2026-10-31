@@ -106,4 +106,4 @@ M4.1 is complete (Dickson, 2026-10-21): Verbatim stopped crashing and stalling a
 
 ## M4.4, message types in their final home
 
-The messages exchanged with the outposts and the listener are `verbatim_model::protocol`'s plain serde types, one enum per direction and role, each variant of a declared kind, with merging declared by the type and the supervisor's generations as typestates ([the messages build](design/ownership-messages.md)). It came before M5 because M5's extension API exposes those types.
+The messages exchanged with the outposts and the listener are `verbatim_model::protocol`'s plain serde types, one enum per direction and role, each variant of a declared kind, with merging declared by the type and the supervisor's generations as typestates ([the messages build](design/ownership.md)). It came before M5 because M5's extension API exposes those types.

@@ -32,7 +32,7 @@
 //!   window and without the native check. NVDA's duplicate test is not
 //!   made: a focus that passes the other checks is read in full, and Core,
 //!   which holds the focus, judges a repeat
-//!   (`docs/design/ownership-one-judge.md`, "The listener");
+//!   (`docs/design/ownership.md`);
 //! - then the classic read, every call on an element the listener holds,
 //!   with no connection to any window and no remote operation
 //!   (`docs/design/listener-without-connections.md`, sections 2 and 3):
@@ -921,7 +921,7 @@ pub fn gap_answer(kind: FocusEvent, judged: &Judged, placed: Option<isize>) -> G
 /// The focus a reading thread read last: the evidence that a runtime id
 /// now names another element (`same_as_last`), where the ancestor read
 /// stops, and, while it is current, what a menu opening is compared with
-/// (`docs/design/ownership-one-judge.md`, "The listener"). It is the
+/// (`docs/design/ownership.md`). It is the
 /// thread's own fact: no judgement of Core's is kept, so a focus Core
 /// refused can be the last read, and Core decides what is spoken.
 struct LastFocus {
@@ -1561,14 +1561,12 @@ impl FocusReader {
     /// check. The current focus is this reading thread's own last read while
     /// that read is current for the opening, `queue`: nothing moved away
     /// from the application since that read's event was queued
-    /// ([`QueuePlace::current_since`]; `docs/design/ownership-one-judge.md`,
-    /// "The listener"). Its drop while a focus is pending is made as it
+    /// ([`QueuePlace::current_since`]; `docs/design/ownership.md`). Its drop while a focus is pending is made as it
     /// arrives (`Readers::focus_pending`).
     ///
     /// NVDA's duplicate test (step 3) is not made here: a focus that passes
     /// the other checks is read in full, and Core, which holds the focus,
-    /// judges whether it repeats it (`docs/design/ownership-one-judge.md`,
-    /// "Repeats").
+    /// judges whether it repeats it (`docs/design/ownership.md`).
     ///
     /// The read's time, `budget`, is asked before each call after the
     /// first. Once it is up, a focus whose window's verdict is known is
