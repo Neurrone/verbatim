@@ -265,9 +265,6 @@ pub enum WatchChange {
     Take(NodeId),
     /// The held watch's check found this.
     Checked(Checked),
-    /// The open watch ended with no evidence, answered `WatchEnded`; the
-    /// reason is logged.
-    End(&'static str),
 }
 
 /// The report to record among those the outpost reads changes for
@@ -706,7 +703,6 @@ fn apply_watch(watch: &mut Watch, change: &WatchChange, clock: Clock, applied: &
                 applied.answers.extend(answer);
             }
         }
-        WatchChange::End(why) => applied.answers.extend(watch.end_kept(why)),
     }
 }
 

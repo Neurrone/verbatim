@@ -1431,7 +1431,8 @@ impl Reducer {
 
     /// Dispatches `work` under `deadline`, concerning `window` (0 for none)
     /// and answering `running`, as a try of `group` when it is one. A read
-    /// of the gap record is deferred work.
+    /// of the gap record is deferred work. A caret key's program ends the
+    /// open watch, which the next key replaces, before its copy is taken.
     fn dispatch(
         &mut self,
         work: Work,
@@ -1440,6 +1441,15 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
+        if is_caret_key(&work)
+            && let Some(answer) = self
+                .facts
+                .follow
+                .watch
+                .end_kept("the next caret key replaced it")
+        {
+            self.answer_watch(answer, now, effects);
+        }
         let request = self.next_request();
         let waiting = self.waiting(&work);
         let deferred = matches!(
@@ -1526,6 +1536,26 @@ impl Reducer {
         };
         self.intake.waiting_carets(pressed_ms)
     }
+}
+
+/// Whether `work` is a caret key's program: a query that opens a watch.
+fn is_caret_key(work: &Work) -> bool {
+    matches!(
+        work,
+        Work::Entry {
+            entry: Entry {
+                item: Item::Query {
+                    query: Query::Text {
+                        op: TextOp::AwaitCaret(_),
+                        ..
+                    },
+                    ..
+                },
+                ..
+            },
+            ..
+        }
+    )
 }
 
 /// The caret event `item` is, by what names its node, if it is one: a

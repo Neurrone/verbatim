@@ -844,12 +844,6 @@ impl Worker<'_> {
     ///
     /// [`check_open_watch`]: Self::check_open_watch
     fn caret_key(&mut self, request_id: u64, trace: TraceId, node_id: NodeId, watch: &CaretWatch) {
-        // Every update from now on is evidence the watch may need: the
-        // reducer stopped absorbing them as it dispatched this program.
-        self.end_watch("the next caret key replaced it");
-        if self.refused() {
-            return;
-        }
         let (watched, read_at) =
             text_reads::check_watch(self.context, node_id, watch, (false, true));
         let caret_read = read_at.map(|at| (node_id, at));
@@ -1041,17 +1035,6 @@ impl Worker<'_> {
             .follow(|follow| follow.watch.kept().map(|open| open.node_id))?;
         (self.context.store.key_of(node_id) == Some((hwnd, OBJID_CLIENT.0, CHILDID_SELF)))
             .then_some(node_id)
-    }
-
-    /// Ends the open caret key's watch, if there is one, without evidence:
-    /// answered `WatchEnded`, for which Core says nothing. `why` is logged.
-    /// A worker abandoned meanwhile leaves it to the worker that replaces
-    /// it.
-    fn end_watch(&mut self, why: &'static str) {
-        self.commit(Effects {
-            watch: Some(WatchChange::End(why)),
-            ..Effects::default()
-        });
     }
 
     /// [`Work::PollRead`]: one read of the console poll of the watch the

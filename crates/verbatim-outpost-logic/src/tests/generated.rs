@@ -28,8 +28,6 @@ enum Action {
     Key,
     /// A caret event of the watch's node arrives.
     CaretEvent,
-    /// The key's program commits the old watch's end.
-    End,
     /// The key's program opens the watch, polling or not.
     Open(bool),
     /// An event's program takes the watch.
@@ -63,10 +61,9 @@ enum Action {
     Close,
 }
 
-const ACTIONS: [Action; 20] = [
+const ACTIONS: [Action; 19] = [
     Action::Key,
     Action::CaretEvent,
-    Action::End,
     Action::Open(false),
     Action::Open(true),
     Action::Take,
@@ -215,7 +212,7 @@ impl Gen {
         match action {
             Action::Key => !self.closed && self.keys < 2,
             Action::CaretEvent => !self.closed && self.events < 2,
-            Action::End | Action::Open(_) => matches!(kind, Some(Kind::Key(_))) && fresh,
+            Action::Open(_) => matches!(kind, Some(Kind::Key(_))) && fresh,
             Action::Take => kind == Some(Kind::Event) && fresh && !self.holds(),
             Action::Answered | Action::Watching => fresh && self.holds(),
             Action::ReportElsewhere => matches!(kind, Some(Kind::Event | Kind::Other)),
@@ -318,15 +315,6 @@ impl Gen {
             Action::CaretEvent => {
                 self.events += 1;
                 self.push(edit_caret())
-            }
-            Action::End => {
-                if !claimed && !self.model.held {
-                    ended(&mut self.model, &mut expected, "watch ended");
-                }
-                self.commit(Change {
-                    watch: Some(WatchChange::End("the next caret key replaced it")),
-                    ..Change::default()
-                })
             }
             Action::Open(console) => {
                 self.flight_mut().done = true;
@@ -485,6 +473,19 @@ impl Gen {
         }
     }
 
+    /// A caret key's dispatch among `effects` ends the open watch it
+    /// replaces, before the key's program is given its copy.
+    fn key_dispatch_ends(&mut self, effects: &[Effect], expected: &mut Vec<(u64, &'static str)>) {
+        if effects.iter().any(|effect| {
+            matches!(effect, Effect::Dispatch(program) if matches!(kind_of(program), Kind::Key(_)))
+        }) && !self.model.held
+            && let Some(open) = self.model.open.take()
+        {
+            expected.push((open, "watch ended"));
+            self.model.until = None;
+        }
+    }
+
     /// Checks the step's effects against the model, follows the programs
     /// they dispatch, and checks the invariants.
     fn check(
@@ -493,6 +494,7 @@ impl Gen {
         effects: &[Effect],
         mut expected: Vec<(u64, &'static str)>,
     ) {
+        self.key_dispatch_ends(effects, &mut expected);
         let trail = &self.trail;
         for effect in effects {
             match effect {
@@ -636,5 +638,5 @@ fn enumerate(generation: &Gen) -> u64 {
 #[test]
 fn every_short_sequence_answers_each_key_once_and_keeps_the_watchs_rules() {
     let count = enumerate(&Gen::new());
-    assert_eq!(count, 126_446);
+    assert_eq!(count, 104_682);
 }

@@ -791,20 +791,17 @@ fn a_program_goes_before_the_next_read() {
     reads(&replay.finish(update.request, false, 15));
 }
 
+/// The next caret key's dispatch ends the open watch, before the key's
+/// program's copy is taken, so that program commits no end.
 #[test]
 fn a_newer_keys_request_ends_the_old_watch_and_its_poll() {
     let mut replay = polling();
     let effects = replay.push(caret_key(8), Source::Other, 4);
-    let next = program(&effects).request;
-    let effects = replay.commit(
-        next,
-        Change {
-            watch: Some(WatchChange::End("the next caret key replaced it")),
-            ..Change::default()
-        },
-        6,
-    );
     assert_eq!(replies(&effects), [(7, "watch ended")]);
+    let key = program(&effects);
+    assert_eq!(key.facts.follow.watch, Watch::None);
+    let next = key.request;
+    assert_eq!(*watch_of(&replay), Watch::None);
     let effects = replay.commit(
         next,
         Change {
@@ -1246,15 +1243,6 @@ fn a_query_is_answered_once_whatever_ends_it() {
         &next.work,
         Work::Entry { entry, .. } if matches!(entry.item, Item::Query { request_id: 6, .. })
     ));
-    let next = next.request;
-    let effects = replay.commit(
-        next,
-        Change {
-            watch: Some(WatchChange::End("the next caret key replaced it")),
-            ..Change::default()
-        },
-        10_041,
-    );
     assert_eq!(replies(&effects), [(5, "watch ended")]);
     assert_eq!(*replay.reducer.queries(), [6].into_iter().collect());
 }
