@@ -2,23 +2,12 @@
 //!
 //! In milestone M1 the map is exactly a set of bound [`GestureId`]s; resolving
 //! a gesture to an action lives in the application's gesture router, not here.
-//! The hook reads the map through an [`ArcSwap`] snapshot so rebinding is a
-//! single atomic store that never blocks the never-blocking hook thread.
+//! The decision machine owns its map, given when it is made: nothing changes
+//! the bindings while Verbatim runs.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::BTreeSet;
 
-use arc_swap::ArcSwap;
 use verbatim_model::GestureId;
-
-/// A lock-free, cheaply cloneable handle to the current gesture map.
-///
-/// The hook thread holds one of these and loads a snapshot per keystroke;
-/// whoever owns bindings replaces the map with
-/// [`ArcSwap::store`](arc_swap::ArcSwapAny::store). The snapshot the hook is
-/// mid-read on stays valid until it is dropped, so a rebind never tears a
-/// read.
-pub type SharedGestureMap = Arc<ArcSwap<GestureMap>>;
 
 /// The set of gesture identifiers currently bound to some action, and the
 /// set of gestures observed on their way to the application.
@@ -32,8 +21,8 @@ pub type SharedGestureMap = Arc<ArcSwap<GestureMap>>;
 /// [`GestureId`], so lookup is order- and case-insensitive.
 #[derive(Clone, Debug, Default)]
 pub struct GestureMap {
-    bound: HashSet<GestureId>,
-    observed: HashSet<GestureId>,
+    bound: BTreeSet<GestureId>,
+    observed: BTreeSet<GestureId>,
 }
 
 impl GestureMap {
@@ -42,7 +31,7 @@ impl GestureMap {
     pub fn new(gestures: impl IntoIterator<Item = GestureId>) -> Self {
         Self {
             bound: gestures.into_iter().collect(),
-            observed: HashSet::new(),
+            observed: BTreeSet::new(),
         }
     }
 
@@ -76,12 +65,6 @@ impl GestureMap {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bound.is_empty()
-    }
-
-    /// Wraps this map in a fresh [`SharedGestureMap`] handle.
-    #[must_use]
-    pub fn into_shared(self) -> SharedGestureMap {
-        Arc::new(ArcSwap::from_pointee(self))
     }
 }
 
@@ -117,11 +100,5 @@ mod tests {
         assert!(!map.contains(&id("kb:leftarrow")));
         assert!(!map.observes(&id("kb:f6")));
         assert_eq!(map.len(), 1);
-    }
-
-    #[test]
-    fn into_shared_round_trips() {
-        let shared = GestureMap::new([id("kb:f6")]).into_shared();
-        assert!(shared.load().contains(&id("kb:f6")));
     }
 }

@@ -146,13 +146,16 @@ pub fn is_raw_windows_binding(name: &str) -> bool {
         && (name == "winapi" || name.starts_with("windows-") || name.starts_with("windows_"))
 }
 
-/// The crates whose state is a reducer's: Core's reducer, the outpost's
-/// reducer and the listener's read scheduler. With what they reach they
-/// are the crates the determinism rule covers ([`covered`]).
+/// The crates whose state is a reducer's or another pure owner's: Core's
+/// reducer, the outpost's reducer, the listener's read scheduler, and the
+/// keyboard decision machine, which is on no reducer's path and so is
+/// listed by hand. With what they reach they are the crates the
+/// determinism rule covers ([`covered`]).
 pub const REDUCERS: &[&str] = &[
     "verbatim-core",
     "verbatim-outpost-logic",
     "verbatim-listener-logic",
+    "verbatim-input",
 ];
 
 /// The third-party crates a crate on a reducer's path may depend on

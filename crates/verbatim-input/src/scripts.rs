@@ -460,12 +460,12 @@ pub fn clearing_keys() -> Vec<GestureId> {
     .collect()
 }
 
-/// Builds the hook's bound-gesture set from a binding table, ready to wrap
-/// in a [`crate::SharedGestureMap`] (or store into an existing one).
+/// Builds the hook's bound-gesture set from a binding table, for the
+/// decision machine to own.
 ///
 /// [`GestureMap`] is a plain membership set, not generic over the bound
 /// action, so the action half of each pair lives with the consumer, which
-/// keeps the same `Vec<(GestureId, ScriptAction)>` (or a `HashMap` built
+/// keeps the same `Vec<(GestureId, ScriptAction)>` (or a map built
 /// from it) to resolve an emitted gesture to its action. `verbatim-app`
 /// does not call this: it reads `Settings.keyboard.layout` once at
 /// startup, builds its own map from [`bindings_for`] plus the menu
@@ -478,7 +478,7 @@ pub fn gesture_map_for(bindings: &[(GestureId, ScriptAction)]) -> GestureMap {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     use super::*;
 
@@ -723,7 +723,7 @@ mod tests {
         // 14 motions with and without Shift, 9 deletions, the 2 sentence
         // keys, and Control+A.
         assert_eq!(caret.len(), 40);
-        let unique: HashSet<&GestureId> = caret.iter().map(|(gesture, _)| gesture).collect();
+        let unique: BTreeSet<&GestureId> = caret.iter().map(|(gesture, _)| gesture).collect();
         assert_eq!(unique.len(), caret.len());
         for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
             let bindings = bindings_for(layout);
@@ -748,14 +748,14 @@ mod tests {
     #[test]
     fn desktop_table_has_no_duplicate_gesture() {
         let bindings = bindings_for(KeyboardLayout::Desktop);
-        let unique: HashSet<&GestureId> = bindings.iter().map(|(gesture, _)| gesture).collect();
+        let unique: BTreeSet<&GestureId> = bindings.iter().map(|(gesture, _)| gesture).collect();
         assert_eq!(unique.len(), bindings.len());
     }
 
     #[test]
     fn laptop_table_has_no_duplicate_gesture() {
         let bindings = bindings_for(KeyboardLayout::Laptop);
-        let unique: HashSet<&GestureId> = bindings.iter().map(|(gesture, _)| gesture).collect();
+        let unique: BTreeSet<&GestureId> = bindings.iter().map(|(gesture, _)| gesture).collect();
         assert_eq!(unique.len(), bindings.len());
     }
 

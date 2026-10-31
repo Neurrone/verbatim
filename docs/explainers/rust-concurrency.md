@@ -75,10 +75,10 @@ Vocabulary that matters when reading call sites:
   replacement for static init patterns).
 - `arc_swap::ArcSwap` — the specialist: readers load an `Arc`
   snapshot with no lock at all, and a writer replaces the whole value
-  in one atomic store. Verbatim uses it for the gesture map
-  (`SharedGestureMap`): the hook thread reads the current bindings on
-  every keystroke without ever contending a lock, and rebinding is
-  one store. The idiom to recognize: *snapshot semantics* — a reader
+  in one atomic store. Verbatim uses it for Core's view of the
+  foreground window (`ForegroundView` in `verbatim-input-windows`): the
+  hook thread reads it for a key it may hold without ever contending a
+  lock, and Core replaces it in one store. The idiom to recognize: *snapshot semantics* — a reader
   keeps a consistent (possibly slightly stale) view for the duration
   of its use, and nobody blocks anybody.
 

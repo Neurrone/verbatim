@@ -19,7 +19,7 @@
 //! keyboard with no error. Therefore the hook procedure must never block:
 //!
 //! - It runs the pure decision machine, which does no I/O and takes
-//!   microseconds against a lock-free snapshot of the gesture map.
+//!   microseconds against the gesture map it owns.
 //! - It reports through callbacks that post to completion ports, the
 //!   reducer's and the speech queue's, whose post never waits and takes no
 //!   lock; a backlog waits in memory in front of the reducer, as the
@@ -65,7 +65,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_QUIT,
 };
 
-use verbatim_input::map::SharedGestureMap;
+use verbatim_input::map::GestureMap;
 use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
 use verbatim_model::{GestureId, HookForeground, KeySeq, TraceId, WindowHandle};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
@@ -314,7 +314,7 @@ impl InputHook {
     /// Installs the low-level keyboard hook on a fresh dedicated thread.
     ///
     /// `config` chooses the Verbatim modifier keys and the double-tap timeout,
-    /// and `map` is the lock-free bound-gesture snapshot the hook consults.
+    /// and `map` the bound and observed gestures the decision machine owns.
     /// `speech` carries out each key press's effect on speech (cancel, or
     /// pause and resume), before anything the press caused is reported, so
     /// speech it causes is never the speech it cancels. `reports` receives,
@@ -329,7 +329,7 @@ impl InputHook {
     /// `SetWindowsHookExW` fails.
     pub fn start(
         config: DecisionConfig,
-        map: SharedGestureMap,
+        map: GestureMap,
         speech: SpeechEffectFn,
         reports: KeyReportFn,
         holding: Arc<KeyHolding>,
@@ -392,7 +392,7 @@ const HOOK_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 /// messages until `WM_QUIT`, then unhook.
 fn hook_thread(
     config: DecisionConfig,
-    map: SharedGestureMap,
+    map: GestureMap,
     effects: Effects,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {

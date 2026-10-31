@@ -12,7 +12,6 @@
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
@@ -318,8 +317,8 @@ fn report_passed(
     scan_code: u32,
     key_seq: KeySeq,
     was_observed: bool,
+    pressed_at_us: u64,
 ) {
-    let pressed_at_us = unix_us();
     let trace_id = TraceId::mint();
     let deferred = state.deferred_transitions();
     let foreground = (state.front, state.foreground.get());
@@ -365,7 +364,10 @@ pub(crate) fn decide(
     // SAFETY: GetKeyState takes any virtual-key code.
     let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
     state.machine.set_num_lock(num_lock);
-    let mut decision = state.machine.on_key(event, Instant::now());
+    // The key's one time, which the machine decides by and a passed key's
+    // report carries.
+    let now_us = unix_us();
+    let mut decision = state.machine.on_key(event, now_us);
     let own = extra_info == OWN_INPUT_TAG;
     // Whether the key reaches the application, now or once deferred.
     let reaches_application = decision.decision == KeyDecision::Pass;
@@ -388,7 +390,7 @@ pub(crate) fn decide(
     }
     if let Some(emitted) = decision.emitted {
         (state.reports)(KeyReport::Gesture {
-            gesture: emitted,
+            gesture: emitted.stamped(TraceId::mint()),
             key_seq,
             pressed_at_us: unix_us(),
         });
@@ -398,6 +400,7 @@ pub(crate) fn decide(
         && !own
     {
         let pressed_at_us = unix_us();
+        let observed = observed.stamped(TraceId::mint());
         (state.reports)(if let Hold::Held(sequence) = hold {
             KeyReport::Held {
                 gesture: observed,
@@ -419,7 +422,7 @@ pub(crate) fn decide(
         && !decision.shared_modifier
         && !own
     {
-        report_passed(state, event, scan_code, key_seq, was_observed);
+        report_passed(state, event, scan_code, key_seq, was_observed, now_us);
     }
     // After what the key did, so that whoever passes it on has been told
     // of it first.
@@ -491,7 +494,7 @@ mod tests {
         let reports = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&reports);
         let mut state = HookState::new(
-            DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
+            DecisionMachine::new(DecisionConfig::default(), map),
             (
                 Box::new(|_, _| {}),
                 Box::new(move |report| sink.lock().unwrap().push(report)),
@@ -537,7 +540,7 @@ mod tests {
         let foreground = Arc::new(ForegroundView::new());
         foreground.set(Some(IN_FRONT));
         let mut state = HookState::new(
-            DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
+            DecisionMachine::new(DecisionConfig::default(), map),
             (
                 Box::new(|_, _| {}),
                 Box::new(move |report| sink.lock().unwrap().push(report)),

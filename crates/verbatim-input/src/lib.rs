@@ -1,7 +1,7 @@
 //! Input (architecture section 5): the operating-system-free half.
 //!
 //! The swallow-or-pass decision for every keystroke runs in microseconds
-//! against a read-only, lock-free snapshot of the gesture map; the hook that
+//! against the gesture map the decision machine owns; the hook that
 //! feeds it only decides and enqueues, and gesture semantics run outside it,
 //! accessibility scripts on the reducer thread and imperative commands in
 //! the shell's gesture router.
@@ -23,11 +23,13 @@ pub mod scripts;
 pub mod state;
 pub mod toggle;
 
-pub use map::{GestureMap, SharedGestureMap};
+pub use map::GestureMap;
 pub use scripts::{
     KeyboardLayout, ScriptAction, bindings_for, caret_bindings, clearing_keys, gesture_map_for,
 };
-pub use state::{Decision, DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
+pub use state::{
+    Decision, DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect, RaisedGesture,
+};
 pub use toggle::ToggleKey;
 
 /// One raw key transition as seen by the low-level hook, before any

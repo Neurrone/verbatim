@@ -3,8 +3,8 @@
 //! Every rule about what a keystroke means to Verbatim lives here, and
 //! nothing here touches the operating system: the machine turns a stream of
 //! [`KeyEvent`]s into swallow-or-pass [`Decision`]s and emitted gestures,
-//! driven only by its configuration, the bound-gesture snapshot, and a
-//! caller-supplied clock. The hook thread (in `verbatim-input-windows`) is the thin
+//! driven only by its configuration, the gesture map it owns, and the time
+//! the caller gives with each key. The hook thread (in `verbatim-input-windows`) is the thin
 //! imperative shell that feeds it real events, which is what lets the whole
 //! of Verbatim's keyboard behaviour be exercised by ordinary unit tests with
 //! scripted key streams and scripted time.
@@ -14,11 +14,9 @@
 //! behaviours Verbatim has decided not to have. [`DecisionMachine`] carries
 //! the summary of both.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::collections::BTreeSet;
+use std::time::Duration;
 
-use arc_swap::ArcSwap;
 use verbatim_model::{GestureId, TraceId};
 
 use crate::keys;
@@ -89,12 +87,10 @@ impl Default for DecisionConfig {
     }
 }
 
-/// A gesture the state machine decided to raise, tagged for tracing.
+/// A gesture the state machine decided to raise: the hook stamps it with a
+/// trace id ([`RaisedGesture::stamped`]) as it reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EmittedGesture {
-    /// A freshly minted trace ID correlating this keypress with everything it
-    /// causes downstream (architecture section 9).
-    pub trace_id: TraceId,
+pub struct RaisedGesture {
     /// The bound gesture that fired.
     pub gesture: GestureId,
     /// The multi-press repeat count: 0 for the first press, 1 for the
@@ -115,6 +111,30 @@ pub struct EmittedGesture {
     pub repeat: u8,
 }
 
+impl RaisedGesture {
+    /// This gesture, tagged with `trace_id` for tracing.
+    #[must_use]
+    pub fn stamped(self, trace_id: TraceId) -> EmittedGesture {
+        EmittedGesture {
+            trace_id,
+            gesture: self.gesture,
+            repeat: self.repeat,
+        }
+    }
+}
+
+/// A raised gesture tagged for tracing, as the hook reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmittedGesture {
+    /// A freshly minted trace ID correlating this keypress with everything it
+    /// causes downstream (architecture section 9).
+    pub trace_id: TraceId,
+    /// The gesture that fired.
+    pub gesture: GestureId,
+    /// Its multi-press repeat count ([`RaisedGesture::repeat`]).
+    pub repeat: u8,
+}
+
 /// What a key press does to speech (`docs/nvda/input.md`, "What a key
 /// press does to speech").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,7 +152,7 @@ pub struct Decision {
     pub decision: KeyDecision,
     /// The gesture this transition raised, if any. Only ever set on a
     /// [`KeyDecision::Swallow`].
-    pub emitted: Option<EmittedGesture>,
+    pub emitted: Option<RaisedGesture>,
     /// What this transition does to speech, carried out before the gesture
     /// is acted on. Set on nearly every key-down, whether it is bound,
     /// swallowed, or passed on.
@@ -149,7 +169,7 @@ pub struct Decision {
     /// the reducer can speak what the application did with it (a caret
     /// key). Only ever set on a [`KeyDecision::Pass`]; its `repeat` is
     /// always 0.
-    pub observed: Option<EmittedGesture>,
+    pub observed: Option<RaisedGesture>,
 }
 
 impl Decision {
@@ -167,11 +187,7 @@ impl Decision {
     /// Pass the transition through, reporting the observed gesture.
     fn pass_observed(gesture: GestureId) -> Self {
         Self {
-            observed: Some(EmittedGesture {
-                trace_id: TraceId::mint(),
-                gesture,
-                repeat: 0,
-            }),
+            observed: Some(RaisedGesture { gesture, repeat: 0 }),
             ..Self::pass()
         }
     }
@@ -193,7 +209,7 @@ impl Decision {
     }
 
     /// Swallow the transition and raise a gesture.
-    fn swallow_emit(emitted: EmittedGesture) -> Self {
+    fn swallow_emit(emitted: RaisedGesture) -> Self {
         Self {
             decision: KeyDecision::Swallow,
             emitted: Some(emitted),
@@ -259,8 +275,9 @@ enum LoneModifier {
     TapPending {
         /// The key that was tapped alone; only that key re-taps it.
         key: KeyCode,
-        /// When the tap ended, which starts the multi-press window.
-        released: Instant,
+        /// When the tap ended, in microseconds on the run's shared clock,
+        /// which starts the multi-press window.
+        released: u64,
     },
     /// A press is being handed to the operating system, and so is every
     /// transition after it until a key-up ends the hand-over. It has to
@@ -274,13 +291,13 @@ impl LoneModifier {
     /// Whether a press of `key` belongs to the operating system rather than
     /// to Verbatim: the second tap of a double tap, or any press while a
     /// hand-over is still running.
-    fn hands_press_to_os(self, key: KeyCode, now: Instant, timeout: Duration) -> bool {
+    fn hands_press_to_os(self, key: KeyCode, now: u64, timeout: Duration) -> bool {
         match self {
             Self::PassingThrough => true,
             Self::TapPending {
                 key: tapped,
                 released,
-            } => tapped == key && now.saturating_duration_since(released) < timeout,
+            } => tapped == key && since(released, now) < timeout,
             Self::Idle | Self::HeldAlone(_) => false,
         }
     }
@@ -303,7 +320,7 @@ impl LoneModifier {
     /// (or restarts) the multi-press window, any release ends a hand-over
     /// since there will be no further auto-repeats, and a release of some
     /// other key changes nothing.
-    fn after_release(self, key: KeyCode, now: Instant) -> Self {
+    fn after_release(self, key: KeyCode, now: u64) -> Self {
         match self {
             Self::PassingThrough => Self::Idle,
             Self::HeldAlone(candidate) | Self::TapPending { key: candidate, .. }
@@ -320,9 +337,8 @@ impl LoneModifier {
 ///
 /// Construct one with [`DecisionMachine::new`], then call
 /// [`on_key`](DecisionMachine::on_key) for every raw key transition. The
-/// machine reads the bound-gesture set from a lock-free [`ArcSwap`] snapshot
-/// on each call, so rebinding gestures is a single atomic store elsewhere and
-/// never blocks the hook.
+/// machine owns its [`GestureMap`], given at construction, and reads no
+/// clock, trace id or shared state: the time comes with each key.
 ///
 /// # The rules
 ///
@@ -371,20 +387,21 @@ impl LoneModifier {
 ///   than being described by whatever the keyboard layout would call it.
 pub struct DecisionMachine {
     config: DecisionConfig,
-    map: Arc<ArcSwap<GestureMap>>,
+    map: GestureMap,
     /// Modifier keys currently held down, both normal modifiers and the
     /// Verbatim modifier, so a later key-down can form a chord with them.
-    held_modifiers: HashSet<KeyCode>,
+    held_modifiers: BTreeSet<KeyCode>,
     /// Keys Verbatim swallowed on the way down, and whose release it must
     /// therefore swallow too. A key still in here has not been released, so
     /// another key-down for it is the operating system's auto-repeat.
-    swallowed_downs: HashSet<KeyCode>,
+    swallowed_downs: BTreeSet<KeyCode>,
     /// How far a lone Verbatim-modifier tap has got towards handing its key
     /// back to the operating system.
     lone_modifier: LoneModifier,
-    /// The gesture and observation time of the most recent genuine (not
-    /// auto-repeated) bound-gesture press, for multi-press counting.
-    last_gesture: Option<(GestureId, Instant)>,
+    /// The gesture and observation time, in microseconds on the run's
+    /// shared clock, of the most recent genuine (not auto-repeated)
+    /// bound-gesture press, for multi-press counting.
+    last_gesture: Option<(GestureId, u64)>,
     /// The multi-press repeat count of
     /// [`last_gesture`](Self::last_gesture); carried unchanged across
     /// auto-repeats of the same held gesture.
@@ -395,15 +412,15 @@ pub struct DecisionMachine {
 }
 
 impl DecisionMachine {
-    /// Creates a machine with the given configuration, reading bound gestures
-    /// from `map`.
+    /// Creates a machine with the given configuration, deciding against the
+    /// gestures of `map`.
     #[must_use]
-    pub fn new(config: DecisionConfig, map: Arc<ArcSwap<GestureMap>>) -> Self {
+    pub fn new(config: DecisionConfig, map: GestureMap) -> Self {
         Self {
             config,
             map,
-            held_modifiers: HashSet::new(),
-            swallowed_downs: HashSet::new(),
+            held_modifiers: BTreeSet::new(),
+            swallowed_downs: BTreeSet::new(),
             lone_modifier: LoneModifier::Idle,
             last_gesture: None,
             repeat_count: 0,
@@ -425,10 +442,10 @@ impl DecisionMachine {
     /// Feeds one raw key transition and returns the swallow-or-pass decision
     /// plus any gesture it raised.
     ///
-    /// `now` is the observation time; the hook passes [`Instant::now`], and
-    /// tests pass a scripted clock. The bound-gesture snapshot is loaded here,
-    /// lock-free.
-    pub fn on_key(&mut self, event: KeyEvent, now: Instant) -> Decision {
+    /// `now` is the observation time, in microseconds on the run's shared
+    /// clock; the hook reads it once for each key, and tests pass a
+    /// scripted time.
+    pub fn on_key(&mut self, event: KeyEvent, now: u64) -> Decision {
         if event.pressed {
             let speech = self.speech_effect(event);
             let mut decision = self.on_press(event, now);
@@ -496,7 +513,7 @@ impl DecisionMachine {
 
     /// Decides a key-down in three steps: what part the key plays, where that
     /// leaves the lone-modifier lifecycle, and what chord it completes.
-    fn on_press(&mut self, event: KeyEvent, now: Instant) -> Decision {
+    fn on_press(&mut self, event: KeyEvent, now: u64) -> Decision {
         let key: KeyCode = (event.vk, event.extended);
 
         // Step one: the key's part in this press. A modifier key whose press
@@ -531,12 +548,11 @@ impl DecisionMachine {
 
         let gesture = self.build_gesture(key, main_name);
         if let Some(gesture) = &gesture
-            && self.map.load().contains(gesture)
+            && self.map.contains(gesture)
         {
             let repeat = self.count_press(gesture, key, now);
             self.swallowed_downs.insert(key);
-            return Decision::swallow_emit(EmittedGesture {
-                trace_id: TraceId::mint(),
+            return Decision::swallow_emit(RaisedGesture {
                 gesture: gesture.clone(),
                 repeat,
             });
@@ -570,7 +586,7 @@ impl DecisionMachine {
             return Decision::pass_shared_modifier();
         }
         if let Some(gesture) = gesture
-            && self.map.load().observes(&gesture)
+            && self.map.observes(&gesture)
         {
             return Decision::pass_observed(gesture);
         }
@@ -579,7 +595,7 @@ impl DecisionMachine {
 
     /// Decides a key-up: where the release leaves the lone-modifier
     /// lifecycle, and whether Verbatim owes this key a swallowed release.
-    fn on_release(&mut self, event: KeyEvent, now: Instant) -> Decision {
+    fn on_release(&mut self, event: KeyEvent, now: u64) -> Decision {
         let key: KeyCode = (event.vk, event.extended);
 
         self.lone_modifier = self.lone_modifier.after_release(key, now);
@@ -614,14 +630,13 @@ impl DecisionMachine {
     /// it re-reports the streak's current count and leaves the streak alone.
     /// NVDA counts auto-repeat as presses; not counting it is a deliberate
     /// difference, so holding a key never turns into a double press.
-    fn count_press(&mut self, gesture: &GestureId, key: KeyCode, now: Instant) -> u8 {
+    fn count_press(&mut self, gesture: &GestureId, key: KeyCode, now: u64) -> u8 {
         if self.swallowed_downs.contains(&key) {
             return self.repeat_count;
         }
         self.repeat_count = match &self.last_gesture {
             Some((last, at))
-                if last == gesture
-                    && now.saturating_duration_since(*at) < self.config.multi_press_timeout =>
+                if last == gesture && since(*at, now) < self.config.multi_press_timeout =>
             {
                 self.repeat_count.saturating_add(1)
             }
@@ -676,6 +691,12 @@ fn generic_modifier_name(vk: u16) -> Option<&'static str> {
     }
 }
 
+/// How long before `now` the time `then` was, both in microseconds on the
+/// run's shared clock: none when `then` is not earlier.
+fn since(then: u64, now: u64) -> Duration {
+    Duration::from_micros(now.saturating_sub(then))
+}
+
 /// Whether the virtual key is one of the numpad's operator keys: multiply,
 /// plus, minus, or divide.
 fn is_numpad_operator(vk: u16) -> bool {
@@ -691,10 +712,18 @@ fn is_normal_modifier(vk: u16) -> bool {
 mod tests {
     use super::*;
 
-    /// Builds a shared, bound-gesture snapshot from raw identifiers.
-    fn map_of(ids: &[&str]) -> Arc<ArcSwap<GestureMap>> {
-        let gestures = ids.iter().map(|id| GestureId::parse(id).expect("valid id"));
-        Arc::new(ArcSwap::from_pointee(GestureMap::new(gestures)))
+    /// Builds a map of bound gestures from raw identifiers.
+    fn map_of(ids: &[&str]) -> GestureMap {
+        GestureMap::new(ids.iter().map(|id| GestureId::parse(id).expect("valid id")))
+    }
+
+    /// A time on the run's shared clock, in microseconds, for a test to
+    /// start from.
+    const START: u64 = 1_000_000_000;
+
+    /// `n` milliseconds, in microseconds.
+    const fn ms(n: u64) -> u64 {
+        n * 1_000
     }
 
     fn machine(config: DecisionConfig, ids: &[&str]) -> DecisionMachine {
@@ -728,7 +757,7 @@ mod tests {
     #[test]
     fn every_key_press_cancels_speech_bound_or_not() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         // A typed letter, a lone Control, the Verbatim modifier, and a bound
         // gesture all cancel; releases do nothing.
         for (vk, extended) in [(A, false), (CONTROL, false), (CAPS, false), (V, false)] {
@@ -751,7 +780,7 @@ mod tests {
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &[]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(m.on_key(down(A, false), t).speech, None);
         m.on_key(up(A, false), t);
         assert_eq!(m.on_key(down(0x20, false), t).speech, None);
@@ -782,7 +811,7 @@ mod tests {
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &[]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(m.on_key(down(0x0D, false), t).speech, None);
         m.on_key(up(0x0D, false), t);
         assert_eq!(
@@ -794,7 +823,7 @@ mod tests {
     #[test]
     fn with_num_lock_on_numpad_plus_types_its_character() {
         let mut m = machine(DecisionConfig::default(), &["kb:numpadplus"]);
-        let t = Instant::now();
+        let t = START;
         let plus = 0x6B;
         assert_eq!(
             m.on_key(down(plus, false), t).decision,
@@ -812,8 +841,8 @@ mod tests {
     fn an_observed_gesture_passes_and_is_reported() {
         let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")])
             .with_observed([GestureId::parse("kb:leftarrow").expect("valid id")]);
-        let mut m = DecisionMachine::new(DecisionConfig::default(), map.into_shared());
-        let t = Instant::now();
+        let mut m = DecisionMachine::new(DecisionConfig::default(), map);
+        let t = START;
         let left = 0x25;
         let decision = m.on_key(down(left, true), t);
         assert_eq!(decision.decision, KeyDecision::Pass);
@@ -829,7 +858,7 @@ mod tests {
     #[test]
     fn shift_alone_toggles_pause_once_per_press() {
         let mut m = machine(DecisionConfig::default(), &[]);
-        let t = Instant::now();
+        let t = START;
         let left_shift = 0xA0;
         assert_eq!(
             m.on_key(down(left_shift, false), t).speech,
@@ -847,7 +876,7 @@ mod tests {
     #[test]
     fn caps_then_v_emits_and_swallows_all_four_transitions() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
 
         let caps_down = m.on_key(down(CAPS, false), t);
         assert_eq!(caps_down.decision, KeyDecision::Swallow);
@@ -865,7 +894,7 @@ mod tests {
     #[test]
     fn double_tap_within_timeout_toggles_caps_lock_through() {
         let mut m = machine(DecisionConfig::default(), &[]);
-        let t = Instant::now();
+        let t = START;
 
         // First tap acts as the modifier and is swallowed.
         assert_eq!(
@@ -876,7 +905,7 @@ mod tests {
 
         // Second tap, comfortably inside the window, passes through both
         // transitions so the OS toggles caps lock.
-        let t2 = t + Duration::from_millis(100);
+        let t2 = t + ms(100);
         let second = m.on_key(down(CAPS, false), t2);
         assert_eq!(second.decision, KeyDecision::Pass);
         assert!(!second.shared_modifier, "Verbatim alone decides its fate");
@@ -901,7 +930,7 @@ mod tests {
     #[test]
     fn tap_then_wait_past_timeout_acts_as_modifier_again() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
 
         assert_eq!(
             m.on_key(down(CAPS, false), t).decision,
@@ -910,7 +939,7 @@ mod tests {
         assert_eq!(m.on_key(up(CAPS, false), t).decision, KeyDecision::Swallow);
 
         // Beyond the timeout, caps acts as the modifier again.
-        let t2 = t + Duration::from_millis(600);
+        let t2 = t + ms(600);
         assert_eq!(
             m.on_key(down(CAPS, false), t2).decision,
             KeyDecision::Swallow
@@ -926,7 +955,7 @@ mod tests {
     #[test]
     fn triple_tap_second_passes_and_third_is_modifier() {
         let mut m = machine(DecisionConfig::default(), &[]);
-        let t = Instant::now();
+        let t = START;
 
         assert_eq!(
             m.on_key(down(CAPS, false), t).decision,
@@ -934,13 +963,13 @@ mod tests {
         );
         assert_eq!(m.on_key(up(CAPS, false), t).decision, KeyDecision::Swallow);
 
-        let t2 = t + Duration::from_millis(100);
+        let t2 = t + ms(100);
         assert_eq!(m.on_key(down(CAPS, false), t2).decision, KeyDecision::Pass);
         assert_eq!(m.on_key(up(CAPS, false), t2).decision, KeyDecision::Pass);
 
         // The passed-through tap does not arm another passthrough; the next
         // press is the modifier again.
-        let t3 = t2 + Duration::from_millis(100);
+        let t3 = t2 + ms(100);
         assert_eq!(
             m.on_key(down(CAPS, false), t3).decision,
             KeyDecision::Swallow
@@ -952,7 +981,7 @@ mod tests {
         // The modifier always names itself `verbatim` in the gesture, whether
         // caps lock, insert, or numpad insert is the physical key.
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(
             m.on_key(down(INSERT, true), t).decision,
             KeyDecision::Swallow
@@ -968,7 +997,7 @@ mod tests {
     #[test]
     fn numpad_insert_acts_as_modifier_and_is_distinct() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         // Non-extended insert is the numpad insert.
         assert_eq!(
             m.on_key(down(INSERT, false), t).decision,
@@ -1002,7 +1031,7 @@ mod tests {
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         // Extended insert is not a modifier here, so it passes through and V
         // is an ordinary keystroke.
         assert_eq!(m.on_key(down(INSERT, true), t).decision, KeyDecision::Pass);
@@ -1017,7 +1046,7 @@ mod tests {
         // companion key reaches the application as a bare keypress, so an
         // unrecognized chord is not eaten.
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(
             m.on_key(down(CAPS, false), t).decision,
             KeyDecision::Swallow
@@ -1041,7 +1070,7 @@ mod tests {
     #[test]
     fn control_verbatim_key_builds_normalized_chord() {
         let mut m = machine(DecisionConfig::default(), &["kb:control+v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         // Control alone passes through and is tracked as a held modifier.
         assert_eq!(
             m.on_key(down(CONTROL, false), t).decision,
@@ -1063,7 +1092,7 @@ mod tests {
     fn generalized_modifier_uses_generic_name() {
         // A right-control variant must generalize to `control`.
         let mut m = machine(DecisionConfig::default(), &["kb:control+v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(m.on_key(down(0xA3, false), t).decision, KeyDecision::Pass); // right control
         assert_eq!(
             m.on_key(down(CAPS, false), t).decision,
@@ -1079,7 +1108,7 @@ mod tests {
     #[test]
     fn injected_events_are_treated_like_physical() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         let caps = KeyEvent {
             injected: true,
             ..down(CAPS, false)
@@ -1099,7 +1128,7 @@ mod tests {
     #[test]
     fn trapped_key_up_swallowed_while_unrelated_key_up_passes() {
         let mut m = machine(DecisionConfig::default(), &[]);
-        let t = Instant::now();
+        let t = START;
 
         // An ordinary keystroke with no modifier passes on the way down and up.
         assert_eq!(m.on_key(down(A, false), t).decision, KeyDecision::Pass);
@@ -1116,7 +1145,7 @@ mod tests {
     #[test]
     fn unknown_vk_passes_through_even_with_modifier_held() {
         let mut m = machine(DecisionConfig::default(), &[]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(
             m.on_key(down(CAPS, false), t).decision,
             KeyDecision::Swallow
@@ -1129,7 +1158,7 @@ mod tests {
     fn solo_bound_gesture_fires_without_modifier() {
         // No Verbatim modifier held, but F6 is bound as a solo gesture.
         let mut m = machine(DecisionConfig::default(), &["kb:f6"]);
-        let t = Instant::now();
+        let t = START;
         let f6 = m.on_key(down(0x75, false), t); // VK_F6
         assert_eq!(f6.decision, KeyDecision::Swallow);
         assert_eq!(f6.emitted.expect("emitted").gesture.as_str(), "kb:f6");
@@ -1140,7 +1169,7 @@ mod tests {
     fn modifier_only_gesture_can_be_bound() {
         // Binding the modifier alone still emits while swallowing.
         let mut m = machine(DecisionConfig::default(), &["kb:verbatim"]);
-        let t = Instant::now();
+        let t = START;
         let caps = m.on_key(down(CAPS, false), t);
         assert_eq!(caps.decision, KeyDecision::Swallow);
         assert_eq!(
@@ -1160,7 +1189,7 @@ mod tests {
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
 
         let caps = m.on_key(down(CAPS, false), t);
         assert_eq!(caps.decision, KeyDecision::Pass);
@@ -1185,7 +1214,7 @@ mod tests {
     #[test]
     fn auto_repeat_of_modifier_does_not_break_chords() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         // Caps auto-repeats (repeated down with no up).
         assert_eq!(
             m.on_key(down(CAPS, false), t).decision,
@@ -1205,7 +1234,7 @@ mod tests {
 
     /// Presses and releases `kb:v+verbatim` once as a genuine (non-repeated)
     /// press at time `t`, returning the repeat count it carried.
-    fn press_v_verbatim(m: &mut DecisionMachine, t: Instant) -> u8 {
+    fn press_v_verbatim(m: &mut DecisionMachine, t: u64) -> u8 {
         m.on_key(down(CAPS, false), t);
         let v = m.on_key(down(V, false), t);
         let repeat = v.emitted.expect("emitted").repeat;
@@ -1217,39 +1246,39 @@ mod tests {
     #[test]
     fn first_press_carries_repeat_zero() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(press_v_verbatim(&mut m, t), 0);
     }
 
     #[test]
     fn second_press_within_window_increments_repeat() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(press_v_verbatim(&mut m, t), 0);
-        let t2 = t + Duration::from_millis(100);
+        let t2 = t + ms(100);
         assert_eq!(press_v_verbatim(&mut m, t2), 1);
     }
 
     #[test]
     fn third_press_within_window_increments_again() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(press_v_verbatim(&mut m, t), 0);
-        let t2 = t + Duration::from_millis(100);
+        let t2 = t + ms(100);
         assert_eq!(press_v_verbatim(&mut m, t2), 1);
-        let t3 = t2 + Duration::from_millis(100);
+        let t3 = t2 + ms(100);
         assert_eq!(press_v_verbatim(&mut m, t3), 2);
     }
 
     #[test]
     fn press_after_window_elapses_resets_to_zero() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(press_v_verbatim(&mut m, t), 0);
-        let t2 = t + Duration::from_millis(100);
+        let t2 = t + ms(100);
         assert_eq!(press_v_verbatim(&mut m, t2), 1);
         // Well past the 500 ms multi-press timeout since the second press.
-        let t3 = t2 + Duration::from_millis(600);
+        let t3 = t2 + ms(600);
         assert_eq!(press_v_verbatim(&mut m, t3), 0);
     }
 
@@ -1259,11 +1288,11 @@ mod tests {
             DecisionConfig::default(),
             &["kb:v+verbatim", "kb:a+verbatim"],
         );
-        let t = Instant::now();
+        let t = START;
         assert_eq!(press_v_verbatim(&mut m, t), 0);
 
         // Press a different bound gesture within the window.
-        let t2 = t + Duration::from_millis(100);
+        let t2 = t + ms(100);
         m.on_key(down(CAPS, false), t2);
         let a = m.on_key(down(A, false), t2);
         assert_eq!(a.emitted.expect("emitted").repeat, 0);
@@ -1272,31 +1301,31 @@ mod tests {
 
         // verbatim+v again, still within the original window: the streak
         // was broken by the different gesture, so this is a fresh press.
-        let t3 = t2 + Duration::from_millis(100);
+        let t3 = t2 + ms(100);
         assert_eq!(press_v_verbatim(&mut m, t3), 0);
     }
 
     #[test]
     fn an_unbound_key_between_presses_resets_the_streak_but_a_modifier_does_not() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         assert_eq!(press_v_verbatim(&mut m, t), 0);
-        let t2 = t + Duration::from_millis(50);
+        let t2 = t + ms(50);
         assert_eq!(
             m.on_key(down(CONTROL, false), t2).decision,
             KeyDecision::Pass
         );
         m.on_key(up(CONTROL, false), t2);
         assert_eq!(
-            press_v_verbatim(&mut m, t2 + Duration::from_millis(50)),
+            press_v_verbatim(&mut m, t2 + ms(50)),
             1,
             "a lone modifier does not end the streak"
         );
-        let t3 = t2 + Duration::from_millis(100);
+        let t3 = t2 + ms(100);
         assert_eq!(m.on_key(down(A, false), t3).decision, KeyDecision::Pass);
         m.on_key(up(A, false), t3);
         assert_eq!(
-            press_v_verbatim(&mut m, t3 + Duration::from_millis(50)),
+            press_v_verbatim(&mut m, t3 + ms(50)),
             0,
             "an unbound key ends it, as in NVDA"
         );
@@ -1311,7 +1340,7 @@ mod tests {
         // auto-repeated emission must carry the same count as the press
         // that started the hold.
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let t = Instant::now();
+        let t = START;
         m.on_key(down(CAPS, false), t);
 
         let first = m.on_key(down(V, false), t);
@@ -1329,18 +1358,18 @@ mod tests {
         // A genuine second press afterward, within the window, still counts
         // as the second press (1), not a fourth (3): the auto-repeats above
         // never advanced the count.
-        let t2 = t + Duration::from_millis(50);
+        let t2 = t + ms(50);
         assert_eq!(press_v_verbatim(&mut m, t2), 1);
     }
 
     #[test]
     fn repeat_count_saturates_instead_of_overflowing() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
-        let mut t = Instant::now();
+        let mut t = START;
         let mut last = 0;
         for _ in 0..=300 {
             last = press_v_verbatim(&mut m, t);
-            t += Duration::from_millis(10);
+            t += ms(10);
         }
         assert_eq!(last, u8::MAX);
     }

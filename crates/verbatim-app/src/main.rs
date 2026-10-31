@@ -43,7 +43,7 @@ use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, Statu
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
-use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout, SharedGestureMap};
+use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
 use verbatim_input_windows::{ForegroundView, InputHook, KeyHolding};
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
 use verbatim_model::{
@@ -374,7 +374,7 @@ fn run(
     // whose say-all stops.
     let hook = InputHook::start(
         decision_config,
-        Arc::clone(&bound_gestures),
+        bound_gestures,
         key_reports::speech_effect(manager.control(), command_tx.clone()),
         key_reports::reports(
             key_reports::Tables::for_layout(keyboard_layout),
@@ -2172,28 +2172,26 @@ fn next_of(received: Received<ShellCommand>) -> Next {
     }
 }
 
-/// The keyboard bindings this milestone ships, as the shared gesture map the
-/// hook consults and the control plane validates against: the menu gesture
+/// The keyboard bindings this milestone ships, as the gesture map the
+/// hook's decision machine owns: the menu gesture
 /// plus every review and object-navigation binding for the active layout
 /// (roadmap M3). The layout's own table already carries the time and tray
 /// gestures, so they are not listed separately. The caret keys are observed,
 /// not bound: they reach the application, and the hook reports them for the
 /// reducer to speak what they did (milestone M4).
-fn bound_gestures(layout: KeyboardLayout) -> SharedGestureMap {
+fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
     let mut gestures = vec![GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")];
     gestures.extend(
         verbatim_input::bindings_for(layout)
             .into_iter()
             .map(|(gesture, _action)| gesture),
     );
-    GestureMap::new(gestures)
-        .with_observed(
-            verbatim_input::caret_bindings()
-                .into_iter()
-                .map(|(gesture, _key)| gesture)
-                .chain(verbatim_input::clearing_keys()),
-        )
-        .into_shared()
+    GestureMap::new(gestures).with_observed(
+        verbatim_input::caret_bindings()
+            .into_iter()
+            .map(|(gesture, _key)| gesture)
+            .chain(verbatim_input::clearing_keys()),
+    )
 }
 
 /// Sends one command to the GUI when it is up; during the startup window

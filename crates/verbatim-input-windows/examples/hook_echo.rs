@@ -22,7 +22,7 @@ fn main() {
     let bindings = ["kb:v+verbatim", "kb:t+verbatim"]
         .into_iter()
         .map(|id| GestureId::parse(id).expect("valid gesture identifier"));
-    let map = GestureMap::new(bindings).into_shared();
+    let map = GestureMap::new(bindings);
 
     // The reports are printed on this thread, not the hook's, which must
     // never block.

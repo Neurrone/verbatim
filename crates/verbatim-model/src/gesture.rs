@@ -15,7 +15,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 /// A normalized gesture identifier such as `kb:v+verbatim`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct GestureId {
     normalized: String,

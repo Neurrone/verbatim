@@ -23,10 +23,15 @@ Public API:
   and names `VK_CLEAR` instead; `numpadminus`, `numpadplus`,
   `numpaddivide`, `numpadmultiply`, and `period` are ordinary untwinned
   keys.
-- `DecisionConfig`, `DecisionMachine`, `Decision`, `EmittedGesture` — the
-  pure state machine. `on_key(event, now)` takes a caller-supplied clock,
-  so tests script entire key streams with fake time. A `Decision` carries
-  the swallow-or-pass verdict, the gesture raised if any, `speech`, the
+- `DecisionConfig`, `DecisionMachine`, `Decision`, `RaisedGesture`,
+  `EmittedGesture` — the pure state machine, which owns its `GestureMap`,
+  given at construction, and reads no clock, trace id or shared state.
+  `on_key(event, now)` takes the time in microseconds on the run's shared
+  clock, which the hook reads once for each key, so tests script entire
+  key streams with fake time. A `Decision` carries
+  the swallow-or-pass verdict, the gesture raised if any (a
+  `RaisedGesture`, which the hook stamps with a trace id as it reports it,
+  `stamped(trace_id)`, making an `EmittedGesture`), `speech`, the
   transition's effect on speech, if any, and `observed`, an observed
   gesture the passed key completed (milestone M4's caret keys). The
   config's `interrupt_for_characters` and `interrupt_for_enter` are NVDA's
@@ -38,8 +43,8 @@ Public API:
   before each key; it is off until it does.
 - `KeySpeechEffect` — what a key press does to speech: `Cancel` (current
   and queued speech) or `TogglePause` (Shift on its own).
-- `GestureMap`, `SharedGestureMap` — the bound-gesture set behind an
-  arc-swap snapshot the hook reads lock-free; rebinding is one atomic store.
+- `GestureMap` — the bound-gesture set, a `BTreeSet`, which the decision
+  machine owns: nothing changes the bindings while Verbatim runs.
   `with_observed(gestures)` adds gestures that are observed rather than
   bound: the key is passed to the application as usual, and the
   `Decision` reports the gesture in `observed`, so the reducer can speak
@@ -141,7 +146,8 @@ rules):
   transitions pass down the hook chain instead, so a screen reader hooked
   behind Verbatim sees the modifier held and swallows it itself.
 - A key-down forming a bound gesture is swallowed, recorded in the
-  swallowed-downs set, and emitted with a freshly minted `TraceId`. An
+  swallowed-downs set, and raised, for the hook to stamp with a freshly
+  minted `TraceId`. An
   unbound companion key falls through to the application as a bare
   keypress — NVDA behavior, so an unrecognized chord is not eaten.
 - Keys swallowed on the way down are swallowed on their key-up too, so an
@@ -177,7 +183,7 @@ rules):
 - Chords normalize modifiers to generic names (left and right control both
   become `control`), and gesture assembly relies on `GestureId::parse` for
   ordering, so press order never matters.
-- Multi-press counting (NVDA semantics, M3): every `EmittedGesture` carries
+- Multi-press counting (NVDA semantics, M3): every `RaisedGesture` carries
   a `repeat` count — 0 for the first press, 1 for the second, 2 for the
   third, saturating rather than overflowing. Pressing the same bound
   gesture again within `multi_press_timeout` (500 ms) of its previous
