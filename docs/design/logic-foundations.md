@@ -258,7 +258,7 @@ The watch's replay tests in `crates/verbatim-outpost-logic/src/tests.rs` were re
 
 ## Determinism (a build of its own)
 
-Status: the first of its three builds, determinism of the logic crates, built on 2026-11-01 on branch `determinism-1`, from main 8893fd97, after the design's reviews (`experiments/logic-tests-study/determinism-design-review.md`, `determinism-design-review-2.md`, and Dickson's purity audit, `experiments/logic-tests-study/purity-audit.md`). The second and third builds are proposed below as designed. The mechanisms are described in the crate guides: [verbatim-outpost-logic](../crates/verbatim-outpost-logic.md) for the reducer's asks, [verbatim-outpost](../crates/verbatim-outpost.md) for the shell's answers and the hung-window test, [verbatim-core](../crates/verbatim-core.md) for the supervisor's liveness and `due_starts`, and [verbatim-model](../crates/verbatim-model.md) for `TraceId::from_raw`; the enforcement is in `xtask/src/tiers.rs` and `xtask/src/ownership.rs`.
+Status: the first of its three builds, determinism of the logic crates, built on 2026-11-01 on branch `determinism-1`, from main 8893fd97, after the design's reviews (`experiments/logic-tests-study/determinism-design-review.md`, `determinism-design-review-2.md`, and Dickson's purity audit, `experiments/logic-tests-study/purity-audit.md`). The second, the other pure owners, built on 2026-11-01 on branch `determinism-2`, from main 5997bd24; its desktop scenarios and wake-up measurements are still to run. The third is proposed below as designed. The mechanisms are described in the crate guides: [verbatim-outpost-logic](../crates/verbatim-outpost-logic.md) for the reducer's asks, [verbatim-outpost](../crates/verbatim-outpost.md) for the shell's answers and the hung-window test, [verbatim-core](../crates/verbatim-core.md) for the supervisor's liveness and `due_starts`, and [verbatim-model](../crates/verbatim-model.md) for `TraceId::from_raw`; the enforcement is in `xtask/src/tiers.rs` and `xtask/src/ownership.rs`.
 
 The determinism rule of [logic tests](logic-tests.md), "Tools and determinism", holds in every crate on the path to a reducer. The rule allows no hash map or set, no clock, no randomness, no thread, no environment or file read, and no other hidden input, and it covers the third-party code those crates call. The work is three builds ("The order of work"): determinism of the logic crates, the other pure owners, and simpler types. They change no thread, message or timer, and what is heard only where named.
 
@@ -272,7 +272,7 @@ The reducers are Core's reducer (`verbatim-core`), the outpost's reducer (`verba
 
 That is seven crates. `workspace-hack` holds no code. The tier check derives the list from the dependency graph (`covered` in `xtask/src/tiers.rs`), so a crate a reducer comes to depend on falls under the rule without anyone listing it.
 
-`verbatim-speech` is not on the path. No covered crate depends on it, and it runs after the reducer, executing its speech effects. It owns the synthesizer threads, the mixer's hand-off and the cancel waker, so the rule could not hold for it, and its four maps are only looked up, never iterated; it stays outside the rule (Dickson, 2026-10-31). `verbatim-config`, `verbatim-i18n` and `verbatim-audio` are not on the path either. In the second build, `verbatim-input`, the keyboard decision machine's crate, joins the covered crates, and Core's request table moves into `verbatim-core` ("The other owners"); `verbatim-input` is on no reducer's path, so it is listed by hand.
+`verbatim-speech` is not on the path. No covered crate depends on it, and it runs after the reducer, executing its speech effects. It owns the synthesizer threads, the mixer's hand-off and the cancel waker, so the rule could not hold for it, and its four maps are only looked up, never iterated; it stays outside the rule (Dickson, 2026-10-31). `verbatim-config`, `verbatim-i18n` and `verbatim-audio` are not on the path either. `verbatim-input`, the keyboard decision machine's crate, is covered too, and Core's request table is in `verbatim-core` ("The other owners"); `verbatim-input` is on no reducer's path, so `REDUCERS` in `xtask/src/tiers.rs` lists it by hand.
 
 ### The rules
 
@@ -294,7 +294,7 @@ The audit found 44 in the covered crates. Two, the batch plan's `hung` and the t
 
 The terminal alignment of a lost read is the worst case: it looks up every row of the whole document by hash. Kept in `BTreeMap`s and `BTreeSet`s, its five transient lookups by row hash (`at`, `old_hashes`, `went`, `hashes` and `with_text`) cost 12 to 31% more than the fixed-hasher maps they replaced, so the design's fallback was built: each is one sorted vector of hashes, searched by binary search (`Hashes` in `crates/verbatim-text/src/terminal_rows.rs`), still ordered and with no hasher, at 1 to 9% more ("Performance on the event path"). The `Spread` hasher is removed. `Aside::rows` stays a `BTreeMap`, so Core's state and the dump format are untouched: its JSON form is a map in key order, and a dump written before reads back.
 
-The second build converts 12 more, outside the logic crates' reducers: `verbatim-input`'s 7 (`GestureMap`'s `bound` and `observed`, the decision machine's `held_modifiers` and `swallowed_downs`, and 3 in `scripts.rs`'s tests), the request table's `entries` and the outbound backlog's `reported`. The supervisor shell's `records`, `apps` and `spare_children` went in the first build, with `due_starts`.
+The second build converted 12 more, outside the logic crates' reducers: `verbatim-input`'s 7 (`GestureMap`'s `bound` and `observed`, the decision machine's `held_modifiers` and `swallowed_downs`, and 3 in `scripts.rs`'s tests), the request table's `entries` and the outbound backlog's `reported`. The supervisor shell's `records`, `apps` and `spare_children` went in the first build, with `due_starts`.
 
 ### The outpost's local reads as inputs
 
@@ -329,7 +329,7 @@ Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) found i
 
 #### Core's request table (the second build)
 
-`RequestTable` (`verbatim-app`, `requests.rs` 122; 502 non-test lines, 3 fields, 4 fields per entry) is the one owner of each query's outcome, on the reducer thread.
+`RequestTable` (`verbatim-app`, `requests.rs` 122, as it was; 502 non-test lines, 3 fields, 4 fields per entry) is the one owner of each query's outcome, on the reducer thread. As built, it is `verbatim-core`'s `requests::RequestTable<A>`, described in [verbatim-core](../crates/verbatim-core.md), "The request table"; line numbers below are the design's, before the build.
 
 **Hash order reaching the reducer.** `entries: HashMap<RequestId, Entry>` (124) is iterated by `outpost_ended` (211 to 222) and `expire` (228 to 247), whose reducer inputs are applied in that order (`main.rs` 1982 and 2011).
 
@@ -337,7 +337,7 @@ Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) found i
 - Chosen: (a). The ids are allocated in increasing order (160 to 182), so the order becomes the order the requests were made in.
 - What is heard: when one outpost ends with several requests outstanding, or several deadlines pass on one wake, their outcomes are spoken in request order, where today they are in hash order. Nothing else changes.
 
-**Deadlines as `Instant`s** (117, 139, 228, 252; the callers at `main.rs` 1835 and 1927). They become microseconds on the shared clock. The reducer thread reads `now_us()` where it reads `Instant::now()` today, so no call is added.
+**Deadlines as `Instant`s** (117, 139, 228, 252; the callers at `main.rs` 1835 and 1927). They become microseconds on the shared clock. The reducer thread reads `now_us()` where it read `Instant::now()` to set a deadline, and when a deadline passes, to expire the table's. Its wait still takes an `Instant`, since its other deadlines stay `Instant`s, so while a request with a deadline is outstanding, which only a list dialog's shell items request has, each pass of its loop reads both clocks once more to turn the table's earliest deadline into a moment on the monotonic clock (`instant_at` in `verbatim-app`). It errs a microsecond late, with the shared clock read first, so the deadline the wait was for has passed when the thread checks (the builder, 2026-11-01, pending Dickson's acceptance).
 
 **Calls inside the owner.** `deliver` (344 to 461) does all of these itself:
 
@@ -345,7 +345,7 @@ Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) found i
 - sends on a channel (399);
 - logs.
 
-The fix: the table becomes generic over its asker, holding it as an opaque token it never calls, as the idle barrier holds its waiters, and returns `(asker, outcome)` pairs. `dump_tree_request` (262 to 271), which finds an entry by its asker's ticket, takes a predicate on the asker instead. A `deliver` in `verbatim-app` carries each out at its three call sites (`main.rs` 1570, 1982 and 2011).
+The fix: the table becomes generic over its asker, holding it as an opaque token it never calls, as the idle barrier holds its waiters, and returns `(asker, outcome)` pairs. `dump_tree_request` (262 to 271), which finds an entry by its asker's ticket, takes a predicate on the asker instead, as `find`; `withdraw_text`, which finds Core's text request by its query id the same way, takes one too, as `withdraw`, and hands the withdrawn asker back for the caller to drop, so it too leaves the table by being moved out. A `deliver` in `verbatim-app` carries each out at its three call sites (`main.rs` 1570, 1982 and 2011).
 
 - Calls: the same, moved to the caller.
 - States: none.
@@ -378,10 +378,12 @@ Before and after:
 
 **The clock.** `on_key(event, now: Instant)` (431) is given `Instant::now()` by the hook (`hook.rs` 368), and keeps it for multi-press counting (387) and the lone-modifier double tap (263). The hook reads `now_us()` once at the top of each key instead. It passes that to `on_key` and reuses it for the passed key's `pressed_at_us` (`hook.rs` 322), so a passed key costs one clock read instead of two. The timeouts compare microseconds, so what is heard is unchanged.
 
+As built, the machine raises a `RaisedGesture`, the gesture and its repeat count, and the hook makes the `EmittedGesture` it reports by stamping it (`RaisedGesture::stamped`), so the reports downstream are unchanged. An observed gesture of Verbatim's own injected input, which the hook does not report, is no longer given a trace id.
+
 **Its sets.** `held_modifiers` and `swallowed_downs` (377 and 381) and `GestureMap`'s `bound` and `observed` (`map.rs` 35 and 36) become `BTreeSet`s, with `GestureId` deriving `Ord` in `verbatim-model` (`gesture.rs` 18). So do three in `scripts.rs`'s tests (726, 751 and 758).
 
 - `build_gesture`'s walk of `held_modifiers` (646) is already order-free, since `GestureId::parse` sorts.
-- The map's lookup per key becomes a few string comparisons in a set of about a hundred gestures. It is measured on `measure_keys_notepad`.
+- The map's lookup per key becomes a few string comparisons in a set of about a hundred gestures. A scratch measurement, release build, 110 gesture strings and six probes, took 47 to 48 ns a lookup in a `BTreeSet` against 11 to 12 ns in a `HashSet`, so about 36 ns more for each of a press's at most two lookups, against the hook's budget of microseconds; the atomic load per press is gone. Wake-ups and processor time are measured on `measure_keys_notepad`.
 
 **Placement.**
 
