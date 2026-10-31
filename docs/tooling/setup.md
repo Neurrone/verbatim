@@ -75,12 +75,12 @@ cargo hakari manage-deps
 
 `cargo xtask ci` is the standard check and exactly what GitHub Actions
 runs, in its `ci`, `ci-arm64` and `ci-linux` jobs. On Windows its steps are
-the platform-neutral dependency check, the scans below, the documentation
+the crate tier check, the scans below, the documentation
 check, the workspace-hack check above, rustfmt, and pedantic Clippy with
 warnings denied and unit tests for the whole workspace, all for the host's
 own architecture into `target/debug`; no build names a target, so an ARM64
 machine checks ARM64. On Linux, where the `ci-linux` job runs it on
-`ubuntu-latest`, it runs the dependency check, the scans and the
+`ubuntu-latest`, it runs the tier check, the scans and the
 documentation check, then Clippy and unit tests only for the crates in
 `LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier, the
 logic crates (`verbatim-reader-rules`, `verbatim-outpost-logic` and
@@ -97,14 +97,19 @@ x86_64-unknown-linux-gnu`; crates that reach `verbatim-text` cannot be
 checked this way, because its `zstd-sys` needs a Linux C toolchain, so
 GitHub's `ci-linux` run is their check.
 
-The dependency check inspects the `cargo tree --target all` of each crate the
-`CLAUDE.md` NVDA provenance section lists as platform-neutral (every
-target's graph, so a dependency gated on `cfg(windows)` counts on Linux
-too), and fails
-naming every one that pulls in the `windows` or `windows-core` bindings by
-any path, or reaches `windows-sys` through a workspace crate that names it
-directly; `windows-sys` beneath third-party libraries and the
-workspace-hack crate is allowed, since those libraries are cross-platform.
+The tier check (`xtask/src/tiers.rs`) reads `cargo metadata` once, with no
+platform filter, over normal and build edges, so a dependency gated on
+`cfg(windows)` counts on Linux too. Every workspace member must be classed
+in one of its tiers, platform-neutral, logic, Windows or tool, so a new
+crate is classed when it is added. It fails naming every offence and its
+path: a platform-neutral crate that reaches a workspace crate of another
+tier, a logic crate that reaches a Windows or tool crate, either that
+reaches the `windows` or `windows-core` bindings by any path or reaches
+`windows-sys` or `winapi` through a workspace crate that names it
+directly, and a role's crate (the outpost's, the listener's or the
+supervisor's) that reaches another role's. `windows-sys` beneath
+third-party libraries and the workspace-hack crate is allowed, since
+those libraries are cross-platform.
 
 Before it builds anything, `cargo xtask ci` also scans the sources with
 checks of its own, each failing the run with the file and line of every

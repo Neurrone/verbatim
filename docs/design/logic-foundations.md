@@ -31,7 +31,7 @@ No edge joins two roles, or the logic crates of different roles; no logic crate 
 
 ### The tier check in `cargo xtask ci`
 
-The platform-neutral dependency check read normal edges only, did not name `winapi`, and passed a Windows-only workspace crate with no `windows` dependency of its own, such as `verbatim-gui`. It is replaced, in the build's last commit, by a check of the crate tiers (`xtask/src/tiers.rs` (planned)), which reads `cargo metadata` once, over normal and build edges for every target:
+The platform-neutral dependency check read normal edges only, did not name `winapi`, and passed a Windows-only workspace crate with no `windows` dependency of its own, such as `verbatim-gui`. It is replaced by a check of the crate tiers (`xtask/src/tiers.rs`), which reads `cargo metadata` once, over normal and build edges for every target:
 
 - Every workspace member is classed in one list: platform-neutral, logic, Windows, or tool. A member in no class fails. Reason: the hole was a crate the check did not know.
 - A platform-neutral crate reaches only platform-neutral workspace crates; a logic crate only platform-neutral and logic ones; neither reaches `windows` or `windows-core` by any path, nor `windows-sys` or `winapi` from a workspace crate other than `workspace-hack`. Reason: the platform-neutral tier may depend on no GPL-tier crate, and third-party crates with target-gated bindings are cross-platform code.
@@ -65,7 +65,7 @@ M4.5's build that lets `xtask` build on any platform and adds a Linux job to CI,
 By module, from what each one uses:
 
 - Windows-only: `conformance` (windows, `verbatim-uia`, `verbatim-uia-rops`, `verbatim-term-sim`, `verbatim-e2e`), `record` (windows, `verbatim-term-sim`, serde), `nvda` (`verbatim-agent`, `verbatim-control`, `verbatim-model`), `demo` and `vm` (`verbatim-e2e`, `verbatim-config`, `verbatim-agent`, base64, PowerShell and Hyper-V), `park` and `trace` (Windows tools: tscon, schtasks, WPR), `perf` (uses `trace`), and in `main.rs` the functions `warm_speech`, `activate_speech` and `windows_terminal`.
-- Portable, using the standard library alone: `docs`, `ownership`, `waits` and `shapes`, and in `main.rs` the dependency check `check_platform_neutral_deps` and `ci` itself.
+- Portable: `docs`, `ownership`, `waits` and `shapes`, using the standard library alone, and in `main.rs` `ci` itself; and the tier check (`tiers.rs`), since the crate split, which reads `cargo metadata`'s JSON with `serde_json`, xtask's one portable dependency.
 
 #### Gating rules
 
@@ -78,15 +78,15 @@ By module, from what each one uses:
 
 - The documentation check (`xtask/src/docs.rs`) is already portable: it builds paths with `/`, compares every component's letter case against directory listings (so a link that differs only in case fails on both systems), and reads lines on `\n` with trailing whitespace trimmed, so both the CRLF checkout on GitHub's Windows runner and Linux's LF checkout read the same. The repository stores every document and fixture with LF (`git ls-files --eol`).
 - The scans (`waits.rs`, `shapes.rs`, `ownership.rs`) are portable: paths are normalised with `replace('\\', "/")` or compared with `Path::ends_with`, files are read with `str::lines`, which drops a trailing `\r`, and Windows names such as `Start-Sleep` or `verbatim_input_windows` are only text they search for.
-- The platform-neutral dependency check is the one host-dependent check: `cargo tree` reads the graph for the host's target, so on Linux it would not see a dependency gated on `cfg(windows)` and would pass where Windows fails. Rule: it passes `--target all`, so it reads the same graph on every host. Reason: the check's answer must not depend on where it ran. On today's graph, `cargo tree --target all` for every platform-neutral crate reaches `windows-sys` only (beneath third-party crates and `workspace-hack`, which the check allows) and neither `windows` nor `windows-core`. `cargo tree` reads the graph and builds nothing, so this is not a build naming a target. Its workspace-crate test compares paths with `std::path::MAIN_SEPARATOR`, which is correct on both systems.
+- The graph check is the one host-dependent check: a graph read for the host's target would not show a dependency gated on `cfg(windows)` on Linux, and would pass where Windows fails. Rule: it reads every target's graph (the tier check's `cargo metadata` has no platform filter), so it reads the same graph on every host. Reason: the check's answer must not depend on where it ran. On today's graph, `cargo tree --target all` for every platform-neutral crate reaches `windows-sys` only (beneath third-party crates and `workspace-hack`, which the check allows) and neither `windows` nor `windows-core`. `cargo tree` reads the graph and builds nothing, so this is not a build naming a target. Its workspace-crate test compares paths with `std::path::MAIN_SEPARATOR`, which is correct on both systems.
 
 ### `cargo xtask ci` on Linux
 
 `ci` keeps one entry point, and what it runs depends on the host:
 
-- On every host: the dependency check, the three scans and the documentation check.
+- On every host: the tier check, the three scans and the documentation check.
 - On Windows, as today: the hakari checks, rustfmt, and Clippy and unit tests for the whole workspace.
-- On any other host: Clippy (warnings denied, all targets) and unit tests for the crates in a new constant, `LINUX_CRATES`, in `xtask/src/main.rs` beside `PLATFORM_NEUTRAL_CRATES`, each passed as `-p`.
+- On any other host: Clippy (warnings denied, all targets) and unit tests for the crates in a constant, `LINUX_CRATES`, in `xtask/src/main.rs`, each passed as `-p`.
 
 Rules, each with its reason:
 
@@ -114,7 +114,7 @@ So no obstacle is known in today's code. Whether `verbatim-text`'s and `verbatim
 
 #### Before and after the split
 
-- Built before the split: xtask's gating, `--target all` in the dependency check, `ci`'s host-dependent steps with `LINUX_CRATES` holding the platform-neutral tier and `xtask`, the `ci-linux` job, and the `docs` job on Linux.
+- Built before the split: xtask's gating, every target's graph in the dependency check (now the tier check), `ci`'s host-dependent steps with `LINUX_CRATES` holding the platform-neutral tier and `xtask`, the `ci-linux` job, and the `docs` job on Linux.
 - Since the split, `LINUX_CRATES` holds the three logic crates too. A logic crate that reaches a Windows crate unconditionally fails to build on Linux, which proves what the tier check reads from the graph; an edge gated on `cfg(windows)` builds on Linux, so only the tier check, reading every target, catches it.
 
 ### Verifying locally on this Windows machine

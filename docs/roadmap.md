@@ -219,7 +219,6 @@ Tests and tooling:
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).
 - Compare mode presses Verbatim+V (`kb:verbatim+v`) as Insert+V, which under NVDA types "v" into Notepad and corrupts the later steps of `notepad_editing`'s comparison.
-- The platform-neutral dependency check (`check_platform_neutral_deps` in `xtask/src/main.rs`) runs `cargo tree -e normal`, so a build-dependency on `windows-sys` or a Windows-specific workspace crate is not caught, `winapi` is on neither banned list, and a dependency on a Windows-only workspace crate that uses no bindings itself passes.
 - `cargo xtask trace scenario` and `cargo xtask measure` look for the build under `<worktree>\target` and ignore `CARGO_TARGET_DIR`, so a worktree building elsewhere measures a stale or missing build.
 - A double-click is checked only by hand: the agent has no mouse request, so no scenario pins "beta selected" for a double-click inside a word.
 - Key holding has no test of a waiting key following the newest watch (`crates/verbatim-core/src/editing.rs`); its other gaps are in M6.5.
