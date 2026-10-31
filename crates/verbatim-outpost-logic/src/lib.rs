@@ -1399,7 +1399,7 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let (deadline, running) = budget(&entry);
+        let (deadline, running) = budget(&entry, now);
         let window = intake::window_of(&entry.item);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
@@ -1618,16 +1618,20 @@ fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// The deadline for an entry, and the query it answers, if it is one.
-fn budget(entry: &Entry) -> (Duration, Option<(RequestId, TraceId)>) {
+/// The deadline for an entry begun at `now`, and the query it answers, if
+/// it is one. A shell item query's deadline is the one it carries, a due
+/// time on the shared clock fixed when the dialog asked, so a query that
+/// waited behind other work has only what is left of it.
+fn budget(entry: &Entry, now: Now) -> (Duration, Option<(RequestId, TraceId)>) {
     match &entry.item {
         Item::Query { request_id, query } => {
             let deadline = match query {
                 Query::FocusNow => HANDLING_DEADLINE,
-                Query::Ancestors { .. }
-                | Query::DumpTree { .. }
-                | Query::ShellItems { .. }
-                | Query::ShellItemPosition { .. } => WALK_DEADLINE,
+                Query::Ancestors { .. } | Query::DumpTree { .. } => WALK_DEADLINE,
+                Query::ShellItems { answer_by_us, .. }
+                | Query::ShellItemPosition { answer_by_us, .. } => {
+                    Duration::from_micros(answer_by_us.saturating_sub(now.wall_us))
+                }
                 Query::Text { .. } => TEXT_DEADLINE,
                 _ => STEP_DEADLINE,
             };

@@ -38,6 +38,19 @@ struct Entry<A> {
     deadline_us: Option<u64>,
 }
 
+/// A request whose deadline passed ([`RequestTable::expire`]).
+#[derive(Debug, PartialEq)]
+pub struct Expired<A> {
+    /// The request, to withdraw from its outpost.
+    pub id: RequestId,
+    /// The outpost it went to.
+    pub outpost: OutpostId,
+    /// Who asked.
+    pub asker: A,
+    /// Its outcome, failed ([`DEADLINE_PASSED`]).
+    pub outcome: QueryOutcome,
+}
+
 /// Outstanding queries, keyed by request id, each with its asker `A`.
 /// Owned by the reducer thread.
 pub struct RequestTable<A> {
@@ -152,10 +165,11 @@ impl<A> RequestTable<A> {
     }
 
     /// Ends every request whose deadline is `now_us` or earlier as failed
-    /// ([`DEADLINE_PASSED`]), returning their askers with that outcome, in
-    /// the order the requests were made. A later answer from its outpost
-    /// finds no request and is dropped.
-    pub fn expire(&mut self, now_us: u64) -> Vec<(A, QueryOutcome)> {
+    /// ([`DEADLINE_PASSED`]), returning each one's id and outpost, to
+    /// withdraw it from, and its asker with that outcome, in the order the
+    /// requests were made. A later answer from its outpost finds no request
+    /// and is dropped.
+    pub fn expire(&mut self, now_us: u64) -> Vec<Expired<A>> {
         if self.timed == 0 {
             return Vec::new();
         }
@@ -167,12 +181,12 @@ impl<A> RequestTable<A> {
             .collect();
         expired
             .into_iter()
-            .filter_map(|id| self.remove(id))
-            .map(|entry| {
-                (
-                    entry.asker,
-                    QueryOutcome::Failed(DEADLINE_PASSED.to_owned()),
-                )
+            .filter_map(|id| self.remove(id).map(|entry| (id, entry)))
+            .map(|(id, entry)| Expired {
+                id,
+                outpost: entry.outpost,
+                asker: entry.asker,
+                outcome: QueryOutcome::Failed(DEADLINE_PASSED.to_owned()),
             })
             .collect()
     }
@@ -353,12 +367,25 @@ mod tests {
         let later = table.begin_until(OutpostId(1), "later", 9_000_000);
         let first = table.begin_until(OutpostId(1), "first", 5_000_000);
         table.begin(OutpostId(1), "untimed");
-        table.begin_until(OutpostId(2), "second", 4_000_000);
+        let second = table.begin_until(OutpostId(2), "second", 4_000_000);
         assert_eq!(table.next_deadline(), Some(4_000_000));
         assert_eq!(table.expire(3_999_999), []);
         assert_eq!(
             table.expire(5_000_000),
-            [("first", deadline_passed()), ("second", deadline_passed())]
+            [
+                Expired {
+                    id: first,
+                    outpost: OutpostId(1),
+                    asker: "first",
+                    outcome: deadline_passed()
+                },
+                Expired {
+                    id: second,
+                    outpost: OutpostId(2),
+                    asker: "second",
+                    outcome: deadline_passed()
+                }
+            ]
         );
         assert_eq!(table.next_deadline(), Some(9_000_000));
         assert_eq!(table.finish(first, OutpostId(1), done()), None);

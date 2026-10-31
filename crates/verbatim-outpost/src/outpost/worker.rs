@@ -4120,13 +4120,24 @@ impl Worker<'_> {
             Query::Text { node_id, op } => {
                 Ok(QueryResult::Text(text_reads::answer(context, *node_id, op)))
             }
-            Query::ShellItems { kind } => {
-                super::shell_items::shell_items(context, client, *kind).map(QueryResult::ShellItems)
-            }
-            Query::ShellItemPosition { kind, item } => {
-                super::shell_items::shell_item_position(context, client, *kind, item)
-                    .map(QueryResult::ShellItemPosition)
-            }
+            Query::ShellItems {
+                kind,
+                walk_until_us,
+                ..
+            } => super::shell_items::shell_items(context, client, *kind, *walk_until_us)
+                .map(QueryResult::ShellItems),
+            Query::ShellItemPosition {
+                kind,
+                item,
+                walk_until_us,
+                ..
+            } => super::shell_items::shell_item_position(
+                context,
+                client,
+                (*kind, item),
+                *walk_until_us,
+            )
+            .map(QueryResult::ShellItemPosition),
         };
         let outcome = match result {
             Ok(result) => QueryOutcome::Done(result),

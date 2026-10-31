@@ -1354,6 +1354,35 @@ fn a_caret_read_after_an_abandoned_text_call_waits_for_nothing() {
     assert_eq!(handles(read).0, 2);
 }
 
+/// A shell items query is abandoned at the deadline it carries, on the
+/// shared clock from the dialog's request, not a walk's deadline from when
+/// its worker begins it: one that waited behind other work has only what
+/// is left.
+#[test]
+fn a_shell_items_query_is_abandoned_at_its_answer_by_time() {
+    let mut replay = Replay::new();
+    let busy = program(&replay.push(name_change(5), Source::Hook, 1)).request;
+    replay.push(
+        Item::Query {
+            request_id: RequestId::shell(4),
+            query: Query::ShellItems {
+                kind: verbatim_model::ShellItemKind::Taskbar,
+                walk_until_us: 2_000_000,
+                answer_by_us: 2_500_000,
+            },
+        },
+        Source::Other,
+        2,
+    );
+    // The query begins at 1.5 s, behind the event's program.
+    let effects = replay.finish(busy, false, 1_500);
+    assert_eq!(program(&effects).request.generation, 0);
+    assert_eq!(replies(&replay.tick(2_499)), []);
+    let effects = replay.tick(2_500);
+    assert_eq!(replies(&effects), [(4, "abandoned")]);
+    assert!(abandons(&effects));
+}
+
 #[test]
 fn a_focus_groups_older_entries_are_tried_after_an_abandoned_try() {
     let mut replay = Replay::new();

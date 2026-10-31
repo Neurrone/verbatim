@@ -1347,7 +1347,7 @@ impl ReducerThread<'_> {
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
                 self.live.mark_ready(outpost);
-                let asked = self.wanted.ready(target_pid);
+                let asked = self.wanted.ready(target_pid, now_us());
                 if let Some(application) = asked.focus_now {
                     if application != target_pid {
                         // A console host's replacement, asked for its
@@ -1357,7 +1357,7 @@ impl ReducerThread<'_> {
                     self.focus_now(outpost, application);
                 }
                 for wanted in asked.shell {
-                    self.ask_shell_items(outpost, wanted.kind, wanted.ask);
+                    self.ask_shell_items(outpost, wanted.kind, wanted.ask, wanted.times);
                 }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
@@ -1887,10 +1887,10 @@ impl ReducerThread<'_> {
     /// starting one when there is none, so verbatim.exe makes no UIA
     /// connection into the shell's windows
     /// (`docs/design/listener-without-connections.md`, decision 9). The
-    /// outcome goes to `ask`'s callback, exactly once; `None` when there is no
-    /// taskbar, when its process gets no outpost or none is ready by
-    /// [`wanted::SHELL_ITEMS_DEADLINE`] from now, or when no answer
-    /// has come by that long after the query was sent.
+    /// outcome goes to `ask`'s callback, exactly once, within
+    /// [`wanted::SHELL_ITEMS_WAIT`] of now; `None` when there is no
+    /// taskbar, when its process gets no outpost or none is ready before
+    /// the walk's last call, or when no answer has come by then.
     fn shell_items(&mut self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
         let Some(pid) = taskbar_process() else {
             // Dropped, the request is answered "nothing".
@@ -1898,38 +1898,50 @@ impl ReducerThread<'_> {
             drop(ask);
             return;
         };
-        let deadline = Instant::now() + wanted::SHELL_ITEMS_DEADLINE;
+        let times = wanted::ShellTimes { asked_us: now_us() };
         if let Some(outpost) = self.live.ready(pid) {
-            self.ask_shell_items(outpost, kind, ask);
+            self.ask_shell_items(outpost, kind, ask, times);
         } else {
-            self.wanted.want_shell_items(pid, kind, ask, deadline);
+            self.wanted.want_shell_items(pid, kind, ask, times);
             self.context.supervisor.ensure_spawned(pid);
         }
     }
 
     /// Sends `outpost` the shell items query or the position query `ask`
-    /// says, answered with nothing by Core if no outcome has come
-    /// [`wanted::SHELL_ITEMS_DEADLINE`] from now, after the
-    /// outpost's own deadline for the walk has run out.
+    /// says, with the walk's last call and the outpost's deadline from
+    /// `times`, answered with nothing by Core, and withdrawn, if no outcome
+    /// has come by Core's deadline ([`wanted::ShellTimes::answer_by_us`]).
     fn ask_shell_items(
         &mut self,
         outpost: OutpostId,
         kind: ShellItemKind,
         ask: verbatim_gui::ShellAsk,
+        times: wanted::ShellTimes,
     ) {
-        let deadline_us = now_us().saturating_add(
-            u64::try_from(wanted::SHELL_ITEMS_DEADLINE.as_micros()).unwrap_or(u64::MAX),
-        );
+        let walk_until_us = times.walk_until_us();
+        let answer_by_us = times.outpost_answer_by_us();
         let (asker, query) = match ask {
-            verbatim_gui::ShellAsk::Items(deliver) => {
-                (Asker::ShellItems { deliver }, Query::ShellItems { kind })
-            }
+            verbatim_gui::ShellAsk::Items(deliver) => (
+                Asker::ShellItems { deliver },
+                Query::ShellItems {
+                    kind,
+                    walk_until_us,
+                    answer_by_us,
+                },
+            ),
             verbatim_gui::ShellAsk::Position(item, deliver) => (
                 Asker::ShellItemPosition { deliver },
-                Query::ShellItemPosition { kind, item },
+                Query::ShellItemPosition {
+                    kind,
+                    item,
+                    walk_until_us,
+                    answer_by_us,
+                },
             ),
         };
-        let id = self.requests.begin_until(outpost, asker, deadline_us);
+        let id = self
+            .requests
+            .begin_until(outpost, asker, times.answer_by_us());
         let command = CoreToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id,
@@ -2000,22 +2012,36 @@ impl ReducerThread<'_> {
         self.wanted
             .next_deadline()
             .into_iter()
-            .chain(self.requests.next_deadline().map(instant_at))
+            .chain(self.requests.next_deadline())
+            .min()
+            .map(instant_at)
+            .into_iter()
             .chain(self.held_due.map(|(_, due)| due))
             .chain(self.terminal_timer.map(|(_, due)| due))
             .chain(self.toggle_reads.front().map(|&(_, due)| due))
             .min()
     }
 
-    /// Answers every shell items request whose deadline is `now` or
-    /// earlier, still waiting for its outpost or for the outpost's answer,
-    /// with nothing, ends every request whose deadline is past, and tells
-    /// Core once the held key's one deadline is past.
+    /// Answers every shell items request still waiting for its outpost at
+    /// its walk's last call with nothing, ends every request whose deadline
+    /// is past and withdraws it from its outpost, and tells Core once the
+    /// held key's one deadline is past.
     fn expire(&mut self, now: Instant) {
-        self.wanted.expire(now);
+        let shared = now_us();
+        self.wanted.expire(shared);
         if self.requests.next_deadline().is_some() {
-            for (asker, outcome) in self.requests.expire(now_us()) {
-                self.deliver(asker, outcome);
+            for expired in self.requests.expire(shared) {
+                let command = CoreToOutpost::Cancel {
+                    request_id: expired.id,
+                };
+                if let Err(error) = self
+                    .context
+                    .supervisor
+                    .send_to_outpost(expired.outpost, command)
+                {
+                    tracing::debug!(%error, outpost = %expired.outpost, "an expired request could not be withdrawn");
+                }
+                self.deliver(expired.asker, expired.outcome);
             }
         }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {

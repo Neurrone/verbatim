@@ -472,21 +472,30 @@ mod tests {
     }
 
     /// A shell items outcome reaches the dialog, and a request ended at its
-    /// deadline, failed, gives it nothing.
+    /// deadline, failed, gives it nothing and is named with its outpost to
+    /// be withdrawn.
     #[test]
     fn a_shell_items_answer_reaches_the_dialog_and_a_passed_deadline_gives_none() {
         let outcomes = std::sync::Arc::default();
         let mut table = RequestTable::default();
         let answered = table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
-        table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
+        let expired = table.begin_until(OutpostId(1), shell_items(&outcomes), 5_000_000);
         finish(
             &mut table,
             answered,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
         );
-        for (asker, outcome) in table.expire(5_000_000) {
-            assert_eq!(deliver(asker, outcome), [] as [Input; 0]);
+        let ended = table.expire(5_000_000);
+        assert_eq!(
+            ended
+                .iter()
+                .map(|ended| (ended.id, ended.outpost))
+                .collect::<Vec<_>>(),
+            [(expired, OutpostId(1))]
+        );
+        for ended in ended {
+            assert_eq!(deliver(ended.asker, ended.outcome), [] as [Input; 0]);
         }
         assert_eq!(
             *outcomes.lock().expect("outcomes"),

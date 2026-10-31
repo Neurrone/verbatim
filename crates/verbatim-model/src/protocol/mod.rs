@@ -974,6 +974,13 @@ pub enum Query {
     ShellItems {
         /// Which shell surface.
         kind: crate::ShellItemKind,
+        /// When the walk makes its last call, in microseconds on the run's
+        /// shared clock: from then it answers the items read.
+        walk_until_us: u64,
+        /// The outpost's deadline for the query, in microseconds on the
+        /// run's shared clock: past it the query is abandoned and answered
+        /// [`QueryOutcome::Abandoned`].
+        answer_by_us: u64,
     },
     /// Where one item of a list [`Query::ShellItems`] answered may be on
     /// the screen now, for a click on it: the outpost walks the surface
@@ -986,16 +993,21 @@ pub enum Query {
         kind: crate::ShellItemKind,
         /// The item chosen.
         item: crate::ShellItem,
+        /// When the walk makes its last call, its last position read
+        /// included, in microseconds on the run's shared clock.
+        walk_until_us: u64,
+        /// The outpost's deadline for the query, in microseconds on the
+        /// run's shared clock, as for [`Query::ShellItems`].
+        answer_by_us: u64,
     },
 }
 
 /// How long an outpost's worker may take over a walk query,
-/// [`Query::Ancestors`] (up to 64 hops), [`Query::DumpTree`] (up to 4096
-/// nodes), [`Query::ShellItems`] or [`Query::ShellItemPosition`], from
-/// when it begins it: by then it has answered, or it is abandoned and the
-/// query answered [`QueryOutcome::Abandoned`]. Core waits for a shell
-/// items or position answer longer than this, so that whichever comes
-/// reaches it before it gives up.
+/// [`Query::Ancestors`] (up to 64 hops) or [`Query::DumpTree`] (up to 4096
+/// nodes), from when it begins it: by then it has answered, or it is
+/// abandoned and the query answered [`QueryOutcome::Abandoned`]. The shell
+/// item queries carry their own deadline instead
+/// ([`Query::ShellItems`]'s `answer_by_us`).
 pub const WALK_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The one outcome of a query.
