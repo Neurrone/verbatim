@@ -166,7 +166,7 @@ use std::time::Duration;
 use verbatim_model::protocol::{DeliveredFact, GapAnswer, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing};
 
-use super::entry::{Entry, Item, UiaKind, WinKind, is_state_property};
+use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
 use super::gap_record::{Accepted, CopyDropped, GapRead, GapRecord, Outcome};
 
 /// The object id of a window's client area (`OBJID_CLIENT`), which the
@@ -635,7 +635,7 @@ impl Intake {
             .waiting
             .iter()
             .position(|waiting| {
-                waiting.marker.is_some() || matches!(waiting.entry.item, Item::IdleQuery { .. })
+                waiting.marker.is_some() || matches!(waiting.entry.item, Item::Barrier { .. })
             })
             .map_or(self.waiting.len(), |at| {
                 if self.waiting[at].marker.is_some() {
@@ -737,7 +737,8 @@ impl Intake {
     /// Whether anything is waiting to be handled, planned or not, a UIA
     /// focus's marker waiting for its read included, and the entry kept for
     /// when nothing else is ready left out ([`take_idle`](Self::take_idle)).
-    pub fn busy(&self) -> bool {
+    #[cfg(test)]
+    fn busy(&self) -> bool {
         !self.waiting.is_empty() || !self.batch.is_empty()
     }
 
@@ -848,6 +849,19 @@ impl Intake {
             .chain(self.batch.iter().flat_map(Planned::entries))
     }
 
+    /// The tests' settles waiting, planned or not, by number.
+    pub fn settles(&self) -> std::collections::BTreeSet<u64> {
+        self.entries()
+            .filter_map(|entry| match entry.item {
+                Item::Barrier {
+                    asker: Asker::Settle(id),
+                    ..
+                } => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// What the planning reads of the focus, which programs are given a
     /// copy of and the mailbox judges its drops by.
     #[cfg(test)]
@@ -882,7 +896,7 @@ fn old_focus_events_first(waiting: &mut VecDeque<Waiting>, place: usize, old: &[
         .iter()
         .skip(place + 1)
         .position(|waiting| {
-            waiting.marker.is_some() || matches!(waiting.entry.item, Item::IdleQuery { .. })
+            waiting.marker.is_some() || matches!(waiting.entry.item, Item::Barrier { .. })
         })
         .map_or(waiting.len(), |at| place + 1 + at);
     let mut place = place;
@@ -963,7 +977,7 @@ fn remove_waiting(
     at: usize,
     matches: impl Fn(&Waiting) -> bool,
 ) -> Option<(usize, Waiting)> {
-    let is_query = |waiting: &Waiting| matches!(waiting.entry.item, Item::IdleQuery { .. });
+    let is_query = |waiting: &Waiting| matches!(waiting.entry.item, Item::Barrier { .. });
     let found = waiting
         .range(..at)
         .rev()
@@ -1040,8 +1054,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
         Item::Query { .. }
         | Item::NotedCaret { .. }
-        | Item::Settle(_)
-        | Item::IdleQuery { .. }
+        | Item::Barrier { .. }
         | Item::Wake
         | Item::GapBound
         | Item::GapRead { .. } => (None, Category::Exempt, 0),
@@ -1356,7 +1369,7 @@ fn plan(
     let query = matches!(
         planned.last(),
         Some(Planned::Run(Entry {
-            item: Item::IdleQuery { .. },
+            item: Item::Barrier { .. },
             ..
         }))
     )
@@ -2738,8 +2751,8 @@ mod tests {
     }
 
     fn idle_query(round: u64) -> Item {
-        Item::IdleQuery {
-            round,
+        Item::Barrier {
+            asker: Asker::Round(round),
             behind_noted: false,
         }
     }

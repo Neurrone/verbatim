@@ -1219,20 +1219,30 @@ impl Outpost {
         Ok(())
     }
 
-    /// Waits until the worker has handled everything queued before this
-    /// call and the noted caret those entries left, the focus-following
-    /// subscriptions have made every move the worker asked of them, and
-    /// every message the worker published has been written to the pipe. A
-    /// test that measures what the outpost's handling cost the application,
-    /// or that asserts the outpost said nothing more, waits on this for its
-    /// evidence. Returns early if the worker is abandoned meanwhile.
+    /// Waits until the reducer reaches a barrier behind everything queued
+    /// before this call and the noted caret those entries left, with no
+    /// program in flight, then until the focus-following subscriptions
+    /// have made every move asked of them before it and every message
+    /// published before it has been written to the pipe. A test that
+    /// measures what the outpost's handling cost the application, or that
+    /// asserts the outpost said nothing more, waits on this for its
+    /// evidence. Unlike Core's idle round, it waits for no open caret
+    /// watch, open gap record or held copies of the hook's, and it divides
+    /// batches as the round does. Returns once the outpost shuts down.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.context.mailbox.post(Posted::Settle(done_tx));
-        // An error means the request was dropped: its worker abandoned, or
-        // the outpost shut down.
-        let _ = done_rx.recv();
-        // The hook changes the worker's handling asked for are made too.
+        // An error means the settle was dropped: the outpost shut down.
+        // Every move and message before the answer was handed to its
+        // thread before the shell answered, so these waits come after
+        // them, on this thread rather than the reducer's.
+        if done_rx.recv().is_ok() {
+            if let Some(registration) = self.context.focus_events.get() {
+                registration.settle();
+            }
+            self.context.outbound.flush();
+        }
+        // The hook changes the programs asked for are made too.
         if let Some(nudger) = self.context.event_thread.get() {
             nudger.sync();
         }
@@ -1495,8 +1505,8 @@ impl Outpost {
                 Source::Other,
             ),
             CoreToOutpost::IdleQuery { round } => context.push(
-                Item::IdleQuery {
-                    round: *round,
+                Item::Barrier {
+                    asker: reducer::Asker::Round(*round),
                     behind_noted: false,
                 },
                 (TraceId::mint(), now_us(), EventTiming::default()),

@@ -4,8 +4,8 @@
 //! its inbox, which the reducer's shell fills, runs it on the copies the
 //! program came with, and posts each commit and its end to the mailbox; it
 //! writes no follow state and sends nothing to Core itself. The programs
-//! are the handlers below: an entry's handling, the owed work, a settle,
-//! a release's drop, and the finish of a cut caret read. Each makes the
+//! are the handlers below: an entry's handling, the owed work, a release's
+//! drop, and the finish of a cut caret read. Each makes the
 //! calls the outpost has always made for its entry, so the calls each
 //! handling makes are unchanged. The worker keeps nothing between programs:
 //! each runs on the copies it was dispatched with.
@@ -35,7 +35,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Instant;
 
@@ -90,11 +90,10 @@ use verbatim_win32::window::{
 pub(super) use super::reducer::is_state_property;
 
 /// A program for a worker, with what the shell let go of for the worker to
-/// drop before it runs, and, for a settle, who waits on it.
+/// drop before it runs.
 pub(super) struct Job {
     pub(super) program: Program,
     pub(super) garbage: Garbage,
-    pub(super) settle: Option<mpsc::Sender<()>>,
 }
 
 /// A worker generation's charge, shared between the worker and the shell
@@ -296,11 +295,7 @@ fn run(
 /// Runs one program, after dropping what the shell let go of, and posts its
 /// end.
 fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<Charge>) {
-    let Job {
-        program,
-        garbage,
-        settle,
-    } = job;
+    let Job { program, garbage } = job;
     // Objects the shell let go of: releasing one can call into the
     // application, so it is done here, under the program's deadline.
     drop(garbage);
@@ -345,15 +340,6 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         }
         Work::Owed(owed) => {
             Worker::new(&request_context, client, 0, EventTiming::default()).attempt_owed(owed);
-        }
-        Work::Settle(_) => {
-            if let Some(registration) = context.focus_events.get() {
-                registration.settle();
-            }
-            context.outbound.flush();
-            if let Some(done) = settle {
-                let _ = done.send(());
-            }
         }
         Work::Drop => {}
         Work::Finish { cut, waiting } => {
@@ -410,7 +396,6 @@ fn describe(work: &Work) -> String {
     match work {
         Work::Entry { entry, .. } => describe_item(&entry.item),
         Work::Owed(owed) => format!("owed work of {:?}", owed.node),
-        Work::Settle(id) => format!("settle {id}"),
         Work::Drop => "drop".to_owned(),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
     }
@@ -436,8 +421,7 @@ fn describe_item(item: &Item) -> String {
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
-        Item::Settle(_) => "settle".to_owned(),
-        Item::IdleQuery { round, .. } => format!("idle query {round}"),
+        Item::Barrier { asker, .. } => format!("barrier of {asker:?}"),
         Item::Wake => "wake".to_owned(),
         Item::GapBound => "the gap record's bound".to_owned(),
         Item::GapRead { window } => format!("the gap record's read, window {window}"),
@@ -833,7 +817,7 @@ impl Worker<'_> {
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
             Item::Wake => self.wake(),
             // The reducer's own: never a program's.
-            Item::NodesHeld { .. } | Item::Settle(_) | Item::IdleQuery { .. } | Item::GapBound => {}
+            Item::NodesHeld { .. } | Item::Barrier { .. } | Item::GapBound => {}
             Item::GapRead { window } => self.gap_read(
                 GapRead {
                     window,

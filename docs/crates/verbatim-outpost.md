@@ -379,10 +379,20 @@ the same tables and code, which the arbitrator's own lists are built from.
   `set_gap_timer` (a `GapTimer` for the gap record's bound, which
   `gap_bound_reacher` reaches); and `without_listener`, for an outpost
   no focus listener forwards to, whose hook's copies are never held.
-- `Outpost::settle` waits until everything queued is handled, follow-ups
-  included, the subscription has made every move asked, every published
-  message is written, and the event thread has taken every nudge. It covers
-  only what has reached the outpost.
+- `Outpost::settle` posts a barrier (`Item::Barrier` with
+  `Asker::Settle`) and waits until the reducer reaches it with no program
+  in flight, everything queued before it handled and a noted caret read,
+  then, on the caller's thread, until the subscription has made every move
+  asked (`Registration::settle`), every published message is written
+  (`Outbound::flush`), and the event thread has taken every nudge. The
+  reducer answers it as it is reached (`Effect::Settled`), waiting for no
+  open caret watch, open gap record or held copies of the hook's, as
+  Core's round does; it divides batches as the round does, and waits for
+  nothing that arrived after it. The shell keeps its waiter by number, and
+  checks after every transition that the waiters are the settles waiting
+  in the intake (`Reducer::settles`); at shutdown the intake drops them
+  and the shell its waiters, so the call returns. It covers only what has
+  reached the outpost.
 - `Outpost::failed_reads` gives the worker's and subscription callbacks'
   failed cached reads (`verbatim_uia::calls`), also logged at shutdown.
 - `Outpost::observe_heard` hands a `HeardObserver` each event the outpost's
@@ -427,7 +437,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   release, the store's for a commit's writes, and a worker's charge.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
-  settle, a release's drop, or the finish of a caret
+  release's drop, or the finish of a caret
   read cut at its value change check ("Text and caret"), with copies of
   what it
   reads
@@ -1279,7 +1289,7 @@ progress. The round is in band, so it covers pipes and backlogs.
   first (`IdleQueried`); outposts being launched are asked once every launch
   has reported, a starting outpost behind its held facts. The query gets
   through a full queue.
-- An outpost queues it (`Item::IdleQuery`), dividing what waits and ending
+- An outpost queues it (`Item::Barrier` with `Asker::Round`), dividing what waits and ending
   its batch; a noted caret goes just ahead (`Intake::push_ahead`), carrying
   its event's timing, so its read is skipped only when a caret read since
   that event covers it. The reducer reaches the query with no program in

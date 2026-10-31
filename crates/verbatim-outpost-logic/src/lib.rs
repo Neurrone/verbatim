@@ -43,7 +43,7 @@ use verbatim_model::protocol::{
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
 use verbatim_reader_rules::MOVED_ON_GRACE;
 
-pub use self::entry::{Entry, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property};
+pub use self::entry::{Asker, Entry, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property};
 pub use self::follow::{
     Applied, CARET_WATCH_BOUND, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, GapNote,
     Group, OpenWatch, Owed, OwedWork, Poll, Report, Route, Subscription, Target, WatchChange,
@@ -136,8 +136,7 @@ pub enum Work {
     },
     /// The work the followed focus owes.
     Owed(Owed),
-    /// Answers `Outpost::settle` number `0`.
-    Settle(u64),
+
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
     /// Finishes the caret read `cut`, cut at its value change check, with
@@ -291,6 +290,9 @@ pub enum Effect {
     Marks(Marks),
     /// The push-time copy of the arbitrator's verdicts, replaced.
     Verdicts(Arc<Verdicts>),
+    /// A test's settle, number `0`, was reached: the shell answers whoever
+    /// waits on it.
+    Settled(u64),
     /// A verdict of UIA for a window's lifetime was recorded: the event
     /// thread may narrow its hook (the outpost's `narrowing`).
     Narrow,
@@ -501,6 +503,14 @@ impl Reducer {
     #[must_use]
     pub fn queries(&self) -> &BTreeSet<u64> {
         &self.queries
+    }
+
+    /// The tests' settles waiting in the intake, by number, which the
+    /// shell's waiters match: a settle is answered as it is reached, so
+    /// these are the settles not yet answered.
+    #[must_use]
+    pub fn settles(&self) -> BTreeSet<u64> {
+        self.intake.settles()
     }
 
     /// Whether a program is in flight.
@@ -1276,26 +1286,33 @@ impl Reducer {
     /// here, and the rest dispatched.
     fn run(&mut self, entry: Entry, batch: u64, now: Now, effects: &mut Vec<Effect>) {
         match entry.item {
-            Item::IdleQuery {
-                round,
+            Item::Barrier {
+                asker,
                 behind_noted,
             } => {
-                // A noted caret is work owed: the query goes directly
+                // A noted caret is work owed: the barrier goes directly
                 // behind it, and waits for nothing more when it is reached
                 // again.
                 if !behind_noted && let Some(noted) = self.intake.take_idle() {
-                    let query = Entry {
-                        item: Item::IdleQuery {
-                            round,
+                    let barrier = Entry {
+                        item: Item::Barrier {
+                            asker,
                             behind_noted: true,
                         },
                         ..entry
                     };
-                    self.intake.push_ahead([noted, query]);
+                    self.intake.push_ahead([noted, barrier]);
                 } else {
-                    // Answered before anything after it is dispatched.
-                    self.idle_query = Some(round);
-                    self.answer_idle(effects);
+                    // Answered before anything after it is dispatched: a
+                    // test's settle at once, Core's round once no deferred
+                    // work is pending.
+                    match asker {
+                        Asker::Round(round) => {
+                            self.idle_query = Some(round);
+                            self.answer_idle(effects);
+                        }
+                        Asker::Settle(id) => effects.push(Effect::Settled(id)),
+                    }
                 }
             }
             Item::NodesHeld {
@@ -1311,25 +1328,6 @@ impl Reducer {
                     acknowledged,
                     live,
                 });
-            }
-            Item::Settle(id) => {
-                if self.intake.busy() {
-                    // Goes to the back of the queue again.
-                    let _ = self.intake.push(entry, None);
-                } else if let Some(noted) = self.intake.take_idle() {
-                    // A noted caret waits for nothing else to be ready, and
-                    // the settle is: it goes first, and the settle after it.
-                    let _ = self.intake.push(noted, None);
-                    let _ = self.intake.push(entry, None);
-                } else {
-                    self.dispatch(
-                        Work::Settle(id),
-                        (HANDLING_DEADLINE, 0, None),
-                        None,
-                        now,
-                        effects,
-                    );
-                }
             }
             Item::GapBound => match self.intake.gap_bound_reached(now.observed_us) {
                 Ok(Some(GapRead { window, stamp_us })) => {
@@ -1594,8 +1592,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Msaa { .. }
         | Item::Uia(_)
         | Item::NotedCaret { .. }
-        | Item::Settle(_)
-        | Item::IdleQuery { .. }
+        | Item::Barrier { .. }
         | Item::Wake
         | Item::GapBound
         | Item::GapRead { .. } => (HANDLING_DEADLINE, None),

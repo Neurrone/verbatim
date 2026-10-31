@@ -129,6 +129,16 @@ impl UiaEvent {
     }
 }
 
+/// Who asked for an idle barrier ([`Item::Barrier`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asker {
+    /// Core's idle query, of this round.
+    Round(u64),
+    /// A test's `Outpost::settle`, numbered so the shell finds who waits
+    /// on it.
+    Settle(u64),
+}
+
 /// One unit of work: what a program handles, or what the reducer does
 /// itself.
 #[derive(Clone, Debug)]
@@ -183,20 +193,15 @@ pub enum Item {
         /// The terminal's node.
         node_id: NodeId,
     },
-    /// `Outpost::settle`, numbered so the shell finds who waits on it:
-    /// answered once nothing else is waiting, the focus-following
-    /// subscriptions have made every move asked of them, and every message
-    /// published has been written.
-    Settle(u64),
-    /// The harness's idle barrier, round `round`
-    /// (`docs/design/communication.md`, section 6.7): reached once
-    /// everything that arrived before it has been handled, and answered
-    /// once a noted caret is read and no deferred work is pending.
-    /// `behind_noted` once the reducer has put it directly behind the
-    /// noted caret, so that reaching it again waits for nothing more.
-    IdleQuery {
-        /// The round.
-        round: u64,
+    /// The idle barrier (`docs/design/communication.md`, section 6.7):
+    /// it ends its batch, and is reached once everything that arrived
+    /// before it has been handled and a noted caret is read. Core's round
+    /// is answered then once no deferred work is pending, a test's settle
+    /// at once. `behind_noted` once the reducer has put it directly behind
+    /// the noted caret, so that reaching it again waits for nothing more.
+    Barrier {
+        /// Who asked for it.
+        asker: Asker,
         /// Whether the reducer has put it directly behind the noted caret.
         behind_noted: bool,
     },

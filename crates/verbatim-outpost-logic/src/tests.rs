@@ -1471,8 +1471,8 @@ fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
     let effects = replay.push(name_change(1), Source::Hook, 1);
     let busy = program(&effects).request;
     replay.push(
-        Item::IdleQuery {
-            round: 5,
+        Item::Barrier {
+            asker: Asker::Round(5),
             behind_noted: false,
         },
         Source::Other,
@@ -1576,8 +1576,8 @@ fn the_idle_answer_waits_for_the_hooks_copies_held_at_the_start() {
     replay.input(Input::Hooked, 0);
     assert!(programs(&replay.push(name_change(1), Source::Hook, 1)).is_empty());
     let effects = replay.push(
-        Item::IdleQuery {
-            round: 5,
+        Item::Barrier {
+            asker: Asker::Round(5),
             behind_noted: false,
         },
         Source::Other,
@@ -1601,8 +1601,8 @@ fn a_gap_read_in_flight_holds_the_idle_answer() {
     replay.finish(request, false, 3);
     // The query is reached with the gap record open, and waits for it.
     let effects = replay.push(
-        Item::IdleQuery {
-            round: 5,
+        Item::Barrier {
+            asker: Asker::Round(5),
             behind_noted: false,
         },
         Source::Other,
@@ -1623,4 +1623,84 @@ fn a_gap_read_in_flight_holds_the_idle_answer() {
     ));
     let effects = replay.finish(read.request, false, 1_002);
     assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
+}
+
+/// A test's settle, number `id`.
+fn settle(id: u64) -> Item {
+    Item::Barrier {
+        asker: Asker::Settle(id),
+        behind_noted: false,
+    }
+}
+
+/// What `effects` answer as settles and dispatch, in order.
+fn settled_and_dispatches(effects: &[Effect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Settled(id) => Some(format!("settled {id}")),
+            Effect::Dispatch(_) => Some("dispatch".to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_settle_is_answered_as_it_is_reached_and_a_close_drops_it() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let busy = program(&effects).request;
+    // Pushed while a program is in flight: it waits, with no program of
+    // its own, and the query after it is not waited for.
+    assert_eq!(
+        settled_and_dispatches(&replay.push(settle(1), Source::Other, 2)),
+        [] as [String; 0]
+    );
+    replay.push(focus_now(1), Source::Other, 3);
+    assert_eq!(replay.reducer.settles(), [1].into_iter().collect());
+    let effects = replay.finish(busy, false, 4);
+    assert_eq!(settled_and_dispatches(&effects), ["settled 1", "dispatch"]);
+    assert_eq!(handles(program(&effects)), (3, None));
+    assert!(replay.reducer.settles().is_empty());
+    // A settle behind the program in flight when the outpost closes is
+    // dropped with the intake, unanswered.
+    let query = program(&effects).request;
+    replay.push(settle(2), Source::Other, 5);
+    assert_eq!(replay.reducer.settles(), [2].into_iter().collect());
+    let effects = replay.input(Input::Close, 6);
+    assert_eq!(settled_and_dispatches(&effects), [] as [String; 0]);
+    assert!(replay.reducer.settles().is_empty());
+    assert_eq!(
+        settled_and_dispatches(&replay.finish(query, false, 7)),
+        [] as [String; 0]
+    );
+}
+
+#[test]
+fn a_settle_waits_for_a_noted_caret_and_for_no_open_watch() {
+    let mut replay = Replay::new();
+    let effects = replay.push(caret_key(7), Source::Other, 1);
+    let key = program(&effects).request;
+    let open = OpenWatch {
+        poll: None,
+        ..polling_watch(7, 1)
+    };
+    let timing = EventTiming::default();
+    replay.commit(
+        key,
+        Change {
+            noted_caret: Some((NodeId::new(4), TraceId::mint(), 1_000, timing)),
+            ..opens(&open)
+        },
+        2,
+    );
+    replay.push(settle(1), Source::Other, 3);
+    // The noted caret is read first; the settle is answered as that read
+    // ends, with the watch still open.
+    let effects = replay.finish(key, false, 4);
+    assert_eq!(settled_and_dispatches(&effects), ["dispatch"]);
+    let noted = program(&effects).request;
+    let effects = replay.finish(noted, false, 5);
+    assert_eq!(settled_and_dispatches(&effects), ["settled 1"]);
+    assert!(replay.reducer.facts().follow.caret_watch.is_some());
 }
