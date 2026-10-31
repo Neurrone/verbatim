@@ -270,7 +270,7 @@ The reducers are Core's reducer (`verbatim-core`), the outpost's reducer (`verba
 - every workspace crate they reach by a normal dependency, today `verbatim-model`, `verbatim-text` and `verbatim-reader-rules`;
 - every workspace crate that is a development dependency of a covered crate, today `verbatim-term-sim`, the oracle M4.6 builds on.
 
-That is seven crates. `workspace-hack` holds no code. The tier check derives the list from the dependency graph (`covered` in `xtask/src/tiers.rs`), so a crate a reducer comes to depend on falls under the rule without anyone listing it.
+With `verbatim-input`, below, that is eight crates. `workspace-hack` holds no code. The tier check derives the rest of the list from the dependency graph (`covered` in `xtask/src/tiers.rs`), so a crate a reducer comes to depend on falls under the rule without anyone listing it.
 
 `verbatim-speech` is not on the path. No covered crate depends on it, and it runs after the reducer, executing its speech effects. It owns the synthesizer threads, the mixer's hand-off and the cancel waker, so the rule could not hold for it, and its four maps are only looked up, never iterated; it stays outside the rule (Dickson, 2026-10-31). `verbatim-config`, `verbatim-i18n` and `verbatim-audio` are not on the path either. `verbatim-input`, the keyboard decision machine's crate, is covered too, and Core's request table is in `verbatim-core` ("The other owners"); `verbatim-input` is on no reducer's path, so `REDUCERS` in `xtask/src/tiers.rs` lists it by hand.
 
