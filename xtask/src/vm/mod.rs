@@ -35,8 +35,8 @@ pub(crate) const CHECKPOINT_NAME: &str = "golden";
 pub(crate) const AGENT_PORT: u16 = verbatim_agent::protocol::DEFAULT_PORT;
 
 /// Verbatim's install directory in the guest; `xtask vm deploy` writes
-/// `verbatim.exe`, `verbatim-outpost.exe` (resolved next to it, per
-/// `verbatim-outpost`'s supervisor), and `settings.toml` here.
+/// `verbatim.exe`, `verbatim-outpost.exe` and `verbatim-listener.exe`
+/// (resolved next to it by `verbatim-supervisor`), and `settings.toml` here.
 pub(crate) const VERBATIM_DIR: &str = r"C:\VerbatimLab\verbatim";
 
 /// The in-guest agent's install directory, matching
@@ -183,7 +183,7 @@ fn print_usage() {
     eprintln!("  restart          restart the VM and wait for the agent to answer");
     eprintln!("  restore [name]   restore a checkpoint (default 'golden') and wait for the agent");
     eprintln!(
-        "  deploy           build verbatim.exe, verbatim-outpost.exe, and the agent, and copy"
+        "  deploy           build verbatim.exe, its outpost and listener, and the agent, and copy"
     );
     eprintln!("                   them (plus settings.toml) into the guest");
     eprintln!("  test             deploy onto the running guest (starting it if needed), then run");

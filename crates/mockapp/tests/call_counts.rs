@@ -58,6 +58,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 
+use verbatim_listener_logic::focus::{FocusEvent, Judged};
 use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, OutpostToCore, Query};
 use verbatim_model::{
     CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, WindowHandle,
@@ -68,7 +69,6 @@ use verbatim_model::{
 };
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
-use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
@@ -1542,7 +1542,7 @@ fn uia_repeated_focus_costs_exactly() {
     let focused = under_test.focused(hwnd);
     common::reset_hits(hwnd);
     let (judged, listener_calls) = outpost.listener_read(&focused);
-    let verbatim_outpost::focus_read::Judged::Read(_) = &judged else {
+    let verbatim_listener_logic::focus::Judged::Read(_) = &judged else {
         panic!("the listener did not read a repeated focus: {judged:?}");
     };
     let cost = Cost {
@@ -1602,7 +1602,7 @@ fn the_listener_makes_no_connection() {
             "the element mockapp reports focused"
         );
         let (judged, listener_calls) = outpost.listener_read(&focused);
-        let verbatim_outpost::focus_read::Judged::Read(_) = &judged else {
+        let verbatim_listener_logic::focus::Judged::Read(_) = &judged else {
             panic!("the listener did not read the focus on {name}: {judged:?}");
         };
         assert_eq!(
@@ -1701,7 +1701,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             expected_hits,
             "the parent's calls while the listener read ({path})"
         );
-        let verbatim_outpost::focus_read::Judged::Read(read) = &judged else {
+        let verbatim_listener_logic::focus::Judged::Read(read) = &judged else {
             panic!("the listener did not read the focus ({path}): {judged:?}");
         };
         let ancestors: Vec<(Option<&str>, isize)> = read

@@ -208,7 +208,7 @@ does):
   the translation uses it while that window is in front. When the
   listener starts with a console already in front, it hooks every
   console's events until that console names its thread, then unhooks
-  them (`verbatim-outpost`, the `foreground` module). A console window
+  them (`verbatim-listener-logic`, the `foreground` module). A console window
   whose thread is not known yet, or a view Core has not brought up to
   date, falls back to the answer Windows gives. Control or Alt alone, or the Windows key,
   make a shortcut, which types nothing. The result counts when it is text

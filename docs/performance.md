@@ -2308,10 +2308,10 @@ moved forward on a line starting where it did.
 Each UIA focus event the listener queues for its reading thread carries
 the answer owed for its marker (`MarkerOwed`,
 `docs/design/ownership.md`): one boxed closure and one `Arc<Outgoing>` clone as the callback
-queues it (`MarkerOwed::new` in `crates/verbatim-outpost/src/listener.rs`),
+queues it (`MarkerOwed::new` in `crates/verbatim-listener/src/listener.rs`),
 and one insert into the readers' map of owed markers at `Readers::push`
 and one removal when the event's outcome consumes it
-(`crates/verbatim-outpost/src/focus_read.rs`), both under the readers' lock
+(`crates/verbatim-listener/src/focus_read.rs`), both under the readers' lock
 the schedule's step already takes. No wake-up and no call are added.
 
 - The listener's processor time per UIA event was not measured end to end:

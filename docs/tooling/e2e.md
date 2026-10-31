@@ -151,13 +151,13 @@ who opens the VM's console.
 The suite always runs against a fixed, generated configuration, never
 whatever `settings.toml` a developer's own manual runs left behind.
 Concretely, in a local run, `Scenario::launch` first runs
-`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host -p mockapp`,
+`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-listener -p verbatim-synth-host -p mockapp`,
 once per test binary, so
 a run can never stage an executable older than the source under test
 (`cargo test -p verbatim-e2e` alone builds only this crate and its
 libraries, not Verbatim's executables). That build is a no-op when
 nothing changed. It then copies `verbatim.exe`, `verbatim-outpost.exe`,
-`verbatim-synth-host.exe`, `mockapp.exe` (the scripted application the
+`verbatim-listener.exe`, `verbatim-synth-host.exe`, `mockapp.exe` (the scripted application the
 spelling errors scenario reads), and the `espeak-ng-data` and `sounds`
 directories into
 `target/e2e-stage` under the workspace root (skipping a copy when the
@@ -609,12 +609,13 @@ measure both. Debug is what a
 run stages by default: it builds the debug binaries and stages them from
 `target\debug`. For release, build every binary the run stages, then name
 the release `verbatim.exe` with `VERBATIM_E2E_VERBATIM_EXE`: the run then
-stages `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-synth-host.exe`,
-`mockapp.exe`, `espeak-ng-data` and `sounds` from that executable's folder
+stages `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-listener.exe`,
+`verbatim-synth-host.exe`, `mockapp.exe`, `espeak-ng-data` and `sounds`
+from that executable's folder
 and skips its own debug build. The agent can stay a debug build.
 
 ```
-cargo build --release -p verbatim-app -p verbatim-outpost -p verbatim-synth-host -p mockapp
+cargo build --release -p verbatim-app -p verbatim-outpost -p verbatim-listener -p verbatim-synth-host -p mockapp
 $env:VERBATIM_E2E_VERBATIM_EXE = "$PWD\target\release\verbatim.exe"
 cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explorer --test-threads=1
 ```

@@ -1,0 +1,1174 @@
+//! What the outpost follows, and what a program's commit changes of it
+//! (`docs/design/ownership.md`): the follow state, the focus line's paths, the caret key's
+//! watch and owed work, all reducer state with no application object. A
+//! program is given a copy ([`Facts`]) and applies its own commits to it
+//! with the same function the reducer applies them with ([`apply`]), so
+//! what it reads after a commit is what the reducer will hold.
+
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
+use verbatim_model::{
+    CallCounts, CaretReport, CaretWatch, NodeId, NodeSnapshot, Role, StateSet, TraceId,
+};
+
+use super::held::{self, Held};
+use super::intake::{Marks, Object};
+use super::text::{RangeKey, TextChange, TextFacts};
+use super::verdicts::{VerdictChange, Verdicts};
+
+/// The longest a caret key's watch stays open without evidence. It only
+/// frees the watch: ending it this way says nothing, as ending it any other
+/// way does. A key whose application raises its evidence later than this
+/// is not spoken. Ten seconds, the time a program allows an application
+/// that is busy, or starting up, to answer one event's reads.
+pub const CARET_WATCH_BOUND: Duration = Duration::from_secs(10);
+
+/// How long after one of the console poll's reads the next is made.
+pub const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// How long after the key was passed on the console poll's last read is
+/// made; a watch that has found no evidence by then ends, as at its own
+/// bound.
+pub const POLL_BOUND: Duration = Duration::from_millis(50);
+
+/// The focus-following subscription's event handler groups, as the
+/// reducer names them (`verbatim_uia::Group`, variant for variant).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Group {
+    #[default]
+    /// The events every focus is followed for.
+    Base,
+    /// The base events and a text control's text events.
+    Extended,
+    /// The extended events without the text events.
+    ExtendedWithoutTextEvents,
+}
+
+/// The dialog the last foreground report gathered text for, which the
+/// focus that follows it reuses: its node and its text.
+pub type DialogMemo = Option<(NodeId, Option<String>)>;
+
+/// What the outpost remembers of the focus it follows across programs and
+/// worker replacements: the focus and the facts about it the menu rules
+/// and the walks read. A cache of reads and of what was reported, which
+/// judges nothing Core was told.
+#[derive(Clone, Debug, Default)]
+pub struct Tracking {
+    /// The role of the focus or foreground window this outpost last
+    /// reported, which the menu rules compare with; the focus's own role is
+    /// `focus_role`.
+    pub role: Option<Role>,
+    /// The batch in which a focus was last reported.
+    pub batch: Option<u64>,
+    /// The last focus this outpost reported and its ancestors, outermost
+    /// first: where the next focus's ancestor walk can stop and reuse the
+    /// rest, as NVDA's does.
+    pub chain: Vec<NodeSnapshot>,
+    /// The window of the last focus this outpost reported, for events on
+    /// that focus, which then need no call to find their window.
+    pub window: Option<isize>,
+    /// The node of the last focus this outpost reported, which it follows:
+    /// its caret, text and terminal output are read, and the
+    /// focus-following subscription is on it.
+    pub focus: Option<NodeId>,
+    /// That focus's role, as last read, which decides how its text is
+    /// read.
+    pub focus_role: Option<Role>,
+    /// The dialog the last foreground report gathered text for.
+    pub dialog: DialogMemo,
+    /// The UIA focus whose value is its first selected item's name, as the
+    /// listener read it (`UiaFocusRead::value_from_selection`).
+    pub value_from_selection: Option<NodeId>,
+}
+
+/// The node whose caret was last read in a committed read, and when that
+/// read began, in microseconds: a caret event observed before then changes
+/// nothing the read did not see, and one observed later (while the read
+/// was in flight included) may.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaretRead(Option<(u64, u64)>);
+
+impl CaretRead {
+    /// Notes a read of node `node`'s caret that began at `started_us`.
+    pub fn note(&mut self, node: u64, started_us: u64) {
+        self.0 = Some((node, started_us));
+    }
+
+    /// Whether the last read of node `node`'s caret began at or after
+    /// `observed_us`, so it saw what an event observed then reports.
+    pub fn covers(self, node: u64, observed_us: u64) -> bool {
+        self.0
+            .is_some_and(|(read, at)| read == node && at >= observed_us)
+    }
+}
+
+/// What the followed focus still needs after the commit that made it
+/// followed: owed work, attempted once per worker generation as a program
+/// of its own with a deadline of its own.
+#[derive(Clone, Debug)]
+pub struct Owed {
+    /// The focus that owes it.
+    pub node: NodeId,
+    /// What is owed.
+    pub work: OwedWork,
+    /// The trace and observation of the event the focus came from.
+    pub trace: TraceId,
+    /// The event's observation, in microseconds on the run's shared clock.
+    pub observed_at_us: u64,
+    /// The worker generation attempting it, once one has started to.
+    pub attempting: Option<u64>,
+}
+
+/// The work a followed focus owes ([`Owed`]).
+#[derive(Clone, Debug)]
+pub enum OwedWork {
+    /// A terminal's first read, with the caret read with its report, or
+    /// `None` for a terminal published at its walk's bound, whose caret is
+    /// read first.
+    FirstRead(Option<CaretReport>),
+    /// A `SensitiveSlider`'s lookup, for a thumb published at its walk's
+    /// bound, whose slider's element this outpost does not keep.
+    Slider,
+}
+
+/// A caret key's watch for evidence, kept open between programs
+/// (`docs/design/key-holding.md`).
+#[derive(Clone, Debug)]
+pub struct OpenWatch {
+    /// The request it answers.
+    pub request_id: u64,
+    /// The key's trace.
+    pub trace: TraceId,
+    /// The node whose caret the key moves.
+    pub node_id: NodeId,
+    /// What the watch looks for, and what it has seen.
+    pub watch: CaretWatch,
+    /// When it was opened, on the reducer's clock, for
+    /// [`CARET_WATCH_BOUND`].
+    pub opened: Duration,
+    /// The request's timing, which its answer carries.
+    pub timing: EventTiming,
+    /// The calls its checks have made so far, none of which found evidence.
+    pub calls: CallCounts,
+    /// Its re-reads of the console host's caret, while they last.
+    pub poll: Option<Poll>,
+}
+
+/// A caret key's watch's poll of the console host's caret, kept in the
+/// watch it belongs to: a documented workaround to waiting only for
+/// evidence (`docs/design/key-holding.md`, "The console host's caret
+/// poll"), since the console host raises its caret events only on its
+/// cursor's blink timer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Poll {
+    /// When the next read is due, on the reducer's clock.
+    pub next: Duration,
+    /// When the last read is due.
+    pub until: Duration,
+}
+
+impl Poll {
+    /// The poll of a watch opened at `opened` for a key passed on at
+    /// `passed_at_ms`, by the clock of `now_ms` (0 when unknown, taken as
+    /// `opened`).
+    #[must_use]
+    pub fn new(opened: Duration, passed_at_ms: u64, now_ms: u64) -> Self {
+        let until = if passed_at_ms == 0 {
+            opened + POLL_BOUND
+        } else {
+            let bound_ms = u64::try_from(POLL_BOUND.as_millis()).unwrap_or(u64::MAX);
+            opened + Duration::from_millis((passed_at_ms + bound_ms).saturating_sub(now_ms))
+        };
+        Self {
+            next: (opened + POLL_INTERVAL).min(until),
+            until,
+        }
+    }
+
+    /// The poll after a read made at `now` found no evidence, or `None`
+    /// when that read was its last.
+    #[must_use]
+    pub fn after_read(self, now: Duration) -> Option<Self> {
+        (now < self.until).then(|| Self {
+            next: (now + POLL_INTERVAL).min(self.until),
+            until: self.until,
+        })
+    }
+}
+
+/// When the reducer is to wake for `open`: at its bound
+/// ([`CARET_WATCH_BOUND`]) when it does not poll, and never when it polls,
+/// since its poll is a program of its own that ends it at its last read.
+#[must_use]
+pub fn wake_for(open: &OpenWatch) -> Option<Duration> {
+    open.poll
+        .is_none()
+        .then_some(open.opened + CARET_WATCH_BOUND)
+}
+
+/// The raw-view chain of the UIA focus the outpost last reported from the
+/// listener's read: the focus, then its ancestors, nearest first, each with
+/// its runtime id and its own window handle (0 for none).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FocusPath {
+    chain: Vec<(Vec<i32>, isize)>,
+    /// Whether the listener's walk up from the focus did not reach the
+    /// top: its read failed, or the walk was cut or ended at a failed step.
+    cut: bool,
+}
+
+/// Where an element of a [`FocusPath`] is found from: the window whose
+/// element the walk starts at, and the runtime ids below it, outermost
+/// first, the last the element's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Route {
+    /// The window whose element the walk starts at.
+    pub window: isize,
+    /// The runtime ids below it, outermost first.
+    pub path: Vec<Vec<i32>>,
+    /// The runtime id of the element wanted.
+    pub runtime_id: Vec<i32>,
+}
+
+impl FocusPath {
+    /// The chain of the focus `read` names.
+    #[must_use]
+    pub fn of(read: &UiaFocusRead) -> Self {
+        let chain = std::iter::once((read.snapshot.runtime_id.clone(), read.hwnd))
+            .chain(
+                read.ancestors
+                    .iter()
+                    .map(|ancestor| (ancestor.snapshot.runtime_id.clone(), ancestor.hwnd)),
+            )
+            .collect();
+        let cut = read.ancestors_end != verbatim_model::protocol::AncestorsEnd::Top;
+        Self { chain, cut }
+    }
+
+    /// Whether the chain begins with the focus `runtime_id` names, holds no
+    /// window of its own anywhere, and the listener's walk up from it did
+    /// not reach the top: the walk was cut below the focus's nearest
+    /// window, so no route leads to its element ([`Self::route_to`]).
+    #[must_use]
+    pub fn is_cut_at(&self, runtime_id: &[i32]) -> bool {
+        self.cut
+            && self.chain.first().is_some_and(|(id, _)| id == runtime_id)
+            && self.chain.iter().all(|&(_, hwnd)| hwnd == 0)
+    }
+
+    /// The route to the element of the chain whose runtime id is
+    /// `runtime_id`: from the nearest element at or above it that has a
+    /// window of its own. `None` when no element of the chain has that
+    /// runtime id, or none at or above it has a window.
+    #[must_use]
+    pub fn route_to(&self, runtime_id: &[i32]) -> Option<Route> {
+        let index = self.chain.iter().position(|(id, _)| id == runtime_id)?;
+        let above = self.chain[index..]
+            .iter()
+            .position(|&(_, hwnd)| hwnd != 0)?;
+        let root = index + above;
+        let path = self.chain[index..root]
+            .iter()
+            .rev()
+            .map(|(id, _)| id.clone())
+            .collect();
+        Some(Route {
+            window: self.chain[root].1,
+            path,
+            runtime_id: runtime_id.to_vec(),
+        })
+    }
+}
+
+/// Where the focus-following subscription is to be moved for a focus: what
+/// is followed, the node, its group and the slider followed for its value
+/// changes, `None` for nothing; and the node's element and the slider's,
+/// when they are kept, by the shell's tokens for them, so the reducer holds
+/// no element.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Target {
+    /// The node followed, its group, and the slider followed for its value
+    /// changes; `None` for nothing.
+    pub wanted: Option<(NodeId, Group, Option<NodeId>)>,
+    /// The node's element, by the shell's token for it, when it is kept.
+    pub element: Option<u64>,
+    /// The slider's element, by the shell's token for it, when it is kept.
+    pub slider: Option<u64>,
+}
+
+/// A focus becoming the followed one ([`Change::follow`]).
+#[derive(Clone, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "facts about one focus, each read before the commit"
+)]
+pub struct Follow {
+    /// The focus and its role.
+    pub node: NodeId,
+    /// The focus's role.
+    pub role: Role,
+    /// The object it is, as the intake records the focus.
+    pub object: Option<Object>,
+    /// The window it was reported in.
+    pub window: Option<isize>,
+    /// Its ancestors, outermost first, and itself.
+    pub chain: Vec<NodeSnapshot>,
+    /// The batch its entry belongs to.
+    pub batch: u64,
+    /// Whether it was reached by redirecting a control's own focus event
+    /// to the control's focused child.
+    pub redirected: bool,
+    /// Whether it is a terminal read through UI Automation, and whether its
+    /// window is the console host's.
+    pub terminal: bool,
+    /// Whether its window is the console host's.
+    pub console: bool,
+    /// Where the subscription is moved.
+    pub target: Target,
+    /// What the focus owes once followed.
+    pub owed: Option<OwedWork>,
+    /// The trace and observation of the event it came from.
+    pub trace: TraceId,
+    /// The event's observation, in microseconds on the run's shared clock.
+    pub observed_at_us: u64,
+    /// Whether it is adopted as the followed focus: false for a focus-now
+    /// answer naming the focus already followed, under the same node,
+    /// which keeps the tracking and the intake's marks as they are and is
+    /// only followed again.
+    pub adopt: bool,
+}
+
+/// A change of the caret key's watch ([`Change::watch`]).
+#[derive(Clone, Debug)]
+pub enum WatchChange {
+    /// A watch opened, the reducer to wake at the time given, if any; the
+    /// query it answers is no longer the program's.
+    Open(OpenWatch, Option<Duration>),
+    /// A watch taken out to be checked, put back with the query no longer
+    /// the program's.
+    PutBack(OpenWatch),
+    /// The watch on this node taken out to be checked, its query made the
+    /// one an abandonment answers.
+    Take(NodeId),
+    /// The open watch ended with no evidence, answered `WatchEnded`; the
+    /// reason is logged.
+    End(&'static str),
+    /// The console poll of the watch for this request yields to another
+    /// program: the watch keeps its poll as it stands and the calls its
+    /// checks have made so far.
+    Yielded {
+        /// The request the watch answers.
+        request_id: u64,
+        /// The poll as it stands.
+        poll: Poll,
+        /// The calls the watch's checks have made so far.
+        calls: CallCounts,
+    },
+    /// The watch for this request was answered by its poll.
+    Answered(u64),
+    /// The watch for this request ended with no evidence, answered
+    /// `WatchEnded`; the reason is logged.
+    Ended(u64, &'static str),
+    /// The reducer is to wake at the time given for the open watch, or not
+    /// at all.
+    Wake(Option<Duration>),
+}
+
+/// The report to record among those the outpost reads changes for
+/// ([`Change::report`]).
+#[derive(Clone, Debug)]
+pub enum Report {
+    /// A focus or foreground change reported, with its own evidence of
+    /// whether it repeats the newest report.
+    Reported(held::Focus, held::Evidence),
+    /// A focus-now answer's control, which keeps the event of the same
+    /// focus judged against before it.
+    Answered(held::Focus),
+}
+
+/// A program's judgement the gap record takes (`super::gap_record`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GapNote {
+    /// A copy in `window`, of top-level window `top_level`, observed at
+    /// `at_us`, dropped because its window is judged UIA.
+    CopyDropped {
+        /// The copy's window.
+        window: isize,
+        /// The window's top-level window.
+        top_level: isize,
+        /// The copy's observation, in microseconds.
+        at_us: u64,
+    },
+    /// An event of `window` accepted: a foreground change, which
+    /// `restamps`, or a copy handled through MSAA.
+    Accepted {
+        /// The event's window.
+        window: isize,
+        /// The window's top-level window.
+        top_level: isize,
+        /// The event's observation, in microseconds.
+        at_us: u64,
+        /// Whether it restamps the record: a foreground change.
+        restamps: bool,
+    },
+    /// `window` was destroyed.
+    WindowDestroyed(isize),
+}
+
+/// What one commit of a program changes, its pure part: built by the
+/// program with every call it needs already made, and applied by the
+/// reducer, after the shell has made its store writes, in the order today's
+/// commit applies them: its report recorded for Core's judgement, then its
+/// messages sent, then the rest.
+#[derive(Clone, Debug, Default)]
+pub struct Change {
+    /// The program's result, which ends its query.
+    pub result: Option<OutpostToCore>,
+    /// An answer given outside its query's own program (a caret key's
+    /// watch), with its request.
+    pub aside: Option<(u64, OutpostToCore)>,
+    /// The report to record for Core's judgement.
+    pub report: Option<Report>,
+    /// A focus becoming the followed one.
+    pub follow: Option<Follow>,
+    /// A foreground report's role and batch, with a caret key's watch on
+    /// another node than this window's ended.
+    pub foreground: Option<(NodeId, Role, u64)>,
+    /// The dialog memo the report leaves.
+    pub dialog: Option<DialogMemo>,
+    /// The focus listener's mark of a UIA focus whose value is its first
+    /// selected item; `None` leaves the mark as it was.
+    pub value_from_selection: Option<Option<NodeId>>,
+    /// The focus path of a UIA focus.
+    pub focus_path: Option<FocusPath>,
+    /// The focus's element found after its report, with its slider's when
+    /// found: the subscription is moved to them only while that node is
+    /// the followed focus.
+    pub element: Option<(NodeId, Target)>,
+    /// The owed work of this node is done, read or failed.
+    pub owed_done: Option<NodeId>,
+    /// A read of this node's caret began at the instant given, in
+    /// microseconds.
+    pub caret_read: Option<(NodeId, u64)>,
+    /// A change of the caret key's watch.
+    pub watch: Option<WatchChange>,
+    /// The intake's marks: the system caret's events dropped until the
+    /// next focus; the console window's updates absorbed; the redirect mark
+    /// cleared.
+    pub drop_system_caret: bool,
+    /// The console window whose updates are absorbed.
+    pub absorb: Option<isize>,
+    /// Whether the redirect mark is cleared.
+    pub clear_redirect: bool,
+    /// A held node's states, as an MSAA state change read them.
+    pub states: Option<(NodeId, StateSet)>,
+    /// The program's judgements for the gap record, in order.
+    pub gap: Vec<GapNote>,
+    /// A held terminal's caret event, noted to be read once nothing else
+    /// is waiting, with its event's timing, which the read of the caret
+    /// judges the caret reads since the event by.
+    pub noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
+    /// The verdicts the program probed, and the windows it found
+    /// destroyed, in order: recorded by the reducer whether or not it
+    /// applies the rest of the commit ([`VerdictChange::kept_from_any_generation`]).
+    pub verdicts: Vec<VerdictChange>,
+    /// The node of a UIA focus whose earlier element, by the focus
+    /// listener's evidence, lost the focus or is gone, so a new element
+    /// stands under it: a caret key's watch on it ends, as Core forgets
+    /// the key's query (`docs/parity/focus-events.md`, "Duplicate focus
+    /// suppression").
+    pub replaced: Option<NodeId>,
+    /// The program's changes of text facts, in order, applied before the
+    /// rest: a program applies each to its own copies as its text call
+    /// makes it, so its own commit carries them only for the reducer, and
+    /// for the copies of a program the console poll ran before.
+    pub text: Vec<TextChange>,
+}
+
+/// What the outpost follows: changed only by a commit the reducer applies,
+/// and copied into each program.
+#[derive(Clone, Debug, Default)]
+pub struct FollowState {
+    /// The focus this outpost follows.
+    pub tracking: Tracking,
+    /// The focus's node and group the focus-following subscription was
+    /// last moved to, with the focus's parent followed for its value
+    /// changes, if one is: `None` for nothing.
+    pub followed: Option<(NodeId, Group, Option<NodeId>)>,
+    /// The token of the element the subscription was last moved to, so a
+    /// node whose element was replaced is followed again.
+    pub followed_element: Option<u64>,
+    /// The token of the slider followed with it for its value changes, so
+    /// a slider whose element was replaced is followed again too.
+    pub followed_slider: Option<u64>,
+    /// The elements of the outpost's older UIA reports, each with its node
+    /// and the group it was given, by token, which keep their groups until
+    /// the store releases their node, so the outpost hears the changes of
+    /// every node it has not released (`docs/design/ownership.md`).
+    pub kept_groups: Vec<(NodeId, Group, u64)>,
+    /// The caret key's watch for evidence kept open between programs.
+    pub caret_watch: Option<OpenWatch>,
+    /// The last committed read of a caret.
+    pub caret_read: CaretRead,
+    /// The raw-view chain the focus listener read for the UIA focus this
+    /// outpost last reported, by which it finds its own copies of that
+    /// focus's elements.
+    pub focus_path: Option<FocusPath>,
+    /// What the followed focus still owes.
+    pub owed: Option<Owed>,
+}
+
+/// What a program is given a copy of: everything it reads of what the
+/// outpost remembers.
+#[derive(Clone, Debug, Default)]
+pub struct Facts {
+    /// The reports whose focus node the outpost has not released.
+    pub held: Held,
+    /// What the outpost follows.
+    pub follow: FollowState,
+    /// What the intake reads of the focus.
+    pub marks: Marks,
+    /// The arbitrator's kept verdicts, a snapshot the reducer replaces on
+    /// change ([`super::verdicts`]).
+    pub verdicts: Arc<Verdicts>,
+    /// Each node's text facts, shared until a change ([`super::text`]).
+    pub text: Arc<TextFacts>,
+}
+
+/// Where the subscription is to follow, by token: the newest focus's
+/// element with its group, the slider's with the value group, and every
+/// kept element with its own group (`Followed::Subscribe`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Subscription {
+    /// The newest focus's element, by token, with its group.
+    pub newest: Option<(u64, Group)>,
+    /// The slider's element, by token, followed for its value changes.
+    pub slider: Option<u64>,
+    /// Every kept element, by token, with its own group.
+    pub kept: Vec<(u64, Group)>,
+}
+
+/// What applying a commit asks of the shell besides the follow state
+/// itself.
+#[derive(Debug, Default)]
+pub struct Applied {
+    /// The caret key's watch taken out by [`WatchChange::Take`].
+    pub taken: Option<OpenWatch>,
+    /// Answers to send: an ended watch's `WatchEnded`, with why it ended.
+    pub ended: Vec<(OpenWatch, &'static str)>,
+    /// The subscription's new targets, when it is to move.
+    pub subscribe: Option<Subscription>,
+    /// The element tokens no longer followed, for the shell to drop.
+    pub unfollowed: Vec<u64>,
+    /// The intake's marks for the focus adopted.
+    pub adopted: Option<Marks>,
+    /// The watch's wake to set, or clear with `Some(None)`.
+    pub wake: Option<Option<Duration>>,
+    /// The UIA ranges no text fact names any more, by node and key, for
+    /// the store to let go of.
+    pub ranges: Vec<(u64, RangeKey)>,
+}
+
+impl FollowState {
+    /// Ends the open caret key's watch, if there is one, with its
+    /// `WatchEnded` answer and its wake cancelled.
+    fn end_watch(&mut self, why: &'static str, applied: &mut Applied) {
+        if let Some(open) = self.caret_watch.take() {
+            applied.wake = Some(None);
+            applied.ended.push((open, why));
+        }
+    }
+
+    /// Ends the open caret key's watch, as [`end_watch`](Self::end_watch)
+    /// does, if it is the one for request `request_id`: a newer watch,
+    /// another key's, is left alone.
+    pub fn end_watch_of(&mut self, request_id: u64, why: &'static str, applied: &mut Applied) {
+        if self
+            .caret_watch
+            .as_ref()
+            .is_some_and(|open| open.request_id == request_id)
+        {
+            self.end_watch(why, applied);
+        }
+    }
+
+    /// Ends a caret key's watch on a node other than `node`, the new focus
+    /// or foreground window, as NVDA's wait gives way to a focus change.
+    fn end_watch_elsewhere(&mut self, node: NodeId, applied: &mut Applied) {
+        if self
+            .caret_watch
+            .as_ref()
+            .is_some_and(|open| open.node_id != node)
+        {
+            self.end_watch("the focus moved", applied);
+        }
+    }
+
+    /// Moves the focus-following subscription's newest focus to `target`,
+    /// unless it is already there, on the same elements. The focus it
+    /// followed before keeps its group on its element, among
+    /// [`kept_groups`](Self::kept_groups), until its node is released; a
+    /// focus that returns to an element that kept its group is not given
+    /// it again.
+    fn retarget(&mut self, target: &Target, applied: &mut Applied) {
+        if self.followed == target.wanted
+            && self.followed_element == target.element
+            && self.followed_slider == target.slider
+        {
+            return;
+        }
+        let before = std::mem::replace(&mut self.followed, target.wanted);
+        let before_element = std::mem::replace(&mut self.followed_element, target.element);
+        let mut dropped: Vec<u64> = std::mem::replace(&mut self.followed_slider, target.slider)
+            .into_iter()
+            .collect();
+        if let (Some((node, group, _)), Some(element)) = (before, before_element) {
+            let kept = self
+                .kept_groups
+                .iter()
+                .position(|(kept, _, _)| *kept == node);
+            if let Some(kept) = kept {
+                let (_, _, replaced) =
+                    std::mem::replace(&mut self.kept_groups[kept], (node, group, element));
+                dropped.push(replaced);
+            } else {
+                self.kept_groups.push((node, group, element));
+            }
+        }
+        // The newest focus's element is followed as the newest, not kept.
+        if let Some((node, _, _)) = target.wanted {
+            let mut index = 0;
+            while index < self.kept_groups.len() {
+                if self.kept_groups[index].0 == node {
+                    dropped.push(self.kept_groups.remove(index).2);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.unfollow(dropped, applied);
+        applied.subscribe = Some(self.subscription());
+    }
+
+    /// Whether `token` names an element the subscription still follows.
+    fn follows(&self, token: u64) -> bool {
+        self.followed_element == Some(token)
+            || self.followed_slider == Some(token)
+            || self.kept_groups.iter().any(|&(_, _, kept)| kept == token)
+    }
+
+    /// Lets go of `tokens`, each once, but those the subscription still
+    /// follows: the shell gives one element one token, whatever it is
+    /// followed as.
+    fn unfollow(&self, tokens: impl IntoIterator<Item = u64>, applied: &mut Applied) {
+        for token in tokens {
+            if !self.follows(token) && !applied.unfollowed.contains(&token) {
+                applied.unfollowed.push(token);
+            }
+        }
+    }
+
+    /// Where the subscription follows now.
+    fn subscription(&self) -> Subscription {
+        let kept = self
+            .kept_groups
+            .iter()
+            .map(|&(_, group, element)| (element, group))
+            .collect();
+        let newest = match (self.followed, self.followed_element) {
+            (Some((_, group, _)), Some(element)) => Some((element, group)),
+            _ => None,
+        };
+        Subscription {
+            newest,
+            slider: self.followed_slider.filter(|_| newest.is_some()),
+            kept,
+        }
+    }
+
+    /// The store released `released`, by node number: the elements of
+    /// those nodes lose their groups, the newest focus's too, with its
+    /// slider's, when its node is released, and the subscription is moved
+    /// once if anything changed.
+    pub fn release_groups(&mut self, released: &HashSet<u64>, applied: &mut Applied) {
+        let mut dropped = Vec::new();
+        let mut index = 0;
+        while index < self.kept_groups.len() {
+            if released.contains(&self.kept_groups[index].0.number()) {
+                dropped.push(self.kept_groups.remove(index).2);
+            } else {
+                index += 1;
+            }
+        }
+        if self
+            .followed
+            .is_some_and(|(node, _, _)| released.contains(&node.number()))
+        {
+            self.followed = None;
+            dropped.extend(self.followed_element.take());
+            dropped.extend(self.followed_slider.take());
+        }
+        if !dropped.is_empty() {
+            self.unfollow(dropped, applied);
+            applied.subscribe = Some(self.subscription());
+        }
+    }
+}
+
+/// Applies the pure part of a commit of `generation`'s, `change`, but for
+/// its report and messages, which the caller records and sends first: to
+/// the reducer's follow state, reports and marks, or to a program's copies
+/// of them.
+pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
+    let mut applied = Applied::default();
+    if !change.text.is_empty() {
+        let text = Arc::make_mut(&mut facts.text);
+        for text_change in &change.text {
+            applied.ranges.extend(text.apply(text_change));
+        }
+    }
+    let follow_state = &mut facts.follow;
+    if let Some(node) = change.replaced
+        && follow_state
+            .caret_watch
+            .as_ref()
+            .is_some_and(|open| open.node_id == node)
+    {
+        follow_state.end_watch("the focus's element was replaced", &mut applied);
+    }
+    if let Some(memo) = &change.dialog {
+        follow_state.tracking.dialog.clone_from(memo);
+    }
+    if let Some(follow) = &change.follow {
+        if follow.adopt {
+            follow_state.end_watch_elsewhere(follow.node, &mut applied);
+            // The intake's marks in one go: a terminal read through UIA
+            // has its caret event planned after its text changes, and a
+            // console host's terminal, whose console caret event is its
+            // caret event, has the system caret's events dropped
+            // (`docs/parity/text.md`).
+            let marks = Marks {
+                focused: follow.object.clone(),
+                terminal: follow.terminal.then(|| follow.window.unwrap_or(0)),
+                focus_redirected: follow.redirected,
+                absorbed: None,
+                system_caret_unused: follow.terminal && follow.console,
+            };
+            facts.marks = marks.clone();
+            applied.adopted = Some(marks);
+            let tracking = &mut follow_state.tracking;
+            tracking.role = Some(follow.role);
+            tracking.focus = Some(follow.node);
+            tracking.focus_role = Some(follow.role);
+            tracking.window = follow.window;
+            tracking.chain.clone_from(&follow.chain);
+            tracking.batch = Some(follow.batch);
+        }
+        follow_state.retarget(&follow.target, &mut applied);
+        follow_state.owed = follow.owed.clone().map(|work| Owed {
+            node: follow.node,
+            work,
+            trace: follow.trace,
+            observed_at_us: follow.observed_at_us,
+            attempting: None,
+        });
+    }
+    if let Some(path) = &change.focus_path {
+        follow_state.focus_path = Some(path.clone());
+    }
+    if let Some(value_from_selection) = change.value_from_selection {
+        follow_state.tracking.value_from_selection = value_from_selection;
+    }
+    if let Some((node, role, batch)) = change.foreground {
+        follow_state.end_watch_elsewhere(node, &mut applied);
+        follow_state.tracking.role = Some(role);
+        follow_state.tracking.batch = Some(batch);
+    }
+    if let Some((node, target)) = &change.element {
+        if follow_state.tracking.focus == Some(*node) {
+            follow_state.retarget(target, &mut applied);
+        } else {
+            follow_state.unfollow(
+                target.element.into_iter().chain(target.slider),
+                &mut applied,
+            );
+        }
+    }
+    if let Some(node) = change.owed_done
+        && follow_state
+            .owed
+            .as_ref()
+            .is_some_and(|owed| owed.node == node && owed.attempting == Some(generation))
+    {
+        follow_state.owed = None;
+    }
+    if let Some((node, started_us)) = change.caret_read {
+        follow_state.caret_read.note(node.number(), started_us);
+    }
+    if change.drop_system_caret {
+        facts.marks.system_caret_unused = true;
+    }
+    if change.absorb.is_some() {
+        facts.marks.absorbed = change.absorb;
+    }
+    if change.clear_redirect {
+        facts.marks.focus_redirected = false;
+    }
+    if let Some((node, states)) = change.states {
+        let _ = facts.held.replace_states(node, states);
+    }
+    if let Some(watch) = &change.watch {
+        apply_watch(follow_state, watch, &mut applied);
+    }
+    applied
+}
+
+/// Applies `watch`, a commit's change of the caret key's watch, to
+/// `follow_state` ([`apply`]).
+fn apply_watch(follow_state: &mut FollowState, watch: &WatchChange, applied: &mut Applied) {
+    match watch {
+        WatchChange::Open(open, wake) => {
+            applied.wake = Some(*wake);
+            follow_state.caret_watch = Some(open.clone());
+        }
+        WatchChange::PutBack(open) => follow_state.caret_watch = Some(open.clone()),
+        WatchChange::Take(node) => {
+            applied.taken = follow_state
+                .caret_watch
+                .take_if(|open| open.node_id == *node);
+        }
+        WatchChange::End(why) => follow_state.end_watch(why, applied),
+        WatchChange::Yielded {
+            request_id,
+            poll,
+            calls,
+        } => {
+            if let Some(open) = follow_state
+                .caret_watch
+                .as_mut()
+                .filter(|open| open.request_id == *request_id)
+            {
+                open.poll = Some(*poll);
+                open.calls = *calls;
+            }
+        }
+        WatchChange::Answered(request_id) => {
+            if follow_state
+                .caret_watch
+                .take_if(|open| open.request_id == *request_id)
+                .is_some()
+            {
+                applied.wake = Some(None);
+            }
+        }
+        WatchChange::Ended(request_id, why) => {
+            follow_state.end_watch_of(*request_id, why, applied);
+        }
+        WatchChange::Wake(at) => applied.wake = Some(*at),
+    }
+}
+
+/// Applies `change`, a program's commit of `generation`, to a program's
+/// copies `facts`, as the program's own commit does: its report recorded,
+/// its verdicts kept, then [`apply`].
+pub fn apply_local(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
+    if let Some(report) = &change.report {
+        record(&mut facts.held, report);
+    }
+    if !change.verdicts.is_empty() {
+        let verdicts = Arc::make_mut(&mut facts.verdicts);
+        for verdict in &change.verdicts {
+            verdicts.apply(verdict);
+        }
+    }
+    apply(facts, generation, change)
+}
+
+/// Records `report` among the reports changes are read for.
+pub fn record(held: &mut Held, report: &Report) {
+    match report {
+        Report::Reported(focus, evidence) => held.reported(focus.clone(), *evidence),
+        Report::Answered(focus) => {
+            let focus = answer_to_judge(held.expected(), focus.clone());
+            // An answer of the newest report's node is the same element
+            // read again.
+            held.reported(focus, held::Evidence::Uia(None));
+        }
+    }
+}
+
+/// A focus-now answer's control, `answered`, as the outpost records it
+/// among its reports, given `before`, the newest report: an answer for the
+/// same node keeps the MSAA event address and the simple-child mark its
+/// report recorded, as NVDA's fake focus leaves its last queued focus's
+/// event as it was.
+pub fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> held::Focus {
+    match before.filter(|before| before.node.id == answered.node.id) {
+        Some(before) => held::Focus {
+            event: before.event,
+            simple_child: before.simple_child,
+            ..answered
+        },
+        None => answered,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::TextUnit;
+
+    use super::*;
+
+    /// A watch for request `request_id` on node 1, opened at `opened`,
+    /// polling as `poll` says.
+    fn watch(request_id: u64, opened: Duration, poll: Option<Poll>) -> OpenWatch {
+        OpenWatch {
+            request_id,
+            trace: TraceId::mint(),
+            node_id: NodeId::new(1),
+            watch: CaretWatch {
+                since: None,
+                pressed_at_ms: 0,
+                unit: TextUnit::Character,
+                compare: None,
+                landing: false,
+                deletes: false,
+            },
+            opened,
+            timing: EventTiming::default(),
+            calls: CallCounts::default(),
+            poll,
+        }
+    }
+
+    #[test]
+    fn only_a_watch_that_does_not_poll_wakes_the_reducer_at_its_bound() {
+        let opened = Duration::from_secs(1);
+        let poll = Poll::new(opened, 0, 0);
+        assert_eq!(wake_for(&watch(7, opened, Some(poll))), None);
+        assert_eq!(
+            wake_for(&watch(7, opened, None)),
+            Some(opened + CARET_WATCH_BOUND)
+        );
+    }
+
+    #[test]
+    fn a_polls_change_leaves_a_newer_watch_on_its_node_alone() {
+        let opened = Duration::from_secs(1);
+        let newer = Poll::new(opened, 0, 0);
+        let mut facts = Facts::default();
+        facts.follow.caret_watch = Some(watch(8, opened, Some(newer)));
+        // The poll of request 7, the older key's, yields and then ends after
+        // the newer key's watch on the same node opened.
+        let yielded = Change {
+            watch: Some(WatchChange::Yielded {
+                request_id: 7,
+                poll: Poll::new(opened + POLL_BOUND, 0, 0),
+                calls: CallCounts::default(),
+            }),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &yielded);
+        assert_eq!(applied.wake, None);
+        let ended = Change {
+            watch: Some(WatchChange::Ended(7, "its poll's bound passed")),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &ended);
+        assert!(applied.ended.is_empty());
+        let open = facts
+            .follow
+            .caret_watch
+            .expect("the newer watch stays open");
+        assert_eq!(open.request_id, 8);
+        assert_eq!(open.poll, Some(newer));
+    }
+
+    #[test]
+    fn a_yield_keeps_the_polls_state_in_its_watch() {
+        let opened = Duration::from_secs(1);
+        let mut facts = Facts::default();
+        facts.follow.caret_watch = Some(watch(7, opened, Some(Poll::new(opened, 0, 0))));
+        let later = Poll {
+            next: opened + 2 * POLL_INTERVAL,
+            until: opened + POLL_BOUND,
+        };
+        let calls = CallCounts {
+            uia: 3,
+            ..CallCounts::default()
+        };
+        let yielded = Change {
+            watch: Some(WatchChange::Yielded {
+                request_id: 7,
+                poll: later,
+                calls,
+            }),
+            ..Change::default()
+        };
+        apply(&mut facts, 0, &yielded);
+        let open = facts.follow.caret_watch.expect("the watch stays open");
+        assert_eq!(open.poll, Some(later));
+        assert_eq!(open.calls, calls);
+    }
+
+    #[test]
+    fn the_poll_ends_its_bound_after_the_key_was_passed_on() {
+        let opened = Duration::from_secs(1);
+        // Opened 3 ms after the key was passed on.
+        let poll = Poll::new(opened, 1_000, 1_003);
+        assert_eq!(poll.until, opened + Duration::from_millis(47));
+        assert_eq!(poll.next, opened + POLL_INTERVAL);
+    }
+
+    #[test]
+    fn a_poll_without_the_keys_time_ends_its_bound_after_it_opened() {
+        let opened = Duration::from_secs(1);
+        let poll = Poll::new(opened, 0, 1_003);
+        assert_eq!(poll.until, opened + POLL_BOUND);
+    }
+
+    #[test]
+    fn each_read_is_followed_by_the_next_until_the_bound() {
+        let opened = Duration::from_secs(1);
+        let poll = Poll::new(opened, 1_000, 1_000);
+        let read_at = opened + Duration::from_millis(47);
+        let next = poll.after_read(read_at).expect("a read before the bound");
+        assert_eq!(next.next, opened + POLL_BOUND);
+        assert!(next.after_read(opened + POLL_BOUND).is_none());
+    }
+
+    #[test]
+    fn an_event_observed_while_a_read_was_in_flight_is_not_covered() {
+        let mut read = CaretRead::default();
+        // A read of node 1 begins at 100 and returns at 200; a caret event
+        // is observed at 150, while it was in flight.
+        read.note(1, 100);
+        assert!(!read.covers(1, 150));
+        // One observed before the read began is covered; another node's
+        // never is.
+        assert!(read.covers(1, 100));
+        assert!(read.covers(1, 90));
+        assert!(!read.covers(2, 90));
+    }
+
+    /// A target following node 2, a slider's thumb, on element `element`
+    /// with its slider, node 3, on element `slider`.
+    fn thumb(element: u64, slider: u64) -> Target {
+        Target {
+            wanted: Some((NodeId::new(2), Group::Base, Some(NodeId::new(3)))),
+            element: Some(element),
+            slider: Some(slider),
+        }
+    }
+
+    #[test]
+    fn a_focus_whose_element_was_replaced_is_followed_again() {
+        let mut facts = Facts::default();
+        facts.follow.retarget(&thumb(5, 6), &mut Applied::default());
+        // The same node, group and slider, the thumb's node now a new
+        // element: it is followed, and the old one let go of.
+        let mut replaced = Applied::default();
+        facts.follow.retarget(&thumb(8, 6), &mut replaced);
+        assert_eq!(
+            (replaced.subscribe, replaced.unfollowed),
+            (
+                Some(Subscription {
+                    newest: Some((8, Group::Base)),
+                    slider: Some(6),
+                    kept: Vec::new(),
+                }),
+                vec![5]
+            )
+        );
+    }
+
+    #[test]
+    fn a_focus_whose_slider_element_was_replaced_is_followed_again() {
+        let mut facts = Facts::default();
+        let mut applied = Applied::default();
+        facts.follow.retarget(&thumb(5, 6), &mut applied);
+        // The same thumb and slider again: nothing moves.
+        let mut same = Applied::default();
+        facts.follow.retarget(&thumb(5, 6), &mut same);
+        assert_eq!((same.subscribe, same.unfollowed), (None, Vec::new()));
+        // The same thumb, its slider's node now a new element.
+        let mut replaced = Applied::default();
+        facts.follow.retarget(&thumb(5, 7), &mut replaced);
+        assert_eq!(
+            (replaced.subscribe, replaced.unfollowed),
+            (
+                Some(Subscription {
+                    newest: Some((5, Group::Base)),
+                    slider: Some(7),
+                    kept: Vec::new(),
+                }),
+                vec![6]
+            )
+        );
+    }
+
+    #[test]
+    fn the_followed_focus_released_lets_go_of_its_element_and_slider() {
+        let mut facts = Facts::default();
+        facts.follow.retarget(&thumb(5, 6), &mut Applied::default());
+        let mut applied = Applied::default();
+        facts
+            .follow
+            .release_groups(&HashSet::from([2]), &mut applied);
+        assert_eq!(
+            (
+                facts.follow.followed,
+                facts.follow.followed_element,
+                facts.follow.followed_slider,
+                applied.subscribe,
+                applied.unfollowed
+            ),
+            (
+                None,
+                None,
+                None,
+                Some(Subscription {
+                    newest: None,
+                    slider: None,
+                    kept: Vec::new(),
+                }),
+                vec![5, 6]
+            )
+        );
+    }
+
+    #[test]
+    fn a_focus_whose_element_was_replaced_ends_the_caret_keys_watch_on_its_node() {
+        let opened = Duration::from_secs(1);
+        let mut facts = Facts::default();
+        facts.follow.caret_watch = Some(watch(7, opened, None));
+        // Another node replaced leaves the watch on node 1 alone.
+        let elsewhere = Change {
+            replaced: Some(NodeId::new(2)),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &elsewhere);
+        assert!(applied.ended.is_empty());
+        let replaced = Change {
+            replaced: Some(NodeId::new(1)),
+            ..Change::default()
+        };
+        let applied = apply(&mut facts, 0, &replaced);
+        let ended: Vec<(u64, &str)> = applied
+            .ended
+            .iter()
+            .map(|(open, why)| (open.request_id, *why))
+            .collect();
+        assert_eq!(
+            (ended, applied.wake, facts.follow.caret_watch.is_none()),
+            (
+                vec![(7, "the focus's element was replaced")],
+                Some(None),
+                true
+            )
+        );
+    }
+}

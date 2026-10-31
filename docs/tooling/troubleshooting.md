@@ -122,10 +122,12 @@ Verbatim's job. To keep a dump too, run
 `vm\scripts\Enable-VerbatimCrashDumps.ps1` once from an elevated
 PowerShell (Dickson runs it himself; the harness never does): it sets
 Windows Error Reporting's LocalDumps keys for `verbatim.exe`,
-`verbatim-outpost.exe`, and `verbatim-synth-host.exe`, writing dumps into
+`verbatim-outpost.exe`, `verbatim-listener.exe`, and
+`verbatim-synth-host.exe`, writing dumps into
 `C:\ProgramData\Verbatim\CrashDumps`, and the suite copies every dump
 written during a scenario into its artifacts. Verbatim and the
-synthesizer host get minidumps; an outpost gets a full-memory dump with
+synthesizer host get minidumps; an outpost and the listener get a
+full-memory dump with
 handle data and thread information (DumpType 0, CustomDumpFlags 0x1826),
 100 to 300 megabytes each, at most 10 kept, so the heap behind a crash
 inside UI Automation's own code can be read in cdb. The dumps come from

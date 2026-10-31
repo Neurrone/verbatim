@@ -56,13 +56,14 @@ struct Checked {
 /// and the audio thread's pass, by the audio rule.
 const CHECKED: [Checked; 7] = [
     Checked {
-        path: "crates/verbatim-outpost/src/read_schedule.rs",
+        path: "crates/verbatim-listener-logic/src/schedule.rs",
         allowed: &[
             "std::collections",
             "std::time::Duration",
             "verbatim_model",
+            "verbatim_reader_rules",
             // The listener's data types.
-            "crate::focus_read",
+            "crate::focus",
             // The module's own tests.
             "super",
         ],
@@ -71,7 +72,7 @@ const CHECKED: [Checked; 7] = [
         within: None,
     },
     Checked {
-        path: "crates/verbatim-outpost/src/outpost/reducer/",
+        path: "crates/verbatim-outpost-logic/src/",
         allowed: &REDUCER_ALLOWED,
         forbidden: &REDUCER_FORBIDDEN,
         skip_tests: true,
@@ -121,7 +122,7 @@ const CHECKED: [Checked; 7] = [
 const REDUCER_ALLOWED: [&str; 11] = [
     "self",
     "super",
-    "crate::outpost::reducer",
+    "crate",
     "verbatim_model",
     "verbatim_core::focus_rules",
     "verbatim_reader_rules",

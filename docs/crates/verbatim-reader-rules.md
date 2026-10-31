@@ -46,7 +46,7 @@ Public API:
   focus `WinEvent`, a second: the bound of the outpost reducer's gap
   record (`gap_record::BOUND_US`), and, by definition, the bound under
   which the listener counts a nearest window's lookup that timed out as
-  failing fast (`focus_read::NEAREST_FAILED_FAST_BOUND`).
+  failing fast (`verbatim_listener_logic::focus::NEAREST_FAILED_FAST_BOUND`).
 
 Tests: the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, and the acceptance test rule by rule

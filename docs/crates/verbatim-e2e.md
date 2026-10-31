@@ -50,7 +50,7 @@ this guide describes the code.
 `Scenario::launch_with` brings the desktop to the same state for every
 scenario, recorded or not, and recording changes nothing else:
 
-1. In a local run, builds `verbatim-app`, `verbatim-outpost`,
+1. In a local run, builds `verbatim-app`, `verbatim-outpost`, `verbatim-listener`,
    `verbatim-synth-host`, and `mockapp` (unless `VERBATIM_E2E_VERBATIM_EXE`
    names a build to stage), copies them, eSpeak NG's data, and the default
    theme's sounds into `target/e2e-stage`, and writes

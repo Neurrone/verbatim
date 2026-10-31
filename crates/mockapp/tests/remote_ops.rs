@@ -20,10 +20,10 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use common::outpost::OutpostUnderTest;
+use verbatim_listener_logic::focus::{FocusEvent, Judged};
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, WinEventStamp};
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
-use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
@@ -758,7 +758,7 @@ fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
     let Judged::Dropped(reason) = judged else {
         panic!("the listener took a focus whose nearest window's lookup timed out: {judged:?}");
     };
-    assert_eq!(reason, verbatim_outpost::focus_read::NEAREST_TIMED_OUT);
+    assert_eq!(reason, verbatim_listener_logic::focus::NEAREST_TIMED_OUT);
     assert_eq!(
         calls,
         CallCounts {
@@ -815,7 +815,7 @@ fn a_nearest_window_lookup_that_fails_fast_leaves_the_gap_record_open() {
     let Judged::Dropped(reason) = judged else {
         panic!("the listener took a focus whose nearest window's lookup failed: {judged:?}");
     };
-    assert_eq!(reason, verbatim_outpost::focus_read::NEAREST_FAILED_FAST);
+    assert_eq!(reason, verbatim_listener_logic::focus::NEAREST_FAILED_FAST);
     assert_eq!(
         calls,
         CallCounts {

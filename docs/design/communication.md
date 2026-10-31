@@ -2,7 +2,7 @@
 
 Status: built, except the audio step (section 11). Steps 8 and 10 of the migration were not adopted (section 11). The decisions are in section 13; section 18 makes wake-ups and processor time criteria alongside latency.
 
-One model for every pipe between Verbatim's processes and for every thread an event or a key passes through on its way to the first audio sample. The mechanism lives in the crate guides: the transport, pipes, ports and scheduling in `docs/crates/verbatim-process.md`; the relay, the outposts' and the listener's threads, the protocol and the idle round in `docs/crates/verbatim-outpost.md`; the reducer's port, the idle barrier's reducer side and the latency ledger in `docs/crates/verbatim-app.md`; the host protocol and the cancellation token in `docs/crates/verbatim-speech.md`, `docs/crates/verbatim-synth-hosted.md` and `docs/crates/verbatim-synth-host.md`; the mixer and device recovery in `docs/crates/verbatim-audio.md`. This document keeps the problem, the alternatives weighed, the reasons and the limits.
+One model for every pipe between Verbatim's processes and for every thread an event or a key passes through on its way to the first audio sample. The mechanism lives in the crate guides: the transport, pipes, ports, scheduling and the message layer in `docs/crates/verbatim-process.md`; the relay in `docs/crates/verbatim-supervisor.md`; the outposts' threads and the idle round in `docs/crates/verbatim-outpost.md`; the listener's threads in `docs/crates/verbatim-listener.md`; the reducer's port, the idle barrier's reducer side and the latency ledger in `docs/crates/verbatim-app.md`; the host protocol and the cancellation token in `docs/crates/verbatim-speech.md`, `docs/crates/verbatim-synth-hosted.md` and `docs/crates/verbatim-synth-host.md`; the mixer and device recovery in `docs/crates/verbatim-audio.md`. This document keeps the problem, the alternatives weighed, the reasons and the limits.
 
 ## 1. Summary
 
@@ -78,7 +78,7 @@ The binary alternative: every message on every pipe is one frame:
 - a `u16` header length, so the header can grow without breaking a reader;
 - the routing fields, used only on the listener's pipe and Core's pipes to outposts: the target process id (`u32`, 0 for none), whether the fact may start an outpost (one bit of the flags), and the fact key as a length and its bytes (the bytes `FactKey` is compared by);
 - the timing block, at fixed offsets: the stamps of section 10, each a `u64` of microseconds on the shared clock or a `u32` duration, zero for a point not passed;
-- the body: JSON of the message type that lives where it lives (`verbatim-outpost`'s protocol, `verbatim-speech`'s hosting types), or raw little-endian samples for PCM.
+- the body: JSON of the message type that lives where it lives (`verbatim-process`'s message layer, `verbatim-speech`'s hosting types), or raw little-endian samples for PCM.
 
 The maximum is 32 MB (`MAX_FRAME_BYTES`). A reader that sees a larger length treats the other end as failed, before allocating. The pipe's end in the middle of a frame (the header or the rest cut short) is the pipe's end with a fault logged, never a message: the partial bytes are discarded and the peer is handled as having exited. `verbatim_speech::hosting` keeps only the host protocol's message types and their bodies, plain data in a platform-neutral crate; the frame is the transport's.
 
@@ -221,7 +221,7 @@ Every scenario ends with the idle barrier (`AwaitIdle`), and the speech collecto
 - When it has every answer, the reducer handles everything already in its port, then checks its own conditions: no request outstanding, no outpost starting, no focus wanted, no caret key held back still waiting to reach its application. If they hold, the round has passed, and the reply goes through the speech queue (`after_queued`), so every utterance queued before it has been broadcast on the same control-plane connection first. If not, it runs another round.
 - Rules that make one round enough: nothing is merged across the query or the answer in any queue they pass through, and neither goes ahead as urgent, since each would move earlier work behind the barrier. Work that arrives after the query is not waited for, so a stream of events cannot hold the answer back.
 
-The mechanism is in `docs/crates/verbatim-app.md` (the reducer's round) and `docs/crates/verbatim-outpost.md` (the relay's round, the listener's and the outpost's answers). The cost is about 3 + 4N wake-ups per barrier with N outposts, paid only when the harness asks. Limit: a key that opens a caret watch and moves nothing holds the barrier until the watch's bound, since the outpost cannot know the application has finished with the key.
+The mechanism is in `docs/crates/verbatim-app.md` (the reducer's round) `docs/crates/verbatim-supervisor.md` (the relay's round), `docs/crates/verbatim-listener.md` (the listener's answer) and `docs/crates/verbatim-outpost.md` (the outpost's answer). The cost is about 3 + 4N wake-ups per barrier with N outposts, paid only when the harness asks. Limit: a key that opens a caret watch and moves nothing holds the barrier until the watch's bound, since the outpost cannot know the application has finished with the key.
 
 ### 6.8 Supervision: pings, pongs and the wedge verdict
 
@@ -434,7 +434,7 @@ Each point was checked against NVDA and the suite, with what guards it:
 
 - Speech frames on the control plane: every utterance is broadcast as queued when it is queued, including those cut before playing, as the Control and Shift flood scenarios and the speech collector's `expect_queued`, `take_until` and `expect_nothing_more` require. Guarded by those scenarios.
 - The idle barrier covers frames in pipes and backlogs, events not yet published and caret watches (section 6.7). Guarded by mockapp's `idle_barrier.rs`, the supervisor's `idle_round.rs`, and every scenario, since each ends with the barrier.
-- Wedge verdicts: a stalled reducer makes no healthy outpost look wedged (section 6.8). Guarded by `crates/verbatim-outpost/tests/arrival_order.rs` and the pong-while-worker-stuck test in mockapp's `shutdown.rs`.
+- Wedge verdicts: a stalled reducer makes no healthy outpost look wedged (section 6.8). Guarded by `crates/verbatim-supervisor/tests/arrival_order.rs` and the pong-while-worker-stuck test in mockapp's `shutdown.rs`.
 - Frames never cut mid-write: a started frame is never cancelled, a child drains before it exits, a marker means completed, and a cut frame is the pipe's end (sections 4.2, 4.3, 4.6, 7.2). Guarded by the transport's tests, the host's `protocol.rs` tests, and `outposts_shut_down_cleanly`.
 - Arrival order under load: a frame written before a key is reduced before it however busy the reducer is (section 4.5). Guarded by `arrival_order.rs`.
 - No new merging: the relay keeps draining while the reducer is held, so the outbound merge rules act no more than before. Guarded by `arrival_order.rs`.

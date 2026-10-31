@@ -22,9 +22,10 @@ target\debug\verbatim.exe
 ```
 
 `cargo verbatim-build` is an alias, defined in `.cargo/config.toml`, for
-`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-synth-host`.
+`cargo build -p verbatim-app -p verbatim-outpost -p verbatim-listener -p verbatim-synth-host`.
 
-Verbatim finds `verbatim-outpost.exe` and `verbatim-synth-host.exe` next
+Verbatim finds `verbatim-outpost.exe`, `verbatim-listener.exe` and
+`verbatim-synth-host.exe` next
 to its own executable; without the synthesizer host, no synthesizer can
 start. Building `verbatim-synth-host` also puts eSpeak NG's compiled
 data, the `espeak-ng-data` directory, in `target\debug`, where the host

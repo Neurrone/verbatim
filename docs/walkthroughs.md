@@ -24,12 +24,12 @@ placed in kill-on-close job objects, so they die with it however it ends
    - `verbatim-relay`, the supervisor's lifecycle owner, which reads the
      focus listener's pipe and every outpost's and finishes every child's
      writes on one completion port, plus short-lived launch helpers
-     (`crates/verbatim-outpost/src/supervisor/`);
+     (`crates/verbatim-supervisor/src/`);
    - `verbatim-speech-queue` and `verbatim-synth`, the speech manager;
    - `verbatim-audio`, the mixer's one audio thread;
    - one control-plane reader and writer per connected client;
    - the GUI thread, which is the main thread.
-2. **The focus listener**, `verbatim-outpost.exe --listener`: one per
+2. **The focus listener**, `verbatim-listener.exe`: one per
    Verbatim, desktop-wide (decision D13). Its callbacks make no
    cross-process call; it holds the one desktop-wide UIA focus registration
    and the global MSAA hooks, and judges and reads each UIA focus on a
@@ -65,9 +65,8 @@ releases Alt. Notepad has no outpost yet.
    Notepad's text area, and an MSAA focus event for it
    (`docs/parity/focus-events.md`, "Stale focus events").
 3. **The listener captures facts.** In
-   `crates/verbatim-outpost/src/listener.rs`
-   ([verbatim-outpost](crates/verbatim-outpost.md), "How focus reaches an
-   outpost"):
+   `crates/verbatim-listener/src/listener.rs`
+   ([verbatim-listener](crates/verbatim-listener.md)):
    - The MSAA events arrive on its event thread. Since Notepad has no
      outpost whose own hook is in, `forward_msaa_event` reads the owning
      pid with `GetWindowThreadProcessId`, a local call, and forwards the
@@ -104,7 +103,7 @@ releases Alt. Notepad has no outpost yet.
 4. **Core routes the facts and starts an outpost.** The relay reads the
    listener's pipe on its completion port (`Owner::read_pipe` and
    `Owner::listener_message` in
-   `crates/verbatim-outpost/src/supervisor/owner.rs`) and handles each fact
+   `crates/verbatim-supervisor/src/owner.rs`) and handles each fact
    in the pass that read it; it alone decides lifecycles. `Owner::route_fact`
    finds no outpost for Notepad's pid. Focus, foreground, menu,
    notification, and alert facts may start one
@@ -145,7 +144,7 @@ releases Alt. Notepad has no outpost yet.
    `Worker::msaa_focus`. A WinEvent focus the worker dropped because it
    judges its window UIA, and that no UIA focus answers within a second, is
    read by the outpost itself through UIA at its gap record's bound
-   (`crates/verbatim-outpost/src/outpost/reducer/gap_record.rs`).
+   (`crates/verbatim-outpost-logic/src/gap_record.rs`).
 8. **The worker publishes, and keeps what it reported.** `emit_focus`
    publishes an `OutpostToCore::Event` carrying the trace id, the
    observation time, the backend, the window's `WindowFacts` (top-level
@@ -451,7 +450,7 @@ application run one at a time by design.
 ## 5. Recovery
 
 Each failure, what notices it, and what happens next
-([verbatim-outpost](crates/verbatim-outpost.md), "The supervisor").
+([verbatim-supervisor](crates/verbatim-supervisor.md)).
 
 1. **A call into an application hangs.** The outpost's watchdog abandons
    the worker and starts a replacement (walkthrough 4); an abandoned

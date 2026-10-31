@@ -98,6 +98,24 @@ guide maps those behaviors onto the crate's types and modules.
   `DumpReadError`, `write_dump` and `read_dump`; see "The dump format".
 - `read_of(&TerminalSnapshot)`, `snapshot_of(&Read, waited, colours)` and
   `read_at(&TerminalSnapshot)`: see "Core's terminal model".
+- `supervisor`: Core's supervisor's pure decisions, which
+  [verbatim-supervisor](verbatim-supervisor.md)'s owner carries out.
+  `generation::Generation` is one application's outpost generation as
+  typestates (`Launching`, `SpareGiven`, `Starting`, `Ready`, `Waiting`),
+  each transition consuming the state and returning the next with its
+  `Notice`s in order; the app's notices among them are a plain
+  `Lifecycle` (`Started`, `Ended`, `Regenerated`, `NotWatched`), which only
+  the supervisor's owner turns into the sealed message the app takes as
+  the supervisor's own. `policy` decides when an outpost is wedged
+  (`wedge_decision`), when an idle one is retired
+  (`retirement_decision`), how long a failed outpost's replacement waits
+  (`Backoff`), how facts that arrive during a start are held and merged
+  (`HeldFacts`, which takes a clock it reads only for the first fact held;
+  `docs/parity/backends.md`, "MSAA winevent flood control"), which facts
+  may start an outpost (`may_start_outpost`;
+  `docs/parity/focus-events.md`, "Background events"), and which spares
+  are kept and given (`Spares`). `EndReason` is why a generation ended;
+  `Received` is when verbatim.exe read a fact, on both clocks.
 
 ## The flight recorder
 

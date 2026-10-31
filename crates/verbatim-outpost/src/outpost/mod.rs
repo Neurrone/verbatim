@@ -47,7 +47,6 @@ mod inbox;
 mod narrowing;
 mod outbound;
 mod read;
-mod reducer;
 mod shell;
 mod shell_items;
 mod store;
@@ -94,6 +93,8 @@ use verbatim_process::held::Target;
 use verbatim_process::message::{decode_message, read_message};
 use verbatim_reader_rules::acceptance;
 use verbatim_win32::window::{ForegroundReader, WindowReadabilityReader};
+
+use verbatim_outpost_logic as reducer;
 
 use commit::{Committed, Effects};
 use outbound::Outbound;

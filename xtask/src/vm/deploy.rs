@@ -49,13 +49,15 @@ struct Artifact {
 pub(crate) struct BuiltArtifacts {
     verbatim: PathBuf,
     outpost: PathBuf,
+    listener: PathBuf,
     synth_host: PathBuf,
     /// The scripted application a scenario reading scripted text launches.
     mockapp: PathBuf,
     agent: PathBuf,
 }
 
-/// Builds `verbatim-app`, `verbatim-agent`, and `verbatim-outpost` (debug
+/// Builds `verbatim-app`, `verbatim-agent`, `verbatim-outpost` and
+/// `verbatim-listener` (debug
 /// profile, matching `.github/workflows/ci.yml`'s runner-direct E2E job) and
 /// confirms each expected artifact exists afterward. Deliberately makes no
 /// contact with the guest at all: `xtask::vm::test` calls this before
@@ -69,7 +71,7 @@ pub(crate) struct BuiltArtifacts {
 pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
     println!(
         "xtask vm deploy: building verbatim-app, verbatim-agent, verbatim-outpost, \
-         verbatim-synth-host, mockapp (debug)"
+         verbatim-listener, verbatim-synth-host, mockapp (debug)"
     );
     build_binaries(repo_root)?;
 
@@ -77,13 +79,14 @@ pub(crate) fn build(repo_root: &Path) -> VmResult<BuiltArtifacts> {
     Ok(BuiltArtifacts {
         verbatim: require_artifact(&target_dir, "verbatim.exe")?,
         outpost: require_artifact(&target_dir, "verbatim-outpost.exe")?,
+        listener: require_artifact(&target_dir, "verbatim-listener.exe")?,
         synth_host: require_artifact(&target_dir, "verbatim-synth-host.exe")?,
         mockapp: require_artifact(&target_dir, "mockapp.exe")?,
         agent: require_artifact(&target_dir, "verbatim-agent.exe")?,
     })
 }
 
-/// Stages a `settings.toml` selecting eSpeak NG, hashes it, `built`'s four
+/// Stages a `settings.toml` selecting eSpeak NG, hashes it, `built`'s five
 /// binaries, the vendored `ffmpeg.exe`, eSpeak NG's data, the sounds, and
 /// the terminal scenarios' pinned portable Windows Terminal (downloaded
 /// once) against the guest's copies, and
@@ -126,6 +129,13 @@ pub(crate) fn stage_and_copy(
             label: "verbatim-outpost.exe".to_owned(),
             local_path: built.outpost,
             remote_path: format!(r"{VERBATIM_DIR}\verbatim-outpost.exe"),
+            is_executable: true,
+            after_copy: None,
+        },
+        Artifact {
+            label: "verbatim-listener.exe".to_owned(),
+            local_path: built.listener,
+            remote_path: format!(r"{VERBATIM_DIR}\verbatim-listener.exe"),
             is_executable: true,
             after_copy: None,
         },
@@ -385,7 +395,7 @@ fn copy_mismatched_artifacts(
             VM_NAME,
             credentials,
             "Stop-ScheduledTask -TaskName 'VerbatimAgent' -ErrorAction SilentlyContinue\n\
-             Stop-Process -Name 'verbatim-agent','verbatim','verbatim-outpost','verbatim-synth-host','mockapp' -Force -ErrorAction SilentlyContinue\n\
+             Stop-Process -Name 'verbatim-agent','verbatim','verbatim-outpost','verbatim-listener','verbatim-synth-host','mockapp' -Force -ErrorAction SilentlyContinue\n\
              Start-Sleep -Seconds 1",
         )?;
         stopped_guest = true;
@@ -502,6 +512,8 @@ fn build_binaries(repo_root: &Path) -> VmResult<()> {
             "verbatim-agent",
             "-p",
             "verbatim-outpost",
+            "-p",
+            "verbatim-listener",
             "-p",
             "verbatim-synth-host",
             "-p",

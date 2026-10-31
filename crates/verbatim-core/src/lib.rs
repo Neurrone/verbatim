@@ -27,6 +27,7 @@ mod review_text;
 mod say_all;
 mod shell;
 mod state;
+pub mod supervisor;
 mod terminal;
 mod terminal_model;
 mod text;

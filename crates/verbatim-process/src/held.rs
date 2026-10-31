@@ -206,15 +206,11 @@ impl IgnoredProcesses {
         self.held.is_empty()
     }
 
-    /// The ignored pids, as the listener's command line takes them:
-    /// separated by commas.
+    /// The ignored pids, in the order they were held, as the listener's
+    /// arguments take them ([`crate::arguments::ListenerArguments`]).
     #[must_use]
-    pub fn list(&self) -> String {
-        self.held
-            .iter()
-            .map(|(pid, _)| pid.0.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
+    pub fn pids(&self) -> Vec<Pid> {
+        self.held.iter().map(|(pid, _)| *pid).collect()
     }
 }
 
@@ -243,7 +239,7 @@ mod tests {
         let own = Pid(std::process::id());
         let ignored = IgnoredProcesses::hold([own, own]);
         assert!(ignored.contains(own));
-        assert_eq!(ignored.list(), own.0.to_string());
+        assert_eq!(ignored.pids(), [own]);
         assert!(!ignored.contains(Pid(own.0 + 4)));
     }
 }

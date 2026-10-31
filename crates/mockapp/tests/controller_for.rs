@@ -37,12 +37,12 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
+use verbatim_listener_logic::focus::{FocusEvent, Judged};
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
 use verbatim_model::{
     CallCounts, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, StateSet,
 };
 use verbatim_outpost::Heard;
-use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Agile, Cached, Fill, ListenerEvent, ListenerSelection, Live, Node, Part, Registration, Shape,
@@ -277,7 +277,7 @@ fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, role: Role, name: &str) -> 
 
 /// mockapp's element selected events under its window `window`, each with
 /// its fact as the focus listener's callback captures it
-/// (`verbatim_outpost::listener::capture_selection`) and its element in agile form,
+/// (`verbatim_listener::listener::capture_selection`) and its element in agile form,
 /// as the listener hands both to its reading thread. The subscription
 /// lasts as long as the registration returned.
 fn selections(
@@ -292,7 +292,7 @@ fn selections(
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element: &Cached<ListenerSelection>| {
                 let (hwnd, snapshot) =
-                    verbatim_outpost::listener::capture_selection(element, &element.read())
+                    verbatim_listener::listener::capture_selection(element, &element.read())
                         .expect("mockapp's element has its process");
                 let fact = DeliveredFact::UiaSelection {
                     hwnd,

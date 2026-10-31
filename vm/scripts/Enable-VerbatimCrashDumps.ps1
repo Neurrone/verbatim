@@ -6,7 +6,8 @@ collects them from.
 
 .DESCRIPTION
 The end-to-end suite fails a scenario when any of Verbatim's processes
-(verbatim.exe, verbatim-outpost.exe, verbatim-synth-host.exe) exits
+(verbatim.exe, verbatim-outpost.exe, verbatim-listener.exe,
+verbatim-synth-host.exe) exits
 unexpectedly. With this configured, Windows also writes a dump of the
 process as it crashes into C:\ProgramData\Verbatim\CrashDumps, and the
 suite copies every dump written during a scenario into that scenario's
@@ -19,14 +20,16 @@ and verbatim-synth-host.exe it keeps a minidump (DumpType 1), with the call
 stacks and the memory they reference, and at most 20 dumps for each program,
 so the folder cannot fill the disk.
 
-For verbatim-outpost.exe it keeps a full-memory dump: a custom dump
+For verbatim-outpost.exe and verbatim-listener.exe it keeps a
+full-memory dump: a custom dump
 (DumpType 0) whose CustomDumpFlags are MiniDumpWithFullMemory,
 MiniDumpWithHandleData, MiniDumpWithUnloadedModules,
 MiniDumpWithFullMemoryInfo and MiniDumpWithThreadInfo (0x1826). An outpost
-has crashed inside UI Automation's own event delivery, and which event and
+has crashed inside UI Automation's own event delivery, as the listener,
+which reads every UIA focus, can, and which event and
 handler were involved is only on the heap, which a minidump leaves out. An
 outpost's full dump is expected to be about 100 to 300 megabytes, so at
-most 10 are kept. Windows Error Reporting writes the dump while the crashed
+most 10 of each are kept. Windows Error Reporting writes the dump while the crashed
 process is held, so a dump is complete by the time the suite sees the
 process exit; in-process code could not take one for every crash, since a
 fail-fast ends the process without running any of its handlers.
@@ -55,7 +58,7 @@ $ErrorActionPreference = 'Stop'
 
 $folder = 'C:\ProgramData\Verbatim\CrashDumps'
 $images = 'verbatim.exe', 'verbatim-synth-host.exe'
-$outpost = 'verbatim-outpost.exe'
+$readers = 'verbatim-outpost.exe', 'verbatim-listener.exe'
 # MiniDumpWithFullMemory (0x2), MiniDumpWithHandleData (0x4),
 # MiniDumpWithUnloadedModules (0x20), MiniDumpWithFullMemoryInfo (0x800)
 # and MiniDumpWithThreadInfo (0x1000).
@@ -90,7 +93,9 @@ function Set-LocalDumps($image, $type, $count, $flags) {
 foreach ($image in $images) {
     Set-LocalDumps $image 1 20 $null
 }
-Set-LocalDumps $outpost 0 10 $outpostDumpFlags
+foreach ($image in $readers) {
+    Set-LocalDumps $image 0 10 $outpostDumpFlags
+}
 foreach ($image in $terminals) {
     Set-LocalDumps $image 2 5
 }

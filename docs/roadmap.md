@@ -643,7 +643,7 @@ At most one outpost serves an application at any time (Dickson,
 2026-10-29): a failed or retired outpost is ended, killed if it does not
 exit, before its replacement starts, because a failed outpost is retired
 on a thread of its own while its replacement is started after the backoff
-(`crates/verbatim-outpost/src/supervisor/owner.rs`, the failure path),
+(`crates/verbatim-supervisor/src/owner.rs`, the failure path),
 so for up to `SHUTDOWN_LIMIT` a stuck outpost and its replacement can
 both be in the application, where two Verbatim processes' calls collide
 inside UIA (`docs/design/listener-without-connections.md`).

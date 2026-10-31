@@ -46,7 +46,7 @@ The aim (2026-10-29): NVDA's focus logic wherever the multi-process model allows
 
 ## Terms
 
-- The listener is the one permanent `verbatim-outpost.exe --listener` process: it holds the desktop-wide UIA focus registration and desktop-wide `WinEvent` hooks, and reads each UIA focus on a thread per application.
+- The listener is the one permanent `verbatim-listener.exe` process: it holds the desktop-wide UIA focus registration and desktop-wide `WinEvent` hooks, and reads each UIA focus on a thread per application.
 - An outpost is the process that serves one application: its own process-scoped `WinEvent` hook, its UIA property and text registrations, one worker thread, a watchdog.
 - Core is the reducer in `verbatim-core`, the only decider; the app is `verbatim.exe`'s thread that feeds it and routes its answers.
 - A route is the path one of an application's events takes to its outpost: the listener's (a UIA focus, read in the listener and relayed through the app) or the outpost's own (its hook and registrations). The two-route structure is that one application's events arrive by both.

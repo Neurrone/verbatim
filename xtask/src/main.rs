@@ -117,7 +117,8 @@ const PLATFORM_NEUTRAL_CRATES: &[&str] = &[
 ];
 
 /// The crates `ci` lints and tests on a host other than Windows, each
-/// passed to cargo as `-p`: the platform-neutral tier and xtask itself, so
+/// passed to cargo as `-p`: the platform-neutral tier, the logic crates,
+/// and xtask itself, so
 /// the unit tests of the documentation check and the scans run there too
 /// (`docs/design/logic-foundations.md`, "xtask on Linux and the Linux
 /// job"). Every crate here must build on Linux, which GitHub's `ci-linux`
@@ -131,6 +132,9 @@ const LINUX_CRATES: &[&str] = &[
     "verbatim-input",
     "verbatim-audio",
     "verbatim-text",
+    "verbatim-reader-rules",
+    "verbatim-outpost-logic",
+    "verbatim-listener-logic",
     "xtask",
 ];
 

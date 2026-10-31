@@ -1036,6 +1036,8 @@ dependencies = [
  "serde_json",
  "verbatim-core",
  "verbatim-ia2",
+ "verbatim-listener",
+ "verbatim-listener-logic",
  "verbatim-model",
  "verbatim-outpost",
  "verbatim-process",
@@ -1881,9 +1883,9 @@ dependencies = [
  "verbatim-input",
  "verbatim-input-windows",
  "verbatim-model",
- "verbatim-outpost",
  "verbatim-process",
  "verbatim-speech",
+ "verbatim-supervisor",
  "verbatim-synth-capture",
  "verbatim-synth-hosted",
  "verbatim-win32",
@@ -2068,6 +2070,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-listener"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "verbatim-core",
+ "verbatim-ia2",
+ "verbatim-listener-logic",
+ "verbatim-model",
+ "verbatim-process",
+ "verbatim-reader-rules",
+ "verbatim-uia",
+ "verbatim-uia-rops",
+ "verbatim-win32",
+ "windows",
+ "workspace-hack",
+]
+
+[[package]]
+name = "verbatim-listener-logic"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "verbatim-model",
+ "verbatim-reader-rules",
+ "workspace-hack",
+]
+
+[[package]]
 name = "verbatim-model"
 version = "0.1.0"
 dependencies = [
@@ -2086,6 +2116,7 @@ dependencies = [
  "verbatim-core",
  "verbatim-ia2",
  "verbatim-model",
+ "verbatim-outpost-logic",
  "verbatim-process",
  "verbatim-reader-rules",
  "verbatim-term-sim",
@@ -2095,6 +2126,16 @@ dependencies = [
  "verbatim-uia-rops",
  "verbatim-win32",
  "windows",
+ "workspace-hack",
+]
+
+[[package]]
+name = "verbatim-outpost-logic"
+version = "0.1.0"
+dependencies = [
+ "verbatim-core",
+ "verbatim-model",
+ "verbatim-reader-rules",
  "workspace-hack",
 ]
 
@@ -2134,6 +2175,20 @@ dependencies = [
  "verbatim-model",
  "verbatim-synth-capture",
  "verbatim-text",
+ "workspace-hack",
+]
+
+[[package]]
+name = "verbatim-supervisor"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "tracing",
+ "verbatim-core",
+ "verbatim-model",
+ "verbatim-process",
+ "verbatim-win32",
+ "windows",
  "workspace-hack",
 ]
 

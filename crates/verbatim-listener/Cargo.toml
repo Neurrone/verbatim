@@ -1,0 +1,24 @@
+[package]
+name = "verbatim-listener"
+description = "The focus listener process: the desktop-global UIA focus registration and MSAA hooks, and the reading threads that judge and read each UIA focus"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true
+verbatim-core.workspace = true
+verbatim-ia2.workspace = true
+verbatim-listener-logic.workspace = true
+verbatim-model.workspace = true
+verbatim-process.workspace = true
+verbatim-reader-rules.workspace = true
+verbatim-uia.workspace = true
+verbatim-uia-rops.workspace = true
+verbatim-win32.workspace = true
+windows.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[lints]
+workspace = true

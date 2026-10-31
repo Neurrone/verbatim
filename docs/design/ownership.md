@@ -52,7 +52,7 @@ Each area gives its problem, the choice with the alternatives weighed, and its l
 
 ### One judge: focuses, repeats and the listener
 
-Crate guides: [verbatim-core](../crates/verbatim-core.md) ("Focus, events and objects"), [verbatim-outpost](../crates/verbatim-outpost.md) (the listener, "What to read") and [verbatim-uia](../crates/verbatim-uia.md).
+Crate guides: [verbatim-core](../crates/verbatim-core.md) ("Focus, events and objects"), [verbatim-listener](../crates/verbatim-listener.md), [verbatim-outpost](../crates/verbatim-outpost.md) ("What to read") and [verbatim-uia](../crates/verbatim-uia.md).
 
 The problem: Core judged each focus report, and the listener and the outposts each kept a copy of Core's focus (`CoreFocus`, `HeldElements`, `Held`'s copy) to guess that verdict and skip work. Each copy was one message old, so a focus that returned while Core's notice was in flight was never spoken (the repeat hole), and every guess needed a patch per sequence (43de3932, c0bbf19b, 094a8dc8).
 
@@ -87,7 +87,7 @@ Limits: each post to the port allocates a box; keys injected with `SendKeys` car
 
 ### Messages: declared kinds, one answer, typestates
 
-Crate guides: [verbatim-model](../crates/verbatim-model.md) ("The wire protocol"), [verbatim-outpost](../crates/verbatim-outpost.md) ("The protocol", "The supervisor"), [verbatim-app](../crates/verbatim-app.md) and [verbatim-gui](../crates/verbatim-gui.md). This is roadmap milestone M4.4.
+Crate guides: [verbatim-model](../crates/verbatim-model.md) ("The wire protocol"), [verbatim-process](../crates/verbatim-process.md) (the message layer), [verbatim-supervisor](../crates/verbatim-supervisor.md), [verbatim-app](../crates/verbatim-app.md) and [verbatim-gui](../crates/verbatim-gui.md). This is roadmap milestone M4.4.
 
 The problem: one enum per direction served both kinds of child, so receivers dropped what was not theirs with a wildcard arm and `CoreFocus` was added with nothing asking what kind of message it was. `carries_nodes` was a `matches!`, so a new node-carrying variant went uncounted and a node could be released while Core read it. The outbound queue's merge had no declared barriers or equivalence test. Wanted requests had no owner, so one never ended when its application exited during a backoff and every later idle round timed out (886d8e73), and the GUI's shell-items request had no answer on drop (76180512). The supervisor's record encoded a generation's life in booleans and a sentinel id (df4c15d9).
 

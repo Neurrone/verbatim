@@ -31,7 +31,7 @@
 //! Backspace and the opening on 2026-10-21) rather than an expectation
 //! that depends on the machine: heard in full, cut off by the item's
 //! focus, or not said at all. Where it lands depends on the focus
-//! listener's own read of the placeholder (`verbatim-outpost`'s
+//! listener's own read of the placeholder (`verbatim-listener`'s
 //! `focus_read.rs`). When File Explorer removes it after the listener's
 //! nearest-window walk, the listener's classic read of it fails, or its
 //! read budget runs out, and the listener reports it with its ancestors

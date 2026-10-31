@@ -360,8 +360,8 @@ the application being each window's provider process, until their own
 deadlines (10 seconds for the worker, `READ_DEADLINE`, 11 seconds, for a
 reading thread); the event is dropped and a new worker or reading thread
 takes the application's later events
-(`docs/crates/verbatim-outpost.md`, "A UIA focus, judged and read by the
-listener", owns when each judges). Console host's own Find, Properties
+(`docs/crates/verbatim-listener.md`, "How a UIA focus is judged and
+read", owns when each judges). Console host's own Find, Properties
 and Defaults windows are on the console window's real thread, while
 `GetWindowThreadProcessId` names the client's thread for the console
 window, so with one of them in front a slow read of the console window
@@ -542,7 +542,7 @@ handles COMErrors (lines 1155 to 1170). The focus is spoken without its
 UIA ancestors, with or without its name, by its source; not captured.
 
 Verbatim: **matched (unverified)**; the listener's own read decides both
-cases (`crates/verbatim-outpost/src/focus_read.rs`). NVDA's first case is
+cases (`crates/verbatim-listener/src/focus_read.rs`). NVDA's first case is
 the listener's nearest-window walk finding no window, which drops the
 event as `NO_WINDOW`; there Verbatim differs, as "A focus UIA does not
 deliver" records: the outpost reads the focus at once and speaks where

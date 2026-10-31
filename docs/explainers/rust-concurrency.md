@@ -20,7 +20,7 @@ same thread cost with far less machinery. Examples of the pattern:
 the speech queue thread and synth thread (`verbatim-speech`), the
 input hook thread (`verbatim-input-windows`), the relay thread, which
 serves every child's pipe to Core and every child's writes on one
-completion port (`verbatim-outpost`'s supervisor), the
+completion port (`verbatim-supervisor`), the
 query-pool workers, and the agent's two tunnel copy threads
 (`verbatim-agent`).
 

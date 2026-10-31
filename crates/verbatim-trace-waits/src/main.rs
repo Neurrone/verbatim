@@ -16,7 +16,8 @@
 //!   is one ready wait.
 //!
 //! It prints, for every thread of the processes named (by default
-//! `verbatim.exe`, `verbatim-outpost.exe` and `verbatim-synth-host.exe`),
+//! `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-listener.exe` and
+//! `verbatim-synth-host.exe`),
 //! its process, id and name, how many times it was woken (readied from a
 //! wait), its time on a processor (from a context switch giving it one to
 //! the next taking it away, so a thread already running when the trace
@@ -1131,6 +1132,7 @@ fn main() -> ExitCode {
         processes = [
             "verbatim.exe",
             "verbatim-outpost.exe",
+            "verbatim-listener.exe",
             "verbatim-synth-host.exe",
         ]
         .map(str::to_owned)

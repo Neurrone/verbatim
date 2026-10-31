@@ -197,7 +197,7 @@ The design was built in these steps, each with its scenarios.
 9. The end-to-end agent's desktop reading through MSAA (decision 10).
 10. The lock removed: code, protocol, tests and documents (section 7).
 11. Core's tray dialog's shell items as a query to File Explorer's outpost (decision 9). The outpost answers within its worker's walk deadline, `WALK_DEADLINE` (5 seconds), and Core waits `SHELL_ITEMS_DEADLINE`, 6 seconds, that deadline and a second for the way through the pipes and the reducer thread, so the items read by the outpost's deadline reach the dialog; a query queued behind a busy outpost worker can still time out in Core, which is accepted (Dickson, 2026-10-20).
-12. Decision 11's read after a `WinEvent` focus with no UIA focus following it, now the outpost's gap record (`crates/verbatim-outpost/src/outpost/reducer/gap_record.rs`).
+12. Decision 11's read after a `WinEvent` focus with no UIA focus following it, now the outpost's gap record (`crates/verbatim-outpost-logic/src/gap_record.rs`).
 
 ## Follow-ups outside this design
 

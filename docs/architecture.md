@@ -92,8 +92,10 @@ screen reader in both rendered and source form.
   when they happened (section 2). Why:
   a foreground gate failed broker-hosted applications and background
   events users expect. Decided 2026-09-02. Amended 2026-10-25 (Dickson,
-  2026-10-26) and 2026-10-30 (Dickson: no state of Core is sent to a
-  reader, [the ownership model](design/ownership.md)).
+  2026-10-26), 2026-10-30 (Dickson: no state of Core is sent to a
+  reader, [the ownership model](design/ownership.md)) and 2026-10-31 (the
+  ported rules both readers apply are defined in `verbatim-reader-rules`,
+  section 2).
 - **D15, the latency budget is split in two and measured per stage.** The
   OS event to the utterance queued takes 10 ms or less on every backend,
   and queued to first audio 10 ms or less with eSpeak NG, OneCore exempt
@@ -141,7 +143,7 @@ rule that the focus listener's callbacks never make a cross-process call
 (its reads of a UIA focus are made on a thread per application, each
 under UIA's call timeout and a watchdog).
 
-Verbatim runs as three kinds of process:
+Verbatim runs as four kinds of process:
 
 1. **Core process (`verbatim.exe`)**, containing these thread groups:
    - the input hook thread, running the low-level keyboard hook;
@@ -159,7 +161,13 @@ Verbatim runs as three kinds of process:
    deadline, and an I/O thread that reads Core's commands, answers pings,
    and finishes the writes to Core that pended; every other thread writes
    its own messages to Core (`docs/design/communication.md`, section 6.4).
-3. **Synthesizer host processes** (D18) — one per synthesizer in use, in
+3. **The focus listener process (`verbatim-listener.exe`)** (D13), one
+   for the desktop, containing its `WinEvent` thread, its UIA event
+   threads, a reading thread for each application whose UIA focus it
+   reads, with their watchdog, and an I/O thread that reads Core's
+   commands; like an outpost's, every other thread writes its own
+   messages.
+4. **Synthesizer host processes** (D18) — one per synthesizer in use, in
    a kill-on-close job, streaming PCM to Core over a pipe; the AppContainer
    sandbox arrives with Eloquence in M6.
 
@@ -584,8 +592,9 @@ per-source flood cap, not implemented yet.
 Each rule (acceptance, a repeated focus, which property changes,
 selections and dialog texts are spoken) is defined once, in a
 platform-neutral crate unless it is ported from NVDA, in which case once
-in the Windows-specific crate the judges before a read share, and every
-place that applies it calls that one definition. Words and every fact
+in `verbatim-reader-rules`, the GPL-tier crate with no Windows dependency
+that the judges before a read, an outpost and the focus listener, share,
+and every place that applies it calls that one definition. Words and every fact
 across applications are judged in Core. What to read for one application
 is judged by its reader, from its own observations of the event, and by
 its outpost's verdict rule, which the listener applies only in its
@@ -1029,11 +1038,23 @@ otherwise.
   operations.
 - `verbatim-ia2` — MSAA/IA2 client stack (WinEvents, IAccessible2).
 - `verbatim-jab` — Java Access Bridge client stack (planned, M13).
-- `verbatim-outpost` — the outpost actor and per-app outpost binary, plus the
-  Core-side supervisor.
+- `verbatim-outpost` — the outpost actor and per-app outpost binary;
+  `verbatim-outpost-logic`, its reducer, pure.
+- `verbatim-listener` — the focus listener and its binary (D13);
+  `verbatim-listener-logic`, its read scheduler, grace, foreground watch
+  and focus vocabulary, pure.
+- `verbatim-supervisor` — the Core-side supervisor of the outposts and the
+  listener, whose pure decisions are `verbatim-core`'s `supervisor`
+  module.
+- `verbatim-reader-rules` — what both readers apply before reading: NVDA's
+  class verdict and acceptance test, and the waits they share; pure.
+- `verbatim-win32` — the local window and process queries more than one
+  role makes.
 - `verbatim-process` — contained child processes (kill-on-close job,
   inherited pipes, per-launch logs), shared by the supervisor and the
-  synthesizer host.
+  synthesizer host, and what every end of Core's children shares: the
+  message layer, the launch arguments, the held processes, a child's start
+  and end.
 - `verbatim-control` — control-plane protocol and server.
 - `verbatim-speech` and `verbatim-audio` — pipeline; the mixer and the
   `AudioDevice` seam.

@@ -90,7 +90,8 @@ build, such as a worktree of an older commit, to compare against. It
 passes that path to the scenario as `VERBATIM_E2E_VERBATIM_EXE`, cannot
 be combined with `--release`, and refuses to start unless the path's
 folder holds everything a run stages: `verbatim.exe`,
-`verbatim-outpost.exe`, `verbatim-synth-host.exe`, `mockapp.exe`,
+`verbatim-outpost.exe`, `verbatim-listener.exe`,
+`verbatim-synth-host.exe`, `mockapp.exe`,
 `espeak-ng-data` and `sounds`, naming each one missing. It also refuses
 to start while `VERBATIM_E2E_VERBATIM_EXE` is set in its environment,
 since it sets that variable itself.

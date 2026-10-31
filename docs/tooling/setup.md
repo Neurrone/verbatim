@@ -82,7 +82,9 @@ own architecture into `target/debug`; no build names a target, so an ARM64
 machine checks ARM64. On Linux, where the `ci-linux` job runs it on
 `ubuntu-latest`, it runs the dependency check, the scans and the
 documentation check, then Clippy and unit tests only for the crates in
-`LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier and xtask.
+`LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier, the
+logic crates (`verbatim-reader-rules`, `verbatim-outpost-logic` and
+`verbatim-listener-logic`) and xtask.
 rustfmt and the workspace-hack checks run only on Windows, since they read
 source and metadata the same way on every host. On Linux xtask builds only
 its portable part, so `ci` and `docs` are its only commands there; the
@@ -126,7 +128,7 @@ finding:
   none holds what it reads.
 - Pure owners' names (`xtask/src/ownership.rs`): a module whose
   transitions are replayed in tests, the listener's read scheduler
-  (`crates/verbatim-outpost/src/read_schedule.rs`), may `use` only its
+  (`crates/verbatim-listener-logic/src/schedule.rs`), may `use` only its
   allow-list (`std::collections`, `std::time::Duration`, `verbatim_model`
   and the listener's data types), and fails on any name of a thread, a
   lock, an atomic, an `Arc`, a channel, a clock read, the file system,

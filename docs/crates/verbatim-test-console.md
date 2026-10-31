@@ -33,7 +33,7 @@ Public API:
   names as the console window's, found by a title unique to the test
   process; it panics as `with` does, or when that window is not found.
   `Console::client_window` is that window, 0 for a console started with
-  `with`. The moved-on rule's test in `verbatim-outpost` uses it.
+  `with`. The moved-on rule's test in `verbatim-win32` uses it.
 
 ## verbatim-stream-test
 

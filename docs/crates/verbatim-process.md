@@ -301,11 +301,20 @@ Public API:
   name from its first bytes without parsing the rest; the relay reads it
   on every outpost frame.
 - `arguments` — the launch arguments the supervisor gives its children,
-  defined once for the end that builds them and the end that parses them:
-  `OutpostOptions` (`remote_operations`, which `--classic-uia` turns off),
-  `IGNORE_PIDS_ARG` (`--ignore-pids`) and `HOOKS_IN_ARG` (`--hooks-in`,
-  with `format_hooks_in` and `parse_hooks_in` for its `pid:outpost`
-  pairs).
+  defined once for the end that builds them and the end that parses them,
+  each with its command line (`command_line(Pipes)`) and its parse
+  (`parse(args)`, the arguments after the program's name), tested by a
+  round trip. `OutpostArguments` is an outpost's: `--pipe-in`,
+  `--pipe-out`, its `OutpostTarget` (`--target-pid <pid>`, or `--spare
+  <launch>` for a spare), and `--classic-uia` when `OutpostOptions`'
+  `remote_operations` is off. `ListenerArguments` is the focus listener's,
+  `--listener` first (`LISTENER_ARG`), then the pipes, the ignored pids
+  (`--ignore-pids`, `IGNORE_PIDS_ARG`) and the applications whose outposts
+  have their own hooks in (`--hooks-in`, `HOOKS_IN_ARG`, with
+  `format_hooks_in` and `parse_hooks_in` for its `pid:outpost` pairs).
+  Each executable's `main` parses its own and refuses the other's: an
+  outpost refuses `--listener`, and the listener refuses an outpost's
+  options.
 - `held` — processes held open by handle, so a pid names one process and
   no other while held. `Target::open(pid)` holds a target application
   (`NotHeld` when it has exited or cannot be opened), with `has_exited`

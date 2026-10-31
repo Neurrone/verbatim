@@ -60,6 +60,11 @@ changed crate's own guide leaves those claims stale.
 - [verbatim-reader-rules](verbatim-reader-rules.md) — what both readers
   apply before reading: NVDA's class verdict and acceptance test, and the
   waits they share.
+- [verbatim-outpost-logic](verbatim-outpost-logic.md) — the outpost's
+  reducer, a pure state machine.
+- [verbatim-listener-logic](verbatim-listener-logic.md) — the focus
+  listener's read scheduler, menu end's grace, foreground watch and focus
+  vocabulary, pure.
 - [verbatim-win32](verbatim-win32.md) — the local window and process
   queries more than one role makes.
 - [verbatim-uia](verbatim-uia.md) — the UIA client stack.
@@ -67,8 +72,12 @@ changed crate's own guide leaves those claims stale.
   programs that run inside a provider's process, and the focus ancestry
   in one round trip.
 - [verbatim-ia2](verbatim-ia2.md) — the MSAA/IA2 client stack.
-- [verbatim-outpost](verbatim-outpost.md) — per-app outposts, the focus
-  listener (D13), the supervisor, and their protocol.
+- [verbatim-outpost](verbatim-outpost.md) — the per-application outpost
+  process.
+- [verbatim-listener](verbatim-listener.md) — the focus listener process
+  (D13).
+- [verbatim-supervisor](verbatim-supervisor.md) — Core's side of starting,
+  watching and ending the outposts and the listener.
 - [mockapp](mockapp.md) — scripted accessibility providers for
   cross-process tests.
 - [verbatim-control](verbatim-control.md) — the control-plane protocol and
