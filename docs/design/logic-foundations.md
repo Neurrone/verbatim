@@ -258,9 +258,9 @@ The watch's replay tests in `crates/verbatim-outpost-logic/src/tests.rs` were re
 
 ## Determinism (a build of its own)
 
-Status: proposed on 2026-10-31 and revised after its adversarial review (`experiments/logic-tests-study/determinism-design-review.md`). It is written against the bookkeeping build's code (branch `bookkeeping`, cec81531), which it starts from, and revised again for Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) and his simplification goal.
+Status: the first of its three builds, determinism of the logic crates, built on 2026-11-01 on branch `determinism-1`, from main 8893fd97, after the design's reviews (`experiments/logic-tests-study/determinism-design-review.md`, `determinism-design-review-2.md`, and Dickson's purity audit, `experiments/logic-tests-study/purity-audit.md`). The second and third builds are proposed below as designed. The mechanisms are described in the crate guides: [verbatim-outpost-logic](../crates/verbatim-outpost-logic.md) for the reducer's asks, [verbatim-outpost](../crates/verbatim-outpost.md) for the shell's answers and the hung-window test, [verbatim-core](../crates/verbatim-core.md) for the supervisor's liveness and `due_starts`, and [verbatim-model](../crates/verbatim-model.md) for `TraceId::from_raw`; the enforcement is in `xtask/src/tiers.rs` and `xtask/src/ownership.rs`.
 
-The build enforces the determinism rule of [logic tests](logic-tests.md), "Tools and determinism", in every crate on the path to a reducer. The rule allows no hash map or set, no clock, no randomness, no thread, no environment or file read, and no other hidden input, and it covers the third-party code those crates call. The work is three builds ("The order of work"): determinism of the logic crates, the other pure owners, and simpler types. They change no thread, message or timer, and what is heard only where named. Paths are given within each crate, since the crates they name exist on the branch only.
+The determinism rule of [logic tests](logic-tests.md), "Tools and determinism", holds in every crate on the path to a reducer. The rule allows no hash map or set, no clock, no randomness, no thread, no environment or file read, and no other hidden input, and it covers the third-party code those crates call. The work is three builds ("The order of work"): determinism of the logic crates, the other pure owners, and simpler types. They change no thread, message or timer, and what is heard only where named.
 
 ### The crates the rule covers
 
@@ -270,9 +270,9 @@ The reducers are Core's reducer (`verbatim-core`), the outpost's reducer (`verba
 - every workspace crate they reach by a normal dependency, today `verbatim-model`, `verbatim-text` and `verbatim-reader-rules`;
 - every workspace crate that is a development dependency of a covered crate, today `verbatim-term-sim`, the oracle M4.6 builds on.
 
-That is seven crates. `workspace-hack` holds no code. The check derives the list from the dependency graph, so a crate a reducer comes to depend on falls under the rule without anyone listing it.
+That is seven crates. `workspace-hack` holds no code. The tier check derives the list from the dependency graph (`covered` in `xtask/src/tiers.rs`), so a crate a reducer comes to depend on falls under the rule without anyone listing it.
 
-`verbatim-speech` is not on the path. No covered crate depends on it, and it runs after the reducer, executing its speech effects. It owns the synthesizer threads, the mixer's hand-off and the cancel waker, so the rule could not hold for it, and its four maps are only looked up, never iterated; it stays outside the rule (Dickson, 2026-10-31). `verbatim-config`, `verbatim-i18n` and `verbatim-audio` are not on the path either. In the second build, `verbatim-input`, the keyboard decision machine's crate, joins the covered crates, and Core's request table moves into `verbatim-core` ("The other owners").
+`verbatim-speech` is not on the path. No covered crate depends on it, and it runs after the reducer, executing its speech effects. It owns the synthesizer threads, the mixer's hand-off and the cancel waker, so the rule could not hold for it, and its four maps are only looked up, never iterated; it stays outside the rule (Dickson, 2026-10-31). `verbatim-config`, `verbatim-i18n` and `verbatim-audio` are not on the path either. In the second build, `verbatim-input`, the keyboard decision machine's crate, joins the covered crates, and Core's request table moves into `verbatim-core` ("The other owners"); `verbatim-input` is on no reducer's path, so it is listed by hand.
 
 ### The rules
 
@@ -290,318 +290,42 @@ That is seven crates. `workspace-hack` holds no code. The check derives the list
 
 ### The hash maps and sets
 
-There are 44. Two go with the local reads (`admit`'s `hung` and the tests' `Recorded::hung`), and the other 42 become `BTreeMap` or `BTreeSet`; `terminal_rows.rs`'s `Spread` hasher and its aliases are removed. Each entry below gives its file, its key, its size bound, and whether its order reaches an effect. Seven of the 44 already used `Spread`.
+The audit found 44 in the covered crates. Two, the batch plan's `hung` and the tests' `Recorded::hung`, went with the local reads; the other 42 are `BTreeMap`s or `BTreeSet`s, but for the terminal alignment's five transient lookups below. Iteration order reached an effect in one place: the outpost's text facts collect the ranges a release drops into `Effect::ForgetRanges` in node order. `Input::Released`'s sets changed with the outpost's shell and store, Core's terminal review takes the held anchors' set as it is rather than a copy, and the listener's scheduler no longer sorts the process ids its map now orders.
 
-`verbatim-text`, 9:
+The terminal alignment of a lost read is the worst case: it looks up every row of the whole document by hash. Kept in `BTreeMap`s and `BTreeSet`s, its five transient lookups by row hash (`at`, `old_hashes`, `went`, `hashes` and `with_text`) cost 12 to 31% more than the fixed-hasher maps they replaced, so the design's fallback was built: each is one sorted vector of hashes, searched by binary search (`Hashes` in `crates/verbatim-text/src/terminal_rows.rs`), still ordered and with no hasher, at 1 to 9% more ("Performance on the event path"). The `Spread` hasher is removed. `Aside::rows` stays a `BTreeMap`, so Core's state and the dump format are untouched: its JSON form is a map in key order, and a dump written before reads back.
 
-- `src/terminal_reading.rs`, `carried`, keyed by old line indexes. Bound: the lines of one read. Order not used.
-- `src/terminal_rows/align.rs`, `Likeness::other`, keyed by non-ASCII characters of a row. Bound: the distinct characters of one row. Order not used.
-- `src/terminal_rows.rs`, `commonest_shift`'s `shifts`, keyed by row shifts. Bound: the pairs kept. The order is not used, since the tie-break on first place is unique.
-- `src/terminal_rows.rs`, six keyed by a row's hash:
-  - `Aside::rows`, the set-aside screen's rows, kept in Core's state and dumps. Its JSON form stays a map, now in key order, so a dump written before reads back.
-  - `shift_votes`'s `at`.
-  - `old_hashes`, `went`, `hashes` and `with_text`, in the alignments.
-  - Bound: the rows of the last read, up to a whole document on a lost read. Order not used.
-
-`verbatim-core`, 1:
-
-- `src/terminal_model.rs`, `held_anchors`, passed as `held` through `src/terminal_model/review.rs`, keyed by anchor numbers. Bound: the anchors Core holds for one outpost, its command marks (1,000 at most) and a few positions. Order not used. It is copied out of `HeldAnchors`, already a `BTreeSet`, so the copy goes.
-
-`verbatim-reader-rules`, 2:
-
-- `src/acceptance.rs`, `RequestedEvents::requested`, keyed by an event, a process id and a window class. Bound: what application support asks for, empty today. Order not used.
-- In its tests, the test desk's `windows`.
-
-`verbatim-outpost-logic`, 10:
-
-- `src/lib.rs`, `Input::Released`'s `nodes` and `anchors`, keyed by node and anchor numbers. Bound: one release's. Order not used.
-  - The sets are passed into `held.rs`, `follow.rs` and `text.rs`.
-  - The outpost's shell in `verbatim-outpost` builds them and changes with them.
-  - The test sites that build them change too: `follow.rs` once, `held.rs` once, `text.rs` twice and `tests.rs` twice.
-- `src/gap_record.rs`, `answered`, keyed by top-level window handles. Bound: the application's answered top-level windows, each removed when its window is destroyed. Order not used.
-- `src/intake.rs`, `admit`'s `hung` and `per_thread`, keyed by window handles and thread ids, and the batch plan's `runs`, keyed by entry indexes. Bound: one batch. Each run is sorted on its own, so order is not used. `hung` is removed, since `admit` no longer tests hung windows.
-- `src/text.rs`, `TextFacts::uia` and `edit`, keyed by node numbers. Bound: the store's live nodes with text facts.
-  - `uia`'s order reaches an effect today: `release` collects the dropped ranges in iteration order into `Effect::ForgetRanges`.
-  - This is the one place found where an order already reaches an effect.
-- `src/verdicts.rs`, `Verdicts::windows`, keyed by window handles. Bound: the windows probed, each removed by a forget. Order not used.
-- In its tests, `src/tests.rs`, `Recorded::hung`, removed with `Recorded`.
-
-`verbatim-listener-logic`, 2:
-
-- `src/schedule.rs`, `Schedule::apps`, keyed by process ids. Bound: the applications with events waiting or being read, each removed when it goes idle. `tick` sorts the ids before walking them, a sort the `BTreeMap` makes unnecessary. The other walks do not depend on order.
-- The same file's `tick`'s `reads`, keyed by process ids. Bound: one tick's reads.
-
-`verbatim-term-sim`, 20, all keyed by row text, row ids, shifts or counts:
-
-- In `src/oracle.rs`, the fields `texts`, `shown`, `covered`, `changes`, `lost`, `erased`, `written` and `rotated`.
-- In `src/oracle.rs`, the locals `texts`, `left`, `at`, `votes`, `said`, `counts` (twice), `ids` and `found`, with the return types of `alternate_lines` and `unique_rows`.
-- In `tests/oracle.rs`, `matched`, `shown` and `found`.
-
-The second build converts 12 more, outside the logic crates' reducers:
-
-- `verbatim-input`'s 7: `GestureMap`'s `bound` and `observed`, the decision machine's `held_modifiers` and `swallowed_downs`, and 3 in `scripts.rs`'s tests;
-- the request table's `entries`;
-- the outbound backlog's `reported`;
-- the supervisor shell's `records`, `apps` and `spare_children`. These three go in the first build, with `due_starts`.
+The second build converts 12 more, outside the logic crates' reducers: `verbatim-input`'s 7 (`GestureMap`'s `bound` and `observed`, the decision machine's `held_modifiers` and `swallowed_downs`, and 3 in `scripts.rs`'s tests), the request table's `entries` and the outbound backlog's `reported`. The supervisor shell's `records`, `apps` and `spare_children` went in the first build, with `due_starts`.
 
 ### The outpost's local reads as inputs
 
-The outpost's reducer calls three functions of its `Locals` trait (`src/lib.rs` 104 to 114) during a transition today. Each leaves the reducer, so that the reducer is pure, with calls as its effects (Dickson, 2026-10-31). The `Locals` trait is removed, the reducer's `input` and `tick` take only the input and its `Now`, and the tests' `Recorded` goes with it.
+The outpost's reducer called three functions of a `Locals` trait during a transition. Each left the reducer, so that it is pure, with calls as its effects (Dickson, 2026-10-31); the trait is gone, and `input` and `tick` take only the input and its `Now`. For each, four designs were weighed: (a) remove the need, moving the decision to where the call is made; (b) the fact's owner pushes an input when the fact changes; (c) the fact is attached to the event that needs it at intake; (d) an effect that asks and an input that answers. Where they were otherwise equal, the one that removes states was preferred.
 
-For each query, four designs are weighed:
+**Whether a window is hung: (a), tested at handling.** The batch plan's `admit` tested each UIA entry's window (`IsHungAppWindow`, 0.41 to 0.42 µs a call on this machine) about once per planned batch. Now the worker tests a UIA event's or focus read's own cached window first as it handles it, a window of 0 passing as NVDA's test passes a sender with no cached window (`nvda/source/UIAHandler/utils.py` 438 to 452), before any window lookup, verdict probe or read.
 
-- (a) remove the need: the decision moves to where the call is made, and the reducer never asks;
-- (b) the fact's owner pushes an input only when the fact changes;
-- (c) the fact is attached to the event that needs it, read once at intake;
-- (d) an effect that asks and an input that answers.
+- Rejected: (a′), testing at arrival as NVDA does in each UIA handler, which would read an entry taken in before the 5-second mark and still waiting after it, where today it was dropped; (b), since Windows gives no notice of a window becoming hung, so it needs a polling timer in every outpost; (c), which behaves as (a′) and keeps the test in the reducer; (d), the only option that left what is heard exactly as before, at a transition per planned batch and a state for a batch waiting for its answer.
+- What is heard changes in one narrow case: a focus read planned before its window became hung and handled after it, because programs ahead of it were slow, is dropped, where before it was read, met the hang, and could be spoken from a half-read focus at its walk's bound (Dickson, 2026-10-31). Every entry `admit` dropped is still dropped.
+- An entry from a hung window, which `admit` dropped for nothing, now costs a dispatch and a `Finished`: one worker wake-up and one shell wake-up. A dropped event's parked element and active-text-position range are taken from the store and go with it; before, an entry the plan dropped left them in the store until the outpost ended.
+- MSAA entries are tested by the worker's `readable`, as before, which is not the UIA rule: it also drops window 0, windows that no longer exist, and windows a ghost stands in for.
 
-Where the options are otherwise equal, the one that removes states is preferred. The one measured figure is `IsHungAppWindow`'s cost: 0.41 to 0.42 µs a call, timed on this machine (Windows 11 x64, a loop of 200,000 calls from PowerShell, 5 runs). Every other cost is a count of call sites and of the transitions that reach them.
+**Whether the user moved on: (d).** The reducer emits `Effect::AskMovedOn { request, window }` where it called the read, and the shell answers `Input::MovedOn { request, moved_on }`. (a) was rejected because the decision to abandon is the reducer's, which owns the generation, so the shell could judge it only from a copy of the program in flight; (b) and (c) would read the front window's owner and provider on every foreground fact, where the read is made only for programs past their grace, and would judge the last fact delivered rather than the window as it is. Calls are as before plus the answer's `Now`, three clock reads, only for slow programs.
 
-#### Whether a window is hung
+**A walk published at its bound: (d).** The reducer emits `Effect::Publish { request, facts, then_abandon }`, clears the walk's bound, and the shell answers `Input::Published { request, change, then_abandon }`. The shell claims the walk's progress from the charge of `request`'s own generation, completes it with local calls, and writes it into the store, so none of that happens inside a transition. `then_abandon` carries an abandonment that asked for the publication and comes back in the answer, so the reducer keeps nothing between the two and today's order holds: the publication is committed, then the program abandoned. Rejected: (a), since the worker is inside the slow call its bound exists for, and a timer of the shell's would make it a second owner of the bound; (b), several messages and shell wake-ups per focus for a rare case; (c), since a bound has no event.
 
-**Today.**
+**The rule for asks.** The shell answers each ask exactly once, as the reducer's next input, before it takes another message, and the reducer applies an answer only while its request is the program in flight. Reasons: each ask has one answer path; nothing comes between an ask and its answer, so effects keep their order; and an answer out of turn is dropped rather than applied to another program. A transition makes at most one ask: a tick judges the deadline first (abandoning, by one `Publish` carrying the abandonment when a walk is armed), then the walk's bound (`Publish`), then the grace's end (`AskMovedOn`), the first that applies deciding, and a judgment left over is made by the publication's answer against its own `Now`. Judged the other way round, a late tick past both the bound and the deadline published and then abandoned before the answer, losing the published focus and trying the group's older entries in its place (the second review's first finding). A `MovedOn` answer applies whether or not its program is claimed, so a published program still stuck is abandoned at once.
 
-- The system owns the fact. Windows reports a window hung once its thread has gone 5 seconds without taking a message (`IsHungAppWindow`'s documented rule).
-- There is one call site, `admit` (`src/intake.rs` 1228 to 1245). It is reached through `Intake::next`, from `pump` (`src/lib.rs` 1234).
-- `pump` ends every input and every tick, but `admit` runs only when a batch is planned.
-- `admit` asks once per distinct non-zero window among the batch's UIA entries:
-  - the outpost's own UIA events;
-  - the listener's selections and notifications;
-  - the listener's focus reads (`UiaFocusRead`, judged by `read.hwnd`, `intake.rs` 1180 to 1184).
-
-  In practice that is about one call per planned batch, on the shell's thread. An entry it drops costs nothing more.
-- The listener also tests its focus read once, before it reads (`verbatim-listener`, `focus_read.rs` 1332).
-- MSAA entries from a hung window are kept by `admit` and dropped by the worker's own test, `event_window_unreadable` (`verbatim-win32`, `window.rs` 278 to 294, through the worker's `readable`). That test also drops window 0, windows that no longer exist, and windows a ghost stands in for, so it is not the UIA rule.
-- A pre-existing defect: an `Item::Uia` that `admit` drops keeps its parked element, and an active-text-position event's range, in the store until the outpost ends. `Intake::push` and `close` return the parked objects of entries they remove (486, 514 and 704), but the batch plan's drop returns nothing.
-
-**When each option tests.** The options differ only for an entry whose window crosses the 5-second mark while the entry waits.
-
-- **At arrival.** This is NVDA's rule: `_shouldSkipEventForHungWindow` is the first statement of each UIA event handler (`nvda/source/UIAHandler/__init__.py` 768, 882, 981, 1085 and 1172). It reads the sender's cached window and passes a sender with none (`nvda/source/UIAHandler/utils.py` 438 to 452, the pass at 449 and 450). Entries taken in before the mark are kept.
-- **At planning.** Today's place.
-- **At handling.** The worker tests each UIA entry as it starts it.
-
-**The options.**
-
-**(a) Remove the need: test at handling.**
-
-- The test: `verbatim_win32::window::window_is_hung` on the entry's own cached window, `event.hwnd` for a UIA event and `read.hwnd` for a focus read. Window 0 passes untested, as NVDA's rule and `admit` pass it.
-- Where: first in the worker's `uia_event` and `uia_focus`, before any window lookup, verdict probe or read. The one exception is that `uia_event` first takes the event's parked element and range from the store, which is local, so a dropped event's objects go to the garbage. This fixes the defect above.
-- `admit`'s test, its `hung` map and the reducer's call go.
-- Calls: one `IsHungAppWindow` per UIA entry handled, on the worker's thread, at 0.41 µs, in place of about one per planned batch on the shell's thread.
-- Wake-ups: none on the ordinary path. An entry from a hung window, which `admit` drops for nothing today, now costs a dispatch and a `Finished`: one worker wake-up and one shell wake-up each.
-- States: none.
-- What is heard changes in one narrow case. Consider a focus read planned before its window crossed the mark and handled after it, because programs before it in the batch were slow.
-  - Today it is read: its ancestor walk meets the hang, and it is published at its walk's bound and spoken from the listener's snapshot and whatever ancestors were read, or abandoned at its deadline.
-  - Under (a) it is dropped, and nothing is said.
-  - The reverse never happens. Every entry `admit` would drop is dropped too, since handling comes after planning.
-- Abandoned reads: no more than today, and fewer in that case.
-
-**(a′) Remove the need: test at arrival.**
-
-- Each UIA event handler, the outpost's and the listener's selection and notification handlers, tests first, as NVDA does. The listener's focus read already does.
-- Calls: one per UIA event taken in.
-- Wake-ups: an event dropped at arrival is never queued, so it wakes nothing. A hung application's own thread raises few provider events, though, so this saves little.
-- What is heard changes the other way. An entry taken in before the mark and still waiting after it, which `admit` drops today, is read. A focus read among them can then be published at its walk's bound and spoken, where today nothing is said. Each such read can also cost an abandoned worker.
-- States: none.
-
-**(a″) Both, at arrival and at handling.** What is heard is as (a). It costs two calls per UIA entry, and saves the dispatch and the two wake-ups for an event that arrives after the mark, which is rare.
-
-**(b) Push on change.** Windows gives no notice when a window becomes hung or answers again, so this needs polling on a timer, with wake-ups in every outpost all the time. Rejected.
-
-**(c) Attach at intake.** The fact is read at arrival and carried in the entry for `admit` to drop by. It behaves as (a′), and the reducer keeps the test. Rejected.
-
-**(d) Ask and answer at planning.** Before planning a batch, the reducer asks for the hung state of its UIA entries' windows and plans when answered.
-
-- This is the only option that leaves what is heard exactly as today.
-- Cost: one more reducer transition per planned batch, on the event path, and the intake gains a state, a batch waiting for its answer.
-- `admit`'s drop must also return its parked objects, to fix the defect.
-
-**Recommended: (a), at handling.**
-
-- It is the simplest: no state and no new interface.
-- It drops everything today's test drops, plus the entries that cross the mark while their batch runs. Those are reads of an application that is no longer responding, which today can produce speech from a half-read focus.
-- It fixes the leak of parked elements.
-
-This replaces the earlier claim that nothing heard differs, which was wrong. Dickson's choice of handling was made on that claim, so the choice goes back to him as a question.
-
-#### Whether the user moved on
-
-**Today.**
-
-- The system owns the window with the focus. `front_is_another_thread_of_its_application` (`verbatim-win32`, `window.rs` 371) reads it with local calls: `GetGUIThreadInfo`, each window's owner, and for a console window its provider process (`OpenProcess`, `NtQueryInformationProcess`, `CloseHandle`).
-- There is one call site, in `judge_abandonment` (`src/lib.rs` 1018), reached by two transitions:
-  - a tick, once per program, as its 500 ms grace (`MOVED_ON_GRACE`) ends;
-  - each foreground fact taken in (`src/lib.rs` 739).
-- Both are reached only while a program with a window is past its grace. So there are zero calls for an ordinary event, and one plus one per foreground change for a slow one.
-
-**(a) Remove the need.** The decision to abandon belongs to the reducer, which owns the generation. The shell could judge it only by holding the program in flight, its window and its grace: a copy judged in a second place. Rejected.
-
-**(b) Push on change.** Foreground changes already arrive as facts, and each could carry the front window's owner and provider.
-
-- Calls: the reads move onto every foreground fact, where today they are made only for slow programs.
-- States: a copy of the front window's facts.
-- At the grace's end, the reducer would judge the last delivered fact rather than the window as it is.
-
-Rejected.
-
-**(c) Attach at intake.** As (b) for foreground facts. The grace's end has no event to attach the fact to.
-
-**(d) Ask and answer.** Where the reducer calls `moved_on` today, it emits `Effect::AskMovedOn { request, window }`. The shell makes today's call and answers `Input::MovedOn { request, moved_on }`. The reducer finishes the judgment when `request` is still the program in flight and the outpost is not stopping.
-
-- Calls: as today, plus the answer's `Now`, which is three clock reads (`shell.rs` 511 to 517), only for programs past their grace.
-- Added: one transition per ask, and no wake-up.
-- States: none.
-- What is heard: unchanged.
-
-**Chosen: (d).**
-
-#### A walk published at its bound
-
-**Today.**
-
-- The walk's progress is the worker's, kept in its generation's `Charge` as it walks.
-- There is one call site, in `publish` (`src/lib.rs` 986), reached by two transitions:
-  - a tick once the bound given by the worker's `Input::Armed` has passed;
-  - `judge_abandonment`, before abandoning a program with a walk armed.
-- The shell then, inside the reducer's transition (`verbatim-outpost`, `shell.rs` 318 to 335):
-  - claims the progress;
-  - completes it with local calls on plain windows;
-  - pushes the context's removed objects into the store's garbage;
-  - writes the change into the store, handing out element tokens;
-  - logs.
-- This happens only for a walk that reaches its bound: zero calls for an ordinary focus.
-
-**(a) Remove the need.**
-
-- The worker cannot publish at its own bound, since it is inside the slow call that is the reason for the bound.
-- The shell publishing by its own timer would make it a second owner of the walk's bound.
-
-Rejected.
-
-**(b) Push on change.** The worker would send its progress at each step of every walk, one ancestor a step. That is several more messages and shell wake-ups per focus, for a rare case. Completing the change would still need the shell's calls and the store. Rejected.
-
-**(c) Attach at intake.** A bound has no event, only a tick. Not applicable.
-
-**(d) Ask and answer.** The reducer emits `Effect::Publish { request, facts, then_abandon }`, carrying the copy of the facts the shell clones today, and clears the walk's bound. `then_abandon` is the abandonment's reason when an abandonment asked for the publication, and none at a plain bound. The shell answers `Input::Published { request, change, then_abandon }`.
-
-- The shell carries out the claim, the store's writes, the garbage, the tokens and the log while carrying out the effect, so they are effects of the reducer, not calls within it.
-- The shell claims the progress from the charge of `request`'s own generation, not the generation in charge's. The two are the same under the order below, but the lookup by request is what makes that order safe to change.
-- On the answer, the reducer commits the change and marks the program claimed when `request` is still current and not claimed, as `publish` does today.
-- Then, if `then_abandon` is set, it completes the abandonment as `judge_abandonment` does today: the generation's death, `Effect::Abandon`, and the answer to the running query.
-
-States: none. A pending abandonment would otherwise need a field on the program in flight, kept between the ask and its answer. It travels in the ask and comes back in the answer instead, so the reducer remembers nothing between them. This preserves today's order: commit, then abandonment. The other way, abandoning first and accepting a publication from a dead generation, needs an owed-publication slot and an exception to the generation rule.
-
-Calls: as today, plus the answer's `Now` (three clock reads). Added: one transition per publication, and no wake-up. What is heard: unchanged.
-
-**Chosen: (d).**
-
-#### The rule for asks, and the sequences
-
-The shell answers each asking effect, `AskMovedOn` and `Publish`, exactly once, as the next input, before it takes another message from the mailbox. The answer carries its request, and the reducer applies it only while that request is current. Reasons:
-
-- Each ask has one answer path.
-- Nothing comes between an ask and its answer, so effects keep today's order.
-- An answer out of turn is dropped rather than applied to another program.
-
-**One ask per transition, and the order within a tick.** A transition emits at most one ask. A tick judges, in this order:
-
-1. The deadline. If it has passed, the abandonment is decided: with a walk armed, by one `Publish { R, then_abandon: deadline }`; with none, at once.
-2. The walk's bound. If it has passed, `Publish { R }`.
-3. The grace's end. If it has come and the program has a window, `AskMovedOn { R }`.
-
-The first that applies decides. A judgment left over, such as the grace ending in the tick that published, is made by the answer's transition against its own `Now`. Reason: judged the other way round, a tick that passed both the bound and the deadline published at the bound and then abandoned before the answer. That lost the published focus and tried the group's older entries in its place.
-
-The rule is proved by a test of the shell: for each ask it carries out, exactly one answer reaches the reducer before the next mailbox message. The reducer's own tests give the answers themselves, so they cannot prove it.
-
-Sequences, each with one answer:
-
-- **The walk passes its bound while the worker still walks.** A tick emits `Publish { R }`, and the walk's bound is cleared. The shell claims the progress, so the worker sends nothing more for R, and answers with the change. The reducer commits it and marks R claimed. The worker's own result for R is refused as claimed, and its return frees the program, as today.
-- **The walk returns just before its bound.** Its commit waits in the mailbox. `Publish { R }` is answered with no change, and the commit is the next input.
-- **One late tick passes both the bound and the deadline.** The walk's bound is at 9.998 s and the deadline at 10 s, and the tick wakes at 10.001 s. The deadline is judged first, so the tick emits one `Publish { R, then_abandon: deadline }`. The answer commits the published focus and marks R claimed, so the group's older entries are not tried, as today. Then it ends generation G. The same sequence is a reducer test.
-- **The deadline passes with a walk armed.** `judge_abandonment` emits `Publish { R, then_abandon: deadline }`. The answer commits the publication, then ends generation G: G + 1 takes charge, `Abandon` is emitted, and R's query is answered once. G's later results are refused by generation, as today.
-- **The user moves on during a walk.** A foreground fact emits `AskMovedOn { R }`, answered `MovedOn { R, true }`. That emits `Publish { R, then_abandon: moved on }`, and its answer completes as above. Three transitions, one shell step.
-- **The program ends between an ask and its answer.** This cannot happen, since no message is taken in between. An answer whose request is not current is dropped; with `then_abandon`, the abandonment is then not made, since its program is gone. A `MovedOn` answer applies whether or not its program is claimed, so a published program still stuck is abandoned at once, as `judge_abandonment` does today (corrected after the review of "The work in flight, shared by both readers"). No ask is made while the outpost is stopping, as today.
-- **The shell's thread panics.** The outpost ends, and Core answers its outstanding requests at its end, as today.
-
-M4.6's recorder then needs nothing special: `MovedOn` and `Published` are inputs like any other. `Change` must be serializable for the recorder in any case, since `Input::Commit` carries one; that is M4.6's work.
-
-#### The outpost's reducer, before and after
-
-Counted on cec81531. Lines are the non-test lines of `verbatim-outpost-logic`'s modules, comments included.
-
-- **Before:**
-  - 5,676 lines;
-  - 15 inputs, plus the tick;
-  - 15 effects;
-  - 10 intake item kinds;
-  - 16 fields;
-  - 4 flags (`to_drop`, `gap_timer_given`, `releasing`, `stopping`);
-  - a program in flight with 10 fields, 3 of them flags (`grace_judged`, `claimed`, `deferred`);
-  - 1 callback interface with 3 calls.
-- **After:**
-  - about 5,680 lines: the hung test and its map leave `admit`, and `publish` and `judge_abandonment` split at their asks;
-  - 17 inputs (`MovedOn` and `Published` added);
-  - 17 effects (`AskMovedOn` and `Publish` added);
-  - 10 intake item kinds;
-  - 16 fields;
-  - 4 flags;
-  - the program in flight unchanged;
-  - no callback interface;
-  - no lifecycle state added.
-
-Each field, flag and state was checked for whether purity or the bookkeeping build lets it go:
-
-- **Let go by the bookkeeping build:** `poll` and the program's `behind_poll` (8f1449cf).
-- **`to_drop`:** objects a release left to drop when no program is in flight. Purity does not touch it, since it is already an effect. Kept.
-- **`releasing`:** a release asked and not yet answered. It is already an ask and answer, and the precedent for the two above. Kept.
-- **`stopping`:** the close. Kept.
-- **`gap_timer_given`:** set by the mockapp tests through `Outpost::gap_bound_reacher`, to drive the gap bound by hand while the outpost runs live. It is a test seam that purity does not remove, since those tests run a live outpost, not the reducer alone. It could go once M4.6 drives the reducer's time directly and the mockapp tests no longer need the seam. That is a follow-up, not this build.
-- **`grace_judged`:** the moved-on rule is judged once at the grace's end. Still needed with the ask. Kept.
-- **`claimed`:** refuses a worker's result after its publication. Still needed. Kept.
-- **`deferred`:** untouched by purity. Kept.
-- **`abandoning`,** proposed in the previous revision: replaced by `then_abandon` travelling in the ask and answer, so it is not added.
+The reducer's inputs and effects went from 15 each to 17 each, with no lifecycle state added: `grace_judged`, `claimed`, `deferred`, `to_drop`, `releasing` and `stopping` are each still needed, and the `abandoning` flag an earlier revision proposed is replaced by `then_abandon`. The reducer's tests answer its asks as the shell does; reducer tests cover the late tick and moving on during a walk with answers out of turn, and a shell test (`an_ask_is_answered_before_the_shell_takes_another_message`) shows a publication's answer, and the abandonment it completes, carried out within the one step of the shell's.
 
 ### The other owners
 
-Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) found impurities in owners outside the logic crates' reducers. Each is treated here: where the impure read is made today, the options weighed, the one chosen, the states added, and what is heard. A fact with two writers is a defect of the design principles, so it is fixed here, not recorded. The work falls into two builds, as "The order of work" below sets out.
+Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) found impurities in owners outside the logic crates' reducers. A fact with two writers is a defect of the design principles, so it is fixed, not recorded. The work falls into two builds, as "The order of work" below sets out.
 
 #### Core's supervisor (the first build)
 
-**Liveness written by the shell.** The generation's `Live` (`verbatim-core`, `supervisor/generation.rs` 49 to 56) is written by its own transitions (369, 425 and 451) and also by the shell, through `live_mut` (310):
+**Liveness written by the shell.** A generation's `Live` was written by its own transitions and also by the supervisor's shell, which set the last pong, the abandoned workers and the hang check through `live_mut`, and judged the wedge rule on every heartbeat from a copy. `Live`'s fields are now private, `live_mut` and `live` are gone, and four transitions judge the wedge rule and the hang check in one place: `ponged`, `heartbeat(now_us, limits)` (answering `Ping`, `CheckHang`, which pings and starts a check of whether the application is hung, or `Wedged(reason)`), `hang_check_ended` when the check's thread could not start, and `hang_checked`. While the supervisor shuts down, the shell drops `hang_checked`'s reason, as it returned first before. Calls and wake-ups are unchanged; one difference: a heartbeat that ends an outpost for missed pongs no longer also starts a hang check for it, whose answer was dropped.
 
-- `owner.rs` 800 to 802 set `last_pong_at` and `abandoned` on a pong;
-- `owner.rs` 2085 to 2087 and 2107 to 2110 set `hang_check`.
+**Liveness the shell keeps.** The listener's and each spare's record kept `last_pong_at` and were judged by `wedge_decision` in the shell. Moving the records into the pure module was rejected, since they hold child processes; each holds a pure `Liveness` instead, with `ponged` and `wedged`, as an application's record holds its `Generation`.
 
-That is two writers of one fact. The fix:
-
-- `Live`'s fields become private and `live_mut` is removed.
-- The generation gains four transitions, so the wedge rule and the hang check are judged in one place:
-  - `ponged(at_us, abandoned)`;
-  - `heartbeat(now_us) -> Heartbeat`, with `Heartbeat` one of `Ping`, `CheckHang` (ping, and start a check of whether the application is hung) or `Wedged(reason)`. It applies `wedge_decision` and the hang-check rule that the shell's heartbeat applies today (`owner.rs` 1951 to 1981), and sets `hang_check` when it answers `CheckHang`;
-  - `hang_check_ended()`, when the shell could not start the check's thread;
-  - `hang_checked(hung, now_us) -> Option<WedgeReason>`, which ends the check and applies `wedge_decision`, as `on_hang_checked` does today (2100 to 2124). While the supervisor is shutting down, the shell drops the reason, as it returns first today.
-- The shell keeps no getter of `Live`, so no copy of it is judged outside the generation.
-- Calls and wake-ups: unchanged.
-- States: none added, and a second writer removed.
-- What is heard: unchanged.
-
-**Liveness the shell keeps.** The listener's record (`owner.rs` 206) and each spare's (339) keep `last_pong_at: Instant`. These are written at 633, 809, 1088, 1297, 1454 and 1574 and judged by `wedge_decision` in the shell: one writer, but outside the pure module. Options:
-
-- (a) move the whole records into the supervisor module. Rejected: they hold child processes.
-- (b) a pure `Liveness { last_pong_us }` type in `supervisor`, with `ponged(at_us)` and `wedged(now_us, ...)`, held by each record as `Generation` is held by an application's record. Chosen.
-
-Calls are unchanged (one shared-clock read per pong where `Instant::now` is read today), and no state is added.
-
-**The order of starts.** `start_due` (`owner.rs` 1122 to 1133) collects the applications whose backoff ended from `records`, a `HashMap` (291), in hash order. It starts each, and `Spares::take` gives the oldest spare first. So which application gets which spare, and the order of their starts, depends on the hasher. Options:
-
-- (a) sort in the shell;
-- (b) a pure `due_starts(backoffs, now_us)` in `supervisor/policy.rs` that returns the applications in the order their backoffs ended, and by process id on a tie. It takes each application's `Backoff` mutably and calls `ended` itself (`policy.rs` 130 to 135), so "ended" is judged once.
-
-Chosen: (b), so the choice is made, and tested, in the pure module. `records`, `apps` (297) and `spare_children` (325) become `BTreeMap`s, so no other walk of them depends on a hasher. Cost: a sort of the applications due on one wake, usually one. What is heard: unchanged, apart from which of two applications whose backoffs end on the same wake starts first, which is now fixed.
-
-#### The outpost's publication (the first build)
-
-The claim, the store's writes, the garbage, the element tokens and the log are carried out by the shell for `Effect::Publish`, as described above, so none happens inside a transition.
+**The order of starts.** `start_due` collected the applications whose backoff ended from a hash map, so which application got which spare depended on the hasher. A pure `due_starts` in `supervisor/policy.rs` returns them in the order their backoffs ended, and by process id on a tie, and calls `Backoff::ended` itself, so "ended" is judged once; sorting in the shell was rejected so that the choice is made, and tested, in the pure module. The shell's `records`, `apps` and `spare_children` are `BTreeMap`s. What is heard is unchanged but which of two applications whose backoffs end on the same wake starts first, which is now fixed.
 
 #### Core's request table (the second build)
 
@@ -694,12 +418,7 @@ Both are described as pure, and their merging and numbering are. But the `encode
 
 #### Floating point from the platform's library (the first build)
 
-`verbatim-model`'s `progress_frequency` (`theme.rs` 425) calls `f64::exp2`, which on Windows goes to the platform's C library, whose results may differ between platforms and versions. Its only caller is `verbatim-speech`'s theme (`theme.rs` 225), so no reducer output reaches it today.
-
-- Options: (a) move the function to `verbatim-speech`; (b) call `libm`'s pure Rust `exp2`.
-- Chosen: (a), which removes the need and adds no dependency.
-
-The rule gains the standard library's transcendental functions for `f32` and `f64` (listed under "The enforcement"). The exact operations (`sqrt`, `mul_add`, rounding and the basic arithmetic) stay allowed.
+`verbatim-model`'s `progress_frequency` called `f64::exp2`, which on Windows goes to the platform's C library, whose results may differ between platforms and versions. Its only caller was `verbatim-speech`'s theme, so it moved there, which removes the need and adds no dependency; calling `libm`'s pure Rust `exp2` was the alternative. The rule forbids the standard library's transcendental functions for `f32` and `f64` ("The enforcement"); the exact operations stay allowed.
 
 ### Simpler owners (the third build)
 
@@ -778,43 +497,11 @@ Counts before and after, for the owners that change:
 
 ### Clocks and trace ids
 
-No production code in the covered crates reads a clock, draws a random number, starts a thread or reads the environment. Two hidden inputs remain.
+Core's supervisor's policy, generations and `Received` take microseconds on the run's shared clock, where they took `Instant` values, and `HeldFacts::hold` takes the time as a value, which the supervisor reads at each hold, where it passed `Instant::now` to be read inside the call. Differences use `saturating_sub`, since a plain subtraction panics in the debug builds the end-to-end suite runs. The shell turns a due time into its wait; `now_us` reads the same performance counter as `Instant` from an offset fixed for the run, so no decision changes.
 
-Core's supervisor (`verbatim-core`, `src/supervisor/`) takes `Instant` values:
+Every production mint on the path has a source: a withdrawn query's "not started" reply carries the trace its query came with; the gap record keeps the trace of its newest copy or foreground change beside its stamp, and its bound's entry carries it; a copy read at once carries the trace of the copy's event, which `GapNote::CopyDropped` and `GapNote::Accepted` now carry; and `verbatim-model`'s samples take fixed ids. With no gap record open, no bound's entry is queued, since it found nothing to read. `TraceId::from_raw` gives fixed ids for tests, and the 319 test sites that minted take it; the mint itself stays for the processes that observe events.
 
-- in `policy.rs`: the wedge and retirement decisions, restart timing, `HeldFacts`, and the spare outposts' `wanted` and `due`;
-- in `generation.rs`: `last_pong_at` and the transitions;
-- in `mod.rs`: `Received::at`.
-
-`HeldFacts::hold` takes a clock function, which `verbatim-supervisor` passes as `Instant::now`, so today the clock is read inside the logic's call. The change:
-
-- Each of these takes and returns microseconds on the shared clock, and `Received` keeps only `at_us`.
-- Differences use `saturating_sub` where they use `saturating_duration_since` today, since a plain subtraction panics in the debug builds the end-to-end suite runs.
-- `a_now_before_the_last_pong_never_panics` keeps its case, with constants.
-- `hold` takes the time as a value. `verbatim-supervisor` reads `now_us()` at each `hold` call (`owner.rs`'s three), at the point where the closure is passed today. That is one counter read per held fact instead of one per application, only while an outpost starts. It leaves the logged `first_fact_held_us` where it is.
-- `verbatim-supervisor` turns a due time into a wait. `now_us` reads the same performance counter as `Instant`, so no decision changes.
-
-Trace ids. Every production mint on the path gets a source:
-
-- `Input::Cancel`'s "not started" reply (`src/lib.rs`): `Intake::cancel` returns the trace id of the withdrawn query's entry, which came with Core's query, and the reply carries it.
-- The gap record's bound (`gap_bound_entry`): the record keeps the trace id of the newest copy or foreground change beside the stamp it already keeps, and its bound's entry carries it. `copy_dropped` and `accepted` take the trace id with their stamp.
-- The read of a dropped copy (`gap_note`): `GapNote::CopyDropped` gains the trace id of the copy's event, which the worker already holds where it builds the note (`verbatim-outpost`, `worker.rs`, `copy_dropped_for_uia`).
-- `verbatim-model`'s `src/protocol/samples.rs`, a public module of samples for other crates' tests, mints twice and uses the new constructor instead.
-
-`verbatim-model` gains `TraceId::from_raw(u64)` for tests and samples. Its static counter stays for the processes that observe events. 313 test sites mint today, and each takes `from_raw` with a fixed number:
-
-- `verbatim-model`: 8;
-- `verbatim-core`'s unit tests: 17;
-- `verbatim-core`'s integration tests under `tests/`: 260, 196 of them in `reduce.rs`;
-- `verbatim-outpost-logic`: 27;
-- `verbatim-listener-logic`: 1.
-
-This is a mechanical edit of about 320 lines.
-
-The remaining shared state stays, since no answer from it reaches a result:
-
-- `verbatim-text`'s `OnceLock` holds the Chinese word segmenter, built from embedded data.
-- `verbatim-listener-logic` logs through `tracing`.
+The remaining shared state stays, since no answer from it reaches a result: `verbatim-text`'s `OnceLock` holds the Chinese word segmenter, built from embedded data, and `verbatim-listener-logic` logs through `tracing`.
 
 ### Third-party crates
 
@@ -860,81 +547,32 @@ Each crate below gives its version from the lock file, what the path calls, and 
 
 ### The enforcement
 
-Clippy enforces the rule, through `disallowed-types` and `disallowed-methods` in a `clippy.toml` in each covered crate's directory. The ownership scan and the tier check guard Clippy's configuration and what Clippy cannot see.
+Clippy enforces the rule, through `disallowed-types` and `disallowed-methods` in a `clippy.toml` in each covered crate's directory, 19 types and 103 methods, each with its reason: the hash collections and `RandomState`; `Instant` and `SystemTime` and their reads; the file, process, network and thread types; the thread functions, the environment's reads and writes, every free function of `std::fs`, the process id, exit and abort; `TraceId::mint` and `TraceId::namespace`; and the 26 transcendental functions of each of `f32` and `f64`. A crate's own `clippy.toml` applies to that crate alone, the two lints are in the `style` group, which `-D warnings` denies, a disallowed type is reported wherever it is named, and a path that does not resolve in a crate is ignored, so one file serves all seven. Every entry was shown to fire by a probe naming each once in `verbatim-core`.
 
-Checked with Clippy 0.1.99 on a scratch crate:
+The ownership scan's determinism rule (`determinism` in `xtask/src/ownership.rs`) guards Clippy's configuration and what Clippy cannot see, over the crates the tier check derives:
 
-- A crate's own `clippy.toml` applies to that crate alone. The workspace's `[lints]` table is unchanged.
-- The two lints are in the `style` group, and `-D warnings` denies them.
-- A disallowed type is reported at `use`, in a type, in `collect::<HashMap<_, _>>()`, in a local alias, and in `#[cfg(test)]` code under `--all-targets`.
-- A third-party alias such as `rustc_hash::FxHashMap` is not reported.
-- `#[allow(clippy::style)]` or `#[allow(warnings)]` silences both lints.
-- A path that does not resolve in a crate is ignored without a warning, so one file can serve all seven crates.
-- Each entry is shown to fire once by a deliberate violation when the build lands. Every entry below except `verbatim_model`'s two was shown to fire on the scratch crate.
-
-Types:
-
-- the hash collections: `std::collections::HashMap`, `std::collections::HashSet`, `std::hash::RandomState`;
-- time: `std::time::Instant`, `std::time::SystemTime`;
-- files: `std::fs::File`, `std::fs::OpenOptions`, `std::fs::DirBuilder`, `std::fs::ReadDir`, `std::fs::DirEntry`, `std::fs::Metadata`;
-- processes: `std::process::Command`, `std::process::Child`;
-- network: `std::net::TcpStream`, `std::net::TcpListener`, `std::net::UdpSocket`;
-- threads: `std::thread::Builder`, `std::thread::JoinHandle`, `std::thread::Thread`.
-
-Methods:
-
-- time: `std::time::Instant::now`, `std::time::Instant::elapsed`, `std::time::SystemTime::now`, `std::time::SystemTime::elapsed`, `std::time::SystemTime::duration_since`;
-- threads: `std::thread::spawn`, `std::thread::scope`, `std::thread::sleep`, `std::thread::current`, `std::thread::park`, `std::thread::park_timeout`, `std::thread::yield_now`, `std::thread::available_parallelism`, `std::thread::panicking`;
-- the environment: `std::env::args`, `std::env::args_os`, `std::env::var`, `std::env::var_os`, `std::env::vars`, `std::env::vars_os`, `std::env::current_dir`, `std::env::set_current_dir`, `std::env::current_exe`, `std::env::temp_dir`, `std::env::home_dir`, `std::env::set_var`, `std::env::remove_var`;
-- files: every free function of `std::fs` (`read`, `read_to_string`, `read_dir`, `read_link`, `metadata`, `symlink_metadata`, `canonicalize`, `exists`, `write`, `copy`, `create_dir`, `create_dir_all`, `remove_file`, `remove_dir`, `remove_dir_all`, `rename`, `hard_link`, `soft_link`, `set_permissions`);
-- the process: `std::process::id`, `std::process::exit`, `std::process::abort`;
-- trace ids: `verbatim_model::TraceId::mint`, `verbatim_model::TraceId::namespace`;
-- floating point, for both `f32` and `f64`: `exp`, `exp2`, `exp_m1`, `ln`, `log`, `log2`, `log10`, `ln_1p`, `powf`, `powi`, `sin`, `cos`, `tan`, `sin_cos`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `cbrt` and `hypot`.
-
-Each entry has its reason.
-
-The ownership scan (`xtask/src/ownership.rs`) gains a determinism rule over the covered crates, read from the graph the tier check reads:
-
-- **One configuration.** Each covered crate has a `clippy.toml` identical to `verbatim-core`'s, and that file names every entry the scan lists. Reason: Clippy has no include, so seven copies are kept equal by a check.
-- **No silencing.** No `allow` or `expect` names `warnings`, `clippy::all`, `clippy::style`, `clippy::disallowed_types` or `clippy::disallowed_methods`. Each covered crate's manifest has `lints.workspace = true` and no `[lints]` table of its own. The workspace's `[workspace.lints]` does not name `all`, `style` or either lint, and `.cargo/config.toml` passes no lint flags.
-- **Its listed exceptions.** These files may `expect` the two lints, with a reason, and no others may:
-  - `verbatim-text` and `verbatim-core` `tests/terminal_cost.rs`, ignored release measurements that time with `Instant`;
-  - `verbatim-core` `tests/replay_fixture.rs`, which reads its fixture file;
-  - `verbatim-model`'s test of `TraceId::mint` itself, in `src/lib.rs`'s test module;
-  - `verbatim-term-sim` `src/conformance.rs` and `tests/conformance.rs`, which read the conformance corpus.
-- **No whole module.** The covered crates' code names no path in `std::fs`, `std::net`, `std::process`, `std::env` or `std::thread`, and none in `std::time` but `std::time::Duration`, in a `use` tree or written out. The listed exception files are excepted. Reason: Clippy names functions one by one, so a function added to the standard library later would pass it, and the scan closes that by module.
-- **Forbidden macros and calls.** No `enabled!`, `event_enabled!`, `span_enabled!`, `proptest!` or `Config::default` (see "Third-party crates").
+- **One configuration.** Each covered crate's `clippy.toml` is identical to `verbatim-core`'s, and that file names every entry the scan lists. Reason: Clippy has no include, so seven copies are kept equal by a check.
+- **No silencing.** No `allow` or `expect` names `warnings`, `clippy::all`, `clippy::style`, `clippy::disallowed_types` or `clippy::disallowed_methods`; each covered crate's `[lints]` table is `workspace = true` alone, with no lint table of its own; the workspace's lint tables name none of those groups or lints; and `.cargo/config.toml` passes no lint flag.
+- **Its listed exceptions,** which may `expect` the two lints, with a reason, and no other file may: `verbatim-text`'s and `verbatim-core`'s `tests/terminal_cost.rs`, ignored release measurements that time with `Instant`; `verbatim-core`'s `tests/replay_fixture.rs`, which reads its fixture file; `verbatim-model`'s test of `TraceId::mint` itself; and `verbatim-term-sim`'s `src/conformance.rs` and `tests/conformance.rs`, which read the conformance corpus.
+- **No whole module.** The covered crates' code names no path in `std::fs`, `std::net`, `std::process`, `std::env` or `std::thread`, and none in `std::time` but `std::time::Duration`, in a `use` tree or written out, the listed exceptions but the mint's test excepted. Reason: Clippy names functions one by one, so a function added to the standard library later would pass it, and the scan closes that by module.
+- **Forbidden macros and calls:** `enabled!`, `event_enabled!`, `span_enabled!`, `proptest!` and `Config::default` ("Third-party crates"); the oracle's random-stream test runs a `TestRunner` built from `random_config()` where it used the macro.
 - **Narrower allow-lists.** The pure rule's allow-lists for the outpost's reducer and the read scheduler narrow `std::collections` to `BTreeMap`, `BTreeSet` and `VecDeque`.
 
-The tier check gains the third-party allow-list and its rule, as described under "Third-party crates".
+The tier check holds each covered crate's direct third-party dependencies, by normal, build and development edges, to its allow-list (`DETERMINISTIC_THIRD_PARTY`), whose comment states the rule for adding a crate. Each rule of the scan and the allow-list was shown to fail `cargo xtask ci` when broken on the real tree.
 
 ### Performance on the event path
 
-These maps on the event path become `BTreeMap`s:
+The maps on the event path that became `BTreeMap`s, the outpost's verdicts, the gap record's answers, the batch plan's two, the text facts and the scheduler's applications, hold tens or hundreds of integer keys, so a lookup is a few comparisons in one or two nodes against SipHash of an integer before. No thread, timer or message is added; the new asks add one reducer transition each, only for slow programs. Wake-ups and processor time per thread on `measure_keys_conhost` and `measure_focus_text_box`, in test audio mode, before and after, are yet to be measured with the build's scenarios.
 
-- the outpost's `Verdicts::windows`, looked up for each event;
-- the gap record's `answered`, for each UIA focus;
-- `admit`'s two maps, once per batch;
-- `TextFacts`, for each text event;
-- the scheduler's `apps`, for each listener event.
+The terminal alignment of a lost read, by `verbatim-text`'s `terminal_cost` (`cargo test --release -p verbatim-text --test terminal_cost -- --ignored --nocapture`), release build, 120 by 30, medians of six runs each interleaved before and after, 2026-11-01 (`docs/performance.md`, "A terminal's rotation"):
 
-Each holds tens or hundreds of integer keys, so a lookup is a few comparisons in one or two nodes, against SipHash of an integer today. No change is expected, and it is measured. No thread, timer or message is added, so wake-ups should not change.
+- Before, with the fixed-hasher maps: a rotation of 1,000 rows over 9,001 rows, a lost read, 1.23 to 1.26 ms; an overflow keeping nothing 1.06 to 1.07 ms.
+- In `BTreeMap`s and `BTreeSet`s: the lost reads 12 to 26% more, the overflow 30 to 31% more, a clear and reprint 26 to 28% more, the bimodal wide lines 36 to 62%.
+- As sorted vectors, as built: the lost reads 1 to 9% more, the overflow and the clear 1 to 3%, the wide lines about 9% at their least.
+- Over a console buffer enlarged to 32,766 rows, a case the build adds: 4.1 ms before, 4.9 ms in `BTree` collections (20% more), 4.2 ms as built (2 to 3% more). It is past the reducer's 2 ms budget for a read before and after the build, as predicted.
+- A screen of 29 Chinese rows each rewritten, every row paired with its old one by likeness, a case the build adds for `Likeness::other`'s lookups: 1.7 ms before, 1.0 ms after, its map of characters now a `BTreeMap`.
 
-The worst case is the terminal's alignment of a lost read, which reads the whole document. Its budget is the reducer's 2 milliseconds for a whole read ([the terminal model](terminal-model.md), "Costs"). Today that read takes 1.2 to 1.4 ms over a full default history of 9,001 rows (`docs/performance.md`, "A terminal's rotation").
-
-A console application can enlarge its buffer to 32,766 rows, and a lost read then reads all of it. Scaled by rows, today's alignment would take about 4 to 5 ms there, past the budget before this build. That is a prediction, and the build measures it.
-
-Measured before and after, in release builds:
-
-- `verbatim-text`'s `terminal_cost` (`cargo test --release -p verbatim-text --test terminal_cost -- --ignored --nocapture`), with two cases added: a lost read over a 32,766-row history, and a gap of Chinese text, for `Likeness::other`'s per-character lookups.
-- Wake-ups and processor time per thread on `measure_keys_conhost` and `measure_focus_text_box`, in test audio mode, at most 20 runs each.
-- The time of `verbatim-term-sim`'s oracle tests under `cargo xtask ci`.
-
-The fallback is taken if the lost read's median time rises by more than 10% over today's at either history size. The five transient structures keyed by row hash (`at`, `old_hashes`, `went`, `hashes` and `with_text`) then become one vector of hash and row pairs per alignment, sorted once and searched by binary search: still ordered, with no hasher.
-
-`Aside::rows` stays a `BTreeMap`, so Core's state and the dump format are untouched. It is looked up for the rows of each read while a full-screen program runs, and for each row of a lost read's document.
-
-If even the fallback costs more than 10%, the figure decides between a named fixed-hasher exception for those five and accepting the cost, a question for Dickson with the figure.
+The oracle tests of `verbatim-term-sim` took 26.4 to 28.4 s before and 26.4 to 26.5 s after, in debug builds.
 
 ### End-to-end runs and the order of work
 
@@ -944,30 +582,9 @@ The work is three builds, in this order. Each build gets its own design review a
 - The second touches `verbatim-app`, `verbatim-input`, the supervisor's writer and the outpost's outbound queue.
 - The third changes types in code the first two have just made pure, so each design stays reviewable on its own.
 
-The commits within each are given in order. Each commit has its unit tests, and the crate guides are updated where an API changes. Each scenario runs three times at the end of its build, and none of them is in `docs/flaky-tests.md`.
+Each commit has its unit tests, and the crate guides are updated where an API changes. Each scenario runs three times at the end of its build, and none of them is in `docs/flaky-tests.md`.
 
-**The first build, determinism of the logic crates:**
-
-- **The 44 maps and sets as `BTree` collections.**
-  - `Spread` is removed, and `Input::Released` changes in the outpost's shell.
-  - Measurements first, before and after.
-  - Scenarios: `conhost_full_history_flood`, for the terminal's alignment, and `notepad_editing`, for the outpost's verdicts, gap record, batch admission and text facts and the listener's scheduler.
-- **Times and trace ids as inputs, and the supervisor's liveness with one writer.**
-  - The supervisor's policy and generation move to the shared clock.
-  - `HeldFacts::hold` takes a value.
-  - `Live` is reached only through its transitions, and the listener's and spares' liveness becomes a `Liveness`.
-  - `due_starts` and the shell's three `BTreeMap`s are added.
-  - The four production mints get their sources.
-  - `TraceId::from_raw` is added, with the 313 test sites and `samples.rs` moved to it.
-  - `progress_frequency` moves to `verbatim-speech`.
-  - Scenario: `notepad_editing`, which starts an outpost from a spare and holds facts while it starts.
-- **The outpost's local reads leave the reducer.**
-  - The hung-window test moves to the worker's handling of UIA entries.
-  - `AskMovedOn` and `MovedOn`, and `Publish` and `Published` with `then_abandon`, are added.
-  - The shell answers each ask before its next message.
-  - `Locals` and `Recorded` are removed, and the reducer's tests are rewritten to give the answers as inputs.
-  - Scenarios: `notepad_editing`, for the outpost's UIA entries, and `rapid_tabbing_in_settings`, for the listener's selections. No scenario reaches a moved-on abandonment or a walk's bound, so those are held by the reducer's tests and a shell test of the rule for asks.
-- **The enforcement for the seven crates.** The `clippy.toml` files, including the floating-point entries, the scan's rule, and the tier check's allow-list, each entry shown to fire once. No scenario.
+**The first build, determinism of the logic crates,** built as four commits: the maps and sets as ordered collections; times and trace ids as inputs with the supervisor's liveness under one writer; the outpost's local reads left the reducer; and the enforcement. Its scenarios: `conhost_full_history_flood`, for the terminal's alignment; `notepad_editing`, for the outpost's verdicts, gap record, batch admission, text facts and UIA entries, the listener's scheduler, and an outpost started from a spare with facts held while it starts; and `rapid_tabbing_in_settings`, for the listener's selections. No scenario reaches a moved-on abandonment or a walk's bound, so those are held by the reducer's tests and the shell's test.
 
 **The second build, the other pure owners:**
 
@@ -990,22 +607,25 @@ The commits within each are given in order. Each commit has its unit tests, and 
 
 - Third-party code is checked by reading it when it is added, and again only when a version change is reviewed. M4.6's run of each case twice is the backstop.
 - A published walk's content follows how far the worker got by its bound. That is the system's timing, and it reaches the reducer as `Published`'s input, so a replay is exact.
-- A lost read over a buffer enlarged to 32,766 rows is past the reducer's 2 ms budget if the build's measurement confirms the prediction, and is then recorded as a limit (Dickson, 2026-10-31).
+- A lost read over a buffer enlarged to 32,766 rows takes 4.2 ms, past the reducer's 2 ms budget, as before the build (Dickson, 2026-10-31).
+- The hung-window test is a call the worker makes on a live window, so no unit test holds it; the scenarios with UIA entries hold its passing path, and none makes a window hung.
+- The shell's test shows an ask answered within the one step of the shell's; that the answer is given once is held by the shape of `Shell::carry_out`, which returns one input per asking effect.
 - A `tracing` event's field expressions run only when the event is enabled, so a field with a side effect would make the logic depend on the subscriber. That is a review rule.
 - The idle barrier (`verbatim-app`, `idle.rs`) and the GUI's lifecycle stay where they are. The audit found them pure, and they decide no reducer input that a replay needs.
 - The verdicts on `serde_json` and `vte` rest on features nothing enables today (`preserve_order` and `ansi`). The tier check holds crates, not features, and `workspace-hack` could unify either feature in from any workspace crate. Neither would make a covered crate's result depend on anything but its input: a JSON map would keep insertion order, and `ansi` adds code the covered crates do not call.
 - A terminal row is compared by its 64-bit hash alone, so two texts with the same hash align as the same row. The hash is a fixed public function of the application's text, so an application could make that happen on purpose. This predates the build and is not changed by it (a follow-up).
+- The ci's list of fixed sleeps in production code, for review, now names two of the scan's entries, `std::thread::sleep` and `std::thread::park_timeout`, since that list reads string literals.
 
 ### Decisions
 
-- `BTreeMap` and `BTreeSet` everywhere on the path, and a fixed-hasher map only where a measurement in the build shows a cost that matters, named here with its figure (Dickson, 2026-10-31).
+- `BTreeMap` and `BTreeSet` everywhere on the path, and a fixed-hasher map only where a measurement in the build shows a cost that matters, named here with its figure (Dickson, 2026-10-31). None is taken.
 - The audit covers the third-party crates the covered crates call, from their source, and a crate added to the allow-list later gets the same check (Dickson, 2026-10-31).
 - The outpost's three local reads leave the reducer, so that it is pure with calls as its effects (Dickson, 2026-10-31).
 - `verbatim-speech` stays outside the rule (Dickson, 2026-10-31).
-- A 32,766-row lost read past the 2 ms budget, if the build confirms it, is recorded as a limit (Dickson, 2026-10-31).
+- A 32,766-row lost read past the 2 ms budget is recorded as a limit (Dickson, 2026-10-31).
 - Making the owners pure should make them simpler where it can, with types that rule out invalid states (Dickson, 2026-10-31).
-- The UIA hung-window test runs where each entry is handled, on the entry's own cached window (0 passing), first in the worker's UIA event and focus handling, covering the listener's focus reads too. It drops what today's test drops, and also a focus read whose window became hung while it waited, which today can be spoken from a half-read focus at its walk's bound (Dickson, 2026-10-31).
-- If the first build's measurement shows the terminal alignment's fallback still costing more than 10%, the figure goes to Dickson, who chooses between a named fixed-hasher exception and accepting the cost (Dickson, 2026-10-31).
+- The UIA hung-window test runs where each entry is handled, on the entry's own cached window (0 passing), first in the worker's UIA event and focus handling, covering the listener's focus reads too. It drops what the batch plan's test dropped, and also a focus read whose window became hung while it waited, which could be spoken from a half-read focus at its walk's bound (Dickson, 2026-10-31).
+- The terminal alignment's lookups by row hash are kept in `BTree` collections if that costs less than 30% against the fixed-hasher maps at 9,001 and 32,766 rows, with no fixed-hasher exception; at 30% or more the figures go to Dickson (Dickson, 2026-11-01). In `BTree` collections the overflow case cost 30 to 31% and the bimodal wide lines more, so the design's fallback, sorted vectors with no hasher, was built, at 1 to 9% (the builder, 2026-11-01, pending Dickson's acceptance).
 
 ## Failure paths and locks (a build of its own)
 

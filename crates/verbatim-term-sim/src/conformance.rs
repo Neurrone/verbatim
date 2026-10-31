@@ -5,6 +5,11 @@
 //! writes the expectations; [`replay`] checks the simulated terminal
 //! against them.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "reads the conformance corpus: listed under the determinism rule's exceptions"
+)]
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 

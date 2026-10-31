@@ -27,6 +27,11 @@
 //! behind a feature no member enables is checked too.
 //! - A role's crates ([`ROLES`]) reach no other role's, the rule of
 //!   one-way dependencies.
+//!
+//! It also derives the crates the determinism rule covers
+//! (`docs/design/logic-foundations.md`, "Determinism"), from the graph with
+//! its development edges ([`covered`]), and holds each of their direct
+//! third-party dependencies to [`DETERMINISTIC_THIRD_PARTY`].
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
@@ -141,20 +146,55 @@ pub fn is_raw_windows_binding(name: &str) -> bool {
         && (name == "winapi" || name.starts_with("windows-") || name.starts_with("windows_"))
 }
 
+/// The crates whose state is a reducer's: Core's reducer, the outpost's
+/// reducer and the listener's read scheduler. With what they reach they
+/// are the crates the determinism rule covers ([`covered`]).
+pub const REDUCERS: &[&str] = &[
+    "verbatim-core",
+    "verbatim-outpost-logic",
+    "verbatim-listener-logic",
+];
+
+/// The third-party crates a crate on a reducer's path may depend on
+/// directly, by a normal, build or development edge
+/// (`docs/design/logic-foundations.md`, "Third-party crates").
+///
+/// The rule for adding one: the functions called from the path, and the
+/// crate's own dependencies they reach, are checked from its source for a
+/// randomly seeded hash map whose order reaches a result; for a clock,
+/// randomness, a thread, the environment or a file; and for global mutable
+/// state that changes a result. The verdict goes into that section with
+/// its evidence, file and line in the crate's source.
+pub const DETERMINISTIC_THIRD_PARTY: &[&str] = &[
+    "serde",
+    "serde_json",
+    "icu_locale_core",
+    "icu_normalizer",
+    "icu_properties",
+    "icu_segmenter",
+    "jieba-rs",
+    "unicode-width",
+    "tracing",
+    "proptest",
+    "vte",
+];
+
 /// The generated crate that unifies third-party features across the
 /// workspace (`docs/tooling/setup.md`), exempt from
 /// [`is_raw_windows_binding`].
 pub const WORKSPACE_HACK: &str = "workspace-hack";
 
 /// The dependency graph the rules read: each package by its id, with its
-/// name and whether it is a workspace member, and its normal and build
-/// edges.
+/// name and whether it is a workspace member, its normal and build edges,
+/// and, apart, its development edges.
 #[derive(Debug, Default)]
 pub struct Graph {
     /// Each package's name and whether it is a workspace member, by id.
     pub packages: BTreeMap<String, (String, bool)>,
     /// Each package's normal and build dependencies, by id.
     pub edges: BTreeMap<String, Vec<String>>,
+    /// Each package's development dependencies, by id.
+    pub dev_edges: BTreeMap<String, Vec<String>>,
 }
 
 impl Graph {
@@ -187,19 +227,26 @@ impl Graph {
         {
             let id = node["id"].as_str().ok_or("a node has no id")?;
             let mut deps = Vec::new();
+            let mut dev_deps = Vec::new();
             for dep in node["deps"].as_array().map_or(&[][..], Vec::as_slice) {
+                let kinds = dep["dep_kinds"].as_array().map_or(&[][..], Vec::as_slice);
+                let Some(pkg) = dep["pkg"].as_str() else {
+                    continue;
+                };
                 // An edge counts when any of its kinds is normal (null) or
                 // build, whatever its target.
-                let counts = dep["dep_kinds"]
-                    .as_array()
-                    .map_or(&[][..], Vec::as_slice)
+                if kinds
                     .iter()
-                    .any(|kind| kind["kind"].is_null() || kind["kind"] == "build");
-                if counts && let Some(pkg) = dep["pkg"].as_str() {
+                    .any(|kind| kind["kind"].is_null() || kind["kind"] == "build")
+                {
                     deps.push(pkg.to_owned());
+                }
+                if kinds.iter().any(|kind| kind["kind"] == "dev") {
+                    dev_deps.push(pkg.to_owned());
                 }
             }
             graph.edges.insert(id.to_owned(), deps);
+            graph.dev_edges.insert(id.to_owned(), dev_deps);
         }
         Ok(graph)
     }
@@ -367,6 +414,65 @@ pub fn offences(graph: &Graph, tiers: &[(Tier, &[&str])], roles: &[&[&str]]) -> 
     offences
 }
 
+/// The crates the determinism rule covers, by name: `reducers`, every
+/// workspace crate they reach by normal and build edges, and every
+/// workspace crate that is a development dependency of a covered crate,
+/// with what it reaches, until none is added; never [`WORKSPACE_HACK`],
+/// which holds no code.
+#[must_use]
+pub fn covered(graph: &Graph, reducers: &[&str]) -> BTreeSet<String> {
+    let mut queue: VecDeque<String> = graph
+        .packages
+        .iter()
+        .filter(|(_, (name, member))| *member && reducers.contains(&name.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut covered: BTreeSet<String> = BTreeSet::new();
+    while let Some(id) = queue.pop_front() {
+        if graph.name(&id) == WORKSPACE_HACK || covered.contains(&id) {
+            continue;
+        }
+        let reached = graph.reached(&id);
+        let dev = graph.dev_edges.get(&id).map_or(&[][..], Vec::as_slice);
+        for next in reached.keys().chain(dev) {
+            if graph.is_member(next) && !covered.contains(next) {
+                queue.push_back(next.clone());
+            }
+        }
+        covered.insert(id);
+    }
+    covered.iter().map(|id| graph.name(id).to_owned()).collect()
+}
+
+/// Every direct third-party dependency of a `covered` crate, by a normal,
+/// build or development edge, that `allowed` does not list.
+#[must_use]
+pub fn third_party_offences(
+    graph: &Graph,
+    covered: &BTreeSet<String>,
+    allowed: &[&str],
+) -> Vec<String> {
+    let mut offences = Vec::new();
+    for (id, (name, member)) in &graph.packages {
+        if !*member || !covered.contains(name) {
+            continue;
+        }
+        let deps = graph.edges.get(id).map_or(&[][..], Vec::as_slice);
+        let dev = graph.dev_edges.get(id).map_or(&[][..], Vec::as_slice);
+        for dep in deps.iter().chain(dev) {
+            let dep_name = graph.name(dep);
+            if !graph.is_member(dep) && !allowed.contains(&dep_name) {
+                offences.push(format!(
+                    "{name}, a crate on a reducer's path, depends on {dep_name}, which is not on the third-party allow-list: check it from its source as xtask/src/tiers.rs says before adding it"
+                ));
+            }
+        }
+    }
+    offences.sort();
+    offences.dedup();
+    offences
+}
+
 fn tier_name(tier: Option<Tier>) -> &'static str {
     match tier {
         Some(Tier::PlatformNeutral) => "platform-neutral",
@@ -377,13 +483,14 @@ fn tier_name(tier: Option<Tier>) -> &'static str {
     }
 }
 
-/// Runs the check on the workspace at `root`.
+/// Runs the check on the workspace at `root`, returning the crates the
+/// determinism rule covers.
 ///
 /// # Errors
 ///
 /// When `cargo metadata` fails, or the graph breaks a rule: the error names
 /// every offence and its path.
-pub fn check(root: &Path) -> Result<(), String> {
+pub fn check(root: &Path) -> Result<BTreeSet<String>, String> {
     let output = Command::new(env!("CARGO"))
         .args(["metadata", "--format-version", "1", "--all-features"])
         .current_dir(root)
@@ -399,9 +506,15 @@ pub fn check(root: &Path) -> Result<(), String> {
     let metadata: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("cargo metadata's output is not JSON: {error}"))?;
     let graph = Graph::from_metadata(&metadata)?;
-    let offences = offences(&graph, TIERS, ROLES);
+    let covered = covered(&graph, REDUCERS);
+    let mut offences = offences(&graph, TIERS, ROLES);
+    offences.extend(third_party_offences(
+        &graph,
+        &covered,
+        DETERMINISTIC_THIRD_PARTY,
+    ));
     if offences.is_empty() {
-        Ok(())
+        Ok(covered)
     } else {
         Err(format!(
             "the crate tiers are broken (see the NVDA provenance section of CLAUDE.md):\n  {}",
@@ -424,6 +537,7 @@ mod tests {
                     .packages
                     .insert((*name).to_owned(), ((*name).to_owned(), member));
                 graph.edges.insert((*name).to_owned(), Vec::new());
+                graph.dev_edges.insert((*name).to_owned(), Vec::new());
             }
         }
         for (from, to) in edges {
@@ -554,6 +668,63 @@ mod tests {
         assert_eq!(
             offences(&graph, TEST_TIERS, TEST_ROLES),
             ["listener reaches another role's crate, outpost-logic: listener -> outpost-logic"]
+        );
+    }
+
+    /// The covered crates are the reducers, what they reach, and the
+    /// workspace crates their development dependencies name, with what
+    /// those reach; nothing a covered crate is only reached by, and not
+    /// the workspace-hack crate.
+    #[test]
+    fn the_covered_crates_are_derived_from_the_reducers_and_their_development_edges() {
+        let mut graph = graph(
+            &[
+                "core",
+                "model",
+                "oracle",
+                "oracle-data",
+                "speech",
+                WORKSPACE_HACK,
+            ],
+            &["serde"],
+            &[
+                ("core", "model"),
+                ("core", WORKSPACE_HACK),
+                ("model", "serde"),
+                ("speech", "core"),
+                ("oracle", "oracle-data"),
+            ],
+        );
+        graph
+            .dev_edges
+            .insert("core".to_owned(), vec!["oracle".to_owned()]);
+        let covered: Vec<String> = covered(&graph, &["core"]).into_iter().collect();
+        assert_eq!(covered, ["core", "model", "oracle", "oracle-data"]);
+    }
+
+    /// A covered crate's direct third-party dependency off the allow-list
+    /// is an offence, by a development edge too; one beneath an allowed
+    /// crate, or a crate that is not covered, is not.
+    #[test]
+    fn a_covered_crates_third_party_dependency_must_be_allowed() {
+        let mut graph = graph(
+            &["core", "speech"],
+            &["serde", "serde_derive", "rand", "hashbrown"],
+            &[
+                ("core", "serde"),
+                ("serde", "serde_derive"),
+                ("speech", "hashbrown"),
+            ],
+        );
+        graph
+            .dev_edges
+            .insert("core".to_owned(), vec!["rand".to_owned()]);
+        let covered = covered(&graph, &["core"]);
+        assert_eq!(
+            third_party_offences(&graph, &covered, &["serde"]),
+            [
+                "core, a crate on a reducer's path, depends on rand, which is not on the third-party allow-list: check it from its source as xtask/src/tiers.rs says before adding it"
+            ]
         );
     }
 }

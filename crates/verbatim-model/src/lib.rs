@@ -214,6 +214,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the mint's own test: listed under the determinism rule's exceptions"
+    )]
     fn trace_ids_are_unique_and_increasing() {
         let first = TraceId::mint();
         let second = TraceId::mint();

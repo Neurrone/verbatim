@@ -18,6 +18,12 @@
 //! the plan first had them. A 2,000-line console-host flood read in 1,054
 //! reads, as measured live on 2026-10-08, gives the bytes a flood moves.
 
+#![expect(
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    reason = "a measurement, timed by the monotonic clock: listed under the determinism rule's exceptions"
+)]
+
 mod terminal_support;
 
 use std::fmt::Write as _;

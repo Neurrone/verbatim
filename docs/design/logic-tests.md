@@ -51,7 +51,7 @@ Moved here from M6.1 (Dickson, 2026-10-31), before the tests, so no test is writ
 
 - `xtask` builds on any platform: its Windows-only commands and their dependencies apply only on Windows, so `cargo xtask docs` and the text scans run on Linux.
 - A Linux job in CI builds and tests the logic crates and `verbatim-core`, and runs `cargo xtask docs` and the scans. Reason: a dependency check reads the graph, while a build on another platform proves it.
-- Determinism is enforced in the pure crates (Dickson, 2026-10-31): no standard hash map or set, no clock, no randomness, no thread and no environment read, checked by Clippy's disallowed types and methods in each pure crate and by the ownership scan, after an audit of the 29 standard hash maps and sets there; M4.6 runs each generated case twice and compares its effects. Reason: a hash map's order changes with each process, so a replay could differ, and every project that built a simulation reports such leaks.
+- Determinism is enforced in the crates on a reducer's path (Dickson, 2026-10-31): no hash map or set of any kind, no clock, no randomness, no thread and no environment read, checked by Clippy's disallowed types and methods in each of those crates, by the ownership scan, and by the tier check's allow-list of third-party crates ([logic foundations](logic-foundations.md), "Determinism"); M4.6 runs each generated case twice and compares its effects. Reason: a hash map's order changes with each process, so a replay could differ, and every project that built a simulation reports such leaks.
 
 ### Measured before and after
 

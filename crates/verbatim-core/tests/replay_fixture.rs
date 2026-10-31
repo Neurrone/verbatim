@@ -7,6 +7,12 @@
 //! below is how it was produced and how a future intentional change to the
 //! scripted shapes regenerates it.
 
+#![expect(
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    reason = "reads its fixture file, and writes it when regenerated: listed under the determinism rule's exceptions"
+)]
+
 use std::fs;
 use std::io::BufReader;
 use std::path::PathBuf;

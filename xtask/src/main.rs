@@ -273,10 +273,13 @@ fn ci() -> ExitCode {
         .parent()
         .expect("xtask lives in the workspace root");
     println!("xtask ci: crate tiers");
-    if let Err(error) = tiers::check(root) {
-        eprintln!("xtask ci: step failed: crate tiers\n{error}");
-        return ExitCode::FAILURE;
-    }
+    let covered = match tiers::check(root) {
+        Ok(covered) => covered,
+        Err(error) => {
+            eprintln!("xtask ci: step failed: crate tiers\n{error}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     println!("xtask ci: waits in test code");
     if let Err(error) = waits::check(root) {
@@ -293,6 +296,12 @@ fn ci() -> ExitCode {
     println!("xtask ci: pure owners' names");
     if let Err(error) = ownership::check(root) {
         eprintln!("xtask ci: step failed: pure owners' names\n{error}");
+        return ExitCode::FAILURE;
+    }
+
+    println!("xtask ci: determinism of the crates on a reducer's path");
+    if let Err(error) = ownership::determinism(root, &covered) {
+        eprintln!("xtask ci: step failed: determinism of the crates on a reducer's path\n{error}");
         return ExitCode::FAILURE;
     }
 

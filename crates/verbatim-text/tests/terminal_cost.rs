@@ -15,6 +15,12 @@
 //! time is counted, not the simulated terminal's: the reads are taken once
 //! and given again to a fresh reader for each run.
 
+#![expect(
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    reason = "a measurement, timed by the monotonic clock: listed under the determinism rule's exceptions"
+)]
+
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 

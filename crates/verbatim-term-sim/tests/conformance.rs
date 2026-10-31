@@ -4,6 +4,11 @@
 //! expectations `cargo xtask regenerate-terminal-conformance-expectations`
 //! recorded (`docs/design/terminal-model.md`, "Testing").
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "reads the conformance corpus: listed under the determinism rule's exceptions"
+)]
+
 use verbatim_term_sim::Flavor;
 use verbatim_term_sim::conformance::{
     Expectation, expectation_path, replay, replay_program_colours, streams,

@@ -2098,15 +2098,26 @@ fn the_ground_truth_reader_passes_the_corpus() {
     assert_eq!(failures, []);
 }
 
-proptest! {
-    #![proptest_config(random_config())]
-
-    #[test]
-    fn the_ground_truth_reader_passes_random_streams(
-        steps in random_steps(),
-        windows_terminal in any::<bool>(),
-    ) {
-        let flavor = if windows_terminal { Flavor::WindowsTerminal } else { Flavor::ConsoleHost };
-        prop_assert_eq!(truth_violations(&stream(&steps), flavor, Size::SMALL), []);
+/// Random streams, from the oracle's fixed configuration: run by a
+/// `TestRunner` built from it rather than by the `proptest!` macro, which
+/// the determinism rule leaves out of the crates on a reducer's path
+/// (`docs/design/logic-foundations.md`, "Third-party crates").
+#[test]
+fn the_ground_truth_reader_passes_random_streams() {
+    let mut runner = proptest::test_runner::TestRunner::new(random_config());
+    let result = runner.run(
+        &(random_steps(), any::<bool>()),
+        |(steps, windows_terminal)| {
+            let flavor = if windows_terminal {
+                Flavor::WindowsTerminal
+            } else {
+                Flavor::ConsoleHost
+            };
+            prop_assert_eq!(truth_violations(&stream(&steps), flavor, Size::SMALL), []);
+            Ok(())
+        },
+    );
+    if let Err(failure) = result {
+        panic!("{failure}");
     }
 }
