@@ -20,6 +20,7 @@ Answered by Dickson on 2026-10-31:
 10. **Where extensions run: agreed.** Built-ins stay in outposts; each installed extension gets a locked-down process of its own (section 7.6.3), with the round trip measured in M5.
 11. **The extension surface's audit:** answered item by item (section 7.6.2).
 12. **Outposts' token:** a write-restricted token, if the experiment of section 7.9 shows UIA and MSAA work under it.
+13. **Braille drivers: open.** Core does the device I/O and drivers are protocol parsers fed bytes, Wasm by default; handles passed to a contained native driver only where that cannot work; vendor SDKs in a weaker container, opt-in (section 7.11)? Recommended: yes.
 
 ## 2. Method
 
@@ -365,6 +366,25 @@ A portable copy runs from any folder, such as Downloads, a folder of the user's 
 - **It never runs elevated** (B2), which matters most for a copy started from an administrator's prompt.
 - **Its updates are verified by signature** (X7), as the installed copy's are.
 
+### 7.11 Braille display drivers (M15)
+
+Braille drivers need hardware, which a sandbox normally denies. The extensions design plans them as the synthesizer host's pattern with a `verbatim_braille_v1` ABI; the hardware changes what that pattern can be. The evidence is in [the survey](../../experiments/security-model-survey/readme.md), "Braille drivers".
+
+The facts that decide it:
+
+- **NVDA's drivers mostly speak a protocol over a plain transport.** Its I/O layer opens the device itself with `CreateFile` (HID, serial, or a vendor kernel driver's bulk endpoints), Bluetooth Low Energy through WinRT, and only two drivers still load a vendor DLL (`lilli.dll`, and FTDI's D2XX for one Papenmeier model). Detection matches USB vendor and product ids and Bluetooth names, which a device can claim falsely.
+- **A sandbox cannot open devices by itself.** Device capabilities such as `serialcommunication` and `humaninterfacedevice` are for packaged apps' WinRT device APIs; whether a non-packaged AppContainer can open `\\.\COM3` or a HID path with `CreateFile` depends on each device's access list, which normally grants no container, and is undocumented, so it counts as not working until tested. Windows' own WinRT HID API refuses keyboard and mouse collections, so a display that also presents a keyboard is only partly reachable that way.
+- **A handle opened outside can be handed in.** Access is checked when a handle is opened, so a device handle the parent opens and duplicates into the child keeps working there for reads, writes, overlapped I/O, `DeviceIoControl` and the HID functions that take a handle; anything that opens by name, such as enumeration or a second endpoint, fails in the child. This follows from how Windows checks access and is to be confirmed by test.
+- **Browsers never hand a raw handle to a sandboxed process.** Chromium's WebUSB, WebHID and WebSerial run in a device service in the browser process, and the renderer gets messages and data pipes only.
+
+The options:
+
+- **A. Core opens the device and hands the handle to a contained driver.** Native drivers keep working nearly unchanged. The driver can send the device any control code the handle allows, including firmware updates, and hot-plug and enumeration stay in Core.
+- **B. Core does all device I/O, and the driver is a protocol parser fed bytes.** Chromium's model. The driver holds no handle at all, can be a Wasm component, memory-safe and the same on x64 and ARM64, and Core can refuse feature reports and control lines a driver has no reason to use. Core grows a typed I/O interface (serial settings and lines, HID input, output and feature reports, bulk endpoints, Bluetooth LE attributes), with a pipe hop that braille's timing tolerates.
+- **C. A vendor SDK in a weaker container.** An SDK that needs its own kernel driver, service or registry keys cannot work in the less privileged AppContainer, so it gets a restricted token at low integrity in a job, or only crash isolation. Little real containment, so opt-in per driver and labelled as trusted native code at install.
+
+Recommended: B by default, as Chromium does; A only for a native driver whose protocol B cannot express, after the handle-passing test; C only for vendor SDKs, opt-in. In every option the driver's parser treats the device's bytes as hostile, and a display's keys produce only the gestures the driver interface defines, never injected keystrokes. Decision 13.
+
 ## 8. How well the architecture serves the goal
 
 The architecture is strongest exactly where screen readers have historically been weakest, and weakest in product surfaces that have not been designed yet.
@@ -422,6 +442,7 @@ Ranked by severity, judged for today's development use; those marked as rising w
 - M8.1: B1 first, then B3 to B8 with B3a and B5a, C5 and C6, and the secure instance's own screen curtain (L8).
 - M9: L3 as file logging arrives.
 - M12: C9, B9 and B3a's remote rule.
+- M15: section 7.11's driver model, with the handle-passing test first if option A is needed.
 - Standing review rules, from now: J3, J4, L6 and X3a.
 
 ## 11. Comparison with NVDA and other screen readers
