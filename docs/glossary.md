@@ -14,7 +14,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   closes, by handle, the windows it left.
   [verbatim-e2e](crates/verbatim-e2e.md).
 - **Abandoned worker** — an outpost worker whose call passed its
-  deadline; the watchdog replaces it, since a thread stuck in a hung
+  deadline; the outpost's reducer replaces it, since a thread stuck in a hung
   application's COM call cannot be safely killed. If the call ever
   returns, the thread publishes nothing and exits. Recovery ladder rung
   2's bounded garbage. [verbatim-outpost](crates/verbatim-outpost.md).
@@ -39,6 +39,11 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   `extensions/builtin/` (planned), loaded by the same host as an installed module
   but never bundled, listed, installed or disabled.
   [extensions](design/extensions.md).
+- **Call program** — a whole sequence of calls into an application with
+  pure stopping rules, such as a focus's walk or a caret read, run by an
+  outpost's worker on copies of what it reads; its commits and result
+  are posted back to the outpost's reducer.
+  [verbatim-outpost](crates/verbatim-outpost.md).
 - **Capability** — a group of host functions a module imports, derived
   from the component's imports and never declared; only the sentences
   naming something of the user's are shown at install.
@@ -116,6 +121,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Normalized model** — `verbatim-model`'s API-agnostic vocabulary
   of nodes, roles, states, and events that both backends map into.
   [verbatim-model](crates/verbatim-model.md).
+- **Object store** — the outpost's monitor that owns node identity,
+  the application objects it keeps and each node's mint tag, and
+  releases a node only when no live request and no message can still
+  name it. [verbatim-outpost](crates/verbatim-outpost.md).
 - **Outpost** — the per-application process owning that app's event
   hooks, queries, and announcements (D9); also the binary
   `verbatim-outpost.exe`, which runs as an app outpost or, with
@@ -138,6 +147,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Request table** — the app's record of every query sent to an
   outpost, the single owner of "exactly one outcome per query".
   [verbatim-app](crates/verbatim-app.md).
+- **Responder** — a value that answers an asker once; answering
+  consumes it, and dropping it unanswered answers "gone". It lives in a
+  thread's shell, never in a pure reducer's state.
+  [ownership-messages](design/ownership-messages.md).
 - **Reducer** — the pure functional core: `reduce(state, input)`
   returns the next state and effects, no I/O, no clocks (architecture
   section 2). [verbatim-core](crates/verbatim-core.md).

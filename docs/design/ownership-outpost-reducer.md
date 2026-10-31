@@ -51,5 +51,5 @@ Reducer build:
 
 ## Decisions
 
-- Built as recommended in the design's open questions, and not yet answered by Dickson: the split into the store build and the reducer build in that order; folding the watchdog and the gap's threadpool timer into the reducer's timed wait; holding the hook's whole stream until `ForwardingEnded`.
+- Accepted by Dickson on 2026-10-31: the split into the store build and the reducer build in that order; folding the watchdog and the gap's threadpool timer into the reducer's timed wait; holding the hook's whole stream until `ForwardingEnded`.
 - The reducer runs on a thread of its own (Dickson, 2026-10-30); the outposts' reply tokens are built here (accepted 2026-10-31).

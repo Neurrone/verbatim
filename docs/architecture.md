@@ -87,11 +87,13 @@ screen reader in both rendered and source form.
   (Dickson).
 - **D14, attention follows focus.** Attention moves only on a foreground
   change, and the foreground is announced, never a gate; each event rule
-  is defined once, judged against Core's focus, outside Core only before
-  a read, and Core orders focuses by when they happened (section 2). Why:
+  is defined once, judged in Core, outside Core only before a read and
+  only from the reader's own observations, and Core orders focuses by
+  when they happened (section 2). Why:
   a foreground gate failed broker-hosted applications and background
   events users expect. Decided 2026-09-02. Amended 2026-10-25 (Dickson,
-  2026-10-26).
+  2026-10-26) and 2026-10-30 (Dickson: no state of Core is sent to a
+  reader, [the ownership model](design/ownership.md)).
 - **D15, the latency budget is split in two and measured per stage.** The
   OS event to the utterance queued takes 10 ms or less on every backend,
   and queued to first audio 10 ms or less with eSpeak NG, OneCore exempt
@@ -214,8 +216,19 @@ Outposts are created when an app first gains focus (or raises a subscribed
 event), retired when the app exits, and may be retired early when idle to
 bound memory use; state rebuilds from live queries on demand.
 
-Inside, an outpost follows NVDA's model of one thread doing all the work
-for an application. What it says to
+Every fact has one owner, one thread or one state machine run by one
+thread, and others learn it from one-way reports or views
+([the ownership model](design/ownership.md)). Core owns every word and
+every fact across applications. Each outpost's reducer owns what its
+application remembers: the order of its two routes, verdicts, the gap,
+the reports Core may hold and the caret watch. The object store owns node
+identity and its release. The hook thread owns the key number. The
+threads that call into applications are the focus listener's reading
+threads and each outpost's workers; no other thread makes such a call.
+
+Inside, an outpost is one pure state machine, the reducer, on a thread of
+its own. Workers run whole call programs on copies of what they read and
+post their results back; the reducer's timed wait keeps every timer. What it says to
 Core waits in one queue, written by a thread of its own; queuing never
 waits, nothing is queued while a lock the watchdog takes is held, and
 waiting messages are merged by object and kind, but never a terminal's
@@ -572,15 +585,16 @@ Each rule (acceptance, a repeated focus, which property changes,
 selections and dialog texts are spoken) is defined once, in a
 platform-neutral crate unless it is ported from NVDA, in which case once
 in the Windows-specific crate the judges before a read share, and every
-place that applies it calls that one definition. A judgment is made
-outside Core only when it must come before an element is read, because a
-UIA element cannot pass to another process: the focus listener judges a
-UIA focus before reading it, and an outpost judges an event against the
-foreground before calling into the application. Those judgments use the
-focus Core holds, which Core sends to the listener and to the focused
-application's outpost whenever it changes, never a copy of the focus the
-listener or outpost last reported. Everything decided after the read is
-decided in the reducer, from facts the outposts report.
+place that applies it calls that one definition. Words and every fact
+across applications are judged in Core. What to read for one application
+is judged by its reader, from its own observations of the event, and by
+its outpost's verdict rule, which the listener applies only in its
+probe-free part (NVDA's MSAA class list and the override), because a UIA
+element cannot pass to another process. No state of Core is sent back for
+a reader to judge against: an outpost reads changes for every node it has
+not released, and Core's targeting decides what is spoken. Everything
+decided after the read is decided in the reducer, from facts the
+outposts report.
 
 Focuses reach Core from several processes, and a slow read in one can
 deliver an earlier focus after a later one. Core orders them by when they
