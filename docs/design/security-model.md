@@ -1,12 +1,12 @@
 # Security model
 
-Proposed on 2026-10-31, pending Dickson's decisions in section 1. Decided by Dickson on 2026-10-31: crash dumps keep their text; developer mode, which gates the developer surfaces below, comes in an M6.x milestone after M6; and outposts are to run with a write-restricted token if an experiment shows UIA and MSAA work under one.
+Proposed on 2026-10-31, pending Dickson's decisions in section 1. Decided by Dickson on 2026-10-31: crash dumps keep their text; developer mode, which gates the developer surfaces below, comes in an M6.x security-fixes milestone after M6, which also takes the fixes that need no milestone of their own; and outposts are to run with a write-restricted token if an experiment shows UIA and MSAA work under one.
 
 This document is Verbatim's threat model, followed by the architectural mitigations it calls for. Sections 3 to 6 are the threat model: what is protected, where untrusted data and control enter, who the adversaries are and which of them cross a real boundary, and the classes of threat. Section 7 gives the mitigations for each class, each with its status in today's code. Sections 8 to 10 judge the architecture, rank the findings and place the work in the roadmap, and section 11 compares Verbatim with NVDA and other screen readers. It is a model, not a build plan: each build that takes up a mitigation gets the usual design and adversarial review.
 
 ## 1. Decisions required
 
-1. **Control plane.** Split it into a narrow user endpoint that is always on (the extension install request and status) and a developer endpoint (key injection, the speech stream, tree and recorder dumps) that exists only in developer mode (M6.x). Should signed builds with UIAccess carry the developer endpoint at all, given that its key injection would reach elevated windows? Recommended: split, and keep the developer endpoint in signed builds behind developer mode, refusing `SendKeys` while a window of higher integrity than the client is in front, so end-to-end tests can still run against a release build.
+1. **Control plane.** Split it into a narrow user endpoint that is always on (the extension install request and status) and a developer endpoint (key injection, the speech stream, tree and recorder dumps) that exists only in developer mode (the M6.x security-fixes milestone). Should signed builds with UIAccess carry the developer endpoint at all, given that its key injection would reach elevated windows? Recommended: split, and keep the developer endpoint in signed builds behind developer mode, refusing `SendKeys` while a window of higher integrity than the client is in front, so end-to-end tests can still run against a release build.
 2. **Injected gestures.** Ignore Verbatim gestures in keys injected by a lower-integrity process, and keep accepting keys injected at the same level, as NVDA does and users' scripts rely on? Recommended: yes.
 3. **Passwords in dumps.** Dumps keep their text (decided). Record characters typed into a protected field as stars, which the reducer speaks anyway, so replay loses nothing? Recommended: yes.
 4. **Installed state.** Settings, logs and dumps under the user's profile for installed copies, and beside the executable for portable copies, as NVDA does? Recommended: yes.
@@ -271,7 +271,7 @@ A native synthesizer, whose adapter and engine are native code:
 - **Calls anything in Windows.** A DLL in a process can call any Windows function, load any system DLL, or make system calls directly, and nothing can stop a native component choosing which functions it calls. So the limit is not on the calls but on the process: every DLL in the host runs with the host's token, and Windows checks each request against that token in the kernel, whichever DLL makes it. Loading another system DLL therefore gains the engine nothing the host could not already do. What the host's token and limits allow is the whole of what a malicious engine can do (X11, X12, X15).
 - **Cannot send** what it hears anywhere, once contained: the less privileged AppContainer has no network capability, so its sockets are refused; it cannot open the user's files, registry keys, other processes or their windows, since none grants the container access; and the job's limits deny it the clipboard and child processes. Its exits are the PCM it returns, which is played aloud, the pipe to Core (X16), and what remains reachable from a less privileged AppContainer: the Windows kernel, and the few system services that accept such callers. That residue is what Chromium's renderers rely on, and it is why X15 removes the window-manager system calls where the engine allows.
 - **Speaks something else** than it is given. No sandbox prevents this; it is inherent in letting a component turn text into sound.
-- **Crashes or hangs,** which R3 answers.
+- **Crashes or hangs, or spins,** which R3 and R7 answer, while the job caps its memory.
 - Before M6's container exists, no third-party native code runs, so the window in which an adapter would have the user's full rights never opens, provided X11 holds from the first adapter.
 
 Developer folders and hot reload load modules without the install dialog, which C8 confines to developer mode, and the secure-desktop instance loads only the administrator-made copy (B5).
@@ -322,6 +322,8 @@ Recommended (question 10): built-ins stay in outposts, since they ship with Verb
 - **R3. A synthesizer failure costs one utterance, and repeated failures cost the synthesizer, never speech.** After three crashes within a minute, switch to eSpeak NG for the session and say why in its voice, and to OneCore if eSpeak NG fails; adapters filter their engines' known crash strings. Measure whether a hang time shorter than 10 seconds, counted from the first audio owed, holds without false alarms. Question 5. Status: one utterance fails and the host restarts; no fallback after startup and no restart cap.
 - **R4. The keyboard hook's health is checked.** A hook that stops receiving keys while `GetLastInputInfo` shows input is reinstalled, and Verbatim says so. Status: missing.
 - **R5. Speech survives losing the audio device.** While the default device refuses a shared stream, play through another active device if there is one, and report the time lost on recovery. Status: retries the same device.
+- **R6. Every extension has a memory and a processor budget, enforced by the process or store that runs it.** A Wasm module's instance has a store limit on memory, tables and stack, and each hook an epoch deadline (extensions design, section 8.3); M5 sets the store limit's value, and keeps the sum of an outpost's instances' limits below its job's memory cap, so one module cannot starve another's application. Hooks are bounded one at a time, so a module that takes most of its deadline on every event of a busy application can still saturate its outpost; each module therefore also has a share of the worker's time over a sliding window, and a module over its share is unloaded for the outpost's lifetime with one spoken report naming it, as repeated traps already are. A module runs only inside hooks, since timers are deferred past M5, so it uses no processor time between events; a timer import, when it comes, carries its own rate. An installed extension's own host (section 7.6.3) gets a job with a memory cap and a hard processor rate cap, since nothing in it is real-time. Status: the epoch deadline and store limiter are designed; the window share and the host's job are missing.
+- **R7. A synthesizer host that uses processor time with nothing to say is ended.** A native engine cannot be capped hard, since it must produce audio in real time, and a rate cap would make speech stutter. Instead Core reads the host's processor time from its job: a host that keeps using it while it owes no audio, after a cancel or between utterances, for a few seconds is ended and restarted, as a hung host is, and counts toward R3's crashes; its memory is capped by the job as today. The host never runs above normal priority. Status: the memory cap holds; the idle check is missing.
 
 ### 7.9 Sandboxing each process
 
@@ -392,10 +394,9 @@ Ranked by severity, judged for today's development use; those marked as rising w
 
 ## 10. Where the work goes
 
-- Now, as a small build of its own: F1 (the agent, C4), F5 (the message filter, C7), and the configuration fallbacks of C3.
 - M5: section 7.6.2's audit findings in the design restatement, and section 7.6.3's placement measured and decided; L1 and L2, since M5 brings the log ring forward; C1's user endpoint, since the install request arrives with M5; S1, X13 and the log cap of section 7.6.1 for extensions.
 - M6: R3, X5, X11, X12, X14, X15, X16 and J1, section 7.9's measurements for the synthesizer host (x86 emulation in the container, the fall-back profile, eSpeak NG as Wasm), the AppContainer as designed, and the native synthesizer's install warning of section 7.6.1.
-- The M6.x developer-mode milestone (Dickson, 2026-10-31): the write-restricted token experiment of section 7.9, C1a, C1's developer endpoint, C8's developer folder, L3's developer setting, and C2's per-session pipe name.
+- The M6.x security-fixes milestone (Dickson, 2026-10-31), after M6: developer mode with C1a, C1's developer endpoint, C8's developer folder and L3's developer setting; F1's agent fix (C4), F5's message filter (C7) and the configuration fallbacks of C3; C2's per-session pipe name; the write-restricted token experiment of section 7.9; X8's audit and X10's fuzzing in `cargo xtask ci`; U7's background flood cap, U8's bound on outposts and R4's check of the keyboard hook; and R6 and R7's resource limits for extensions.
 - M6.3, the speech and audio pipeline: U4's cut reaching speech, and R5.
 - M6.4, terminal residuals: U5.
 - M6.5, text residuals: L9's check that a character is judged against the focus it was typed in.
@@ -404,7 +405,7 @@ Ranked by severity, judged for today's development use; those marked as rising w
 - M8.1: B1 first, then B3 to B8 with B3a and B5a, C5 and C6, and the secure instance's own screen curtain (L8).
 - M9: L3 as file logging arrives.
 - M12: C9, B9 and B3a's remote rule.
-- Ongoing, from now: X8's audit and X10's fuzzing in `cargo xtask ci`; U7's background flood cap, U8 and R4 with the next focus or input build; J3, J4 and L6 as standing review rules.
+- Standing review rules, from now: J3, J4, L6 and X3a.
 
 ## 11. Comparison with NVDA and other screen readers
 
