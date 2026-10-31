@@ -126,35 +126,92 @@ guide maps those behaviors onto the crate's types and modules.
   are kept and given (`Spares`). Every time these take is in
   microseconds on the run's shared clock. `EndReason` is why a generation
   ended; `Received` is when verbatim.exe read a fact.
-- `requests::RequestTable<A>` and `RequestId`: the one owner of each
-  query Core sends an outpost and of its one outcome, generic over who
-  asked (below, "The request table").
+- `requests::RequestTable<A>`: the one owner of each query the shell
+  sends an outpost for its own askers and of its one outcome, generic over
+  who asked (below, "The request table"). `SrState::outstanding_queries`
+  is the count of the reducer's own queries the idle barrier waits for
+  (below, "Core's queries").
+
+## Core's queries
+
+Every query the reducer asks, of an outpost or of a terminal's memory,
+is recorded in one field of `SrState`, `queries` (`src/queries.rs`), from
+its request to its one ending, under the `QueryId` its request goes out
+as (`protocol::RequestId::reducer`). An entry holds the outpost asked,
+the trace its request runs under, who answers it (`Asked`: `Read`, which
+the idle barrier waits for, `Watch`, a caret key's watch, which it does
+not, or `Memory`, a request Core answers from a terminal's memory), and
+what its answer continues (`Then`).
+
+- One way to ask: `Queries::ask(asking, then)` records the query and
+  returns the request's effect (`Effect::Fetch`, `Effect::Text` or
+  `Effect::Activate`); `ask_memory(node, then)` records one only Core
+  answers, a command mark's move. `terminal_model::intercept` turns a
+  request it takes out of the effects into a `Memory` one
+  (`answer_from_memory_later`).
+- One ending each, after which the continuation runs once, routed by the
+  entry's `then` (`queries::ended`): the outpost's answer,
+  `Input::Answered`, taken only from the outpost asked and never for a
+  `Memory` entry (`queries::answered`); the outpost's end, inside
+  `Input::OutpostEnded`, where every entry still open there ends "gone" in
+  number order, under its own trace or the end's (`outpost_gone`); its
+  owner's withdrawal, the held key's read at its deadline
+  (`Queries::withdraw`, `Effect::Withdraw`); and Core's answer from
+  memory (`answer_from_memory`), or the removal of the terminal's model,
+  which ends its reviews' entries with nothing run
+  (`SrState::drop_models`, the only way a model goes). An answer with no
+  entry is dropped. An ending whose number is the watch the held keys wait
+  on (`HeldKeys::awaiting_watch`) resumes them, however it ended.
+- The outcome becomes the result the entry's kind takes: a navigation's
+  `FetchResult` (`Gone` for a gone node, `Unanswered` for any failure), an
+  activation's action, said "No action" for a failure and nothing for an
+  abandoned one, or a `TextReply` (`Gone`, or `Unanswered` for any
+  failure).
+- A query superseded or cleared is turned to `Then::Nothing`
+  (`Queries::forget`): its entry stays until its answer, which runs
+  nothing, so the idle barrier still waits for a superseded read; a
+  `Memory` entry is removed at once instead. A newer caret key on the same
+  node turns the waiting key's entry into `SupersededCaret`, whose answer
+  may still say a change of the selection; a cancel turns the flood
+  policy's open read into `Overtaken`.
+- A terminal model's asks (owed, fresh, history and search reads) are
+  entries tagged with the model's node and generation, which each model
+  gets from a counter kept with the models (`Terminals`), so a model made
+  again for the same node takes none of its predecessor's answers. Its
+  questions are lookups (`model_asks`). An owed read asked while one is
+  open turns the older to `Nothing`.
+- `reduce` ends each transition by setting the trace of the queries made
+  in it to the trace the shell runs their requests under: the key's inside
+  `Effect::ForKey`, else the input's (`set_traces`).
+- `held_nodes` takes the node a navigation starts from and the nodes of
+  the caret keys', text commands' and held keys' entries; an entry with
+  `Nothing` holds nothing.
 
 ## The request table
 
-`RequestTable<A>` records every query Core sends an outpost, on the
-reducer thread, with a `RequestId` and the outpost generation it went to,
-and holds its asker `A` as a token it never calls. `verbatim-app` gives
-its `Asker` and carries each outcome out (`requests::deliver`,
+`RequestTable<A>` records every query the shell sends an outpost for its
+own askers (a tree dump, focus-now, the fake focus, and the two shell
+item queries), on the reducer thread, with a `RequestId` tagged
+`Requester::Shell` and the outpost generation it went to, and holds its
+asker `A` as a token it never calls. `verbatim-app` gives its `Asker` and
+carries each outcome out (`requests::deliver`,
 [verbatim-app](verbatim-app.md)).
 
-- `begin`, `begin_passive` and `begin_until(outpost, asker, deadline_us)`
-  record a request. A passive one, a caret watch's, gets its outcome but
-  is not counted by `outstanding`, the idle barrier's count. A deadline is
-  in microseconds on the run's shared clock.
+- `begin` and `begin_until(outpost, asker, deadline_us)` record a
+  request. A deadline is in microseconds on the run's shared clock.
 - Every ending hands the asker back with its outcome, so each asker leaves
   the table exactly once: `finish(id, outpost, outcome)` only for the
   generation asked and only the first time; `outpost_ended(outpost)`, each
   outstanding request answered "gone"; `expire(now_us)`, each past its
-  deadline answered failed (`DEADLINE_PASSED`); and `withdraw(which)`, the
-  first request whose asker `which` picks, with no outcome, its asker
-  handed back for the caller to drop. `find(which)` names a request to
-  withdraw from its outpost while it keeps its one outcome.
-- Request ids are given in increasing order and kept in a `BTreeMap`, so
-  the outcomes `outpost_ended` and `expire` return together come in the
-  order the requests were made, and are spoken in that order.
-- `next_deadline` is the earliest deadline; a count of the timed requests
-  makes it and `expire` free while none is outstanding.
+  deadline answered failed (`DEADLINE_PASSED`) and named with its outpost
+  (`Expired`) for the shell to withdraw; and `withdraw(which)`, the first
+  request whose asker `which` picks, with no outcome, its asker handed
+  back for the caller to drop. `find(which)` names a request to withdraw
+  from its outpost while it keeps its one outcome.
+- Request numbers are given in increasing order and kept in a
+  `BTreeMap`, so the outcomes `outpost_ended` and `expire` return together
+  come in the order the requests were made.
+- `next_deadline` is the earliest deadline.
 
 ## The flight recorder
 
@@ -416,8 +473,10 @@ code is in `reduce.rs` unless named.
 review cursor that follow focus. A `Command` runs against them:
 report-object announces, spells, then copies on repeated presses; parent,
 sibling and first-child moves emit a navigation `Fetch` whose completion
-moves and announces the navigator; activate emits `Activate`, answered by
-`Input::ActivationCompleted`; to-focus snaps back; report focus
+moves and announces the navigator, a newer navigation turning an older
+one still pending to nothing; activate emits `Activate`, whose answer says
+what was done; to-focus snaps back, turning a pending navigation to
+nothing; report focus
 (`report_focus`) runs against the focus. With no navigator a command says
 "No navigator object". An object with text is announced by
 `announce_navigator` and `editing::navigator_text`: name, role and states,
@@ -514,8 +573,8 @@ in flight. `Effect::BoundHeldKey` sets the shell's one slot, or clears it
 when the wait or the read ends sooner, and `Input::HeldKeyDue` enters
 when it passes (`editing::held_key_due`): a key still waiting is read; a
 key still being read is passed on without the read, and the read is
-given up (`Effect::WithdrawText`), so its late answer finds nothing and
-is dropped.
+withdrawn (`Effect::Withdraw`), so it is no longer waited for and its
+late answer finds nothing and is dropped.
 
 Every key input that comes while a held key waits waits behind it
 (`WaitingKey`) and is handled in order (`editing::next_held`): a held
@@ -782,13 +841,16 @@ answers to the requests they make.
   terminal; and `read_at(&TerminalSnapshot)`, when a snapshot was taken as
   far as keys are concerned: when the read ended, or when it began for a
   snapshot that does not say when it ended.
-- `SrState::terminals` holds a model per terminal node read, at most 16,
-  least recently read forgotten first and an ended outpost's dropped: the
-  rules (`TerminalReader`) behind an `Arc`, the keys not yet given to
-  them, a read owed, waiting review requests, history rows asked for, the
+- `SrState::terminals` (`Terminals`) holds a model per terminal node
+  read, at most 16, least recently read forgotten first and an ended
+  outpost's dropped, each only through `SrState::drop_models`: the rules
+  (`TerminalReader`) behind an `Arc`, the model's generation, the keys not
+  yet given to them, waiting review requests, history rows that came, the
   review places, the caret and screen shape, the shape told to the
-  outpost, and the quiet-period timer's due time. A model is made with a
-  terminal's first snapshot while it has the focus.
+  outpost, and the quiet-period timer's due time. The reads it asked for
+  are Core's queries, tagged with its node and generation ("Core's
+  queries", above). A model is made with a terminal's first snapshot
+  while it has the focus.
 - Keys. Every key input while the focus is a modeled terminal is kept by
   its kind, a clearing key as `Forget` then `Other`. With each, Core asks
   for the screen's colours over the key's window, `KEY_WINDOW_MS` from its
@@ -812,8 +874,10 @@ answers to the requests they make.
   `TextOp::TerminalShape`; the rules' timer is `Effect::TerminalTimer`,
   answered by `Input::TerminalTimer`.
 - Review commands. A request the memory answers is not sent: `reduce`
-  takes it out of the step's effects, asks for a fresh read
-  (`TerminalScope::Fresh`) and answers it from the memory. Rows above the
+  takes it out of the step's effects, its query becoming one Core answers
+  itself, never waited for, asks for a fresh read
+  (`TerminalScope::Fresh`) and answers it from the memory, which ends its
+  query (`queries::answer_from_memory`). Rows above the
   memory are asked for with `TextOp::TerminalHistory { above, whole }`, a
   screen more than needed, and placed only when they count from the read
   the memory last took (`review::placed_history`, sharing

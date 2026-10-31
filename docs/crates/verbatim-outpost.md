@@ -1250,8 +1250,12 @@ Caret and text events:
   `ShellCandidates` with each matching button's `Place` and whether every
   button was read; Core picks (`verbatim-gui`'s `refind`). Both read only
   their application's windows, look the shell windows up without the proxy
-  rule (`any_window_element`), stop at `WALK_BUDGET` (2 s) with what they
-  read, and read a failed step as no more items, logged as a warning.
+  rule (`any_window_element`), stop their calls at `WALK_BUDGET` (2 s)
+  from when they begin or at the query's `walk_until_us` on the run's
+  shared clock, whichever comes first (`walk_limit`), answering what they
+  read, and read a failed step as no more items, logged as a warning. The
+  reducer abandons either query at the `answer_by_us` it carries, Core's
+  times for the list dialog's wait, fixed when the dialog asked.
 - `DumpTree { locations }` walks the foreground window (or the first
   visible top-level window): UIA with `verbatim_uia_rops::tree_dump`, MSAA
   with `verbatim_ia2::acquire::walk_tree`, capped at depth 64 and 4096

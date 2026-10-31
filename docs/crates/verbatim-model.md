@@ -127,9 +127,12 @@ recorder unchanged. What the reducer does with each type is in
   executes the input's effects under and Core's key stamp looks up.
   - Inputs are events (each with its source pid, backend, optional
     `WindowFacts`, and the observation time on the run's shared clock in
-    microseconds, one clock read for every event kind), fetch completions (with
-    their `QueryKind`), `OutpostEnded` (a generation ended, so its node
-    ids are dead), timer ticks, `Command` (a `ReviewCommand`, its key
+    microseconds, one clock read for every event kind), `Answered` (an
+    outpost's answer to a query the reducer asked, its `QueryId`, the
+    outpost that answered and the protocol's `QueryOutcome`, which the
+    reducer turns into the result its query's kind takes), `OutpostEnded`
+    (a generation ended, so its node ids are dead and the reducer's queries
+    of it end "gone", with a trace the shell mints for it), timer ticks, `Command` (a `ReviewCommand`, its key
     number, a press-repeat count and when the hook saw it), `Script` (the
     menu, the time, or the shell's lists, as a `Script`, with the same),
     `ToggleKeyPressed` (a lock key reached the operating system, with its
@@ -146,7 +149,9 @@ recorder unchanged. What the reducer does with each type is in
     `FocusNow`); `Fetch` (a `Query` naming the node and a `QueryKind`:
     parent, next or previous sibling, first child, answered by a
     `FetchResult` that tells a tree edge, `NoNeighbor`, from a node that
-    could not be re-acquired, `Gone`); `PlayEarcon`; `Activate`;
+    could not be re-acquired, `Gone`); `PlayEarcon`; `Activate` (a node
+    to activate, under its `QueryId`); `Withdraw` (a query Core gave up
+    on, to withdraw from its outpost);
     `CopyToClipboard` (routed through the shell's clipboard helper, its
     result back as `Input::ClipboardCopied`); `ReadForegroundFocus`
     (NVDA's fake focus); `ReadClock { repeat }` (read the time and date
@@ -158,8 +163,8 @@ recorder unchanged. What the reducer does with each type is in
   application not responding, start, exit, an error, browse and focus
   mode, suggestions opened and closed, and progress with its percentage.
   The theme decides how each is presented.
-- `ActionName`: the action an activation performed, in
-  `Input::ActivationCompleted`: `Invoke` (spoken "invoke") or `Named` (an
+- `ActionName`: the action an activation performed, in its answer
+  (`QueryResult::Activated`): `Invoke` (spoken "invoke") or `Named` (an
   application's own name, spoken as is).
 - `ReviewCommand`: the review and object-navigation vocabulary the
   keyboard layer's scripts map onto, so the reducer never depends on
@@ -246,16 +251,19 @@ that carries them on the pipes, `Message`, is
     marker, read, or drop with its `GapAnswer`, an MSAA focus or
     menu-popup address, a foreground window, with the listener's trace
     id, its `EventTiming`, whose `observed_at_us` orders the fact, and
-    for a `WinEvent` its `WinEventStamp`); `ForwardingEnded`; `Query`;
-    `Cancel` (withdraws a query not started); `Ping`; `Fetches`;
+    for a `WinEvent` its `WinEventStamp`); `ForwardingEnded`; `Query`
+    (under a `RequestId`: who in Core asked, `Requester::Reducer` or
+    `Requester::Shell`, non-exhaustive for later askers, and that asker's
+    number, which outposts store, compare and echo and decide nothing by);
+    `Cancel` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
     `NodesHeld`; `IdleQuery`; `Shutdown`; and `Assign`.
   - `CoreToListener`: `SetBackendOverride` for one application's `pid`,
     `HookInstalled`, `HookRemoved`, `Ping`, `IdleQuery` and `Shutdown`.
   - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
     observation time in microseconds, backend, `WindowFacts`, the
     normalized event, and the application it belongs to when not the
-    outpost's target), `Reply` (exactly one per accepted query, with its
-    `EventTiming` and a `QueryOutcome`: `Done` with a `QueryResult`,
+    outpost's target), `Reply` (exactly one per accepted query, echoing
+    its `RequestId`, with its `EventTiming` and a `QueryOutcome`: `Done` with a `QueryResult`,
     `Gone`, `Failed`, `NotStarted`, or `Abandoned`), `Pong`, `Fault`,
     `TargetExited` and `IdleAnswer`.
   - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
@@ -279,7 +287,10 @@ that carries them on the pipes, `Message`, is
   `SpareReady`), none of which carries a node.
 - `Query` is `FocusNow`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
   `Text`, `ShellItems` or `ShellItemPosition`; `WALK_DEADLINE` (5
-  seconds) bounds an outpost's walk, so Core's deadline outlasts it. A
+  seconds) bounds an outpost's walk of the ancestors or the tree, from
+  when its worker begins it. A shell items or position query carries its
+  own times on the run's shared clock: `walk_until_us`, the walk's last
+  call, and `answer_by_us`, the outpost's deadline for it. A
   `FocusNow` answer carries the foreground window when the application
   holds the foreground, its focused control (`FocusedControl`) with
   ancestors, selected child, window facts and text, and when reading
@@ -405,8 +416,9 @@ implements. What each answer says is in `docs/parity/text.md`,
 ### Requests and replies
 
 Core emits `Effect::Text(TextRequest { query_id, node_id, op })`; the
-outpost owning `node_id` answers with `Input::TextCompleted { trace_id,
-query_id, reply }` (a `TextReply`). A newer request for the same purpose
+outpost owning `node_id` answers, and the answer reaches Core as
+`Input::Answered { trace_id, query_id, outpost, outcome }`, whose outcome
+carries a `TextReply`. A newer request for the same purpose
 supersedes an older one, whose answer Core drops. The operations
 (`TextOp`):
 
@@ -537,8 +549,8 @@ exists), or `Unanswered` (no answer in time, or the read failed).
 - `Effect::BoundHeldKey(Option<(TraceId, u64)>)`: send
   `Input::HeldKeyDue` with that trace once the milliseconds given have
   passed, a later one replacing it, `None` clearing it.
-- `Effect::WithdrawText(QueryId)`: end the text request Core gave up on
-  and withdraw it from its outpost.
+- `Effect::Withdraw { outpost, query_id }`: withdraw from its outpost a
+  query Core gave up on and no longer records.
 - `Effect::KeepDisplayOn(bool)`: keep the display on while say-all reads;
   every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a

@@ -36,6 +36,11 @@ Public API:
   the facts it is judged against and `then_abandon`, the abandonment
   that asked for it (a `Reason`), which comes back in the answer so the
   reducer keeps nothing between the two.
+- A program's deadline is its entry's (`budget`): its kind's from when
+  the program begins, or, for a shell items or position query, the
+  `answer_by_us` the query carries, on the run's shared clock, so a query
+  that waited behind other work has only what is left of it. A query's
+  `RequestId` is stored and echoed in its reply, and decides nothing.
 - The program in flight is the reducer's work in flight
   (`InFlight<Current>`): its request, deadline, walk and moved-on rule
   are kept there, and the reducer keeps beside them only the query the

@@ -208,20 +208,19 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   its wait for the key ahead or for the read of its caret, kept beside the
   reducer thread's other deadlines (`next_deadline`); when it passes, the
   thread enters `Input::HeldKeyDue` with the key's trace ID.
-  `Effect::WithdrawText` ends Core's text request that Core gave up on,
-  removing it from the request table (`RequestTable::withdraw`), so
-  the harness's idle condition no longer counts it and its outcome is
-  dropped, and sends its outpost `CoreToOutpost::Cancel`, as a tree dump's
-  give-up does.
+  `Effect::Withdraw` sends the outpost of a query Core gave up on, and
+  no longer records, `CoreToOutpost::Cancel`, as a tree dump's give-up
+  does.
   `Effect::TerminalTimer` sets or clears the focused terminal's
   quiet-period timer, another of those deadlines, its due time on the
   shared clock turned into an instant; when it passes, the thread enters
   `Input::TerminalTimer` with that due time and a trace ID minted then.
-- `Effect::Text` goes to the outpost of the node it names as
-  `Query::Text`, recorded in the request table as `Asker::Text`; its one
-  outcome comes back as `Input::TextCompleted` under the reducer's query
-  id, the outpost's reply when it answered, `Gone` when the node or its
-  outpost is gone, and `Unanswered` for any failure.
+- `Effect::Fetch`, `Effect::Activate` and `Effect::Text` go to the
+  outpost of the node they name as `Query::Navigate`, `Query::Activate`
+  and `Query::Text`, under the request id `RequestId::reducer` of the
+  reducer's own query number, which the reducer records itself
+  ([verbatim-core](verbatim-core.md), "Core's queries"); a query that
+  cannot be sent is answered at once as failed.
 - The speech pipeline's observer (`speech_events`) is the latency ledger
   plus the marks: every index mark playback reaches becomes
   `Input::MarkReached` posted to the same port, so say-all advances, and
@@ -343,7 +342,7 @@ knowing for review:
   carry this, since wxWidgets' loop ends on it without keeping its
   parameters. `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.
-- `ReducerThread` — owns the reducer state, the request table, and the
+- `ReducerThread` — owns the reducer state, the shell's request table, and the
   live-outpost set, and is the only thread that touches them. It takes
   every input from its port (`Commands`, a `port_queue::Poster` of
   `ShellCommand`s, is what every other thread posts through), first in,
@@ -376,34 +375,35 @@ knowing for review:
   outpost release the focus it reported in that same answer before Core
   took it, so the focus came back as a new node and was announced twice at
   startup. On an end the reducer
-  gets `Input::OutpostEnded`, then a "gone" outcome for each of that
-  outpost's outstanding queries, and the control plane's event subscribers
-  get `Frame::OutpostEnded`. There is no foreground pid gate: which
+  gets `Input::OutpostEnded`, with a trace minted for it, which ends the
+  reducer's own queries of that outpost "gone"; then each of the shell's
+  outstanding queries of it gets a "gone" outcome, and the control plane's
+  event subscribers get `Frame::OutpostEnded`. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the
   reducer, the latency ledger, and the control plane's event subscribers
   (copied for the control plane only while one is subscribed);
-  replies go through the request table. The thread never waits on a
+  replies are routed by their request id's asker (`requests::reply_input`):
+  one to a query of the reducer's re-enters it as `Input::Answered` under
+  the reply's trace, a failed outcome logged first, and one to a query of
+  the shell's goes through the request table. The idle condition counts
+  both tables' outstanding queries. The thread never waits on a
   handoff: speech and control-plane sends never block, and a command for an
   outpost is queued on that outpost's writer, failing at once if the queue
   is full.
-- `requests` — who asks Core's queries of outposts, and where each
-  outcome goes. The request table is `verbatim-core`'s
+- `requests` — who asks the shell's own queries of outposts, and where
+  each outcome goes. The request table is `verbatim-core`'s
   `RequestTable<Asker>` ([verbatim-core](verbatim-core.md), "The request
   table"), the single owner of "exactly one outcome per
   query" (`docs/architecture.md`, section 1); it hands each `Asker` back
   with its outcome, and `requests::deliver` carries the outcome out, at
   the reducer thread's three places an outcome comes: an outpost's reply,
-  an outpost's end, and a deadline passed. Every query sent to an
-  outpost (a navigation step, an activation, a tree dump, a focus-now
-  query) is recorded with a fresh `RequestId` and the outpost generation it
-  went to, and sent as a `Query` carrying that id; the outpost's one `Reply`
-  echoes it with one of five outcomes. The first outcome removes the
-  entry and goes to the asker: a navigation outcome re-enters the reducer
-  as `Input::FetchCompleted` under the reducer's own query id, an
-  activation's becomes `Input::ActivationCompleted`, which the reducer
-  speaks, except that an abandoned activation (started, then past its
-  deadline, so it may or may not have happened) is only logged and says
-  nothing; a tree dump's is sent on its reply channel; and a
+  an outpost's end, and a deadline passed. Every query the shell sends an
+  outpost for itself (a tree dump, a focus-now query, the fake focus, and
+  the shell item queries) is recorded with a fresh `RequestId` tagged
+  `Requester::Shell` and the outpost generation it went to, and sent as a
+  `Query` carrying that id; the outpost's one `Reply` echoes it with one
+  of five outcomes. The first outcome removes the entry and goes to the
+  asker: a tree dump's is sent on its reply channel; and a
   focus-now query's becomes reducer input: a focus on the focused control,
   with its ancestors and the text its outpost read with it, its window
   announced only as an entered ancestor when it is presentable, as NVDA
@@ -601,18 +601,23 @@ knowing for review:
   `Asker::ShellItemPosition`, or starts an outpost for it and sends the
   query once it is ready, and hands the outcome to the dialog's delivery
   callback, exactly once, through its responder: the items or the
-  candidates, or `None` for any failure, when the process gets no outpost
-  (`NotWatched`), when no outpost is ready six seconds after the request,
-  when no answer has come six seconds after the query was sent, or when
-  the request is dropped anywhere on its way (`wanted::SHELL_ITEMS_DEADLINE`: the
-  outpost's own deadline for the walk, `verbatim_model::protocol::WALK_DEADLINE`,
-  and a second for the way through the pipes, so that Core gives up only
-  after the outpost's deadline has run out and what it read by then
-  reaches the dialog). The requests still waiting for an
-  outpost are `wanted::Wanted`'s; a request sent is the
-  request table's, recorded with its deadline in microseconds on the
-  run's shared clock (`RequestTable::begin_until`), so a late answer is
-  dropped; the reducer thread turns that deadline into a moment on the
+  candidates, or `None` for any failure, within
+  `wanted::SHELL_ITEMS_WAIT` (3 seconds) of the request. Its times are
+  fixed on the run's shared clock when the dialog asks
+  (`wanted::ShellTimes`): Core's deadline for the answer 3 seconds later,
+  the outpost's deadline for the query half a second before that, and the
+  walk's last call half a second before the outpost's, both carried in
+  the query (`walk_until_us`, `answer_by_us`), so the walk answers what
+  it read in time rather than Core cutting it off. The answer is `None`
+  when the process gets no outpost (`NotWatched`), when its outpost is not
+  ready before the walk's last call (`Wanted::ready` and
+  `Wanted::expire`), when no answer has come by Core's deadline, or when
+  the request is dropped anywhere on its way. The requests still waiting
+  for an outpost are `wanted::Wanted`'s; a request sent is the request
+  table's, recorded with Core's deadline in microseconds on the run's
+  shared clock (`RequestTable::begin_until`), so a late answer is
+  dropped, and withdrawn from its outpost with `CoreToOutpost::Cancel`
+  when that deadline passes; the reducer thread turns that deadline into a moment on the
   monotonic clock for its wait, erring a microsecond late (`instant_at`). The reducer thread waits for its next
   command only until the earliest such deadline (`recv_timeout`), and
   waits without one when none is outstanding; only the queue's end

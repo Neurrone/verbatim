@@ -105,7 +105,7 @@ Core sends the outpost one small request a key, naming the key's window; the out
 
 ### The review cursor
 
-Within the last read, a kept row carries the review position to its new place, a rewritten row keeps it, and a gone row moves it to the nearest surviving row above, or to the caret. A review command first takes a read and then moves and speaks within that snapshot, never on a live provider range. Above the last read, its read starts two screens above the anchor's place, the second covering output that scrolls meanwhile (Dickson, 2026-10-26), and of two rows equally near takes the higher (Dickson, 2026-10-25); the answer names the read whose start it counted from, and Core places its rows only when its memory last took that read, otherwise ending the command silently.
+Within the last read, a kept row carries the review position to its new place, a rewritten row keeps it, and a gone row moves it to the nearest surviving row above, or to the caret. A review command first takes a read and then moves and speaks within that snapshot, never on a live provider range. The command's own request is never sent: Core answers it from the memory, so the idle barrier never waits for it, and a command whose terminal's model is forgotten before its answer ends saying nothing. Above the last read, its read starts two screens above the anchor's place, the second covering output that scrolls meanwhile (Dickson, 2026-10-26), and of two rows equally near takes the higher (Dickson, 2026-10-25); the answer names the read whose start it counted from, and Core places its rows only when its memory last took that read, otherwise ending the command silently.
 
 ### Every time limit
 

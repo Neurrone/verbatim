@@ -282,7 +282,8 @@ Public API:
   sender's buffer, and `decode_message` parses a frame's `Parts`. A
   message that carries a terminal's text (an event with a
   `TerminalSnapshot`, or a reply with a `TerminalSnapshot`,
-  `TerminalHistory`, or `TerminalFound`) has a raw section (the private
+  `TerminalHistory`, or `TerminalFound`, its `RequestId` in the JSON as
+  any reply's) has a raw section (the private
   `message::raw` module; `docs/design/communication.md`, section 4.2): each
   text is UTF-8 there and a range in the JSON, `"raw":[start,length]` in a
   `TerminalText` and `"text":[start,length]` for a history's or match's

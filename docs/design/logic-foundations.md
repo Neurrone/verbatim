@@ -329,7 +329,7 @@ Dickson's purity audit (`experiments/logic-tests-study/purity-audit.md`) found i
 
 #### Core's request table (the second build)
 
-`RequestTable` (`verbatim-app`, `requests.rs` 122, as it was; 502 non-test lines, 3 fields, 4 fields per entry) is the one owner of each query's outcome, on the reducer thread. As built, it is `verbatim-core`'s `requests::RequestTable<A>`, described in [verbatim-core](../crates/verbatim-core.md), "The request table"; line numbers below are the design's, before the build.
+`RequestTable` (`verbatim-app`, `requests.rs` 122, as it was; 502 non-test lines, 3 fields, 4 fields per entry) is the one owner of each query's outcome, on the reducer thread. As built, it is `verbatim-core`'s `requests::RequestTable<A>`, described in [verbatim-core](../crates/verbatim-core.md), "The request table"; line numbers below are the design's, before the build. The query table build then took the reducer's own queries out of it into Core's state ("Core's query table", below), leaving it the shell's five askers, with no passive entries and no count of timed ones.
 
 **Hash order reaching the reducer.** `entries: HashMap<RequestId, Entry>` (124) is iterated by `outpost_ended` (211 to 222) and `expire` (228 to 247), whose reducer inputs are applied in that order (`main.rs` 1982 and 2011).
 
@@ -857,7 +857,15 @@ The order of work: measure before; the enumerated test against today's code, sho
 
 ## Core's query table (a build of its own)
 
-Status: proposed on 2026-11-01, written against main 39dce0b2, revised after its adversarial review (`experiments/logic-tests-study/query-table-design-review.md`) and for Dickson's decisions of the same day (below). It is candidate three of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`, "Third: Core's outstanding queries in one table owned by Core's reducer"). It starts after the caret watch build and after the determinism build's request table commit, which puts the table's entries in a `BTreeMap`, moves its deadlines to the shared clock and makes it generic over its asker in `verbatim-core`; this build then takes Core's own queries out of that table. A query here is a request Core's reducer makes for a node's text, a navigation or an activation, whether an outpost answers it or Core answers it from a terminal's memory.
+Status: built on 2026-11-01 on branch `query-table`, from main e0406881; the line numbers below are main's at 39dce0b2, where it was written, and the request table it starts from is the second determinism build's, `verbatim-core`'s `requests::RequestTable<A>`. The mechanism is described in [verbatim-core](../crates/verbatim-core.md), "Core's queries", and [verbatim-app](../crates/verbatim-app.md) for the shell. It was proposed the same day, revised after its adversarial review (`experiments/logic-tests-study/query-table-design-review.md`) and for Dickson's decisions of the same day (below). It is candidate three of the simplification study (`experiments/logic-tests-study/radical-simplification-study.md`, "Third: Core's outstanding queries in one table owned by Core's reducer"). It starts after the caret watch build and after the determinism build's request table commit, which puts the table's entries in a `BTreeMap`, moves its deadlines to the shared clock and makes it generic over its asker in `verbatim-core`; this build then takes Core's own queries out of that table. A query here is a request Core's reducer makes for a node's text, a navigation or an activation, whether an outpost answers it or Core answers it from a terminal's memory.
+
+Where the build differs from the text below, pending Dickson's acceptance:
+
+- `Input::OutpostEnded` carries a trace the shell mints, which a query asked under an input with no trace ends under at its outpost's end ("Traces" names the ending input's trace, and the input had none).
+- `Queries::ask` returns the query's number with its effect, since a caret key's watch becomes the watch the held keys wait on by its number.
+- The differential check matched on 11,760 of 11,762 sequences. The two that differ, a console review command whose model a refocus or an eviction dropped before the focus moved on, differ only in the nodes held: before, the dropped review's holder kept the console's node held though nothing could answer it; now the review's query ends with its model, so the node is no longer held once the focus leaves it. No effect differs.
+- The shell items' expiry is withdrawn by the request table naming each expired request with its outpost (`Expired`).
+- No test drives an owed read asked while one is open: the rules ask for one only from a read Core takes, and Core takes none while one is owed, so no sequence of inputs reaches it; the rule is kept as written.
 
 ### Two records of each query today
 
