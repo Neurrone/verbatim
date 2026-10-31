@@ -18,7 +18,7 @@
 //! [`GraceState::step`], which the listener's threadpool timer and its
 //! callers drive.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use verbatim_model::Pid;
@@ -335,7 +335,7 @@ enum Dropping {
 pub struct Schedule<J> {
     deadline: u64,
     grace: u64,
-    apps: HashMap<Pid, App<J>>,
+    apps: BTreeMap<Pid, App<J>>,
     next_generation: u64,
     stopping: bool,
     /// How many events have been queued: an event's place is the count
@@ -364,7 +364,7 @@ impl<J> Schedule<J> {
         Self {
             deadline: micros(deadline),
             grace: micros(grace),
-            apps: HashMap::new(),
+            apps: BTreeMap::new(),
             next_generation: 0,
             stopping: false,
             queued: 0,
@@ -750,7 +750,7 @@ impl<J> Schedule<J> {
         if self.stopping {
             return;
         }
-        let mut reads: HashMap<Pid, TickRead> =
+        let mut reads: BTreeMap<Pid, TickRead> =
             reads.into_iter().map(|read| (read.pid, read)).collect();
         let mut due: Option<u64> = None;
         let mut wake_on_foreground = false;
@@ -758,8 +758,7 @@ impl<J> Schedule<J> {
         let mut published = Vec::new();
         let mut waited = Vec::new();
         let mut stale = false;
-        let mut pids: Vec<Pid> = self.apps.keys().copied().collect();
-        pids.sort_unstable();
+        let pids: Vec<Pid> = self.apps.keys().copied().collect();
         for pid in pids {
             let Some(app) = self.apps.get(&pid) else {
                 continue;

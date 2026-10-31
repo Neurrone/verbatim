@@ -33,7 +33,7 @@
 //! copy or change, as in a focus run tried newest first, neither restamps
 //! the record nor answers it. The bound stays a second from the first copy.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use verbatim_model::protocol::GapAnswer;
 
@@ -138,7 +138,7 @@ pub enum Outcome {
 pub struct GapRecord {
     open: Option<Open>,
     /// The newest answer for each top-level window, by its observation.
-    answered: HashMap<isize, u64>,
+    answered: BTreeMap<isize, u64>,
     /// The newest answer for any window.
     answered_anywhere: Option<u64>,
     /// The newest observation of a UIA focus whose sender had no window

@@ -106,7 +106,7 @@
 //! property of the stream, so it is tested by unit tests that state a
 //! stream and its speech, never here.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::rc::Rc;
@@ -617,7 +617,7 @@ struct Line {
 struct Lines {
     list: Vec<Line>,
     /// The lines with each text.
-    texts: HashMap<String, Vec<usize>>,
+    texts: BTreeMap<String, Vec<usize>>,
 }
 
 impl Lines {
@@ -667,7 +667,7 @@ impl Lines {
             }
             first = at + 1;
         }
-        let mut texts: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut texts: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (number, line) in lines.iter().enumerate() {
             texts.entry(line.text.clone()).or_default().push(number);
         }
@@ -736,33 +736,33 @@ struct Check<'a> {
     /// Every text a line had at the reads checked so far: on the main
     /// screen, its lines; on the alternate screen, the lines the read
     /// showed.
-    shown: HashSet<String>,
+    shown: BTreeSet<String>,
     /// The last read on the main screen checked so far.
     last: Option<usize>,
     /// What was reported of each line of that read, from its start.
     heard: Vec<String>,
     /// For each text, how many lines with it were reported while it stayed
     /// on the main screen.
-    covered: HashMap<String, usize>,
+    covered: BTreeMap<String, usize>,
     /// The texts that appeared at a read on the main screen checked so far
     /// while a line vanished there: under some pairing, a row that changed
     /// to that text (see [`Reason::Volatile`]).
-    changes: HashSet<String>,
+    changes: BTreeSet<String>,
     /// The smallest rotation consistent with the history the last read on
     /// the main screen showed and the read checked (see the module's
     /// documentation); 0 when the last read is the alternate screen's.
     rotation: usize,
     /// What was said of each text of a line withheld as having lost text,
     /// while a line with that text is shown (see [`Reason::LostText`]).
-    lost: HashMap<String, Vec<String>>,
+    lost: BTreeMap<String, Vec<String>>,
     /// The texts of the lines that vanished at a read on the main screen
     /// checked so far, without spaces (see [`Reason::WrittenBack`]).
-    erased: HashSet<String>,
+    erased: BTreeSet<String>,
     /// The same texts as they were, for a redrawn row's speech of a line
     /// written back with a change.
-    written: HashSet<String>,
+    written: BTreeSet<String>,
     /// The rows the main buffer rotated out up to the read checked.
-    rotated: HashSet<RowId>,
+    rotated: BTreeSet<RowId>,
     holds: Vec<Hold>,
     /// The new lines a read left unreported under [`Limit::BlankScreen`]:
     /// the read, the coordinate of the line's first row, and its text.
@@ -970,16 +970,16 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
     let mut check = Check {
         reads,
         lines,
-        shown: HashSet::new(),
+        shown: BTreeSet::new(),
         last: None,
         heard: Vec::new(),
-        covered: HashMap::new(),
-        changes: HashSet::new(),
+        covered: BTreeMap::new(),
+        changes: BTreeSet::new(),
         rotation: 0,
-        lost: HashMap::new(),
-        erased: HashSet::new(),
-        written: HashSet::new(),
-        rotated: HashSet::new(),
+        lost: BTreeMap::new(),
+        erased: BTreeSet::new(),
+        written: BTreeSet::new(),
+        rotated: BTreeSet::new(),
         deferred: Vec::new(),
         aside: false,
         alternate: None,
@@ -1065,7 +1065,7 @@ fn excused(reads: &[Observation], violation: &Violation) -> bool {
 fn kept_on_a_copy(reads: &[Observation], index: usize) -> Option<usize> {
     let previous = &reads[index.checked_sub(1)?];
     let read = &reads[index];
-    let left: HashSet<RowId> = read.rotated.iter().copied().collect();
+    let left: BTreeSet<RowId> = read.rotated.iter().copied().collect();
     read.heard
         .moved
         .as_ref()?
@@ -1120,14 +1120,14 @@ fn block_fits_twice(reads: &[Observation], index: usize) -> bool {
     };
     let height = last.main.len().saturating_sub(last.screen_top);
     let old = &last.main[last.screen_top.saturating_sub(height)..];
-    let mut at: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut at: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (to, seen) in reads[index].main.iter().enumerate() {
         let text = seen.text.trim_end();
         if !text.is_empty() {
             at.entry(text).or_default().push(to);
         }
     }
-    let mut votes: HashMap<isize, usize> = HashMap::new();
+    let mut votes: BTreeMap<isize, usize> = BTreeMap::new();
     for (from, seen) in old.iter().enumerate() {
         for &to in at.get(seen.text.trim_end()).into_iter().flatten() {
             let shift = isize::try_from(to).unwrap_or(isize::MAX)
@@ -1295,7 +1295,7 @@ fn at_top(read: &Observation) -> bool {
 
 /// Lines no longer on the screen are no longer covered: each text's
 /// count is at most `count` gives for it.
-fn uncover(covered: &mut HashMap<String, usize>, count: impl Fn(&str) -> usize) {
+fn uncover(covered: &mut BTreeMap<String, usize>, count: impl Fn(&str) -> usize) {
     covered.retain(|text, covered| {
         *covered = (*covered).min(count(text));
         *covered > 0
@@ -1304,8 +1304,8 @@ fn uncover(covered: &mut HashMap<String, usize>, count: impl Fn(&str) -> usize) 
 
 /// How many lines with text of `rows`, an alternate screen's rows, have
 /// each text.
-fn alternate_lines(rows: &[Seen]) -> HashMap<String, usize> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
+fn alternate_lines(rows: &[Seen]) -> BTreeMap<String, usize> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut text = String::new();
     for (at, seen) in rows.iter().enumerate() {
         text.push_str(&seen.text);
@@ -1359,7 +1359,7 @@ fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
     let lines = check.lines[index]
         .as_ref()
         .expect("a read on the main screen");
-    let said: HashSet<&str> = lines
+    let said: BTreeSet<&str> = lines
         .list
         .iter()
         .zip(&state.said)
@@ -1651,7 +1651,7 @@ enum Claim {
 /// as often in `lines`, a read's.
 fn vanished(check: &Check, lines: &Lines) -> Vec<String> {
     check.last_lines().map_or_else(Vec::new, |last| {
-        let mut counts: HashMap<&String, usize> = HashMap::new();
+        let mut counts: BTreeMap<&String, usize> = BTreeMap::new();
         for line in &last.list {
             // On the alternate screen shown in place of the last read the
             // rows start at the read's first, and nothing rotates.
@@ -1935,7 +1935,7 @@ fn matching(edges: &[Vec<usize>], slots: usize) -> Vec<Option<usize>> {
 /// (Knuth, Morris and Pratt); taking the whole history out always fits.
 fn smallest_rotation(last: &Observation, read: &Observation) -> usize {
     let history = last.screen_top.min(last.main.len());
-    let mut ids: HashMap<&str, usize> = HashMap::new();
+    let mut ids: BTreeMap<&str, usize> = BTreeMap::new();
     let mut id = |text| {
         let next = ids.len();
         *ids.entry(text).or_insert(next)
@@ -2001,8 +2001,8 @@ fn row_text(rows: &[Seen], row: usize) -> &str {
 }
 
 /// The rows of `rows` with each text that is on exactly one of them.
-fn unique_rows(rows: &[Seen]) -> HashMap<&str, usize> {
-    let mut found: HashMap<&str, Option<usize>> = HashMap::new();
+fn unique_rows(rows: &[Seen]) -> BTreeMap<&str, usize> {
+    let mut found: BTreeMap<&str, Option<usize>> = BTreeMap::new();
     for row in 0..rows.len() {
         let text = row_text(rows, row);
         if text.is_empty() {

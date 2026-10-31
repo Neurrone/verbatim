@@ -52,7 +52,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -149,8 +149,8 @@ pub(super) enum TextWrite {
 /// What a release freed ([`Store::release`]): the nodes and anchors, by
 /// number, and their objects, for the caller to drop once no lock is held.
 pub(super) struct Released {
-    pub(super) nodes: HashSet<u64>,
-    pub(super) anchors: HashSet<u64>,
+    pub(super) nodes: BTreeSet<u64>,
+    pub(super) anchors: BTreeSet<u64>,
     pub(super) objects: Removed,
 }
 
@@ -258,7 +258,7 @@ impl State {
 
     /// Forgets everything kept for the nodes `gone`: their text, terminal
     /// and tags, and the tags of their anchors, into `removed`.
-    fn forget_nodes(&mut self, gone: &HashSet<u64>, removed: &mut Removed) {
+    fn forget_nodes(&mut self, gone: &BTreeSet<u64>, removed: &mut Removed) {
         let anchors = &mut self.anchors;
         self.anchor_nodes.retain(|anchor, node| {
             let kept = !gone.contains(node);
@@ -478,12 +478,12 @@ impl Store {
                         waiting == 0 && position <= acknowledged && !held.contains(&carried)
                     })
             };
-            let nodes: HashSet<u64> = state
+            let nodes: BTreeSet<u64> = state
                 .nodes
                 .iter_mut()
                 .filter_map(|(&node, tags)| free(Carried::Node(node), tags).then_some(node))
                 .collect();
-            let anchors: HashSet<u64> = state
+            let anchors: BTreeSet<u64> = state
                 .anchors
                 .iter_mut()
                 .filter_map(|(&anchor, tags)| free(Carried::Anchor(anchor), tags).then_some(anchor))
@@ -531,7 +531,7 @@ impl Store {
     pub(super) fn forget_window(&self, hwnd: isize) -> (Removed, Vec<NodeId>) {
         let mut state = self.lock();
         let (gone, released) = self.msaa.forget_window(hwnd);
-        let numbers: HashSet<u64> = gone.iter().map(|node| node.number()).collect();
+        let numbers: BTreeSet<u64> = gone.iter().map(|node| node.number()).collect();
         let mut removed = Removed::default();
         removed.msaa.push(released);
         state.forget_nodes(&numbers, &mut removed);
@@ -542,7 +542,7 @@ impl Store {
     /// Returns how many nodes there were.
     pub(super) fn release_everything(&self) -> (usize, Removed) {
         let mut state = self.lock();
-        let nodes: HashSet<u64> = self
+        let nodes: BTreeSet<u64> = self
             .uia
             .ids()
             .into_iter()

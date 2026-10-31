@@ -27,14 +27,14 @@
 //! windowless Chromium document under a Chrome embedding window, is not
 //! ported: Verbatim has no Chromium support yet.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use verbatim_core::focus_rules::ForegroundRelation;
 
 /// An event, by the name NVDA gives it when it tests it for acceptance.
 /// NVDA's hide and desktop switch events have no counterpart: Verbatim hooks
 /// neither.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EventName {
     /// A focus or foreground change, or a UIA menu opening.
     GainFocus,
@@ -74,7 +74,7 @@ pub enum EventName {
 /// where application support will ask.
 #[derive(Debug, Default)]
 pub struct RequestedEvents {
-    requested: HashSet<(EventName, u32, String)>,
+    requested: BTreeSet<(EventName, u32, String)>,
 }
 
 impl RequestedEvents {
@@ -204,7 +204,7 @@ pub fn foreground_relation(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use super::*;
 
@@ -223,7 +223,7 @@ mod tests {
     /// Made-up windows, the foreground and active windows among them.
     #[derive(Default)]
     struct Desk {
-        windows: HashMap<isize, Window>,
+        windows: BTreeMap<isize, Window>,
         foreground: isize,
         active: isize,
     }
@@ -354,7 +354,7 @@ mod tests {
     fn a_requested_event_is_accepted_from_a_background_window() {
         let desk = Desk::new();
         let requested = RequestedEvents {
-            requested: HashSet::from([(EventName::Selection, 200, "Edit".to_owned())]),
+            requested: BTreeSet::from([(EventName::Selection, 200, "Edit".to_owned())]),
         };
         assert!(accepts_event(
             EventName::Selection,

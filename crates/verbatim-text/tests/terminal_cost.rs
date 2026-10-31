@@ -46,6 +46,10 @@ enum Style {
     /// A line's number then text to one cell short of two rows, so each
     /// line wraps onto a second row.
     Wrapped,
+    /// A line's number then Chinese text to one cell short of the screen's
+    /// width: three bytes a character, none of them ASCII, so comparing
+    /// rows by likeness looks up every character among the row's others.
+    Chinese,
 }
 
 impl Style {
@@ -67,6 +71,15 @@ impl Style {
             Self::Cyrillic => {
                 let cells = line.len();
                 line.extend("привет мир ".chars().cycle().take(WIDTH - 1 - cells));
+            }
+            Self::Chinese => {
+                let cells = line.len();
+                line.extend(
+                    "你好世界终端读取测试"
+                        .chars()
+                        .cycle()
+                        .take(WIDTH - 1 - cells),
+                );
             }
         }
         line.push_str("\r\n");
@@ -100,6 +113,31 @@ enum Output {
     /// at one place and their texts at thousands, the most rows for the
     /// subsequence to compare.
     Echoed(usize),
+    /// The screen's lines but its caret's written again from its top, each
+    /// with its last character changed: every row of the screen is a gap
+    /// row paired with its old row by likeness.
+    Rewritten,
+}
+
+/// How many rows the history holds.
+#[derive(Clone, Copy)]
+enum History {
+    /// The terminal's default.
+    Default,
+    /// A console buffer enlarged to its greatest height, 32,766 rows.
+    Enlarged,
+}
+
+impl History {
+    fn rows(self, flavor: Flavor) -> usize {
+        match self {
+            Self::Default => history(flavor),
+            Self::Enlarged => match flavor {
+                Flavor::ConsoleHost => 32_766 - HEIGHT,
+                Flavor::WindowsTerminal => 32_766,
+            },
+        }
+    }
 }
 
 struct Case {
@@ -107,6 +145,7 @@ struct Case {
     style: Style,
     fill: Fill,
     output: Output,
+    history: History,
 }
 
 impl Case {
@@ -125,84 +164,112 @@ const CASES: &[Case] = &[
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Lines(1),
+        history: History::Default,
     },
     Case {
         name: "a rotation of 58 rows",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Lines(58),
+        history: History::Default,
     },
     Case {
         name: "a rotation of 61 rows",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Lines(61),
+        history: History::Default,
     },
     Case {
         name: "a rotation of 1,000 rows",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Lines(1000),
+        history: History::Default,
     },
     Case {
         name: "a rotation of 1,000 rows, wide lines",
         style: Style::Wide,
         fill: Fill::Distinct,
         output: Output::Lines(1000),
+        history: History::Default,
     },
     Case {
         name: "a rotation of 1,000 rows, Cyrillic lines",
         style: Style::Cyrillic,
         fill: Fill::Distinct,
         output: Output::Lines(1000),
+        history: History::Default,
     },
     Case {
         name: "an overflow keeping nothing, lines of two rows",
         style: Style::Wrapped,
         fill: Fill::Distinct,
         output: Output::Lines(5000),
+        history: History::Default,
     },
     Case {
         name: "an overflow keeping nothing",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Lines(10_000),
+        history: History::Default,
     },
     Case {
         name: "an overflow keeping nothing, wide lines",
         style: Style::Wide,
         fill: Fill::Distinct,
         output: Output::Lines(10_000),
+        history: History::Default,
     },
     Case {
         name: "an overflow keeping nothing, Cyrillic lines",
         style: Style::Cyrillic,
         fill: Fill::Distinct,
         output: Output::Lines(10_000),
+        history: History::Default,
     },
     Case {
         name: "a clear and a reprint of 8,905 rows",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::ClearAndReprint(8905),
+        history: History::Default,
     },
     Case {
         name: "1,000 lines of a history of one repeated line",
         style: Style::Numbered,
         fill: Fill::OneLine,
         output: Output::Lines(1000),
+        history: History::Default,
     },
     Case {
         name: "1,000 lines shuffled from the last screen's",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Shuffled(1000),
+        history: History::Default,
     },
     Case {
         name: "8,000 lines drawn from the last screen's, then 60 new",
         style: Style::Numbered,
         fill: Fill::Distinct,
         output: Output::Echoed(8000),
+        history: History::Default,
+    },
+    Case {
+        name: "a rotation of 1,000 rows over a 32,766-row history",
+        style: Style::Numbered,
+        fill: Fill::Distinct,
+        output: Output::Lines(1000),
+        history: History::Enlarged,
+    },
+    Case {
+        name: "a screen of Chinese lines rewritten",
+        style: Style::Chinese,
+        fill: Fill::Distinct,
+        output: Output::Rewritten,
+        history: History::Default,
     },
 ];
 
@@ -272,11 +339,12 @@ fn settle(
 }
 
 fn take_reads(case: &Case, flavor: Flavor) -> Reads {
-    let mut terminal = Terminal::new(flavor, WIDTH, HEIGHT, history(flavor));
+    let rows = case.history.rows(flavor);
+    let mut terminal = Terminal::new(flavor, WIDTH, HEIGHT, rows);
     let mut reader = TerminalReader::new(Settings::default());
     let mut query = Query::default();
     let mut at_ms = 0;
-    let filled = history(flavor) + HEIGHT + 100;
+    let filled = rows + HEIGHT + 100;
     let text = |number: usize| case.text(number);
     let mut fill = String::new();
     for number in 1..=filled {
@@ -320,6 +388,17 @@ fn take_reads(case: &Case, flavor: Flavor) -> Reads {
             }
             for number in filled + 2..filled + 62 {
                 output.push_str(&text(number));
+            }
+        }
+        Output::Rewritten => {
+            output.push_str("\x1b[H");
+            for number in filled + 1 - (HEIGHT - 2)..=filled + 1 {
+                let line = text(number);
+                let mut chars: Vec<char> = line.trim_end_matches("\r\n").chars().collect();
+                chars.pop();
+                chars.push('变');
+                output.extend(chars);
+                output.push_str("\r\n");
             }
         }
     }

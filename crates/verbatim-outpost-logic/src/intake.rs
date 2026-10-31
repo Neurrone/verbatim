@@ -160,7 +160,7 @@
 //! append, and the reducer pushes each entry it drains into the intake, in
 //! mailbox order.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use verbatim_model::protocol::{DeliveredFact, GapAnswer, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing};
@@ -1199,7 +1199,7 @@ fn admit(
     let mut hung: HashMap<isize, bool> = HashMap::new();
     let mut keep = vec![false; waiting.len()];
     let mut focus_kept = 0;
-    let mut per_thread: HashMap<u32, usize> = HashMap::new();
+    let mut per_thread: BTreeMap<u32, usize> = BTreeMap::new();
     for (index, item) in waiting.iter().enumerate().rev() {
         let msaa = matches!(
             item.key,
@@ -1279,7 +1279,7 @@ fn plan(
     // oldest first, by where its newest is: an MSAA event of NVDA's pump
     // ends a run ([`ends_a_run`]), and every other entry keeps its place
     // without ending it.
-    let mut runs: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut runs: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     let mut run: Vec<usize> = Vec::new();
     for (index, item) in kept.iter().enumerate() {
         match &item.key {

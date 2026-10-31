@@ -437,7 +437,7 @@ impl Gen {
                 }
                 self.input(Input::Released {
                     nodes: [1].into_iter().collect(),
-                    anchors: HashSet::new(),
+                    anchors: BTreeSet::new(),
                     objects: false,
                 })
             }

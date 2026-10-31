@@ -5,7 +5,7 @@
 //! with the same function the reducer applies them with ([`apply`]), so
 //! what it reads after a commit is what the reducer will hold.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
 use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
@@ -554,7 +554,7 @@ impl FollowState {
     /// those nodes lose their groups, the newest focus's too, with its
     /// slider's, when its node is released, and the subscription is moved
     /// once if anything changed.
-    pub fn release_groups(&mut self, released: &HashSet<u64>, applied: &mut Applied) {
+    pub fn release_groups(&mut self, released: &BTreeSet<u64>, applied: &mut Applied) {
         let mut dropped = Vec::new();
         let mut index = 0;
         while index < self.kept_groups.len() {
@@ -850,7 +850,7 @@ mod tests {
         let mut applied = Applied::default();
         facts
             .follow
-            .release_groups(&HashSet::from([2]), &mut applied);
+            .release_groups(&BTreeSet::from([2]), &mut applied);
         assert_eq!(
             (
                 facts.follow.followed,
@@ -884,7 +884,7 @@ mod tests {
         let mut applied = Applied::default();
         facts
             .follow
-            .release_groups(&HashSet::from([9]), &mut applied);
+            .release_groups(&BTreeSet::from([9]), &mut applied);
         assert_eq!(
             (
                 facts.follow.followed_element,

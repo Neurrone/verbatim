@@ -18,7 +18,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -845,8 +845,8 @@ impl Shell {
         let Some(released) = released else {
             tracing::debug!(?held, acknowledged, position, "nothing to release");
             return Input::Released {
-                nodes: HashSet::new(),
-                anchors: HashSet::new(),
+                nodes: BTreeSet::new(),
+                anchors: BTreeSet::new(),
                 objects: false,
             };
         };

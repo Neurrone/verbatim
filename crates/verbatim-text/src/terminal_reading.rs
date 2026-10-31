@@ -1069,7 +1069,7 @@ impl TerminalReader {
         let mut emphasis_candidates: Vec<usize> = Vec::new();
         let old_caret = previous.caret.clone();
         // The old lines whose history a line of the read carries.
-        let mut carried: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut carried: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         for line in &outcome.lines {
             let start = line.rows.start;
             let kinds = &outcome.rows[line.rows.clone()];

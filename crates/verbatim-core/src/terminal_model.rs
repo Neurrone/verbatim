@@ -1312,14 +1312,14 @@ fn queue_only(state: &mut SrState, effects: Vec<Effect>, trace: TraceId) -> Vec<
 }
 
 /// The anchors Core holds of terminal `node`'s outpost.
-fn held_anchors(state: &SrState, node: NodeId) -> std::collections::HashSet<u64> {
+fn held_anchors(
+    state: &SrState,
+    node: NodeId,
+) -> std::collections::BTreeSet<verbatim_model::TextAnchor> {
     state
         .held_anchors()
         .remove(&node.outpost())
         .unwrap_or_default()
-        .into_iter()
-        .map(|anchor| anchor.0)
-        .collect()
 }
 
 /// The quiet-period timer came due at `at_ms`: the focused terminal's rules

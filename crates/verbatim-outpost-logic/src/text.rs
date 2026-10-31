@@ -11,7 +11,7 @@
 //! change them only through [`TextChange`]s, which it applies to its own
 //! copies as it makes them and commits for the reducer to apply.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use verbatim_model::{TextPosition, TextUnit};
@@ -234,7 +234,7 @@ impl<P: Clone> NodeAnchors<P> {
 
     /// Forgets the anchors `forgotten` names, with the positions reported
     /// in their chunks.
-    fn forget_anchors(&mut self, forgotten: &HashSet<u64>) {
+    fn forget_anchors(&mut self, forgotten: &BTreeSet<u64>) {
         self.anchors.retain(|number, _| !forgotten.contains(number));
         self.reported
             .retain(|(anchor, _), _| !forgotten.contains(anchor));
@@ -360,8 +360,8 @@ impl TextChange {
 /// Every node's text facts, through UIA and through edit controls' messages.
 #[derive(Clone, Debug, Default)]
 pub struct TextFacts {
-    uia: HashMap<u64, Arc<NodeAnchors<RangeKey>>>,
-    edit: HashMap<u64, Arc<NodeAnchors<u32>>>,
+    uia: BTreeMap<u64, Arc<NodeAnchors<RangeKey>>>,
+    edit: BTreeMap<u64, Arc<NodeAnchors<u32>>>,
 }
 
 /// The keys `anchors` names.
@@ -430,8 +430,8 @@ impl TextFacts {
     /// node and key; a freed node's ranges the store let go of with it.
     pub fn release(
         &mut self,
-        nodes: &HashSet<u64>,
-        anchors: &HashSet<u64>,
+        nodes: &BTreeSet<u64>,
+        anchors: &BTreeSet<u64>,
     ) -> Vec<(u64, RangeKey)> {
         self.uia.retain(|node, _| !nodes.contains(node));
         self.edit.retain(|node, _| !nodes.contains(node));
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(copied, BTreeSet::from([4]));
         part.anchors.extend(edit_part(&[9]).anchors);
         assert_eq!(
-            facts.release(&HashSet::new(), &HashSet::from([4])),
+            facts.release(&BTreeSet::new(), &BTreeSet::from([4])),
             Vec::new()
         );
         let put = TextChange::Edit {
@@ -544,7 +544,7 @@ mod tests {
             report: 2,
         });
         assert_eq!(
-            facts.release(&HashSet::new(), &HashSet::from([3])),
+            facts.release(&BTreeSet::new(), &BTreeSet::from([3])),
             vec![(1, 10)]
         );
         let put = TextChange::Uia {

@@ -144,7 +144,7 @@ fn a_spliced_or_looked_up_node_is_recorded_as_carried() {
     let (_, released) = store.release(&outbound, &held, 1, &[]);
     assert_eq!(
         released.map(|released| released.nodes),
-        Some(HashSet::from([focused.number()]))
+        Some(std::collections::BTreeSet::from([focused.number()]))
     );
     assert_eq!(release(&store, &outbound, 1, &[]), vec![spliced]);
 }

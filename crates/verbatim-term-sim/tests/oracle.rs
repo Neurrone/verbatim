@@ -7,7 +7,7 @@
 //! by text passes those streams, random streams, every short stream of the
 //! tiny alphabet and the conformance corpus.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use verbatim_term_sim::conformance::{Stream, history, streams};
@@ -102,7 +102,7 @@ impl Reader for TextDiff {
             }
         }
         let mut moved = vec![None; self.previous.len()];
-        let mut matched = HashSet::new();
+        let mut matched = BTreeSet::new();
         let (mut i, mut j) = (0, 0);
         while i < old.len() && j < new.len() {
             if self.previous[old[i]] == rows[new[j]] {
@@ -309,7 +309,7 @@ struct Truth {
     reads: Vec<Observation>,
     at: usize,
     /// Every line's text the main screen showed.
-    shown: HashSet<String>,
+    shown: BTreeSet<String>,
     /// The text of the row the review position is on.
     review: Option<String>,
 }
@@ -342,8 +342,8 @@ fn texts(rows: &[Seen]) -> Vec<String> {
 }
 
 /// The rows of `rows` with each text that is on exactly one of them.
-fn unique(rows: &[String]) -> HashMap<&str, usize> {
-    let mut found: HashMap<&str, Option<usize>> = HashMap::new();
+fn unique(rows: &[String]) -> BTreeMap<&str, usize> {
+    let mut found: BTreeMap<&str, Option<usize>> = BTreeMap::new();
     for (row, text) in rows.iter().enumerate() {
         if !text.is_empty() {
             found
@@ -443,7 +443,7 @@ fn truth_violations(stream: &Stream, flavor: Flavor, size: Size) -> Vec<Violatio
     let mut truth = Truth {
         reads: learned.reads,
         at: 0,
-        shown: HashSet::new(),
+        shown: BTreeSet::new(),
         review: None,
     };
     observe(&mut size.terminal(flavor), stream, &mut truth).violations()

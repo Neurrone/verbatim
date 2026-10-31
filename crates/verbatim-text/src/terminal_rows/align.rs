@@ -3,7 +3,7 @@
 //! of fewest blocks and then fewest rows moved, and the pairing of the
 //! rows left between kept rows by likeness.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// A kept row's worth in an alignment's score, above any number of blocks.
 const KEPT: i64 = 1 << 42;
@@ -118,7 +118,7 @@ pub(super) struct Likeness {
     /// For each ASCII character, one more than its mask's number, 0 for
     /// none; other characters' are in `other`.
     ascii: [u16; 128],
-    other: HashMap<char, u16>,
+    other: BTreeMap<char, u16>,
 }
 
 impl Likeness {
@@ -130,7 +130,7 @@ impl Likeness {
             words,
             masks: Vec::new(),
             ascii: [0; 128],
-            other: HashMap::new(),
+            other: BTreeMap::new(),
         };
         for (at, &c) in chars.iter().enumerate() {
             let slot = likeness.slot(c).unwrap_or_else(|| {

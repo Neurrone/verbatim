@@ -4,7 +4,7 @@
 //! ordering that once needed a real bound, a real deadline or a race to
 //! reproduce is one test here.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::time::Duration;
 
 use verbatim_model::protocol::{
@@ -627,8 +627,8 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
     assert!(programs(&effects).is_empty());
     let effects = replay.input(
         Input::Released {
-            nodes: HashSet::new(),
-            anchors: HashSet::new(),
+            nodes: BTreeSet::new(),
+            anchors: BTreeSet::new(),
             objects: true,
         },
         10_002,
@@ -1018,7 +1018,7 @@ fn release(replay: &mut Replay, nodes: &[u64], at_ms: u64) -> Vec<Effect> {
     replay.input(
         Input::Released {
             nodes: nodes.iter().copied().collect(),
-            anchors: HashSet::new(),
+            anchors: BTreeSet::new(),
             objects: false,
         },
         at_ms,

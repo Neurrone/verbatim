@@ -34,7 +34,7 @@ mod text;
 mod verdicts;
 mod watch;
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -393,9 +393,9 @@ pub enum Input {
     /// there are objects to drop.
     Released {
         /// The nodes let go of, by number.
-        nodes: HashSet<u64>,
+        nodes: BTreeSet<u64>,
         /// The text anchors let go of, by number.
-        anchors: HashSet<u64>,
+        anchors: BTreeSet<u64>,
         /// Whether there are objects to drop.
         objects: bool,
     },

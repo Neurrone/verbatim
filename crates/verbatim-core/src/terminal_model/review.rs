@@ -21,7 +21,7 @@
 //! line's hash from a screen above the place to a screen below it, or else
 //! the place itself.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
@@ -88,7 +88,7 @@ pub(crate) fn answer(
     model: &mut TerminalModel,
     op: &TextOp,
     next_anchor: &mut u64,
-    held: &HashSet<u64>,
+    held: &BTreeSet<TextAnchor>,
 ) -> Result<TextReply, Need> {
     let caret = model.caret;
     let plan = {
@@ -174,14 +174,14 @@ fn place_of(model: &TerminalModel, anchor: TextAnchor) -> Option<u64> {
 /// Keeps a place at `anchor` for the text anchor numbered `number`,
 /// forgetting the oldest places whose anchors Core does not hold beyond
 /// [`KEPT_PLACES`].
-fn keep_place(model: &mut TerminalModel, number: u64, anchor: Anchor, held: &HashSet<u64>) {
+fn keep_place(model: &mut TerminalModel, number: u64, anchor: Anchor, held: &BTreeSet<TextAnchor>) {
     let place = model.rules().memory_mut().add_place(anchor);
     model.places.push_back((number, place));
     while model.places.len() > KEPT_PLACES {
         let Some(at) = model
             .places
             .iter()
-            .position(|(kept, _)| !held.contains(kept))
+            .position(|(kept, _)| !held.contains(&TextAnchor(*kept)))
         else {
             break;
         };
@@ -197,7 +197,7 @@ fn finish(
     model: &mut TerminalModel,
     plan: Plan,
     mint: &mut dyn FnMut() -> u64,
-    held: &HashSet<u64>,
+    held: &BTreeSet<TextAnchor>,
 ) -> TextReply {
     let mut chunk_of = |model: &mut TerminalModel, chunked: Chunked| {
         let number = mint();
@@ -685,7 +685,7 @@ pub(crate) fn mark(
     model: &mut TerminalModel,
     (forward, from): (bool, &TextPoint),
     next_anchor: &mut u64,
-    held: &HashSet<u64>,
+    held: &BTreeSet<TextAnchor>,
 ) -> Result<Option<TextReply>, Search> {
     let review = match from {
         TextPoint::At(position) => place_of(model, position.anchor)

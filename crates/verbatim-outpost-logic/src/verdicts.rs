@@ -19,7 +19,7 @@
 //! no override, which stay configuration. A window's owning thread, which
 //! a reused handle is told apart by, is read by the caller and passed in.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// A kept probe result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,7 +116,7 @@ struct Window {
 /// Every window's kept verdicts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Verdicts {
-    windows: HashMap<isize, Window>,
+    windows: BTreeMap<isize, Window>,
 }
 
 impl Verdicts {

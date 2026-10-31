@@ -11,7 +11,7 @@
 //! worker's release, under the same locks, when the store releases its
 //! focus node. The outpost judges nothing against Core's focus.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use verbatim_core::focus_rules::HeldNode;
 use verbatim_model::{EarlierElement, NodeId, Role, StateSet};
@@ -161,7 +161,7 @@ impl Held {
     /// The store released `released`, by node number: every report whose
     /// focus node is one of them is forgotten, and so are the states last
     /// read of a released focus.
-    pub fn release(&mut self, released: &HashSet<u64>) {
+    pub fn release(&mut self, released: &BTreeSet<u64>) {
         self.reports
             .retain(|report| !released.contains(&report.node.id.number()));
         if self
@@ -293,7 +293,7 @@ mod tests {
         }
     }
 
-    fn released(numbers: &[u64]) -> HashSet<u64> {
+    fn released(numbers: &[u64]) -> BTreeSet<u64> {
         numbers.iter().copied().collect()
     }
 
