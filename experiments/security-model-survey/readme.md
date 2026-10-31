@@ -1,6 +1,54 @@
 # Security model survey
 
-The evidence behind section 11 of [the security model](../../docs/design/security-model.md), gathered on 2026-10-31. NVDA's mechanisms were read from its source at the pinned commit `732d1ce2f0f051da3ef1e6a6247c64cf04596337`, with paths relative to that tree. Everything else comes from the public sources named beside each item. Entries marked unconfirmed could not be checked from a primary source.
+The evidence behind [the security model](../../docs/design/security-model.md), and its comparison with NVDA and other screen readers, gathered on 2026-10-31. NVDA's mechanisms were read from its source at the pinned commit `732d1ce2f0f051da3ef1e6a6247c64cf04596337`, with paths relative to that tree. Everything else comes from the public sources named beside each item. Entries marked unconfirmed could not be checked from a primary source.
+
+## Comparison with NVDA and other screen readers
+
+NVDA's mechanisms below were read from its source at the pinned commit. Its advisories come from its GitHub advisory list, which held 24 entries on 2026-10-31. The other readers' history comes from NVD, vendors' documentation and published research.
+
+### NVDA's record
+
+About half of NVDA's advisories are escapes from secure screens or the lock screen, several rated critical: the Python console, the log viewer, context help, a clipboard error dialog and a formatting dialog each led to code running as SYSTEM, and object navigation walked out of the lock screen. The rest are information left behind across that boundary (debug logging, the speech viewer, braille contents), code execution (DLL planting in the installer, web text run through an HTML dialog, an add-on able to patch NVDA's elevation code, which NV Access treats as a consequence of add-ons being unrestricted), and Remote Access flaws, the worst a missed certificate check on reconnecting.
+
+The lesson Verbatim takes is that the secure-desktop instance, not the everyday one, is where a screen reader is attacked, and that a denylist of features there fails one feature at a time.
+
+### Mechanism by mechanism
+
+- **Isolation from hostile applications.** NVDA runs its logic on one main thread, and its watchdog cancels COM calls and `SendMessage` after a stall. Verbatim isolates each application in its own process (D9). Verbatim is ahead. Both cap ancestor walks (NVDA at 100 hops, then it jumps to the desktop; Verbatim at 64), and neither detects a repeat (mitigation U2).
+- **Control surface.** NVDA's controller is a local RPC endpoint whose access list grants full access to Everyone and to every AppContainer, with no authentication, and carries both the public speech functions and internal ones, including an add-on install request and a Remote Access link handler. Its injected helper reports through the same endpoint. Verbatim's pipe admits only the owning user and refuses remote clients, so it is ahead on reach, but it offers key injection, which NVDA's controller does not (mitigation C1).
+- **Logs and dumps.** NVDA's log at its IO level records every utterance and every key, including keys typed in password fields. It lives in the temporary folder, and only its startup configuration dump is redacted. In secure mode its logging is off. Verbatim logs no content today, which is ahead, but its crash dumps keep typed characters and the text Verbatim itself copied (mitigations L1 and L2). NVDA's crash handler writes a minidump of its memory, which holds whatever it was reading, so neither keeps content out of crash data.
+- **Protected fields.** Both echo a star for each typed character and suppress typed-word echo.
+- **Injected input.** Both treat injected keys as gestures. NVDA lets the user turn that off, and neither looks at the injector's integrity level (mitigation C5).
+- **Extensions.** NVDA's add-ons are unrestricted Python in its process. Its store pins each release by SHA-256 and scans it, but nobody reviews the code and nothing is signed. Verbatim's Wasm modules with derived capabilities are ahead by design (mitigation X4). NVDA's copy of add-ons to the secure screens, chosen by the user and made by an elevated step, is the model Verbatim's design already follows.
+- **Configuration.** NVDA keeps it in the user's profile for installed copies, beside the executable for portable ones, and in an administrator-owned copy for secure screens; it validates the file against a specification and resets a corrupt one to defaults. Verbatim matches this only once mitigations C3 and X1 are done.
+- **Recovery from its own crash.** NVDA's crash handler restarts NVDA, with a breaker that stops after too many crashes in a short window. Verbatim does not restart (mitigation A1), and should copy the breaker.
+- **Synthesizers.** NVDA runs most synthesizers in its own process. A failure to load falls back from OneCore to eSpeak NG to silence, but a crash at runtime takes NVDA with it, and only 32-bit SAPI voices run in a separate host. Verbatim's host per synthesizer (D18) is ahead. Neither falls back after a runtime crash (mitigation A3).
+- **Secure mode.** NVDA's is mature, built from twenty advisories. Verbatim has none yet. It has the chance to build one from an allowlist from the start (mitigations B3 to B8).
+- **Updates.** NVDA checks a SHA-1 hash from its own update server and runs the launcher; no signature check was found. Verbatim has no updater yet (mitigation X9).
+- **Injection.** NVDA injects its helper DLL into every process that raises a focus or foreground event, through global in-context hooks. Verbatim injects nothing until M7, and then only through one helper (D2).
+
+### Other screen readers
+
+- **JAWS.** Its scripts are compiled code loaded per application. Its one public vulnerability found is a service, in versions 13 and earlier, that any user could reconfigure to run code as SYSTEM. No other advisory or CVE was found, which may reflect disclosure practice rather than an absence of flaws.
+- **Narrator.** It was the route of a BitLocker lock-screen bypass (CVE-2020-1398), and NVD lists several privilege-escalation entries for Narrator's braille support and for the accessibility broker, `ATBroker.exe`, in 2026, chiefly untrusted search paths. Even Windows' own screen reader is attacked at the sign-in screen and through DLL search order.
+- **Orca and AT-SPI.** The Linux accessibility bus has no access control, and any client can see every other's events. GNOME's recent work moves keyboard capture into the compositor and sends keys only to an allowlisted screen reader, so that no process can act as a keylogger. The lesson for Verbatim is that a screen reader's input path is a keylogger by design, and must not be readable by others (mitigations L5 and L1).
+- **VoiceOver.** Apple's fixes include VoiceOver reading secure input fields, saved passwords and the passcode aloud, and a login window bypass. macOS asks the user to grant accessibility access per application. The lesson is that protected text must never be spoken by any path, including paths added later (mitigation L2).
+- **Android accessibility services.** Banking malware uses accessibility services to read the screen and inject input, which is why Android 13 restricts them for sideloaded apps, a restriction droppers have bypassed. Any API that grants a screen reader's reach is a malware target: Verbatim's extension imports must not hand that reach to an extension the user did not knowingly install (mitigation C7).
+- **Research.** Jang and others (CCS 2014, "A11y Attacks") bypassed UAC and the sandboxes of four systems through accessibility. On Windows, speech synthesized by a process drove Speech Recognition, which runs at High integrity, and UI Automation clicked a password field's reveal button. Their recommendation, that an assistive technology check that its input comes from the user, is mitigation C5.
+
+### NVDA's issue tracker
+
+NVDA's issues add risks its advisories do not show. The mitigations they led to are L9 (echo failing closed: unrecognised password fields, consoles, the sign-in PIN's last digit, typed words outside edit fields), B3 and C8 (remote control and updates on the lock screen, the sign-in setting rewritten), B5 (whole folders copied to the secure configuration), X3 (state read with Python's pickle), C1a (a debug switch left on), L8's additions (the curtain switched off by a profile, no way to query it), C8's end-to-end encryption (the relay reading Remote traffic), S3 (link destinations), X8's narrow injection, and L6's update check. The issues are listed below, under "NVDA's issue tracker".
+
+### Where Verbatim can do better
+
+- Build the secure instance from an allowlist before it first runs, rather than after advisories.
+- Decide lock state from Windows, failing closed.
+- Give the control surface the least reach, and none on secure screens.
+- Keep passwords out of every file, including crash dumps, without losing the text dumps need.
+- Refuse lower-integrity injected input, which no surveyed screen reader does.
+- Fall back to another synthesizer after runtime crashes, which neither NVDA nor Verbatim does today.
+- Verify updates by signature.
 
 ## NVDA, from its source
 
@@ -115,7 +163,18 @@ Searched through GitHub's issue search on 2026-10-31, not exhaustively (at most 
 
 ## Sandboxing
 
-Gathered on 2026-10-31 for section 7.9 of the security model.
+### How others sandbox
+
+- **Chromium** splits a broker, the browser process, from targets, each limited four ways: a restricted token, a job, an alternate desktop and a low or untrusted integrity level. Renderers get the strictest token (`USER_LOCKDOWN`), untrusted integrity and the window-manager system calls removed; the network service runs in a less privileged AppContainer; every process but those that load third-party code (speech recognition, screen AI, media decryption) may load only Microsoft-signed images. Its interception of system calls is for compatibility, and its own documentation says it provides no security.
+- **Firefox** uses the same Chromium sandbox code at configurable levels, and compiles some third-party libraries (font shaping, spell checking, XML parsing) to Wasm and back to C with RLBox, so a memory-safety bug in them stays inside a Wasm boundary within the same process. Removing window-manager calls once broke its accessibility, because DLLs injected by other software made such calls while COM started.
+- **Both browsers** moved accessibility out of their sandboxed processes: the browser process caches the whole tree and answers UIA and IA2 from it, because a sandboxed process cannot serve those interfaces and asking it for each call was too slow. No browser process is a UIA client.
+- **The Codex CLI** on Windows uses no AppContainer: it runs commands under a write-restricted token, whose writes succeed only where an access entry names one of its restricting SIDs, adds those entries to the folders it allows, gives each command a job, a private desktop and a default access list that keeps launches apart, and, when installed by an administrator, blocks network access with Windows Filtering Platform rules scoped to a dedicated account.
+- **Windows' Win32 app isolation** (preview) puts an ordinary program in an AppContainer with brokered file access. None of its capabilities covers UIA, observing input or crossing UIPI.
+- Windows has no general system-call filter like Linux's seccomp; the closest are the policies that remove the window-manager or file-system-control calls. Its signed-image policy admits only Microsoft, Store or WHQL signatures, never a third party's own certificate; only App Control for Business (WDAC) can allow a chosen publisher.
+
+### Sources
+
+Gathered on 2026-10-31 for section 6.9 of the security model.
 
 - Codex CLI on Windows: a restricted token made with `CreateRestrictedToken` (`DISABLE_MAX_PRIVILEGE`, `LUA_TOKEN`, `WRITE_RESTRICTED`), restricting SIDs of its own plus the user, logon and Everyone SIDs, write access granted by adding access entries to allowed folders, a default access list limited to the logon SID, a private desktop, a job per child; in its elevated mode, dedicated local accounts and Windows Filtering Platform rules scoped to them that block the network; no AppContainer in its classic backends (https://github.com/openai/codex/tree/main/codex-rs/windows-sandbox-rs). On macOS, a deny-by-default Seatbelt profile modelled on Chrome's; on Linux, bubblewrap with a read-only root, no new privileges and a seccomp filter on network calls.
 - Chromium: the design and its four restrictions (https://chromium.googlesource.com/chromium/src/+/main/docs/design/sandbox.md), which says the interception and IPC "does not provide security"; token levels in `sandbox/win/src/security_level.h`; per-process policies in `sandbox/policy/win/sandbox_win.cc` (renderer lockdown with window-manager calls removed, network service and print compositor in a less privileged AppContainer, Microsoft-signed images forced except for speech recognition, screen AI, media decryption and the platform runtime). Accessibility is served by the browser process from a cached tree, since renderers "can't implement operating system APIs directly" (https://chromium.googlesource.com/chromium/src/+/main/docs/accessibility/overview.md).
@@ -128,7 +187,9 @@ Gathered on 2026-10-31 for section 7.9 of the security model.
 
 ## Extension resource limits
 
-Gathered on 2026-10-31 for R6 to R8 of the security model.
+In short: Chrome stops an extension's service worker after 30 seconds idle or an event longer than 5 minutes and caps nothing else; Firefox stops content scripts after 5 seconds, warns about slow add-ons and gives up its extension process after 5 crashes in 30 seconds; VS Code profiles an unresponsive extension host after 3 seconds and gives up after 3 crashes in 5 minutes; Cloudflare Workers and Shopify Functions set hard limits per call; Figma and NVDA set none. Verbatim's design sits at the strict end, with a deadline per hook, a memory limit per instance and a job per process.
+
+Gathered on 2026-10-31 for A6 to A8 of the security model.
 
 - Chrome (Manifest V3): the service worker stops after 30 seconds idle, an event or API call longer than 5 minutes, or a fetch response slower than 30 seconds, with lifetime extensions in Chrome 110, 114, 116 and 118 (https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle). No per-extension memory cap; the renderer job's limit is 1 TB (`sandbox/policy/win/sandbox_win.cc`). The enterprise `ExtensionSettings` policy has no processor or memory field (https://support.google.com/chrome/a/answer/9867568). No current automatic kill or "slowing Chrome" warning was found.
 - Firefox: `dom.max_ext_content_script_run_time` 5 seconds, `dom.max_script_run_time` 10 seconds (`modules/libpref/init/StaticPrefList.yaml`); an idle background page unloaded after 30 seconds (`ext-backgroundPage.js`); the extension process stops being respawned after 5 crashes in 30 seconds (`Extension.sys.mjs`); a bar saying an add-on "might be making Firefox run slowly", which can name the wrong add-on (https://bugzilla.mozilla.org/show_bug.cgi?id=2025327).
@@ -143,7 +204,7 @@ Gathered on 2026-10-31 for R6 to R8 of the security model.
 
 ## Braille drivers
 
-Gathered on 2026-10-31 for section 7.11 of the security model, from NVDA's master branch (the pinned submodule was not checked out).
+Gathered on 2026-10-31 for section 6.11 of the security model, from NVDA's master branch (the pinned submodule was not checked out).
 
 - NVDA's I/O layer (`source/hwIo`): `Hid` opens the HID path and reads its capabilities on that handle; `Bulk` opens two endpoint paths of a vendor kernel driver; `Serial` uses pyserial; Bluetooth LE uses bleak over WinRT. Drivers in `source/brailleDisplayDrivers` use HID and serial (alva, baum, brailliantB, handyTech, seikantk, eurobraille), a kernel bulk driver (freedomScientific; hims with a WinUSB fallback because its unsigned `himsusb.sys` cannot install on Windows 11), plain serial (hedo, seika, papenmeier_serial, ecoBraille, albatross), FTDI's D2XX DLL (papenmeier), `lilli.dll` (lilli), and BrlAPI (brltty). Detection in `source/bdDetect.py` matches USB vendor and product ids and Bluetooth names.
 - BRLTTY: on Windows, LibUSB with WinUSB and an administrator-installed BrlAPI service (https://brltty.app/doc/Windows.html); on Linux, it drops from root to a dedicated user, keeps three capabilities, joins the input, dialout and audio groups, isolates namespaces and offers an optional system-call filter (https://brltty.app/doc/Linux.html).
@@ -151,3 +212,13 @@ Gathered on 2026-10-31 for section 7.11 of the security model, from NVDA's maste
 - A duplicated handle refers to the same object with the access already granted (https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-duplicatehandle); that it keeps working in a container child follows from access being checked at open, not found stated in one source.
 - Chromium's device service runs in the browser process and gives renderers Mojo interfaces and data pipes, never handles (`services/device/public/mojom/serial.mojom`, `hid.mojom`).
 - Device-side risks: BadUSB (https://opensource.srlabs.de/projects/badusb).
+
+## Extension processes and crash reporting
+
+Gathered on 2026-10-31 for X4 and L5 of the security model.
+
+- Chromium: "extension documents and workers are semi-privileged and run in dedicated renderer processes", and "Chromium ensures that extensions do not share a process with each other or with web pages"; content scripts run in the page's renderer (https://chromium.googlesource.com/chromium/src/+/main/docs/process_model_and_site_isolation.md). One process per extension follows from that and process-per-site.
+- Firefox: one extension process for all extensions (`dom.ipc.processCount.extension` 1 in `modules/libpref/init/all.js`; `extensions.webextensions.remote` true in `browser/app/profile/firefox.js`).
+- Safari on macOS: eight extensions with background pages are eight processes (https://developer.apple.com/videos/play/wwdc2021/10027/).
+- Windows Error Reporting: local dumps are configured independently of upload consent but only under `HKLM`, needing an administrator (https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps, https://learn.microsoft.com/en-us/windows/win32/wer/wer-settings); an unhandled exception filter that returns `EXCEPTION_EXECUTE_HANDLER` ends the process without the system's error handling (https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-setunhandledexceptionfilter), from which it is inferred, untested, that Windows' reporting then never runs.
+- NVDA (master): `watchdog.py` installs `crashHandler` outside secure mode unless 3 crashes happened within 120 seconds; `utils/_crashHandler.py` writes `nvda_crash.dmp` beside the log in `%TEMP%`, logs every thread's stack, restarts NVDA and returns `EXCEPTION_EXECUTE_HANDLER`; `nvdaHelper/local/crashDump.cpp` calls `MiniDumpWriteDump` and overwrites the previous dump. No upload exists in the code.

@@ -885,6 +885,35 @@ Typing and keys:
 Exit: each entry is matched (verified) by a scenario or a test, with a
 declared deviation where Dickson chose one.
 
+## M6.6 — Security fixes
+
+After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security model](design/security-model.md) that need no milestone of their own; the model's mitigation ids are named in brackets. Built as a few large builds with one design and review each.
+
+- Developer mode: said at startup, never reaching secure screens; the control protocol's two endpoints, the developer one only in developer mode (C1, C1a); the extension developer folder and debug-level logging only in developer mode (C7, L3).
+- The test agent bound to loopback with a deploy-time token, and the VM's firewall rule scoped to the host's switch (C4). Critical on any networked development machine: it now listens on every interface with no authentication and can launch processes and write files.
+- Named objects that cannot be squatted: the startup mutex and replacement event in a private namespace, the pipe named per session and user, and a pipe failure that never stops startup (C2). Today another session holding the pipe name, or anyone holding the mutex, stops Verbatim from starting.
+- The process-wide `WM_QUIT` filter removed (C6); size limits on the control pipe's and configuration's readers, and no fallback to `%TEMP%\verbatim-defaults` or the current directory (C3).
+- Keys injected from a lower integrity level never trigger gestures and are never held or re-sent (C5).
+- Characters typed into protected fields recorded as stars (L2); native crashes dumped by Verbatim, never by Windows Error Reporting (L5).
+- COM unmarshalling hardened with `EOAC_NO_CUSTOM_MARSHAL`, and the write-restricted token for outposts, tested together against UIA, MSAA and a remote operation (X7, section 6.9).
+- Walks with repeat detection, lists capped before fetching, property strings capped, an application named by a handle rather than a process id, a bound on outposts, and the background flood cap (U2 to U4, U7 to U9).
+- Terminal alignment's quadratic cost and Core's memory cap (U5, A2).
+- Synthesizer escapes covering control and NUL characters (J1).
+- `cargo deny` in `cargo xtask ci`, and fuzzing of the frame and raw-section decoders, terminal alignment and the control-plane reader first (X10, X12).
+
+Security work other milestones carry:
+
+- M5: the extension surface's rules ([extensions](design/extensions.md), section 4.6); installed extensions in hosts of their own, with the round trip measured (X4); compiled code mapped only from where ordinary processes cannot write (X5); starting with every extension off (A8); the user endpoint for the install request (C1); module log caps.
+- M6: the synthesizer container, confirmed before any native code loads, read-only, limited at creation, with the host's messages checked and engines pinned (X6); the synthesizer fallback after repeated crashes and the idle-spin check (A3, A7); x86 emulation in the container measured.
+- M6.3: speech moved to another audio device while the default refuses Verbatim (A5); a cut string known to speech (U4).
+- M6.5: typed characters judged against the focus they were typed in (L9).
+- M7: the helper loaded narrowly, handed its channel, version-checked and treated as hostile (X8); link destinations (S3).
+- M8, with the installer: a machine-wide, signed, administrator-owned installation (X1); pinned DLL search (X2); signed updates from a process of their own (X9); never running elevated (B2); diagnostics' home and limits (L4); Core's restart with a degrading breaker (A1); the screen curtain built for a user who cannot see it (L8); linear-time dictionaries (J2); direction overrides spoken (S2); clipboard history (L7); the outposts' network block and process mitigations (section 6.9).
+- M8.1: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8), developer mode in UIAccess builds turned on only in Verbatim's own window (C1), and the secure instance's own curtain.
+- M9: no content in logs at default levels (L3).
+- M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9).
+- M15: braille drivers in model A or B (section 6.11).
+
 ## M7 — Browse mode, browsers, and the injection helper
 
 - Document projection / incremental virtual buffer over the normalized tree;

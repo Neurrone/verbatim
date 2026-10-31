@@ -45,16 +45,21 @@ screen reader in both rendered and source form.
 - **D6, extensions are Wasm components.** Their WIT-defined API is
   deny-by-default, with capabilities derived from a component's imports,
   never declared; wasmtime is the runtime, named only by `verbatim-ext`,
-  and modules run in the outposts and Core, never in the listener
+  and built-in modules run in the outposts and Core, each installed
+  extension in a sandboxed host process of its own, never in the listener
   (section 7; [design](design/extensions.md)). Why: unlike NVDA's Python
-  add-ons, the surface is enumerable from the binary. Decided 2026-07-13. Amended
-  2026-10-24 (Dickson).
+  add-ons, the surface is enumerable from the binary, and an installed
+  extension's escape from the runtime reaches only its own sandbox.
+  Decided 2026-07-13. Amended 2026-10-24 and 2026-10-31 (Dickson).
 - **D7, braille last.** Braille is implemented last, with its traits and
   pipeline seams present from the start. Why: no hardware is available
   for development. Decided 2026-07-13.
 - **D8, one control plane.** Development tooling and the future Remote
-  feature share one protocol (section 10). Why: Remote then rides on
-  infrastructure the end-to-end tests exercise daily. Decided 2026-07-13.
+  feature share one protocol (section 10), served on two endpoints: a
+  narrow user endpoint, always on, and a developer endpoint only in
+  developer mode. Why: Remote then rides on infrastructure the end-to-end
+  tests exercise daily, and a user's machine exposes only what users'
+  features need. Decided 2026-07-13. Amended 2026-10-31 (Dickson).
 - **D9, one outpost process per application.** Each application has its
   own outpost; a shared host stays a possible later optimization behind
   the same protocol (section 1). Why: a thread blocked in a cross-process
@@ -886,9 +891,12 @@ display model (M14) as further text sources behind the same review commands.
 
 ## 10. Control plane (dev tooling, then remote support)
 
-A single authenticated protocol (JSON-RPC over named pipe locally; TLS
-WebSocket for remote) exposes: event/speech streams, tree queries, gesture and
-input injection, config, and lifecycle. The E2E harness and
+One protocol (JSON-RPC over named pipe locally; TLS WebSocket for remote)
+exposes: event/speech streams, tree queries, gesture and input injection,
+config, and lifecycle. Locally it is served on two endpoints: a user
+endpoint, always on, with the extension install request and status, and a
+developer endpoint with everything else, only in developer mode
+([security model](design/security-model.md), C1). The E2E harness and
 `verbatim-inspect` are its first clients, so it is battle-tested long before
 the Remote feature (which is pairing, auth, and UX on top: speech mirroring
 out, gestures in). Secure-desktop and permission rules apply to remote
@@ -924,19 +932,20 @@ input.
 
 ## 12. Security posture
 
-The threat model, its rules and the gaps in today's code are in
-[the security model](design/security-model.md), proposed on 2026-10-31.
+The threat model and its mitigations are in
+[the security model](design/security-model.md).
 
 - No injection unless and until the D2 helper ships (M7), and then only via
   it.
-- Native synth DLLs and Wasm extensions are sandboxed as described; Core never
-  loads third-party native code in-process.
+- Native synth DLLs and installed Wasm extensions run in sandboxed processes
+  of their own; Core never loads third-party native code in-process.
 - **UIAccess**: reading elevated apps' UI from a non-elevated Verbatim
   requires `uiAccess=true`, which requires signed binaries in a trusted path —
   an installer/signing prerequisite tracked from the start (R5).
 - **Secure desktop**: register as an Assistive Technology so Windows launches
-  a minimal Verbatim instance (same binary, `--secure`: no extensions, no
-  control plane, read-only config copy) on sign-in/UAC desktops.
+  a minimal Verbatim instance (same binary, `--secure`: only the extensions
+  the user allowlisted for secure screens, no control plane, an
+  administrator-made read-only config copy) on sign-in/UAC desktops.
 
 ## 13. Testing strategy
 
