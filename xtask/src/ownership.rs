@@ -801,14 +801,20 @@ const FORBIDDEN_MODULES: [&str; 5] = [
 /// What a covered crate may not name: `tracing`'s questions to its
 /// dispatcher, whose answer is the subscriber's state, and `proptest`'s
 /// macro and default configuration, which read `PROPTEST_` environment
-/// variables and persist failures to files
+/// variables, seed at random and persist failures to files; the prelude's
+/// `ProptestConfig` is listed by name, since a match after a letter is not
+/// a match
 /// (`docs/design/logic-foundations.md`, "Third-party crates").
-const FORBIDDEN_CALLS: [&str; 5] = [
+const FORBIDDEN_CALLS: [&str; 9] = [
     "enabled!",
     "event_enabled!",
     "span_enabled!",
     "proptest!",
     "Config::default",
+    "ProptestConfig::default",
+    "Config::with_cases",
+    "ProptestConfig::with_cases",
+    "TestRunner::default",
 ];
 
 /// The lint flags `.cargo/config.toml` may not pass.
@@ -1356,13 +1362,15 @@ fn after() { GetMessageW(); }
     /// configuration are found; a longer name ending the same is not.
     #[test]
     fn the_calls_that_read_hidden_state_are_found() {
-        let source = "proptest! {}\nfn a() {\n    let on = tracing::enabled!(Level::INFO);\n    let config = Config::default();\n    let theme = ThemeConfig::default();\n}\n";
+        let source = "proptest! {}\nfn a() {\n    let on = tracing::enabled!(Level::INFO);\n    let config = Config::default();\n    let theme = ThemeConfig::default();\n    let runner = TestRunner::new(ProptestConfig::with_cases(64));\n    let other = TestRunner::default();\n}\n";
         assert_eq!(
             determinism_findings("crates/verbatim-core/src/a.rs", source),
             [
                 "1: names `proptest!`",
                 "3: names `enabled!`",
-                "4: names `Config::default`"
+                "4: names `Config::default`",
+                "6: names `ProptestConfig::with_cases`",
+                "7: names `TestRunner::default`"
             ]
         );
     }

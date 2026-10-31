@@ -563,12 +563,6 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
     })
 }
 
-/// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
-/// for one it does not test: a notification and an active text position,
-/// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
-/// 1063 and 1158). A caret and a text change go through NVDA's automation
-/// event handler, which tests them as any other (`docs/parity/focus-events.md`, "Event
-/// acceptance").
 /// Whether a UIA entry's own window, `hwnd`, belongs to an application the
 /// system reports hung: a local call, never made for 0, which passes, as
 /// NVDA's test passes a sender with no cached window.
@@ -576,6 +570,12 @@ fn hung(hwnd: isize) -> bool {
     hwnd != 0 && verbatim_win32::window::window_is_hung(hwnd)
 }
 
+/// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
+/// for one it does not test: a notification and an active text position,
+/// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
+/// 1063 and 1158). A caret and a text change go through NVDA's automation
+/// event handler, which tests them as any other (`docs/parity/focus-events.md`, "Event
+/// acceptance").
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
         UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),
