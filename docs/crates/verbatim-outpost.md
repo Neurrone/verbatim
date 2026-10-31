@@ -424,9 +424,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   yet answered. Inputs
   come in mailbox order; effects go out: dispatch a program, send a
   message, release, move the subscription, abandon a worker, set a timer.
-  It names no Windows type and holds no application object; its local
-  reads (a hung window, whether the user moved on, a publication at a
-  walk's bound) reach it through `reducer::Locals`. `cargo xtask ci`
+  It names no Windows type, holds no application object and makes no
+  call; what it needs of Windows' own state it asks for by an effect
+  (`Effect::AskMovedOn`, whether the user moved on; `Effect::Publish`, a
+  walk's publication), which the shell's `apply` answers at once, exactly
+  once, as the reducer's next input, before it takes another message, and
+  what the answer asks is carried out before anything asked after the
+  question, as a release's answer is. `cargo xtask ci`
   reads every file of its crate by the pure rule
   (`xtask/src/ownership.rs`). The shell waits on the mailbox's alarm
   (`verbatim_process::alarm::Alarm`): an event set by an append while it waits, and a
@@ -499,8 +503,13 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   text change goes just after the change, whose read reads the caret
   (`caret_after_update`). Per batch the newest 4 MSAA focus events and 10
   other MSAA events per thread are kept (the focus's own events beyond the
-  limit, a foreground change by either); events from a hung window are
-  dropped.
+  limit, a foreground change by either). Nothing is dropped at planning
+  for a hung window: the worker tests a UIA event's or focus read's own
+  window first as it handles it (`IsHungAppWindow`, a window of 0
+  passing, as NVDA's test passes a sender with no cached window), before
+  any window lookup or read, so an entry whose window became hung while
+  it waited is dropped too, and a dropped event's parked element and
+  range go with it; an MSAA event's window is tested by `readable`.
 - Runs: each run of MSAA focus and foreground events is tried newest first,
   each try a program under its own deadline, until one is reported, at the
   run's newest place, as NVDA's `pumpAll` does (`ends_a_run`); the reducer
@@ -538,8 +547,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   400 ms; an ancestor walk, a tree dump or a release 5 s; a text request
   2 s. After half a second on a window it also abandons a worker once the
   user has moved to another UI thread of the same provider process,
-  judged when the grace ends and at each foreground fact
-  (`verbatim_win32::window::front_is_another_thread_of_its_application`).
+  judged when the grace ends and at each foreground fact, by an ask the
+  shell answers with
+  `verbatim_win32::window::front_is_another_thread_of_its_application`.
   It publishes an
   armed walk first, marks the generation dead in the worker's charge
   (`worker::Charge`), answers the query the program was running
@@ -563,7 +573,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   ancestor it keeps, a remote program nothing until it returns. A walk
   already past its bound when it begins is not armed. Should the walk
   still be under way at the bound, the reducer publishes the focus from
-  that progress (`Locals::publication`, `worker::publication`), its chain
+  that progress (`Effect::Publish`, carried out by `Shell::publication`
+  against the charge of the request's own generation, and
+  `worker::publication`), its chain
   as `bound::chain_at_bound` makes it, by local calls on the reducer's
   thread, with no selected child, dialog text or text of its own. A walk
   that returns past its bound is marked so in the charge, and the reducer
@@ -572,8 +584,9 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   program reports it. The publication records the report, sends it,
   makes the focus the followed one with the work it owes, and claims the
   walk's request: nothing more of its program is applied. The reducer
-  publishes an armed walk before it abandons its worker, in the same
-  transition. The owed work, a terminal's first read or a
+  publishes an armed walk before it abandons its worker: the abandonment
+  asks for the publication, carrying its reason, and the answer commits
+  the publication and then abandons, in one step of the shell's. The owed work, a terminal's first read or a
   `SensitiveSlider`'s lookup for a thumb published at its bound, is a
   program the reducer dispatches before anything else, once per worker
   generation, under a deadline of its own with no moved-on window.

@@ -16,21 +16,32 @@ reducer's rules for each kind of event.
 
 Public API:
 
-- `Reducer` with `input(input, now, locals)`, which takes one `Input` in
+- `Reducer` with `input(input, now)`, which takes one `Input` in
   mailbox order, given the time (`Now`: the shell's monotonic clock, the
-  observation clock and the shared clock) and its local reads, and returns
-  the `Effect`s in the order the shell applies them; `tick(now, locals)`,
-  for a timer that came due; and `next_timer(now)`, the time of the
-  shell's timed wait.
+  observation clock and the shared clock), and returns the `Effect`s in
+  the order the shell applies them; `tick(now)`, for a timer that came
+  due; and `next_timer(now)`, the time of the shell's timed wait. It makes
+  no call of any kind.
 - `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
   program finished, a release's answer, a worker returned, the gap
-  record's bound, and the shell's close. `Effect`: dispatch a `Program`,
-  send a message, release, move the subscription (`Subscription`), drop
-  elements or objects, abandon a worker generation, publish the intake's
-  marks or the verdicts, set the gap record's timer.
-- `Locals`: the local reads it makes, which never wait on an application:
-  a hung window, whether the user moved on, a walk's publication at its
-  bound. The shell implements them live; the tests by a recording.
+  record's bound, the answers to its asks (`MovedOn`, `Published`), and
+  the shell's close. `Effect`: dispatch a `Program`, send a message,
+  release, move the subscription (`Subscription`), drop elements or
+  objects, abandon a worker generation, publish the intake's marks or the
+  verdicts, set the gap record's timer, and two asks: `AskMovedOn`,
+  whether the user has left the program's window for another thread of
+  its application, and `Publish`, the publication of a walk armed, with
+  the facts it is judged against and `then_abandon`, the abandonment
+  that asked for it, which comes back in the answer so the reducer keeps
+  nothing between the two.
+- The rule for asks: the shell answers each ask exactly once, as the
+  reducer's next input, before it takes another message, and the reducer
+  applies an answer only while its request is the program in flight. A
+  transition makes at most one ask: a tick judges the deadline first
+  (abandoning, by one `Publish` with `then_abandon` when a walk is armed),
+  then the walk's bound (`Publish`), then the end of the grace
+  (`AskMovedOn`), the first that applies deciding; a judgment left over
+  is made by the publication's answer against its own `Now`.
 - `Program` and `Work`: what the worker generation in charge runs, with
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
@@ -64,8 +75,9 @@ a replaced node ends it in any state, and a release of its node ends it.
 `cargo xtask ci` reads every file of the crate by the pure rule
 (`xtask/src/ownership.rs`): no clock, no lock, no thread, no Windows type.
 
-Tests: the reducer's unit tests drive it through `input` and `tick` with a recording
-of `Locals` (`crates/verbatim-outpost-logic/src/tests.rs`, and each
+Tests: the reducer's unit tests drive it through `input` and `tick`, its
+asks answered by recorded answers as the shell answers them
+(`crates/verbatim-outpost-logic/src/tests.rs`, and each
 module's own), so every ordering of inputs is a replay. The watch has a
 generated test (`crates/verbatim-outpost-logic/src/tests/generated.rs`):
 every sequence of up to six steps of the inputs that move it, enumerated

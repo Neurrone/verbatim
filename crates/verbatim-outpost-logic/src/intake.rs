@@ -56,10 +56,11 @@
 //!   foreground changes can hold the 4 newest of them and, besides,
 //!   every older foreground change of another window, or of the same
 //!   window from another thread, that its thread's limit keeps.
-//! - UIA events from a window the system reports as hung are dropped
-//!   before any read; an MSAA event from one is counted and kept, and the
-//!   worker drops it before it reads anything, as NVDA's limiter counts it
-//!   and `winEventToNVDAEvent` drops it.
+//! - Nothing is dropped here for a hung window: the worker tests a UIA
+//!   entry's own window as it handles it, and an MSAA event's, before it
+//!   reads anything, so an entry whose window became hung while it waited
+//!   is dropped too; an MSAA event from one is counted here, as NVDA's
+//!   limiter counts it and `winEventToNVDAEvent` drops it.
 //! - Each consecutive run of MSAA focus events and foreground changes is
 //!   tried newest first, until one is reported, at the place of the run's
 //!   newest, as NVDA's `pumpAll` collects a run of focus and foreground
@@ -160,7 +161,7 @@
 //! append, and the reducer pushes each entry it drains into the intake, in
 //! mailbox order.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use verbatim_model::protocol::{DeliveredFact, GapAnswer, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
@@ -252,7 +253,7 @@ enum Category {
     /// Any other MSAA event, limited per thread that raised it.
     Other,
     /// Not counted: a UIA event, which NVDA's MSAA limiter never sees,
-    /// dropped with its window when that is hung, and an MSAA menu
+    /// and an MSAA menu
     /// opening, of which only the newest is handled, as NVDA's limiter
     /// keeps its newest menu event apart from both limits.
     Uncounted,
@@ -266,7 +267,6 @@ enum Category {
 struct Waiting {
     key: Option<Key>,
     category: Category,
-    hwnd: isize,
     /// The thread an MSAA entry is counted by ([`raiser_of`]), 0 for one
     /// not counted.
     raiser: u32,
@@ -478,7 +478,7 @@ impl Intake {
             ),
             item => (Entry { item, ..entry }, None),
         };
-        let (key, category, hwnd) = classify(&entry.item);
+        let (key, category, _) = classify(&entry.item);
         let raiser = raiser_of(&entry.item);
         if self.closed {
             pushed.unparked = entry.item.parked();
@@ -536,7 +536,6 @@ impl Intake {
         let waiting = Waiting {
             key,
             category,
-            hwnd,
             raiser,
             marker,
             entry,
@@ -617,11 +616,10 @@ impl Intake {
     }
 
     /// The next entry to handle and the number of its batch, planning a new
-    /// batch from everything waiting when the current one is done, with
-    /// `window_is_hung` telling a hung window, a local read. With nothing
-    /// else ready it gives the entry [`when_idle`](Self::when_idle) kept,
-    /// if any. `None` when nothing is ready.
-    pub fn next(&mut self, window_is_hung: impl Fn(isize) -> bool) -> Option<(Planned, u64)> {
+    /// batch from everything waiting when the current one is done. With
+    /// nothing else ready it gives the entry [`when_idle`](Self::when_idle)
+    /// kept, if any. `None` when nothing is ready.
+    pub fn next(&mut self) -> Option<(Planned, u64)> {
         if let Some(planned) = self.batch.pop_front() {
             return Some((planned, self.batch_number));
         }
@@ -649,7 +647,7 @@ impl Intake {
                 self.marks.focused.as_ref(),
                 self.marks.terminal,
             );
-            let batch = plan(waiting, self.marks.focused.as_ref(), window_is_hung);
+            let batch = plan(waiting, self.marks.focused.as_ref());
             self.batch = batch.into();
             self.batch_number += 1;
             if let Some(planned) = self.batch.pop_front() {
@@ -727,14 +725,13 @@ impl Intake {
             return;
         }
         for (offset, entry) in entries.into_iter().enumerate() {
-            let (key, category, hwnd) = classify(&entry.item);
+            let (key, category, _) = classify(&entry.item);
             let raiser = raiser_of(&entry.item);
             self.waiting.insert(
                 offset,
                 Waiting {
                     key,
                     category,
-                    hwnd,
                     raiser,
                     marker: None,
                     entry,
@@ -1148,10 +1145,7 @@ fn classify_fact(fact: &DeliveredFact, raiser: u32) -> (Option<Key>, Category, i
             Category::Focus,
             *hwnd,
         ),
-        // Its own window, 0 for an element that is not a window, so a
-        // windowless focus is never tested as hung, as NVDA's hung-window
-        // test passes a UIA event whose sender's cached window is 0
-        // (`docs/parity/focus-events.md`).
+        // Its own window, 0 for an element that is not a window.
         DeliveredFact::UiaFocusRead { read, .. } => (
             Some(Key::UiaFocus(read.snapshot.runtime_id.clone())),
             Category::Uncounted,
@@ -1190,36 +1184,18 @@ fn raiser_of(item: &Item) -> u32 {
 }
 
 /// What the batch limits keep of everything that was waiting, oldest
-/// first, as NVDA's limiters flush it: UIA events from hung windows are
-/// dropped, as NVDA's UIA handlers drop them as they arrive, and so are
-/// all but the newest MSAA focus events and the newest other MSAA events of
-/// each thread, those of the focused object excepted. An MSAA event from a
-/// hung window is counted and kept here, as NVDA's limiter counts it, and
-/// dropped by the worker when it is handled, as NVDA drops it when it
-/// makes its object (`winEventToNVDAEvent`).
-fn admit(
-    waiting: Vec<Waiting>,
-    focused: Option<&Object>,
-    window_is_hung: impl Fn(isize) -> bool,
-) -> Vec<Waiting> {
-    let mut hung: HashMap<isize, bool> = HashMap::new();
+/// first, as NVDA's limiters flush it: all but the newest MSAA focus
+/// events and the newest other MSAA events of each thread, those of the
+/// focused object excepted. An MSAA event from a hung window is counted and
+/// kept here, as NVDA's limiter counts it, and dropped by the worker when
+/// it is handled, as NVDA drops it when it makes its object
+/// (`winEventToNVDAEvent`); a UIA entry from one is dropped by the worker
+/// too, which tests its window as it starts it.
+fn admit(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Waiting> {
     let mut keep = vec![false; waiting.len()];
     let mut focus_kept = 0;
     let mut per_thread: BTreeMap<u32, usize> = BTreeMap::new();
     for (index, item) in waiting.iter().enumerate().rev() {
-        let msaa = matches!(
-            item.key,
-            Some(Key::Msaa(..) | Key::MsaaFocus(..) | Key::Foreground(..) | Key::MenuPopup(..))
-        );
-        if !msaa
-            && item.category != Category::Exempt
-            && item.hwnd != 0
-            && *hung
-                .entry(item.hwnd)
-                .or_insert_with(|| window_is_hung(item.hwnd))
-        {
-            continue;
-        }
         let of_focus =
             focused.is_some() && item.key.as_ref().and_then(Key::object).as_ref() == focused;
         keep[index] = match item.category {
@@ -1258,7 +1234,7 @@ fn admit(
 }
 
 /// Plans one batch from everything that was waiting, in the order it
-/// arrived: drops events from hung windows, applies the batch limits, tries
+/// arrived: applies the batch limits, tries
 /// each consecutive run of MSAA focus events and foreground changes newest
 /// first at the place of its newest ([`try_newest_first`]), a run ended
 /// only by an MSAA event of NVDA's pump ([`ends_a_run`]), handles every
@@ -1270,12 +1246,8 @@ fn admit(
 /// foreground events, and when another accepted event comes processes
 /// those collected newest first, stopping at the first valid one, before
 /// that event.
-fn plan(
-    waiting: Vec<Waiting>,
-    focused: Option<&Object>,
-    window_is_hung: impl Fn(isize) -> bool,
-) -> Vec<Planned> {
-    let kept = admit(waiting, focused, window_is_hung);
+fn plan(waiting: Vec<Waiting>, focused: Option<&Object>) -> Vec<Planned> {
+    let kept = admit(waiting, focused);
     let newest = |wanted: fn(&Key) -> bool| {
         kept.iter()
             .rposition(|item| item.key.as_ref().is_some_and(wanted))
@@ -1430,11 +1402,10 @@ mod tests {
             id_child: child,
             raiser: thread,
         };
-        let (key, category, hwnd) = classify(&item);
+        let (key, category, _) = classify(&item);
         Waiting {
             key,
             category,
-            hwnd,
             raiser: raiser_of(&item),
             marker: None,
             entry: Entry {
@@ -1453,11 +1424,10 @@ mod tests {
 
     fn fact(fact: DeliveredFact, observed_at_us: u64) -> Waiting {
         let item = Item::Fact(fact, None);
-        let (key, category, hwnd) = classify(&item);
+        let (key, category, _) = classify(&item);
         Waiting {
             key,
             category,
-            hwnd,
             raiser: 1,
             marker: None,
             entry: Entry {
@@ -1518,11 +1488,10 @@ mod tests {
             request_id,
             query: Query::FocusNow,
         };
-        let (key, category, hwnd) = classify(&item);
+        let (key, category, _) = classify(&item);
         Waiting {
             key,
             category,
-            hwnd,
             raiser: 0,
             marker: None,
             entry: Entry {
@@ -1560,10 +1529,6 @@ mod tests {
             .collect()
     }
 
-    fn never_hung(_: isize) -> bool {
-        false
-    }
-
     #[test]
     fn a_windows_console_updates_merge_into_one_while_they_wait() {
         let key = |kind, object, child| {
@@ -1594,7 +1559,7 @@ mod tests {
             .map(|child| msaa(WinKind::ValueChange, 7, child))
             .collect();
         waiting.push(msaa(WinKind::ValueChange, 8, 50));
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(
             observed(&planned),
             vec![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 50]
@@ -1607,7 +1572,7 @@ mod tests {
         // 80, not the window's, 70, which raised ten newer events in it.
         let mut waiting = vec![msaa_from(WinKind::ConsoleUpdate, 7, 1, 80)];
         waiting.extend((2..=11).map(|child| msaa_from(WinKind::ValueChange, 7, child, 70)));
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(observed(&planned), (1..=11).collect::<Vec<u64>>());
     }
 
@@ -1648,7 +1613,7 @@ mod tests {
         waiting.extend(
             (12..=16).map(|n| fact(uia_focus(0, 3, vec![42, n]), u64::try_from(n).unwrap_or(0))),
         );
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(
             observed(&planned),
             (1..=16).collect::<Vec<u64>>(),
@@ -1666,7 +1631,7 @@ mod tests {
             msaa_focus(5, 5),
             msaa_focus(6, 6),
         ];
-        let kept: Vec<u64> = admit(waiting, None, never_hung)
+        let kept: Vec<u64> = admit(waiting, None)
             .iter()
             .map(|item| item.entry.observed_at_us)
             .collect();
@@ -1682,7 +1647,7 @@ mod tests {
         waiting.extend((2..=12).map(|child| msaa(WinKind::ValueChange, 7, child)));
         waiting.push(msaa(WinKind::ValueChange, 7, 1));
         let focused = Object::Msaa(7, -4, 1);
-        let planned = plan(waiting, Some(&focused), never_hung);
+        let planned = plan(waiting, Some(&focused));
         // The query is not counted. The focused object's events are, as
         // NVDA counts them, but kept beyond the limit: its newest is the
         // first of the ten, so of the other events only the nine newest
@@ -1718,33 +1683,11 @@ mod tests {
         push_item(&mut intake, notification_fact("progress", "20 percent"), 30);
         let mut order = Vec::new();
         for _ in 0..2 {
-            if let Some((Planned::Run(entry), _)) = intake.next(never_hung) {
+            if let Some((Planned::Run(entry), _)) = intake.next() {
                 order.push(entry.observed_at_us);
             }
         }
         assert_eq!(order, vec![20, 30]);
-    }
-
-    #[test]
-    fn a_hung_windows_uia_events_are_dropped_its_msaa_events_kept_for_the_worker() {
-        // The MSAA event is counted and kept, for the worker to drop as
-        // NVDA drops it when it makes its object; the UIA selection is
-        // dropped, as NVDA's UIA handler drops it on arrival; a query is
-        // never dropped.
-        let waiting = vec![
-            msaa(WinKind::ValueChange, 9, 1),
-            fact(
-                DeliveredFact::UiaSelection {
-                    hwnd: 9,
-                    focus_window: 0,
-                    snapshot: snapshot(vec![42]),
-                },
-                5,
-            ),
-            query(1),
-        ];
-        let planned = plan(waiting, None, |hwnd| hwnd == 9);
-        assert_eq!(observed(&planned), vec![1, 0]);
     }
 
     #[test]
@@ -1769,7 +1712,7 @@ mod tests {
             ),
             fact(uia_focus(0, 3, vec![42]), 5),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(
             observed(&planned),
             vec![4, 2, 5, 1],
@@ -1785,7 +1728,7 @@ mod tests {
         let uia = |runtime_id: i32, observed_at_us: u64| {
             fact(uia_focus(0, 3, vec![42, runtime_id]), observed_at_us)
         };
-        let planned = plan(vec![uia(1, 1), uia(2, 2), uia(3, 3)], None, never_hung);
+        let planned = plan(vec![uia(1, 1), uia(2, 2), uia(3, 3)], None);
         assert_eq!(observed(&planned), vec![1, 2, 3]);
         assert!(
             planned
@@ -1804,7 +1747,7 @@ mod tests {
             msaa_focus(3, 4),
             msaa_focus(4, 5),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(
             focus_groups(&planned),
             vec![vec![2, 1], vec![5, 4]],
@@ -1816,7 +1759,7 @@ mod tests {
     #[test]
     fn a_run_of_five_msaa_focus_events_keeps_the_newest_four() {
         let waiting = (1..=5).map(|child| msaa_focus(child, u64::try_from(child).unwrap_or(0)));
-        let planned = plan(waiting.collect(), None, never_hung);
+        let planned = plan(waiting.collect(), None);
         assert_eq!(focus_groups(&planned), vec![vec![5, 4, 3, 2]]);
     }
 
@@ -1856,7 +1799,7 @@ mod tests {
             fact(DeliveredFact::Foreground { hwnd: 8 }, 4),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![4, 3, 2, 1]]);
         assert_eq!(observed(&planned), vec![4, 3, 2, 1, 30]);
     }
@@ -1879,7 +1822,7 @@ mod tests {
             stamped(fact(DeliveredFact::Foreground { hwnd: 9 }, 2), 196),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![1, 2]]);
         assert_eq!(observed(&planned), vec![1, 2, 30]);
     }
@@ -1957,7 +1900,7 @@ mod tests {
             fact(DeliveredFact::Foreground { hwnd: 8 }, 2),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![2, 1]]);
         assert_eq!(tried(planned, &[1, 30]), vec![2, 1, 30]);
     }
@@ -1969,7 +1912,7 @@ mod tests {
             fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![2, 1]]);
         assert_eq!(tried(planned, &[1, 2, 30]), vec![2, 30]);
     }
@@ -1981,7 +1924,7 @@ mod tests {
             fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(tried(planned, &[1, 30]), vec![2, 1, 30]);
     }
 
@@ -1993,7 +1936,7 @@ mod tests {
             msaa_focus(3, 3),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![3, 2, 1]]);
         assert_eq!(tried(planned, &[1, 2, 3, 30]), vec![3, 30]);
     }
@@ -2006,7 +1949,7 @@ mod tests {
             fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
             msaa(WinKind::NameChange, 3, 40),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![1], vec![2]]);
         assert_eq!(tried(planned, &[]), vec![1, 30, 2, 40]);
     }
@@ -2022,11 +1965,10 @@ mod tests {
             anchors: Vec::new(),
             acknowledged: 0,
         };
-        let (key, category, hwnd) = classify(&held);
+        let (key, category, _) = classify(&held);
         let held = Waiting {
             key,
             category,
-            hwnd,
             raiser: 0,
             marker: None,
             entry: Entry {
@@ -2043,7 +1985,7 @@ mod tests {
             fact(DeliveredFact::Foreground { hwnd: 9 }, 3),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
         assert_eq!(tried(planned, &[3]), vec![2, 0, 3, 30]);
     }
@@ -2065,7 +2007,7 @@ mod tests {
             msaa_focus(3, 3),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
         assert_eq!(observed(&planned), vec![2, 3, 1, 30]);
     }
@@ -2080,7 +2022,7 @@ mod tests {
             msaa_focus(3, 3),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![2], vec![3, 1]]);
         assert_eq!(observed(&planned), vec![2, 3, 1, 30]);
     }
@@ -2101,7 +2043,7 @@ mod tests {
             msaa_focus(3, 3),
             msaa(WinKind::NameChange, 3, 30),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
         assert_eq!(observed(&planned), vec![20, 21, 22, 23, 3, 1, 30]);
     }
@@ -2125,7 +2067,7 @@ mod tests {
             msaa(WinKind::Caret, 3, 40),
             msaa_focus(5, 5),
         ];
-        let planned = plan(waiting, None, never_hung);
+        let planned = plan(waiting, None);
         assert_eq!(focus_groups(&planned), vec![vec![1], vec![3], vec![5]]);
         assert_eq!(observed(&planned), vec![1, 3, 40, 5, 2]);
     }
@@ -2139,7 +2081,7 @@ mod tests {
             msaa_focus(3, 3),
             msaa(WinKind::NameChange, 7, 4),
         ];
-        assert_eq!(observed(&plan(waiting, None, never_hung)), vec![1, 2, 3, 4]);
+        assert_eq!(observed(&plan(waiting, None)), vec![1, 2, 3, 4]);
         // Arriving while a batch is in progress, after that batch's events
         // that have not started.
         let mut intake = Intake::default();
@@ -2165,7 +2107,7 @@ mod tests {
         push(&mut intake, name_change(2), 2);
         push(&mut intake, name_change(3), 3);
         let mut order = Vec::new();
-        let (first, _) = intake.next(never_hung).expect("an entry");
+        let (first, _) = intake.next().expect("an entry");
         order.extend(first.entries().iter().map(|entry| entry.observed_at_us));
         push(
             &mut intake,
@@ -2180,7 +2122,7 @@ mod tests {
             4,
         );
         while intake.busy() {
-            let (planned, _) = intake.next(never_hung).expect("an entry");
+            let (planned, _) = intake.next().expect("an entry");
             order.extend(planned.entries().iter().map(|entry| entry.observed_at_us));
         }
         assert_eq!(order, vec![1, 2, 3, 4]);
@@ -2211,7 +2153,7 @@ mod tests {
         push(&mut intake, 1, 30);
         let mut order = Vec::new();
         for _ in 0..2 {
-            if let Some((Planned::Run(entry), _)) = intake.next(never_hung) {
+            if let Some((Planned::Run(entry), _)) = intake.next() {
                 order.push(entry.observed_at_us);
             }
         }
@@ -2300,7 +2242,7 @@ mod tests {
                 None,
             );
         }
-        let Some((Planned::Run(entry), _)) = intake.next(never_hung) else {
+        let Some((Planned::Run(entry), _)) = intake.next() else {
             panic!("the list is planned");
         };
         assert!(matches!(
@@ -2340,7 +2282,7 @@ mod tests {
             },
         );
         push_fact(&mut intake, DeliveredFact::Foreground { hwnd: 77 });
-        let (planned, _) = intake.next(never_hung).expect("an entry");
+        let (planned, _) = intake.next().expect("an entry");
         assert_eq!(
             planned.entries().len(),
             2,
@@ -2399,7 +2341,7 @@ mod tests {
     fn handed_out(intake: &mut Intake) -> Vec<u64> {
         let mut order = Vec::new();
         while intake.ready_now() {
-            let (planned, _) = intake.next(never_hung).expect("an entry");
+            let (planned, _) = intake.next().expect("an entry");
             order.extend(planned.entries().iter().map(|entry| entry.observed_at_us));
         }
         order
@@ -2450,7 +2392,7 @@ mod tests {
             fact: Box::new(selection.clone()),
         };
         push_item(&mut intake, Item::Fact(marked, None), 3);
-        let (planned, _) = intake.next(never_hung).expect("an entry");
+        let (planned, _) = intake.next().expect("an entry");
         let entries = planned.entries();
         assert!(
             matches!(&entries[0].item, Item::Fact(fact, None) if *fact == selection),
@@ -2520,7 +2462,7 @@ mod tests {
             ),
             2,
         );
-        let (planned, _) = intake.next(never_hung).expect("the bound's entry");
+        let (planned, _) = intake.next().expect("the bound's entry");
         assert!(
             matches!(
                 planned.entries()[..],
@@ -2594,7 +2536,7 @@ mod tests {
                 .timer,
             Some(TimerAction::Cancel)
         );
-        let (planned, _) = intake.next(never_hung).expect("the record's read");
+        let (planned, _) = intake.next().expect("the record's read");
         assert!(
             matches!(
                 planned.entries()[..],

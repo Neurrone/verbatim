@@ -132,7 +132,7 @@ struct Model {
 #[derive(Clone)]
 struct Gen {
     reducer: Reducer,
-    locals: Recorded,
+    answers: Answers,
     at: u64,
     keys: u64,
     events: u32,
@@ -184,7 +184,7 @@ impl Gen {
     fn new() -> Self {
         Self {
             reducer: Reducer::new(),
-            locals: Recorded::default(),
+            answers: Answers::default(),
             at: 1,
             keys: 0,
             events: 0,
@@ -246,7 +246,13 @@ impl Gen {
 
     fn input(&mut self, input: Input) -> Vec<Effect> {
         let now = self.now();
-        self.reducer.input(input, now, &mut self.locals)
+        let effects = self.reducer.input(input, now);
+        with_answers(&mut self.reducer, &mut self.answers, effects, now)
+    }
+
+    fn tick(&mut self, now: Now) -> Vec<Effect> {
+        let effects = self.reducer.tick(now);
+        with_answers(&mut self.reducer, &mut self.answers, effects, now)
     }
 
     fn push(&mut self, item: Item) -> Vec<Effect> {
@@ -398,13 +404,13 @@ impl Gen {
                 }
                 self.flight = None;
                 let now = self.now();
-                self.reducer.tick(now, &mut self.locals)
+                self.tick(now)
             }
             Action::Due => {
                 let due = self.reducer.facts.follow.watch.due().expect("a due time");
                 self.at = self.at.max(due / 1_000);
                 let now = self.now();
-                self.reducer.tick(now, &mut self.locals)
+                self.tick(now)
             }
             Action::Publish(report) => {
                 self.flight_mut().claimed = true;
@@ -412,7 +418,7 @@ impl Gen {
                 if report {
                     ended(&mut self.model, &mut expected, "watch ended");
                 }
-                self.locals.publications.push_back(if report {
+                self.answers.publications.push_back(if report {
                     focus_change(2, false)
                 } else {
                     Change::default()
@@ -421,7 +427,7 @@ impl Gen {
                 self.input(Input::Armed { request, bound });
                 self.at += 1;
                 let now = self.now();
-                self.reducer.tick(now, &mut self.locals)
+                self.tick(now)
             }
             Action::NodesHeld => {
                 self.held_pushed = true;

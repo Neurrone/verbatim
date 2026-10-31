@@ -32,8 +32,8 @@ use verbatim_uia::{Agile, Kept};
 use super::commit::{Effects, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Asker, Change, Cut, Effect, Entry, Facts, Group, Input, Item, Locals, Marks, Now, Program,
-    Reducer, Request, Source, Subscription, VerdictChange, Verdicts,
+    Asker, Change, Cut, Effect, Entry, Facts, Group, Input, Item, Marks, Now, Program, Reducer,
+    Request, Source, Subscription, VerdictChange, Verdicts,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -299,44 +299,6 @@ impl Elements {
     }
 }
 
-/// The shell's local reads for the reducer.
-struct ShellLocals<'a> {
-    context: &'a Arc<Context>,
-    charge: Option<&'a Charge>,
-    elements: &'a mut Elements,
-    garbage: &'a mut Garbage,
-}
-
-impl Locals for ShellLocals<'_> {
-    fn window_is_hung(&self, hwnd: isize) -> bool {
-        verbatim_win32::window::window_is_hung(hwnd)
-    }
-
-    fn moved_on(&self, window: isize) -> bool {
-        verbatim_win32::window::front_is_another_thread_of_its_application(window)
-    }
-
-    fn publication(&mut self, request: Request, facts: &Facts) -> Option<Change> {
-        let progress = self.charge?.publish(request)?;
-        let tag = tag_of(request);
-        let context = RequestContext::new(self.context, tag, facts.clone());
-        let effects = worker::publication(&context, &progress);
-        self.garbage.store.push(context.take_removed());
-        tracing::info!(
-            trace = %progress.focus.trace,
-            name = ?progress.focus.node.name,
-            "a focus walk was under way at its bound or its worker's abandonment; the focus is published as read so far"
-        );
-        Some(write(
-            &self.context.store,
-            tag,
-            effects,
-            self.elements,
-            self.garbage,
-        ))
-    }
-}
-
 /// The store's tag for `request`.
 pub(super) fn tag_of(request: Request) -> Tag {
     Tag {
@@ -531,7 +493,7 @@ impl Shell {
                 self.take(posted);
             }
             let now = self.now();
-            let effects = self.with_locals(|reducer, locals| reducer.tick(now, locals));
+            let effects = self.reducer.tick(now);
             self.apply(effects);
             if self.closing && !self.reducer.busy() {
                 break;
@@ -550,22 +512,31 @@ impl Shell {
         std::mem::take(&mut self.threads)
     }
 
-    /// Runs `step` on the reducer with the shell's local reads.
-    fn with_locals(
-        &mut self,
-        step: impl FnOnce(&mut Reducer, &mut dyn Locals) -> Vec<Effect>,
-    ) -> Vec<Effect> {
-        let charge = self
-            .generations
-            .get(&self.reducer.generation())
-            .map(|generation| Arc::clone(&generation.charge));
-        let mut locals = ShellLocals {
-            context: &self.context,
-            charge: charge.as_deref(),
-            elements: &mut self.elements,
-            garbage: &mut self.garbage,
-        };
-        step(&mut self.reducer, &mut locals)
+    /// The publication of the walk `request` armed, if it is still armed
+    /// in the charge of `request`'s own generation and not returned before
+    /// its bound: its progress as it stands, claimed so its worker sends
+    /// nothing more for it, completed by plain windows with local calls
+    /// only, judged against `facts`, and written into the store as a commit
+    /// of its program.
+    fn publication(&mut self, request: Request, facts: Facts) -> Option<Change> {
+        let charge = Arc::clone(&self.generations.get(&request.generation)?.charge);
+        let progress = charge.publish(request)?;
+        let tag = tag_of(request);
+        let context = RequestContext::new(&self.context, tag, facts);
+        let effects = worker::publication(&context, &progress);
+        self.garbage.store.push(context.take_removed());
+        tracing::info!(
+            trace = %progress.focus.trace,
+            name = ?progress.focus.node.name,
+            "a focus walk was under way at its bound or its worker's abandonment; the focus is published as read so far"
+        );
+        Some(write(
+            &self.context.store,
+            tag,
+            effects,
+            &mut self.elements,
+            &mut self.garbage,
+        ))
     }
 
     /// Takes one posted input into the reducer and applies what it asks.
@@ -645,7 +616,7 @@ impl Shell {
             }
         };
         let now = self.now();
-        let effects = self.with_locals(|reducer, locals| reducer.input(input, now, locals));
+        let effects = self.reducer.input(input, now);
         self.apply(effects);
     }
 
@@ -670,100 +641,126 @@ impl Shell {
         })
     }
 
-    /// Applies the reducer's effects, in order.
+    /// Applies the reducer's effects, in order. An effect that asks, a
+    /// release, whether the user moved on, or a walk's publication, is
+    /// answered at once, exactly once, as the reducer's next input, before
+    /// the shell takes another message, and what the answer asks comes
+    /// before anything asked after the question.
     fn apply(&mut self, effects: Vec<Effect>) {
         let mut effects: VecDeque<Effect> = effects.into();
         while let Some(effect) = effects.pop_front() {
-            match effect {
-                Effect::Dispatch(program) => self.dispatch(*program),
-                Effect::Send(message) => self.send(*message),
-                Effect::Release {
-                    nodes,
-                    anchors,
-                    acknowledged,
-                    live,
-                } => {
-                    let released = self.release(&nodes, &anchors, acknowledged, &live);
-                    let now = self.now();
-                    let more =
-                        self.with_locals(|reducer, locals| reducer.input(released, now, locals));
-                    // What the release's input asks comes before anything
-                    // asked after the release.
-                    for effect in more.into_iter().rev() {
-                        effects.push_front(effect);
+            let Some(answer) = self.carry_out(effect) else {
+                continue;
+            };
+            let now = self.now();
+            let more = self.reducer.input(answer, now);
+            for effect in more.into_iter().rev() {
+                effects.push_front(effect);
+            }
+        }
+        self.check_tables();
+    }
+
+    /// Carries out `effect`, returning the answer to one that asks.
+    fn carry_out(&mut self, effect: Effect) -> Option<Input> {
+        match effect {
+            Effect::Dispatch(program) => self.dispatch(*program),
+            Effect::Send(message) => self.send(*message),
+            Effect::Release {
+                nodes,
+                anchors,
+                acknowledged,
+                live,
+            } => return Some(self.release(&nodes, &anchors, acknowledged, &live)),
+            Effect::AskMovedOn { request, window } => {
+                return Some(Input::MovedOn {
+                    request,
+                    moved_on: verbatim_win32::window::front_is_another_thread_of_its_application(
+                        window,
+                    ),
+                });
+            }
+            Effect::Publish {
+                request,
+                facts,
+                then_abandon,
+            } => {
+                return Some(Input::Published {
+                    request,
+                    change: self.publication(request, *facts).map(Box::new),
+                    then_abandon,
+                });
+            }
+            Effect::Subscribe(subscription) => self.subscribe(&subscription),
+            Effect::Unfollow(tokens) => {
+                for token in tokens {
+                    if let Some(element) = self.elements.kept.remove(&token) {
+                        self.garbage.elements.push(element);
                     }
                 }
-                Effect::Subscribe(subscription) => self.subscribe(&subscription),
-                Effect::Unfollow(tokens) => {
-                    for token in tokens {
-                        if let Some(element) = self.elements.kept.remove(&token) {
-                            self.garbage.elements.push(element);
-                        }
-                    }
-                }
-                Effect::ForgetRanges(ranges) => {
+            }
+            Effect::ForgetRanges(ranges) => {
+                self.garbage
+                    .store
+                    .push(self.context.store.forget_ranges(&ranges));
+            }
+            Effect::Unpark(keys) => {
+                for key in keys {
                     self.garbage
-                        .store
-                        .push(self.context.store.forget_ranges(&ranges));
+                        .parked
+                        .extend(self.context.store.take_parked(key));
                 }
-                Effect::Unpark(keys) => {
-                    for key in keys {
-                        self.garbage
-                            .parked
-                            .extend(self.context.store.take_parked(key));
-                    }
-                }
-                Effect::Abandon {
-                    dead,
-                    replacement,
-                    count,
+            }
+            Effect::Abandon {
+                dead,
+                replacement,
+                count,
+                reason,
+            } => {
+                tracing::warn!(
+                    abandoned = count,
                     reason,
-                } => {
-                    tracing::warn!(
-                        abandoned = count,
-                        reason,
-                        "the worker is abandoned and replaced"
-                    );
-                    if let Some(generation) = self.generations.remove(&dead) {
-                        generation.charge.abandon();
-                    }
-                    self.context.abandoned.store(count, Ordering::Relaxed);
-                    self.spawn_worker(replacement, false);
+                    "the worker is abandoned and replaced"
+                );
+                if let Some(generation) = self.generations.remove(&dead) {
+                    generation.charge.abandon();
                 }
-                Effect::Returned { count } => {
-                    tracing::info!("an abandoned worker returned; its result is discarded");
-                    self.context.abandoned.store(count, Ordering::Relaxed);
+                self.context.abandoned.store(count, Ordering::Relaxed);
+                self.spawn_worker(replacement, false);
+            }
+            Effect::Returned { count } => {
+                tracing::info!("an abandoned worker returned; its result is discarded");
+                self.context.abandoned.store(count, Ordering::Relaxed);
+            }
+            Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
+            Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
+            Effect::Settled(id) => {
+                if let Some(done) = self.settles.remove(&id) {
+                    let _ = done.send(());
                 }
-                Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
-                Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
-                Effect::Settled(id) => {
-                    if let Some(done) = self.settles.remove(&id) {
-                        let _ = done.send(());
-                    }
-                }
-                // After the copy above, so the event thread decides on it.
-                Effect::Narrow => self
-                    .context
-                    .nudge_event_thread(super::narrowing::Nudge::Decide),
-                Effect::WatchEnded { trace, why, waited } => {
-                    tracing::debug!(
-                        %trace,
-                        why,
-                        waited_ms = waited.as_millis(),
-                        "a caret key's watch ended without evidence"
-                    );
-                }
-                Effect::GapTimer(due) => {
-                    if let Some(timer) = self.context.gap_timer() {
-                        match due {
-                            Some(due_us) => timer.set(due_us),
-                            None => timer.cancel(),
-                        }
+            }
+            // After the copy above, so the event thread decides on it.
+            Effect::Narrow => self
+                .context
+                .nudge_event_thread(super::narrowing::Nudge::Decide),
+            Effect::WatchEnded { trace, why, waited } => {
+                tracing::debug!(
+                    %trace,
+                    why,
+                    waited_ms = waited.as_millis(),
+                    "a caret key's watch ended without evidence"
+                );
+            }
+            Effect::GapTimer(due) => {
+                if let Some(timer) = self.context.gap_timer() {
+                    match due {
+                        Some(due_us) => timer.set(due_us),
+                        None => timer.cancel(),
                     }
                 }
             }
         }
-        self.check_tables();
+        None
     }
 
     /// Checks, in debug builds, that the shell's tables match the
@@ -945,23 +942,6 @@ mod tests {
     use super::super::store::TextWrite;
     use super::*;
 
-    /// No local read: a test's reducer is never asked one.
-    struct NoLocals;
-
-    impl Locals for NoLocals {
-        fn window_is_hung(&self, _: isize) -> bool {
-            false
-        }
-
-        fn moved_on(&self, _: isize) -> bool {
-            false
-        }
-
-        fn publication(&mut self, _: Request, _: &Facts) -> Option<Change> {
-            None
-        }
-    }
-
     /// A commit whose text call minted anchor `anchor` in edit control
     /// `node`'s text.
     fn minted(node: u64, anchor: u64) -> (Effects, TextChange) {
@@ -1012,7 +992,6 @@ mod tests {
                 read_answer: None,
             },
             Now::default(),
-            &mut NoLocals,
         );
         let in_flight = effects
             .iter()
@@ -1048,5 +1027,91 @@ mod tests {
         .expect("the change of the program in flight");
         assert_eq!(admitted.text, vec![change]);
         assert!(store.tags_anchor(8));
+    }
+    /// The context of an outpost of this process watching this process,
+    /// its own reducer's thread and workers shut down, so the shell a test
+    /// builds on it is the only one.
+    fn context() -> Arc<Context> {
+        use std::io::BufReader;
+
+        use verbatim_process::message::read_message;
+        use verbatim_process::overlapped::{End, Flow, pipe};
+        use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
+
+        let (ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(BlockingReader::new(ours).expect("a reader"));
+            while let Ok(Some(_)) = read_message::<_, OutpostToCore>(&mut reader) {}
+        });
+        let outpost = super::super::Outpost::new(theirs, std::process::id());
+        let context = Arc::clone(&outpost.context);
+        outpost.shutdown();
+        context
+    }
+
+    /// The shell answers a publication it is asked for at once, as the
+    /// reducer's next input, and carries out what the answer asks before it
+    /// returns to its mailbox: asked by an abandonment for a program whose
+    /// charge holds no walk, it answers with nothing published, and the
+    /// abandonment completes, its replacement started and its query
+    /// answered, within the one step.
+    #[test]
+    fn an_ask_is_answered_before_the_shell_takes_another_message() {
+        let mut shell = Shell {
+            context: context(),
+            reducer: Reducer::new(),
+            tokens: HashMap::new(),
+            settles: HashMap::new(),
+            settles_taken: 0,
+            elements: Elements::default(),
+            garbage: Garbage::default(),
+            generations: HashMap::new(),
+            threads: Vec::new(),
+            closing: false,
+        };
+        shell.take(Posted::Entry {
+            entry: Entry::own(
+                Item::Query {
+                    request_id: 1,
+                    query: Query::FocusNow,
+                },
+                TraceId::from_raw(1),
+                1,
+            ),
+            source: Source::Other,
+            read_answer: None,
+        });
+        let request = Request {
+            generation: 0,
+            number: 1,
+        };
+        assert!(
+            shell.reducer.accepts(request),
+            "the query's program in flight"
+        );
+        assert_eq!(shell.tokens.len(), 1);
+        shell.take(Posted::Armed {
+            request,
+            bound_at: shell.context.epoch + std::time::Duration::from_secs(60),
+        });
+        shell.apply(vec![Effect::Publish {
+            request,
+            facts: Box::default(),
+            then_abandon: Some("a call passed its deadline"),
+        }]);
+        assert!(!shell.reducer.accepts(request), "abandoned by the answer");
+        assert_eq!(shell.reducer.generation(), 1);
+        assert!(shell.tokens.is_empty(), "its query answered");
+        assert!(
+            shell.generations.contains_key(&1),
+            "its replacement started"
+        );
+        shell.generations.clear();
+        for thread in shell.threads.drain(..) {
+            thread
+                .join()
+                .expect("the worker ends once its inbox closes");
+        }
     }
 }

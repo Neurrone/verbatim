@@ -569,6 +569,13 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
 /// 1063 and 1158). A caret and a text change go through NVDA's automation
 /// event handler, which tests them as any other (`docs/parity/focus-events.md`, "Event
 /// acceptance").
+/// Whether a UIA entry's own window, `hwnd`, belongs to an application the
+/// system reports hung: a local call, never made for 0, which passes, as
+/// NVDA's test passes a sender with no cached window.
+fn hung(hwnd: isize) -> bool {
+    hwnd != 0 && verbatim_win32::window::window_is_hung(hwnd)
+}
+
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
         UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),
@@ -2706,6 +2713,19 @@ impl Worker<'_> {
             .element
             .and_then(|key| self.context.store.take_parked(key))
             .and_then(super::store::Parked::element);
+        // An event whose own window's application the system reports hung
+        // is dropped before any window lookup or read, as NVDA's UIA
+        // handlers drop it first, a window of 0 passing untested
+        // (`docs/design/logic-foundations.md`, "Whether a window is hung").
+        // Its element and range, taken from the store, go with it.
+        if hung(event.hwnd) {
+            if let UiaKind::ActiveTextPosition(Some(range)) = event.kind {
+                drop(self.context.store.take_parked(range));
+            }
+            tracing::debug!(%trace, hwnd = event.hwnd, "UIA event dropped: its window is hung");
+            drop(element);
+            return;
+        }
         // The event's window: its own, else the recorded window of the focus
         // it concerns, else its element's. Never the system's focus window,
         // which can belong to another application.
@@ -3569,6 +3589,15 @@ impl Worker<'_> {
     /// may have text, before it is reported, since its caret is read with
     /// it.
     fn uia_focus(&mut self, read: &UiaFocusRead, trace: TraceId, observed_at_us: u64) {
+        // A read whose own window's application the system reports hung is
+        // dropped before anything is looked up or read, as an event is
+        // ([`Self::uia_event`]): one planned before the window became hung
+        // is dropped too, rather than published from a walk that met the
+        // hang.
+        if hung(read.hwnd) {
+            tracing::debug!(%trace, hwnd = read.hwnd, "UIA focus dropped: its window is hung");
+            return;
+        }
         let context = self.context;
         let judged = (|| {
             // NVDA's acceptance test against the foreground window was

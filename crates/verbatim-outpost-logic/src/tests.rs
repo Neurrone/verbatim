@@ -1,10 +1,10 @@
-//! The reducer's replay tests (`docs/design/ownership.md`): recorded inputs given to the reducer, with recorded local
-//! reads, and the effects it answers with asserted. Each replays one
+//! The reducer's replay tests (`docs/design/ownership.md`): recorded inputs given to the reducer, with its
+//! asks answered as the shell answers them, and the effects it answers with asserted. Each replays one
 //! ordering the outpost's threads can produce, at the times given, so an
 //! ordering that once needed a real bound, a real deadline or a race to
 //! reproduce is one test here.
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use verbatim_model::protocol::{
@@ -20,53 +20,88 @@ use super::*;
 
 mod generated;
 
-/// The local reads the reducer makes, as a test records them: the hung
-/// windows, whether the user has moved on, and the publications the shell
-/// would make at a walk's bound, in order.
+/// The answers the shell gives the reducer's asks, as a test records them:
+/// whether the user has moved on, and the publications the shell would make
+/// at a walk's bound, in order, with the requests it published.
 #[derive(Clone, Default)]
-struct Recorded {
-    hung: HashSet<isize>,
+struct Answers {
     moved_on: bool,
     publications: VecDeque<Change>,
     published: Vec<Request>,
 }
 
-impl Locals for Recorded {
-    fn window_is_hung(&self, hwnd: isize) -> bool {
-        self.hung.contains(&hwnd)
-    }
-
-    fn moved_on(&self, _: isize) -> bool {
-        self.moved_on
-    }
-
-    fn publication(&mut self, request: Request, _: &Facts) -> Option<Change> {
-        let change = self.publications.pop_front()?;
-        self.published.push(request);
-        Some(change)
+impl Answers {
+    /// The answer to `effect`, if it asks one, as the shell gives it.
+    fn to(&mut self, effect: &Effect) -> Option<Input> {
+        match effect {
+            Effect::AskMovedOn { request, .. } => Some(Input::MovedOn {
+                request: *request,
+                moved_on: self.moved_on,
+            }),
+            Effect::Publish {
+                request,
+                then_abandon,
+                ..
+            } => {
+                let change = self.publications.pop_front().map(Box::new);
+                if change.is_some() {
+                    self.published.push(*request);
+                }
+                Some(Input::Published {
+                    request: *request,
+                    change,
+                    then_abandon: *then_abandon,
+                })
+            }
+            _ => None,
+        }
     }
 }
 
-/// The reducer under test with its recorded local reads.
+/// Gives `effects` to `answers` as the shell carries them out: each ask is
+/// answered at once by the reducer's next input, at `now`, and what that
+/// asks follows it in place, so the effects come back in the order the
+/// shell carries them out, the asks among them.
+fn with_answers(
+    reducer: &mut Reducer,
+    answers: &mut Answers,
+    effects: Vec<Effect>,
+    now: Now,
+) -> Vec<Effect> {
+    let mut out = Vec::new();
+    for effect in effects {
+        let answer = answers.to(&effect);
+        out.push(effect);
+        if let Some(answer) = answer {
+            let more = reducer.input(answer, now);
+            out.extend(with_answers(reducer, answers, more, now));
+        }
+    }
+    out
+}
+
+/// The reducer under test with the answers its asks are given.
 struct Replay {
     reducer: Reducer,
-    locals: Recorded,
+    answers: Answers,
 }
 
 impl Replay {
     fn new() -> Self {
         Self {
             reducer: Reducer::new(),
-            locals: Recorded::default(),
+            answers: Answers::default(),
         }
     }
 
     fn input(&mut self, input: Input, at_ms: u64) -> Vec<Effect> {
-        self.reducer.input(input, now(at_ms), &mut self.locals)
+        let effects = self.reducer.input(input, now(at_ms));
+        with_answers(&mut self.reducer, &mut self.answers, effects, now(at_ms))
     }
 
     fn tick(&mut self, at_ms: u64) -> Vec<Effect> {
-        self.reducer.tick(now(at_ms), &mut self.locals)
+        let effects = self.reducer.tick(now(at_ms));
+        with_answers(&mut self.reducer, &mut self.answers, effects, now(at_ms))
     }
 
     /// Pushes `item`, observed at `at_ms`, from `source`.
@@ -500,7 +535,7 @@ fn a_walk_returned_before_its_bound_is_reported_by_its_program() {
     let effects = replay.commit(request, focus_change(1, false), 120);
     assert_eq!(sent(&effects).len(), 1, "the program's report");
     assert_eq!(followed(&replay), Some(NodeId::new(1)));
-    assert_eq!(replay.locals.published, []);
+    assert_eq!(replay.answers.published, []);
 }
 
 #[test]
@@ -515,14 +550,17 @@ fn a_walk_under_way_at_its_bound_is_published_and_its_programs_report_refused() 
         },
         2,
     );
-    replay.locals.publications.push_back(focus_change(1, false));
+    replay
+        .answers
+        .publications
+        .push_back(focus_change(1, false));
     assert_eq!(
         replay.reducer.next_timer(now(2)),
         Some(Duration::from_millis(500))
     );
     let effects = replay.tick(500);
     assert_eq!(sent(&effects).len(), 1, "the publication");
-    assert_eq!(replay.locals.published, [request]);
+    assert_eq!(replay.answers.published, [request]);
     assert_eq!(followed(&replay), Some(NodeId::new(1)));
     // The walk returns: its program's own report is not applied (2bd69a85).
     assert!(!replay.reducer.accepts(request));
@@ -533,7 +571,7 @@ fn a_walk_under_way_at_its_bound_is_published_and_its_programs_report_refused() 
         },
         600,
     );
-    assert_eq!(replay.locals.published.len(), 1, "published once");
+    assert_eq!(replay.answers.published.len(), 1, "published once");
     // The program ends having reported: the group ends.
     let effects = replay.finish(request, true, 610);
     assert!(programs(&effects).is_empty());
@@ -551,7 +589,10 @@ fn a_walk_returned_past_its_bound_is_published_from_its_progress() {
         },
         2,
     );
-    replay.locals.publications.push_back(focus_change(1, false));
+    replay
+        .answers
+        .publications
+        .push_back(focus_change(1, false));
     // The walk returns past its bound before the bound's timer fired.
     let effects = replay.input(
         Input::WalkReturned {
@@ -581,9 +622,10 @@ fn a_walk_whose_worker_is_abandoned_is_published_first_and_its_sends_after_refus
         },
         2,
     );
-    replay.locals.publications.push_back(focus_change(1, true));
+    replay.answers.publications.push_back(focus_change(1, true));
     // The deadline comes before the bound: the walk is published, then its
-    // worker abandoned, in one transition (c47d57ae).
+    // worker abandoned, in one step of the shell's: the tick asks for the
+    // publication, and its answer commits it then abandons (c47d57ae).
     let effects = replay.tick(10_001);
     let order: Vec<&str> = effects
         .iter()
@@ -602,6 +644,156 @@ fn a_walk_whose_worker_is_abandoned_is_published_first_and_its_sends_after_refus
     // What the abandoned worker sends afterwards is refused.
     assert!(!replay.reducer.accepts(request));
     assert_eq!(followed(&replay), Some(NodeId::new(1)));
+}
+
+/// The deadline of the program dispatched at 1 ms, at which the tests
+/// below abandon it.
+const DEADLINE: &str = "a call passed its deadline";
+
+/// What `effects` do, by kind, in order: a send, an abandonment, a
+/// dispatch, or an ask.
+fn kinds(effects: &[Effect]) -> Vec<&'static str> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Send(_) => Some("send"),
+            Effect::Abandon { .. } => Some("abandon"),
+            Effect::Dispatch(_) => Some("dispatch"),
+            Effect::Publish { .. } => Some("publish"),
+            Effect::AskMovedOn { .. } => Some("ask moved on"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// One late tick past both the walk's bound and the deadline judges the
+/// deadline first: it makes one ask, a publication carrying the
+/// abandonment, and abandons nothing until its answer, which commits the
+/// published focus, then abandons, and the older entries of the focus
+/// group are not tried, since the try was published.
+#[test]
+fn a_late_tick_past_the_bound_and_the_deadline_publishes_once_then_abandons() {
+    let mut reducer = Reducer::new();
+    let push = |reducer: &mut Reducer, item: Item, at_ms: u64| {
+        reducer.input(
+            Input::Entry {
+                entry: entry(item, at_ms),
+                source: Source::Hook,
+                read_answer: None,
+            },
+            now(at_ms),
+        )
+    };
+    // A program in flight, so the two focuses wait for one batch.
+    let busy = program(&push(&mut reducer, name_change(1), 0)).request;
+    push(&mut reducer, msaa_focus(1, 1), 0);
+    push(&mut reducer, msaa_focus(2, 2), 0);
+    let finished = Input::Finished {
+        request: busy,
+        reported: false,
+        panicked: false,
+        cut: None,
+    };
+    let request = program(&reducer.input(finished, now(1))).request;
+    reducer.input(
+        Input::Armed {
+            request,
+            bound: Duration::from_millis(9_998),
+        },
+        now(2),
+    );
+    let effects = reducer.tick(now(10_001));
+    assert!(
+        matches!(
+            &effects[..],
+            [Effect::Publish { request: asked, then_abandon: Some(DEADLINE), .. }]
+                if *asked == request
+        ),
+        "{effects:?}"
+    );
+    let effects = reducer.input(
+        Input::Published {
+            request,
+            change: Some(Box::new(focus_change(1, false))),
+            then_abandon: Some(DEADLINE),
+        },
+        now(10_001),
+    );
+    assert_eq!(kinds(&effects), ["send", "abandon"]);
+    assert_eq!(reducer.facts().follow.tracking.focus, Some(NodeId::new(1)));
+    assert!(!reducer.accepts(request));
+}
+
+/// A foreground fact past the grace asks whether the user moved on; a yes,
+/// with a walk armed, asks for the walk's publication carrying the
+/// abandonment, and its answer, with nothing published, abandons. An
+/// answer whose request is no longer in flight changes nothing.
+#[test]
+fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped() {
+    let mut reducer = Reducer::new();
+    let entry_of = |item: Item, at_ms: u64| Input::Entry {
+        entry: entry(item, at_ms),
+        source: Source::Hook,
+        read_answer: None,
+    };
+    let request = program(&reducer.input(entry_of(msaa_focus(1, 1), 1), now(1))).request;
+    reducer.input(
+        Input::Armed {
+            request,
+            bound: Duration::from_secs(5),
+        },
+        now(2),
+    );
+    let foreground = Item::Fact(DeliveredFact::Foreground { hwnd: 7 }, None);
+    let effects = reducer.input(entry_of(foreground, 600), now(600));
+    assert!(
+        matches!(
+            &effects[..],
+            [Effect::AskMovedOn { request: asked, window: 9 }] if *asked == request
+        ),
+        "{effects:?}"
+    );
+    let moved = "the user moved on from a slow window";
+    let effects = reducer.input(
+        Input::MovedOn {
+            request,
+            moved_on: true,
+        },
+        now(600),
+    );
+    assert!(
+        matches!(
+            &effects[..],
+            [Effect::Publish { request: asked, then_abandon: Some(why), .. }]
+                if *asked == request && *why == moved
+        ),
+        "{effects:?}"
+    );
+    let effects = reducer.input(
+        Input::Published {
+            request,
+            change: None,
+            then_abandon: Some(moved),
+        },
+        now(600),
+    );
+    assert_eq!(kinds(&effects)[..2], ["abandon", "dispatch"]);
+    // The answers come again, out of turn: nothing is abandoned again.
+    let replacement = program(&effects).request;
+    for answer in [
+        Input::MovedOn {
+            request,
+            moved_on: true,
+        },
+        Input::Published {
+            request,
+            change: Some(Box::new(focus_change(2, false))),
+            then_abandon: Some(moved),
+        },
+    ] {
+        assert_eq!(kinds(&reducer.input(answer, now(601))), Vec::<&str>::new());
+    }
+    assert!(reducer.accepts(replacement));
 }
 
 #[test]
@@ -1003,7 +1195,7 @@ fn a_program_claimed_while_it_holds_the_watch_ends_it_once() {
     let mut replay = polling();
     let update = program(&replay.push(console_caret(), Source::Hook, 4)).request;
     replay.commit(update, takes(), 5);
-    replay.locals.publications.push_back(Change::default());
+    replay.answers.publications.push_back(Change::default());
     replay.input(
         Input::Armed {
             request: update,
@@ -1094,7 +1286,6 @@ fn the_bound_is_reached_by_the_shared_clock_with_the_observation_clock_frozen() 
             read_answer: None,
         },
         frozen(1),
-        &mut replay.locals,
     );
     let key = program(&effects).request;
     replay.reducer.input(
@@ -1103,7 +1294,6 @@ fn the_bound_is_reached_by_the_shared_clock_with_the_observation_clock_frozen() 
             change: Box::new(opens(7, false)),
         },
         frozen(2),
-        &mut replay.locals,
     );
     replay.reducer.input(
         Input::Finished {
@@ -1113,13 +1303,12 @@ fn the_bound_is_reached_by_the_shared_clock_with_the_observation_clock_frozen() 
             cut: None,
         },
         frozen(3),
-        &mut replay.locals,
     );
     assert_eq!(
         replay.reducer.next_timer(frozen(3)),
         Some(Duration::from_millis(10_002))
     );
-    let effects = replay.reducer.tick(frozen(10_002), &mut replay.locals);
+    let effects = replay.reducer.tick(frozen(10_002));
     assert_eq!(replies(&effects), [(7, "watch ended")]);
 }
 
@@ -1292,7 +1481,7 @@ fn a_program_waiting_on_a_window_the_user_left_is_abandoned_once_its_grace_ends(
     let mut replay = Replay::new();
     let effects = replay.push(name_change(1), Source::Hook, 1);
     assert_eq!(program(&effects).request.generation, 0);
-    replay.locals.moved_on = true;
+    replay.answers.moved_on = true;
     // Before the grace ends nothing is judged.
     assert!(!abandons(&replay.tick(400)));
     assert_eq!(
@@ -1309,7 +1498,7 @@ fn a_foreground_fact_after_the_grace_judges_the_moved_on_rule_again() {
     // At the grace's end the user has not moved on.
     assert!(!abandons(&replay.tick(501)));
     // A wake for anything else judges nothing.
-    replay.locals.moved_on = true;
+    replay.answers.moved_on = true;
     assert!(!abandons(&replay.push(name_change(2), Source::Hook, 600)));
     // A foreground fact does.
     let effects = replay.push(
@@ -1646,7 +1835,12 @@ fn a_cut_watch_check_is_finished_within_its_reads_deadline_and_query() {
     let finish = program(&effects);
     assert_eq!(finishes(finish), ("watch", false));
     assert!(matches!(finish.facts.follow.watch, Watch::Checking { .. }));
-    assert!(replay.tick(10 + 9_999).is_empty());
+    // Its grace has ended: the shell is asked whether the user moved on,
+    // and the answer, no, changes nothing.
+    assert!(matches!(
+        &replay.tick(10 + 9_999)[..],
+        [Effect::AskMovedOn { request, .. }] if *request == finish.request
+    ));
     let effects = replay.tick(10 + 10_000);
     assert!(abandons(&effects));
     assert_eq!(replies(&effects), [(7, "abandoned")]);
