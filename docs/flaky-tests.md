@@ -84,6 +84,13 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - Cause: not found.
   - Fix: [the M4.1 follow-ups](roadmap.md#follow-ups-from-m41), the entry on these tests.
 
+## Synthesizer host tests on GitHub's runner
+
+- `verbatim-synth-host`'s `hosting` tests `a_hosted_synthesizer_streams_audio_and_marks_in_order`, `a_cancelled_utterance_ends_promptly_and_the_host_carries_on` and `an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries_on`
+  - How: all three failed together under `cargo xtask ci` with "the synthesizer host sent nothing for 10s" (run 41267826098, 2026-11-01, a documents-only commit); the runs before and after it passed.
+  - Cause: not found. The speech platform's first activation in a fresh runner session can take more than ten seconds, which is why the unit-test jobs run `cargo xtask warm-speech` first; whether that warm-up did not hold here is not known.
+  - Fix: none yet.
+
 ## Scenarios that fail on GitHub's runner, skipped there
 
 These are `local_only` in the registry. The `e2e` job deselects them (`--skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded`), and they pass locally. No fix planned for any of them: the runner's image is not ours.
