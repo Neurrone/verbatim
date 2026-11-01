@@ -988,7 +988,8 @@ machine's taskbar, from a separate process running the outpost's walk,
   for every transition while the view says the focus has text in a
   window that may hold keys, or while a key waits in the decision
   machine's line, and otherwise only for a press that may type, whose
-  translation needs it; one read serves both. The hook posts each
+  translation needs it; one read serves both. Nothing on the hook thread
+  waits. The hook posts each
   report, a gesture's included, to the reducer's completion port
   (`docs/crates/verbatim-input-windows.md`), and a key that cancels or
   pauses speech posts once to the speech queue's port: no lock is taken
@@ -1780,6 +1781,17 @@ with a full history of numbered lines.
   scroll region (8,950 events while 9,000 lines filled the buffer with the
   first row unchanged), so Verbatim does not use it (Dickson, 2026-10-25).
 
+### What Core last spoke of the focus
+
+Core keeps, beside the reading of the focus it holds, what it last spoke
+of it (`SpokenRecord` in `crates/verbatim-core/src/state.rs`), against
+which name, value, description and state changes are compared
+([verbatim-core](crates/verbatim-core.md), "Focus"). No call, wake-up or
+timer is added. Its bound: per focus change, each new ancestor searches
+the previous focus line's entries, as the entered containers already
+search the previous chain, so the work grows with the depth of the
+application's focus line.
+
 ### A terminal's reads in Core
 
 Each read crosses the pipe as a snapshot and is aligned on the reducer
@@ -1829,16 +1841,22 @@ terminal's rotation") and the page faults of the heap taking pages back;
 Core's own part is about 0.2 to 0.5 ms.
 
 The outpost's conversion of a read into its snapshot, in one pass into
-buffers made for each read, and its writing in the event sent to Core
-(`terminal::unpadded_utf16`; the ignored `measure_conversion` in
-`crates/verbatim-outpost/src/terminal/tests.rs`, release, 2026-11-01,
-three runs): a whole document of 9,031 rows of 120 cells 2,145 to 2,305
-µs with 108 to 192 page faults, in Latin or Cyrillic text; an ordinary
-read of two screens 22 to 24 µs; 64 KiB, the write buffer, kept after a
-whole document. With the spare buffers the conversion reused before, on
-the same day and machine: a whole document 1,769 to 1,966 µs with no page
-fault, an ordinary read 18 to 21 µs. The whole document's 0.4 ms more is
-paid in the outpost, once per whole-document read.
+buffers made for each read, its text sized up front, and its writing in
+the event sent to Core (`terminal::unpadded_utf16`; the ignored
+`measure_conversion` in `crates/verbatim-outpost/src/terminal/tests.rs`,
+release, 2026-11-01, eleven runs): a whole document of 9,031 rows of 120
+cells 1,947 to 2,128 µs with 78 to 80 page faults in Latin text, 2,036
+to 2,180 µs with 95 to 98 in Cyrillic; an ordinary read of two screens
+20 to 27 µs; 64 KiB, the write buffer, kept after a whole document. Paid
+in the outpost, once per whole-document read. Measured as the change
+that removed the spare buffers the conversion reused, on the same day
+and machine: with them, a whole document 1,769 to 1,966 µs with no page
+fault and an ordinary read 18 to 21 µs; without them and with the text
+grown from empty, 2,134 to 2,407 µs with 114 to 159 page faults in
+Latin text and an ordinary read 21 to 24 µs. Sizing the text up front
+removed about a third of the page faults; its time difference is within
+the drift of the comparison's unchanged two-copy conversion
+(`docs/design/allocation-simplification.md`).
 
 ### A terminal's reads, live
 

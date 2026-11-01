@@ -431,12 +431,11 @@ fn unhook_event(hook: HWINEVENTHOOK) {
     }
 }
 
-/// What a thread keeps about each window it hears events from, by the
-/// window's handle, until the window is destroyed. Each entry also keeps
-/// the thread that owned the window when it was learned, so a handle that
-/// another thread's window has reused, the first window's destruction
-/// having gone unheard, is learned afresh, as the outpost's arbitration
-/// keeps its verdicts.
+/// What the outpost's arbitration keeps about each window it takes events
+/// from, by the window's handle, until the window is destroyed. Each entry
+/// also keeps the thread that owned the window when it was learned, so a
+/// handle that another thread's window has reused, the first window's
+/// destruction having gone unheard, is learned afresh.
 #[derive(Debug)]
 pub struct WindowCache<T> {
     entries: HashMap<isize, (u32, T)>,

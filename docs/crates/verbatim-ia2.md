@@ -98,7 +98,8 @@ Public API:
   unhooks the change events of windows read through MSAA this way while
   its application's focus and foreground windows are read through UIA
   (`docs/crates/verbatim-outpost.md`, "Event flow").
-- `WindowCache<T>` — what a thread keeps about each window by its handle
+- `WindowCache<T>` — what the outpost's arbitration keeps about each
+  window by its handle
   until the window is destroyed (`forget`): `get_or_learn(hwnd, owner,
   learn)` learns an entry anew when none is kept or the handle is now
   owned by another thread than the one it was learned under, a reused

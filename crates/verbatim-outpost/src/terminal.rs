@@ -244,14 +244,18 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
 }
 
 /// `units`, UTF-16 as a terminal's provider gives its text, as UTF-8
-/// without the spaces that pad its lines,
-/// with each line's padded length, exactly as
-/// `TerminalText::unpadded(&String::from_utf16_lossy(units))` makes it, an
-/// unpaired surrogate becoming U+FFFD, but in one pass and with no copy
-/// of the padded text between.
+/// without the spaces that pad its lines, with each line's padded length,
+/// exactly as `TerminalText::unpadded(&String::from_utf16_lossy(units))`
+/// makes it, an unpaired surrogate becoming U+FFFD, but in one pass and
+/// with no copy of the padded text between. The text starts with room for
+/// one byte a code unit, which ASCII text never outgrows, since padding is
+/// only removed.
 #[must_use]
 pub fn unpadded_utf16(units: &[u16]) -> TerminalText {
-    let mut into = TerminalText::default();
+    let mut into = TerminalText {
+        text: String::with_capacity(units.len()),
+        lengths: Vec::new(),
+    };
     let TerminalText { text, lengths } = &mut into;
     // The line's length so far in characters, padding included; the spaces
     // after its last other character, written only once another follows;

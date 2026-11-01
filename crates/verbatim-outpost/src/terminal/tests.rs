@@ -369,9 +369,10 @@ fn event(
 /// ([`screen_colours`]), each read 50 times after one to warm up.
 /// "Before" converts with two copies and writes into a buffer that keeps
 /// whatever it grew to, as the transport's did; "after" converts in one
-/// pass into new buffers and writes into a buffer kept to `WRITE_KEPT_BYTES` once each write is done, as the
-/// outpost's writer does; "parse" decodes the frame's body and raw section
-/// as Core's reducer does.
+/// pass into new buffers and writes into a buffer kept to
+/// `WRITE_KEPT_BYTES` once each write is done, as the outpost's writer
+/// does; "parse" decodes the frame's body and raw section as Core's
+/// reducer does.
 #[test]
 #[ignore = "a measurement: run in a release build, by hand"]
 fn measure_conversion() {

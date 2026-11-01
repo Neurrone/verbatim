@@ -16,8 +16,11 @@ A rule for every item: the code becomes the plain form, its behaviour stays the 
 ### The terminal conversion's spare buffers
 
 - Today: `crates/verbatim-outpost/src/terminal.rs`, lines 248 to 290, keeps a pool (`SPARE`, at most `SPARES`, two, pairs of buffers, each shrunk to `SPARE_KEPT_BYTES`, 64 KiB), which the outbound writer refills after writing a read (`terminal::recycle`, `crates/verbatim-outpost/src/outpost/outbound.rs`, lines 242 to 245, through `terminal_read`, line 338), so that an ordinary read allocates nothing for its text and screen.
-- Replacement: the pool, `recycle`, `spare`, `SPARES`, `SPARE_KEPT_BYTES` and the outbound `terminal_read` go. `unpadded_utf16(units)` keeps its one pass from UTF-16 to unpadded UTF-8 and returns a new `TerminalText`.
-- What changes: each read allocates its two buffers. A whole-document read of 9,031 rows takes 2.1 to 2.3 ms in the outpost with 108 to 192 page faults, against 1.8 to 2.0 ms with none when the pool's buffers, though shrunk to 64 KiB, were grown again in the heap's reused pages; an ordinary read is unchanged within noise (release, `measure_conversion`, 2026-11-01).
+- Replacement: the pool, `recycle`, `spare`, `SPARES`, `SPARE_KEPT_BYTES` and the outbound `terminal_read` go. `unpadded_utf16(units)` keeps its one pass from UTF-16 to unpadded UTF-8 and returns a new `TerminalText`, its text made with room for one byte a code unit, enough for ASCII text, since padding is only removed (Dickson, 2026-11-01).
+- What changes: each read allocates its two buffers. Measured with `measure_conversion` (release, 2026-11-01), a whole-document read of 9,031 rows in the outpost:
+  - with the pool, 1.77 to 1.97 ms with no page fault, the pool's buffers, though shrunk to 64 KiB, grown again in the heap's reused pages; an ordinary read 18 to 21 µs;
+  - without the pool, its text grown from empty, 2.13 to 2.41 ms with 114 to 159 page faults in Latin text, 2.27 to 2.51 ms with 134 to 153 in Cyrillic; an ordinary read 21 to 24 µs (9 to 14 runs a case);
+  - without the pool, its text sized up front, 1.95 to 2.13 ms with 78 to 80 page faults in Latin text, 2.04 to 2.18 ms with 95 to 98 in Cyrillic; an ordinary read 20 to 27 µs (11 runs a case, six of them interleaved with six of the previous). Sizing up front removes about a third of the page faults; the time difference is not attributed to it, since the comparison's unchanged two-copy conversion also ran 6 to 9% faster in the build that sized the text.
 - Tests: `converted_alike` and its two callers (`a_reads_text_converted_in_one_pass_is_the_two_copies_exactly`, `unpaired_surrogates_and_line_ends_convert_as_the_two_copies`) convert without a reused buffer; the ignored `measure_conversion` measures the one pass into new buffers as "after".
 
 ### Core's small checkpoint
@@ -109,7 +112,7 @@ In this build's documents commit (Dickson, 2026-11-01):
 ## Limitations
 
 - The recorder's hand-written serializer remains, about 270 lines, for its constant cost per string.
-- The relay's copy of a whole-document frame adds about 0.4 ms, and the conversion without a pool about 0.4 ms in the outpost, off the reducer's thread, on the rare reads of a whole document.
+- The relay's copy of a whole-document frame adds about 0.4 ms, and the conversion without a pool about 0.2 to 0.3 ms in the outpost, off the reducer's thread, on the rare reads of a whole document.
 
 ## Decisions
 
