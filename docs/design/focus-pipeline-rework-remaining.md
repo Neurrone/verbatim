@@ -63,6 +63,12 @@ Terms used below beyond the design's: an unread fact is a focus or foreground ev
 
 The commits within the build, each leaving `cargo xtask ci` passing: read requests and the foreground record; repeats; the followed focus and `CoreFocus` removed; the hold; the gap. Repeats come before the followed focus because the unread facts replace what `CoreFocus` told the readers, and the gap comes last because it closes on unread repeats as reports. (Reversed: repeats and the followed focus are built by the ownership refactor.) Repeats and the followed focus waited for the parallel fix build's reused-runtime-id keep and amended MSAA equality ("The followed focus", dependencies).
 
+### A foreground change Core never learns of
+
+Found on 2026-11-01 and not yet designed; the restatement of this build designs it. Switching to an application whose UIA calls are held, then back to the same place in Notepad, speaks nothing (4 of 4 runs, by hand on Dickson's desktop). The busy application's outpost drops its MSAA foreground fact because UIA owns the window ("foreground dropped: UIA owns the window"), and its UIA focus read never answers, so Core's foreground record never leaves Notepad and Core judges the return unchanged. Silence for the busy application itself is this build's rule, as NVDA is silent when its read is given up ("The gap, closed by the outpost's own reports"); the return is the defect. With read requests reversed, nothing in this build tells Core of that foreground change.
+
+First, an NVDA capture of the same sequence: a UIA application held in a provider call (mockapp's `hold`), Alt+Tab to it, then Alt+Tab back to Notepad, for what NVDA says at each switch. The direction to weigh, if NVDA speaks the return: the outpost reports the foreground change from Windows' own state, with no call into the application, so Core's one foreground record follows it.
+
 ### Read requests and Core's foreground
 
 Reversed by Dickson's decisions of 2026-10-30 (`docs/design/ownership.md`): kept only as a record of what was designed; not to be built.
