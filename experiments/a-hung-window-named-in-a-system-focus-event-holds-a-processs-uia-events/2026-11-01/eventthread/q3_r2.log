@@ -1,0 +1,76 @@
+[1793543290946135] q3U: ready
+[1793543290959522] tool find q3U -> 3474782 
+[1793543290974088] q3M: ready
+[1793543290986162] tool find q3M -> 2688850 
+[1793543291004214] q3B: ready
+[1793543291016250] tool find q3B -> 2098914 
+[1793543291066075] D: ev D desk:base t=1793543291065918 pid=7580 name="Taskbar"
+[1793543291066592] D: registered D desk:base in 33.3ms
+[1793543291076726] D: registered D name:2098914 in 10.1ms
+[1793543291076824] D: client-ready D
+[1793543291108937] D0: registered D0 name:2098914 in 13.8ms
+[1793543291109035] D0: client-ready D0
+[1793543291609139] >q3B: set-name btn1 Base0
+[1793543291609988] q3B: applied
+[1793543291611844] D0: ev D0 name:2098914 t=1793543291611736 pid=6684 name="Base0"
+[1793543291612075] D: ev D name:2098914 t=1793543291611991 pid=6684 name="Base0"
+[1793543291912343] >q3U: slow 3000
+[1793543291912683] q3U: applied
+[1793543291912830] >q3U: focus btn1
+[1793543330922488] q3U: applied
+focus raise took 39010 ms
+[1793543331123404] >q3B: set-name btn1 During0
+[1793543331123796] q3B: applied
+[1793543331125289] D: ev D name:2098914 t=1793543331125180 pid=6684 name="During0"
+[1793543331125602] D0: ev D0 name:2098914 t=1793543331125529 pid=6684 name="During0"
+RESULT r2 slow_uia_focus slow=3000 rep 0: D(base 2.9 ms) B's name after 2 ms; D0 after 2 ms; trigger 39211 ms before; focus events so far []
+[1793543331125827] >q3U: slow 0
+[1793543336928949] q3U: applied
+[1793543338929613] >q3B: set-name btn1 Base1
+[1793543338930111] q3B: applied
+[1793543338931607] D0: ev D0 name:2098914 t=1793543338931529 pid=6684 name="Base1"
+[1793543338931866] D: ev D name:2098914 t=1793543338931785 pid=6684 name="Base1"
+[1793543339232315] >q3U: slow 3000
+[1793543339232570] q3U: applied
+[1793543339232667] >q3U: focus slider1
+[1793543378238773] q3U: applied
+focus raise took 39006 ms
+[1793543378439367] >q3B: set-name btn1 During1
+[1793543378439886] q3B: applied
+[1793543378441979] D0: ev D0 name:2098914 t=1793543378441447 pid=6684 name="During1"
+[1793543378442035] D: ev D name:2098914 t=1793543378441783 pid=6684 name="During1"
+RESULT r2 slow_uia_focus slow=3000 rep 1: D(base 2.3 ms) B's name after 3 ms; D0 after 3 ms; trigger 39207 ms before; focus events so far []
+[1793543378442833] >q3U: slow 0
+[1793543384242877] q3U: applied
+[1793543386243312] >q3B: set-name btn1 Base2
+[1793543386244043] q3B: applied
+[1793543386247038] D0: ev D0 name:2098914 t=1793543386246271 pid=6684 name="Base2"
+[1793543386247138] D: ev D name:2098914 t=1793543386246729 pid=6684 name="Base2"
+[1793543386547522] >q3U: slow 3000
+[1793543386547786] q3U: applied
+[1793543386547883] >q3U: focus btn1
+[1793543425552612] q3U: applied
+focus raise took 39005 ms
+[1793543425753009] >q3B: set-name btn1 During2
+[1793543425753366] q3B: applied
+[1793543425754777] D0: ev D0 name:2098914 t=1793543425754655 pid=6684 name="During2"
+[1793543425754941] D: ev D name:2098914 t=1793543425754857 pid=6684 name="During2"
+RESULT r2 slow_uia_focus slow=3000 rep 2: D(base 3.8 ms) B's name after 2 ms; D0 after 2 ms; trigger 39205 ms before; focus events so far []
+[1793543425755069] >q3U: slow 0
+[1793543455557439] q3U: applied
+[1793543457557992] >q3B: set-name btn1 Base3
+[1793543457558605] q3B: applied
+[1793543457560160] D0: ev D0 name:2098914 t=1793543457560078 pid=6684 name="Base3"
+[1793543457560410] D: ev D name:2098914 t=1793543457560355 pid=6684 name="Base3"
+[1793543457860958] >q3U: slow 3000
+[1793543457861132] q3U: applied
+[1793543457861202] >q3U: focus slider1
+[1793543496866619] q3U: applied
+focus raise took 39005 ms
+[1793543497067492] >q3B: set-name btn1 During3
+[1793543497067978] q3B: applied
+[1793543497068960] D0: ev D0 name:2098914 t=1793543497068882 pid=6684 name="During3"
+[1793543500894591] D: ev D name:2098914 t=1793543500894484 pid=6684 name="During3"
+RESULT r2 slow_uia_focus slow=3000 rep 3: D(base 2.4 ms) B's name after 3827 ms; D0 after 1 ms; trigger 39206 ms before; focus events so far []
+[1793543500894788] >q3U: slow 0
+[1793543502870149] q3U: applied

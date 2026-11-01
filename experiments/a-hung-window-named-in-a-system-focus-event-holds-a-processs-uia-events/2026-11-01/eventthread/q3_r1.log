@@ -1,0 +1,44 @@
+[1793543125690621] q3U: ready
+[1793543125702825] tool find q3U -> 6096284 
+[1793543125718599] q3M: ready
+[1793543125731182] tool find q3M -> 4261332 
+[1793543125746872] q3B: ready
+[1793543125759380] tool find q3B -> 3540858 
+[1793543125806238] D: ev D desk:base t=1793543125806130 pid=7580 name="Taskbar"
+[1793543125806747] D: registered D desk:base in 31.3ms
+[1793543125815554] D: registered D name:3540858 in 8.8ms
+[1793543125815648] D: client-ready D
+[1793543125844700] D0: registered D0 name:3540858 in 12.7ms
+[1793543125844806] D0: client-ready D0
+[1793543126345038] >q3B: set-name btn1 Base0
+[1793543126345622] q3B: applied
+[1793543126347096] D: ev D name:3540858 t=1793543126347029 pid=8796 name="Base0"
+[1793543126347397] D0: ev D0 name:3540858 t=1793543126347333 pid=8796 name="Base0"
+[1793543126647352] >q3M: slow 3000
+[1793543126647720] q3M: applied
+[1793543126647909] >q3M: focus btn1
+[1793543126650651] q3M: applied
+[1793543126851742] >q3B: set-name btn1 During0
+[1793543126852303] q3B: applied
+[1793543126854381] D0: ev D0 name:3540858 t=1793543126853885 pid=8796 name="During0"
+[1793543126854450] D: ev D name:3540858 t=1793543126854195 pid=8796 name="During0"
+RESULT r1 slow_msaa_focus slow=3000 rep 0: D(base 2.1 ms) B's name after 3 ms; D0 after 3 ms; trigger 204 ms before; focus events so far []
+[1793543126854881] >q3M: slow 0
+[1793543129653982] q3M: applied
+[1793543129663514] D: ev D desk:base t=1793543129663387 pid=9940 name="Original Name"
+late D: ev D desk:base t=1793543129663387 pid=9940 name="Original Name"
+[1793543131654486] >q3B: set-name btn1 Base1
+[1793543131654905] q3B: applied
+[1793543131656462] D: ev D name:3540858 t=1793543131656386 pid=8796 name="Base1"
+[1793543131656698] D0: ev D0 name:3540858 t=1793543131656630 pid=8796 name="Base1"
+[1793543131956893] >q3M: slow 3000
+[1793543131957057] q3M: applied
+[1793543131957130] >q3M: focus slider1
+[1793543131957425] q3M: applied
+[1793543132157978] >q3B: set-name btn1 During1
+[1793543132158565] q3B: applied
+[1793543132159744] D0: ev D0 name:3540858 t=1793543132159540 pid=8796 name="During1"
+[1793543133961150] D: ev D name:3540858 t=1793543133960936 pid=8796 name="During1"
+RESULT r1 slow_msaa_focus slow=3000 rep 1: D(base 2.0 ms) B's name after 1803 ms; D0 after 2 ms; trigger 201 ms before; focus events so far []
+[1793543133961330] >q3M: slow 0
+[1793543155962218] q3M: applied

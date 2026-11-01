@@ -1,0 +1,101 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+
+
+
+
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+WARNING: Process 6808 is not attached as a debuggee
+         The process can be examined but debug events will not be received
+.........................
+(1a98.1a0): Wake debugger - code 80000007 (first chance)
+ntdll!NtWaitForSingleObject+0x14:
+00007ffb`cd4a1dd4 c3              ret
+0:000> cdb: Reading initial command '.lines -d; ~*kn 40; qd'
+Line number information will not be loaded
+
+.  0  Id: 1a98.1a0 Suspend: 1 Teb: 00000077`cca6f000 Unfrozen "main"
+ # Child-SP          RetAddr               Call Site
+00 00000077`cccfd638 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+*** WARNING: Unable to verify checksum for C:\Users\Dickson\Desktop\projects\verbatim\target\debug\mockapp.exe
+01 00000077`cccfd640 00007ff6`8d91c2ba     KERNELBASE!WaitForSingleObjectEx+0xaf
+02 00000077`cccfd6e0 00007ff6`8d7d2642     mockapp+0x1dc2ba
+03 00000077`cccfd760 00007ff6`8d7d230e     mockapp+0x92642
+04 00000077`cccfd880 00007ff6`8d77071b     mockapp+0x9230e
+05 00000077`cccfd8b0 00007ffb`cb3352e6     mockapp+0x3071b
+06 00000077`cccfdbd0 00007ffb`cb334b6c     user32!UserCallWinProcCheckWow+0x356
+07 00000077`cccfdd30 00007ffb`cb35f593     user32!DispatchClientMessage+0x9c
+08 00000077`cccfdd90 00007ffb`cd4a5d94     user32!_fnDWORD+0x33
+09 00000077`cccfddf0 00007ffb`cb021364     ntdll!KiUserCallbackDispatcherContinue
+0a 00000077`cccfde78 00007ffb`cb34aea2     win32u!NtUserGetMessage+0x14
+0b 00000077`cccfde80 00007ff6`8d7ccf15     user32!GetMessageW+0x22
+0c 00000077`cccfdee0 00007ff6`8d76ed54     mockapp+0x8cf15
+0d 00000077`cccfdf40 00007ff6`8d7dee4d     mockapp+0x2ed54
+0e 00000077`cccfeba0 00007ff6`8d7df0ce     mockapp+0x9ee4d
+0f 00000077`cccff8c0 00007ff6`8d7b84a6     mockapp+0x9f0ce
+10 00000077`cccff9b0 00007ff6`8d77f849     mockapp+0x784a6
+11 00000077`cccff9e0 00007ff6`8d796f6c     mockapp+0x3f849
+12 00000077`cccffa10 00007ff6`8d917810     mockapp+0x56f6c
+13 00000077`cccffa40 00007ff6`8d78d267     mockapp+0x1d7810
+14 00000077`cccffad0 00007ff6`8d7e8a09     mockapp+0x4d267
+15 00000077`cccffb10 00007ff6`8d935def     mockapp+0xa8a09
+16 00000077`cccffb40 00007ffb`cbe8dda7     mockapp+0x1f5def
+17 00000077`cccffb80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+18 00000077`cccffbb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   1  Id: 1a98.cdc Suspend: 1 Teb: 00000077`cca71000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000077`ccdff478 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000077`ccdff480 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000077`ccdff7e0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000077`ccdff810 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 1a98.1f58 Suspend: 1 Teb: 00000077`cca73000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000077`cceff778 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000077`cceff780 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000077`cceffae0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000077`cceffb10 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 1a98.276c Suspend: 1 Teb: 00000077`cca75000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000077`ccfffba8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000077`ccfffbb0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000077`ccffff10 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000077`ccffff40 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   4  Id: 1a98.2344 Suspend: 1 Teb: 00000077`cca77000 Unfrozen "mockapp-stdin"
+ # Child-SP          RetAddr               Call Site
+00 00000077`cd1fce78 00007ff6`8d9159d1     ntdll!NtReadFile+0x14
+01 00000077`cd1fce80 00007ff6`8d915bd1     mockapp+0x1d59d1
+02 00000077`cd1fcf10 00007ff6`8d91e897     mockapp+0x1d5bd1
+03 00000077`cd1fcf80 00007ff6`8d913024     mockapp+0x1de897
+04 00000077`cd1ff020 00007ff6`8d91f4a0     mockapp+0x1d3024
+05 00000077`cd1ff0e0 00007ff6`8d7fa19e     mockapp+0x1df4a0
+06 00000077`cd1ff160 00007ff6`8d7b0639     mockapp+0xba19e
+07 00000077`cd1ff2b0 00007ff6`8d76ba4f     mockapp+0x70639
+08 00000077`cd1ff5a0 00007ff6`8d77f869     mockapp+0x2ba4f
+09 00000077`cd1ff5e0 00007ff6`8d7ec62c     mockapp+0x3f869
+0a 00000077`cd1ff610 00007ff6`8d7efca1     mockapp+0xac62c
+0b 00000077`cd1ff6a0 00007ff6`8d7e9af1     mockapp+0xafca1
+0c 00000077`cd1ff710 00007ff6`8d7efe93     mockapp+0xa9af1
+0d 00000077`cd1ff770 00007ff6`8d7ec3c3     mockapp+0xafe93
+0e 00000077`cd1ff7c0 00007ff6`8d7b3179     mockapp+0xac3c3
+0f 00000077`cd1ff980 00007ff6`8d91d503     mockapp+0x73179
+10 00000077`cd1ff9b0 00007ffb`cbe8dda7     mockapp+0x1dd503
+11 00000077`cd1ffa60 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+12 00000077`cd1ffa90 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+quit:

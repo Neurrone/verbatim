@@ -1,0 +1,1207 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+
+
+
+
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+(2230.1d2c): Break instruction exception - code 80000003 (first chance)
+ntdll!DbgBreakPoint:
+00007ffb`cd463f40 cc              int     3
+0:012> .lines -d
+Line number information will not be loaded
+0:012> bm focusproto!*HandleFocusChangedEvent* ".echotime; .printf \"=== HANDLER-FOCUS tid=%x\n\", @$tid; kc 14; gc"
+*** WARNING: Unable to verify checksum for <scratch folder>\fp\target\debug\focusproto.exe
+  0: 00007ff6`2429f870 @!"focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>"
+  1: 00007ff6`24293050 @!"focusproto!focusproto::impl$1::HandleFocusChangedEvent"
+0:012> bm focusproto!*HandlePropertyChangedEvent* ".echotime; .printf \"=== HANDLER-NAME tid=%x\n\", @$tid; gc"
+  2: 00007ff6`2429f990 @!"focusproto!windows::Win32::UI::Accessibility::impl$346::new::HandlePropertyChangedEvent<focusproto::Prop_Impl,-1>"
+  3: 00007ff6`24292710 @!"focusproto!focusproto::impl$3::HandlePropertyChangedEvent"
+0:012> bp uiautomationcore!FocusTracker::HandleFocusChange ".echotime; .printf \"=== TRACKER tid=%x\n\", @$tid; gc"
+0:012> bp user32!SendMessageTimeoutW ".echotime; .printf \"=== SMTO tid=%x hwnd=%p msg=%x\n\", @$tid, @rcx, @edx; gc"
+0:012> .echo ATTACHED
+ATTACHED
+0:012> g
+Debugger (not debuggee) time: Mon Nov  2 01:22:44.662 2026 (UTC + 8:00)
+=== TRACKER tid=2374 Debugger (not debuggee) time: Mon Nov  2 01:22:44.664 2026 (UTC + 8:00)
+=== SMTO tid=2374 hwnd=000000000112031e msg=3d mincore\com\oleaut32\dispatch\ups.cpp(2126)\oleaut32.dll!00007FFBCBC5D72D: (caller: 00007FFBCBC5DDB2) ReturnHr(2) tid(20e0) 8002801D Library not registered.
+mincore\com\oleaut32\dispatch\ups.cpp(2126)\oleaut32.dll!00007FFBCBC5D72D: (caller: 00007FFBCBC5DDB2) ReturnHr(3) tid(20e0) 8002801D Library not registered.
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.568 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000030502 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.569 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000030502 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.571 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.572 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.573 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.602 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.610 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.618 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002df04f2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.619 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002df04f2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.622 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.623 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.625 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.633 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.636 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.638 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002df04f2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.640 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002df04f2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.641 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.646 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.648 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.653 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002df04f2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.654 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002df04f2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.660 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.663 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.667 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.671 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.674 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.677 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000005106be msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.678 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000005106be msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.680 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.681 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.683 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.690 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.691 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.694 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000005106be msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.699 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000005106be msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.701 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.702 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.704 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.713 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000005106be msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.714 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000005106be msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.716 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.716 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.722 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.726 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.727 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.731 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000560732 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.732 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000560732 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.733 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.734 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.735 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.743 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.745 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.755 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000560732 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.756 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000560732 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.758 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.759 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.764 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.767 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.769 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.776 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000560732 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.777 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000560732 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.778 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.779 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.780 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.787 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006c0398 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.788 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006c0398 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.790 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.791 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.796 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.800 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.802 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.807 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006c0398 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.808 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006c0398 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.810 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.811 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.812 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.818 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006c0398 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.819 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006c0398 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.823 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.825 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.826 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.831 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.834 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.840 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000001b02f8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.841 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000001b02f8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.843 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.844 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.845 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.852 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.853 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.862 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000001b02f8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.863 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000001b02f8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.865 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.870 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.871 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.878 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.880 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.882 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000001b02f8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.887 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000001b02f8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.888 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.889 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.890 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.892 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.893 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.894 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.895 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.895 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.900 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.901 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.904 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.905 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.906 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.907 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.908 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.910 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.911 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.912 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.913 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.914 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.916 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.918 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.920 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000018205d4 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.921 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000018205d4 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.922 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.924 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.925 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.927 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.928 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.931 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000018205d4 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.931 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000018205d4 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.933 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.934 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.934 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.936 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000018205d4 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.938 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000018205d4 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.939 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.940 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.941 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.943 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.945 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.947 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.948 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.950 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.951 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.951 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.955 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.956 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.960 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.961 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.962 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.964 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.964 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.967 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.968 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.969 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.970 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.971 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.973 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.975 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.978 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.979 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.980 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.981 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.982 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.984 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.987 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.990 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.991 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.993 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.994 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:45.995 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:45.998 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:45.999 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.002 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.003 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.004 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.005 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.006 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.008 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000460706 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.008 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000460706 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.010 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.011 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.012 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.015 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.016 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.018 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000460706 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.019 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000460706 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.020 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.021 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.022 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.025 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000460706 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.025 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000460706 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.027 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.028 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.029 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.031 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.033 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.035 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000b4b0744 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.037 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000b4b0744 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.038 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.039 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.040 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.042 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.043 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.047 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000b4b0744 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.048 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000b4b0744 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.049 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.050 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.051 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.053 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.055 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.057 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000b4b0744 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.059 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000b4b0744 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.060 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.060 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.061 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.063 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.064 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.066 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.066 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.067 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.070 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.071 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.074 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.075 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.076 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.077 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.078 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.081 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.082 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.085 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.086 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.087 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.088 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.089 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.090 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.091 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.093 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.093 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.094 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.096 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.098 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.100 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.101 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.102 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.103 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.104 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.106 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.106 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.108 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.109 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000000403aa msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.110 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=000000000001000c msg=3d Debugger (not debuggee) time: Mon Nov  2 01:22:46.112 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.113 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=6e8 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::OpenShowWinEventCallbackThreadProc
+ntdll!RtlpTpWorkCallback
+ntdll!TppWorkerThread
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.313 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006105b2 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.317 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000500722 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.321 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000006005c8 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.329 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000002400730 msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:46.331 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=00000000040105fa msg=164 (2230.2374): C++ EH exception - code e06d7363 (first chance)
+(2230.2374): C++ EH exception - code e06d7363 (first chance)
+Debugger (not debuggee) time: Mon Nov  2 01:22:46.966 2026 (UTC + 8:00)
+=== SMTO tid=2374 hwnd=000000000112031e msg=c1aa Debugger (not debuggee) time: Mon Nov  2 01:22:47.100 2026 (UTC + 8:00)
+=== SMTO tid=6e8 hwnd=0000000000030502 msg=164 (2230.2374): C++ EH exception - code e06d7363 (first chance)
+(2230.2374): C++ EH exception - code e06d7363 (first chance)
+(2230.2374): C++ EH exception - code e06d7363 (first chance)
+(2230.2374): C++ EH exception - code e06d7363 (first chance)
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.974 2026 (UTC + 8:00)
+=== SMTO tid=2374 hwnd=000000000011055a msg=164 Debugger (not debuggee) time: Mon Nov  2 01:22:48.975 2026 (UTC + 8:00)
+=== HANDLER-NAME tid=2374 Debugger (not debuggee) time: Mon Nov  2 01:22:48.976 2026 (UTC + 8:00)
+=== HANDLER-NAME tid=2374 Debugger (not debuggee) time: Mon Nov  2 01:22:48.977 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.979 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.980 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.981 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.982 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.984 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.985 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.987 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.988 2026 (UTC + 8:00)
+=== TRACKER tid=2374 Debugger (not debuggee) time: Mon Nov  2 01:22:48.989 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::NotifyFocusHandlers
+uiautomationcore!FocusTracker::GetFocusedElementFromWinEvent
+uiautomationcore!FocusTracker::HandleFocusChange
+uiautomationcore!FocusTracker::WinEventThreadProcCallback
+uiautomationcore!WinEventTracker::WinEventThreadProc
+uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.992 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!ClientEventManager::NotifyFocusHandlers
+uiautomationcore!FocusTracker::GetFocusedElementFromWinEvent
+uiautomationcore!FocusTracker::HandleFocusChange
+uiautomationcore!FocusTracker::WinEventThreadProcCallback
+uiautomationcore!WinEventTracker::WinEventThreadProc
+uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.994 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.996 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.997 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:48.998 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:49.000 2026 (UTC + 8:00)
+=== TRACKER tid=2374 Debugger (not debuggee) time: Mon Nov  2 01:22:49.002 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!FocusTracker::HandleFocusChange
+uiautomationcore!FocusTracker::WinEventThreadProcCallback
+uiautomationcore!WinEventTracker::WinEventThreadProc
+uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:49.004 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!FocusTracker::HandleFocusChange
+uiautomationcore!FocusTracker::WinEventThreadProcCallback
+uiautomationcore!WinEventTracker::WinEventThreadProc
+uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:49.007 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+Debugger (not debuggee) time: Mon Nov  2 01:22:49.008 2026 (UTC + 8:00)
+=== HANDLER-FOCUS tid=2374 Call Site
+focusproto!focusproto::impl$1::HandleFocusChangedEvent
+focusproto!windows::Win32::UI::Accessibility::impl$305::new::HandleFocusChangedEvent<focusproto::Focus_Impl,-1>
+uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent
+uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent
+uiautomationcore!SavedEvent::OnMessage
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+(2230.1e14): Break instruction exception - code 80000003 (first chance)
+ntdll!DbgBreakPoint:
+00007ffb`cd463f40 cc              int     3
+0:015> 0:015> quit:

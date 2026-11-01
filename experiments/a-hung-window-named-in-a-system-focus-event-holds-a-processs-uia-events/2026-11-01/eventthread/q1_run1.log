@@ -1,0 +1,32 @@
+[1793542826148680] q1TV: ready
+[1793542826165449] tool find q1TV -> 2623272 
+[1793542826180725] q1M: ready
+[1793542826192308] tool find q1M -> 2557352 
+[1793542826205726] q1B: ready
+[1793542826216825] tool find q1B -> 2295418 
+[1793542826227713] tool findchild 2623272 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 3016102 
+[1793542826273635] D: registered D deskprop:base in 30.7ms
+[1793542826283579] D: registered D name:2295418 in 9.9ms
+[1793542826283685] D: client-ready D
+[1793542826312010] D0: registered D0 name:2295418 in 12.5ms
+[1793542826312120] D0: client-ready D0
+[1793542826812236] >q1B: set-name btn1 Base0
+[1793542826812860] q1B: applied
+[1793542826814446] D0: ev D0 name:2295418 t=1793542826814369 pid=2844 name="Base0"
+[1793542826814645] D: ev D name:2295418 t=1793542826814593 pid=2844 name="Base0"
+[1793542827127427] tool winevent 3016102 800C -4 0 -> winevent sent t=1793542827125657 
+[1793542827328288] >q1B: set-name btn1 During0
+[1793542827328806] q1B: applied
+[1793542827330713] D0: ev D0 name:2295418 t=1793542827330260 pid=2844 name="During0"
+[1793542827330768] D: ev D name:2295418 t=1793542827330536 pid=2844 name="During0"
+RESULT run1 ctl_tree rep 0: D(base 2.4 ms) B's name after 2 ms; D0 after 2 ms; trigger 213 ms before B's raise
+[1793542828832085] >q1B: set-name btn1 Base1
+[1793542828832538] q1B: applied
+[1793542828834162] D0: ev D0 name:2295418 t=1793542828834087 pid=2844 name="Base1"
+[1793542828834438] D: ev D name:2295418 t=1793542828834368 pid=2844 name="Base1"
+[1793542829145227] tool winevent 3016102 800C -4 0 -> winevent sent t=1793542829143081 
+[1793542829345400] >q1B: set-name btn1 During1
+[1793542829345824] q1B: applied
+[1793542829347335] D0: ev D0 name:2295418 t=1793542829347263 pid=2844 name="During1"
+[1793542829347532] D: ev D name:2295418 t=1793542829347489 pid=2844 name="During1"
+RESULT run1 ctl_tree rep 1: D(base 2.4 ms) B's name after 2 ms; D0 after 2 ms; trigger 211 ms before B's raise

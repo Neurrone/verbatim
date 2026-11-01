@@ -1,0 +1,2 @@
+RESULT run4 slow_msaa rep 0: D(base 2.4 ms) B's name after 2 ms; D0 after 2 ms; trigger 201 ms before B's raise
+RESULT run4 slow_msaa rep 1: D(base 1.7 ms) B's name after 2 ms; D0 after 2 ms; trigger 200 ms before B's raise

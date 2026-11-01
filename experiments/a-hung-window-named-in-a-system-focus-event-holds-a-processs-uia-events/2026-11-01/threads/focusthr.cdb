@@ -1,0 +1,7 @@
+.lines -d
+bm focusproto!*HandleFocusChangedEvent* ".echotime; .printf \"=== HANDLER-FOCUS tid=%x\n\", @$tid; kc 14; gc"
+bm focusproto!*HandlePropertyChangedEvent* ".echotime; .printf \"=== HANDLER-NAME tid=%x\n\", @$tid; gc"
+bp uiautomationcore!FocusTracker::HandleFocusChange ".echotime; .printf \"=== TRACKER tid=%x\n\", @$tid; gc"
+bp user32!SendMessageTimeoutW ".echotime; .printf \"=== SMTO tid=%x hwnd=%p msg=%x\n\", @$tid, @rcx, @edx; gc"
+.echo ATTACHED
+g

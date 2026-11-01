@@ -1,0 +1,4 @@
+RESULT run3 stall_tree rep 0: D(base 2.8 ms) B's name after 2 ms; D0 after 2 ms; trigger 213 ms before B's raise
+RESULT run3 stall_tree rep 1: D(base 1.7 ms) B's name after 3 ms; D0 after 2 ms; trigger 217 ms before B's raise
+RESULT run3 stall_win rep 0: D(base 3.1 ms) B's name after 2 ms; D0 after 2 ms; trigger 212 ms before B's raise
+RESULT run3 stall_win rep 1: D(base 2.0 ms) B's name after 2 ms; D0 after 2 ms; trigger 222 ms before B's raise

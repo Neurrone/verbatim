@@ -1,0 +1,19 @@
+2026-11-02, the hungmsaa runs at 00:56; the desktop was found locked at 00:58 and when the lock began is not known, so these may have run on a locked desktop. Copied from the session's output.
+python states.py hidden (listener lines; the stand-in lines are from the first attempt, whose listener lines were void because B was not yet shown)
+RESULT hidden listener: baseline 2.09 ms, during the stall 3803.956 ms
+RESULT hidden listener: baseline 1.897 ms, during the stall 3816.007 ms
+RESULT hidden listener: baseline 2.407 ms, during the stall 3827.311 ms
+RESULT hidden stand-in: baseline 1.7 ms, during the stall 3806 ms
+RESULT hidden stand-in: baseline 1.7 ms, during the stall 3821 ms
+RESULT hidden stand-in: baseline 1.8 ms, during the stall 3813 ms
+python states.py shown
+RESULT shown listener: baseline 7.099 ms, during the stall 3822.268 ms
+RESULT shown listener: baseline 2.386 ms, during the stall 3807.26 ms
+RESULT shown listener: baseline 1.635 ms, during the stall 3811.233 ms
+RESULT shown stand-in: baseline 2.2 ms, during the stall 3814 ms
+RESULT shown stand-in: baseline 1.8 ms, during the stall 3819 ms
+RESULT shown stand-in: baseline 2.3 ms, during the stall 3811 ms
+python states.py hungmsaa
+RESULT hungmsaa listener: baseline 1.685 ms, during the stall 7821.378 ms
+RESULT hungmsaa listener: baseline 1.75 ms, during the stall 7833.508 ms
+RESULT hungmsaa listener: baseline 2.334 ms, during the stall 7831.879 ms

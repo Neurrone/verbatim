@@ -1,0 +1,3 @@
+RESULT selfbusy rep 0: hung_at_trigger=0 baseline 1.8 ms; held name after 1 ms; 502 ms into the 15000 ms stall; trigger at 300 ms
+RESULT selfbusy rep 1: hung_at_trigger=0 baseline 1.4 ms; held name after 2 ms; 502 ms into the 15000 ms stall; trigger at 300 ms
+RESULT selfbusy rep 2: hung_at_trigger=0 baseline 1.3 ms; held name after 1 ms; 502 ms into the 15000 ms stall; trigger at 300 ms

@@ -1,0 +1,44 @@
+[1793543970697785] qlA: ready
+[1793543970710821] tool find qlA -> 983858 
+[1793543970725798] qlB: ready
+[1793543970739044] tool find qlB -> 15009180 
+[1793543970777174] D: registered D qname:983858 in 21.0ms
+[1793543970778683] D: registered D qtext:983858 in 1.5ms
+[1793543970788359] D: registered D name:15009180 in 9.6ms
+[1793543970788472] D: client-ready D
+[1793543971288698] >qlB: set-name btn1 Warm
+[1793543971289445] qlB: applied
+[1793543971290614] D: ev D name:15009180 t=1793543971290567 pid=7932 name="Warm"
+[1793543971589731] >qlA: flood 30000 0.1 name
+[1793543974589991] qlA: applied
+one_c0_10k: flood of 30000 at 0.1 ms raised in 3.00 s
+[1793543974590234] >qlB: set-name btn1 L1
+[1793543974590491] qlB: applied
+[1793543974841017] >D: stats
+[1793543974841259] D: stats D name:15009180=n1:first1793543971290567:last1793543971290567 qname:983858=n95:first1793543971591708:last1793543971700539
+[1793543974841494] >D: cpu
+[1793543974841589] D: cpu D proc_user=3375.0 proc_kernel=265.6 worker7600_user=3031.2 worker7600_kernel=140.6 worker7600_cycles=11933211535
+one_c0_10k: +0.3 s after the flood: A's events received 95; worker CPU 3172 ms; B probes sent 1, delivered 0
+[1793543974841837] >qlB: set-name btn1 L2
+[1793543974842174] qlB: applied
+[1793543975092398] >qlB: set-name btn1 L3
+[1793543975092776] qlB: applied
+[1793543975343349] >qlB: set-name btn1 L4
+[1793543975343910] qlB: applied
+[1793543975594253] >qlB: set-name btn1 L5
+[1793543975594779] qlB: applied
+[1793543975845336] >qlB: set-name btn1 L6
+[1793543975845722] qlB: applied
+[1793543976095967] >qlB: set-name btn1 L7
+[1793543976096498] qlB: applied
+[1793543976347073] >qlB: set-name btn1 L8
+[1793543976347450] qlB: applied
+[1793543976597848] >qlB: set-name btn1 L9
+[1793543976598264] qlB: applied
+[1793543976848846] >D: stats
+[1793543976848977] D: stats D name:15009180=n1:first1793543971290567:last1793543971290567 qname:983858=n95:first1793543971591708:last1793543971700539
+[1793543976849061] >D: cpu
+[1793543976849173] D: cpu D proc_user=5312.5 proc_kernel=328.1 worker7600_user=4968.8 worker7600_kernel=203.1 worker7600_cycles=19488156325
+one_c0_10k: +2.3 s after the flood: A's events received 95; worker CPU 5172 ms; B probes sent 9, delivered 0
+[1793543976849353] stacks q2long_one_c0_10k pid=8348 took 31166 ms -> <scratch folder>\eventthread\stacks\q2long_one_c0_10k.txt
+one_c0_10k: no B probe delivered in 30.0 s

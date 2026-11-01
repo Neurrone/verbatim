@@ -1,0 +1,348 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+
+
+
+
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+CommandLine: <scratch folder>/fp/target/debug/focusproto.exe client D to=2000 desk:base
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+(2ec.1dac): Break instruction exception - code 80000003 (first chance)
+ntdll!LdrpDoDebuggerBreak+0x35:
+00007ffb`cd4626c9 cc              int     3
+0:000> .lines -d
+Line number information will not be loaded
+0:000> sxe -c ".printf \"=== THREAD-CREATED tid=%x\n\", @$tid; ~.; gc" ct
+0:000> sxe -c ".printf \"=== THREAD-EXITED tid=%x\n\", @$tid; gc" et
+0:000> sxe ld:uiautomationcore
+0:000> bp ntdll!NtCreateThreadEx ".printf \"=== NtCreateThreadEx from tid=%x\n\", @$tid; kc 25; gc"
+0:000> bp ntdll!NtCreateWorkerFactory ".printf \"=== NtCreateWorkerFactory from tid=%x\n\", @$tid; kc 25; gc"
+0:000> bp combase!CoCreateInstance ".printf \"=== MARK CoCreateInstance tid=%x\n\", @$tid; gc"
+0:000> g
+=== MARK CoCreateInstance tid=*** WARNING: Unable to verify checksum for focusproto.exe
+1dac ModLoad: 00007ffb`cbf70000 00007ffb`cc01f000   C:\WINDOWS\System32\clbcatq.dll
+=== MARK CoCreateInstance tid=1dac === MARK CoCreateInstance tid=1dac ModLoad: 00007ffb`cbdb0000 00007ffb`cbe58000   C:\WINDOWS\System32\sechost.dll
+=== NtCreateWorkerFactory from tid=1dac Call Site
+ntdll!NtCreateWorkerFactory
+ntdll!TpAllocPoolInternal
+KERNELBASE!CreateThreadpool
+RPCRT4!RPC_THREAD_POOL::InitializeCallbackEnvironmentIfNecessary
+RPCRT4!RPC_THREAD_POOL::CreateTimer
+RPCRT4!GarbageCollectionNeeded
+RPCRT4!LRPC_CASSOCIATION::RemoveReference
+RPCRT4!LRPC_CCALL::~LRPC_CCALL
+RPCRT4!LRPC_CCALL::`vector deleting destructor'
+RPCRT4!LRPC_CCALL::FreeObject
+RPCRT4!REFERENCED_OBJECT::RemoveReference
+RPCRT4!LRPC_CCALL::FreeBuffer
+RPCRT4!I_RpcFreeBuffer
+RPCRT4!Ndr64pClientFinally
+RPCRT4!NdrpClientCall3
+RPCRT4!NdrClientCall3
+sechost!LsaLookupClose
+sechost!LookupAccountSidInternal
+sechost!LookupAccountSidLocalW
+combase!LookupPrincName
+combase!CoInitializeSecurity
+combase!InitializeSecurity
+combase!CComApartment::InitRemoting
+combase!CComApartment::StartServer
+combase!InitChannelIfNecessary
+combase!CGIPTable::RegisterInterfaceInGlobalHlp
+combase!CGIPTable::RegisterInterfaceInGlobal
+uiautomationcore!BlockingCoreDispatcher::CreateAndRegisterBlockingCore
+uiautomationcore!BlockingCoreDispatcher::FinalConstruct
+uiautomationcore!CUIAutomation8::FinalConstruct
+uiautomationcore!ATL::CComCreator<ATL::CComObject<CUIAutomation8> >::CreateInstance
+uiautomationcore!ATL::CComClassFactory::CreateInstance
+combase!CServerContextActivator::CreateInstance
+combase!ActivationPropertiesIn::DelegateCreateInstance
+combase!CApartmentActivator::CreateInstance
+combase!CProcessActivator::CCICallback
+combase!CProcessActivator::AttemptActivation
+=== NtCreateThreadEx from tid=1dac Call Site
+ntdll!NtCreateThreadEx
+KERNELBASE!CreateRemoteThreadEx
+KERNEL32!CreateThreadStub
+combase!CacheCreateThread
+combase!CROIDTable::EnsureWorkerThread
+combase!CROIDTable::NotifyWorkWaiting
+combase!CComApartment::InitRemoting
+combase!CComApartment::EnsureNAInited
+combase!CComApartment::EnsureLinkToPrimaryOxid
+combase!CComApartment::CallTheResolver
+combase!CComApartment::InitRemoting
+combase!CComApartment::StartServer
+combase!InitChannelIfNecessary
+combase!CGIPTable::RegisterInterfaceInGlobalHlp
+combase!CGIPTable::RegisterInterfaceInGlobal
+uiautomationcore!BlockingCoreDispatcher::CreateAndRegisterBlockingCore
+uiautomationcore!BlockingCoreDispatcher::FinalConstruct
+uiautomationcore!CUIAutomation8::FinalConstruct
+uiautomationcore!ATL::CComCreator<ATL::CComObject<CUIAutomation8> >::CreateInstance
+uiautomationcore!ATL::CComClassFactory::CreateInstance
+combase!CServerContextActivator::CreateInstance
+combase!ActivationPropertiesIn::DelegateCreateInstance
+combase!CApartmentActivator::CreateInstance
+combase!CProcessActivator::CCICallback
+combase!CProcessActivator::AttemptActivation
+combase!CProcessActivator::ActivateByContext
+combase!CProcessActivator::CreateInstance
+combase!ActivationPropertiesIn::DelegateCreateInstance
+combase!CClientContextActivator::CreateInstance
+combase!ActivationPropertiesIn::DelegateCreateInstance
+combase!ICoCreateInstanceExWorker
+combase!CComActivator::DoCreateInstance
+combase!CoCreateInstanceExCopy
+combase!CoCreateInstance
+focusproto!windows::Win32::System::Com::CoCreateInstance<enum2$<core::option::Option<ref$<windows_core::unknown::IUnknown> > >,windows::Win32::UI::Accessibility::IUIAutomation>
+focusproto!focusproto::make_uia_inner
+focusproto!focusproto::make_uia_with
+=== THREAD-CREATED tid=ce0 .  4  Id: 2ec.ce0 Suspend: 1 Teb: 000000ac`4af65000 Unfrozen
+      Start: combase!CRpcThreadCache::RpcWorkerThreadEntry (00007ffb`cc9c21e0)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== THREAD-CREATED tid=cdc .  5  Id: 2ec.cdc Suspend: 1 Teb: 000000ac`4af67000 Unfrozen
+      Start: ntdll!TppWorkerThread (00007ffb`cd364990)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== THREAD-CREATED tid=2668 .  6  Id: 2ec.2668 Suspend: 1 Teb: 000000ac`4af69000 Unfrozen
+      Start: ntdll!TppWorkerThread (00007ffb`cd364990)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== MARK CoCreateInstance tid=1dac === MARK CoCreateInstance tid=1dac ModLoad: 00007ffb`b7e60000 00007ffb`b7ed5000   C:\WINDOWS\SYSTEM32\OLEACC.dll
+=== MARK CoCreateInstance tid=1dac === NtCreateThreadEx from tid=1dac Call Site
+ntdll!NtCreateThreadEx
+KERNELBASE!CreateRemoteThreadEx
+KERNEL32!CreateThreadStub
+uiautomationcore!NavigationHelperProxyOneCore::Initialize
+uiautomationcore!NavigationHelperProxyOneCore::GetInstance
+uiautomationcore!NavigationHelperProxyOneCore::GetInstance
+uiautomationcore!HwndProxy::HwndProxy
+uiautomationcore!ProviderEntryPoint::GetProviderProxy
+uiautomationcore!UiaNodeFactory::CompleteNodeInfo
+uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+uiautomationcore!UiaNodeFactory::FromProviderEntryPoint
+uiautomationcore!CUIAutomation::GetClientRootNode
+uiautomationcore!CUIAutomation::GetRootElement
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+focusproto!focusproto::client
+focusproto!focusproto::main
+focusproto!core::ops::function::FnOnce::call_once<void (*)(),tuple$<> >
+focusproto!std::sys::backtrace::__rust_begin_short_backtrace<void (*)(),tuple$<> >
+focusproto!std::rt::lang_start::closure$0<tuple$<> >
+focusproto!std::rt::lang_start_internal::closure$0
+focusproto!std::panicking::catch_unwind::do_call
+focusproto!std::panicking::catch_unwind
+focusproto!std::panic::catch_unwind
+focusproto!std::rt::lang_start_internal
+focusproto!std::rt::lang_start<tuple$<> >
+focusproto!main
+focusproto!invoke_main
+focusproto!__scrt_common_main_seh
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+=== THREAD-CREATED tid=1a98 .  7  Id: 2ec.1a98 Suspend: 1 Teb: 000000ac`4af6b000 Unfrozen
+      Start: uiautomationcore!NavigationHelperProxyOneCore::s_CoreUIThreadProc (00007ffb`a98ac590)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== MARK CoCreateInstance tid=1dac === MARK CoCreateInstance tid=1dac === MARK CoCreateInstance tid=1dac ModLoad: 00007ffb`aaf40000 00007ffb`ab01b000   C:\Windows\System32\UiaManager.dll
+=== MARK CoCreateInstance tid=1dac === MARK CoCreateInstance tid=1dac ModLoad: 00007ffb`c74c0000 00007ffb`c74ea000   C:\WINDOWS\SYSTEM32\wtsapi32.dll
+=== MARK CoCreateInstance tid=1dac === NtCreateThreadEx from tid=1dac Call Site
+ntdll!NtCreateThreadEx
+KERNELBASE!CreateRemoteThreadEx
+KERNEL32!CreateThreadStub
+uiautomationcore!OverlappedIOManager::AddChannel_AnyThread
+uiautomationcore!OverlappedIOManager::AddReadWriteChannel
+uiautomationcore!ChannelBasedClientConnectionManager::CreateLowBoxChannelBasedClientConnection
+uiautomationcore!ChannelBasedClientConnectionManager::CreateChannelBasedConnection
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!UiaNodeFactory::CompleteNodeInfo
+uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+uiautomationcore!UiaNodeFactory::FromProviderEntryPoint
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+focusproto!focusproto::client
+focusproto!focusproto::main
+focusproto!core::ops::function::FnOnce::call_once<void (*)(),tuple$<> >
+focusproto!std::sys::backtrace::__rust_begin_short_backtrace<void (*)(),tuple$<> >
+focusproto!std::rt::lang_start::closure$0<tuple$<> >
+focusproto!std::rt::lang_start_internal::closure$0
+focusproto!std::panicking::catch_unwind::do_call
+focusproto!std::panicking::catch_unwind
+focusproto!std::panic::catch_unwind
+focusproto!std::rt::lang_start_internal
+focusproto!std::rt::lang_start<tuple$<> >
+focusproto!main
+focusproto!invoke_main
+focusproto!__scrt_common_main_seh
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+=== THREAD-CREATED tid=23e8 .  8  Id: 2ec.23e8 Suspend: 1 Teb: 000000ac`4af6d000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== THREAD-EXITED tid=23e8 === MARK CoCreateInstance tid=1dac ModLoad: 00007ffb`c78d0000 00007ffb`c78fe000   C:\WINDOWS\SYSTEM32\dwmapi.dll
+=== NtCreateThreadEx from tid=1dac Call Site
+ntdll!NtCreateThreadEx
+KERNELBASE!CreateRemoteThreadEx
+KERNEL32!CreateThreadStub
+uiautomationcore!OverlappedIOManager::AddChannel_AnyThread
+uiautomationcore!OverlappedIOManager::AddReadWriteChannel
+uiautomationcore!ChannelBasedClientConnectionManager::CreateLowBoxChannelBasedClientConnection
+uiautomationcore!ChannelBasedClientConnectionManager::CreateChannelBasedConnection
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+focusproto!focusproto::client
+focusproto!focusproto::main
+focusproto!core::ops::function::FnOnce::call_once<void (*)(),tuple$<> >
+focusproto!std::sys::backtrace::__rust_begin_short_backtrace<void (*)(),tuple$<> >
+focusproto!std::rt::lang_start::closure$0<tuple$<> >
+focusproto!std::rt::lang_start_internal::closure$0
+focusproto!std::panicking::catch_unwind::do_call
+focusproto!std::panicking::catch_unwind
+focusproto!std::panic::catch_unwind
+focusproto!std::rt::lang_start_internal
+focusproto!std::rt::lang_start<tuple$<> >
+focusproto!main
+focusproto!invoke_main
+focusproto!__scrt_common_main_seh
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+=== THREAD-CREATED tid=d2c .  8  Id: 2ec.d2c Suspend: 1 Teb: 000000ac`4af6f000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== NtCreateThreadEx from tid=1dac Call Site
+ntdll!NtCreateThreadEx
+KERNELBASE!CreateRemoteThreadEx
+KERNEL32!CreateThreadStub
+uiautomationcore!WinEventManager::Init
+uiautomationcore!WinEventManager::AddWinEvent
+uiautomationcore!ProxyEventManager::AdviseEventAddedRemoved
+uiautomationcore!ProxyEventManager::AddProxyEventScope
+uiautomationcore!ProxyEventManager::AddProxyEventInfo
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+focusproto!focusproto::client
+focusproto!focusproto::main
+focusproto!core::ops::function::FnOnce::call_once<void (*)(),tuple$<> >
+focusproto!std::sys::backtrace::__rust_begin_short_backtrace<void (*)(),tuple$<> >
+focusproto!std::rt::lang_start::closure$0<tuple$<> >
+focusproto!std::rt::lang_start_internal::closure$0
+focusproto!std::panicking::catch_unwind::do_call
+focusproto!std::panicking::catch_unwind
+focusproto!std::panic::catch_unwind
+focusproto!std::rt::lang_start_internal
+focusproto!std::rt::lang_start<tuple$<> >
+focusproto!main
+focusproto!invoke_main
+focusproto!__scrt_common_main_seh
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+=== THREAD-CREATED tid=2b44 .  9  Id: 2ec.2b44 Suspend: 1 Teb: 000000ac`4af71000 Unfrozen
+      Start: uiautomationcore!WinEventManager::ThreadProc (00007ffb`a990eb10)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== MARK CoCreateInstance tid=2b44 === MARK CoCreateInstance tid=2b44 === THREAD-CREATED tid=b54 . 10  Id: 2ec.b54 Suspend: 1 Teb: 000000ac`4af73000 Unfrozen
+      Start: ntdll!TppWorkerThread (00007ffb`cd364990)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== NtCreateThreadEx from tid=2b44 Call Site
+ntdll!NtCreateThreadEx
+KERNELBASE!CreateRemoteThreadEx
+KERNEL32!CreateThreadStub
+combase!CacheCreateThread
+combase!OXIDEntry::PostCall
+combase!ClientCall::PostServerCallToProcessLocalOxid
+combase!StandardComClientCall::PostServerCallToProcessLocalOxid
+combase!CSyncClientCall::TransmitCall
+combase!ClassicSTAThreadDispatchCrossApartmentCall
+combase!CSyncClientCall::SwitchAptAndDispatchCall
+combase!CSyncClientCall::SendReceive2
+combase!SyncClientCallRetryContext::SendReceiveWithRetry
+combase!CSyncClientCall::SendReceiveInRetryContext
+combase!ClassicSTAThreadSendReceive
+combase!CSyncClientCall::SendReceive
+combase!CClientChannel::SendReceive
+combase!NdrExtpProxySendReceive
+RPCRT4!NdrpClientCall3
+combase!ObjectStublessClient
+combase!ObjectStubless
+combase!CObjectContext::InternalContextCallback
+combase!CGIPTable::GetInterfaceFromGlobal
+combase!GetInterfaceFromStdGlobal
+combase!CProcessActivator::GetApartmentActivator
+combase!CProcessActivator::CCICallback
+combase!CProcessActivator::AttemptActivation
+combase!CProcessActivator::ActivateByContext
+combase!CProcessActivator::CreateInstance
+combase!ActivationPropertiesIn::DelegateCreateInstance
+combase!CClientContextActivator::CreateInstance
+combase!ActivationPropertiesIn::DelegateCreateInstance
+combase!ICoCreateInstanceExWorker
+combase!CComActivator::DoCreateInstance
+combase!CoCreateInstanceExCopy
+combase!CoCreateInstance
+uiautomationcore!BlockingCoreDispatcher::CreateAndRegisterBlockingCore
+uiautomationcore!BlockingCoreDispatcher::FinalConstruct
+=== THREAD-CREATED tid=2960 . 11  Id: 2ec.2960 Suspend: 1 Teb: 000000ac`4af75000 Unfrozen
+      Start: combase!CRpcThreadCache::RpcWorkerThreadEntry (00007ffb`cc9c21e0)
+      Priority: 0  Priority class: 32  Affinity: fff
+=== MARK CoCreateInstance tid=2960 ModLoad: 00007ffb`ca290000 00007ffb`ca332000   C:\WINDOWS\SYSTEM32\sxs.dll
+=== MARK CoCreateInstance tid=2b44 === MARK CoCreateInstance tid=2b44 mincore\com\oleaut32\dispatch\ups.cpp(2126)\oleaut32.dll!00007FFBCBC5D72D: (caller: 00007FFBCBC5DDB2) ReturnHr(1) tid(2b44) 8002801D Library not registered.
+ev D desk:base focus t=1793542942814853 pid=7580 name="Taskbar" hwnd=65770
+=== MARK CoCreateInstance tid=1dac === MARK CoCreateInstance tid=1dac registered D desk:base in 2103.6ms
+client-ready D
+=== THREAD-EXITED tid=d2c === THREAD-EXITED tid=2668 === THREAD-EXITED tid=1a98 === THREAD-EXITED tid=2b44 === THREAD-EXITED tid=2960 === THREAD-EXITED tid=f00 === THREAD-EXITED tid=ce0 === THREAD-EXITED tid=31a0 === THREAD-EXITED tid=30ec === THREAD-EXITED tid=b54 === THREAD-EXITED tid=cdc ntdll!NtTerminateProcess+0x14:
+00007ffb`cd4a22d4 c3              ret
+0:000> .echo === MODULE-LOADED uiautomationcore
+=== MODULE-LOADED uiautomationcore
+0:000> .reload /f uiautomationcore.dll
+0:000> bm uiautomationcore!*::AddFocusChangedEventHandler ".printf \"=== MARK AddFocusChangedEventHandler tid=%x\n\", @$tid; gc"
+  3: 00007ffb`a98d77d0 @!"uiautomationcore!CUIAutomation::AddFocusChangedEventHandler"
+  4: 00007ffb`a97d43f0 @!"uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler"
+  5: 00007ffb`a9909468 @!"uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler"
+0:000> bm uiautomationcore!*::put_ConnectionTimeout ".printf \"=== MARK put_ConnectionTimeout tid=%x\n\", @$tid; gc"
+  6: 00007ffb`a9890770 @!"uiautomationcore!SimpleProxy::put_ConnectionTimeout"
+  7: 00007ffb`a98dccf0 @!"uiautomationcore!CUIAutomation::put_ConnectionTimeout"
+  8: 00007ffb`a9829c20 @!"uiautomationcore!MsaaProxy::put_ConnectionTimeout"
+0:000> bm uiautomationcore!*::ElementFromHandle ".printf \"=== MARK ElementFromHandle tid=%x\n\", @$tid; gc"
+  9: 00007ffb`a983c200 @!"uiautomationcore!CUIAutomation::ElementFromHandle"
+0:000> g
+       ^ No runnable debuggees error in 'g'
+0:000> NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\atlmfc.natvis'

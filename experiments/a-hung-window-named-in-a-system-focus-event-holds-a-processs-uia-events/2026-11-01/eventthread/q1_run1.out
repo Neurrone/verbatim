@@ -1,0 +1,2 @@
+RESULT run1 ctl_tree rep 0: D(base 2.4 ms) B's name after 2 ms; D0 after 2 ms; trigger 213 ms before B's raise
+RESULT run1 ctl_tree rep 1: D(base 2.4 ms) B's name after 2 ms; D0 after 2 ms; trigger 211 ms before B's raise

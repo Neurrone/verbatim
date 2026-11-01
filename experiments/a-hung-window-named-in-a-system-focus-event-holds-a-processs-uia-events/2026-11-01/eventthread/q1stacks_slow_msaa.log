@@ -1,0 +1,33 @@
+[1793542990878494] qsTV: ready
+[1793542990898922] tool find qsTV -> 1574626 
+[1793542990917784] qsM: ready
+[1793542990933760] tool find qsM -> 4523424 
+[1793542990953683] qsU: ready
+[1793542990969416] tool find qsU -> 2754238 
+[1793542990989860] qsB: ready
+[1793542991004535] tool find qsB -> 1967954 
+[1793542991018161] tool findchild 1574626 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 3474854 
+[1793542991066645] D: registered D deskprop:base in 29.1ms
+[1793542991078268] D: registered D name:4523424 in 11.6ms
+[1793542991089696] D: registered D name:1967954 in 11.4ms
+[1793542991089817] D: client-ready D
+[1793542991590062] >qsB: set-name btn1 Base
+[1793542991590477] qsB: applied
+[1793542991591742] D: ev D name:1967954 t=1793542991591676 pid=10216 name="Base"
+[1793542991591775] >D: cpu
+[1793542991591884] D: cpu D proc_user=62.5 proc_kernel=0.0 worker9196_user=0.0 worker9196_kernel=0.0 worker9196_cycles=1896121
+D pid 9856; cpu {'proc_user': 62.5, 'proc_kernel': 0.0, 'worker9196_user': 0.0, 'worker9196_kernel': 0.0, 'worker9196_cycles': 1896121.0}
+[1793542991591972] >qsM: slow 3000
+[1793542991592125] qsM: applied
+[1793542991592149] >qsM: client-name Renamed
+[1793542991592253] qsM: applied
+[1793542991792540] >qsB: set-name btn1 During
+[1793542991792923] qsB: applied
+[1793542991793947] D: ev D name:1967954 t=1793542991793884 pid=10216 name="During"
+[1793542992593242] stacks slow_msaa_1s pid=9856 took 774 ms -> <scratch folder>\eventthread\stacks\slow_msaa_1s.txt
+[1793542993367521] stacks slow_msaa_target_1s pid=4164 took 3716 ms -> <scratch folder>\eventthread\stacks\slow_msaa_target_1s.txt
+[1793542998584321] stacks slow_msaa_3s pid=9856 took 505 ms -> <scratch folder>\eventthread\stacks\slow_msaa_3s.txt
+RESULT slow_msaa: B's name after 1 ms (stack dumps included, each pauses D)
+[1793542999089312] >qsM: slow 0
+[1793542999089349] >qsU: slow 0
+[1793542999089501] qsU: applied

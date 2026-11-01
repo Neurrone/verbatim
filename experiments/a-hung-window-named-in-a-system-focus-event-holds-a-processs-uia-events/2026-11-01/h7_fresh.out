@@ -1,0 +1,2 @@
+RESULT fresh rep 0: hung_at_trigger=0 baseline 1.6 ms; held name after 3991 ms; 4205 ms into the 15000 ms stall; trigger at 0 ms
+RESULT fresh rep 1: hung_at_trigger=0 baseline 1.6 ms; held name after 4166 ms; 4396 ms into the 15000 ms stall; trigger at 0 ms

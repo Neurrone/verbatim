@@ -1,0 +1,46 @@
+MARK altf run 1
+    KEY alt+f in hold (1.0 s) fg='hung-msaa -> first audio SILENT within 5 s
+    KEY alt+f in hold (2.5 s) fg='hung-msaa -> first audio SILENT within 5 s
+    KEY alt+f after hold (6 s, control) fg= -> first audio SILENT within 5 s
+MARK altf run 2
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio +150 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio +134 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f after hold (6 s, control) fg= -> first audio +140 ms: New tab Alt, N  Ctrl+N 1 of 13
+MARK altf run 3
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio +140 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio +126 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f after hold (6 s, control) fg= -> first audio +131 ms: New tab Alt, N  Ctrl+N 1 of 13
+MARK done altf
+MARK busyfocus run 1
+MARK done busyfocus
+MARK altf_bg run 1
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio +158 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio +140 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f after hold (6 s, control) fg= -> first audio +137 ms: New tab Alt, N  Ctrl+N 1 of 13
+MARK altf_bg run 2
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio +142 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio +156 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f after hold (6 s, control) fg= -> first audio +152 ms: New tab Alt, N  Ctrl+N 1 of 13
+MARK altf_bg run 3
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio +155 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio +143 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f after hold (6 s, control) fg= -> first audio +138 ms: New tab Alt, N  Ctrl+N 1 of 13
+MARK done altf_bg
+MARK altf_bg run 1
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio +170 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio +155 ms: New tab Alt, N  Ctrl+N 1 of 13
+    KEY alt+f after hold (6 s, control) fg= -> first audio +140 ms: New tab Alt, N  Ctrl+N 1 of 13
+MARK done altf_bg
+MARK altf_bg run 1
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio SILENT within 5 s
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio SILENT within 5 s
+    KEY alt+f after hold (6 s, control) fg= -> first audio SILENT within 5 s
+MARK altf_bg run 2
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio SILENT within 5 s
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio SILENT within 5 s
+    KEY alt+f after hold (6 s, control) fg= -> first audio SILENT within 5 s
+MARK altf_bg run 3
+    KEY alt+f in hold (1.0 s) fg='notes.txt -> first audio SILENT within 5 s
+    KEY alt+f in hold (2.5 s) fg='notes.txt -> first audio SILENT within 5 s
+    KEY alt+f after hold (6 s, control) fg= -> first audio SILENT within 5 s
+MARK done altf_bg

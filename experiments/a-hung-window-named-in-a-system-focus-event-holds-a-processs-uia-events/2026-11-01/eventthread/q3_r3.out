@@ -1,0 +1,4 @@
+RESULT r3 slow_uia_we slow=1000 rep 0: D(base 2.4 ms) B's name after 3820 ms; D0 after 3 ms; trigger 214 ms before; focus events so far []
+RESULT r3 slow_uia_we slow=1000 rep 1: D(base 2.4 ms) B's name after 3813 ms; D0 after 2 ms; trigger 211 ms before; focus events so far []
+RESULT r3 slow_msaa_we slow=1000 rep 0: D(base 1.6 ms) B's name after 3968 ms; D0 after 2 ms; trigger 217 ms before; focus events so far []
+RESULT r3 slow_msaa_we slow=1000 rep 1: D(base 2.7 ms) B's name after 3800 ms; D0 after 2 ms; trigger 219 ms before; focus events so far []

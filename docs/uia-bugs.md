@@ -126,21 +126,31 @@ No test reproduces it reliably yet. The collide tool reproduced it in at most a 
 
 #### Trigger
 
-A process holds any UIA focus registration: a desktop-wide focus handler, or a focus event in an event handler group scoped to one window, even another application's. A focus WinEvent then names a window that UIA reads through its proxy and that is not answering messages. Tested with mockapp's comctl32 tree view, stalled on its window thread.
+A process holds any UIA focus registration: a desktop-wide focus handler, or a focus event in an event handler group scoped to one window, even another application's. A focus WinEvent then names a window that does not answer UIA in time: one not answering messages, tested with mockapp's comctl32 tree view stalled on its window thread, or one that answers messages but whose provider answers slowly, tested with mockapp's MSAA and UIA backends answering every provider call 1 or 3 seconds late (`q3`).
 
 #### Symptoms
 
-All of that process's UIA event delivery waits, every application's events and not only focus, until the hung window answers or UIA gives up, and then the held events arrive. UIA's client runs all event work in a process on one work-item thread; for the focus WinEvent its focus tracking makes two `SendMessageTimeoutW` calls in turn to the hung window, a `WM_GETOBJECT` for `UiaRootObjectId` (flags `SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT`) and the registered message `UiaServerConnection_HookMessage` (flags 0), each waiting the connection timeout, and every other event waits behind it in the queue (`h1_base`, `h2_base`).
+That process's UIA event delivery waits, every application's events and not only focus, until the window answers or UIA gives up, and then the held events arrive; the one exception is below. UIA's client runs a process's event work on one work-item thread (`WorkItemQueue`), which its I/O thread creates when the first event arrives; the process's first registration, or the element lookup before it, starts UIA's WinEvent thread (`WinEventManager::ThreadProc`), the I/O thread (`OverlappedIOManager`) and a `NavigationHelperProxyOneCore` thread (`threads_name`, `threads_desk`). For the focus WinEvent, UIA's focus tracking (`FocusTracker::HandleFocusChange`) runs on the work-item thread and makes these calls to the window in turn, each waiting the connection timeout, while every other event waits behind it in the queue (`h1_base`, `h2_base`; the calls verified with cdb in `calls_focus`):
+
+- `SendMessageTimeoutW(hwnd, WM_GETOBJECT, wParam, UiaRootObjectId, SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, connection timeout)`, from `HwndUtils::SendWmGetObject` under `ProviderEntryPoint::GetNativeUiaNode`;
+- only when that finds no provider of the window's own, `SendMessageTimeoutW(hwnd, RegisterWindowMessageW("UiaServerConnection_HookMessage"), 0, lParam, 0, connection timeout)`, from `PerformOperationOnHwndThread` under `ProviderEntryPoint::GetProxyUiaNode` and `UiaNodeFactory::InProcProxyFromHwnd`. Windows assigns the registered message's number when it is first registered, so it is not fixed: 0xC1AA in `calls_reg` on 2026-11-01, 0xC199 in `h2_base` on 2026-10-18.
+
+What bounds the hold, and who meets it:
 
 - The hold is twice the connection timeout per focus WinEvent, or until the window answers if sooner: 812 ms with the connection timeout at 500 ms; 3,806 to 3,821 ms at the default 2,000 ms; with 10,000 ms, 7,773 ms in an 8-second stall and 19,767 ms in a 20-second stall, each the end of the stall (`h3_*`).
+- Once Windows has marked the window hung the hold is one connection timeout: on a real, unlocked desktop, 1,803 to 1,981 ms at 2,000 ms, against 3,980 to 4,166 ms before the window was marked (`h7_*`). Windows marked a stalled window hung and showed its ghost window between 2 and 6.5 seconds into the stall (`h7_alttab_to_early`, `ghost`), which fits the 5 seconds Microsoft documents for `IsHungAppWindow`; on a hidden desktop it never did (`h4_*`).
+- A window that answers messages but whose provider is slow holds the same way: 3,800 to 6,817 ms at 2,000 ms (`q3`). An application raising its own focus while its provider was slow held up to 3,827 ms in some runs and nothing in others.
 - Each focus WinEvent naming the hung window pays the full wait again: three held 5,814 ms at 1,000 ms, one held 1,824 ms.
 - Each client object in the process that holds a focus registration runs its own focus tracking on the same thread: two client objects with a desktop handler each made four calls (1,820 ms at 500 ms).
 - With the connection timeout at 10 seconds, a 15-second stall held 14,800 ms, and a name change at a desktop-wide registration was not delivered within 25 s (E-hung-proxy).
-- Verbatim sets the connection timeout to UIA's default 2 seconds (`CONNECTION_TIMEOUT`), so the listener's hold is up to about 4 seconds per focus WinEvent, as measured at 2,000 ms above.
+- Verbatim's listener is held like any client. Verbatim sets the connection timeout to UIA's default 2 seconds (`CONNECTION_TIMEOUT`), so its hold is about 4 seconds per focus WinEvent, or 2 once Windows has marked the window hung. A UIA notification from another application reached the running listener 3,804 to 3,827 ms late with a new tree view mockapp stalled (`states`), and 3,815 to 3,829 ms late on the unlocked desktop (`both`); with a tree view mockapp that had run all evening under Verbatim, 7,821 to 7,834 ms late, and why that hold was twice as long is not known (`states`).
+
+The exception: UIA raises focus for a newly opened or shown window, such as a menu's popup, on a thread-pool thread (`ClientEventManager::OpenShowWinEventCallbackThreadProc`, then `EventManager::AssociateWithRecord` and `RaiseLocalEvent`), and that focus is not held. In the same hold that kept another application's notification from the listener for 3.8 seconds, Notepad's File menu focus reached it 26 to 112 ms after Alt+F (`both`); in a stand-in client the menu's focus events arrived on a thread-pool thread while the work-item thread was held, and the next focus within the open menu, after Down, waited for the work-item thread with the name changes (`route1`, `route2`). So focus moving within an existing window, name changes and notifications are held. That route delivered 54 and 64 focus events to the stand-in's handler for one menu opening. An earlier series, which timed only the speech of Alt+F, 126 to 170 ms into the hold, seemed to show the listener unaffected because every focus it timed took that route (`altf`).
 
 #### Not affected
 
-- A name-change WinEvent for the hung window held nothing (2 to 3 ms); only the focus WinEvent triggers it (`e_hung_cause`).
+- A name-change WinEvent for the hung window held nothing (2 to 3 ms); only the focus WinEvent triggers it (`e_hung_cause`), also in a process with a desktop-wide name-change registration and a cache request (`q1`).
+- Alt+Tab away from a hung window, or back to it, held nothing (1 to 2 ms, `h7_alttab*`).
 - A process with no focus registration of any kind: another application's name change arrived in 1 ms during the same stall (`e_hung_cause`; P4's `N_B`, 1 ms; in `e_cross`, a stand-in outpost's name and text events 0 to 1 ms).
 - A hung application that no focus WinEvent names delays nothing (E-hung-proxy, 0 ms).
 - Explicit reads on other threads of the held process: 1 ms throughout (E-hung-proxy).
@@ -149,7 +159,7 @@ All of that process's UIA event delivery waits, every application's events and n
 
 #### Workarounds that worked
 
-- Verbatim's choice: only the listener holds a UIA focus registration; outposts hold none, so a hung window stalls the listener's UIA focus delivery only, and every outpost's UIA events, explicit reads and MSAA hooks keep working (`e_cross`). While it lasts UIA focus is not announced, as in NVDA; announcing from MSAA meanwhile was considered and rejected by Dickson (2026-10-10), because live checks showed MSAA could stand in for only some UIA focus changes and would sound different (the focus pipeline design, section 12.3).
+- Verbatim's choice: only the listener holds a UIA focus registration; outposts hold none, so a hung window holds only the listener's UIA events (focus, element selected, menu opened and notifications, except focus for a newly opened or shown window), and every outpost's UIA events, explicit reads and MSAA hooks keep working (`e_cross`). While it lasts, UIA focus within an existing window is not announced, as in NVDA; announcing from MSAA meanwhile was considered and rejected by Dickson (2026-10-10), because live checks showed MSAA could stand in for only some UIA focus changes and would sound different (the focus pipeline design, section 12.3).
 - A shorter connection timeout bounds the hold, at two costs: it is one value for the whole process, so it also shortens every read there (see "The connection timeout applies to the whole process"); and a focus change in a window that stays busy past both of UIA's waits for it, each one connection timeout, is dropped, never delivered. In `h6_*`, an MSAA mockapp raised its focus from inside a 3-second stall: at 10,000 ms it arrived 3,003 ms into the stall, and at 500 ms and the default 2,000 ms it had not arrived 8 seconds after the stall began, though at 2,000 ms the stall was shorter than UIA's two waits together.
 - Emptying the client's proxy factory mapping (`ClearTable`) removes the second call and halves the hold (1,812 ms), but leaves that client with no proxies for any Win32 window, so it is not used.
 
@@ -160,7 +170,7 @@ All of that process's UIA event delivery waits, every application's events and n
 - A separate client object for focus, on the same thread or a thread of its own (815 to 819 ms at 500 ms, the same as one object); a separate client object for other events (there is still one queue thread).
 - A single-threaded apartment (3,809 ms); `ConnectionRecoveryBehavior` on or off (3,818 and 3,821 ms); `CoalesceEvents` on or off (3,814 and 3,819 ms); an empty cache request (3,806 ms); a group-scoped focus registration in place of the desktop handler (3,809 ms).
 - The older `CUIAutomation` coclass: its second call waited until the window answered, and its objects have no `IUIAutomation2`, so its timeout cannot be set at all (`h2_cui`).
-- `SMTO_ABORTIFHUNG` never took effect here: Windows did not flag the stalled window hung even after 9 s with a message posted to it, presumably because no input reaches a hidden desktop (`h4_*`). For a window Windows does flag hung, the first call is inferred to return at once and the second, with flags 0, still to wait one connection timeout.
+- `SMTO_ABORTIFHUNG` does nothing until Windows marks the window hung: never on a hidden desktop, even after 9 s with a message posted to the window (`h4_*`), and not within the first 2 s on a real desktop (`h7_alttab_to_early`). Once the window is marked, the hold is one connection timeout (`h7_hung`), which fits the first call returning at once and the second, with flags 0, still waiting; no trace shows it.
 
 #### NVDA
 
@@ -172,7 +182,46 @@ No test reproduces the hold, its absence in a process with no focus registration
 
 #### Evidence
 
-[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.3, for the decision taken from them.
+[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); and in [its `2026-11-01/` folder](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/2026-11-01/readme.md) the series of 2026-11-01 and 2026-11-02, `calls_reg`, `calls_focus`, `threads_name`, `threads_desk`, `route1`, `route2`, `both`, `altf`, `states`, `h7_*`, `ghost`, `q1` and `q3`; `docs/design/focus-pipeline.md`, section 12.3, for the decision taken from them.
+
+### A flood of UIA events from one application stops all of a process's UIA events
+
+#### Trigger
+
+One application raises UIA events at about 10,000 a second, name changes with event coalescing on or off, or text changed events with coalescing off, while a client process holds registrations for them. Tested with mockapp's `flood` command and a client that registers for the flooding application's name and text changes and another application's name changes, on one client object, with handlers that only copy and queue (`q2`, `q2long`).
+
+#### Symptoms
+
+After the first 83 to 110 events, delivered within about the first 110 ms, the process's UIA work-item thread delivers no further event to any of its handlers, the other application's included, and uses one processor core continuously: 90 seconds after a 3-second flood it had delivered none of the 349 name changes the other application raised meanwhile, and its processor time had grown by about 2 seconds every 2 seconds throughout (`q2long`, coalescing on; with coalescing off the 9 probes made before the run was cut short were not delivered either).
+
+Below that rate the queue drains, at a cost to every other application's events in the process. At 1,000 name changes a second the other application's name changes in the same process were delayed 16 ms at the median (at most 43) with coalescing off and 41 ms (at most 100) with it on, against 1.8 and 3.8 ms for text changes at the same rate; at 2,000 to 5,000 a second, with coalescing on, its median delay was 12 to 42 ms and at most about 100 ms, and the flooding application's last event arrived 2.9 to 10.4 seconds after the flood ended (`q2`, `q2_thr`). At 100 a second nothing was delayed (1.2 to 1.4 ms).
+
+A thread dump about 2 seconds after the flood, one with coalescing on and one with it off, caught the work-item thread in `WorkItemQueue::GetDuplicatedEventWorkItemCount`, `SavedEvent::GetWorkItemInfo`, `ProtobufHelper::GetEventArgs`, decoding a saved event's arguments (`q2long`). That this count decodes every queued event at each dequeue, so that the work grows with the square of the backlog, is inferred from the function names and the processor time, not shown.
+
+#### Not affected
+
+- Another process's handlers: with the other application's registration in a second client process, its name changes arrived in 1.4 to 1.8 ms at the median at every rate, while the flooded process stopped (`q2`, layout two).
+- Text changed events at about 10,000 a second with coalescing on did not stop the thread in the one run of each layout: 2,529 and 2,641 of 30,000 delivered (`q2`).
+
+#### Workarounds that worked
+
+- Holding the flooding application's registrations in a process of their own, as above. Verbatim's choice: each application's event registrations are held by its own outpost (`docs/architecture.md`, D9), so a flood is inferred to stop only that application's outpost; the listener's desktop-wide registrations, focus, element selected, menu opened and notifications, are inferred to be exposed to a flood of those events from any application. Neither is measured.
+
+#### Workarounds that didn't work
+
+- Event coalescing (`IUIAutomation6::CoalesceEvents`) on: name changes stopped the thread with it on as with it off (`q2`, `q2long`).
+
+#### NVDA
+
+NVDA is one process holding UIA registrations for every application, so it is inferred to lose all its UIA events to such a flood; whether the reports below share this cause is not established, but they match its symptoms. [NVDA #11002](https://github.com/nvaccess/nvda/issues/11002) (2020): with UIA in the Windows console, printing in a loop made every UIA application inaccessible until NVDA was restarted; the reporter had also tried turning off coalescing and connection recovery. [NVDA #14888](https://github.com/nvaccess/nvda/pull/14888), merged on 2023-11-27, moved NVDA's UIA event handlers into C++, storing events for its main thread and merging duplicates, because a flood such as a console's text changes could make NVDA seem frozen or stop its UIA focus tracking. [NVDA #15850](https://github.com/nvaccess/nvda/issues/15850) (2023-11-28), "not fixed by #14888": large output in a console stopped all UIA in NVDA for one to five minutes. [NVDA #17602](https://github.com/nvaccess/nvda/issues/17602) (2025): busy web pages in Chrome, with NVDA's enhanced UIA event processing, broke focus tracking system-wide.
+
+#### Reproduction test
+
+No test reproduces it yet. mockapp's `flood` command (cb90020e) raises the flood; `uia_flood_raises_each_name_change` in `crates/mockapp/tests/events.rs` tests only the command.
+
+#### Evidence
+
+[`experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/`](../experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/readme.md): experiments `q2`, `q2_thr` and `q2long`, with the event probe's source, the scripts, outputs and logs, and the two thread dumps.
 
 ### The connection timeout applies to the whole process
 

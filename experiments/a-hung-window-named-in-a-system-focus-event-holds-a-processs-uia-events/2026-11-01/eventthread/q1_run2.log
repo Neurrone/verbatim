@@ -1,0 +1,41 @@
+[1793542850367405] q1TV: ready
+[1793542850383611] tool find q1TV -> 5834020 
+[1793542850397953] q1M: ready
+[1793542850410491] tool find q1M -> 2688756 
+[1793542850426509] q1B: ready
+[1793542850438950] tool find q1B -> 4195744 
+[1793542850450968] tool findchild 5834020 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 2688808 
+[1793542850492723] D: registered D deskprop:base in 25.5ms
+[1793542850502544] D: registered D name:4195744 in 9.8ms
+[1793542850502648] D: client-ready D
+[1793542850542979] D0: registered D0 name:4195744 in 21.4ms
+[1793542850543084] D0: client-ready D0
+[1793542851043691] >q1B: set-name btn1 Base0
+[1793542851045810] q1B: applied
+[1793542851050525] D: ev D name:4195744 t=1793542851050432 pid=8780 name="Base0"
+[1793542851050823] D0: ev D0 name:4195744 t=1793542851050702 pid=8780 name="Base0"
+[1793542851351129] >q1TV: stall 8000
+[1793542851351354] q1TV: stall started
+[1793542851364556] tool winevent 2688808 800C -4 0 -> winevent sent t=1793542851362398 
+[1793542851564706] >q1B: set-name btn1 During0
+[1793542851565099] q1B: applied
+[1793542851566505] D0: ev D0 name:4195744 t=1793542851566448 pid=8780 name="During0"
+[1793542851566750] D: ev D name:4195744 t=1793542851566708 pid=8780 name="During0"
+RESULT run2 stall_tree rep 0: D(base 6.8 ms) B's name after 2 ms; D0 after 2 ms; trigger 213 ms before B's raise
+[1793542859351524] q1TV: stall ended 1793542859351428
+[1793542860543912] D: ev D deskprop:base t=1793542860543779 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+[1793542860544831] D: ev D deskprop:base t=1793542860544790 pid=7580 name="Terminal - 3 running windows"
+[1793542860545097] D: ev D deskprop:base t=1793542860545062 pid=7580 name="verbatim.exe - 1 running window"
+[1793542860545483] D: ev D deskprop:base t=1793542860545449 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+[1793542860561804] D: ev D deskprop:base t=1793542860561682 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+[1793542860562891] D: ev D deskprop:base t=1793542860562848 pid=7580 name="Terminal - 3 running windows"
+[1793542860564159] D: ev D deskprop:base t=1793542860564112 pid=7580 name="verbatim.exe - 1 running window"
+[1793542860565345] D: ev D deskprop:base t=1793542860565310 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+late D: ev D deskprop:base t=1793542860543779 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+late D: ev D deskprop:base t=1793542860544790 pid=7580 name="Terminal - 3 running windows"
+late D: ev D deskprop:base t=1793542860545062 pid=7580 name="verbatim.exe - 1 running window"
+late D: ev D deskprop:base t=1793542860545449 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+late D: ev D deskprop:base t=1793542860561682 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"
+late D: ev D deskprop:base t=1793542860562848 pid=7580 name="Terminal - 3 running windows"
+late D: ev D deskprop:base t=1793542860564112 pid=7580 name="verbatim.exe - 1 running window"
+late D: ev D deskprop:base t=1793542860565310 pid=7580 name="Clock 10:21 PM\n\u{200e}11/\u{200e}1/\u{200e}2026"

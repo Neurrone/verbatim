@@ -1,0 +1,3 @@
+RESULT synth_bg rep 0: hung_at_trigger=0 baseline 2.2 ms; held name after 4149 ms; 4470 ms into the 12000 ms stall; trigger at 100 ms
+RESULT synth_bg rep 1: hung_at_trigger=0 baseline 1.3 ms; held name after 3987 ms; 4299 ms into the 12000 ms stall; trigger at 100 ms
+RESULT synth_bg rep 2: hung_at_trigger=0 baseline 1.4 ms; held name after 4151 ms; 4465 ms into the 12000 ms stall; trigger at 100 ms

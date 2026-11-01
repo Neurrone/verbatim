@@ -1,0 +1,32 @@
+[1793543511216125] qsTV: ready
+[1793543511231400] tool find qsTV -> 2361048 
+[1793543511248493] qsM: ready
+[1793543511262749] tool find qsM -> 7603492 
+[1793543511279741] qsU: ready
+[1793543511294455] tool find qsU -> 57280122 
+[1793543511310445] qsB: ready
+[1793543511324328] tool find qsB -> 57869818 
+[1793543511338170] tool findchild 2361048 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 4523476 
+[1793543511395017] D: ev D desk:base t=1793543511394904 pid=7580 name="Taskbar"
+[1793543511395563] D: registered D desk:base in 39.6ms
+[1793543511405447] D: registered D name:57869818 in 9.9ms
+[1793543511405544] D: client-ready D
+[1793543511905951] >qsB: set-name btn1 Base
+[1793543511906629] qsB: applied
+[1793543511907981] D: ev D name:57869818 t=1793543511907894 pid=8640 name="Base"
+[1793543511908025] >D: cpu
+[1793543511908132] D: cpu D proc_user=15.6 proc_kernel=0.0 worker1640_user=15.6 worker1640_kernel=0.0 worker1640_cycles=101960766 worker3392_user=0.0 worker3392_kernel=0.0 worker3392_cycles=3233151
+D pid 3100; cpu {'proc_user': 15.6, 'proc_kernel': 0.0, 'worker1640_user': 15.6, 'worker1640_kernel': 0.0, 'worker1640_cycles': 101960766.0, 'worker3392_user': 0.0, 'worker3392_kernel': 0.0, 'worker3392_cycles': 3233151.0}
+[1793543511908223] >qsU: slow 3000
+[1793543511908389] qsU: applied
+[1793543511923317] tool winevent 57280122 8005 -4 0 -> winevent sent t=1793543511920663 
+[1793543512123944] >qsB: set-name btn1 During
+[1793543512124295] qsB: applied
+[1793543512924523] stacks q3_slow_uia_we_1s pid=3100 took 1706 ms -> <scratch folder>\eventthread\stacks\q3_slow_uia_we_1s.txt
+[1793543514630556] stacks q3_slow_uia_we_target_1s pid=6808 took 1088 ms -> <scratch folder>\eventthread\stacks\q3_slow_uia_we_target_1s.txt
+[1793543517783260] D: ev D name:57869818 t=1793543517783168 pid=8640 name="During"
+[1793543517218931] stacks q3_slow_uia_we_3s pid=3100 took 589 ms -> <scratch folder>\eventthread\stacks\q3_slow_uia_we_3s.txt
+RESULT q3_slow_uia_we: B's name after 5659 ms (stack dumps included, each pauses D)
+[1793543517808058] >qsM: slow 0
+[1793543517808074] >qsU: slow 0
+[1793543517808251] qsM: applied

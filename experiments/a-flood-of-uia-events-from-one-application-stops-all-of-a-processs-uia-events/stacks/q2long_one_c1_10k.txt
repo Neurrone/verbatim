@@ -1,0 +1,172 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+
+
+
+
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+WARNING: Process 4700 is not attached as a debuggee
+         The process can be examined but debug events will not be received
+...................................
+(125c.220c): Wake debugger - code 80000007 (first chance)
+*** WARNING: Unable to verify checksum for <scratch folder>\eventthread\probe\target\release\evprobe.exe
+ntdll!NtReadFile+0x14:
+00007ffb`cd4a1e14 c3              ret
+0:000> cdb: Reading initial command '.lines -d; ~*kn 40; qd'
+Line number information will not be loaded
+
+.  0  Id: 125c.220c Suspend: 1 Teb: 00000064`5098b000 Unfrozen "main"
+ # Child-SP          RetAddr               Call Site
+00 00000064`50afd318 00007ff6`9f13c651     ntdll!NtReadFile+0x14
+01 00000064`50afd320 00007ff6`9f13c851     evprobe+0x1c651
+02 00000064`50afd3b0 00007ff6`9f143a57     evprobe+0x1c851
+03 00000064`50afd420 00007ff6`9f13a354     evprobe+0x23a57
+04 00000064`50aff4c0 00007ff6`9f1445d0     evprobe+0x1a354
+05 00000064`50aff580 00007ff6`9f1305ed     evprobe+0x245d0
+06 00000064`50aff600 00007ff6`9f123781     evprobe+0x105ed
+07 00000064`50aff660 00007ff6`9f1339a6     evprobe+0x3781
+08 00000064`50aff910 00007ff6`9f13152c     evprobe+0x139a6
+09 00000064`50aff940 00007ff6`9f13ddc0     evprobe+0x1152c
+0a 00000064`50aff970 00007ff6`9f12886c     evprobe+0x1ddc0
+0b 00000064`50affa00 00007ff6`9f156cef     evprobe+0x886c
+0c 00000064`50affa40 00007ffb`cbe8dda7     evprobe+0x36cef
+0d 00000064`50affa80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+0e 00000064`50affab0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   1  Id: 125c.7f0 Suspend: 1 Teb: 00000064`5098d000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`50bff918 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000064`50bff920 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000064`50bffc80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`50bffcb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 125c.16bc Suspend: 1 Teb: 00000064`5098f000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`50cff8f8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000064`50cff900 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000064`50cffc60 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`50cffc90 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 125c.10e4 Suspend: 1 Teb: 00000064`50991000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`50dff4f8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000064`50dff500 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000064`50dff860 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`50dff890 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   4  Id: 125c.35c Suspend: 1 Teb: 00000064`50993000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`50fff168 00007ffb`cd3aca73     ntdll!NtWaitForAlertByThreadId+0x14
+01 00000064`50fff170 00007ffb`ca9ee158     ntdll!RtlWaitOnAddress+0x213
+02 00000064`50fff1e0 00007ff6`9f13d611     KERNELBASE!WaitOnAddress+0x38
+03 00000064`50fff220 00007ff6`9f12df48     evprobe+0x1d611
+04 00000064`50fff280 00007ff6`9f12ecaa     evprobe+0xdf48
+05 00000064`50fff350 00007ff6`9f133a6f     evprobe+0xecaa
+06 00000064`50fff480 00007ff6`9f133675     evprobe+0x13a6f
+07 00000064`50fff5f0 00007ff6`9f142b63     evprobe+0x13675
+08 00000064`50fff740 00007ffb`cbe8dda7     evprobe+0x22b63
+09 00000064`50fff7f0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+0a 00000064`50fff820 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   5  Id: 125c.2960 Suspend: 1 Teb: 00000064`50995000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`510ff398 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+01 00000064`510ff3a0 00007ffb`cc9c9abe     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 (Inline Function) --------`--------     combase!WaitCoalesced+0x79
+03 00000064`510ff690 00007ffb`cc9c231f     combase!CROIDTable::WorkerThreadLoop+0xae
+04 00000064`510ff900 00007ffb`cc9c222f     combase!CRpcThread::WorkerLoop+0x5b
+05 00000064`510ff970 00007ffb`cbe8dda7     combase!CRpcThreadCache::RpcWorkerThreadEntry+0x4f
+06 00000064`510ff9a0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+07 00000064`510ff9d0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   6  Id: 125c.b30 Suspend: 1 Teb: 00000064`50997000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`511ff6e8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000064`511ff6f0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000064`511ffa50 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`511ffa80 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   7  Id: 125c.1ff4 Suspend: 1 Teb: 00000064`50999000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`512ff5c8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000064`512ff5d0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000064`512ff930 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`512ff960 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   8  Id: 125c.23a4 Suspend: 1 Teb: 00000064`5099b000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`513ff248 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+01 00000064`513ff250 00007ffb`c6da3438     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 00000064`513ff540 00007ffb`c6da3113     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitController::Callback_WaitAny+0xc8
+03 00000064`513ff630 00007ffb`c6da2d6e     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_DoWait+0x123
+04 00000064`513ff700 00007ffb`c6db0d2c     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_Wait+0x5e
+05 00000064`513ff7c0 00007ffb`c6db02b7     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitCollection::Callback_DoGeneralWait+0x1ec
+06 00000064`513ff890 00007ffb`c6da8604     CoreMessaging!Microsoft::CoreUI::Dispatch::WaitController::Callback_OnDispatch+0xf7
+07 00000064`513ff980 00007ffb`c6da819d     CoreMessaging!Microsoft::CoreUI::Dispatch::Dispatcher::Callback_DispatchLoop+0x334
+08 00000064`513ffa80 00007ffb`c6da9008     CoreMessaging!Microsoft::CoreUI::Dispatch::EventLoop::Callback_RunCoreLoop+0x11d
+09 00000064`513ffaf0 00007ffb`c6e0b406     CoreMessaging!Microsoft::CoreUI::Dispatch::Win32EventLoopBridge::Callback_Run+0xd8
+0a 00000064`513ffbd0 00007ffb`c6e0455f     CoreMessaging!Microsoft::CoreUI::Dispatch::EventLoop::Callback_Run+0x156
+0b 00000064`513ffc60 00007ffb`c6de07db     CoreMessaging!Microsoft::CoreUI::Messaging::MessageSession::Microsoft_CoreUI_IExportMessageSession_Run$+0x33
+0c 00000064`513ffc90 00007ffb`a98ac5c3     CoreMessaging!Microsoft::CoreUI::IExportMessageSession::ExportAdapter$::Run+0x5b
+0d 00000064`513ffcd0 00007ffb`cbe8dda7     uiautomationcore!NavigationHelperProxyOneCore::s_CoreUIThreadProc+0x33
+0e 00000064`513ffd00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+0f 00000064`513ffd30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   9  Id: 125c.1f08 Suspend: 1 Teb: 00000064`5099d000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`514ff728 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+01 00000064`514ff730 00007ffb`ca932641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 00000064`514ffa20 00007ffb`a976f2f6     KERNELBASE!WaitForMultipleObjects+0x11
+03 00000064`514ffa60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0xc6
+04 00000064`514ffac0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+05 00000064`514ffaf0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+06 00000064`514ffb20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  10  Id: 125c.12cc Suspend: 1 Teb: 00000064`5099f000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`515ff9d8 00007ffb`a990ece4     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+01 00000064`515ff9e0 00007ffb`cbe8dda7     uiautomationcore!WinEventManager::ThreadProc+0x1d4
+02 00000064`515ffa60 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`515ffa90 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  11  Id: 125c.10ec Suspend: 1 Teb: 00000064`509a1000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`516ffa98 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 00000064`516ffaa0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+02 00000064`516ffe00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+03 00000064`516ffe30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  12  Id: 125c.a8c Suspend: 1 Teb: 00000064`509a3000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`517ff918 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+01 00000064`517ff920 00007ffb`cc9c25aa     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 00000064`517ffc10 00007ffb`cc9c23e4     combase!WaitCoalesced+0xca
+03 00000064`517ffea0 00007ffb`cc9c222f     combase!CRpcThread::WorkerLoop+0x120
+04 00000064`517fff10 00007ffb`cbe8dda7     combase!CRpcThreadCache::RpcWorkerThreadEntry+0x4f
+05 00000064`517fff40 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+06 00000064`517fff70 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  13  Id: 125c.1614 Suspend: 1 Teb: 00000064`509a5000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 00000064`518ff5f0 00007ffb`a97860d9     uiautomationcore!ProtobufHelper::GetObj+0x4a
+01 00000064`518ff6d0 00007ffb`a97869bb     uiautomationcore!ProtobufHelper::GetEventArgs+0x249
+02 00000064`518ff7c0 00007ffb`a98330c2     uiautomationcore!SavedEvent::GetWorkItemInfo+0xab
+03 00000064`518ff7f0 00007ffb`a9832d75     uiautomationcore!WorkItemQueue::GetDuplicatedEventWorkItemCount+0x6e
+04 00000064`518ff860 00007ffb`a9961819     uiautomationcore!WorkItemQueue::ThreadProc+0x185
+05 00000064`518ff8e0 00007ffb`cbe8dda7     uiautomationcore!WorkItemQueue::StaticThreadProc+0x9
+06 00000064`518ff910 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+07 00000064`518ff940 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+quit:

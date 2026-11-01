@@ -1,0 +1,16 @@
+.lines -d
+sxe -c ".printf \"=== THREAD-CREATED tid=%x\n\", @$tid; ~.; gc" ct
+sxe -c ".printf \"=== THREAD-EXITED tid=%x\n\", @$tid; gc" et
+
+bp ntdll!NtCreateThreadEx ".printf \"=== NtCreateThreadEx from tid=%x\n\", @$tid; kc 25; gc"
+bp ntdll!NtCreateWorkerFactory ".printf \"=== NtCreateWorkerFactory from tid=%x\n\", @$tid; kc 25; gc"
+bp combase!CoCreateInstance ".printf \"=== MARK CoCreateInstance tid=%x\n\", @$tid; gc"
+
+
+
+bu uiautomationcore!CUIAutomation::AddFocusChangedEventHandler ".printf \"=== MARK AddFocusChangedEventHandler tid=%x\n\", @$tid; gc"
+
+bu uiautomationcore!CUIAutomation::ElementFromHandle ".printf \"=== MARK ElementFromHandle tid=%x\n\", @$tid; gc"
+
+bu uiautomationcore!CUIAutomation::AddPropertyChangedEventHandlerNativeArray ".printf \"=== MARK AddPropertyChangedEventHandlerNativeArray tid=%x\n\", @$tid; gc"
+g

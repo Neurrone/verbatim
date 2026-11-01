@@ -1,0 +1,8 @@
+RESULT r1 ctl_uia_we slow=3000 rep 0: D(base 2.7 ms) B's name after 3 ms; D0 after 3 ms; trigger 215 ms before; focus events so far []
+RESULT r1 ctl_uia_we slow=3000 rep 1: D(base 2.0 ms) B's name after 2 ms; D0 after 2 ms; trigger 213 ms before; focus events so far []
+RESULT r1 slow_uia_we slow=3000 rep 0: D(base 2.3 ms) B's name after 4818 ms; D0 after 2 ms; trigger 212 ms before; focus events so far []
+RESULT r1 slow_uia_we slow=3000 rep 1: D(base 2.3 ms) B's name after 3807 ms; D0 after 1 ms; trigger 211 ms before; focus events so far []
+RESULT r1 slow_msaa_we slow=3000 rep 0: D(base 2.3 ms) B's name after 6817 ms; D0 after 2 ms; trigger 214 ms before; focus events so far []
+RESULT r1 slow_msaa_we slow=3000 rep 1: D(base 2.7 ms) B's name after 4966 ms; D0 after 2 ms; trigger 212 ms before; focus events so far []
+RESULT r1 slow_msaa_focus slow=3000 rep 0: D(base 2.1 ms) B's name after 3 ms; D0 after 3 ms; trigger 204 ms before; focus events so far []
+RESULT r1 slow_msaa_focus slow=3000 rep 1: D(base 2.0 ms) B's name after 1803 ms; D0 after 2 ms; trigger 201 ms before; focus events so far []

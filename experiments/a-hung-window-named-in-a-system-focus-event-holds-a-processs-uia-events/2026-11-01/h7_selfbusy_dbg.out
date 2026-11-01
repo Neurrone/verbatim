@@ -1,0 +1,1 @@
+RESULT selfbusy_dbg rep 0: hung_at_trigger=0 baseline 1.8 ms; held name after 2 ms; 502 ms into the 8000 ms stall; trigger at 300 ms

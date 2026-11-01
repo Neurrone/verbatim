@@ -1,0 +1,70 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+
+
+
+
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+(858.b4c): Break instruction exception - code 80000003 (first chance)
+ntdll!DbgBreakPoint:
+00007ffb`cd463f40 cc              int     3
+0:012> .lines -d
+Line number information will not be loaded
+0:012> bp user32!RegisterWindowMessageW ".printf \"=== RegisterWindowMessageW tid=%x name=%mu\n\", @$tid, @rcx; kc 6; gc"
+0:012> bp user32!SendMessageTimeoutW ".printf \"=== SendMessageTimeoutW tid=%x hwnd=%p msg=%x wp=%p lp=%p flags=%x timeout=%d\n\", @$tid, @rcx, @edx, @r8, @r9, dwo(@rsp+28), dwo(@rsp+30); kc 12; gc"
+0:012> g
+=== SendMessageTimeoutW tid=31bc hwnd=0000000000580262 msg=3d wp=0000000078336517 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ClientProxyManager::GetCompleteProxyNode
+uiautomationcore!FocusTracker::GetFocusedElementFromWinEvent
+uiautomationcore!FocusTracker::HandleFocusChange
+uiautomationcore!FocusTracker::WinEventThreadProcCallback
+uiautomationcore!WinEventTracker::WinEventThreadProc
+uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+ntdll!RtlUserThreadStart
+(858.31bc): C++ EH exception - code e06d7363 (first chance)
+(858.31bc): C++ EH exception - code e06d7363 (first chance)
+=== SendMessageTimeoutW tid=31bc hwnd=0000000000580262 msg=c1aa wp=0000000000000000 lp=0000000078336518 flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetProxyUiaNode
+uiautomationcore!UiaNodeFactory::InProcProxyFromHwnd
+uiautomationcore!ClientProxyManager::InternalGetProxyProvider
+uiautomationcore!ClientProxyManager::GetCompleteProxyNode
+uiautomationcore!FocusTracker::GetFocusedElementFromWinEvent
+uiautomationcore!FocusTracker::HandleFocusChange
+uiautomationcore!FocusTracker::WinEventThreadProcCallback
+uiautomationcore!WinEventTracker::WinEventThreadProc
+uiautomationcore!WinEventTracker::CallbackWorkItem::DoWork
+uiautomationcore!WorkItemQueue::ThreadProc
+uiautomationcore!WorkItemQueue::StaticThreadProc
+KERNEL32!BaseThreadInitThunk
+(858.31bc): C++ EH exception - code e06d7363 (first chance)
+(858.31bc): C++ EH exception - code e06d7363 (first chance)
+(858.31bc): C++ EH exception - code e06d7363 (first chance)
+(858.31bc): C++ EH exception - code e06d7363 (first chance)

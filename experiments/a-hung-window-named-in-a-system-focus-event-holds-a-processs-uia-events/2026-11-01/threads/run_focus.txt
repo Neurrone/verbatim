@@ -1,0 +1,449 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+
+
+
+
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+CommandLine: <scratch folder>\fp\target\debug\focusproto.exe client D to=2000 desk:base
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+(e70.1934): Break instruction exception - code 80000003 (first chance)
+ntdll!LdrpDoDebuggerBreak+0x35:
+00007ffb`cd4626c9 cc              int     3
+0:000> .lines -d
+Line number information will not be loaded
+0:000> bp user32!RegisterWindowMessageW ".printf \"=== RegisterWindowMessageW tid=%x name=%mu\n\", @$tid, @rcx; kc 6; gc"
+0:000> bp user32!SendMessageTimeoutW ".printf \"=== SendMessageTimeoutW tid=%x hwnd=%p msg=%x wp=%p lp=%p flags=%x timeout=%d\n\", @$tid, @rcx, @edx, @r8, @r9, dwo(@rsp+28), dwo(@rsp+30); kc 12; gc"
+0:000> g
+=== RegisterWindowMessageW tid=1934 name={FB8F0821-0164-101B-84ED-08002B2EC713} Call Site
+user32!RegisterWindowMessageW
+ole32!_RegisterClipFormat
+ole32!InitPropset
+ole32!_typesDllMain
+ole32!OleautExtDllMain
+ole32!DllMain
+=== SendMessageTimeoutW tid=1934 hwnd=000000000001000c msg=3d wp=0000000000000e70 lp=00000000fffffffc flags=2 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+OLEACC!SendMessageTimeoutHelper
+OLEACC!AccessibleObjectFromWindowTimeout
+uiautomationcore!CreateMsaaProxy
+uiautomationcore!BuiltinProxyFactory::CreateProvider
+uiautomationcore!ClientProxyManager::InternalGetProxyProvider
+uiautomationcore!UiaNodeFactory::CompleteNodeInfo
+uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+uiautomationcore!UiaNodeFactory::FromProviderEntryPoint
+uiautomationcore!CUIAutomation::GetClientRootNode
+uiautomationcore!CUIAutomation::GetRootElement
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+*** WARNING: Unable to verify checksum for focusproto.exe
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+focusproto!focusproto::client
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000104d6 msg=3d wp=000000005e7d8283 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!UiaNodeFactory::CompleteNodeInfo
+uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+uiautomationcore!UiaNodeFactory::FromProviderEntryPoint
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+focusproto!focusproto::client
+=== SendMessageTimeoutW tid=1934 hwnd=000000000001000c msg=3d wp=0000000000000e70 lp=00000000fffffffc flags=2 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+OLEACC!SendMessageTimeoutHelper
+OLEACC!AccessibleObjectFromWindowTimeout
+uiautomationcore!MsaaProxy::get_FragmentRoot
+uiautomationcore!ProviderCallouts::get_FragmentRoot
+uiautomationcore!EventManager::ProviderHandlesWinEvents
+uiautomationcore!EventManager::CollectClientSideItemsToAdvise
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+focusproto!focusproto::register
+=== SendMessageTimeoutW tid=1934 hwnd=0000000000020348 msg=3d wp=000000005e7d8284 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== RegisterWindowMessageW tid=1934 name=UiaServerConnection_HookMessage Call Site
+user32!RegisterWindowMessageW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+=== SendMessageTimeoutW tid=1934 hwnd=0000000000020348 msg=c1aa wp=0000000000000000 lp=000000005e7d8285 flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000100ea msg=3d wp=000000005e7d8286 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000100ea msg=c1aa wp=0000000000000000 lp=000000005e7d8287 flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000403aa msg=3d wp=000000005e7d8288 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000403aa msg=c1aa wp=0000000000000000 lp=000000005e7d8289 flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=000000000001042c msg=3d wp=000000005e7d828a lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=000000000001042c msg=c1aa wp=0000000000000000 lp=000000005e7d828b flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=000000000002048c msg=3d wp=000000005e7d828c lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=000000000002048c msg=c1aa wp=0000000000000000 lp=000000005e7d828d flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000200da msg=3d wp=000000005e7d828e lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000200da msg=c1aa wp=0000000000000000 lp=000000005e7d828f flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=0000000000040220 msg=3d wp=000000005e7d8290 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000303e2 msg=3d wp=000000005e7d8291 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000604c4 msg=3d wp=000000005e7d8292 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000202f2 msg=3d wp=000000005e7d8293 lp=ffffffffffffffe7 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!HwndUtils::SendWmGetObject
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::GetNativeUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000202f2 msg=c1aa wp=0000000000000000 lp=000000005e7d8294 flags=0 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!`anonymous namespace'::PerformOperationOnHwndThreadImpl
+uiautomationcore!PerformOperationOnHwndThread
+uiautomationcore!ProviderEntryPoint::ConnectUsingHwnd
+uiautomationcore!ProviderEntryPoint::ConnectToProvider
+uiautomationcore!ProviderEntryPoint::GetUiaNode
+uiautomationcore!ProviderEntryPoint::TryGetClientChannelConnection
+uiautomationcore!AdvisableItemsGroupedByProcess::AdvisableItemsGroup::TryGetConnection
+uiautomationcore!EventManager::DoCalldowns_ClientSideOptimized
+uiautomationcore!EventManager::DoCalldowns
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler
+uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler
+uiautomationcore!CUIAutomation::AddFocusChangedEventHandler
+focusproto!windows::Win32::UI::Accessibility::IUIAutomation::AddFocusChangedEventHandler<ref$<windows::Win32::UI::Accessibility::IUIAutomationCacheRequest>,ref$<windows::Win32::UI::Accessibility::IUIAutomationFocusChangedEventHandler> >
+focusproto!focusproto::register::closure$0
+mincore\com\oleaut32\dispatch\ups.cpp(2126)\oleaut32.dll!00007FFBCBC5D72D: (caller: 00007FFBCBC5DDB2) ReturnHr(1) tid(7ec) 8002801D Library not registered.
+=== SendMessageTimeoutW tid=1934 hwnd=00000000000100ea msg=164 wp=0000000000000000 lp=000000534ecf9d50 flags=22 timeout=2000 Call Site
+user32!SendMessageTimeoutW
+uiautomationcore!BasicHwndUtils::GetComboFromList
+uiautomationcore!HwndProxy::Navigate
+uiautomationcore!UiaNodeFactory::ConstructUiaNode
+uiautomationcore!UiaNodeFactory::FromPartialNodeInfo
+uiautomationcore!UiaNodeFactory::FromLocalProvider
+uiautomationcore!UiaNodeTraverser::GetParent
+uiautomationcore!UiaNodeTraverser::Traverse
+uiautomationcore!BulkFetch::Traverse
+uiautomationcore!<lambda_eafec5e4b917385edc51df6d92b0ed43>::operator()
+uiautomationcore!<lambda_0ff94b35afe585fe48ec5b7a1c5ea129>::operator()
+uiautomationcore!UiaUtils::DispatchWithInvoker
+uiautomationcore!BulkFetch::Fetch
+uiautomationcore!EventManager::ProcessLocalMatchingEventRecords
+uiautomationcore!EventManager::RaiseLocalEvent
+uiautomationcore!EventManager::AssociateWithRecord
+uiautomationcore!EventManager::AddEventRecord
+uiautomationcore!ClientEventManager::RegisterHandler
+ev D desk:base focus t=1793544109955842 pid=7580 name="Taskbar" hwnd=65770
+registered D desk:base in 3048.5ms
+client-ready D
+ntdll!NtTerminateProcess+0x14:
+00007ffb`cd4a22d4 c3              ret
+0:000> NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\atlmfc.natvis'

@@ -1,0 +1,4 @@
+one_c0_10k: flood of 30000 at 0.1 ms raised in 3.00 s
+one_c0_10k: +0.3 s after the flood: A's events received 95; worker CPU 3172 ms; B probes sent 1, delivered 0
+one_c0_10k: +2.3 s after the flood: A's events received 95; worker CPU 5172 ms; B probes sent 9, delivered 0
+one_c0_10k: no B probe delivered in 30.0 s

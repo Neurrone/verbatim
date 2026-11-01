@@ -1,0 +1,32 @@
+[1793543523968041] qsTV: ready
+[1793543523983511] tool find qsTV -> 13108636 
+[1793543524001493] qsM: ready
+[1793543524014987] tool find qsM -> 57345658 
+[1793543524032174] qsU: ready
+[1793543524047546] tool find qsU -> 10290526 
+[1793543524066046] qsB: ready
+[1793543524080419] tool find qsB -> 8259410 
+[1793543524094782] tool findchild 13108636 WindowsForms10.SysTreeView32.app.0.141b42a_r9_ad1 -> 2557656 
+[1793543524153816] D: ev D desk:base t=1793543524153708 pid=7580 name="Taskbar"
+[1793543524155356] D: registered D desk:base in 40.4ms
+[1793543524166971] D: registered D name:8259410 in 11.6ms
+[1793543524167076] D: client-ready D
+[1793543524667457] >qsB: set-name btn1 Base
+[1793543524667899] qsB: applied
+[1793543524669206] D: ev D name:8259410 t=1793543524669111 pid=3640 name="Base"
+[1793543524669314] >D: cpu
+[1793543524669409] D: cpu D proc_user=46.9 proc_kernel=46.9 worker12352_user=15.6 worker12352_kernel=15.6 worker12352_cycles=105533022 worker1712_user=0.0 worker1712_kernel=0.0 worker1712_cycles=3193322
+D pid 1832; cpu {'proc_user': 46.9, 'proc_kernel': 46.9, 'worker12352_user': 15.6, 'worker12352_kernel': 15.6, 'worker12352_cycles': 105533022.0, 'worker1712_user': 0.0, 'worker1712_kernel': 0.0, 'worker1712_cycles': 3193322.0}
+[1793543524669508] >qsM: slow 3000
+[1793543524669653] qsM: applied
+[1793543524686041] tool winevent 57345658 8005 -4 0 -> winevent sent t=1793543524682860 
+[1793543524886213] >qsB: set-name btn1 During
+[1793543524886574] qsB: applied
+[1793543525687057] stacks q3_slow_msaa_we_1s pid=1832 took 588 ms -> <scratch folder>\eventthread\stacks\q3_slow_msaa_we_1s.txt
+[1793543526274679] stacks q3_slow_msaa_we_target_1s pid=5284 took 474 ms -> <scratch folder>\eventthread\stacks\q3_slow_msaa_we_target_1s.txt
+[1793543528249094] stacks q3_slow_msaa_we_3s pid=1832 took 587 ms -> <scratch folder>\eventthread\stacks\q3_slow_msaa_we_3s.txt
+[1793543530095075] D: ev D name:8259410 t=1793543530094986 pid=3640 name="During"
+RESULT q3_slow_msaa_we: B's name after 5209 ms (stack dumps included, each pauses D)
+[1793543530095180] >qsM: slow 0
+[1793543530095198] >qsU: slow 0
+[1793543530095391] qsU: applied

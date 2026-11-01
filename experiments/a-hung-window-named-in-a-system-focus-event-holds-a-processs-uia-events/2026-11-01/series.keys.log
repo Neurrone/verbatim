@@ -1,0 +1,851 @@
+20:57:41.031 KEY ctrl+home reset
+20:57:41.835 CMD slow-uia hold
+20:57:41.835 MARK hold run 1
+20:57:42.858 MARK held seen=True
+20:57:48.938 KEY ctrl+home reset
+20:57:49.739 CMD slow-uia hold
+20:57:49.739 MARK hold run 1
+20:57:50.778 MARK held seen=True
+20:57:51.279 KEY alt+tab*1 to notepad
+20:57:52.833 KEY down 
+20:57:53.458 KEY down 
+20:57:54.059 KEY down 
+20:57:54.660 KEY down 
+20:57:55.266 CMD slow-uia release
+20:57:56.824 MARK done hold
+20:57:57.716 KEY ctrl+home reset
+20:57:58.517 CMD slow-uia slow 1000
+20:57:58.718 MARK slow run 1
+20:57:59.520 KEY alt+tab*1 to notepad
+20:58:01.072 KEY down 
+20:58:01.693 KEY down 
+20:58:02.293 KEY down 
+20:58:02.899 KEY down 
+20:58:03.516 CMD slow-uia slow 0
+20:58:03.744 MARK slow 0 applied=True
+20:58:05.244 MARK done slow
+20:58:25.095 KEY esc reset
+20:58:25.411 KEY esc reset
+20:58:25.711 KEY ctrl+home reset
+20:58:26.514 CMD slow-uia hold
+20:58:26.514 MARK hold run 1
+20:58:27.537 MARK held seen=True
+20:58:28.037 KEY alt+tab*1 to notepad
+20:58:29.613 KEY down 
+20:58:30.220 KEY down 
+20:58:30.821 KEY down 
+20:58:31.422 KEY down 
+20:58:32.024 CMD slow-uia release
+20:58:34.487 KEY esc reset
+20:58:34.788 KEY esc reset
+20:58:35.090 KEY ctrl+home reset
+20:58:35.891 CMD slow-uia hold
+20:58:35.891 MARK hold run 2
+20:58:36.924 MARK held seen=True
+20:58:37.425 KEY alt+tab*1 to notepad
+20:58:38.977 KEY down 
+20:58:39.578 KEY down 
+20:58:40.185 KEY down 
+20:58:40.786 KEY down 
+20:58:41.388 CMD slow-uia release
+20:58:43.851 KEY esc reset
+20:58:44.155 KEY esc reset
+20:58:44.459 KEY ctrl+home reset
+20:58:45.260 CMD slow-uia hold
+20:58:45.260 MARK hold run 3
+20:58:46.284 MARK held seen=True
+20:58:46.784 KEY alt+tab*1 to notepad
+20:58:48.340 KEY down 
+20:58:48.941 KEY down 
+20:58:49.543 KEY down 
+20:58:50.149 KEY down 
+20:58:50.750 CMD slow-uia release
+20:58:52.408 MARK done hold
+20:59:14.410 KEY esc reset
+20:59:14.711 KEY esc reset
+20:59:15.012 KEY ctrl+home reset
+20:59:15.814 CMD slow-uia hold
+20:59:15.814 MARK hold2 run 1
+20:59:16.837 MARK held seen=True
+20:59:17.337 KEY alt+tab*2 to explorer
+20:59:18.940 KEY down 
+20:59:19.541 KEY down 
+20:59:20.142 KEY alt+tab*1 to notepad
+20:59:21.696 KEY down 
+20:59:22.297 KEY down 
+20:59:22.898 CMD slow-uia release
+20:59:26.174 KEY esc reset
+20:59:26.476 KEY esc reset
+20:59:26.777 KEY ctrl+home reset
+20:59:27.578 CMD slow-uia hold
+20:59:27.578 MARK hold2 run 2
+20:59:28.612 MARK held seen=True
+20:59:29.112 KEY alt+tab*2 to explorer
+20:59:30.723 KEY down 
+20:59:31.325 KEY down 
+20:59:31.926 KEY alt+tab*1 to notepad
+20:59:33.494 KEY down 
+20:59:34.095 KEY down 
+20:59:34.696 CMD slow-uia release
+20:59:37.958 KEY esc reset
+20:59:38.263 KEY esc reset
+20:59:38.564 KEY ctrl+home reset
+20:59:39.366 CMD slow-uia hold
+20:59:39.366 MARK hold2 run 3
+20:59:40.398 MARK held seen=True
+20:59:40.898 KEY alt+tab*2 to explorer
+20:59:42.522 KEY down 
+20:59:43.124 KEY down 
+20:59:43.725 KEY alt+tab*1 to notepad
+20:59:45.277 KEY down 
+20:59:45.878 KEY down 
+20:59:46.479 CMD slow-uia release
+20:59:48.037 MARK done hold2
+21:01:10.854 KEY esc reset
+21:01:11.155 KEY esc reset
+21:01:11.456 KEY ctrl+home reset
+21:01:12.258 CMD slow-uia hold
+21:01:12.258 MARK hold2 run 1
+21:01:13.279 MARK held seen=True
+21:01:13.779 KEY alt+tab*2 to explorer
+21:01:15.383 KEY down 
+21:01:15.984 KEY down 
+21:01:16.585 KEY alt+tab*1 to notepad
+21:01:18.138 KEY down 
+21:01:18.739 KEY down 
+21:01:19.341 CMD slow-uia release
+21:01:20.901 MARK done hold2
+21:02:00.898 KEY esc reset
+21:02:01.199 KEY esc reset
+21:02:01.500 KEY ctrl+home reset
+21:02:02.302 CMD slow-uia hold
+21:02:02.302 MARK hold run 1
+21:02:03.345 MARK held seen=True
+21:02:03.846 KEY alt+tab*1 to notepad
+21:02:05.418 KEY down 
+21:02:06.025 KEY down 
+21:02:06.626 KEY down 
+21:02:07.227 KEY down 
+21:02:07.829 CMD slow-uia release
+21:02:09.437 MARK done hold
+21:02:27.834 KEY esc reset
+21:02:28.138 KEY esc reset
+21:02:28.441 KEY ctrl+home reset
+21:02:29.253 CMD slow-uia slow 1000
+21:02:29.454 MARK slow run 1
+21:02:30.256 KEY alt+tab*1 to notepad
+21:02:31.825 KEY down 
+21:02:32.432 KEY down 
+21:02:33.033 KEY down 
+21:02:33.635 KEY down 
+21:02:34.236 CMD slow-uia slow 0
+21:02:34.507 MARK slow 0 applied=True
+21:02:36.810 KEY esc reset
+21:02:37.113 KEY esc reset
+21:02:37.417 KEY ctrl+home reset
+21:02:38.234 CMD slow-uia slow 1000
+21:02:38.435 MARK slow run 2
+21:02:39.236 KEY alt+tab*1 to notepad
+21:02:40.796 KEY down 
+21:02:41.398 KEY down 
+21:02:41.999 KEY down 
+21:02:42.600 KEY down 
+21:02:43.202 CMD slow-uia slow 0
+21:02:43.473 MARK slow 0 applied=True
+21:02:45.775 KEY esc reset
+21:02:46.079 KEY esc reset
+21:02:46.383 KEY ctrl+home reset
+21:02:47.193 CMD slow-uia slow 1000
+21:02:47.393 MARK slow run 3
+21:02:48.196 KEY alt+tab*1 to notepad
+21:02:49.749 KEY down 
+21:02:50.355 KEY down 
+21:02:50.966 KEY down 
+21:02:51.567 KEY down 
+21:02:52.175 CMD slow-uia slow 0
+21:02:52.450 MARK slow 0 applied=True
+21:02:54.754 KEY esc reset
+21:02:55.055 KEY esc reset
+21:02:55.357 KEY ctrl+home reset
+21:02:56.159 CMD slow-uia slow 1000
+21:02:56.360 MARK slow run 4
+21:02:57.162 KEY alt+tab*1 to notepad
+21:02:58.719 KEY down 
+21:02:59.326 KEY down 
+21:02:59.928 KEY down 
+21:03:00.529 KEY down 
+21:03:01.130 CMD slow-uia slow 0
+21:03:01.402 MARK slow 0 applied=True
+21:03:03.707 KEY esc reset
+21:03:04.008 KEY esc reset
+21:03:04.309 KEY ctrl+home reset
+21:03:05.111 CMD slow-uia slow 1000
+21:03:05.312 MARK slow run 5
+21:03:06.114 KEY alt+tab*1 to notepad
+21:03:07.671 KEY down 
+21:03:08.272 KEY down 
+21:03:08.873 KEY down 
+21:03:09.474 KEY down 
+21:03:10.075 CMD slow-uia slow 0
+21:03:10.346 MARK slow 0 applied=True
+21:03:12.649 KEY esc reset
+21:03:12.950 KEY esc reset
+21:03:13.252 KEY ctrl+home reset
+21:03:14.060 CMD slow-uia slow 1000
+21:03:14.260 MARK slow run 6
+21:03:15.062 KEY alt+tab*1 to notepad
+21:03:16.614 KEY down 
+21:03:17.216 KEY down 
+21:03:17.817 KEY down 
+21:03:18.417 KEY down 
+21:03:19.019 CMD slow-uia slow 0
+21:03:19.297 MARK slow 0 applied=True
+21:03:21.599 KEY esc reset
+21:03:21.900 KEY esc reset
+21:03:22.201 KEY ctrl+home reset
+21:03:23.002 CMD slow-uia slow 1000
+21:03:23.203 MARK slow run 7
+21:03:24.005 KEY alt+tab*1 to notepad
+21:03:25.559 KEY down 
+21:03:26.160 KEY down 
+21:03:26.761 KEY down 
+21:03:27.361 KEY down 
+21:03:27.963 CMD slow-uia slow 0
+21:03:28.235 MARK slow 0 applied=True
+21:03:30.538 KEY esc reset
+21:03:30.842 KEY esc reset
+21:03:31.143 KEY ctrl+home reset
+21:03:31.951 CMD slow-uia slow 1000
+21:03:32.151 MARK slow run 8
+21:03:32.953 KEY alt+tab*1 to notepad
+21:03:34.506 KEY down 
+21:03:35.107 KEY down 
+21:03:35.708 KEY down 
+21:03:36.309 KEY down 
+21:03:36.911 CMD slow-uia slow 0
+21:03:38.192 MARK slow 0 applied=True
+21:03:40.495 KEY esc reset
+21:03:40.796 KEY esc reset
+21:03:41.097 KEY ctrl+home reset
+21:03:41.899 CMD slow-uia slow 1000
+21:03:42.099 MARK slow run 9
+21:03:42.936 KEY alt+tab*1 to notepad
+21:03:44.503 KEY down 
+21:03:45.114 KEY down 
+21:03:45.724 KEY down 
+21:03:46.325 KEY down 
+21:03:46.932 CMD slow-uia slow 0
+21:03:48.167 MARK slow 0 applied=True
+21:03:50.469 KEY esc reset
+21:03:50.773 KEY esc reset
+21:03:51.077 KEY ctrl+home reset
+21:03:51.879 CMD slow-uia slow 1000
+21:03:52.079 MARK slow run 10
+21:03:52.908 KEY alt+tab*1 to notepad
+21:03:54.477 KEY down 
+21:03:55.079 KEY down 
+21:03:55.680 KEY down 
+21:03:56.281 KEY down 
+21:03:56.882 CMD slow-uia slow 0
+21:03:58.118 MARK slow 0 applied=True
+21:03:59.618 MARK done slow
+21:04:01.362 KEY esc reset
+21:04:01.664 KEY esc reset
+21:04:01.965 KEY ctrl+home reset
+21:04:04.268 CMD hung-msaa stall 16000
+21:04:04.268 MARK hung run 1
+21:04:10.769 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:04:10.769 KEY alt+tab*1 to notepad
+21:04:12.321 KEY down 
+21:04:12.922 KEY down 
+21:04:13.523 KEY down 
+21:04:14.124 KEY alt+tab*2 to explorer over hung
+21:04:15.745 KEY down 
+21:04:16.347 KEY down 
+21:04:23.427 KEY esc reset
+21:04:23.733 KEY esc reset
+21:04:24.033 KEY ctrl+home reset
+21:04:26.338 CMD hung-msaa stall 16000
+21:04:26.338 MARK hung run 2
+21:04:32.839 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:04:32.839 KEY alt+tab*1 to notepad
+21:04:34.394 KEY down 
+21:04:35.011 KEY down 
+21:04:35.612 KEY down 
+21:04:36.219 KEY alt+tab*2 to explorer over hung
+21:04:37.835 KEY down 
+21:04:38.437 KEY down 
+21:04:45.511 KEY esc reset
+21:04:45.812 KEY esc reset
+21:04:46.113 KEY ctrl+home reset
+21:04:48.419 CMD hung-msaa stall 16000
+21:04:48.419 MARK hung run 3
+21:04:54.920 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:04:54.920 KEY alt+tab*1 to notepad
+21:04:56.473 KEY down 
+21:04:57.075 KEY down 
+21:04:57.678 KEY down 
+21:04:58.279 KEY alt+tab*2 to explorer over hung
+21:04:59.889 KEY down 
+21:05:00.490 KEY down 
+21:05:07.660 KEY esc reset
+21:05:07.961 KEY esc reset
+21:05:08.262 KEY ctrl+home reset
+21:05:10.566 CMD hung-msaa stall 16000
+21:05:10.566 MARK hung run 4
+21:05:17.084 MARK hung=1 fg_class=Ghost
+21:05:17.085 KEY alt+tab*1 to notepad
+21:05:18.635 KEY down 
+21:05:19.238 KEY down 
+21:05:19.839 KEY down 
+21:05:20.439 KEY alt+tab*2 to explorer over hung
+21:05:22.040 KEY down 
+21:05:22.640 KEY down 
+21:05:29.807 KEY esc reset
+21:05:30.108 KEY esc reset
+21:05:30.410 KEY ctrl+home reset
+21:05:32.742 CMD hung-msaa stall 16000
+21:05:32.742 MARK hung run 5
+21:05:39.257 MARK hung=1 fg_class=Ghost
+21:05:39.257 KEY alt+tab*1 to notepad
+21:05:40.808 KEY down 
+21:05:41.409 KEY down 
+21:05:42.009 KEY down 
+21:05:42.610 KEY alt+tab*2 to explorer over hung
+21:05:44.211 KEY down 
+21:05:44.811 KEY down 
+21:05:51.987 KEY esc reset
+21:05:52.288 KEY esc reset
+21:05:52.590 KEY ctrl+home reset
+21:05:54.898 CMD hung-msaa stall 16000
+21:05:54.898 MARK hung run 6
+21:06:01.410 MARK hung=1 fg_class=Ghost
+21:06:01.410 KEY alt+tab*1 to notepad
+21:06:02.961 KEY down 
+21:06:03.562 KEY down 
+21:06:04.162 KEY down 
+21:06:04.763 KEY alt+tab*2 to explorer over hung
+21:06:06.364 KEY down 
+21:06:06.964 KEY down 
+21:06:14.082 KEY esc reset
+21:06:14.387 KEY esc reset
+21:06:14.688 KEY ctrl+home reset
+21:06:17.027 CMD hung-msaa stall 16000
+21:06:17.027 MARK hung run 7
+21:06:23.544 MARK hung=1 fg_class=Ghost
+21:06:23.544 KEY alt+tab*1 to notepad
+21:06:25.095 KEY down 
+21:06:25.695 KEY down 
+21:06:26.296 KEY down 
+21:06:26.896 KEY alt+tab*2 to explorer over hung
+21:06:28.497 KEY down 
+21:06:29.097 KEY down 
+21:06:36.209 KEY esc reset
+21:06:36.514 KEY esc reset
+21:06:36.818 KEY ctrl+home reset
+21:06:39.143 CMD hung-msaa stall 16000
+21:06:39.143 MARK hung run 8
+21:06:45.665 MARK hung=1 fg_class=Ghost
+21:06:45.666 KEY alt+tab*1 to notepad
+21:06:47.216 KEY down 
+21:06:47.817 KEY down 
+21:06:48.417 KEY down 
+21:06:49.018 KEY alt+tab*2 to explorer over hung
+21:06:50.619 KEY down 
+21:06:51.220 KEY down 
+21:06:58.361 KEY esc reset
+21:06:58.662 KEY esc reset
+21:06:58.964 KEY ctrl+home reset
+21:07:01.292 CMD hung-msaa stall 16000
+21:07:01.292 MARK hung run 9
+21:07:07.815 MARK hung=1 fg_class=Ghost
+21:07:07.815 KEY alt+tab*1 to notepad
+21:07:09.366 KEY down 
+21:07:09.967 KEY down 
+21:07:10.567 KEY down 
+21:07:11.168 KEY alt+tab*2 to explorer over hung
+21:07:12.769 KEY down 
+21:07:13.369 KEY down 
+21:07:20.519 KEY esc reset
+21:07:20.825 KEY esc reset
+21:07:21.126 KEY ctrl+home reset
+21:07:23.430 CMD hung-msaa stall 16000
+21:07:23.430 MARK hung run 10
+21:07:29.931 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:07:29.931 KEY alt+tab*1 to notepad
+21:07:31.489 KEY down 
+21:07:32.090 KEY down 
+21:07:32.690 KEY down 
+21:07:33.291 KEY alt+tab*2 to explorer over hung
+21:07:34.892 KEY down 
+21:07:35.492 KEY down 
+21:07:41.011 MARK done hung
+21:07:41.908 KEY esc reset
+21:07:42.244 KEY esc reset
+21:07:42.546 KEY ctrl+home reset
+21:07:43.348 CMD hung-msaa stall 14000
+21:07:43.348 MARK background run 1
+21:07:49.348 KEY down 
+21:07:50.153 KEY down 
+21:07:50.954 KEY down 
+21:07:51.755 KEY down 
+21:07:52.556 KEY down 
+21:07:53.357 KEY down 
+21:07:59.251 KEY esc reset
+21:07:59.592 KEY esc reset
+21:07:59.902 KEY ctrl+home reset
+21:08:00.704 CMD hung-msaa stall 14000
+21:08:00.704 MARK background run 2
+21:08:06.704 KEY down 
+21:08:07.505 KEY down 
+21:08:08.306 KEY down 
+21:08:09.107 KEY down 
+21:08:09.908 KEY down 
+21:08:10.709 KEY down 
+21:08:16.649 KEY esc reset
+21:08:16.993 KEY esc reset
+21:08:17.297 KEY ctrl+home reset
+21:08:18.099 CMD hung-msaa stall 14000
+21:08:18.099 MARK background run 3
+21:08:24.099 KEY down 
+21:08:24.903 KEY down 
+21:08:25.703 KEY down 
+21:08:26.504 KEY down 
+21:08:27.305 KEY down 
+21:08:28.106 KEY down 
+21:08:33.994 KEY esc reset
+21:08:34.297 KEY esc reset
+21:08:34.602 KEY ctrl+home reset
+21:08:35.406 CMD hung-msaa stall 14000
+21:08:35.406 MARK background run 4
+21:08:41.406 KEY down 
+21:08:42.211 KEY down 
+21:08:43.017 KEY down 
+21:08:43.817 KEY down 
+21:08:44.627 KEY down 
+21:08:45.432 KEY down 
+21:08:51.291 KEY esc reset
+21:08:51.619 KEY esc reset
+21:08:51.920 KEY ctrl+home reset
+21:08:52.722 CMD hung-msaa stall 14000
+21:08:52.722 MARK background run 5
+21:08:58.723 KEY down 
+21:08:59.524 KEY down 
+21:09:00.324 KEY down 
+21:09:01.138 KEY down 
+21:09:01.943 KEY down 
+21:09:02.744 KEY down 
+21:09:08.571 KEY esc reset
+21:09:08.910 KEY esc reset
+21:09:09.212 KEY ctrl+home reset
+21:09:10.014 CMD hung-msaa stall 14000
+21:09:10.014 MARK background run 6
+21:09:16.015 KEY down 
+21:09:16.816 KEY down 
+21:09:17.616 KEY down 
+21:09:18.417 KEY down 
+21:09:19.218 KEY down 
+21:09:20.024 KEY down 
+21:09:25.892 KEY esc reset
+21:09:26.194 KEY esc reset
+21:09:26.496 KEY ctrl+home reset
+21:09:27.299 CMD hung-msaa stall 14000
+21:09:27.299 MARK background run 7
+21:09:33.300 KEY down 
+21:09:34.101 KEY down 
+21:09:34.902 KEY down 
+21:09:35.703 KEY down 
+21:09:36.503 KEY down 
+21:09:37.305 KEY down 
+21:09:43.254 KEY esc reset
+21:09:43.560 KEY esc reset
+21:09:43.863 KEY ctrl+home reset
+21:09:44.664 CMD hung-msaa stall 14000
+21:09:44.664 MARK background run 8
+21:09:50.665 KEY down 
+21:09:51.466 KEY down 
+21:09:52.267 KEY down 
+21:09:53.069 KEY down 
+21:09:53.870 KEY down 
+21:09:54.671 KEY down 
+21:10:00.562 KEY esc reset
+21:10:00.864 KEY esc reset
+21:10:01.166 KEY ctrl+home reset
+21:10:01.968 CMD hung-msaa stall 14000
+21:10:01.968 MARK background run 9
+21:10:07.969 KEY down 
+21:10:08.769 KEY down 
+21:10:09.571 KEY down 
+21:10:10.371 KEY down 
+21:10:11.173 KEY down 
+21:10:11.973 KEY down 
+21:10:17.855 KEY esc reset
+21:10:18.176 KEY esc reset
+21:10:18.485 KEY ctrl+home reset
+21:10:19.295 CMD hung-msaa stall 14000
+21:10:19.295 MARK background run 10
+21:10:25.295 KEY down 
+21:10:26.100 KEY down 
+21:10:26.903 KEY down 
+21:10:27.706 KEY down 
+21:10:28.507 KEY down 
+21:10:29.308 KEY down 
+21:10:34.365 MARK done background
+21:11:18.672 KEY esc reset fg='C:\\Users\\Dickson\\Desktop\\proje'
+21:11:18.975 KEY esc reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:19.278 KEY ctrl+home reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:20.081 CMD hung-msaa stall 14000
+21:11:20.081 MARK background run 1
+21:11:26.082 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:26.882 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:27.683 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:28.488 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:29.297 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:30.098 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:36.007 KEY esc reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:36.319 KEY esc reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:36.620 KEY ctrl+home reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:37.424 CMD hung-msaa stall 14000
+21:11:37.424 MARK background run 2
+21:11:43.424 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:44.225 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:45.026 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:45.826 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:46.627 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:47.428 KEY down  fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:53.309 KEY esc reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:11:53.610 KEY esc reset fg='C:\\Users\\Dickson\\.local\\bin\\py'
+21:12:11.381 KEY esc reset fg='notes.txt - Notepad'
+21:12:11.682 KEY esc reset fg='notes.txt - Notepad'
+21:12:11.983 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:12:12.785 CMD hung-msaa stall 14000
+21:12:12.785 MARK background run 1
+21:12:18.785 KEY down  fg=''
+21:12:19.586 KEY down  fg=''
+21:12:20.388 KEY down  fg=''
+21:12:21.189 KEY down  fg=''
+21:12:21.989 KEY down  fg=''
+21:12:22.789 KEY down  fg=''
+21:12:29.282 KEY esc reset fg='notes.txt - Notepad'
+21:12:29.583 KEY esc reset fg='notes.txt - Notepad'
+21:12:29.884 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:12:30.686 CMD hung-msaa stall 14000
+21:12:30.686 MARK background run 2
+21:12:36.686 KEY down  fg='notes.txt - Notepad'
+21:12:37.487 KEY down  fg='notes.txt - Notepad'
+21:12:38.287 KEY down  fg='notes.txt - Notepad'
+21:12:39.088 KEY down  fg='notes.txt - Notepad'
+21:12:39.889 KEY down  fg='notes.txt - Notepad'
+21:12:40.690 KEY down  fg='notes.txt - Notepad'
+21:12:46.767 KEY esc reset fg='notes.txt - Notepad'
+21:12:47.070 KEY esc reset fg='notes.txt - Notepad'
+21:12:47.371 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:12:48.173 CMD hung-msaa stall 14000
+21:12:48.173 MARK background run 3
+21:12:54.174 KEY down  fg='notes.txt - Notepad'
+21:12:54.974 KEY down  fg='notes.txt - Notepad'
+21:12:55.775 KEY down  fg='notes.txt - Notepad'
+21:12:56.576 KEY down  fg='notes.txt - Notepad'
+21:12:57.377 KEY down  fg='notes.txt - Notepad'
+21:12:58.177 KEY down  fg='notes.txt - Notepad'
+21:13:03.289 MARK done background
+21:13:05.306 KEY esc reset fg='notes.txt - Notepad'
+21:13:05.606 KEY esc reset fg='notes.txt - Notepad'
+21:13:05.908 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:13:08.368 CMD hung-msaa stall 16000
+21:13:08.368 MARK hung run 1
+21:13:14.870 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:13:14.870 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+21:13:16.724 KEY down  fg='notes.txt - Notepad'
+21:13:17.324 KEY down  fg='notes.txt - Notepad'
+21:13:17.925 KEY down  fg='notes.txt - Notepad'
+21:13:18.526 KEY alt+tab*2 to explorer over hung fg_after='Documents - File Explorer'
+21:13:20.431 KEY down  fg='Documents - File Explorer'
+21:13:21.086 KEY down  fg='Documents - File Explorer'
+21:13:27.943 KEY esc reset fg='notes.txt - Notepad'
+21:13:28.244 KEY esc reset fg='notes.txt - Notepad'
+21:13:28.545 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:13:31.015 CMD hung-msaa stall 16000
+21:13:31.015 MARK hung run 2
+21:13:37.516 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:13:37.516 KEY alt+tab*1 to notepad fg_after='hung-msaa'
+21:13:39.375 KEY down  fg='hung-msaa'
+21:13:39.976 KEY down  fg='hung-msaa'
+21:13:40.577 KEY down  fg='hung-msaa'
+21:13:41.178 KEY alt+tab*2 to explorer over hung fg_after='hung-msaa'
+21:13:43.083 KEY down  fg='hung-msaa'
+21:13:43.684 KEY down  fg='hung-msaa'
+21:13:50.509 KEY esc reset fg='notes.txt - Notepad'
+21:13:50.814 KEY esc reset fg='notes.txt - Notepad'
+21:13:51.117 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:13:53.582 CMD hung-msaa stall 16000
+21:13:53.582 MARK hung run 3
+21:14:00.083 MARK hung=1 fg_class=VerbatimMockAppWindow
+21:14:00.083 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+21:14:01.936 KEY down  fg='notes.txt - Notepad'
+21:14:02.537 KEY down  fg='notes.txt - Notepad'
+21:14:03.137 KEY down  fg='notes.txt - Notepad'
+21:14:03.738 KEY alt+tab*2 to explorer over hung fg_after='Documents - File Explorer'
+21:14:05.641 KEY down  fg='Documents - File Explorer'
+21:14:06.243 KEY down  fg='Documents - File Explorer'
+21:14:11.216 MARK done hung
+21:23:49.377 KEY esc reset fg='notes.txt - Notepad'
+21:23:49.692 KEY esc reset fg='notes.txt - Notepad'
+21:23:49.997 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:23:52.453 CMD hung-msaa stall 12000
+21:23:52.563 MARK busyfocus run 1
+21:23:52.680 MARK focus winevent raised for the busy tree view
+21:23:52.981 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+21:23:53.833 KEY down  fg='notes.txt - Notepad'
+21:23:54.435 KEY down  fg='notes.txt - Notepad'
+21:23:55.036 KEY down  fg='notes.txt - Notepad'
+21:23:55.637 KEY down  fg='notes.txt - Notepad'
+21:23:56.243 KEY down  fg='notes.txt - Notepad'
+21:23:56.850 KEY down  fg='notes.txt - Notepad'
+21:24:06.928 KEY esc reset fg='notes.txt - Notepad'
+21:24:07.229 KEY esc reset fg='notes.txt - Notepad'
+21:24:07.533 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:24:09.991 CMD hung-msaa stall 12000
+21:24:10.049 MARK busyfocus run 2
+21:24:10.158 MARK focus winevent raised for the busy tree view
+21:24:10.459 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+21:24:11.310 KEY down  fg='notes.txt - Notepad'
+21:24:11.911 KEY down  fg='notes.txt - Notepad'
+21:24:12.519 KEY down  fg='notes.txt - Notepad'
+21:24:13.126 KEY down  fg='notes.txt - Notepad'
+21:24:13.742 KEY down  fg='notes.txt - Notepad'
+21:24:14.344 KEY down  fg='notes.txt - Notepad'
+21:24:24.405 KEY esc reset fg='notes.txt - Notepad'
+21:24:24.709 KEY esc reset fg='notes.txt - Notepad'
+21:24:25.013 KEY ctrl+home reset fg='notes.txt - Notepad'
+21:24:27.480 CMD hung-msaa stall 12000
+21:24:27.590 MARK busyfocus run 3
+21:24:27.705 MARK focus winevent raised for the busy tree view
+21:24:28.005 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+21:24:28.857 KEY down  fg='notes.txt - Notepad'
+21:24:29.458 KEY down  fg='notes.txt - Notepad'
+21:24:30.060 KEY down  fg='notes.txt - Notepad'
+21:24:30.661 KEY down  fg='notes.txt - Notepad'
+21:24:31.262 KEY down  fg='notes.txt - Notepad'
+21:24:31.870 KEY down  fg='notes.txt - Notepad'
+21:24:41.071 MARK done busyfocus
+23:38:12.316 KEY esc reset fg=''
+23:38:12.616 KEY esc reset fg=''
+23:38:12.916 KEY ctrl+home reset fg=''
+23:38:15.970 CMD hung-msaa stall 12000
+23:38:16.034 MARK altf run 1
+23:38:16.156 MARK focus winevent raised for the busy tree view
+23:38:16.535 KEY alt+tab*1 to notepad fg_after=''
+23:38:17.136 KEY alt+f in hold (1.0 s) fg=''
+23:38:17.935 KEY esc close fg=''
+23:38:18.186 KEY esc close fg=''
+23:38:18.635 KEY alt+f in hold (2.5 s) fg=''
+23:38:19.435 KEY esc close fg=''
+23:38:19.685 KEY esc close fg=''
+23:38:22.135 KEY alt+f after hold (6 s, control) fg=''
+23:38:22.935 KEY esc close fg=''
+23:38:23.186 KEY esc close fg=''
+23:38:31.022 KEY esc reset fg=''
+23:38:31.323 KEY esc reset fg=''
+23:38:31.623 KEY ctrl+home reset fg=''
+23:38:34.678 CMD hung-msaa stall 12000
+23:38:34.735 MARK altf run 2
+23:38:34.851 MARK focus winevent raised for the busy tree view
+23:38:35.236 KEY alt+tab*1 to notepad fg_after=''
+23:38:35.836 KEY alt+f in hold (1.0 s) fg=''
+23:38:36.636 KEY esc close fg=''
+23:38:36.886 KEY esc close fg=''
+23:38:37.336 KEY alt+f in hold (2.5 s) fg=''
+23:38:38.136 KEY esc close fg=''
+23:38:38.386 KEY esc close fg=''
+23:38:40.836 KEY alt+f after hold (6 s, control) fg=''
+23:38:41.636 KEY esc close fg=''
+23:38:41.886 KEY esc close fg=''
+23:38:49.715 KEY esc reset fg=''
+23:38:50.015 KEY esc reset fg=''
+23:38:50.316 KEY ctrl+home reset fg=''
+23:38:53.370 CMD hung-msaa stall 12000
+23:38:53.477 MARK altf run 3
+23:38:53.588 MARK focus winevent raised for the busy tree view
+23:38:53.978 KEY alt+tab*1 to notepad fg_after=''
+23:38:54.578 KEY alt+f in hold (1.0 s) fg=''
+23:38:55.378 KEY esc close fg=''
+23:38:55.628 KEY esc close fg=''
+23:38:56.078 KEY alt+f in hold (2.5 s) fg=''
+23:38:56.878 KEY esc close fg=''
+23:38:57.128 KEY esc close fg=''
+23:38:59.578 KEY alt+f after hold (6 s, control) fg=''
+23:39:00.378 KEY esc close fg=''
+23:39:00.628 KEY esc close fg=''
+23:39:06.945 MARK done altf
+23:40:54.564 KEY esc reset fg='notes.txt - Notepad'
+23:40:54.872 KEY esc reset fg='notes.txt - Notepad'
+23:40:55.177 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:40:57.653 CMD hung-msaa stall 12000
+23:40:57.813 MARK altf run 1
+23:40:57.928 MARK focus winevent raised for the busy tree view
+23:40:58.314 KEY alt+tab*1 to notepad fg_after='hung-msaa'
+23:40:58.914 KEY alt+f in hold (1.0 s) fg='hung-msaa'
+23:40:59.713 KEY esc close fg='hung-msaa'
+23:40:59.964 KEY esc close fg='hung-msaa'
+23:41:00.413 KEY alt+f in hold (2.5 s) fg='hung-msaa'
+23:41:01.214 KEY esc close fg='hung-msaa'
+23:41:01.465 KEY esc close fg='hung-msaa'
+23:41:03.913 KEY alt+f after hold (6 s, control) fg='hung-msaa'
+23:41:04.714 KEY esc close fg='hung-msaa'
+23:41:04.965 KEY esc close fg='hung-msaa'
+23:41:12.171 KEY esc reset fg='notes.txt - Notepad'
+23:41:12.472 KEY esc reset fg='notes.txt - Notepad'
+23:41:12.774 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:41:15.234 CMD hung-msaa stall 12000
+23:41:15.291 MARK altf run 2
+23:41:15.402 MARK focus winevent raised for the busy tree view
+23:41:15.792 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+23:41:16.392 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:41:17.192 KEY esc close fg='notes.txt - Notepad'
+23:41:17.489 KEY esc close fg='notes.txt - Notepad'
+23:41:17.892 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:41:18.692 KEY esc close fg='notes.txt - Notepad'
+23:41:18.943 KEY esc close fg='notes.txt - Notepad'
+23:41:21.392 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:41:22.192 KEY esc close fg='notes.txt - Notepad'
+23:41:22.443 KEY esc close fg='notes.txt - Notepad'
+23:41:29.683 KEY esc reset fg='notes.txt - Notepad'
+23:41:29.984 KEY esc reset fg='notes.txt - Notepad'
+23:41:30.286 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:41:32.742 CMD hung-msaa stall 12000
+23:41:32.802 MARK altf run 3
+23:41:32.913 MARK focus winevent raised for the busy tree view
+23:41:33.302 KEY alt+tab*1 to notepad fg_after='notes.txt - Notepad'
+23:41:33.902 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:41:34.703 KEY esc close fg='notes.txt - Notepad'
+23:41:34.954 KEY esc close fg='notes.txt - Notepad'
+23:41:35.403 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:41:36.203 KEY esc close fg='notes.txt - Notepad'
+23:41:36.465 KEY esc close fg='notes.txt - Notepad'
+23:41:38.903 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:41:39.703 KEY esc close fg='notes.txt - Notepad'
+23:41:39.954 KEY esc close fg='notes.txt - Notepad'
+23:41:46.313 MARK done altf
+23:43:22.529 KEY esc reset fg='notes.txt - Notepad'
+23:43:22.830 KEY esc reset fg='notes.txt - Notepad'
+23:43:23.131 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:43:25.613 CMD hung-msaa stall 12000
+23:43:25.720 MARK busyfocus run 1
+23:43:25.833 MARK focus winevent raised for the busy tree view
+23:43:26.133 KEY alt+tab*1 to notepad fg_after='hung-msaa'
+23:43:26.985 KEY down  fg='hung-msaa'
+23:43:27.586 KEY down  fg='hung-msaa'
+23:43:28.186 KEY down  fg='hung-msaa'
+23:43:28.787 KEY down  fg='hung-msaa'
+23:43:29.388 KEY down  fg='hung-msaa'
+23:43:29.989 KEY down  fg='hung-msaa'
+23:43:39.236 MARK done busyfocus
+23:44:03.988 KEY esc reset fg='notes.txt - Notepad'
+23:44:04.289 KEY esc reset fg='notes.txt - Notepad'
+23:44:04.591 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:44:05.893 CMD hung-msaa stall 12000
+23:44:05.951 MARK altf_bg run 1
+23:44:06.065 MARK focus winevent raised for the busy tree view
+23:44:07.052 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:44:07.852 KEY esc close fg='notes.txt - Notepad'
+23:44:08.103 KEY esc close fg='notes.txt - Notepad'
+23:44:08.552 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:44:09.352 KEY esc close fg='notes.txt - Notepad'
+23:44:09.612 KEY esc close fg='notes.txt - Notepad'
+23:44:12.052 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:44:12.852 KEY esc close fg='notes.txt - Notepad'
+23:44:13.103 KEY esc close fg='notes.txt - Notepad'
+23:44:20.310 KEY esc reset fg='notes.txt - Notepad'
+23:44:20.614 KEY esc reset fg='notes.txt - Notepad'
+23:44:20.918 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:44:22.222 CMD hung-msaa stall 12000
+23:44:22.337 MARK altf_bg run 2
+23:44:22.450 MARK focus winevent raised for the busy tree view
+23:44:23.438 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:44:24.237 KEY esc close fg='notes.txt - Notepad'
+23:44:24.488 KEY esc close fg='notes.txt - Notepad'
+23:44:24.938 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:44:25.738 KEY esc close fg='notes.txt - Notepad'
+23:44:25.999 KEY esc close fg='notes.txt - Notepad'
+23:44:28.438 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:44:29.238 KEY esc close fg='notes.txt - Notepad'
+23:44:29.489 KEY esc close fg='notes.txt - Notepad'
+23:44:36.729 KEY esc reset fg='notes.txt - Notepad'
+23:44:37.029 KEY esc reset fg='notes.txt - Notepad'
+23:44:37.331 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:44:38.636 CMD hung-msaa stall 12000
+23:44:38.744 MARK altf_bg run 3
+23:44:38.856 MARK focus winevent raised for the busy tree view
+23:44:39.845 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:44:40.645 KEY esc close fg='notes.txt - Notepad'
+23:44:40.900 KEY esc close fg='notes.txt - Notepad'
+23:44:41.345 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:44:42.144 KEY esc close fg='notes.txt - Notepad'
+23:44:42.396 KEY esc close fg='notes.txt - Notepad'
+23:44:44.844 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:44:45.645 KEY esc close fg='notes.txt - Notepad'
+23:44:45.907 KEY esc close fg='notes.txt - Notepad'
+23:44:52.229 MARK done altf_bg
+23:47:07.505 KEY esc reset fg='notes.txt - Notepad'
+23:47:07.814 KEY esc reset fg='notes.txt - Notepad'
+23:47:08.116 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:47:09.418 CMD hung-msaa stall 12000
+23:47:09.475 MARK altf_bg run 1
+23:47:09.590 MARK focus winevent raised for the busy tree view
+23:47:10.576 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:47:11.376 KEY esc close fg='notes.txt - Notepad'
+23:47:11.636 KEY esc close fg='notes.txt - Notepad'
+23:47:12.076 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:47:12.876 KEY esc close fg='notes.txt - Notepad'
+23:47:13.127 KEY esc close fg='notes.txt - Notepad'
+23:47:15.576 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:47:16.376 KEY esc close fg='notes.txt - Notepad'
+23:47:16.627 KEY esc close fg='notes.txt - Notepad'
+23:47:22.998 MARK done altf_bg
+23:49:13.964 KEY esc reset fg='notes.txt - Notepad'
+23:49:14.266 KEY esc reset fg='notes.txt - Notepad'
+23:49:14.567 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:49:15.869 CMD hung-msaa stall 12000
+23:49:15.977 MARK altf_bg run 1
+23:49:16.094 MARK focus winevent raised for the busy tree view
+23:49:17.078 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:49:17.878 KEY esc close fg='notes.txt - Notepad'
+23:49:18.129 KEY esc close fg='notes.txt - Notepad'
+23:49:18.578 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:49:19.378 KEY esc close fg='notes.txt - Notepad'
+23:49:19.629 KEY esc close fg='notes.txt - Notepad'
+23:49:22.078 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:49:22.878 KEY esc close fg='notes.txt - Notepad'
+23:49:23.129 KEY esc close fg='notes.txt - Notepad'
+23:49:30.368 KEY esc reset fg='notes.txt - Notepad'
+23:49:30.672 KEY esc reset fg='notes.txt - Notepad'
+23:49:30.976 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:49:32.278 CMD hung-msaa stall 12000
+23:49:32.388 MARK altf_bg run 2
+23:49:32.499 MARK focus winevent raised for the busy tree view
+23:49:33.489 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:49:34.289 KEY esc close fg='notes.txt - Notepad'
+23:49:34.557 KEY esc close fg='notes.txt - Notepad'
+23:49:34.989 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:49:35.789 KEY esc close fg='notes.txt - Notepad'
+23:49:36.040 KEY esc close fg='notes.txt - Notepad'
+23:49:38.489 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:49:39.289 KEY esc close fg='notes.txt - Notepad'
+23:49:39.552 KEY esc close fg='notes.txt - Notepad'
+23:49:46.808 KEY esc reset fg='notes.txt - Notepad'
+23:49:47.109 KEY esc reset fg='notes.txt - Notepad'
+23:49:47.410 KEY ctrl+home reset fg='notes.txt - Notepad'
+23:49:48.712 CMD hung-msaa stall 12000
+23:49:48.819 MARK altf_bg run 3
+23:49:48.931 MARK focus winevent raised for the busy tree view
+23:49:49.920 KEY alt+f in hold (1.0 s) fg='notes.txt - Notepad'
+23:49:50.720 KEY esc close fg='notes.txt - Notepad'
+23:49:50.971 KEY esc close fg='notes.txt - Notepad'
+23:49:51.420 KEY alt+f in hold (2.5 s) fg='notes.txt - Notepad'
+23:49:52.220 KEY esc close fg='notes.txt - Notepad'
+23:49:52.471 KEY esc close fg='notes.txt - Notepad'
+23:49:54.920 KEY alt+f after hold (6 s, control) fg='notes.txt - Notepad'
+23:49:55.720 KEY esc close fg='notes.txt - Notepad'
+23:49:55.976 KEY esc close fg='notes.txt - Notepad'
+23:50:02.348 MARK done altf_bg

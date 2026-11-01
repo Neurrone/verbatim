@@ -1,0 +1,4 @@
+2026-11-02 01:06 to 01:07, unlocked desktop, Notepad in front (the run's own check: KEY alt+f fg='notes.txt - Notepad') Copied from the session's output.
+RESULT run 0: B's notification after 3829.034 ms; Notepad menu focus after Alt+F 26.12 ms
+RESULT run 1: B's notification after 3814.701 ms; Notepad menu focus after Alt+F 112.368 ms
+RESULT run 2: B's notification after 3821.546 ms; Notepad menu focus after Alt+F 104.295 ms
