@@ -1889,14 +1889,6 @@ pub fn run_pipe(
         (Err(error), None) => Err(error),
     };
     outpost.shut_down(Some(&mut io));
-    if cfg!(debug_assertions) {
-        // For the measure of the lock check's cost (`docs/performance.md`,
-        // "The debug-build lock check").
-        tracing::info!(
-            acquisitions = verbatim_win32::held_locks::acquisitions(),
-            "the outpost's lock acquisitions, each recorded by the debug-build lock check"
-        );
-    }
     // The process has finished with UIA: only its exit gives back the
     // process-wide hold, which ends the registering thread every
     // registration in the process shares.

@@ -59,10 +59,11 @@ impl Tables {
 }
 
 /// One of the hook's posts: a command for the reducer's port, or a key's
-/// cancel for the speech queue's.
+/// cancel or pause toggle for the speech queue's.
 enum Post {
     Command(ShellCommand),
     Cancel(KeySeq),
+    TogglePause,
 }
 
 /// What the hook's fault point is told of a post: which port it is for,
@@ -127,7 +128,7 @@ impl Ports {
         let refused = verbatim_faults::hit(
             verbatim_faults::Fault::KeyPostRefused,
             &PostSubject {
-                speech: matches!(post, Post::Cancel(_)),
+                speech: !matches!(post, Post::Command(_)),
                 key_seq,
             },
         );
@@ -154,6 +155,12 @@ impl Ports {
                 }
                 self.control.is_open().then_some(Post::Cancel(key))
             }
+            Post::TogglePause => {
+                if !refused && self.control.toggle_pause() {
+                    return None;
+                }
+                self.control.is_open().then_some(Post::TogglePause)
+            }
         }
     }
 }
@@ -172,7 +179,7 @@ pub(crate) fn speech_effect(ports: Ports) -> Box<dyn Fn(KeySpeechEffect, KeySeq)
                 Some(key_seq),
             );
         }
-        KeySpeechEffect::TogglePause => ports.control.toggle_pause(),
+        KeySpeechEffect::TogglePause => ports.post(Post::TogglePause, Some(key_seq)),
     })
 }
 
@@ -547,7 +554,8 @@ mod tests {
             .collect()
     }
 
-    /// The key each cancel waiting on `port` names.
+    /// The key each cancel waiting on `port` names, `None` for any other
+    /// item, a pause toggle being the only other these tests post.
     fn cancelled_keys(
         port: &mut verbatim_process::port_queue::PortQueue<verbatim_speech::QueueItem>,
     ) -> Vec<Option<KeySeq>> {
@@ -645,6 +653,43 @@ mod tests {
             typed_keys(&mut commands),
             [None, None],
             "each key's SpeechCancelled, once"
+        );
+        drop(refusal);
+    }
+
+    /// Shift's pause toggle waits behind a key's kept cancel rather than
+    /// overtaking it.
+    #[test]
+    fn a_pause_toggle_is_posted_behind_a_kept_speech_cancel() {
+        // A key no other test posts, so the selector names this test's post.
+        let key = KeySeq::new(93_001);
+        // Refused as the key posts it, and again as the key's own
+        // `SpeechCancelled` is posted behind it.
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::KeyPostRefused,
+            move |post: &PostSubject| {
+                *post
+                    == PostSubject {
+                        speech: true,
+                        key_seq: Some(key),
+                    }
+            },
+            2,
+        );
+        let (ports, _commands, mut speech) = ports();
+        let effect = speech_effect(ports);
+
+        effect(KeySpeechEffect::Cancel, key);
+        assert_eq!(
+            cancelled_keys(&mut speech),
+            [],
+            "the refused cancel is kept"
+        );
+        effect(KeySpeechEffect::TogglePause, key);
+        assert_eq!(
+            cancelled_keys(&mut speech),
+            [Some(key), None],
+            "the kept cancel first, then the toggle"
         );
         drop(refusal);
     }

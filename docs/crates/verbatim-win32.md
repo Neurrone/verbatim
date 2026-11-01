@@ -20,9 +20,8 @@ Public API:
   `LockHeldAcrossCall` payload; a ninth lock held at once fails the same
   way. `abort_if_lock_check(payload)` ends the process when a panic caught
   around application calls carries that payload, so no catch hides it.
-  `acquisitions()` counts the locks taken through `hold`. In release
-  builds `hold` and `check` do nothing. The outpost's `Lock` takes the
-  slot; the backends check at every counted call and agile reference
+  In release builds `hold` and `check` do nothing. The outpost's `Lock`
+  takes the slot; the backends check at every counted call and agile reference
   ([verbatim-outpost](verbatim-outpost.md)).
 
 - `window` — queries by window handle. The general ones: `window_exists`,

@@ -123,6 +123,17 @@ pub fn hit<S: Any>(fault: Fault, subject: &S) -> bool {
     true
 }
 
+/// [`hit`] with a subject built by `subject` only while `fault` is armed,
+/// for a subject whose making is itself a call the build without fault
+/// points does not make.
+pub fn hit_with<S: Any>(fault: Fault, subject: impl FnOnce() -> S) -> bool {
+    let armed = table()
+        .armed
+        .iter()
+        .any(|armed| armed.fault == fault && armed.left > 0);
+    armed && hit(fault, &subject())
+}
+
 /// An armed fault point ([`arm`]).
 #[must_use = "dropping the guard disarms the point and checks it fired"]
 pub struct Guard {

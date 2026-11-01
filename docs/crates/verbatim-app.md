@@ -63,8 +63,8 @@ active review and navigation bindings follow `settings.toml`'s
 The keyboard hook's two callbacks are the `key_reports` module, which
 runs on the hook thread and is checked by `cargo xtask ci`'s hook rule
 (`xtask/src/ownership.rs`): the speech effect calls `cancel_through` with
-the key's number and posts `Input::SpeechCancelled`, or toggles the
-pause; the report callback notes the key in the latency ledger and turns
+the key's number and posts `Input::SpeechCancelled`, or posts the
+pause's toggle; the report callback notes the key in the latency ledger and turns
 each `KeyReport` into its `ShellCommand`s, by lookups in tables made when
 the hook starts (`key_reports::Tables`), and posts them to the reducer's
 port in the order the hook decided them. Both callbacks post through one
@@ -72,8 +72,8 @@ function, `key_reports::Ports`, over the reducer's port and the speech
 queue's: a post a port refuses while its taker is still there, which
 only a system out of memory does, is kept in a thread-local queue on the
 hook thread, and the next post joins it and posts the queue from its
-front until a port refuses again, so no command or cancel overtakes a
-refused one and a key's cancel and its `SpeechCancelled` are both kept or
+front until a port refuses again, so no command, cancel or pause toggle
+overtakes a refused one and a key's cancel and its `SpeechCancelled` are both kept or
 both made; one whose port has closed is dropped. While posts succeed this
 adds one check of an empty queue, and no timer, lock or message; a kept
 post waits for the next key. Unit tests refuse a post through the

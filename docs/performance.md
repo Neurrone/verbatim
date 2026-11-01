@@ -696,13 +696,6 @@ wake-ups and processor time per event.
   waiting, a scan of the intake when a caret key's watch is open or a
   caret key is dispatched; and a scan of the intake for an edit control's
   value change when a caret read is cut at its value change check.
-  Per input and timer tick, a copy of the marks to compare them after the
-  transition, one small allocation while the focus is a UIA element; with
-  debug builds in test audio mode, `measure_keys_notepad`, three
-  12-second windows after and four before (2026-11-01), the outpost's
-  processor time per input-hook wake was 1.39 ms after and 1.39 ms before
-  (median), and wake-ups in all processes per hook wake 31.7 after and
-  31.8 before: no change measured.
 - Locks: the watch lock and the commit's nested locks are gone. The
   reducer's thread takes the mailbox's lock to drain it, the store's for
   a commit's writes, a worker's charge for a publication, and the
@@ -737,25 +730,6 @@ added: every walk makes the calls it made before.
 - A release reads every kept node's and anchor's tags, where it read only
   the carried ones, and also frees nodes and anchors no message carried
   once their request ends, which before were kept for the outpost's life.
-
-### The debug-build lock check
-
-Debug builds only; a release build records nothing and checks nothing
-(`docs/design/logic-foundations.md`, "Failure paths and locks"). No
-wake-up and no call into an application is added.
-
-- Each acquisition of one of the outpost's locks fills a slot of its
-  thread's record and counts the acquisition, and each release empties
-  the slot: about 60 ns added per acquisition, 83 to 88 ns against 25 ns
-  for the plain mutex, in a debug build on this x64 machine (three runs of
-  `measure_lock_check`, `crates/verbatim-outpost/src/outpost/lock.rs`).
-- Each counted call, agile reference, bounded wait and release of the
-  store's removed objects scans the calling thread's eight slots.
-- An outpost logs at its shutdown, in a debug build, how many locks it
-  took ("the outpost's lock acquisitions"), from which the acquisitions per
-  focus change on `measure_focus_text_box` and per key on
-  `measure_keys_notepad` are read, and with the cost above the time added
-  to each.
 
 ### A focus change, MSAA, cold
 

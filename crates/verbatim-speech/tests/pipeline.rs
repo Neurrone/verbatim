@@ -1069,7 +1069,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
     let mut harness = control_manager();
     let held = harness.manager.speak(&harness.token, queued("held"));
     assert_eq!(recv_started(&harness.started), "held");
-    harness.manager.control().toggle_pause();
+    assert!(
+        harness.manager.control().toggle_pause(),
+        "the queue took the toggle"
+    );
     // The pause reaches the mixer through the queue thread, the audio
     // through the synth thread; once the pause is reported applied, audio
     // sent after it is ordered after it at the mixer.
@@ -1091,7 +1094,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
         Duration::from_millis(100),
     );
     assert_eq!(harness.recorder.ended_so_far(), [], "held while paused");
-    harness.manager.control().toggle_pause();
+    assert!(
+        harness.manager.control().toggle_pause(),
+        "the queue took the toggle"
+    );
     assert_eq!(
         harness.recorder.endings_through(held),
         [(held, UtteranceEnding::Completed)]
@@ -1099,7 +1105,10 @@ fn a_pause_holds_speech_until_resumed_and_new_speech_cancels_it() {
 
     let paused = harness.manager.speak(&harness.token, queued("paused"));
     assert_eq!(recv_started(&harness.started), "paused");
-    harness.manager.control().toggle_pause();
+    assert!(
+        harness.manager.control().toggle_pause(),
+        "the queue took the toggle"
+    );
     let next = harness.manager.speak(&harness.token, queued("next"));
     assert_eq!(recv_started(&harness.started), "next");
     harness.finish.send(()).unwrap();

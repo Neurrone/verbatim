@@ -1304,10 +1304,11 @@ impl Follower {
         for registered in registered {
             let started = Instant::now();
             #[cfg(any(test, feature = "faults"))]
-            let refused = verbatim_faults::hit(
-                verbatim_faults::Fault::RemoveGroup,
-                &(self.id, crate::com::runtime_id(&registered.element)),
-            );
+            // The runtime id is a call into the application, made only
+            // while the point is armed.
+            let refused = verbatim_faults::hit_with(verbatim_faults::Fault::RemoveGroup, || {
+                (self.id, crate::com::runtime_id(&registered.element))
+            });
             #[cfg(not(any(test, feature = "faults")))]
             let refused = false;
             let removed = if refused {

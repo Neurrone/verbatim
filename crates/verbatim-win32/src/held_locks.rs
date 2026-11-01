@@ -33,11 +33,6 @@ thread_local! {
         const { std::cell::Cell::new([None; SLOTS]) };
 }
 
-/// How many locks have been taken through [`hold`] in this process, for
-/// the measurement of the check's cost.
-#[cfg(debug_assertions)]
-static ACQUISITIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// The panic payload of a failed check, whose message has already been
 /// written to standard error and the log.
 #[derive(Debug)]
@@ -58,7 +53,6 @@ pub struct Held {
 pub fn hold(at: &'static Location<'static>) -> Held {
     #[cfg(debug_assertions)]
     {
-        ACQUISITIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let slot = HELD
             .try_with(|held| {
                 let mut slots = held.get();
@@ -166,14 +160,4 @@ pub fn abort_if_lock_check(payload: &(dyn Any + Send)) {
     }
     #[cfg(not(debug_assertions))]
     let _ = payload;
-}
-
-/// How many locks have been taken through [`hold`] in this process; 0 in a
-/// release build, which records none.
-#[must_use]
-pub fn acquisitions() -> u64 {
-    #[cfg(debug_assertions)]
-    return ACQUISITIONS.load(std::sync::atomic::Ordering::Relaxed);
-    #[cfg(not(debug_assertions))]
-    0
 }

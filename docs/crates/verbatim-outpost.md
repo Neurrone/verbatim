@@ -451,8 +451,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   store's `Removed` check. The worker's catch around a program
   (`worker::catching`), UIA's around its event callbacks and the bounded
   client's around its operations end the process when the panic is the
-  check's. An outpost logs its lock acquisitions at shutdown in a debug
-  build (`docs/performance.md`, "The debug-build lock check").
+  check's.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret

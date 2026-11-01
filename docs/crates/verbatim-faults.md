@@ -28,6 +28,10 @@ Public API:
   operation it stands for: true when an armed selector picks the subject
   and has firings left, and the caller then takes the path the real
   failure takes, with the error the real call returns.
+- `hit_with(fault, subject)` — `hit` with the subject built by the
+  closure `subject` only while `fault` is armed, for a subject whose
+  making is itself a call, such as reading an element's runtime id, which
+  the build without fault points does not make.
 
 How it works: one process-wide table of armed points under one lock, and
 a condition variable notified at each firing. A subject of another type

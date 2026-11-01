@@ -244,8 +244,13 @@ impl SpeechControl {
     }
 
     /// Pauses speech where it is, or resumes it when paused.
-    pub fn toggle_pause(&self) {
-        let _ = inbox::post(&*self.inbox, QueueEvent::TogglePause);
+    ///
+    /// Returns whether the queue's inbox took the toggle; one given back,
+    /// as with [`cancel_through`](Self::cancel_through), is the caller's
+    /// to post again or drop.
+    #[must_use]
+    pub fn toggle_pause(&self) -> bool {
+        inbox::post(&*self.inbox, QueueEvent::TogglePause).is_ok()
     }
 
     /// Tells the manager where the focus now is: speech being spoken whose
