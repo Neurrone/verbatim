@@ -36,8 +36,9 @@ And for cost, which the design's costing and the ledger
   cached read the request did not fill (counted as a failed cached read);
 - work done, or a thread woken, on every occurrence of an event that is
   only needed when the event is spoken;
-- an allocation, copy, or parse on the per-event path that could be done
-  once;
+- work on the per-event path that grows with the application (a
+  document, a history, a tree) and could be done once, or that a
+  measurement shows costs;
 - a new wake-up source: a timer, a poll, or a hand-off between threads
   where the producing thread could do the work;
 - a ledger entry or call-count test left unchanged by a change that
