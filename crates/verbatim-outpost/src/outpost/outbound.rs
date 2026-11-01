@@ -35,7 +35,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 
-use verbatim_model::NormalizedEvent;
 use verbatim_model::protocol::{Merge, OutpostToCore, Urgent, merge_into};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
@@ -337,7 +336,8 @@ mod tests {
     use std::time::Duration;
 
     use verbatim_model::{
-        Backend, NodeId, TerminalColourRun, TerminalSnapshot, TerminalText, TraceId,
+        Backend, NodeId, NormalizedEvent, TerminalColourRun, TerminalSnapshot, TerminalText,
+        TraceId,
     };
     use verbatim_process::overlapped::{End, Flow, pipe};
 
