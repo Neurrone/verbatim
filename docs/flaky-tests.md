@@ -91,6 +91,14 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - Cause: not found. The speech platform's first activation in a fresh runner session can take more than ten seconds, which is why the unit-test jobs run `cargo xtask warm-speech` first; whether that warm-up did not hold here is not known.
   - Fix: none yet.
 
+## A failed group removal test on GitHub's ARM64 runner
+
+- `mockapp`'s `failure_paths` test `a_group_whose_removals_all_failed_is_removed_when_the_registering_thread_ends`
+  - How: its first assertion, "the old element's group outlives the close", found the two applications' advised groups at (1, 1) where (1, 0) was expected (`crates/mockapp/tests/failure_paths.rs`, line 233): right after `close`, the new element's group was still advised.
+  - How often: once, in the `ci-arm64` job of run 41333390347 (2026-11-01, a commit adding only documents and `experiments/`); the same code passed `ci-arm64` in run 41331655970 just before it, and passed `cargo xtask ci` locally.
+  - Cause: not found.
+  - Fix: none yet.
+
 ## Scenarios that fail on GitHub's runner, skipped there
 
 These are `local_only` in the registry. The `e2e` job deselects them (`--skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded`), and they pass locally. No fix planned for any of them: the runner's image is not ours.
