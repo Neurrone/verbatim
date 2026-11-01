@@ -31,7 +31,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::rc::Rc;
 
 use crate::com::CHILDID_SELF;
 
@@ -342,12 +341,6 @@ thread_local! {
         const { RefCell::new(None) };
     /// The kinds this thread's hooks were installed for.
     static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
-    /// The class of each window [`is_wanted`] has asked about, while this
-    /// thread's hooks hear windows destroyed ([`WinEventKind::Destroy`]),
-    /// which forgets a destroyed window's: a flood of events from one
-    /// window asks its class once. `None` for hooks that do not hear it,
-    /// such as the focus listener's, which ask it once for each event.
-    static CLASSES: RefCell<Option<WindowCache<Rc<str>>>> = const { RefCell::new(None) };
     /// This thread's hook set: the process it is scoped to, and each raw
     /// event hooked now with its hook, `None` while the thread has none.
     static HOOKS: RefCell<Option<HookSet>> = const { RefCell::new(None) };
@@ -560,18 +553,12 @@ impl WinEventHook {
             return Err("this thread already has a set of WinEvent hooks".to_owned());
         }
         KINDS.with(|slot| *slot.borrow_mut() = kinds.to_vec());
-        CLASSES.with(|slot| {
-            *slot.borrow_mut() = kinds
-                .contains(&WinEventKind::Destroy)
-                .then(WindowCache::default);
-        });
         let undo = |hooked: Vec<(u32, HWINEVENTHOOK)>| {
             for (_, hook) in hooked {
                 unhook_event(hook);
             }
             CALLBACK.with(|slot| *slot.borrow_mut() = None);
             KINDS.with(|slot| slot.borrow_mut().clear());
-            CLASSES.with(|slot| *slot.borrow_mut() = None);
         };
         let mut hooked: Vec<(u32, HWINEVENTHOOK)> = Vec::with_capacity(SUBSCRIPTIONS.len());
         for (event, kind) in SUBSCRIPTIONS {
@@ -633,7 +620,6 @@ impl Drop for WinEventHook {
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
         MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
-        CLASSES.with(|slot| *slot.borrow_mut() = None);
     }
 }
 
@@ -705,24 +691,13 @@ const _: () = {
 
 /// The [`WinEventKind`] the raw event `event` on (`hwnd`, `id_object`,
 /// `id_child`) has among `kinds`, if [`is_wanted`] keeps it, `None` for
-/// events we do not want. It is called for every event, so it allocates
-/// nothing. A window's class is asked of `classes` when it keeps
-/// them, with the window's owning thread (`window.0`) and its class read
-/// from Windows (`window.1`) when it is learned, and of Windows each time
-/// otherwise. A window's own destruction forgets its class first.
+/// events we do not want. A window's class is read from Windows with
+/// `class_of`, at most once for the event and only when a filter asks it.
 fn wanted_kind(
     (event, hwnd, id_object, id_child): (u32, isize, i32, i32),
     kinds: &[WinEventKind],
-    classes: &mut Option<WindowCache<Rc<str>>>,
-    (owner_of, class_of): (impl Fn(isize) -> u32, impl Fn(isize) -> String),
+    class_of: impl Fn(isize) -> String,
 ) -> Option<WinEventKind> {
-    if event == EVENT_OBJECT_DESTROY
-        && id_object == OBJID_WINDOW.0
-        && id_child == CHILDID_SELF
-        && let Some(classes) = classes.as_mut()
-    {
-        classes.forget(hwnd);
-    }
     // The system caret's show is a caret event, as NVDA handles it, not a
     // tooltip's show.
     if event == EVENT_OBJECT_SHOW && id_object == OBJID_CARET.0 {
@@ -730,16 +705,9 @@ fn wanted_kind(
             .contains(&WinEventKind::Caret)
             .then_some(WinEventKind::Caret);
     }
-    // Read at most once for the event, whether or not `classes` keeps it.
-    let mut read: Option<Rc<str>> = None;
-    let mut class = || {
-        Rc::clone(read.get_or_insert_with(|| match classes.as_mut() {
-            Some(classes) => {
-                Rc::clone(classes.get_or_learn(hwnd, owner_of(hwnd), || Rc::from(class_of(hwnd))))
-            }
-            None => Rc::from(class_of(hwnd)),
-        }))
-    };
+    // Read at most once for the event.
+    let mut read: Option<String> = None;
+    let mut class = || read.get_or_insert_with(|| class_of(hwnd)).clone();
     // Program Manager's or the taskbar's coming to the front, for an install
     // that asks for it, as its own kind.
     if event == EVENT_SYSTEM_FOREGROUND
@@ -781,7 +749,7 @@ fn is_wanted(
     kind: WinEventKind,
     id_object: i32,
     id_child: i32,
-    class: &mut impl FnMut() -> Rc<str>,
+    class: &mut impl FnMut() -> String,
 ) -> bool {
     if matches!(
         kind,
@@ -846,17 +814,11 @@ unsafe extern "system" fn win_event_proc(
     // `time` is on the event clock.
     let raised_ms_ago = event_clock().wrapping_sub(time);
     let wanted = KINDS.with(|kinds| {
-        CLASSES.with(|classes| {
-            wanted_kind(
-                (event, hwnd.0 as isize, id_object, id_child),
-                &kinds.borrow(),
-                &mut classes.borrow_mut(),
-                (
-                    crate::window::window_thread,
-                    crate::window::window_class_name,
-                ),
-            )
-        })
+        wanted_kind(
+            (event, hwnd.0 as isize, id_object, id_child),
+            &kinds.borrow(),
+            crate::window::window_class_name,
+        )
     });
     if let Some(kind) = wanted {
         // An event on a window object stands for its client area, as NVDA's
@@ -913,20 +875,14 @@ mod tests {
     /// [`is_wanted`] for window `hwnd`, its class read from Windows.
     fn wanted(kind: WinEventKind, hwnd: HWND, id_object: i32, id_child: i32) -> bool {
         let hwnd = hwnd.0 as isize;
-        let mut class = || Rc::from(crate::window::window_class_name(hwnd));
+        let mut class = || crate::window::window_class_name(hwnd);
         is_wanted(kind, id_object, id_child, &mut class)
     }
 
-    /// The kind, if any, an outpost's hook keeps of the raw event `event` on object
-    /// `id_object` of window 42, its classes kept in `classes`, the window
-    /// owned by thread 7 and of class `Edit`, each class read counted in
-    /// `reads`.
-    fn outpost_kinds(
-        event: u32,
-        id_object: i32,
-        classes: &mut Option<WindowCache<Rc<str>>>,
-        reads: &Cell<u32>,
-    ) -> Vec<WinEventKind> {
+    /// The kind, if any, an outpost's hook keeps of the raw event `event`
+    /// on object `id_object` of window 42, of class `Edit`, each class read
+    /// counted in `reads`.
+    fn outpost_kinds(event: u32, id_object: i32, reads: &Cell<u32>) -> Vec<WinEventKind> {
         let class_of = |_| {
             reads.set(reads.get() + 1);
             "Edit".to_owned()
@@ -934,30 +890,14 @@ mod tests {
         wanted_kind(
             (event, 42, id_object, CHILDID_SELF),
             APP_SUBSCRIPTIONS,
-            classes,
-            (|_| 7, class_of),
+            class_of,
         )
         .into_iter()
         .collect()
     }
 
-    #[test]
-    fn a_windows_class_is_read_once_for_its_events() {
-        // Value changes of child objects, whose window NVDA's Excel check
-        // asks the class of.
-        let mut classes = Some(WindowCache::default());
-        let reads = Cell::new(0);
-        for _ in 0..3 {
-            assert_eq!(
-                outpost_kinds(EVENT_OBJECT_VALUECHANGE, 5, &mut classes, &reads),
-                [WinEventKind::ValueChange]
-            );
-        }
-        assert_eq!(reads.get(), 1);
-    }
-
-    /// The focus listener, which keeps no classes, reads a window's class
-    /// once for its foreground event, though both the shell's foreground
+    /// The focus listener reads a window's class once for its foreground
+    /// event, though both the shell's foreground
     /// and the foreground change ask it.
     #[test]
     fn the_listener_reads_a_foreground_windows_class_once() {
@@ -965,30 +905,13 @@ mod tests {
         let kind = wanted_kind(
             (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
             LISTENER_SUBSCRIPTIONS,
-            &mut None,
-            (
-                |_| 7,
-                |_| {
-                    reads.set(reads.get() + 1);
-                    "Notepad".to_owned()
-                },
-            ),
+            |_| {
+                reads.set(reads.get() + 1);
+                "Notepad".to_owned()
+            },
         );
         assert_eq!(kind, Some(WinEventKind::Foreground));
         assert_eq!(reads.get(), 1);
-    }
-
-    #[test]
-    fn a_destroyed_windows_class_is_forgotten() {
-        let mut classes = Some(WindowCache::default());
-        let reads = Cell::new(0);
-        outpost_kinds(EVENT_OBJECT_VALUECHANGE, 5, &mut classes, &reads);
-        assert_eq!(
-            outpost_kinds(EVENT_OBJECT_DESTROY, OBJID_WINDOW.0, &mut classes, &reads),
-            [WinEventKind::Destroy]
-        );
-        outpost_kinds(EVENT_OBJECT_VALUECHANGE, 5, &mut classes, &reads);
-        assert_eq!(reads.get(), 2, "read again once its window was destroyed");
     }
 
     #[test]
@@ -1032,10 +955,9 @@ mod tests {
 
     #[test]
     fn the_carets_show_is_a_caret_event_for_an_outpost_only() {
-        let mut classes = Some(WindowCache::default());
         let reads = Cell::new(0);
         assert_eq!(
-            outpost_kinds(EVENT_OBJECT_SHOW, OBJID_CARET.0, &mut classes, &reads),
+            outpost_kinds(EVENT_OBJECT_SHOW, OBJID_CARET.0, &reads),
             [WinEventKind::Caret]
         );
         assert_eq!(reads.get(), 0, "no class is read for the caret");
@@ -1044,8 +966,7 @@ mod tests {
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
-                &mut classes,
-                (|_| 7, |_| "Edit".to_owned()),
+                |_| "Edit".to_owned(),
             ),
             None
         );
@@ -1061,8 +982,7 @@ mod tests {
             wanted_kind(
                 (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
                 kinds,
-                &mut None,
-                (|_| 7, move |_| class.to_owned()),
+                move |_| class.to_owned(),
             )
         };
         for class in ["Progman", "Shell_TrayWnd"] {
@@ -1099,15 +1019,9 @@ mod tests {
     fn a_console_scroll_of_ten_columns_left_is_kept() {
         // `EVENT_CONSOLE_UPDATE_SCROLL` carries its horizontal distance in
         // the object id: ten columns to the left is -10, `OBJID_ALERT`.
-        let mut classes = Some(WindowCache::default());
         let reads = Cell::new(0);
         assert_eq!(
-            outpost_kinds(
-                EVENT_CONSOLE_UPDATE_SCROLL,
-                OBJID_ALERT.0,
-                &mut classes,
-                &reads
-            ),
+            outpost_kinds(EVENT_CONSOLE_UPDATE_SCROLL, OBJID_ALERT.0, &reads),
             [WinEventKind::ConsoleUpdate]
         );
     }

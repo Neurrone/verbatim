@@ -165,7 +165,6 @@ pub(crate) struct HistoryAsked {
 pub(crate) struct TerminalModel {
     pub(crate) node: NodeId,
     /// The reading rules and their memory, shared with checkpoints.
-    #[serde(with = "shared")]
     pub(crate) reader: Arc<TerminalReader>,
     /// The keys not yet given to the rules, in the order Core took them in.
     pending: VecDeque<PendingKey>,
@@ -282,27 +281,6 @@ impl Terminals {
             false
         });
         reviews
-    }
-}
-
-/// The reader held behind an `Arc`, serialized as itself.
-mod shared {
-    use std::sync::Arc;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use verbatim_text::terminal_reading::TerminalReader;
-
-    pub(super) fn serialize<S: Serializer>(
-        reader: &Arc<TerminalReader>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        reader.as_ref().serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Arc<TerminalReader>, D::Error> {
-        TerminalReader::deserialize(deserializer).map(Arc::new)
     }
 }
 

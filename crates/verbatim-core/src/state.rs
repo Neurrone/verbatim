@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use verbatim_model::{
     CaretKey, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId, Pid, QueryId,
@@ -41,10 +41,6 @@ pub(crate) struct FocusContext {
     /// so it is shared rather than owned: cloning the state, as the flight
     /// recorder does at each checkpoint, copies a pointer, not the chain.
     /// A focus change replaces the whole chain, never edits it.
-    #[serde(
-        serialize_with = "serialize_shared",
-        deserialize_with = "deserialize_shared"
-    )]
     pub(crate) ancestors: Arc<[NodeSnapshot]>,
     /// The most recently announced selected item within the focused
     /// container — seeded by the focus event's own `selected_child`, then
@@ -103,10 +99,6 @@ pub(crate) struct SpokenRecord {
     pub(crate) states: StateSet,
     /// Each ancestor's states as last spoken, outermost first, shared as
     /// the chain is, so a checkpoint copies a pointer.
-    #[serde(
-        serialize_with = "serialize_shared",
-        deserialize_with = "deserialize_shared"
-    )]
     pub(crate) ancestors: Arc<[(NodeId, StateSet)]>,
 }
 
@@ -232,10 +224,6 @@ pub(crate) enum ReviewText {
 /// shorter lines, with `offset` where it really is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReviewPosition {
-    #[serde(
-        serialize_with = "serialize_chunk",
-        deserialize_with = "deserialize_chunk"
-    )]
     pub(crate) line: SharedChunk,
     pub(crate) offset: usize,
     pub(crate) column: usize,
@@ -249,10 +237,6 @@ pub(crate) struct ReviewPosition {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CaretContext {
     pub(crate) node: NodeId,
-    #[serde(
-        serialize_with = "serialize_chunk",
-        deserialize_with = "deserialize_chunk"
-    )]
     pub(crate) line: SharedChunk,
     pub(crate) selection: Option<Selection>,
     /// The line the selection starts in, when it starts on a line before
@@ -300,10 +284,6 @@ pub(crate) const CARET_HISTORY: usize = 8;
 pub(crate) struct TimedCaret {
     pub(crate) observed_at_ms: u64,
     pub(crate) node: NodeId,
-    #[serde(
-        serialize_with = "serialize_chunk",
-        deserialize_with = "deserialize_chunk"
-    )]
     pub(crate) line: SharedChunk,
     pub(crate) selection: Option<Selection>,
     /// The line the selection starts in, when it starts on a line before
@@ -543,10 +523,6 @@ impl StartMarker {
 /// the chunk's text, and whether it starts a unit read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BufferedPiece {
-    #[serde(
-        serialize_with = "serialize_chunk",
-        deserialize_with = "deserialize_chunk"
-    )]
     pub(crate) chunk: SharedChunk,
     pub(crate) start: u32,
     pub(crate) end: u32,
@@ -561,10 +537,6 @@ pub(crate) struct BufferedPiece {
 /// there.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct UnitStart {
-    #[serde(
-        serialize_with = "serialize_chunk",
-        deserialize_with = "deserialize_chunk"
-    )]
     pub(crate) chunk: SharedChunk,
     pub(crate) offset: u32,
 }
@@ -643,11 +615,9 @@ pub(crate) struct SayAll {
 
 /// Reducer state: focus, attention, navigator, and Core's queries.
 ///
-/// Small control state is held in plain fields; anything that grows with
-/// the application is held behind `Arc`, so a clone of the whole state
-/// costs the same however large the application is. The flight recorder
-/// relies on that to snapshot the state at each checkpoint, and serializes
-/// the snapshot into a dump, so a recorded window replays from its start.
+/// The flight recorder clones the state at each checkpoint, once per
+/// segment of its window, and serializes the clone into a dump, so a
+/// recorded window replays from its start.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
     pub(crate) focus: Option<FocusContext>,
@@ -1039,29 +1009,4 @@ impl SrState {
         let reviews = self.terminals.remove_where(which);
         self.queries.forget_memory(reviews);
     }
-}
-
-/// Serializes a shared slice as a plain sequence.
-fn serialize_shared<S: Serializer, T: Serialize>(
-    items: &Arc<[T]>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    items[..].serialize(serializer)
-}
-
-/// Deserializes a plain sequence into a shared slice.
-fn deserialize_shared<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-    deserializer: D,
-) -> Result<Arc<[T]>, D::Error> {
-    Vec::<T>::deserialize(deserializer).map(Arc::from)
-}
-
-/// Serializes a shared chunk as a plain chunk.
-fn serialize_chunk<S: Serializer>(chunk: &SharedChunk, serializer: S) -> Result<S::Ok, S::Error> {
-    chunk.as_ref().serialize(serializer)
-}
-
-/// Deserializes a plain chunk into a shared one.
-fn deserialize_chunk<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SharedChunk, D::Error> {
-    TextChunk::deserialize(deserializer).map(Arc::new)
 }

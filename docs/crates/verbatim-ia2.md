@@ -60,10 +60,8 @@ Public API:
   is on (`GetTickCount`). `WinEventKind` names the event; drop unhooks.
   NVDA's early filters run at the hook, some asking the window's class
   (Excel's `EXCEL7` child objects, a foreground change of the shell, a
-  tooltip's show): a hook set that hears windows destroyed, as an
-  outpost's does, keeps each window's class until its destroy event, so a
-  flood from one window asks its class once; the listener's asks it once
-  for each event. None of those filters applies to the console host's events
+  tooltip's show, a menu event), reading it with `GetClassNameW` at most
+  once for each event and only when a filter asks it. None of those filters applies to the console host's events
   (`ConsoleUpdate` and `ConsoleCaret`), whose object and child ids carry
   data, such as a scroll's horizontal distance, which is at or below
   `OBJID_ALERT` for ten or more columns to the left; NVDA hooks them
@@ -104,8 +102,8 @@ Public API:
   until the window is destroyed (`forget`): `get_or_learn(hwnd, owner,
   learn)` learns an entry anew when none is kept or the handle is now
   owned by another thread than the one it was learned under, a reused
-  handle whose destruction went unheard. The hook's class cache and the
-  outpost's event thread use it.
+  handle whose destruction went unheard. The outpost's event thread uses
+  it.
 - `dialog` — `DialogObject`, the objects a dialog's own text is gathered
   from (`docs/nvda/object-model.md`, "A dialog's own text"; the gathering
   is `verbatim-outpost`'s `dialog_text`). `DialogObject::of_node(node,

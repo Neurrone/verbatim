@@ -89,7 +89,7 @@ How it works:
   written to its outpost there and then; an outpost's frame is read only
   for its kind (`verbatim_process::message::peek`), a pong and `TargetExited` handled,
   `Ready` handled and passed on, anything else handed on whole
-  (`transport::FrameBody::Owned` or a copy). Helpers report through `relay::Mailbox`: a queue
+  (a copy of its lent parts, `transport::Parts::into_owned`). Helpers report through `relay::Mailbox`: a queue
   and a `closed` mark under one lock, where a send into an empty queue
   posts the relay's wake after unlocking, the relay takes the whole queue
   at each wake and each heartbeat, and the `Inbox`'s drop, however the

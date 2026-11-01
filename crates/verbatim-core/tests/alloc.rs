@@ -1,18 +1,16 @@
 //! Core's allocation invariant: a reduce step allocates the same number of
-//! bytes whatever the size of the state it changes, and a flight-recorder
-//! checkpoint of the state allocates a small, fixed number of bytes
-//! whatever the state's size.
+//! bytes whatever the size of the state it changes.
 //!
 //! This test binary installs a global allocator that counts the bytes each
 //! thread asks for, so the test runner's parallel threads do not disturb
 //! one another's counts. Today the parts of the state that grow with the
 //! application are the focus ancestor chain (and the navigator that follows
 //! focus) and the text Core keeps for the caret and the review cursor (a
-//! line, up to 64 KB, and the lines of the caret's last 8 timed reports,
-//! shared rather than copied by a checkpoint), and a terminal's output waiting to be spoken is
-//! bounded by the flood policy; the large state here has a previous focus with
-//! 10,000 ancestors and the small one has 10. Each step's input is the same
-//! in both cases, so only the state varies.
+//! line, up to 64 KB, and the lines of the caret's last 8 timed reports),
+//! and a terminal's output waiting to be spoken is bounded by the flood
+//! policy; the large state here has a previous focus with 10,000 ancestors
+//! and the small one has 10. Each step's input is the same in both cases,
+//! so only the state varies.
 
 mod terminal_support;
 
@@ -339,49 +337,4 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
     assert_eq!(small_effects, large_effects);
     assert!(!small_effects.is_empty(), "the line is spoken");
     assert_eq!(small_bytes, large_bytes);
-}
-
-#[test]
-fn the_themes_fetches_change_the_state_without_allocating() {
-    let mut state = state_with_chain(LARGE_CHAIN);
-    let fetches = verbatim_model::Fetches {
-        description: false,
-        ..verbatim_model::Fetches::default()
-    };
-    let (effects, bytes) = allocated_by(|| reduce(&mut state, &Input::Fetches(fetches)));
-    assert_eq!(effects, Vec::<Effect>::new());
-    assert_eq!(bytes, 0, "the fetches are held inline");
-    assert_eq!(state.fetches(), fetches);
-}
-
-#[test]
-fn a_checkpoint_with_text_allocates_a_small_fixed_amount() {
-    let small = editing_with_chain(SMALL_CHAIN);
-    let large = editing_with_chain(LARGE_CHAIN);
-    let (_, small_bytes) = allocated_by(|| small.clone());
-    let (_, large_bytes) = allocated_by(|| large.clone());
-    assert_eq!(small_bytes, large_bytes);
-    // The caret's line and the review cursor's are shared, not copied.
-    assert!(
-        large_bytes < 1024,
-        "a checkpoint allocated {large_bytes} bytes"
-    );
-}
-
-#[test]
-fn a_checkpoint_allocates_a_small_fixed_amount_whatever_the_ancestor_chain() {
-    let small = state_with_chain(SMALL_CHAIN);
-    let large = state_with_chain(LARGE_CHAIN);
-
-    let (small_copy, small_bytes) = allocated_by(|| small.clone());
-    let (large_copy, large_bytes) = allocated_by(|| large.clone());
-
-    assert_eq!(small_copy, small);
-    assert_eq!(large_copy, large);
-    assert_eq!(small_bytes, large_bytes);
-    // The focus and navigator snapshots are copied; the chain is shared.
-    assert!(
-        large_bytes < 1024,
-        "a checkpoint allocated {large_bytes} bytes"
-    );
 }

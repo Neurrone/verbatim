@@ -29,7 +29,7 @@ use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_process::overlapped::{Completion, Completions, Port};
 use verbatim_process::port_queue::Progress;
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
-use verbatim_process::transport::{FrameBody, Reading};
+use verbatim_process::transport::{Parts, Reading};
 
 use verbatim_model::protocol::{
     CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
@@ -522,19 +522,17 @@ impl Owner {
         let port = Arc::clone(&self.port);
         let outpost = read.outpost;
         let source = read.source;
-        let reading = read
-            .pipe
-            .take_bodies(completion, &port, |body| match source {
-                Source::Listener => {
-                    // When verbatim.exe took the message in, before it is
-                    // parsed (`docs/design/communication.md`, section 10.1).
-                    let received = received_now();
-                    self.listener_message(outpost, received, decode_message(body.parts())?);
-                    Ok(())
-                }
-                Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
-                Source::Spare => self.spare_frame(outpost, &body),
-            });
+        let reading = read.pipe.take(completion, &port, |body| match source {
+            Source::Listener => {
+                // When verbatim.exe took the message in, before it is
+                // parsed (`docs/design/communication.md`, section 10.1).
+                let received = received_now();
+                self.listener_message(outpost, received, decode_message(body)?);
+                Ok(())
+            }
+            Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
+            Source::Spare => self.spare_frame(outpost, body),
+        });
         match (reading, source) {
             (Reading::Waiting | Reading::Yielded, _) => self.relay.put_reader(key, read),
             (Reading::Ended(Ok(())), Source::Listener) => {
@@ -564,15 +562,9 @@ impl Owner {
     /// with when it was read (`docs/design/communication.md`, section
     /// 6.2). Only the frame's kind is read, from its first bytes; a pong,
     /// a few dozen bytes, is parsed for its count of abandoned workers. A
-    /// frame handed on keeps the reader's buffer when the reader gave it
-    /// up, a large frame read over several reads, and is copied out of the
-    /// buffer it was lent from otherwise.
-    fn outpost_frame(
-        &mut self,
-        outpost: OutpostId,
-        pid: Pid,
-        body: FrameBody<'_>,
-    ) -> io::Result<()> {
+    /// frame handed on is copied out of the reader's buffer it was lent
+    /// from.
+    fn outpost_frame(&mut self, outpost: OutpostId, pid: Pid, body: Parts<'_>) -> io::Result<()> {
         if self
             .records
             .get(&pid)
@@ -585,13 +577,13 @@ impl Owner {
         }
         let read_at_us = now_us();
         #[deny(clippy::wildcard_enum_match_arm)]
-        match peek(body.parts().body) {
+        match peek(body.body) {
             Peeked::Pong => {
                 let OutpostToCore::Pong {
                     parked_count,
                     written_at_us,
                     ..
-                } = decode_message(body.parts())?
+                } = decode_message(body)?
                 else {
                     return Err(io::Error::other("a pong that is not a pong"));
                 };
@@ -623,7 +615,7 @@ impl Owner {
                     .get_mut(&pid)
                     .and_then(|record| record.generation.spare_fault())
                     .is_some()
-                    && let OutpostToCore::Fault { detail } = decode_message(body.parts())?
+                    && let OutpostToCore::Fault { detail } = decode_message(body)?
                     && let Some(fault) = self
                         .records
                         .get_mut(&pid)
@@ -641,16 +633,15 @@ impl Owner {
     /// A frame read from the pipe of the spare `outpost`, before it was
     /// given: its `SpareReady`, its pongs, and its faults. Dropped once the
     /// spare has ended.
-    fn spare_frame(&mut self, outpost: OutpostId, body: &FrameBody<'_>) -> io::Result<()> {
+    fn spare_frame(&mut self, outpost: OutpostId, body: Parts<'_>) -> io::Result<()> {
         let Some(spare) = self.spare_children.get_mut(&outpost) else {
             return Ok(());
         };
         #[deny(clippy::wildcard_enum_match_arm)]
-        match peek(body.parts().body) {
+        match peek(body.body) {
             Peeked::Pong => spare.liveness.ponged(now_us()),
             Peeked::SpareReady => {
-                let OutpostToCore::SpareReady { outpost_pid } = decode_message(body.parts())?
-                else {
+                let OutpostToCore::SpareReady { outpost_pid } = decode_message(body)? else {
                     return Err(io::Error::other("a spare's ready that is not one"));
                 };
                 if let Some(waiting) = self.spares.ready(outpost) {
@@ -664,7 +655,7 @@ impl Owner {
                 }
             }
             Peeked::Fault => {
-                if let OutpostToCore::Fault { detail } = decode_message(body.parts())? {
+                if let OutpostToCore::Fault { detail } = decode_message(body)? {
                     tracing::warn!(%outpost, detail, "spare outpost fault");
                     spare.fault = Some(detail);
                 }

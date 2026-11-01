@@ -15,8 +15,6 @@
 
 pub mod reading;
 
-use crate::outpost::lock::Lock;
-use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
 use windows::Win32::UI::Accessibility::{
@@ -245,58 +243,16 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
     hasher.finish()
 }
 
-/// The most bytes a spare buffer keeps once a read has been written to
-/// Core ([`recycle`]): a few times an ordinary read's text, about 1 KB
-/// unpadded for a screen of a shell and 7 KB for two screens of output, so
-/// a whole document's read, about 1 MB with a full history, gives the rest
-/// back rather than holding it until the outpost ends.
-pub const SPARE_KEPT_BYTES: usize = 64 * 1024;
-
-/// How many pairs of spare buffers the outpost keeps: it reads one focused
-/// terminal at a time, and a read is written before the next but one is
-/// taken.
-const SPARES: usize = 2;
-
-/// Buffers a terminal's text and screen are converted into, given back
-/// once the read that used them has been written to Core, so an ordinary
-/// read allocates nothing for them.
-static SPARE: Lock<VecDeque<(TerminalText, TerminalText)>> = Lock::new(VecDeque::new());
-
-/// Gives the buffers of `snapshot`, written to Core, back for the next
-/// read, emptied and kept to at most [`SPARE_KEPT_BYTES`] each.
-pub fn recycle(snapshot: TerminalSnapshot) {
-    let mut spare = SPARE.lock();
-    if spare.len() >= SPARES {
-        return;
-    }
-    let emptied = |mut text: TerminalText| {
-        text.text.clear();
-        text.text.shrink_to(SPARE_KEPT_BYTES);
-        text.lengths.clear();
-        text.lengths
-            .shrink_to(SPARE_KEPT_BYTES / std::mem::size_of::<(u32, u32)>());
-        text
-    };
-    spare.push_back((emptied(snapshot.text), emptied(snapshot.screen)));
-}
-
-/// A pair of buffers for a read's text and screen: spare ones when there
-/// are, new ones otherwise.
-fn spare() -> (TerminalText, TerminalText) {
-    SPARE.lock().pop_front().unwrap_or_default()
-}
-
-/// `units`, UTF-16 as a terminal's provider gives its text, in `into`'s
-/// buffers, emptied first: as UTF-8 without the spaces that pad its lines,
+/// `units`, UTF-16 as a terminal's provider gives its text, as UTF-8
+/// without the spaces that pad its lines,
 /// with each line's padded length, exactly as
 /// `TerminalText::unpadded(&String::from_utf16_lossy(units))` makes it, an
 /// unpaired surrogate becoming U+FFFD, but in one pass and with no copy
 /// of the padded text between.
 #[must_use]
-pub fn unpadded_utf16(units: &[u16], mut into: TerminalText) -> TerminalText {
+pub fn unpadded_utf16(units: &[u16]) -> TerminalText {
+    let mut into = TerminalText::default();
     let TerminalText { text, lengths } = &mut into;
-    text.clear();
-    lengths.clear();
     // The line's length so far in characters, padding included; the spaces
     // after its last other character, written only once another follows;
     // and a carriage return that may begin a line break.
@@ -347,8 +303,7 @@ pub fn unpadded_utf16(units: &[u16], mut into: TerminalText) -> TerminalText {
 /// The wire form of a snapshot taken at `started_ms`: its texts as UTF-8
 /// without their lines' padding, and the caret's row and its column in it in
 /// characters, from the caret read with it. `waited` says whether the read
-/// waited for Core's speech queue ("Volatile rows"). The text and the
-/// screen are converted into spare buffers when there are ([`recycle`]).
+/// waited for Core's speech queue ("Volatile rows").
 #[must_use]
 pub fn snapshot_of(snapshot: &Snapshot, started_ms: u64, waited: bool) -> TerminalSnapshot {
     let (caret_line, caret_column) = snapshot.caret.as_ref().map_or_else(
@@ -356,10 +311,9 @@ pub fn snapshot_of(snapshot: &Snapshot, started_ms: u64, waited: bool) -> Termin
         |caret| caret_row(&caret.line.text, caret.line.offset),
     );
     let cells = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
-    let (text, screen) = spare();
     TerminalSnapshot {
-        text: unpadded_utf16(&snapshot.text, text),
-        screen: unpadded_utf16(&snapshot.screen, screen),
+        text: unpadded_utf16(&snapshot.text),
+        screen: unpadded_utf16(&snapshot.screen),
         from_start: snapshot.from_start,
         shrank: snapshot.shrank,
         at_document_start: snapshot.at_document_start,

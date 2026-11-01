@@ -208,15 +208,10 @@ Public API:
   inside a frame or brought something that is not one, or a frame
   `frame` refused). A read asks for 64 KiB while the next frame's length
   is unknown and for the whole rest of a frame once it is, so a large
-  frame is read in one read into a buffer of its size.
-  `take_bodies(completion, port, frame)` is the same turn, handing each
-  frame out as a `FrameBody`: `Borrowed`, its parts lent for the call, or
-  `Owned`, an `OwnedFrame` in the reader's own buffer given up (the whole
-  frame, its header ahead of its body), which it is for a frame gathered
-  over several reads that fills the buffer with nothing of the next frame
-  after it, a large frame above all, so a caller that keeps the frame
-  does not copy it. `parts()` reads either; `into_owned()` gives the
-  `OwnedFrame`, copying only a lent one. `Sender` writes an
+  frame is read in one read into a buffer of its size; that buffer is
+  given back once the frame is handed out. Every frame's parts are lent
+  for the call, and `Parts::into_owned()` copies them into an
+  `OwnedFrame` for a caller that keeps the frame. `Sender` writes an
   overlapped end: `send(item)` puts the item in the `Backlog`, a caller's
   policy (`push`, `pop`, `is_empty`, and `encode`, which appends an
   item's frame just before it is written, whichever thread writes it, so

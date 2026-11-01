@@ -31,7 +31,7 @@ use crate::calls::count;
 
 pub(crate) use verbatim_win32::window::{
     desktop_window, is_child, is_enabled, is_multiline_edit, parent, rect, related, style,
-    top_child, window_class_name, window_exists, window_is_visible, window_thread,
+    top_child, window_class_name, window_exists, window_is_visible,
 };
 
 /// The `HWND` for a handle value.

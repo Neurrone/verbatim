@@ -1445,8 +1445,7 @@ provider gives no handle for the window, which the classic walk finds.
   Core may ask for the whole document or a first read's history block
   (`TextOp::TerminalReadNow`). `terminal::snapshot_of` makes Core's
   `TerminalSnapshot`: UTF-8 text without line padding, each line's padded
-  length (one pass, `terminal::unpadded_utf16`, into buffers a written read
-  returns, `terminal::recycle`, each kept to `SPARE_KEPT_BYTES`, 64 KiB),
+  length (one pass, `terminal::unpadded_utf16`, into new buffers),
   the caret's row and column, colours from `verbatim_uia_rops::ColourRun`,
   and when the read began. The start is kept unless the screen shows no text
   where the last kept read's did (`verbatim_text::terminal_rows::shows_text`).

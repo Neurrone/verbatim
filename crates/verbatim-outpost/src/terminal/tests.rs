@@ -184,11 +184,10 @@ fn two_copies(units: &[u16]) -> TerminalText {
     TerminalText::unpadded(&String::from_utf16_lossy(units))
 }
 
-/// `units` converted in one pass into `reused`, buffers a read used
-/// before, checked against the two copies field by field and as the bytes
-/// sent; the buffers are returned for the next.
-fn converted_alike(units: &[u16], reused: TerminalText, what: &str) -> TerminalText {
-    let one_pass = super::unpadded_utf16(units, reused);
+/// `units` converted in one pass, checked against the two copies field by
+/// field and as the bytes sent.
+fn converted_alike(units: &[u16], what: &str) {
+    let one_pass = super::unpadded_utf16(units);
     let expected = two_copies(units);
     assert_eq!(one_pass, expected, "{what}");
     assert_eq!(
@@ -196,16 +195,13 @@ fn converted_alike(units: &[u16], reused: TerminalText, what: &str) -> TerminalT
         serde_json::to_vec(&expected).expect("serializes"),
         "{what}"
     );
-    one_pass
 }
 
 /// Every corpus stream's whole document and screen, after each chunk, in
-/// both terminals, converts in one pass exactly as with two copies, into
-/// buffers reused from one read to the next.
+/// both terminals, converts in one pass exactly as with two copies.
 #[test]
 fn a_reads_text_converted_in_one_pass_is_the_two_copies_exactly() {
     use verbatim_term_sim::conformance::{history, streams};
-    let mut reused = TerminalText::default();
     for (name, stream) in streams() {
         for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
             let mut terminal = verbatim_term_sim::Terminal::new(flavor, 120, 30, history(flavor));
@@ -221,9 +217,8 @@ fn a_reads_text_converted_in_one_pass_is_the_two_copies_exactly() {
                     .expect("a simulated read");
                 for (part, text) in [("text", &snapshot.text), ("screen", &snapshot.screen)] {
                     let units: Vec<u16> = text.encode_utf16().collect();
-                    reused = converted_alike(
+                    converted_alike(
                         &units,
-                        reused,
                         &format!("{name} in {flavor:?}, chunk {chunk}, {part}"),
                     );
                 }
@@ -255,9 +250,8 @@ fn unpaired_surrogates_and_line_ends_convert_as_the_two_copies() {
             0x6F, 0x6E, 0x65, 0x20, 0x20, 0x0D, 0x0A, 0x74, 0x77, 0x6F, 0x20, 0x20,
         ],
     ];
-    let mut reused = TerminalText::default();
     for (case, units) in cases.iter().enumerate() {
-        reused = converted_alike(units, reused, &format!("case {case}: {units:04X?}"));
+        converted_alike(units, &format!("case {case}: {units:04X?}"));
     }
 }
 
@@ -364,21 +358,9 @@ fn event(
     }
 }
 
-/// The read in an [`event`], given back once it is written.
-fn read_of(message: OutpostToCore) -> TerminalSnapshot {
-    let OutpostToCore::Event {
-        event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
-        ..
-    } = message
-    else {
-        panic!("a terminal's event");
-    };
-    *snapshot
-}
-
 /// The time and page faults of converting a terminal's read and writing
 /// it in the event the outpost sends Core, before and after the conversion
-/// in one pass with buffers kept, and the time Core takes to parse that
+/// in one pass, and the time Core takes to parse that
 /// event's frame: run with `cargo test --release -p verbatim-outpost --lib
 /// terminal::tests::measure_conversion -- --ignored --nocapture
 /// --test-threads=1`. A whole document of a full history (9,031 rows and
@@ -387,8 +369,7 @@ fn read_of(message: OutpostToCore) -> TerminalSnapshot {
 /// ([`screen_colours`]), each read 50 times after one to warm up.
 /// "Before" converts with two copies and writes into a buffer that keeps
 /// whatever it grew to, as the transport's did; "after" converts in one
-/// pass into the spare buffers ([`super::recycle`]) and writes into a
-/// buffer kept to `WRITE_KEPT_BYTES` once each write is done, as the
+/// pass into new buffers and writes into a buffer kept to `WRITE_KEPT_BYTES` once each write is done, as the
 /// outpost's writer does; "parse" decodes the frame's body and raw section
 /// as Core's reducer does.
 #[test]
@@ -429,14 +410,13 @@ fn measure_conversion() {
         let before_us = started.elapsed().as_micros() / u128::from(RUNS);
         let before_faults = (page_faults() - faults) / RUNS;
         let before_held = buffer.capacity();
-        // After: one pass into spare buffers, given back once written, and
-        // a write buffer kept to its bound.
+        // After: one pass into new buffers, and a write buffer kept to its
+        // bound.
         let mut buffer = Vec::new();
         let mut after = || {
-            let (text, spare_screen) = super::spare();
             let message = wire(
-                super::unpadded_utf16(&units, text),
-                super::unpadded_utf16(&screen, spare_screen),
+                super::unpadded_utf16(&units),
+                super::unpadded_utf16(&screen),
             );
             buffer.clear();
             put_message(&mut buffer, &message).expect("written");
@@ -444,7 +424,6 @@ fn measure_conversion() {
                 buffer.clear();
                 buffer.shrink_to(WRITE_KEPT_BYTES);
             }
-            super::recycle(read_of(message));
         };
         after();
         let (faults, started) = (page_faults(), Instant::now());
@@ -453,11 +432,6 @@ fn measure_conversion() {
         }
         let after_us = started.elapsed().as_micros() / u128::from(RUNS);
         let after_faults = (page_faults() - faults) / RUNS;
-        let spare: usize = super::SPARE
-            .lock()
-            .iter()
-            .map(|(text, screen)| text.text.capacity() + screen.text.capacity())
-            .sum();
         // Parse: the event's frame, its body and raw section, read back.
         let message = wire(two_copies(&units), two_copies(&screen));
         let frame = encode_message(&message).expect("encoded");
@@ -476,9 +450,8 @@ fn measure_conversion() {
         println!(
             "{what}: before {before_us} us and {before_faults} page faults a read, {before_held} \
              bytes held after; after {after_us} us and {after_faults} page faults a read, {} \
-             bytes held after ({} written, {spare} spare); parse {parse_us} us for a body of \
-             {} bytes and a raw section of {}",
-            buffer.capacity() + spare,
+             bytes held after; parse {parse_us} us for a body of {} bytes and a raw section of \
+             {}",
             buffer.capacity(),
             parts.body.len(),
             raw.len()

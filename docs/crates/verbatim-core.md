@@ -239,8 +239,9 @@ segments, each starting at a checkpoint:
 
 So the window always starts at a checkpoint, holds between half and all
 of each bound, takes a checkpoint once per half window, and keeps at most
-three alive. Their size is not counted against the byte bound, because
-the state holds everything that grows behind shared pointers.
+three alive. Their size is not counted against the byte bound; the
+state's large parts that exist today (the ancestor chain, the text lines,
+the terminal readers) are held behind `Arc`s, which a clone shares.
 
 `ReducerRecorder` is `FlightRecorder<RecordedInput, SrState>`:
 `with_default_bounds(initial)` uses the shell's bounds,
@@ -250,7 +251,11 @@ ordinary inputs never reach, so text-bearing inputs are what it caps);
 when a checkpoint is due; `dump_inputs()` gives the recorded inputs,
 oldest first, ready to replay from the checkpoint.
 `RecordedInput::estimated_bytes()` is the entry's inline size plus the
-length of its compact JSON, counted without building the JSON.
+heap it owns, found by `HeapCounter`, a serde serializer that formats
+nothing and adds each string's length and each element's inline size. It
+is kept over counting the entry's JSON because its cost is constant per
+string, where formatting JSON scans every byte of a terminal document on
+the reducer's step before its speech.
 `replay(initial, inputs)` re-runs a recorded sequence and returns the
 effects per step; tests prove it deterministic, and prove that a window
 that has dropped its start replays from its checkpoint to the effects the
@@ -289,12 +294,8 @@ intentional change to the scripted shapes.
 thread requests. It asserts that a focus step, a navigation command and
 its completion, caret and review steps, and a terminal read each allocate
 the same against a small state and a large one (a previous focus with 10
-ancestors and with 10,000), that a flight-recorder checkpoint allocates
-under 1 KB for both, even with a 64 KB line in the state, and that the
-theme's fetches are taken in without allocating. It holds because `reduce`
-changes the state in place and `SrState` holds whatever grows with the
-application (the ancestor chain, text, terminal models) behind `Arc`s;
-anything added to the state that grows must be held the same way.
+ancestors and with 10,000). It holds because `reduce` changes the state
+in place.
 
 ## Focus, events and objects
 

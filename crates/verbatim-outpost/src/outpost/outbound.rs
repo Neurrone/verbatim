@@ -238,12 +238,7 @@ impl Backlog for Pending {
         // queue's time from the pipe's, taken as the write begins, whichever
         // thread writes.
         message.written(now_us());
-        let written = put_message(buffer, &message);
-        // A terminal's read, written, gives its buffers back for the next.
-        if let Some(snapshot) = terminal_read(message) {
-            crate::terminal::recycle(snapshot);
-        }
-        written
+        put_message(buffer, &message)
     }
 }
 
@@ -331,26 +326,6 @@ impl Outbound {
             // with nothing left to write.
             let _ = done_rx.recv();
         }
-    }
-}
-
-/// The terminal's read `message` carries, as an event or an answer.
-fn terminal_read(message: OutpostToCore) -> Option<verbatim_model::TerminalSnapshot> {
-    match message {
-        OutpostToCore::Event {
-            event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
-            ..
-        }
-        | OutpostToCore::Reply {
-            outcome:
-                verbatim_model::protocol::QueryOutcome::Done(
-                    verbatim_model::protocol::QueryResult::Text(
-                        verbatim_model::TextReply::TerminalSnapshot(snapshot),
-                    ),
-                ),
-            ..
-        } => Some(*snapshot),
-        _ => None,
     }
 }
 

@@ -104,6 +104,17 @@ impl<'a> Parts<'a> {
             )),
         }
     }
+
+    /// A copy of the frame, for a caller that keeps it.
+    #[must_use]
+    pub fn into_owned(self) -> OwnedFrame {
+        let mut buffer = Vec::with_capacity(self.body.len() + self.raw.map_or(0, <[u8]>::len));
+        buffer.extend_from_slice(self.body);
+        if let Some(raw) = self.raw {
+            buffer.extend_from_slice(raw);
+        }
+        OwnedFrame::new(buffer, self.raw.map(|_| self.body.len()))
+    }
 }
 
 /// Appends a frame without a raw section to `buffer`: the header, then the
@@ -196,24 +207,21 @@ fn append_frame(
     Ok(())
 }
 
-/// A frame read whole and kept: the buffer it is in, its header ahead of
-/// it when a reader gave its own buffer up, and where in it its body and
-/// its raw section start.
+/// A frame read whole and kept: the buffer holding its body and then its
+/// raw section, and where the raw section starts.
 #[derive(Debug, PartialEq, Eq)]
 pub struct OwnedFrame {
     buffer: Vec<u8>,
-    /// Where the body starts.
-    start: usize,
     /// Where the raw section starts, after the body, when there is one; it
     /// runs to the buffer's end.
     raw: Option<usize>,
 }
 
 impl OwnedFrame {
-    /// The frame whose body is `buffer` from `start` to `raw`, or to its
-    /// end without a raw section, and whose raw section is the rest.
-    fn new(buffer: Vec<u8>, start: usize, raw: Option<usize>) -> Self {
-        Self { buffer, start, raw }
+    /// The frame whose body is `buffer` up to `raw`, or to its end without
+    /// a raw section, and whose raw section is the rest.
+    fn new(buffer: Vec<u8>, raw: Option<usize>) -> Self {
+        Self { buffer, raw }
     }
 
     /// Its two parts.
@@ -221,10 +229,10 @@ impl OwnedFrame {
     pub fn parts(&self) -> Parts<'_> {
         match self.raw {
             Some(raw) => Parts {
-                body: &self.buffer[self.start..raw],
+                body: &self.buffer[..raw],
                 raw: Some(&self.buffer[raw..]),
             },
-            None => Parts::body(&self.buffer[self.start..]),
+            None => Parts::body(&self.buffer),
         }
     }
 }
@@ -245,7 +253,7 @@ pub fn read_frame<R: BufRead>(reader: &mut R) -> io::Result<Option<OwnedFrame>> 
     let mut buffer = vec![0; lengths.whole()];
     reader.read_exact(&mut buffer)?;
     let raw = lengths.raw.map(|_| lengths.body);
-    Ok(Some(OwnedFrame::new(buffer, 0, raw)))
+    Ok(Some(OwnedFrame::new(buffer, raw)))
 }
 
 /// The lengths a header gives: its body's, and its raw section's when it
@@ -558,55 +566,6 @@ pub struct PortReader {
     pending: Vec<u8>,
 }
 
-/// A frame as a [`PortReader`] hands it out
-/// ([`take_bodies`](PortReader::take_bodies)): lent from the reader's
-/// buffer, or, when the reader gathered the frame in a buffer of its own
-/// and nothing after it, that buffer itself, so a caller that keeps the
-/// body need not copy it.
-#[derive(Debug)]
-pub enum FrameBody<'a> {
-    /// Lent for the call: a caller that keeps it copies it.
-    Borrowed(Parts<'a>),
-    /// The reader's buffer, given up: the whole frame, its header and then
-    /// its body and raw section. Only a frame gathered over more than one
-    /// read is handed out this way, a large one above all.
-    Owned(OwnedFrame),
-}
-
-impl FrameBody<'_> {
-    /// The frame's body and raw section.
-    #[must_use]
-    pub fn parts(&self) -> Parts<'_> {
-        match self {
-            FrameBody::Borrowed(parts) => *parts,
-            FrameBody::Owned(frame) => frame.parts(),
-        }
-    }
-
-    /// The frame as one the caller keeps: the reader's own buffer when it
-    /// was given up, a copy of a lent frame otherwise.
-    #[must_use]
-    pub fn into_owned(self) -> OwnedFrame {
-        match self {
-            FrameBody::Borrowed(Parts { body, raw }) => {
-                let mut buffer = Vec::with_capacity(body.len() + raw.map_or(0, <[u8]>::len));
-                buffer.extend_from_slice(body);
-                if let Some(raw) = raw {
-                    buffer.extend_from_slice(raw);
-                }
-                OwnedFrame::new(buffer, 0, raw.map(|_| body.len()))
-            }
-            FrameBody::Owned(frame) => frame,
-        }
-    }
-
-    /// Whether the reader's buffer was given up rather than lent.
-    #[must_use]
-    pub fn is_owned(&self) -> bool {
-        matches!(self, FrameBody::Owned(_))
-    }
-}
-
 /// What became of a [`PortReader`] in a turn.
 #[derive(Debug)]
 pub enum Reading {
@@ -652,20 +611,6 @@ impl PortReader {
         completion: &Completion,
         port: &Port,
         mut frame: impl FnMut(Parts<'_>) -> io::Result<()>,
-    ) -> Reading {
-        self.take_bodies(completion, port, |body| frame(body.parts()))
-    }
-
-    /// [`take`](Self::take), handing out each body as a [`FrameBody`]: a
-    /// frame that was gathered in the reader's buffer over several reads,
-    /// with nothing of the next frame after it, is handed out as that
-    /// buffer, given up, rather than lent, so a caller that keeps a large
-    /// frame does not copy it again.
-    pub fn take_bodies(
-        &mut self,
-        completion: &Completion,
-        port: &Port,
-        mut frame: impl FnMut(FrameBody<'_>) -> io::Result<()>,
     ) -> Reading {
         let mut done = if completion.is_posted() {
             if self.slot.in_flight() {
@@ -722,29 +667,16 @@ impl PortReader {
         }
     }
 
-    /// Hands out every frame the last read completed, keeping the start of
-    /// the next. A frame the reads gathered in `pending` that fills it
-    /// exactly is handed out as `pending` itself, given up; every other
-    /// frame is lent.
-    fn hand_out(
-        &mut self,
-        frame: &mut impl FnMut(FrameBody<'_>) -> io::Result<()>,
-    ) -> io::Result<()> {
-        let mut lend = |parts: Parts<'_>| frame(FrameBody::Borrowed(parts));
+    /// Hands out every frame the last read completed, each lent, keeping
+    /// the start of the next.
+    fn hand_out(&mut self, frame: &mut impl FnMut(Parts<'_>) -> io::Result<()>) -> io::Result<()> {
         let data = self.slot.data();
         if self.pending.is_empty() {
-            let used = whole_frames(data, &mut lend)?;
+            let used = whole_frames(data, frame)?;
             self.pending.extend_from_slice(&data[used..]);
         } else {
             self.pending.extend_from_slice(data);
-            if let Some((header, lengths)) = frame_bounds(&self.pending)?
-                && header + lengths.whole() == self.pending.len()
-            {
-                let buffer = std::mem::take(&mut self.pending);
-                let raw = lengths.raw.map(|_| header + lengths.body);
-                return frame(FrameBody::Owned(OwnedFrame::new(buffer, header, raw)));
-            }
-            let used = whole_frames(&self.pending, &mut lend)?;
+            let used = whole_frames(&self.pending, frame)?;
             self.pending.drain(..used);
         }
         if self.pending.is_empty() && self.pending.capacity() > READ_SIZE {
@@ -1801,13 +1733,8 @@ mod tests {
         assert_eq!(read(&mut reader).expect("read"), None);
     }
 
-    /// A frame's body as a reader handed it out, and whether it gave its
-    /// buffer up for it.
-    type Body = (Vec<u8>, bool);
-
-    /// A frame's body and raw section as a reader handed them out, and
-    /// whether it gave its buffer up for them.
-    type OwnedParts = (Vec<u8>, Option<Vec<u8>>, bool);
+    /// A frame's body and raw section as a reader handed them out.
+    type OwnedParts = (Vec<u8>, Option<Vec<u8>>);
 
     /// A port reader on a pipe whose other end the test writes itself.
     struct Fixture {
@@ -1831,13 +1758,13 @@ mod tests {
                 writer: Some(File::from(theirs)),
                 completions: Completions::with_capacity(4),
             };
-            assert_eq!(reading.turn().0, Vec::<Vec<u8>>::new());
+            assert_eq!(reading.turn().0, Vec::<OwnedParts>::new());
             reading
         }
 
         /// One completion's turn: the frames handed out, and whether the
         /// reading ended, and how.
-        fn turn(&mut self) -> (Vec<Vec<u8>>, Option<io::Result<()>>) {
+        fn turn(&mut self) -> (Vec<OwnedParts>, Option<io::Result<()>>) {
             assert_eq!(
                 self.port
                     .wait(&mut self.completions, Some(Duration::from_secs(10)))
@@ -1847,47 +1774,8 @@ mod tests {
             );
             let completion = self.completions.iter().next().expect("one");
             let mut frames = Vec::new();
-            let reading = self.reader.take(&completion, &self.port, |body| {
-                frames.push(body.without_raw().expect("no raw section").to_vec());
-                Ok(())
-            });
-            match reading {
-                Reading::Ended(result) => (frames, Some(result)),
-                Reading::Waiting | Reading::Yielded => (frames, None),
-            }
-        }
-
-        /// One completion's turn, as [`turn`](Self::turn), with each
-        /// frame's body and whether the reader gave its buffer up for it.
-        fn turn_bodies(&mut self) -> (Vec<Body>, Option<io::Result<()>>) {
-            let (frames, ended) = self.turn_parts();
-            let bodies = frames
-                .into_iter()
-                .map(|(body, raw, owned)| {
-                    assert_eq!(raw, None, "no raw section");
-                    (body, owned)
-                })
-                .collect();
-            (bodies, ended)
-        }
-
-        /// One completion's turn, as [`turn_bodies`](Self::turn_bodies),
-        /// with each frame's raw section too.
-        fn turn_parts(&mut self) -> (Vec<OwnedParts>, Option<io::Result<()>>) {
-            assert_eq!(
-                self.port
-                    .wait(&mut self.completions, Some(Duration::from_secs(10)))
-                    .expect("waited"),
-                1,
-                "one completion within the bound"
-            );
-            let completion = self.completions.iter().next().expect("one");
-            let mut frames = Vec::new();
-            let reading = self.reader.take_bodies(&completion, &self.port, |body| {
-                let owned = body.is_owned();
-                let frame = body.into_owned();
-                let Parts { body, raw } = frame.parts();
-                frames.push((body.to_vec(), raw.map(<[u8]>::to_vec), owned));
+            let reading = self.reader.take(&completion, &self.port, |parts| {
+                frames.push((parts.body.to_vec(), parts.raw.map(<[u8]>::to_vec)));
                 Ok(())
             });
             match reading {
@@ -1907,13 +1795,19 @@ mod tests {
             let (frames, ended) = self.turn();
             assert!(ended.is_none(), "still reading: {ended:?}");
             frames
+                .into_iter()
+                .map(|(body, raw)| {
+                    assert_eq!(raw, None, "no raw section");
+                    body
+                })
+                .collect()
         }
 
         /// Closes the writing end, and says how the reading ended.
         fn close(&mut self) -> io::Result<()> {
             self.writer = None;
             let (frames, ended) = self.turn();
-            assert_eq!(frames, Vec::<Vec<u8>>::new());
+            assert_eq!(frames, Vec::<OwnedParts>::new());
             ended.expect("the reading ended")
         }
     }
@@ -1958,15 +1852,14 @@ mod tests {
             }
         };
         writing.join().expect("the writer");
-        assert_eq!(frames, [large, b"after".to_vec()]);
+        assert_eq!(frames, [(large, None), (b"after".to_vec(), None)]);
         assert!(ended.is_ok(), "{ended:?}");
     }
 
     /// A frame larger than one read, gathered in the reader's buffer with
-    /// nothing after it, is handed out as that buffer, given up, whole and
-    /// as written.
+    /// nothing after it, is handed out whole and as written.
     #[test]
-    fn a_port_reader_gives_up_its_buffer_for_a_large_frame_read_whole() {
+    fn a_port_reader_hands_out_a_large_frame_read_whole() {
         let large: Vec<u8> = (0..300_000u32).map(|at| (at % 251) as u8).collect();
         let stream = framed(&large);
         let mut reading = Fixture::new(4096);
@@ -1974,7 +1867,7 @@ mod tests {
         let writing = thread::spawn(move || writer.write_all(&stream).expect("written"));
         let mut frames = Vec::new();
         let ended = loop {
-            let (more, ended) = reading.turn_bodies();
+            let (more, ended) = reading.turn();
             frames.extend(more);
             if let Some(ended) = ended {
                 break ended;
@@ -1982,14 +1875,14 @@ mod tests {
         };
         writing.join().expect("the writer");
         assert_eq!(frames.len(), 1);
-        assert!(frames[0].1, "the reader's buffer, given up");
+        assert_eq!(frames[0].1, None, "no raw section");
         assert!(frames[0].0 == large, "the frame whole and as written");
         assert!(ended.is_ok(), "{ended:?}");
     }
 
     /// A frame gathered in the reader's buffer with the start of the next
-    /// after it is lent, the buffer kept for the next; that next frame,
-    /// once it fills the buffer alone, is handed out as the buffer.
+    /// after it is lent, the buffer kept for the next; that next frame is
+    /// handed out once its rest arrives.
     #[test]
     fn a_port_reader_lends_a_frame_followed_by_the_start_of_another() {
         let mut stream = framed(b"first");
@@ -2003,18 +1896,18 @@ mod tests {
                 .expect("open")
                 .write_all(bytes)
                 .expect("written");
-            let (frames, ended) = reading.turn_bodies();
+            let (frames, ended) = reading.turn();
             assert!(ended.is_none(), "still reading: {ended:?}");
             frames
         };
         assert_eq!(write(&stream[..5]), []);
-        assert_eq!(write(&stream[5..first + 3]), [(b"first".to_vec(), false)]);
-        assert_eq!(write(&stream[first + 3..]), [(b"second".to_vec(), true)]);
+        assert_eq!(write(&stream[5..first + 3]), [(b"first".to_vec(), None)]);
+        assert_eq!(write(&stream[first + 3..]), [(b"second".to_vec(), None)]);
     }
 
     /// A frame with a raw section is handed out with its body and raw
-    /// section parted, lent or given up: a small one lent, then a large
-    /// one gathered over several reads as the reader's buffer.
+    /// section parted: a small one, then a large one gathered over several
+    /// reads.
     #[test]
     fn a_port_reader_hands_out_a_frames_raw_section_apart_from_its_body() {
         let large: Vec<u8> = (0..300_000u32).map(|at| (at % 251) as u8).collect();
@@ -2024,14 +1917,14 @@ mod tests {
         let mut reading = Fixture::new(4096);
         let mut writer = reading.writer.take().expect("open");
         writer.write_all(&stream[..small]).expect("written");
-        let (frames, ended) = reading.turn_parts();
+        let (frames, ended) = reading.turn();
         assert!(ended.is_none(), "still reading: {ended:?}");
-        assert_eq!(frames, [(b"small".to_vec(), Some(b"raw".to_vec()), false)]);
+        assert_eq!(frames, [(b"small".to_vec(), Some(b"raw".to_vec()))]);
         let rest = stream[small..].to_vec();
         let writing = thread::spawn(move || writer.write_all(&rest).expect("written"));
         let mut frames = Vec::new();
         let ended = loop {
-            let (more, ended) = reading.turn_parts();
+            let (more, ended) = reading.turn();
             frames.extend(more);
             if let Some(ended) = ended {
                 break ended;
@@ -2039,13 +1932,12 @@ mod tests {
         };
         writing.join().expect("the writer");
         assert_eq!(frames.len(), 1);
-        let (body, raw, owned) = &frames[0];
+        let (body, raw) = &frames[0];
         assert_eq!(body, b"large");
         assert!(
             raw.as_deref() == Some(large.as_slice()),
             "the raw section whole"
         );
-        assert!(*owned, "the reader's buffer, given up");
         assert!(ended.is_ok(), "{ended:?}");
     }
 
