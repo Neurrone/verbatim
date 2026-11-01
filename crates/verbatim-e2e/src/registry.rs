@@ -2550,7 +2550,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// Writes the wait chains a failed launch's error carries, recorded when
-/// its document's window did not open in time, to the scenario's artifacts
+/// its document's window did not open or take the foreground in time, to the scenario's artifacts
 /// in `dir`; a launch fails before there is a scenario to collect them.
 fn record_launch_wait_chains(dir: &std::path::Path, error: &io::Error) {
     if let Some(chains) = wait_chains_of(error)

@@ -356,9 +356,11 @@ pub enum Request {
     /// Records the wait chain (Windows' Wait Chain Traversal) of the thread
     /// owning each window in `windows`, and of each thread of each process
     /// in `pids` that owns a top-level window, or of every thread of one
-    /// that owns none, each thread once: what a thread that stopped
-    /// answering waits on, for the report of a window that did not open in
-    /// time. Answered by [`ReplyPayload::WaitChains`].
+    /// that owns none, each thread once; a process that has exited has one
+    /// chain saying so. What a thread that stopped answering waits on, for
+    /// the report of a window that did not open or take the foreground in
+    /// time. Answered by [`ReplyPayload::WaitChains`], or by
+    /// [`Frame::Error`] when the chains are not read within 10 seconds.
     WaitChains {
         /// Window handles, as [`WindowInfo::window`] reports them.
         windows: Vec<u64>,

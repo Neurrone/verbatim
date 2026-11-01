@@ -325,12 +325,15 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
-        Request::WaitChains { windows, pids } => Frame::Reply {
-            to: id,
-            payload: ReplyPayload::WaitChains {
-                chains: wait_chain::wait_chains(&windows, &pids),
-            },
-        },
+        Request::WaitChains { windows, pids } => {
+            match wait_chain::wait_chains_within(windows, pids, wait_chain::WAIT_CHAINS_TIMEOUT) {
+                Ok(chains) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::WaitChains { chains },
+                },
+                Err(message) => Frame::Error { to: id, message },
+            }
+        }
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
         | Request::SetForeground { .. }
