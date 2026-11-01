@@ -102,6 +102,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
     declared with its request.
+  - [allocation-simplification.md](design/allocation-simplification.md)
+    — removing code shaped only to avoid allocations, and the ledger's
+    entries of that size, with the instructions that caused them.
   - [wake-ups.md](design/wake-ups.md) — the sources of Verbatim's
     wake-ups and the reason for each fix.
   - [terminal-model.md](design/terminal-model.md) — how terminal screens
