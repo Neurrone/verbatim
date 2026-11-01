@@ -64,7 +64,15 @@ screen reader in both rendered and source form.
   own outpost; a shared host stays a possible later optimization behind
   the same protocol (section 1). Why: a thread blocked in a cross-process
   COM call can only be abandoned, so process exit is the only full
-  recovery, and per-application processes make it surgical. Decided 2026-07-13.
+  recovery, and per-application processes make it surgical. Weighed again
+  against readers as threads in Core and against one process, and kept:
+  all of a process's UIA events pass through one UIA worker thread, so a
+  window named in a focus event that does not answer holds every
+  application's ordinary events there for 2 to 4 seconds, an event flood
+  of about 10,000 a second stops that process's delivery for every
+  application, and a crash inside UIA ends the whole process; the boundary
+  costs about 2 MB and 3 wake-ups an event per application. Decided
+  2026-07-13. Amended 2026-11-02 (Dickson).
 - **D10, localization is Fluent.** Through `i18n-embed`, English is
   compiled in as the fallback, other locales load from a `locale` folder,
   every lookup goes through `fl!`, and no user-visible string is

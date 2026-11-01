@@ -12,12 +12,11 @@ VM), and M3 (desktop usability core) are complete, and what each
 delivered is in [Completed milestones](roadmap-done.md). M4 is in
 progress; its completed parts, M4.1 (stability) among them, are listed
 there too, and M4.1's open follow-ups are under M4, "Follow-ups from
-M4.1". M4.5 (logic foundations) is complete. Next: M4.7 (the process
-and thread layout), a decision Dickson takes himself (2026-11-01).
-The work whose shape depends on it waits for it, as M4.7 lists; that
-includes the focus pipeline rework's second and third builds and M4.6
-(generated tests). Work that does not depend on it may go ahead
-meanwhile.
+M4.1". M4.5 (logic foundations) is complete. The process and thread
+layout was weighed again and kept: an outpost process per application
+and a separate focus listener (D9, D13; Dickson, 2026-11-02). Next: the
+focus pipeline rework's second and third builds, then M4.6 (generated
+tests).
 
 ## M4 — Text, editing, and terminals
 
@@ -283,119 +282,6 @@ Text and selection:
 
 - `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. The caret and selection rework removes the first check and runs the scenario ten times; if it still fails, the likely cause, unconfirmed, is Core comparing "alpha" while the outpost's word unit reads "alpha " with its white space.
 - The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it; the caret and selection rework's captures settle it.
-
-## M4.7 — The process and thread layout
-
-Which work runs in which process and on which thread, decided by
-Dickson himself (2026-11-01), because the layout shapes every later
-milestone and was last weighed when D9 and D13 were made, before the
-costs of the split were known. D9 gives each application its own
-outpost process, so the reducer in Core can hold no UIA or MSAA object
-and every node crosses a pipe by id. Much of what M4 built exists only
-for that boundary: node ids and their release by message position,
-outpost generations, the frames and message kinds, ordering focuses
-from several processes by when they happened, and the collisions when
-two Verbatim processes connect to one application. Most defects of the
-focus pipeline rework were a fact decided in two processes
-([ownership](design/ownership.md), "The problem").
-
-The layouts to weigh:
-
-- Today's: Core, the focus listener, one outpost per application, and
-  the synthesizer and extension hosts.
-- The readers as threads in Core, one per application, with the focus
-  listener still a process of its own, holding the desktop-wide focus
-  registration.
-- Everything in one process except the sandboxed hosts, with the focus
-  registration in Core.
-- One shared reader process for every application, D9's own stated
-  fallback.
-
-Whatever the layout, the synthesizer hosts and the extension hosts stay
-processes of their own, since they run third-party code. Whether
-browsers' IAccessible2 reading needs a process of its own is M7's
-question, raised here only so that no layout rules it out.
-
-What is measured, each run as an experiment under `experiments/`, on a
-real, unlocked desktop where Windows marks a window as hung, since
-every measurement of the hung-window hold so far ran on a hidden
-desktop where it never did:
-
-- How long a hung window named in a focus event holds every UIA event
-  of the process holding the focus registration, with the window
-  marked hung and its ghost window shown (`docs/uia-bugs.md`, "A hung
-  window named in a system focus event holds a process's UIA events").
-- Alt+Tab from a hung application to Notepad and then to File
-  Explorer: the time from each key to the focus being spoken, and
-  whether the arrow keys after it are spoken on time, ten runs each, in
-  Verbatim as it is and in a stand-in program that holds the focus
-  registration and other applications' event handlers in one process,
-  as a listener thread would.
-- Alt+Tab passing over the hung window, and whether the ghost window
-  adds holds.
-- Working in Notepad while another application hangs in the background
-  and is never focused.
-- During a hold, in the process holding the registration: other
-  applications' non-focus UIA events, and reads on other threads.
-- Whether the collision of a listener's and an outpost's connections
-  to one application (`docs/uia-bugs.md`, "A new connection fails while
-  another process's remote operation is queued") happens when both
-  connections are made by one process.
-- What an abandoned UIA reader thread costs in memory and holds, and
-  how many abandonments a day of real use produces, counted from the
-  logs, to judge leaving them in place and restarting rarely against
-  killing a process.
-- The working set and start-up time of an outpost against those of a
-  reader thread, and each layout's wake-ups and processor time on the
-  event path, measured in the same mode.
-- Each scenario above with NVDA at the pinned build, as captures with
-  timing and NVDA's debug log naming any call that blocked, so the
-  comparison is with what users already live with.
-
-What is read from sources, each with its finding recorded in the study:
-
-- An inventory of the mechanisms that exist only because of the
-  per-application process boundary, with their size and their defect
-  history from git.
-- How often a client process crashes inside `UIAutomationCore.dll`
-  outside its own exit, from NVDA's issue record and Verbatim's logs,
-  since a reader thread in Core would take speech down with such a
-  crash until Core restarts (M8's restart with a breaker).
-- NVDA's lessons for any layout, checked against the code of each: no
-  thread that calls into applications serves more than one application;
-  an event is dropped only on facts that cost no call; registrations
-  are narrow; every queue an application can fill is bounded; nothing
-  calls into a window Windows reports hung.
-
-Async, decided after the layout. Async Rust writes waiting on several
-things, with deadlines and cancellation, as sequential code, where
-Verbatim writes each such coordinator as an explicit state machine. One
-coordinator the chosen layout keeps, such as Core's request table
-(`crates/verbatim-core/src/requests.rs`) or the supervisor's owner
-thread (`crates/verbatim-supervisor/src/owner.rs`), is written both
-ways and compared on size, on whether generated tests can drive it as
-M4.6 drives a reducer, and on wake-ups and processor time. Calls into
-applications keep threads of their own in either style, since async
-cannot stop a call blocking.
-
-The study is written by an agent that reads the measurements and
-`docs/uia-bugs.md` rather than the design records, so that it is not
-anchored on the present layout; it gives the strongest case for each
-layout with its costs, and is reviewed adversarially before Dickson
-decides.
-
-What waits for the decision, because its shape depends on the layout:
-the focus pipeline rework's second and third builds; M4.6's generated
-tests of the outpost's reducer, the listener's scheduler and Core's
-request table; where M5's built-in modules run; M6.1; M6.2; the outpost
-hardening in M6.6 (the write-restricted token and the unmarshalling
-flag); and M7's injection helper. What does not, and may go ahead: M4.2,
-M4.3, M6's synthesizer host and M6.3, and work confined to Core's
-reducer or `verbatim-text`.
-
-Exit: Dickson's decision recorded as an amendment of D9 and, if it
-changes, D13, with the study and its experiments kept; and the waiting
-milestones replanned against it.
 
 ## M4.6 — Generated tests
 

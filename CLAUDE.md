@@ -26,7 +26,7 @@ All documentation, comments, and commit messages in this repo must read well wit
 
 Dickson takes the decisions in these areas himself; every other decision is Claude's, made with its reason recorded where the decision lives and checked by the adversarial review, because splitting each decision between Dickson and Claude spread the responsibility without adding judgment (2026-11-01).
 
-- The process and thread layout: which work runs in which process and on which thread (D9, D13, M4.7).
+- The process and thread layout: which work runs in which process and on which thread (D9, D13).
 - Architecture and high-level design
 - Trust boundaries and accepted risks: which code is trusted, what is sandboxed, what extensions and native add-ons may do and how users approve them, and the posture for UIAccess and secure screens. The mechanisms that enforce them are the session's.
 - What users hear: every deliberate difference from NVDA's speech, and every spoken behaviour NVDA has no answer for. Matching NVDA's captured speech needs no decision.
