@@ -55,16 +55,16 @@ flowchart LR
 
 ## 2. What each one gives you
 
-| Question | Threads in one process | Separate processes |
-|---|---|---|
-| Talking to each other | Hand over a value or object through a channel; nanoseconds | Copy bytes through a pipe; microseconds, plus packing and unpacking |
-| Sharing objects such as UIA elements | Yes | No. Only ids, because the object lives in the other process's memory |
-| One crashes (access violation) | The whole process dies | Only that process dies |
-| One hangs forever | Only that thread stops, but anything waiting on it stops too | The same, but the process can be killed |
-| Killing it cleanly | Not possible. Killing a thread from outside can leave locks held and memory half-changed | Yes. Windows reclaims all its memory and handles |
-| Restricting what it may do (a sandbox) | Not possible. Every thread has the process's permissions | Yes. A process can be given a weaker security identity |
-| Behaviour Windows applies per process, such as UIA's one event thread or UIA's connection timeout | Shared by every thread | Each process gets its own |
-| Cost | A stack, typically 1 MB reserved and much less used | A full process: its own copies of libraries' data, COM and UIA setup, several megabytes |
+| Question                                                                                          | Threads in one process                                                                   | Separate processes                                                                      |
+| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Talking to each other                                                                             | Hand over a value or object through a channel; nanoseconds                               | Copy bytes through a pipe; microseconds, plus packing and unpacking                     |
+| Sharing objects such as UIA elements                                                              | Yes                                                                                      | No. Only ids, because the object lives in the other process's memory                    |
+| One crashes (access violation)                                                                    | The whole process dies                                                                   | Only that process dies                                                                  |
+| One hangs forever                                                                                 | Only that thread stops, but anything waiting on it stops too                             | The same, but the process can be killed                                                 |
+| Killing it cleanly                                                                                | Not possible. Killing a thread from outside can leave locks held and memory half-changed | Yes. Windows reclaims all its memory and handles                                        |
+| Restricting what it may do (a sandbox)                                                            | Not possible. Every thread has the process's permissions                                 | Yes. A process can be given a weaker security identity                                  |
+| Behaviour Windows applies per process, such as UIA's one event thread or UIA's connection timeout | Shared by every thread                                                                   | Each process gets its own                                                               |
+| Cost                                                                                              | A stack, typically 1 MB reserved and much less used                                      | A full process: its own copies of libraries' data, COM and UIA setup, several megabytes |
 
 Two rows matter most: **killing it cleanly** and **sandboxing**. Only a process can do them. Almost everything else is easier, faster and cheaper with threads.
 
@@ -86,11 +86,11 @@ Two details people often get wrong:
 
 Applied to Verbatim:
 
-| Process | Reason |
-|---|---|
-| Synthesizer host | 1 and 2: third-party engines that crash on particular text |
-| Extension hosts | 1: third-party code |
-| Focus listener | 4: UIA delivers all of a process's events on one internal thread, and its focus tracking can hold that thread for seconds on a hung window |
+| Process                     | Reason                                                                                                                                                                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Synthesizer host            | 1 and 2: third-party engines that crash on particular text                                                                                                                                                                          |
+| Extension hosts             | 1: third-party code                                                                                                                                                                                                                 |
+| Focus listener              | 4: UIA delivers all of a process's events on one internal thread, and its focus tracking can hold that thread for seconds on a hung window                                                                                          |
 | One outpost per application | 3, and partly 4: a stuck UIA call can only be undone by killing the process, and each process gets its own UIA event queue. This is the one under debate, because a stuck thread can also be abandoned and left behind (exercise 6) |
 
 A useful habit: whenever someone proposes a process boundary, ask which of the four reasons it serves, and whether that reason is measured or assumed.
@@ -125,7 +125,7 @@ Much of a screen reader's time is spent waiting: for keys, for events, for appli
 
 **Async** (in Rust: `async fn`, `.await`, and a runtime such as Tokio) is a different way to write waiting. You write code that looks sequential, such as "ask the outpost, give up after two seconds, and meanwhile also listen for a cancel", and the compiler turns it into a state machine. A runtime then runs many such tasks on a few threads, switching between them whenever one is waiting. Exercise 8 is exercise 7 rewritten this way, plus a deadline in one line.
 
-What async is good at: expressing "wait for any of these, with a deadline, and cancel the rest" concisely. This is what ahicks meant by expressiveness. What it cannot do: make a blocking call stop blocking. A UIA call still blocks whatever thread makes it, so such calls still need their own threads, and an async program hands them to those threads and awaits the answer. Its usual traps are a task that blocks without meaning to (freezing every other task on that thread), and work silently dropped when `select!` abandons a branch halfway ("cancellation safety").
+What async is good at: expressing "wait for any of these, with a deadline, and cancel the rest" concisely. This is what is meant by expressiveness. What it cannot do: make a blocking call stop blocking. A UIA call still blocks whatever thread makes it, so such calls still need their own threads, and an async program hands them to those threads and awaits the answer. Its usual traps are a task that blocks without meaning to (freezing every other task on that thread), and work silently dropped when `select!` abandons a branch halfway ("cancellation safety").
 
 The two styles are not opposites. Verbatim's reducer is a hand-written, explicit state machine, chosen so it can be replayed and tested exactly; async hides the state machine inside the compiler. Async could suit the glue code that coordinates threads and pipes, but not the reducer.
 
@@ -182,7 +182,7 @@ The rules these suggest hold whether Verbatim's readers are processes or threads
 
 ### First: the foundations
 
-1. ***Operating Systems: Three Easy Pieces*** (OSTEP), by Remzi and Andrea Arpaci-Dusseau. Free, written for beginners, and the best foundation. Each chapter is a separate PDF with real text. The examples use Linux and C, but the ideas carry over to Windows unchanged.
+1. **_Operating Systems: Three Easy Pieces_** (OSTEP), by Remzi and Andrea Arpaci-Dusseau. Free, written for beginners, and the best foundation. Each chapter is a separate PDF with real text. The examples use Linux and C, but the ideas carry over to Windows unchanged.
    - [The Abstraction: The Process](https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-intro.pdf)
    - [Interlude: Process API](https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-api.pdf)
    - [Concurrency: An Introduction](https://pages.cs.wisc.edu/~remzi/OSTEP/threads-intro.pdf)
@@ -193,7 +193,7 @@ The rules these suggest hold whether Verbatim's readers are processes or threads
    - [Event-based Concurrency](https://pages.cs.wisc.edu/~remzi/OSTEP/threads-events.pdf), the idea behind message loops and async
    - The [book's home page](https://pages.cs.wisc.edu/~remzi/OSTEP/) lists every chapter.
 2. **The Rust Book, chapter 16, [Fearless Concurrency](https://doc.rust-lang.org/book/ch16-00-concurrency.html):** threads, channels and locks in Rust, with how the compiler prevents data races.
-3. ***Rust Atomics and Locks***, by Mara Bos, free online. Read [chapter 1, Basics of Rust Concurrency](https://marabos.nl/atomics/basics.html) now; the [rest of the book](https://marabos.nl/atomics/) later if you want to understand what crossbeam and arc-swap do inside.
+3. **_Rust Atomics and Locks_**, by Mara Bos, free online. Read [chapter 1, Basics of Rust Concurrency](https://marabos.nl/atomics/basics.html) now; the [rest of the book](https://marabos.nl/atomics/) later if you want to understand what crossbeam and arc-swap do inside.
 
 ### Second: Windows
 
