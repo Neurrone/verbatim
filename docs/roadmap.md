@@ -79,8 +79,10 @@ application whose UIA calls are held, then back to the same place in
 Notepad, speaks nothing, in 4 of 4 runs. The busy application's outpost
 drops its MSAA foreground fact because UIA owns the window and its UIA
 focus read never answers, so Core never learns the focus left Notepad
-and judges the return unchanged. What Verbatim says for a focus it
-cannot read is checked against an NVDA capture first.
+and judges the return unchanged. The return must be spoken as the same
+switch is without a stall (Dickson, 2026-11-02); the second build
+designs it ([the remaining builds](design/focus-pipeline-rework-remaining.md),
+"A foreground change Core never learns of").
 
 Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
 between processes' copies of one fact, so the ownership refactor below
