@@ -69,25 +69,19 @@ impl DeviceNotices {
         }
     }
 
-    /// Records a notification, from any thread, and wakes the audio thread
-    /// when it asks for the device to be reopened.
+    /// Records a notification, from any thread, and wakes the audio thread,
+    /// which decides from [`needs_reopen`](Self::needs_reopen) in its pass
+    /// whether to reopen. Every notice wakes it, so that whether to wake is
+    /// never decided here from a flag the audio thread may be changing: the
+    /// flag is set before the wake, and the pass after the wake reads it,
+    /// whatever the open's progress.
     pub fn notify(&self, notice: DeviceNotice) {
         let inner = &*self.inner;
         match notice {
-            DeviceNotice::DefaultChanged => {
-                inner.default_changed.store(true, Ordering::SeqCst);
-                (inner.waker)();
-            }
-            DeviceNotice::Available => {
-                inner.available.store(true, Ordering::SeqCst);
-                // An open device is not woken for an arrival. An open under
-                // way reads the flag when it reports its outcome, and the
-                // audio thread looks at `needs_reopen` before it next waits.
-                if inner.failed.load(Ordering::SeqCst) {
-                    (inner.waker)();
-                }
-            }
+            DeviceNotice::DefaultChanged => inner.default_changed.store(true, Ordering::SeqCst),
+            DeviceNotice::Available => inner.available.store(true, Ordering::SeqCst),
         }
+        (inner.waker)();
     }
 
     /// An open is about to be tried: every earlier notification is
@@ -194,11 +188,11 @@ mod tests {
 
         notices.notify(DeviceNotice::Available);
         assert!(!notices.needs_reopen());
-        assert_eq!(wakes.load(Ordering::SeqCst), 0);
+        assert_eq!(wakes.load(Ordering::SeqCst), 1, "every notice wakes");
 
         notices.notify(DeviceNotice::DefaultChanged);
         assert!(notices.needs_reopen());
-        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        assert_eq!(wakes.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -206,7 +200,7 @@ mod tests {
         let (notices, wakes) = notices();
         notices.opening();
         notices.notify(DeviceNotice::Available);
-        assert_eq!(wakes.load(Ordering::SeqCst), 0);
+        assert_eq!(wakes.load(Ordering::SeqCst), 1, "every notice wakes");
         notices.failed(None);
         assert!(notices.needs_reopen());
     }

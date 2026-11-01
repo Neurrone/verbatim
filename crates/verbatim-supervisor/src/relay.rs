@@ -23,14 +23,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::os::windows::io::OwnedHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::overlapped::{Completion, Completions, Port};
 use verbatim_process::transport::PortReader;
@@ -58,20 +56,30 @@ pub(super) fn read_key(outpost: OutpostId) -> usize {
     command_key(outpost) + 1
 }
 
-/// The sending end of the owner's mailbox: every send wakes the relay,
-/// unless a wake is already waiting to be taken.
+/// The owner's mailbox: the items sent and not yet taken, in order, and
+/// whether the owner has ended. Every wake is decided by reading this state
+/// under its lock: a send posts the relay's wake only when it finds the
+/// queue empty, since a queue that holds an item already has a wake posted
+/// for its first item, or a heartbeat that will take it.
+struct Queue<T> {
+    items: VecDeque<T>,
+    /// Set once the [`Inbox`] has gone with the owner thread, however it
+    /// ended: nothing sent after is read.
+    closed: bool,
+}
+
+/// The sending end of the owner's mailbox: a send into an empty queue wakes
+/// the relay.
 pub(super) struct Mailbox<T> {
-    sender: Sender<T>,
+    queue: Arc<Mutex<Queue<T>>>,
     port: Arc<Port>,
-    posted: Arc<AtomicBool>,
 }
 
 impl<T> Clone for Mailbox<T> {
     fn clone(&self) -> Self {
         Self {
-            sender: self.sender.clone(),
+            queue: Arc::clone(&self.queue),
             port: Arc::clone(&self.port),
-            posted: Arc::clone(&self.posted),
         }
     }
 }
@@ -80,60 +88,79 @@ impl<T> Clone for Mailbox<T> {
 #[derive(Debug)]
 pub(super) struct OwnerGone;
 
+fn lock<T>(queue: &Mutex<Queue<T>>) -> MutexGuard<'_, Queue<T>> {
+    queue.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl<T> Mailbox<T> {
-    /// Sends `item` to the owner and wakes it.
+    /// Sends `item` to the owner, and wakes it if the queue was empty.
+    ///
+    /// The wake is posted outside the lock. A wake the port refuses, which
+    /// only a system out of memory does, is logged, and the item waits for
+    /// the relay's heartbeat, which takes the queue: the queue stays
+    /// non-empty until then, so later sends post nothing.
     ///
     /// # Errors
     ///
-    /// Returns [`OwnerGone`] when the owner has ended.
+    /// Returns [`OwnerGone`] when the owner has ended; `item` is dropped.
     pub(super) fn send(&self, item: T) -> Result<(), OwnerGone> {
-        self.sender.send(item).map_err(|_| OwnerGone)?;
-        wake(&self.posted, || self.port.post(OWNER_KEY));
+        let was_empty = {
+            let mut queue = lock(&self.queue);
+            if queue.closed {
+                return Err(OwnerGone);
+            }
+            let was_empty = queue.items.is_empty();
+            queue.items.push_back(item);
+            was_empty
+        };
+        if was_empty && let Err(error) = self.port.post(OWNER_KEY) {
+            tracing::error!(%error, "the relay could not be woken; it takes its mailbox at its next heartbeat");
+        }
         Ok(())
     }
 }
 
-/// Posts the mailbox's wake with `post` unless one is already waiting to be
-/// taken, as `posted` says. A wake the port refuses, which only a system
-/// out of memory does, is not counted as waiting, so the next send tries
-/// again; and the relay takes its inbox at every heartbeat as well, so
-/// what was sent meanwhile waits at most a ping interval.
-fn wake(posted: &AtomicBool, post: impl FnOnce() -> io::Result<()>) {
-    if posted.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    if let Err(error) = post() {
-        posted.store(false, Ordering::SeqCst);
-        tracing::error!(%error, "the relay could not be woken; it takes its mailbox at its next heartbeat");
-    }
-}
-
-/// The receiving end of the owner's mailbox.
+/// The receiving end of the owner's mailbox, owned by the owner thread and
+/// dropped however that thread ends, which closes the mailbox.
 pub(super) struct Inbox<T> {
-    receiver: Receiver<T>,
-    posted: Arc<AtomicBool>,
+    queue: Arc<Mutex<Queue<T>>>,
 }
 
 impl<T> Inbox<T> {
-    /// Everything sent so far, in order, once the mailbox's wake has been
-    /// taken from the port. A send after this begins wakes the relay again.
-    pub(super) fn take(&self) -> impl Iterator<Item = T> + '_ {
-        self.posted.store(false, Ordering::SeqCst);
-        self.receiver.try_iter()
+    /// Everything sent so far, in order. A send after this finds the queue
+    /// empty and wakes the relay again.
+    pub(super) fn take(&self) -> VecDeque<T> {
+        std::mem::take(&mut lock(&self.queue).items)
+    }
+}
+
+impl<T> Drop for Inbox<T> {
+    /// Closes the mailbox, so a later send is refused rather than waiting
+    /// in a queue no one takes, and drops what was sent and not taken,
+    /// after unlocking: a `Shutdown`'s reply sender among them, whose drop
+    /// tells its waiter the owner has gone.
+    fn drop(&mut self) {
+        let items = {
+            let mut queue = lock(&self.queue);
+            queue.closed = true;
+            std::mem::take(&mut queue.items)
+        };
+        drop(items);
     }
 }
 
 /// The owner's mailbox, whose sends wake the relay through `port`.
 pub(super) fn mailbox<T>(port: Arc<Port>) -> (Mailbox<T>, Inbox<T>) {
-    let (sender, receiver) = unbounded();
-    let posted = Arc::new(AtomicBool::new(false));
+    let queue = Arc::new(Mutex::new(Queue {
+        items: VecDeque::new(),
+        closed: false,
+    }));
     (
         Mailbox {
-            sender,
+            queue: Arc::clone(&queue),
             port,
-            posted: Arc::clone(&posted),
         },
-        Inbox { receiver, posted },
+        Inbox { queue },
     )
 }
 
@@ -425,25 +452,6 @@ mod tests {
                 name(&command)
             })
             .collect()
-    }
-
-    /// A wake the port refuses is not counted as waiting: the next send
-    /// posts again.
-    #[test]
-    fn a_refused_wake_is_posted_again_by_the_next_send() {
-        let posted = AtomicBool::new(false);
-        wake(&posted, || Err(io::Error::other("refused")));
-        let mut posts = 0;
-        wake(&posted, || {
-            posts += 1;
-            Ok(())
-        });
-        assert_eq!(posts, 1, "the next send posted");
-        wake(&posted, || {
-            posts += 1;
-            Ok(())
-        });
-        assert_eq!(posts, 1, "one wake waits, so no other is posted");
     }
 
     /// The owner's order through the relay's writer: facts held while the

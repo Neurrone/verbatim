@@ -79,7 +79,12 @@ How it works:
   written to its outpost there and then; an outpost's frame is read only
   for its kind (`verbatim_process::message::peek`), a pong and `TargetExited` handled,
   `Ready` handled and passed on, anything else handed on whole
-  (`transport::FrameBody::Owned` or a copy). Helpers report through `relay::Mailbox`. It never blocks:
+  (`transport::FrameBody::Owned` or a copy). Helpers report through `relay::Mailbox`: a queue
+  and a `closed` mark under one lock, where a send into an empty queue
+  posts the relay's wake after unlocking, the relay takes the whole queue
+  at each wake and each heartbeat, and the `Inbox`'s drop, however the
+  owner thread ends, sets `closed` so a later send gets `OwnerGone`. A
+  wake the port refuses leaves the item for the heartbeat's take. It never blocks:
   launches, retirements, and hang checks run on threads of their own.
 - Each application's record keeps what belongs to the application (its
   held facts, held idle round, attention time and backoff) and its

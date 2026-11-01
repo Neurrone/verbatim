@@ -30,7 +30,6 @@ mod wanted;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -293,17 +292,11 @@ fn run(
         ignored,
     )?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
-    // Set once the focus listener first reports ready; part of the
-    // readiness the control plane's status reports.
-    let listener_ready = Arc::new(AtomicBool::new(false));
-    let focus_known = Arc::new(AtomicBool::new(false));
     // The GUI's handle, once the GUI thread is up; part of readiness.
     let gui_handle: Arc<OnceLock<GuiHandle>> = Arc::new(OnceLock::new());
     let readiness = Arc::new(harness::Readiness::new(
         own_pid,
         Arc::clone(&gui_handle),
-        Arc::clone(&listener_ready),
-        Arc::clone(&focus_known),
         Arc::clone(&outposts),
     ));
     let idle_line = Arc::new(harness::IdleLine::default());
@@ -329,8 +322,6 @@ fn run(
             server_slot: Arc::clone(&server_slot),
             outposts: Arc::clone(&outposts),
             recorder: Arc::clone(&recorder),
-            listener_ready: Arc::clone(&listener_ready),
-            focus_known: Arc::clone(&focus_known),
             reader: terminal_settings::ReaderSection {
                 writer: reader_writer,
                 view: Arc::clone(&reader_view),
@@ -884,9 +875,6 @@ struct ReducerContext {
     server_slot: Arc<OnceLock<ControlServer>>,
     outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     recorder: SharedRecorder,
-    listener_ready: Arc<AtomicBool>,
-    /// Set once Core knows a focus, for the control plane's readiness.
-    focus_known: Arc<AtomicBool>,
     /// The reader section of the settings, which this thread owns: reader
     /// settings changed by a toggle key or the Terminal page are published
     /// for the page and handed to the saver.
@@ -996,6 +984,8 @@ struct ReducerThread<'a> {
     /// were last sent, which are written the nodes Core holds in them
     /// ([`send_views`](Self::send_views)).
     focus_reported: BTreeSet<OutpostId>,
+    /// Whether Core has known a focus, which readiness was told once.
+    focus_known: bool,
     /// The highest numbered harness key handled so far.
     handled_input: u64,
     /// Turns the outposts' frames, which the supervisor's relay posts
@@ -1100,8 +1090,7 @@ impl ReducerThread<'_> {
                 }
             }
             OutpostMessage::ListenerReady { replacement, .. } => {
-                self.context.listener_ready.store(true, Ordering::Release);
-                self.context.readiness.notify();
+                self.context.readiness.listener_ready();
                 // Facts were lost while there was no listener: read the
                 // foreground afresh and ask its application for the focus.
                 if replacement && let Some(pid) = foreground_pid() {
@@ -1600,9 +1589,9 @@ impl ReducerThread<'_> {
             self.focus_reported.insert(node.id.outpost());
         }
         let effects = reduce(&mut self.state, &input);
-        if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
-        {
-            self.context.readiness.notify();
+        if !self.focus_known && self.state.focused().is_some() {
+            self.focus_known = true;
+            self.context.readiness.focus_known();
         }
         self.context.ledger.reduced(trace_id);
         self.context.foreground.set(self.state.hook_foreground());
@@ -2140,6 +2129,7 @@ fn reducer_loop(
         wanted: wanted::Wanted::default(),
         views: (None, BTreeSet::new()),
         focus_reported: BTreeSet::new(),
+        focus_known: false,
         handled_input: 0,
         frames: context.supervisor.frames(),
         barrier: idle::IdleBarrier::default(),

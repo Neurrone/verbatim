@@ -1291,12 +1291,12 @@ impl SynthThread {
                             self.driver = driver;
                             self.chosen = true;
                             self.describe();
-                            reply(Ok(()));
+                            reply.answer(Ok(()));
                         }
                         // The previous synthesizer stays: a synthesizer that
                         // cannot start, or whose host does not answer within
                         // its time limit, fails here.
-                        Err(error) => reply(Err(error)),
+                        Err(error) => reply.answer(Err(error)),
                     }
                 }
                 SynthCommand::Settle(done) => done(),

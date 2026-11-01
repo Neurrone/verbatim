@@ -1312,7 +1312,7 @@ fn switch(host: &verbatim_speech::SettingsHost, id: &str) -> Result<(), SynthErr
     let (done_tx, done) = crossbeam_channel::bounded(1);
     host.switch_synthesizer(
         &SynthId::new(id),
-        Box::new(move |outcome| {
+        verbatim_speech::switch_done(move |outcome| {
             let _ = done_tx.send(outcome);
         }),
     );
@@ -1393,7 +1393,7 @@ fn a_change_and_a_commit_during_a_switch_save_the_synth_the_switch_started() {
     let (done_tx, done) = crossbeam_channel::bounded(1);
     host.switch_synthesizer(
         &SynthId::new("two"),
-        Box::new(move |outcome| {
+        verbatim_speech::switch_done(move |outcome| {
             let _ = done_tx.send(outcome);
         }),
     );
@@ -1436,7 +1436,7 @@ fn a_revert_during_a_switch_that_fails_restores_the_committed_values() {
     let (done_tx, done) = crossbeam_channel::bounded(1);
     host.switch_synthesizer(
         &SynthId::new("broken"),
-        Box::new(move |outcome| {
+        verbatim_speech::switch_done(move |outcome| {
             let _ = done_tx.send(outcome);
         }),
     );

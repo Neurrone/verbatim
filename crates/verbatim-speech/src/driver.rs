@@ -14,7 +14,6 @@
 
 use std::fmt;
 use std::ops::ControlFlow;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
@@ -313,8 +312,16 @@ pub type CancelWake = Box<dyn Fn() + Send + Sync>;
 /// [`on_cancel`](SynthSink::on_cancel) from it.
 #[derive(Default)]
 pub struct CancelToken {
-    cancelled: AtomicBool,
-    wake: Mutex<Option<CancelWake>>,
+    state: Mutex<Cancel>,
+}
+
+/// A token's flag and its waker, under one lock, so whether to wake at
+/// once is decided by reading the flag in the same hold that registers the
+/// waker.
+#[derive(Default)]
+struct Cancel {
+    cancelled: bool,
+    wake: Option<CancelWake>,
 }
 
 impl CancelToken {
@@ -324,15 +331,19 @@ impl CancelToken {
         Self::default()
     }
 
-    /// Cancels, and calls the waker registered, if any, once. Never
-    /// blocks beyond the waker's own call, which must not block.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Cancel> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Cancels, and calls the waker registered, if any, once, after letting
+    /// go of the lock. Never blocks beyond the waker's own call, which must
+    /// not block.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-        let wake = self
-            .wake
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let wake = {
+            let mut state = self.lock();
+            state.cancelled = true;
+            state.wake.take()
+        };
         if let Some(wake) = wake {
             wake();
         }
@@ -341,18 +352,19 @@ impl CancelToken {
     /// Whether [`cancel`](Self::cancel) has been called.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.lock().cancelled
     }
 
     /// Registers `wake`, replacing any waker registered before, or calls
-    /// it at once if the token is already cancelled.
+    /// it at once, after letting go of the lock, if the token is already
+    /// cancelled.
     pub fn on_cancel(&self, wake: CancelWake) {
-        let mut slot = self.wake.lock().unwrap_or_else(PoisonError::into_inner);
-        if self.is_cancelled() {
-            drop(slot);
+        let mut state = self.lock();
+        if state.cancelled {
+            drop(state);
             wake();
         } else {
-            *slot = Some(wake);
+            state.wake = Some(wake);
         }
     }
 }

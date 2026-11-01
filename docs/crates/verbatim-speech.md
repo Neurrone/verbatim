@@ -33,7 +33,9 @@ Public API:
   mixer first, then the job, whose waker it calls).
 - `CancelToken` — an utterance's cancellation
   (`docs/design/communication.md`, section 7.3): a flag and the one waker
-  a driver registered. `cancel()` sets the flag and calls the waker once;
+  a driver registered, under one lock, so `on_cancel` decides whether to
+  wake at once by reading the flag in the hold that registers the waker.
+  `cancel()` sets the flag and calls the waker once, after unlocking;
   `is_cancelled()` reads the flag; `on_cancel(wake)` registers the waker,
   or calls it at once if the token is already cancelled. The speech
   manager keeps one per job and its sink answers `is_cancelled` and
@@ -134,7 +136,8 @@ Public API:
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
   GUI's live handle (`docs/design/ownership.md`): list synthesizers, switch the active one
   (`switch_synthesizer`, which returns at once and hands the outcome to a
-  `SwitchDone` callback on the synth thread, after the mirror describes
+  `SwitchDone`, a `Responder` made by `switch_done(callback)` whose drop
+  unanswered hands the callback a failed switch, on the synth thread, after the mirror describes
   the new synthesizer; a synthesizer that cannot start, its host's time
   limit passed included, fails the switch and the previous one stays),
   read descriptors and values as the synth thread last read them from

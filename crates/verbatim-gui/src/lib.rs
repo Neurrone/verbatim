@@ -708,7 +708,7 @@ impl GuiCore {
         let handle = self.handle.clone();
         self.host.switch_synthesizer(
             &chosen,
-            Box::new(move |outcome| {
+            verbatim_speech::switch_done(move |outcome| {
                 handle.post(GuiMessage::SynthesizerSwitched(name, outcome));
             }),
         );

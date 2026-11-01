@@ -95,7 +95,10 @@ The end-to-end harness's hooks (private `harness` module):
   Verbatim sets that event once it is ready for input (the GUI up, the
   focus listener running, its own window's outpost ready, and the focus
   known), the same condition `StatusInfo::ready` reports, so a test waits
-  on the event rather than asking again and again.
+  on the event rather than asking again and again. The listener, focus
+  and spares parts and whether the event is set are under one lock, and
+  each setter records its part and decides in that hold whether to set
+  the event, so two setters cannot each miss the other's part.
 - The idle barrier: the keyboard hook reports each numbered key stroke
   handled (`KeyReport::Handled`), posted to the reducer thread behind
   whatever the stroke caused (`ShellCommand::InputHandled`), which records

@@ -351,7 +351,7 @@ mod tests {
         }
         fn switch_synthesizer(&self, id: &SynthId, done: verbatim_speech::SwitchDone) {
             *self.active.lock().unwrap() = id.clone();
-            done(Ok(()));
+            done.answer(Ok(()));
         }
         fn setting_descriptors(&self) -> Vec<SettingDescriptor> {
             vec![

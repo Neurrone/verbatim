@@ -44,8 +44,10 @@ Public API:
   asks to be reopened on `DefaultChanged`; after a failed open, also on
   `Available`, or once `retry_after` has passed for a failure the system
   sends no notification for. A notification that comes during an open is
-  kept, so it is answered by another open. `notify` calls the waker only
-  when it asks for a reopen.
+  kept, so it is answered by another open. `notify` sets its flag and
+  then calls the waker for every notice, and the audio thread decides
+  from `needs_reopen` in its pass, so no thread decides a wake from a flag
+  the other is changing.
 - `MixerBuilder` — everything the audio thread takes in is made before
   it starts. `new(device)`; `source(listener)` adds a source, a stream of
   utterances played one after another, returning its `SourceKey`;
@@ -393,7 +395,7 @@ limit once idle, with no second open, then opened again on a notice that
 a device is available. Unit tests in `notices.rs` check that a failed open
 asks for a reopen only once a device is available or its deadline has
 passed, that an open device is reopened on a default change and not on an
-arrival, and that an arrival during a failing open is not lost. Unit
+arrival, though every notice wakes the audio thread, and that an arrival during a failing open is not lost. Unit
 tests in `sound.rs` decode WAV files of each sample format, refuse what is
 not one, and check a tone's fades and a sound's conversion. A unit test in `wav.rs`
 checks that the recorder writes a valid WAV with silence where nothing

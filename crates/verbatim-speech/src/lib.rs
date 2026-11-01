@@ -34,8 +34,23 @@ pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
 pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
 
-/// Takes the outcome of [`SpeechSettingsHost::switch_synthesizer`].
-pub type SwitchDone = Box<dyn FnOnce(Result<(), SynthError>) + Send>;
+/// Takes the outcome of [`SpeechSettingsHost::switch_synthesizer`]: a
+/// responder, so that a path that drops the request still answers it, as
+/// a failed switch ([`switch_done`]).
+pub type SwitchDone = verbatim_model::protocol::Responder<Result<(), SynthError>>;
+
+/// A [`SwitchDone`] that hands its outcome to `done`: the switch's own, or,
+/// when the request is dropped unanswered, [`SynthError::Unavailable`], so
+/// whoever waits on a switch hears its end on every path.
+pub fn switch_done(done: impl FnOnce(Result<(), SynthError>) + Send + 'static) -> SwitchDone {
+    verbatim_model::protocol::Responder::new(move |outcome| {
+        done(outcome.unwrap_or_else(|| {
+            Err(SynthError::Unavailable(
+                "the switch was dropped unanswered".to_owned(),
+            ))
+        }));
+    })
+}
 
 /// The synth thread's answer to a change or a revert: every value the
 /// driver has, read back from it, and the number of the latest change the
@@ -124,4 +139,28 @@ pub trait SpeechSettingsHost: Send + Sync {
 
     /// Gives every answer of the synth thread to `answered`, from now on.
     fn answer_to(&self, answered: SettingsAnswered);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    /// A switch request dropped unanswered, as a queue thread that drops it
+    /// does, still tells its asker the switch failed, so a mark set while
+    /// it is under way clears.
+    #[test]
+    fn a_switch_dropped_unanswered_answers_that_it_failed() {
+        let outcomes = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&outcomes);
+        let done = switch_done(move |outcome| kept.lock().expect("outcomes").push(outcome));
+        drop(done);
+        assert_eq!(
+            *outcomes.lock().expect("outcomes"),
+            [Err(SynthError::Unavailable(
+                "the switch was dropped unanswered".to_owned()
+            ))]
+        );
+    }
 }

@@ -42,8 +42,9 @@ a default render device change (console role) as `DefaultChanged`, and a
 device added or changed to the active state as `Available`, not filtered
 by data flow, since that would take a call into the enumerator from the
 callback, and an arrival costs a reopen only while an open has failed.
-`needs_reopen` reports the notices, and a notice that asks for a reopen
-signals the wait's event itself. Any failure of the stream (an unplugged
+`needs_reopen` reports the notices, and every notice signals the wait's
+event, so an arrival costs the audio thread one pass while a device is
+open. Any failure of the stream (an unplugged
 headset reports `AUDCLNT_E_DEVICE_INVALIDATED`) is an error the mixer
 also answers by reopening.
 

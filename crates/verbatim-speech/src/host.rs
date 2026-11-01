@@ -192,7 +192,7 @@ impl SpeechSettingsHost for SettingsHost {
                 reply: done,
             },
         ) {
-            reply(Err(SynthError::Unavailable(
+            reply.answer(Err(SynthError::Unavailable(
                 "speech pipeline stopped".to_owned(),
             )));
         }
