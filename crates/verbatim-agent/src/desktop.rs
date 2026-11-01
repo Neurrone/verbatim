@@ -523,7 +523,7 @@ fn process_age_ms(pid: u32) -> Option<u64> {
 }
 
 /// `pid`'s executable file name, such as `notepad.exe`.
-fn image_name(pid: u32) -> Option<String> {
+pub(crate) fn image_name(pid: u32) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = u32::try_from(buffer.len()).ok()?;
     // SAFETY: a query-only open that fails safely; the handle is closed

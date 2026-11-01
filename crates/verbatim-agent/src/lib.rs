@@ -46,3 +46,4 @@ mod terminals;
 mod tunnel;
 mod typing;
 mod wait;
+mod wait_chain;

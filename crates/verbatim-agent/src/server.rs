@@ -26,7 +26,7 @@ use crate::protocol::{
 };
 use crate::{
     desktop, events, files, focus, jobs, keys, process, scenario_windows, session, terminals,
-    tunnel, typing,
+    tunnel, typing, wait_chain,
 };
 
 /// The number the next key stroke or typed character the agent injects
@@ -324,6 +324,12 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
                 payload: ReplyPayload::FileContents { data_base64 },
             },
             Err(error) => error_frame(id, &error),
+        },
+        Request::WaitChains { windows, pids } => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::WaitChains {
+                chains: wait_chain::wait_chains(&windows, &pids),
+            },
         },
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }

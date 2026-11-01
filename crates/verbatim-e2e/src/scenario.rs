@@ -44,8 +44,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use verbatim_agent::protocol::{
-    EventOutcome, ForegroundInfo, ProcessExit, ProcessInfo, ProcessState, WindowCondition,
-    WindowInfo,
+    EventOutcome, ForegroundInfo, ProcessExit, ProcessInfo, ProcessState, WaitChain, WaitNode,
+    WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -66,6 +66,9 @@ const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 const FOCUS_FILE_NAME: &str = "focus.txt";
 const LATENCY_FILE_NAME: &str = "latency.csv";
 const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
+/// The wait chains recorded when a window did not open in time
+/// ([`window_wait_chains`]), one chain a line.
+const WAIT_CHAINS_FILE_NAME: &str = "wait-chains.txt";
 
 /// Text in the title of every window the harness opens on purpose: the
 /// document a [`Document`] names is named with it, so
@@ -264,6 +267,10 @@ pub struct Scenario {
     /// The NVDA the scenario runs against in compare mode; `None` when it
     /// runs against Verbatim.
     nvda: Option<NvdaRun>,
+    /// The wait chains recorded when a window the scenario launched did not
+    /// open in time ([`window_wait_chains`]), one chain a line, for
+    /// [`WAIT_CHAINS_FILE_NAME`].
+    wait_chains: Vec<String>,
 }
 
 /// The NVDA a compare-mode scenario runs against.
@@ -470,6 +477,7 @@ impl Scenario {
                 quit: false,
                 held: Vec::new(),
                 nvda: Some(nvda),
+                wait_chains: Vec::new(),
             });
         }
         let dumps_before = crash_dumps(&mut agent);
@@ -570,6 +578,7 @@ impl Scenario {
             quit: false,
             held: Vec::new(),
             nvda: None,
+            wait_chains: Vec::new(),
         })
     }
 
@@ -1169,16 +1178,21 @@ impl Scenario {
         )?;
         // A cloaked window is not shown: the Settings app keeps its closed
         // window so, and shows it again when opened.
-        let window = desktop
+        let Some(window) = desktop
             .windows
             .iter()
             .find(|window| present && !window.cloaked && window.title.contains(title))
-            .ok_or_else(|| {
-                io::Error::other(format!(
+        else {
+            let chains = window_wait_chains(&mut self.agent, &desktop, launch.pid);
+            self.wait_chains.extend(chains.iter().cloned());
+            return Err(WindowWaitFailure::error(
+                format!(
                     "no window titled {title:?} opened within {WINDOW_TIMEOUT:?}: {}",
                     describe_foreground(&desktop)
-                ))
-            })?;
+                ),
+                chains,
+            ));
+        };
         if by_handle && let Some(launched) = self.launched.last_mut() {
             launched.window = Some(window.clone());
         }
@@ -1993,6 +2007,11 @@ impl Scenario {
         if let Err(error) = fs::write(dir.join(TIMELINE_FILE_NAME), self.timeline.render()) {
             problems.push(format!("could not write the timeline: {error}"));
         }
+        if !self.wait_chains.is_empty()
+            && let Err(error) = write_wait_chains(dir, &self.wait_chains)
+        {
+            problems.push(format!("could not write the wait chains: {error}"));
+        }
         if self.is_comparing() {
             return problems;
         }
@@ -2524,16 +2543,20 @@ fn open_document(
         },
         WINDOW_TIMEOUT,
     )?;
-    let window = desktop
+    let Some(window) = desktop
         .windows
         .iter()
         .find(|window| present && window.title.contains(&marker))
-        .ok_or_else(|| {
-            io::Error::other(format!(
+    else {
+        let chains = window_wait_chains(agent, &desktop, launch.pid);
+        return Err(WindowWaitFailure::error(
+            format!(
                 "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
                 describe_foreground(&desktop)
-            ))
-        })?;
+            ),
+            chains,
+        ));
+    };
     if !agent.set_foreground(window.window)? {
         return Err(io::Error::other(format!(
             "Notepad's window {:?} could not be brought to the foreground: {}",
@@ -3085,6 +3108,132 @@ fn settings_prelaunch(windows: &[WindowInfo]) -> Vec<u32> {
     pids
 }
 
+/// A window wait that ran out, with the wait chains recorded for it
+/// ([`window_wait_chains`]): the error a launch whose window did not open
+/// returns, so the runner can write the chains to the scenario's artifacts
+/// ([`wait_chains_of`]) even when no [`Scenario`] was made.
+#[derive(Debug)]
+struct WindowWaitFailure {
+    message: String,
+    chains: Vec<String>,
+}
+
+impl WindowWaitFailure {
+    /// `message` with `chains` appended, as an I/O error.
+    fn error(message: String, chains: Vec<String>) -> io::Error {
+        io::Error::other(Self { message, chains })
+    }
+}
+
+impl std::fmt::Display for WindowWaitFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.message)?;
+        if !self.chains.is_empty() {
+            write!(formatter, "\nwait chains:\n{}", self.chains.join("\n"))?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for WindowWaitFailure {}
+
+/// The wait chains `error` carries, when a window wait ran out
+/// ([`window_wait_chains`]).
+pub(crate) fn wait_chains_of(error: &io::Error) -> Option<&[String]> {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<WindowWaitFailure>())
+        .map(|failure| failure.chains.as_slice())
+}
+
+/// Writes `chains` to [`WAIT_CHAINS_FILE_NAME`] in `dir`.
+pub(crate) fn write_wait_chains(dir: &Path, chains: &[String]) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    fs::write(dir.join(WAIT_CHAINS_FILE_NAME), chains.join("\n") + "\n")
+}
+
+/// When a window wait ran out with `desktop` as it ended: the wait chain of
+/// the thread owning each window `desktop` reports as not responding, and
+/// of the threads of `pid`, the process launched to open the window
+/// (`Request::WaitChains`), each on one line ([`describe_wait_chain`]); one
+/// line saying why when they could not be read.
+fn window_wait_chains(agent: &mut AgentClient, desktop: &ForegroundInfo, pid: u32) -> Vec<String> {
+    let mut windows: Vec<u64> = Vec::new();
+    for window in desktop.foreground.iter().chain(&desktop.windows) {
+        if window.hung && !windows.contains(&window.window) {
+            windows.push(window.window);
+        }
+    }
+    match agent.wait_chains(windows, vec![pid]) {
+        Ok(chains) => chains.iter().map(describe_wait_chain).collect(),
+        Err(error) => vec![format!("the wait chains could not be read: {error}")],
+    }
+}
+
+/// `chain` as one line: whose thread it is, then each node in order, then
+/// whether it is a cycle; or why it could not be read.
+fn describe_wait_chain(chain: &WaitChain) -> String {
+    let subject = match (chain.window, chain.thread) {
+        (Some(window), 0) => format!("window {window:#x} (pid {})", chain.pid),
+        (Some(window), thread) => {
+            format!("window {window:#x} (pid {}), thread {thread}", chain.pid)
+        }
+        (None, 0) => format!("pid {}", chain.pid),
+        (None, thread) => format!("pid {}, thread {thread}", chain.pid),
+    };
+    if let Some(error) = &chain.error {
+        return format!("{subject}: could not be read: {error}");
+    }
+    let nodes: Vec<String> = chain.nodes.iter().map(describe_wait_node).collect();
+    let cycle = if chain.cycle {
+        "a cycle, so a deadlock"
+    } else {
+        "no cycle"
+    };
+    format!("{subject}: {}; {cycle}", nodes.join("; "))
+}
+
+/// One node of a wait chain: its kind, the thread for a thread node, and
+/// its state.
+fn describe_wait_node(node: &WaitNode) -> String {
+    let kind = match (node.kind, &node.thread) {
+        (WaitNodeKind::Thread, Some(thread)) if thread.image.is_empty() => {
+            format!("thread {} of pid {}", thread.thread, thread.pid)
+        }
+        (WaitNodeKind::Thread, Some(thread)) => format!(
+            "thread {} of {} pid {}",
+            thread.thread, thread.image, thread.pid
+        ),
+        (WaitNodeKind::Thread, None) => "thread".to_owned(),
+        (WaitNodeKind::CriticalSection, _) => "critical section".to_owned(),
+        (WaitNodeKind::SendMessage, _) => "send message".to_owned(),
+        (WaitNodeKind::Mutex, _) => "mutex".to_owned(),
+        (WaitNodeKind::Alpc, _) => "ALPC".to_owned(),
+        (WaitNodeKind::Com, _) => "COM".to_owned(),
+        (WaitNodeKind::ComActivation, _) => "COM activation".to_owned(),
+        (WaitNodeKind::ThreadWait, _) => "thread wait".to_owned(),
+        (WaitNodeKind::ProcessWait, _) => "process wait".to_owned(),
+        (WaitNodeKind::SocketIo, _) => "socket".to_owned(),
+        (WaitNodeKind::SmbIo, _) => "SMB".to_owned(),
+        (WaitNodeKind::Unknown, _) => "unknown".to_owned(),
+        (WaitNodeKind::Other(number), _) => format!("type {number}"),
+    };
+    let status = match node.status {
+        WaitNodeStatus::NoAccess => "no access".to_owned(),
+        WaitNodeStatus::Running => "running".to_owned(),
+        WaitNodeStatus::Blocked => "blocked".to_owned(),
+        WaitNodeStatus::PidOnly => "owner's process only".to_owned(),
+        WaitNodeStatus::PidOnlyRpcss => "owner's process only, the RPC subsystem".to_owned(),
+        WaitNodeStatus::Owned => "owned".to_owned(),
+        WaitNodeStatus::NotOwned => "not owned".to_owned(),
+        WaitNodeStatus::Abandoned => "abandoned".to_owned(),
+        WaitNodeStatus::Unknown => "unknown".to_owned(),
+        WaitNodeStatus::Error => "error".to_owned(),
+        WaitNodeStatus::Other(number) => format!("status {number}"),
+    };
+    format!("{kind} ({status})")
+}
+
 /// `info` as one line: the foreground window, then the visible windows.
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
@@ -3206,6 +3355,7 @@ fn outpost_log_names(name: &str, pid: u32) -> bool {
 #[cfg(test)]
 mod minimize_tests {
     use super::*;
+    use verbatim_agent::protocol::WaitThread;
 
     fn window(title: &str, image: &str, pid: u32) -> WindowInfo {
         WindowInfo {
@@ -3287,6 +3437,58 @@ mod minimize_tests {
         assert_eq!(
             describe_foreground(&desktop),
             "foreground window \"verbatim-e2e-console-flood\" (powershell.exe pid 14224, class ConsoleWindowClass, hidden, not responding); visible windows: \"Untitled - Notepad\" (Notepad.exe pid 11016, class Class, minimized)"
+        );
+    }
+
+    /// A window's wait chain is one line naming the window and its thread,
+    /// then each node with its state, a thread with its process, and
+    /// whether it loops; a process's thread whose chain could not be read
+    /// says why.
+    #[test]
+    fn wait_chains_are_described_node_by_node() {
+        let thread = |pid: u32, thread: u32, image: &str| WaitNode {
+            kind: WaitNodeKind::Thread,
+            status: WaitNodeStatus::Blocked,
+            thread: Some(WaitThread {
+                pid,
+                thread,
+                image: image.to_owned(),
+            }),
+        };
+        let object = |kind: WaitNodeKind, status: WaitNodeStatus| WaitNode {
+            kind,
+            status,
+            thread: None,
+        };
+        let hung = WaitChain {
+            window: Some(0x0004_0a2e),
+            pid: 14224,
+            thread: 5016,
+            nodes: vec![
+                thread(9120, 5016, "conhost.exe"),
+                object(WaitNodeKind::SendMessage, WaitNodeStatus::Blocked),
+                thread(4410, 812, "explorer.exe"),
+                object(WaitNodeKind::Alpc, WaitNodeStatus::PidOnly),
+                thread(6000, 77, ""),
+            ],
+            cycle: true,
+            error: None,
+        };
+        let denied = WaitChain {
+            window: None,
+            pid: 14224,
+            thread: 7000,
+            nodes: Vec::new(),
+            cycle: false,
+            error: Some("Access is denied. (0x80070005)".to_owned()),
+        };
+        assert_eq!(
+            describe_wait_chain(&hung),
+            "window 0x40a2e (pid 14224), thread 5016: thread 5016 of conhost.exe pid 9120 (blocked); send message (blocked); thread 812 of explorer.exe pid 4410 (blocked); ALPC (owner's process only); thread 77 of pid 6000 (blocked); a cycle, so a deadlock"
+        );
+        assert_eq!(
+            describe_wait_chain(&denied),
+            "pid 14224, thread 7000: could not be read: Access is denied. (0x80070005)"
         );
     }
 

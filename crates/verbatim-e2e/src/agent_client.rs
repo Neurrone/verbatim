@@ -24,7 +24,7 @@ use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, Frame, KillOutcome,
     ProcessExit, ProcessInfo, ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo,
-    WindowCondition, WindowInfo,
+    WaitChain, WindowCondition, WindowInfo,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -759,6 +759,22 @@ impl AgentClient {
                 ..
             } => Ok(info),
             other => Err(unexpected("ForegroundInfo", &other)),
+        }
+    }
+
+    /// The wait chains of the threads owning `windows`, and of the threads
+    /// of `pids` ([`Request::WaitChains`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_chains(&mut self, windows: Vec<u64>, pids: Vec<u32>) -> io::Result<Vec<WaitChain>> {
+        match self.request(Request::WaitChains { windows, pids })? {
+            Frame::Reply {
+                payload: ReplyPayload::WaitChains { chains },
+                ..
+            } => Ok(chains),
+            other => Err(unexpected("WaitChains", &other)),
         }
     }
 
