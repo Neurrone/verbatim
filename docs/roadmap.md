@@ -74,6 +74,14 @@ the program's copies and its commit, and takes no lock of its own. NVDA's
 speech for the equality's edge cases waits for one capture session
 against mockapp's `object_equality.json` fixture.
 
+A defect found on 2026-11-01 belongs to the rework: switching to an
+application whose UIA calls are held, then back to the same place in
+Notepad, speaks nothing, in 4 of 4 runs. The busy application's outpost
+drops its MSAA foreground fact because UIA owns the window and its UIA
+focus read never answers, so Core never learns the focus left Notepad
+and judges the return unchanged. What Verbatim says for a focus it
+cannot read is checked against an NVDA capture first.
+
 Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
 between processes' copies of one fact, so the ownership refactor below
 comes first. The keep-id review's fix and M4.5 are built; the rework
