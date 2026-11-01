@@ -134,8 +134,11 @@ Further follow-ups from the focus work and the ownership builds:
 - A new console host's window can stay hidden and not responding while
   the outpost's first call into it passes its deadline (3 of 20 measure
   runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
-  host not responding at its outpost's first call"). Find which call it
-  is, at debug level, and whether it holds the console host.
+  host not responding at its outpost's first call"). The kept artifacts
+  show the console host hung on its own; to find what holds it, have the
+  agent log the window thread's wait chain (`GetThreadWaitChain`) when the
+  harness's wait fails on a window not responding, and have the outpost's
+  abandoned-worker warning name the call it was in.
 - A new application's window sometimes does not appear within the
   harness's 30 seconds: Notepad five times locally and a mockapp Windows
   Forms window once on GitHub's runner, on 2026-11-01 ([the flaky

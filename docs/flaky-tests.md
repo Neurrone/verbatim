@@ -66,7 +66,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release build, 2026-10-31, on main's code with temporary log lines), and `conhost_full_history_flood` (debug build, 2026-11-01, 1 of 3 with the first determinism build; its outpost was killed at shutdown, and the next scenario, `notepad_editing`, found no Notepad window within 30 s, then passed 10 of 10).
 
 - How: setup fails with "no window titled ... opened within 30s"; the PowerShell console's window is hidden and not responding, or not shown at all. The outpost given the new `conhost.exe` starts watching it, and its worker's first call passes its 10 s deadline about 10 s later and finishes only at shutdown, 2 to 35 s after. 3 of 20 runs; in one, a crate split build's unit tests were running on the same desktop.
-- Cause: not found. Whether the outpost's first call holds the console host or only waits on it is not in the info-level logs.
+- Cause: not found. In two `conhost_full_history_flood` failures on 2026-11-01 whose artifacts were kept, Verbatim waited on the console host and not the reverse: the window never answered the outpost's first message (the arbitration's `WM_GETOBJECT` probe timed out at 3 s, where a healthy console answers in about 0.4 s), the outpost's worker then blocked in an MSAA read until the outpost was killed, and the console host stayed hung after every Verbatim process had exited. Both runs also had Explorer's notification area not answering (`Shell_NotifyIcon` timed out at Verbatim's start) and the Widgets process not responding, which no passing run showed. What the console host's window thread waited on is not in the logs.
 - Fix: none yet; a roadmap follow-up under M4.
 
 ## A new application's window not shown in time
@@ -74,7 +74,7 @@ Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release bu
 Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_typed_words` locally, and mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` under `cargo xtask ci` on GitHub's runner.
 
 - How: setup fails with "no window titled ... opened within 30s" and no Notepad window among the visible ones, before any key is sent; the mockapp test fails with "the window is shown: Timeout". Locally five times on 2026-11-01, in bursts of up to three runs in a row, then passing; on the runner once (run 41254405706). Twelve runs in a row, six idle and six under a release build's load, all passed.
-- Cause: not found. Load from a concurrent build did not reproduce it. Whether an outpost's first call holds the new window, as in the console host entry above, is not yet known; the local batch script now keeps a failed run's artifacts.
+- Cause: not found. Load from a concurrent build did not reproduce it. The console host entry above, whose kept artifacts show the new window hung on its own with Explorer's notification area also not answering, may be the same; no Notepad failure's artifacts have been kept yet.
 - Fix: none yet; a roadmap follow-up under M4.
 
 ## Mockapp tests under `cargo xtask ci`
