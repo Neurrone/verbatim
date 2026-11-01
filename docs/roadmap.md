@@ -63,8 +63,7 @@ source for them; its first step is the measurements and captures. Built
 on 2026-10-30, ahead of its later steps: the outpost's commit point, the
 one identity rule for Core and the speech manager, and MSAA object
 equality, and the reused UIA runtime id keeping its node, with the gone
-element's text caches dropped before the caret read (Fable, 2026-10-30,
-pending Dickson's acceptance), and, after its review, on not focused as
+element's text caches dropped before the caret read (Fable, 2026-10-30), and, after its review, on not focused as
 well. Follow-ups found: a focus group's older entries are
 lost with an abandoned worker, and the text anchors' locks are held
 across text calls; neither is made direct by the commit point. The
@@ -858,7 +857,7 @@ remains, in order:
 
 Related items, each to be settled within the redesign or after it:
 
-- Provisional, awaiting Dickson (2026-10-11): the console host raises no
+- Provisional (2026-10-11): the console host raises no
   text change for a write that leaves the cursor where it was, as a full
   history scrolling whole lines may (the model's "The terminals"); if a
   measurement on the installed build confirms it, follow NVDA, which has

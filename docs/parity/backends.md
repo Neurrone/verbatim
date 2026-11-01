@@ -145,7 +145,7 @@ Verbatim: **matched (unverified)**, case by case:
   builds it: its MSAA client or its UIA element, by the outpost's verdict;
   a plain window, a ghost's, a hung one or one above the process boundary,
   is never focused, as NVDA's `Window` has no focused state (Fable,
-  2026-10-30, pending Dickson's acceptance;
+  2026-10-30;
   `the_focused_state_test_continues_past_a_failed_acc_parent` pins the
   drop). A repeated MSAA focus is dropped before it is read, as NVDA's
   `isDuplicateIAccessibleEvent` drops it (`docs/parity/focus-events.md`,

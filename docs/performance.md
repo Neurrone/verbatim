@@ -1333,8 +1333,7 @@ ancestor carries its class name; and MSAA's invisible state is carried.
 
 The outpost follows a UIA `SensitiveSlider` for its value changes while
 its thumb is the focus (`docs/parity/focus-context.md`, "A slider that
-focuses its thumb"). The cost is accepted (Fable, 2026-10-30, pending
-Dickson's acceptance).
+focuses its thumb"). The cost is accepted (Fable, 2026-10-30).
 
 - Today: for a focus whose parent is such a slider, one connection call
   and one remote operation find the slider's element by the focus's path,
