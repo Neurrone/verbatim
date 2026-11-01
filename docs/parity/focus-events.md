@@ -579,7 +579,7 @@ what it reads after the walk. The outpost's worker, once its call
 returns, follows the focus published, as if it had reported it, and a
 worker abandoned before that hands the focus to the worker that replaces
 it, which follows it before anything else (the outpost's half: Fable,
-2026-10-30, pending Dickson's acceptance). A focus
+2026-10-30). A focus
 whose object is not yet acquired at the bound, and a focus-now answer or
 a foreground report, are left to the watchdog's deadline. A step that reaches a ghost's or a hung application's window
 other than the focus's nearest one ends every UIA walk there, as NVDA
@@ -588,7 +588,7 @@ by the window hierarchy with no further call (`correctAPIForRelation`,
 `NVDAObjects/window/__init__.py` 85 to 97); the listener names the window
 and the outpost goes on from it, and a focus-now query with such a window
 above its focus reads the ancestors by the classic walk rather than a
-remote program (Fable, 2026-10-30, pending Dickson's acceptance;
+remote program (Fable, 2026-10-30;
 `focus_reports.rs`'s `a_hung_window_above_a_uia_focus_ends_the_listeners_walk`
 and `a_hung_window_above_a_focus_now_is_a_plain_window_remote` and
 `_classic`). The completion at the bound and the depth limit is a deliberate difference (`docs/design/focus-pipeline-rework.md`,

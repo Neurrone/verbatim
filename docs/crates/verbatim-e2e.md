@@ -768,7 +768,11 @@ Each exists in both terminals unless named for one.
   - Windows: `set_foreground`, `wait_for_window`, `minimize_all`,
     `foreground_info`, `close_windows`, `close_window`, `record_windows`,
     `wait_for_new_windows_gone`, `close_abandoned_windows`,
-    `take_foreign_terminal_windows`.
+    `take_foreign_terminal_windows`, `wait_chains` (the wait chains of
+    windows' and processes' threads, which a launch whose window did not
+    open in time appends to its failure and writes to `wait-chains.txt`,
+    the runner writing it for a launch that fails before the scenario
+    exists).
   - Accessibility reads: `focused_element`, `focus_by_automation_id`,
     `misspelt_words`, `name_by_automation_id`, `controlled_items`,
     `key_toggled`.

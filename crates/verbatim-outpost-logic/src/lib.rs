@@ -271,6 +271,8 @@ pub enum Effect {
         replacement: u64,
         /// Why the generation was abandoned, for the log.
         reason: &'static str,
+        /// What the abandoned worker had in hand, for the log.
+        in_hand: InHand,
     },
     /// The push-time copy of the facts' marks, given after a transition
     /// that changed them, ahead of the transition's other effects so that
@@ -432,6 +434,50 @@ pub enum Input {
     Close,
 }
 
+/// What a program had in hand, which the log names when its worker is
+/// abandoned: the work, the entry's trace and the window it concerns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InHand {
+    /// What the program does: the kind of entry it handles, or its other
+    /// work.
+    pub work: &'static str,
+    /// The trace of the entry it handles, when it handles one.
+    pub trace: Option<TraceId>,
+    /// The window whose application it waits on, when it is known.
+    pub window: Option<isize>,
+}
+
+impl InHand {
+    /// What a program doing `work`, concerning `window`, has in hand.
+    fn of(work: &Work, window: Option<Window>) -> Self {
+        let (work, trace) = match work {
+            Work::Entry { entry, .. } => (
+                match entry.item {
+                    Item::Msaa { .. } => "an MSAA event",
+                    Item::Uia(_) => "a UIA event",
+                    Item::Fact(..) => "a fact such as a focus or a foreground change",
+                    Item::Query { .. } => "a query from Core",
+                    Item::NodesHeld { .. } => "the nodes Core holds",
+                    Item::NotedCaret { .. } => "a noted caret",
+                    Item::Barrier { .. } => "the idle barrier",
+                    Item::GapBound => "the gap record's bound",
+                    Item::GapRead { .. } => "the gap record's read",
+                },
+                Some(entry.trace),
+            ),
+            Work::Owed(_) => ("the work the followed focus owes", None),
+            Work::Drop => ("the drop of released objects", None),
+            Work::PollRead => ("a read of the caret key's console poll", None),
+            Work::Finish { .. } => ("the finish of a cut caret read", None),
+        };
+        Self {
+            work,
+            trace,
+            window: window.map(Window::get),
+        }
+    }
+}
+
 /// What the reducer keeps of the program in flight, beside what the work
 /// in flight keeps of it (its request, times, walk and moved-on rule).
 #[derive(Clone, Debug)]
@@ -446,6 +492,8 @@ struct Current {
     /// record, or it holds the caret key's watch, or answered it and may
     /// still read the terminal under the key's trace.
     deferred: bool,
+    /// What the program has in hand, for the log of its abandonment.
+    in_hand: InHand,
 }
 
 /// One try of a focus group, and what is left of it.
@@ -1075,6 +1123,7 @@ impl Reducer {
             item: current,
             published,
         } = abandoned;
+        let in_hand = current.in_hand;
         if self
             .facts
             .follow
@@ -1091,6 +1140,7 @@ impl Reducer {
                 Reason::Deadline => "a call passed its deadline",
                 Reason::MovedOn => "the user moved on from a slow window",
             },
+            in_hand,
         });
         if let Some(answer) = self.facts.follow.watch.abandoned() {
             self.answer_watch(answer, now, effects);
@@ -1483,6 +1533,7 @@ impl Reducer {
             running,
             group,
             deferred,
+            in_hand: InHand::of(&work, window),
         };
         let request = self.flight.start(
             current,

@@ -577,7 +577,12 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   a foreground fact judges nothing. It publishes an
   armed walk first, marks the generation dead in the worker's charge
   (`worker::Charge`), answers the query the program was running
-  `Abandoned`, and starts a replacement. A returning abandoned worker has
+  `Abandoned`, and starts a replacement. `Effect::Abandon` carries what the
+  program had in hand (`InHand`, kept in the reducer's record of the
+  program in flight from its dispatch): the kind of entry or other work,
+  the entry's trace and the window it waits on, which the shell's warning
+  names. The warning does not name the call the worker was in: only the
+  worker's thread knows it. A returning abandoned worker has
   its commits refused, posts that it returned, and exits. The shell alone
   counts the abandoned workers that have not returned, one more as it
   carries out `Effect::Abandon` and one fewer at each return, which no

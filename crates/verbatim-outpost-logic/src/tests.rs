@@ -1751,6 +1751,35 @@ fn a_program_waiting_on_a_window_the_user_left_is_abandoned_once_its_grace_ends(
     assert!(abandons(&replay.tick(501)));
 }
 
+/// The abandonment names what the worker had in hand: the kind of entry,
+/// its trace and the window it waits on.
+#[test]
+fn an_abandonment_names_the_entry_in_hand() {
+    let mut replay = Replay::new();
+    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let Work::Entry { entry, .. } = &program(&effects).work else {
+        panic!("an entry's program");
+    };
+    let trace = entry.trace;
+    replay.answers.moved_on = true;
+    let in_hand: Vec<InHand> = replay
+        .tick(501)
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Abandon { in_hand, .. } => Some(in_hand),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        in_hand,
+        vec![InHand {
+            work: "an MSAA event",
+            trace: Some(trace),
+            window: Some(9),
+        }]
+    );
+}
+
 /// Past the grace, the moved-on rule is judged again every half second,
 /// with no foreground fact; a wake for anything else, or a foreground fact,
 /// judges nothing.

@@ -63,8 +63,7 @@ source for them; its first step is the measurements and captures. Built
 on 2026-10-30, ahead of its later steps: the outpost's commit point, the
 one identity rule for Core and the speech manager, and MSAA object
 equality, and the reused UIA runtime id keeping its node, with the gone
-element's text caches dropped before the caret read (Fable, 2026-10-30,
-pending Dickson's acceptance), and, after its review, on not focused as
+element's text caches dropped before the caret read (Fable, 2026-10-30), and, after its review, on not focused as
 well. Follow-ups found: a focus group's older entries are
 lost with an abandoned worker, and the text anchors' locks are held
 across text calls; neither is made direct by the commit point. The
@@ -136,16 +135,19 @@ Further follow-ups from the focus work and the ownership builds:
   the outpost's first call into it passes its deadline (3 of 20 measure
   runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
   host not responding at its outpost's first call"). The kept artifacts
-  show the console host hung on its own; to find what holds it, have the
-  agent log the window thread's wait chain (`GetThreadWaitChain`) when the
-  harness's wait fails on a window not responding, and have the outpost's
-  abandoned-worker warning name the call it was in.
+  show the console host hung on its own. The harness now records the wait
+  chain of each not-responding window's thread and of the launched
+  process's threads when its window wait fails (`wait-chains.txt`), and
+  the outpost's abandoned-worker warning names the entry its worker had in
+  hand; read the next failure's chains to find what holds the window's
+  thread.
 - A new application's window sometimes does not appear within the
   harness's 30 seconds: Notepad five times locally and a mockapp Windows
   Forms window once on GitHub's runner, on 2026-11-01 ([the flaky
   tests](flaky-tests.md), "A new application's window not shown in
-  time"). Find, from a failed run's kept artifacts, whether an outpost's
-  first call holds the new window, as the console host entry above may.
+  time"). Find, from a failed run's kept artifacts and its
+  `wait-chains.txt`, whether an outpost's first call holds the new window,
+  as the console host entry above may.
 - `verbatim-model`'s comment on `DeliveredFact::key` cites NVDA source
   files, which the provenance rule forbids in a platform-neutral crate;
   rewrite it to cite the parity docs.
@@ -855,7 +857,7 @@ remains, in order:
 
 Related items, each to be settled within the redesign or after it:
 
-- Provisional, awaiting Dickson (2026-10-11): the console host raises no
+- Provisional (2026-10-11): the console host raises no
   text change for a write that leaves the cursor where it was, as a full
   history scrolling whole lines may (the model's "The terminals"); if a
   measurement on the installed build confirms it, follow NVDA, which has

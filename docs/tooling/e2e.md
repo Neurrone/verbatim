@@ -419,6 +419,20 @@ losing any of them fails the run:
   "Settings" frame of `ApplicationFrameHost.exe` that hosts it stays
   listed, as cloaked, since the agent's window list does not say which
   application a frame hosts.
+- `wait-chains.txt`, only when a launched application's window did not
+  open within 30 seconds: one line per thread, the wait chain (Windows'
+  Wait Chain Traversal) of the thread owning each window the failure
+  reports as not responding, and of the threads of the launched process
+  that own a window, or of all its threads when none does. Each line
+  names the window or process and the thread, then each node in order,
+  a thread with its process's image and pid, an object by its kind
+  (critical section, send message, mutex, ALPC, COM, and the rest), each
+  with its state, then whether the chain is a cycle, a deadlock. A thread
+  that cannot be read, such as an elevated process's, has the error
+  instead. The same lines are appended to the failure message. When the
+  window was the scenario's document, which opens before Verbatim, the
+  launch fails before any other artifact is collected, and this file is
+  the only one.
 - `stderr.log`: Verbatim's captured standard output and error, with its
   `verbatim::latency` lines.
 - Every file of the launch's log directory, `logs\<Verbatim's pid>` next

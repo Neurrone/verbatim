@@ -380,8 +380,7 @@ a walk of the window's whole tree would wait on its
   The outpost stamps its own events and times its verdicts' keeps by the
   test's observation clock (`observed_now`), with which the facts handed
   over are stamped. Each test chooses that clock once, as it makes the
-  outpost, so none switches partway through (Fable, 2026-10-30, pending
-  Dickson's acceptance):
+  outpost, so none switches partway through (Fable, 2026-10-30):
   - `OutpostUnderTest::on_frozen_time` (or
     `on_frozen_time_with_options`) gives the frozen clock: the run's clock
     when the outpost was made, moved on only by the time passed and by a

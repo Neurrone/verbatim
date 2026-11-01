@@ -59,7 +59,7 @@ A focus reported again, the same as the focus, does not replace the
 line: NVDA keeps its line when the focus matches itself, so a repeat
 whose chain was cut at its bound leaves the containers the focus is in,
 and the next focus in them says only itself; the repeat's newer reading
-of the focus and of the line's nodes it holds is kept (Fable, 2026-10-30, pending Dickson's acceptance).
+of the focus and of the line's nodes it holds is kept (Fable, 2026-10-30).
 A child window's client object reached from its window object is its
 window's, whether or not it has an identity string, so it carries its
 window. Each report's chain is complete to the desktop, windows a walk
@@ -89,7 +89,7 @@ An invisible ancestor, MSAA's `STATE_SYSTEM_INVISIBLE` on an object read
 through MSAA, is not presented, as NVDA counts an invisible object
 unavailable (`_get_presentationType`); the state is never spoken. A
 window read from Windows' own state carries no invisible state from its
-style (Fable, 2026-10-30, pending Dickson's acceptance): a Windows Terminal window not yet shown when
+style (Fable, 2026-10-30): a Windows Terminal window not yet shown when
 its focus is published at its bound would lose its title for good, where
 NVDA reads it through UI Automation and says it. UI Automation's
 `IsOffscreen` is NVDA's offscreen state, not invisible, and does not
@@ -120,7 +120,7 @@ menu, so a top-level window is spoken by its title and a child window
 between it and the focus's own window is structure; a ghost's or a hung
 application's window stays a plain window, role window, as NVDA's object
 for it is (`docs/design/focus-pipeline-rework.md`, "The foreground
-wait"). Past a walk's bound this is (Fable, 2026-10-30, pending Dickson's acceptance): File Explorer's
+wait"). Past a walk's bound this is (Fable, 2026-10-30): File Explorer's
 folder window published at its bound said its title with "window",
 another "window" and "ShellView window", where the walk read in full
 says the title once. A window whose element the cut walk had already
@@ -210,7 +210,7 @@ and a value change of one that is the focus's innermost ancestor when
 its value differs from the one it was entered with. The outpost follows
 such a parent for its value changes alone while the focus is its child,
 finding its element by the focus's path when it keeps none (Fable,
-2026-10-30, pending Dickson's acceptance). **done**: reducer tests and
+2026-10-30). **done**: reducer tests and
 mockapp's `a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value`
 and
 `a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus`.

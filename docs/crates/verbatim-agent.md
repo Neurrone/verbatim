@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 25) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 26) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -43,7 +43,7 @@ Public API:
     code).
   - The desktop: `ForegroundInfo` (the foreground window and the visible
     top-level windows, each with its handle, owning pid, title, class,
-    program, whether it is cloaked or minimized, whether Windows judges it not responding, `hung`, whether it has `WS_EX_NOACTIVATE`, so Windows never brings it to the foreground, `no_activate`, and whether it is hidden, `hidden`, which only the foreground window can be), `SetForeground`
+    program, whether it is cloaked or minimized, whether Windows judges it not responding, `hung`, whether it has `WS_EX_NOACTIVATE`, so Windows never brings it to the foreground, `no_activate`, and whether it is hidden, `hidden`, which only the foreground window can be), `WaitChains` (protocol version 26, private `wait_chain` module: the wait chain, read with Wait Chain Traversal in a synchronous session following chains out of the process, into COM and into critical sections, of the thread owning each window named, and of each thread of each process named that owns a top-level window, or of every thread of one that owns none, each thread once; each chain's nodes with their kind and state, a thread node with its pid, thread id and image name, whether the chain is a cycle, and the error instead when it cannot be read, such as access denied to an elevated process's thread; it registers COM's call and activation state functions from `ole32.dll` once, so a COM wait is followed to the thread serving it), `SetForeground`
     (restoring a window from minimized, minimizing it first, without
     activating another window, when it is restored and not in front, then
     `SetForegroundWindow`, injecting no input; the minimize and the

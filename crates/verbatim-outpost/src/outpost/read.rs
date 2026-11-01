@@ -595,9 +595,9 @@ pub(super) fn reads_as_plain(context: &Context, hwnd: isize) -> bool {
 /// it, read from Windows' own state with no call into any application. It
 /// is never focused, as NVDA's `Window` states hold only invisible and
 /// unavailable (`NVDAObjects/window/__init__.py`, `Window._get_states`),
-/// and never invisible either (Fable, 2026-10-30, pending Dickson's
-/// acceptance): a window not yet shown when it is read, as a Windows
-/// Terminal window at its bound, would lose its title for good, where
+/// and never invisible either (Fable, 2026-10-30): a window not yet shown
+/// when it is read, as a Windows Terminal window at its bound, would lose
+/// its title for good, where
 /// NVDA reads it through UIA and says it. It is kept at its window
 /// object's address, so a node read from it acquires the window's own
 /// object.
@@ -699,8 +699,7 @@ fn plain_windows_above(
 /// complete, whether cut at its bound, failed or stopped at the process
 /// boundary: each is NVDA's MSAA client for it ([`client_pane`]), but a
 /// ghost's or a hung application's window, which is a [`plain_window`], as
-/// NVDA's object for it is (Fable, 2026-10-30, pending Dickson's
-/// acceptance).
+/// NVDA's object for it is (Fable, 2026-10-30).
 pub(super) fn plain_windows_from(context: &RequestContext<'_>, hwnd: isize) -> Vec<NodeSnapshot> {
     let desktop = desktop_window();
     let mut windows = Vec::new();

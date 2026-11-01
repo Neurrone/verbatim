@@ -159,7 +159,7 @@ use verbatim_config::Settings;
 
 use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::compare::{self, ReportHeader};
-use crate::scenario::{Document, Scenario};
+use crate::scenario::{Document, Scenario, wait_chains_of, write_wait_chains};
 use crate::scenarios::{
     caret_keys, demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
     demo_terminal_session, document_keys, editing, explorer_folder_window, lock_key_announcements,
@@ -2159,6 +2159,7 @@ fn run_compare(def: &ScenarioDef) {
     let mut scenario =
         Scenario::compare_with(def.settings, def.document.map(|document| document()))
             .unwrap_or_else(|error| {
+                record_launch_wait_chains(&dir, &error);
                 panic!(
                     "scenario {:?}: starting against NVDA failed: {error}",
                     def.name
@@ -2292,6 +2293,7 @@ fn run(def: &ScenarioDef) {
 
     let mut scenario = Scenario::launch_with(def.settings, def.document.map(|document| document()))
         .unwrap_or_else(|error| {
+            record_launch_wait_chains(&dir, &error);
             panic!(
                 "scenario {:?}: launching Verbatim through the agent failed: {error}",
                 def.name
@@ -2545,6 +2547,17 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
                 .map(|failure| failure.message.clone())
         })
         .unwrap_or_else(|| "(a panic with no message)".to_owned())
+}
+
+/// Writes the wait chains a failed launch's error carries, recorded when
+/// its document's window did not open in time, to the scenario's artifacts
+/// in `dir`; a launch fails before there is a scenario to collect them.
+fn record_launch_wait_chains(dir: &std::path::Path, error: &io::Error) {
+    if let Some(chains) = wait_chains_of(error)
+        && let Err(write) = write_wait_chains(dir, chains)
+    {
+        eprintln!("could not write the wait chains: {write}");
+    }
 }
 
 /// Records what held the foreground before setup and after cleanup.

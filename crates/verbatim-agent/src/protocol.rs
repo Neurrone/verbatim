@@ -62,11 +62,13 @@ use serde::{Deserialize, Serialize};
 /// measurement of a caret key held with auto-repeat; version 24 launches
 /// the agent's own executable for [`AGENT_SELF`], which the recordings'
 /// desktop capture runs as; version 25 added [`WindowInfo::hidden`], so
-/// a failure names a foreground window that is not yet shown. A test
+/// a failure names a foreground window that is not yet shown; version 26
+/// added [`Request::WaitChains`], so a window that did not open in time is
+/// reported with what its not-responding windows' threads wait on. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 25;
+pub const AGENT_PROTOCOL_VERSION: u32 = 26;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -351,6 +353,18 @@ pub enum Request {
     /// foreground when an assertion fails. Answered by
     /// [`ReplyPayload::ForegroundInfo`].
     ForegroundInfo,
+    /// Records the wait chain (Windows' Wait Chain Traversal) of the thread
+    /// owning each window in `windows`, and of each thread of each process
+    /// in `pids` that owns a top-level window, or of every thread of one
+    /// that owns none, each thread once: what a thread that stopped
+    /// answering waits on, for the report of a window that did not open in
+    /// time. Answered by [`ReplyPayload::WaitChains`].
+    WaitChains {
+        /// Window handles, as [`WindowInfo::window`] reports them.
+        windows: Vec<u64>,
+        /// OS process ids.
+        pids: Vec<u32>,
+    },
     /// Sends a close request to every visible top-level window whose title
     /// contains `title_contains`, cloaked ones aside, and waits up to
     /// `timeout_ms` for them to go. Answered by
@@ -718,6 +732,11 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::ForegroundInfo`].
     ForegroundInfo(ForegroundInfo),
+    /// Answer to [`Request::WaitChains`].
+    WaitChains {
+        /// The chains, windows' first, in the order asked for.
+        chains: Vec<WaitChain>,
+    },
     /// Answer to [`Request::CloseWindows`] and [`Request::CloseWindow`]: how many matching windows were
     /// still open when the wait ended; zero means every one closed.
     WindowsClosed {
@@ -861,6 +880,108 @@ pub struct WindowInfo {
     /// Manager (`docs/tooling/troubleshooting.md`).
     #[serde(default)]
     pub hidden: bool,
+}
+
+/// One thread's wait chain, as [`Request::WaitChains`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitChain {
+    /// The window whose thread this is, when the chain was asked for a
+    /// window; `None` for a process's thread.
+    pub window: Option<u64>,
+    /// The process the window belongs to, as Windows reports it, or the
+    /// process asked for.
+    pub pid: u32,
+    /// The thread the chain starts at; 0 when none was found.
+    pub thread: u32,
+    /// The chain's nodes, starting at the thread itself: each thread waits
+    /// on the object after it, and each object is owned by the thread
+    /// after it. Windows reports at most 16.
+    pub nodes: Vec<WaitNode>,
+    /// Whether the chain loops back on itself: a deadlock.
+    pub cycle: bool,
+    /// Why the chain could not be read, such as access being denied to an
+    /// elevated process's thread; `nodes` is then empty.
+    pub error: Option<String>,
+}
+
+/// One node of a [`WaitChain`] (`WAITCHAIN_NODE_INFO`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitNode {
+    /// What the node is.
+    pub kind: WaitNodeKind,
+    /// Its state.
+    pub status: WaitNodeStatus,
+    /// For a thread node, the thread.
+    pub thread: Option<WaitThread>,
+}
+
+/// A thread in a [`WaitChain`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitThread {
+    /// The OS process id of its process.
+    pub pid: u32,
+    /// Its OS thread id.
+    pub thread: u32,
+    /// Its process's executable file name; empty when it could not be read.
+    pub image: String,
+}
+
+/// The kind of a [`WaitNode`] (`WCT_OBJECT_TYPE`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WaitNodeKind {
+    /// A thread.
+    Thread,
+    /// A critical section.
+    CriticalSection,
+    /// A message sent to another thread's window (`SendMessage`).
+    SendMessage,
+    /// A mutex.
+    Mutex,
+    /// An ALPC call, a local RPC.
+    Alpc,
+    /// A COM call.
+    Com,
+    /// A COM activation.
+    ComActivation,
+    /// A wait on another thread's exit.
+    ThreadWait,
+    /// A wait on a process's exit.
+    ProcessWait,
+    /// Socket input or output.
+    SocketIo,
+    /// SMB input or output.
+    SmbIo,
+    /// An object Windows reports as of unknown kind.
+    Unknown,
+    /// A kind this vocabulary does not name, by its number.
+    Other(i32),
+}
+
+/// The state of a [`WaitNode`] (`WCT_OBJECT_STATUS`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WaitNodeStatus {
+    /// Access to the object was denied.
+    NoAccess,
+    /// A thread that is running.
+    Running,
+    /// A thread that is blocked.
+    Blocked,
+    /// Only the owning process is known.
+    PidOnly,
+    /// Only the owning process is known, and it is the RPC subsystem.
+    PidOnlyRpcss,
+    /// A lock held by a thread.
+    Owned,
+    /// A lock no thread holds.
+    NotOwned,
+    /// A lock abandoned by a thread that ended holding it.
+    Abandoned,
+    /// Windows reports the state as unknown.
+    Unknown,
+    /// Windows reports an error for the object.
+    Error,
+    /// A state this vocabulary does not name, by its number.
+    Other(i32),
 }
 
 /// What [`Request::WaitForWindow`] waits for. Titles are matched as
@@ -1181,6 +1302,74 @@ mod tests {
             assert_eq!(&read_request, request);
             assert_eq!(&read_frame, frame);
         }
+    }
+
+    #[test]
+    fn a_wait_chain_request_round_trips() {
+        let request = RequestEnvelope {
+            id: 14,
+            request: Request::WaitChains {
+                windows: vec![0x0004_0a2e],
+                pids: vec![14224],
+            },
+        };
+        let frame = Frame::Reply {
+            to: 14,
+            payload: ReplyPayload::WaitChains {
+                chains: vec![
+                    WaitChain {
+                        window: Some(0x0004_0a2e),
+                        pid: 14224,
+                        thread: 5016,
+                        nodes: vec![
+                            WaitNode {
+                                kind: WaitNodeKind::Thread,
+                                status: WaitNodeStatus::Blocked,
+                                thread: Some(WaitThread {
+                                    pid: 9120,
+                                    thread: 5016,
+                                    image: "conhost.exe".to_owned(),
+                                }),
+                            },
+                            WaitNode {
+                                kind: WaitNodeKind::SendMessage,
+                                status: WaitNodeStatus::Blocked,
+                                thread: None,
+                            },
+                            WaitNode {
+                                kind: WaitNodeKind::Other(42),
+                                status: WaitNodeStatus::Other(17),
+                                thread: None,
+                            },
+                        ],
+                        cycle: true,
+                        error: None,
+                    },
+                    WaitChain {
+                        window: None,
+                        pid: 14224,
+                        thread: 7000,
+                        nodes: Vec::new(),
+                        cycle: false,
+                        error: Some("Access is denied.".to_owned()),
+                    },
+                ],
+            },
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
     }
 
     #[test]
