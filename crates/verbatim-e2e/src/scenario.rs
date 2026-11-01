@@ -66,7 +66,8 @@ const FLIGHT_RECORDER_FILE_NAME: &str = "flight-recorder.jsonl";
 const FOCUS_FILE_NAME: &str = "focus.txt";
 const LATENCY_FILE_NAME: &str = "latency.csv";
 const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
-/// The wait chains recorded when a window did not open in time
+/// The wait chains recorded when a window did not open or take the
+/// foreground in time
 /// ([`window_wait_chains`]), one chain a line.
 const WAIT_CHAINS_FILE_NAME: &str = "wait-chains.txt";
 
@@ -268,8 +269,8 @@ pub struct Scenario {
     /// runs against Verbatim.
     nvda: Option<NvdaRun>,
     /// The wait chains recorded when a window the scenario launched did not
-    /// open in time ([`window_wait_chains`]), one chain a line, for
-    /// [`WAIT_CHAINS_FILE_NAME`].
+    /// open or take the foreground in time ([`window_wait_chains`]), one
+    /// chain a line, for [`WAIT_CHAINS_FILE_NAME`].
     wait_chains: Vec<String>,
 }
 
@@ -1183,7 +1184,7 @@ impl Scenario {
             .iter()
             .find(|window| present && !window.cloaked && window.title.contains(title))
         else {
-            let chains = window_wait_chains(&mut self.agent, &desktop, launch.pid);
+            let chains = window_wait_chains(&mut self.agent, &desktop, None, launch.pid);
             self.wait_chains.extend(chains.iter().cloned());
             return Err(WindowWaitFailure::error(
                 format!(
@@ -1209,7 +1210,8 @@ impl Scenario {
                 describe_foreground(&desktop)
             )));
         }
-        self.require_in_front(title, launch)
+        let opened = window.window;
+        self.require_in_front(title, launch, opened)
     }
 
     /// Launches `command`, which opens a window titled with `title`, a
@@ -1500,9 +1502,15 @@ impl Scenario {
         Ok(())
     }
 
-    /// Waits for the window titled with `title`, which `launch` opened, to
-    /// take the foreground, and records the process that owns it.
-    fn require_in_front(&mut self, title: &str, launch: AgentLaunch) -> io::Result<WindowInfo> {
+    /// Waits for the window titled with `title`, which `launch` opened as
+    /// window `opened`, to take the foreground, and records the process
+    /// that owns it.
+    fn require_in_front(
+        &mut self,
+        title: &str,
+        launch: AgentLaunch,
+        opened: u64,
+    ) -> io::Result<WindowInfo> {
         let (met, desktop) = self.agent.wait_for_window(
             WindowCondition::Foreground {
                 title_contains: title.to_owned(),
@@ -1510,17 +1518,22 @@ impl Scenario {
             },
             WINDOW_TIMEOUT,
         )?;
-        let window = desktop.foreground.clone().filter(|_| met).ok_or_else(|| {
-            io::Error::other(format!(
-                "the window titled {title:?} did not take the foreground within {WINDOW_TIMEOUT:?}{}: {}",
-                if launch.foreground_allowed {
-                    ""
-                } else {
-                    " (Windows did not let the agent allow its launch to take the foreground)"
-                },
-                describe_foreground(&desktop)
-            ))
-        })?;
+        let Some(window) = desktop.foreground.clone().filter(|_| met) else {
+            let chains = window_wait_chains(&mut self.agent, &desktop, Some(opened), launch.pid);
+            self.wait_chains.extend(chains.iter().cloned());
+            return Err(WindowWaitFailure::error(
+                format!(
+                    "the window titled {title:?} did not take the foreground within {WINDOW_TIMEOUT:?}{}: {}",
+                    if launch.foreground_allowed {
+                        ""
+                    } else {
+                        " (Windows did not let the agent allow its launch to take the foreground)"
+                    },
+                    describe_foreground(&desktop)
+                ),
+                chains,
+            ));
+        };
         if let Some(launched) = self
             .launched
             .iter_mut()
@@ -2548,7 +2561,7 @@ fn open_document(
         .iter()
         .find(|window| present && window.title.contains(&marker))
     else {
-        let chains = window_wait_chains(agent, &desktop, launch.pid);
+        let chains = window_wait_chains(agent, &desktop, None, launch.pid);
         return Err(WindowWaitFailure::error(
             format!(
                 "no window titled {marker:?} opened within {WINDOW_TIMEOUT:?}: {}",
@@ -2564,6 +2577,7 @@ fn open_document(
             describe_foreground(&desktop)
         )));
     }
+    let opened = window.window;
     let (met, desktop) = agent.wait_for_window(
         WindowCondition::Foreground {
             title_contains: marker.clone(),
@@ -2571,12 +2585,16 @@ fn open_document(
         },
         WINDOW_TIMEOUT,
     )?;
-    let window = desktop.foreground.clone().filter(|_| met).ok_or_else(|| {
-        io::Error::other(format!(
-            "the window titled {marker:?} did not take the foreground within {WINDOW_TIMEOUT:?}: {}",
-            describe_foreground(&desktop)
-        ))
-    })?;
+    let Some(window) = desktop.foreground.clone().filter(|_| met) else {
+        let chains = window_wait_chains(agent, &desktop, Some(opened), launch.pid);
+        return Err(WindowWaitFailure::error(
+            format!(
+                "the window titled {marker:?} did not take the foreground within {WINDOW_TIMEOUT:?}: {}",
+                describe_foreground(&desktop)
+            ),
+            chains,
+        ));
+    };
     launched.owners.push(window.pid);
     Ok(launched)
 }
@@ -3153,12 +3171,19 @@ pub(crate) fn write_wait_chains(dir: &Path, chains: &[String]) -> io::Result<()>
 }
 
 /// When a window wait ran out with `desktop` as it ended: the wait chain of
-/// the thread owning each window `desktop` reports as not responding, and
-/// of the threads of `pid`, the process launched to open the window
-/// (`Request::WaitChains`), each on one line ([`describe_wait_chain`]); one
-/// line saying why when they could not be read.
-fn window_wait_chains(agent: &mut AgentClient, desktop: &ForegroundInfo, pid: u32) -> Vec<String> {
-    let mut windows: Vec<u64> = Vec::new();
+/// the thread owning `window`, the launched window when it opened but did
+/// not take the foreground, then of the thread owning each window `desktop`
+/// reports as not responding, and of the threads of `pid`, the process
+/// launched to open the window (`Request::WaitChains`), each on one line
+/// ([`describe_wait_chain`]); one line saying why when they could not be
+/// read.
+fn window_wait_chains(
+    agent: &mut AgentClient,
+    desktop: &ForegroundInfo,
+    window: Option<u64>,
+    pid: u32,
+) -> Vec<String> {
+    let mut windows: Vec<u64> = window.into_iter().collect();
     for window in desktop.foreground.iter().chain(&desktop.windows) {
         if window.hung && !windows.contains(&window.window) {
             windows.push(window.window);

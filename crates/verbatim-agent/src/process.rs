@@ -625,7 +625,7 @@ fn job_has_processes(job: &OwnedHandle) -> bool {
 ///
 /// Returns an error if the process can be opened but its exit code cannot
 /// be read.
-fn status(pid: u32) -> io::Result<ProcessState> {
+pub(crate) fn status(pid: u32) -> io::Result<ProcessState> {
     {
         let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = launched.get(&pid) {

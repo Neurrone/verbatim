@@ -6,7 +6,9 @@
 
 use std::collections::HashSet;
 use std::mem::size_of;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
+use std::thread;
+use std::time::Duration;
 
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::System::Diagnostics::Debug::{
@@ -27,23 +29,89 @@ use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 use windows::core::{BOOL, s, w};
 
-use crate::desktop;
-use crate::protocol::{WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WaitThread};
+use crate::protocol::{
+    ProcessState, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WaitThread,
+};
+use crate::{desktop, process};
+
+/// How long [`wait_chains_within`] waits for the chains: under the
+/// harness's 30-second bound on a reply, so it gets the reason rather than
+/// a timed-out connection.
+pub const WAIT_CHAINS_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// [`wait_chains`], read on a thread of its own and answered within
+/// `timeout`, so the connection's thread is never held longer.
+/// Microsoft's documentation of `GetThreadWaitChain` gives no bound on how
+/// long a synchronous session's call takes, and Wait Chain Traversal
+/// follows a chain into other processes.
+///
+/// # Errors
+///
+/// Returns the reason when the thread cannot be started, or the chains are
+/// not read within `timeout`; the reading thread is then left to finish
+/// alone, its answer dropped.
+pub fn wait_chains_within(
+    windows: Vec<u64>,
+    pids: Vec<u32>,
+    timeout: Duration,
+) -> Result<Vec<WaitChain>, String> {
+    answer_within(timeout, move || wait_chains(&windows, &pids))
+}
+
+/// `read`'s answer, run on a thread of its own, or why there is none
+/// within `timeout`.
+fn answer_within<T: Send + 'static>(
+    timeout: Duration,
+    read: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name("wait-chains".to_owned())
+        .spawn(move || {
+            // The receiver is gone when the answer came too late.
+            let _ = sender.send(read());
+        })
+        .map_err(|error| format!("the wait chain thread could not be started: {error}"))?;
+    receiver.recv_timeout(timeout).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout => {
+            format!("the wait chains were not read within {timeout:?}")
+        }
+        mpsc::RecvTimeoutError::Disconnected => {
+            "the wait chain thread ended without an answer".to_owned()
+        }
+    })
+}
 
 /// The wait chain of the thread owning each of `windows`, then of each
 /// thread of each process in `pids` that owns a top-level window, or of
-/// every thread of one that owns none, each thread once.
+/// every thread of one that owns none, each thread once. A process in
+/// `pids` that has exited gets one chain saying so, read through the
+/// handle the agent holds for a child it launched, which keeps the pid from
+/// naming another process's threads.
 #[must_use]
 pub fn wait_chains(windows: &[u64], pids: &[u32]) -> Vec<WaitChain> {
-    let mut subjects: Vec<(Option<u64>, u32, u32)> = Vec::new();
+    // Each subject's window, process, and thread, or why it has no thread.
+    let mut subjects: Vec<(Option<u64>, u32, Result<u32, String>)> = Vec::new();
     for &window in windows {
         let mut pid = 0u32;
         // SAFETY: tolerates any handle, writing 0 for an invalid one.
         let thread =
             unsafe { GetWindowThreadProcessId(HWND(window as *mut _), Some(&raw mut pid)) };
+        let thread = match thread {
+            0 => Err("the window no longer exists".to_owned()),
+            thread => Ok(thread),
+        };
         subjects.push((Some(window), pid, thread));
     }
     for &pid in pids {
+        if let Ok(ProcessState::Exited { exit_code }) = process::status(pid) {
+            let exited = match exit_code {
+                Some(code) => format!("the process has exited, with exit code {code}"),
+                None => "the process has exited".to_owned(),
+            };
+            subjects.push((None, pid, Err(exited)));
+            continue;
+        }
         let threads = window_threads(pid);
         let threads = if threads.is_empty() {
             process_threads(pid)
@@ -51,13 +119,58 @@ pub fn wait_chains(windows: &[u64], pids: &[u32]) -> Vec<WaitChain> {
             threads
         };
         if threads.is_empty() {
-            subjects.push((None, pid, 0));
+            subjects.push((
+                None,
+                pid,
+                Err("the process has no thread; it has exited".to_owned()),
+            ));
         }
-        subjects.extend(threads.into_iter().map(|thread| (None, pid, thread)));
+        subjects.extend(threads.into_iter().map(|thread| (None, pid, Ok(thread))));
     }
     let mut seen = HashSet::new();
-    subjects.retain(|&(_, _, thread)| thread == 0 || seen.insert(thread));
+    subjects.retain(|(_, _, thread)| match thread {
+        Ok(thread) => seen.insert(*thread),
+        Err(_) => true,
+    });
 
+    with_session(|opened| {
+        subjects
+            .into_iter()
+            .map(|(window, pid, thread)| {
+                let mut chain = WaitChain {
+                    window,
+                    pid,
+                    thread: *thread.as_ref().unwrap_or(&0),
+                    nodes: Vec::new(),
+                    cycle: false,
+                    error: None,
+                };
+                let read = match (opened, thread) {
+                    (_, Err(reason)) => Err(reason),
+                    (Err(error), Ok(_)) => Err(error.clone()),
+                    (Ok(session), Ok(thread)) => read_chain(*session, thread),
+                };
+                match read {
+                    Ok((nodes, cycle)) => {
+                        chain.nodes = nodes;
+                        chain.cycle = cycle;
+                    }
+                    Err(error) => chain.error = Some(error),
+                }
+                chain
+            })
+            .collect()
+    })
+}
+
+/// `use_session`'s answer given a synchronous Wait Chain Traversal session,
+/// or why one could not be opened, with COM's state functions registered
+/// first ([`register_com_callback`]), and no other session of this process
+/// open meanwhile: a session opened and closed while another thread's
+/// session read a chain crashed this process in about one run of five.
+fn with_session<T>(use_session: impl FnOnce(&Result<*mut core::ffi::c_void, String>) -> T) -> T {
+    static ONE_SESSION: Mutex<()> = Mutex::new(());
+    let _only = ONE_SESSION.lock().unwrap_or_else(PoisonError::into_inner);
     register_com_callback();
     // SAFETY: a synchronous session (no flags, no callback), closed below.
     let session =
@@ -70,38 +183,12 @@ pub fn wait_chains(windows: &[u64], pids: &[u32]) -> Vec<WaitChain> {
     } else {
         Ok(session)
     };
-    let chains = subjects
-        .into_iter()
-        .map(|(window, pid, thread)| {
-            let mut chain = WaitChain {
-                window,
-                pid,
-                thread,
-                nodes: Vec::new(),
-                cycle: false,
-                error: None,
-            };
-            let read = match (&opened, thread) {
-                (Err(error), _) => Err(error.clone()),
-                (Ok(_), 0) if window.is_some() => Err("the window no longer exists".to_owned()),
-                (Ok(_), 0) => Err("the process has no thread; it has exited".to_owned()),
-                (Ok(session), thread) => read_chain(*session, thread),
-            };
-            match read {
-                Ok((nodes, cycle)) => {
-                    chain.nodes = nodes;
-                    chain.cycle = cycle;
-                }
-                Err(error) => chain.error = Some(error),
-            }
-            chain
-        })
-        .collect();
+    let answer = use_session(&opened);
     if let Ok(session) = opened {
         // SAFETY: the session opened above, closed once.
         unsafe { CloseThreadWaitChainSession(session) };
     }
-    chains
+    answer
 }
 
 /// The nodes of `thread`'s wait chain, and whether it is a cycle.
@@ -291,13 +378,10 @@ mod tests {
         // SAFETY: no preconditions.
         let thread = unsafe { GetCurrentThreadId() };
         let pid = std::process::id();
-        // SAFETY: a synchronous session, closed below.
-        let session =
-            unsafe { OpenThreadWaitChainSession(OPEN_THREAD_WAIT_CHAIN_SESSION_FLAGS(0), None) };
-        assert!(!session.is_null());
-        let read = read_chain(session, thread);
-        // SAFETY: opened above.
-        unsafe { CloseThreadWaitChainSession(session) };
+        let read = with_session(|opened| {
+            let session = opened.as_ref().expect("the session opens");
+            read_chain(*session, thread)
+        });
         let image = desktop::image_name(pid).expect("this process's image");
         assert_eq!(
             read,
@@ -309,6 +393,56 @@ mod tests {
                 }],
                 false
             ))
+        );
+    }
+
+    /// A reading that does not finish within the bound is answered with
+    /// the reason, and the reading is left to finish alone.
+    #[test]
+    fn a_reading_past_its_bound_is_answered_with_why() {
+        let (release, released) = mpsc::channel::<()>();
+        let answer = answer_within(Duration::from_millis(50), move || released.recv());
+        assert_eq!(
+            answer.map(|_| ()),
+            Err("the wait chains were not read within 50ms".to_owned())
+        );
+        release.send(()).expect("the reading thread still waits");
+    }
+
+    /// A launched process that has exited, its pid kept by the handle the
+    /// agent holds, has one chain saying so and naming its exit code, not
+    /// any thread.
+    #[test]
+    fn an_exited_process_s_chain_says_it_exited() {
+        let _launching = process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Launched as the agent launches, inheriting none of another
+        // test's handles, its handle held while its entry is kept.
+        let (pid, _) = process::launch(
+            "cmd",
+            &["/C".to_owned(), "exit 3".to_owned()],
+            None,
+            &[],
+            None,
+            None,
+            (false, false, false),
+        )
+        .expect("spawns cmd");
+        assert_eq!(
+            process::wait_for_exit(pid, Duration::from_secs(10)).expect("waits"),
+            ProcessState::Exited { exit_code: Some(3) }
+        );
+        assert_eq!(
+            wait_chains(&[], &[pid]),
+            vec![WaitChain {
+                window: None,
+                pid,
+                thread: 0,
+                nodes: Vec::new(),
+                cycle: false,
+                error: Some("the process has exited, with exit code 3".to_owned()),
+            }]
         );
     }
 }

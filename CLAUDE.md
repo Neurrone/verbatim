@@ -36,7 +36,9 @@ Dickson takes the decisions in these areas himself; every other decision is the 
 - Scope and order: what each milestone includes and which comes next.
 - The working process: this file and `REVIEW.md`.
 
-A decision is Dickson's when one of these areas is part of it, however small it looks; when that is unclear, ask. A question for him states the options with their costs in his area's terms (what is heard, latency, risk, what users or extension authors depend on), with a recommendation, never in terms of the mechanism. He reviews this list every month or two, since what a session can be trusted with changes as models improve.
+A decision is Dickson's when one of these areas is part of it, however small it looks; when that is unclear, ask. A question for him states the options with their costs in his area's terms (what is heard, latency, risk, what users or extension authors depend on), with a recommendation, never in terms of the mechanism.
+
+A decision outside his areas that is important or wide-ranging stays the session's to take, but Dickson is told of it: one that amends or replaces a decision of record or a design he agreed, changes a mechanism several crates or processes depend on, adds or removes a crate or a third-party dependency, is hard to reverse, or accepts a documented workaround or a known limit. The session's report to him leads with these, each in a sentence or two with its reason and where it is recorded, apart from the questions he must answer; he need not reply, and the decision stands unless he objects. He reviews this list every month or two, since what a session can be trusted with changes as models improve.
 
 ## Standing rules
 

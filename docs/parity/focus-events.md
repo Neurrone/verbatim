@@ -180,7 +180,7 @@ foreground window (`foreground_relation`) reported with an event's
 window facts, which the reducer judges a focus by after the read
 (`verbatim_core::focus_rules::ForegroundRelation::related`). NVDA's hold
 for a foreground event's window is not built, a deliberate difference
-(Fable, 2026-10-30, pending Dickson's acceptance): the outpost judges a
+(Fable, 2026-10-30; accepted by Dickson, 2026-11-01): the outpost judges a
 foreground change when it comes ("Attention" below). The hold changes
 no word on entering the Settings app, the one window measured to lag:
 with the frame's own focus dropped, the content's chain says "Settings"

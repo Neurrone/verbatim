@@ -51,7 +51,7 @@ when its defer finds the frame in front or as an entered ancestor of the
 content's focus when the frame's own focus is dropped
 (`experiments/the-settings-frame-comes-in-front-after-its-foreground-event/nvda-capture.txt`).
 **different** (decision 7 of that design, Dickson, 2026-10-18, amended
-2026-10-29 and, by Fable on 2026-10-30 pending Dickson's acceptance):
+2026-10-29 and, by Fable on 2026-10-30, accepted by Dickson on 2026-11-01):
 a window NVDA reads through UIA, as a WPF or WinUI host its probe finds
 UIA, is said by its title alone where NVDA says "title window", and an
 application whose MSAA client reports another role is still a pane.

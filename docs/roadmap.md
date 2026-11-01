@@ -275,7 +275,7 @@ Events and controls:
 - The classic .NET Framework Windows Forms combo box rule, element-selected events from the `ComboLBox` window reported as the combo box's value change (`NVDAObjects/UIA/__init__.py`, lines 2734 to 2744 and 2779 to 2790), is deferred until Verbatim reads such a combo box in an application (Dickson, 2026-10-20).
 - The rule for a `Windows.UI.Core` combo box with the `Value` pattern (lines 2795 to 2798) is not built, since every Settings combo box checked lacks the pattern (`docs/parity/changes-and-selection.md`, "A combo box's value from its selected item").
 - The events NVDA registers desktop-wide that Verbatim lacks are deferred until each is supported (Dickson, 2026-10-20; `docs/parity/backends.md`, "UIA event registration"); a foreground UIA progress bar that is not the focus is in M4.2, background progress bars in M4.3.
-- Table cells: the suppression of an unchanged row and column within the same table is not ported (pending Dickson), nor are header texts, spans, a cell's own coordinates text, or MSAA and IAccessible2 cells.
+- Table cells: header texts, spans, a cell's own coordinates text, or MSAA and IAccessible2 cells.
 - On this Windows 11 build `TrayNotifyWnd`'s UIA subtree is empty, so the tray list (`crates/verbatim-outpost/src/outpost/shell_items.rs`) is empty unless the overflow flyout is open; and a double press of Verbatim+F11 opens the tray list rather than the taskbar list.
 - The shell items' `refind` (`crates/verbatim-gui/src/shell_items.rs`) takes a candidate by its runtime id alone, without its name, so a runtime id the shell has reused for another button clicks that button.
 
@@ -483,11 +483,16 @@ NVDA capture.
   capture. Such answers are more frequent since the outpost's runtime-id
   search was removed (719b4ed4, 2026-10-29), so a node with no kept
   element and no focus route answers gone.
+- Table cells: an unchanged row or column within one table left out, as
+  NVDA leaves it out, which needs the containing grid's identity read
+  with each cell (Dickson, 2026-11-01;
+  [focus announcement](parity/focus-announcement.md), "Table cell
+  coordinates").
 
 The remaining work is two sessions (Dickson, 2026-10-21): one takes
 toasts, the foreground UIA progress bar, and the differences in a list
 the focus controls; the other takes the review cursor on objects that no
-longer exist.
+longer exist. The table cells go with the first session.
 
 Exit: each entry is matched (verified) by a scenario, with a declared
 deviation where Dickson chose one, checked with compare mode.

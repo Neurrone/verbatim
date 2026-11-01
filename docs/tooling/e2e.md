@@ -420,16 +420,21 @@ losing any of them fails the run:
   listed, as cloaked, since the agent's window list does not say which
   application a frame hosts.
 - `wait-chains.txt`, only when a launched application's window did not
-  open within 30 seconds: one line per thread, the wait chain (Windows'
-  Wait Chain Traversal) of the thread owning each window the failure
-  reports as not responding, and of the threads of the launched process
-  that own a window, or of all its threads when none does. Each line
-  names the window or process and the thread, then each node in order,
-  a thread with its process's image and pid, an object by its kind
-  (critical section, send message, mutex, ALPC, COM, and the rest), each
-  with its state, then whether the chain is a cycle, a deadlock. A thread
-  that cannot be read, such as an elevated process's, has the error
-  instead. The same lines are appended to the failure message. When the
+  open within 30 seconds, or opened but did not take the foreground
+  within 30 seconds: one line per thread, the wait chain (Windows'
+  Wait Chain Traversal) of the thread owning the opened window, when it
+  opened, and of each window the failure reports as not responding, and
+  of the threads of the launched process that own a window, or of all
+  its threads when none does. Each line names the window or process and
+  the thread, then each node in order, a thread with its process's image
+  and pid, an object by its kind (critical section, send message, mutex,
+  ALPC, COM, and the rest), each with its state, then whether the chain
+  is a cycle, a deadlock. A thread that cannot be read, such as an
+  elevated process's, has the error instead, and a launched process that
+  has exited has one line saying so, with its exit code. When the request
+  for the chains itself fails, such as when the agent does not read them
+  within 10 seconds, the file holds one line giving the reason. The same
+  lines are appended to the failure message. When the
   window was the scenario's document, which opens before Verbatim, the
   launch fails before any other artifact is collected, and this file is
   the only one.
