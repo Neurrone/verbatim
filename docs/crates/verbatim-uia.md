@@ -425,7 +425,12 @@ The design is `docs/design/focus-pipeline.md`, section 17.
   fails at the close stays live, calling the closed registration's
   callbacks, until the thread ends and `RemoveAllEventHandlers` removes
   it. A `close()` made on the registering thread itself is queued and
-  does not wait.
+  does not wait. The removals and the focus handler's add carry fault
+  points, `RemoveGroup`, `AddFocusHandler` and `RemoveFocusHandler`,
+  compiled into this crate's tests and under its `faults` feature, which
+  also gives `kept_for_tests()`, how many closed or failed registrations
+  the registering thread keeps for a failed removal
+  ([verbatim-faults](verbatim-faults.md); mockapp's `failure_paths`).
 - Every registration in a process is made by one registering thread with
   one client, created on the process's first registration, in the order
   asked, because Microsoft's guidance for UIA clients is that a client

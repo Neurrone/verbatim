@@ -10,16 +10,24 @@ license.workspace = true
 crossbeam-channel.workspace = true
 tracing.workspace = true
 verbatim-core.workspace = true
+verbatim-faults = { workspace = true, optional = true }
 verbatim-model.workspace = true
 verbatim-process.workspace = true
 verbatim-win32.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[dev-dependencies]
+verbatim-faults.workspace = true
+
 [features]
 # `Sealed::for_tests`, so the app's tests can hand its reducer the
 # supervisor's lifecycle notices.
 lifecycle-for-tests = []
+# The fault points of the relay's mailbox and of the port queue the app's
+# sink posts to, for the `fault_paths` tests; only `cargo xtask faults`
+# turns it on.
+faults = ["dep:verbatim-faults", "verbatim-process/faults"]
 
 [lints]
 workspace = true
@@ -58,3 +66,11 @@ harness = false
 [[test]]
 name = "spares"
 harness = false
+
+# Runs itself as stand-in applications, listener, and outposts, which its
+# own `main` recognizes; arms fault points, so only `cargo xtask faults`
+# builds it.
+[[test]]
+name = "fault_paths"
+harness = false
+required-features = ["faults"]

@@ -71,7 +71,7 @@ use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid};
-use verbatim_process::port_queue::Progress;
+use verbatim_process::port_queue::{Poster, Progress};
 
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 
@@ -180,6 +180,26 @@ impl EventSink {
         }
     }
 
+    /// A sink that posts each message, wrapped by `wrap`, to a completion
+    /// port's queue through `poster`, as the app's reducer takes its
+    /// inputs: a post given back while the queue is still taken is
+    /// [`Undelivered::Refused`], the port having refused the packet, and
+    /// the message is had back with `unwrap`, which is given only an item
+    /// `wrap` made; one given back once the queue is gone is
+    /// [`Undelivered::Gone`].
+    #[must_use]
+    pub fn posting<T: Send + 'static>(
+        poster: Poster<T>,
+        wrap: fn(OutpostMessage) -> T,
+        unwrap: fn(T) -> OutpostMessage,
+    ) -> Self {
+        Self::new(move |message| match poster.send(wrap(message)) {
+            Ok(()) => Ok(()),
+            Err(item) if poster.is_open() => Err(Undelivered::Refused(unwrap(item))),
+            Err(_) => Err(Undelivered::Gone),
+        })
+    }
+
     /// This sink, with the thread taking its messages watched: at each
     /// heartbeat the relay reads `progress`, how many of that thread's
     /// inputs have been posted and how many taken, and once it has taken
@@ -232,6 +252,19 @@ impl std::fmt::Debug for EventSink {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("EventSink")
     }
+}
+
+/// Arms the relay mailbox's fault point
+/// ([`verbatim_faults::Fault::RelayWake`]) to refuse, once, the wake that
+/// [`Supervisor::shutdown`]'s message posts, for a fault test: the point's
+/// subject, the owner's event, is private to this crate.
+#[cfg(feature = "faults")]
+pub fn refuse_shutdown_wake() -> verbatim_faults::Guard {
+    verbatim_faults::arm(
+        verbatim_faults::Fault::RelayWake,
+        |event: &owner::OwnerEvent| matches!(event, owner::OwnerEvent::Shutdown(_)),
+        1,
+    )
 }
 
 /// The window in the foreground as the focus listener reported it

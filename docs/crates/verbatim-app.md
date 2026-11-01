@@ -67,7 +67,18 @@ the key's number and posts `Input::SpeechCancelled`, or toggles the
 pause; the report callback notes the key in the latency ledger and turns
 each `KeyReport` into its `ShellCommand`s, by lookups in tables made when
 the hook starts (`key_reports::Tables`), and posts them to the reducer's
-port in the order the hook decided them. An observed caret key becomes
+port in the order the hook decided them. Both callbacks post through one
+function, `key_reports::Ports`, over the reducer's port and the speech
+queue's: a post a port refuses while its taker is still there, which
+only a system out of memory does, is kept in a thread-local queue on the
+hook thread, and the next post joins it and posts the queue from its
+front until a port refuses again, so no command or cancel overtakes a
+refused one and a key's cancel and its `SpeechCancelled` are both kept or
+both made; one whose port has closed is dropped. While posts succeed this
+adds one check of an empty queue, and no timer, lock or message; a kept
+post waits for the next key. Unit tests refuse a post through the
+`KeyPostRefused` fault point ([verbatim-faults](verbatim-faults.md)) and
+check each port takes every post once, in the hook's order. An observed caret key becomes
 `Input::CaretKey`; a clearing key `Input::ClearingKey`, then
 `Input::CaretKey` with `CaretMotion::Other`; Verbatim+V `Input::Script`
 with `Script::ShowMenu`; the time and tray-list bindings `Input::Script`
@@ -79,7 +90,8 @@ harness mark `ShellCommand::InputHandled` and `Barrier` the idle waiter
 reducer thread logs each `Command` and `Script` it applies, since the
 hook thread writes no log. The speech queue's inbox is a completion
 port too (`PortInbox` and `PortTaker` over `port_queue::<QueueItem>`), so
-the hook's cancel takes no lock.
+the hook's cancel takes no lock. The supervisor's sink is
+`EventSink::posting` over the reducer's port.
 
 The end-to-end harness's hooks (private `harness` module):
 

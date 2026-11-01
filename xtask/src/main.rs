@@ -17,12 +17,21 @@
 //! runs as the `ci-linux` job. Everything builds for the host's own
 //! architecture.
 //!
+//! On Windows `ci` ends with the fault step, [`faults`].
+//!
 //! `docs` checks the repository's Markdown documents: that every relative
 //! link and every backticked repository path names something that exists,
 //! and that `docs/readme.md` indexes every document under `docs/`. See
 //! `xtask/src/docs.rs`.
 //!
 //! The commands below exist on Windows only.
+//!
+//! `faults` builds and runs the fault tests (`docs/testing.md`, and
+//! `docs/design/logic-foundations.md`, "Failure paths and locks"): clippy
+//! of every crate with a `faults` feature with that feature on, one package
+//! at a time, then each fault test target, into `target/debug`. No other
+//! command turns a `faults` feature on, so the ordinary steps build and
+//! lint exactly the shipped configuration.
 //!
 //! `vm` drives the milestone M2 Hyper-V E2E harness (`docs/architecture.md`
 //! section 14): building and importing the golden VM, deploying builds into
@@ -130,6 +139,8 @@ fn main() -> ExitCode {
         #[cfg(windows)]
         Some("vm") => vm::run(&args[1..]),
         #[cfg(windows)]
+        Some("faults") => faults(),
+        #[cfg(windows)]
         Some("park") => park::run(),
         #[cfg(windows)]
         Some("trace") => trace::run(&args[1..]),
@@ -162,6 +173,10 @@ fn main() -> ExitCode {
             );
             eprintln!(
                 "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
+            );
+            #[cfg(windows)]
+            eprintln!(
+                "  faults  clippy with the faults feature, then the fault tests, into target/debug (docs/testing.md)"
             );
             #[cfg(windows)]
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
@@ -321,24 +336,107 @@ fn ci() -> ExitCode {
         other_host_steps()
     };
 
-    for (name, cargo_args) in &steps {
-        println!("xtask ci: {name}");
+    if run_steps("ci", &steps) != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    #[cfg(windows)]
+    if run_steps("ci", &fault_steps()) != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+
+    println!("xtask ci: all steps passed");
+    ExitCode::SUCCESS
+}
+
+/// Runs each of `steps` in turn as `command`'s, stopping at the first that
+/// fails.
+fn run_steps(command_name: &str, steps: &[Step]) -> ExitCode {
+    for (name, cargo_args) in steps {
+        println!("xtask {command_name}: {name}");
         let mut command = Command::new(env!("CARGO"));
         command.args(cargo_args);
         match command.status() {
             Ok(status) if status.success() => {}
             Ok(status) => {
-                eprintln!("xtask ci: step failed: {name} ({status})");
+                eprintln!("xtask {command_name}: step failed: {name} ({status})");
                 return ExitCode::FAILURE;
             }
             Err(error) => {
-                eprintln!("xtask ci: could not run cargo for step {name}: {error}");
+                eprintln!("xtask {command_name}: could not run cargo for step {name}: {error}");
                 return ExitCode::FAILURE;
             }
         }
     }
+    ExitCode::SUCCESS
+}
 
-    println!("xtask ci: all steps passed");
+/// The crates with a `faults` feature, each linted with it on.
+#[cfg(windows)]
+const FAULT_CRATES: &[&str] = &[
+    "verbatim-process",
+    "verbatim-uia",
+    "verbatim-outpost",
+    "verbatim-supervisor",
+    "mockapp",
+];
+
+/// The fault test targets, each its package's and its name: test targets
+/// with `required-features = ["faults"]`, which the ordinary steps skip.
+#[cfg(windows)]
+const FAULT_TESTS: &[(&str, &str)] = &[
+    ("verbatim-supervisor", "fault_paths"),
+    ("mockapp", "failure_paths"),
+];
+
+/// The fault step's cargo invocations: clippy of each of [`FAULT_CRATES`]
+/// with its `faults` feature, one package at a time so no feature reaches
+/// a package that did not ask for it, then each of [`FAULT_TESTS`], all
+/// into `target/debug`.
+#[cfg(windows)]
+fn fault_steps() -> Vec<Step> {
+    let mut steps: Vec<Step> = FAULT_CRATES
+        .iter()
+        .map(|package| {
+            (
+                "fault clippy",
+                args(&[
+                    "clippy",
+                    "-p",
+                    package,
+                    "--features",
+                    "faults",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ]),
+            )
+        })
+        .collect();
+    steps.extend(FAULT_TESTS.iter().map(|(package, test)| {
+        (
+            "fault tests",
+            args(&[
+                "test",
+                "-p",
+                package,
+                "--features",
+                "faults",
+                "--test",
+                test,
+            ]),
+        )
+    }));
+    steps
+}
+
+/// `cargo xtask faults`: the fault step on its own.
+#[cfg(windows)]
+fn faults() -> ExitCode {
+    if run_steps("faults", &fault_steps()) != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    println!("xtask faults: all steps passed");
     ExitCode::SUCCESS
 }
 

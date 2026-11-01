@@ -11,6 +11,7 @@ crossbeam-channel.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 verbatim-core.workspace = true
+verbatim-faults = { workspace = true, optional = true }
 verbatim-ia2.workspace = true
 verbatim-model.workspace = true
 verbatim-outpost-logic.workspace = true
@@ -24,8 +25,14 @@ windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+verbatim-faults.workspace = true
 verbatim-term-sim.workspace = true
 verbatim-test-console.workspace = true
+
+[features]
+# The worker's fault point, for mockapp's
+# `failure_paths` tests; only `cargo xtask faults` turns it on.
+faults = ["dep:verbatim-faults"]
 
 [lints]
 workspace = true

@@ -10,8 +10,13 @@ license.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Normal and optional only so that the `faults` feature can turn their
+# fault points on: a feature cannot name a dev-dependency.
+verbatim-faults = { workspace = true, optional = true }
 verbatim-model.workspace = true
+verbatim-outpost = { workspace = true, optional = true }
 verbatim-process.workspace = true
+verbatim-uia = { workspace = true, optional = true }
 windows.workspace = true
 windows-core.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
@@ -25,6 +30,11 @@ verbatim-outpost.workspace = true
 verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true
 verbatim-win32.workspace = true
+
+[features]
+# The fault points of the outpost's worker and of the UIA subscription, for
+# the `failure_paths` tests; only `cargo xtask faults` turns it on.
+faults = ["dep:verbatim-faults", "verbatim-outpost/faults", "verbatim-uia/faults"]
 
 # The test binaries that use UIA as a client run through their own runner,
 # which ends the process without running DLL detach code; the reason is in
@@ -133,3 +143,9 @@ workspace = true
 [[test]]
 name = "object_equality"
 harness = false
+
+# Arms fault points, so only `cargo xtask faults` builds it.
+[[test]]
+name = "failure_paths"
+harness = false
+required-features = ["faults"]

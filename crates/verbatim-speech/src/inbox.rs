@@ -18,6 +18,19 @@ use crate::manager::QueueEvent;
 /// One event for the speech queue thread, opaque outside this crate.
 pub struct QueueItem(pub(crate) QueueEvent);
 
+impl QueueItem {
+    /// The key a key press's cancel names
+    /// ([`SpeechControl::cancel_through`](crate::SpeechControl::cancel_through)),
+    /// `None` for any other event: for a test that reads what was posted.
+    #[must_use]
+    pub fn cancels_through(&self) -> Option<verbatim_model::KeySeq> {
+        match self.0 {
+            QueueEvent::Cancel(key) => key,
+            _ => None,
+        }
+    }
+}
+
 /// Where the speech queue thread's events are posted, from any thread.
 pub trait SpeechInbox: Send + Sync {
     /// Posts `item` behind everything posted before it, from any thread.
@@ -28,6 +41,14 @@ pub trait SpeechInbox: Send + Sync {
     /// Gives `item` back when the queue can no longer take it: the queue
     /// thread has gone, or the inbox refused it.
     fn post(&self, item: QueueItem) -> Result<(), QueueItem>;
+
+    /// Whether the queue thread still takes what is posted: after a
+    /// [`post`](Self::post) that gave its item back, true means the inbox
+    /// refused it for now, and a later post may succeed. An inbox that
+    /// cannot tell, as [`channel_inbox`]'s, says true.
+    fn is_open(&self) -> bool {
+        true
+    }
 }
 
 /// The speech queue thread's end of its inbox.

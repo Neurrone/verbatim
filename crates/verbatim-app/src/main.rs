@@ -357,14 +357,15 @@ fn run(
     // it, through the callbacks in `key_reports`, in the order the keys
     // were pressed; a key that cancels speech also tells the reducer,
     // whose say-all stops.
+    let hook_ports = key_reports::Ports::new(command_tx.clone(), manager.control());
     let hook = InputHook::start(
         decision_config,
         bound_gestures,
-        key_reports::speech_effect(manager.control(), command_tx.clone()),
+        key_reports::speech_effect(hook_ports.clone()),
         key_reports::reports(
             key_reports::Tables::for_layout(keyboard_layout),
             Arc::clone(&ledger),
-            command_tx.clone(),
+            hook_ports,
         ),
         foreground,
     )?;
@@ -679,6 +680,10 @@ struct PortInbox(Poster<QueueItem>);
 impl SpeechInbox for PortInbox {
     fn post(&self, item: QueueItem) -> Result<(), QueueItem> {
         self.0.send(item)
+    }
+
+    fn is_open(&self) -> bool {
+        self.0.is_open()
     }
 }
 
@@ -2088,15 +2093,11 @@ fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
 /// a stall it reports (section 6.8).
 fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {
     let progress = command_tx.clone();
-    verbatim_supervisor::EventSink::new(move |message| {
-        match command_tx.send(ShellCommand::Outpost(message)) {
-            Ok(()) => Ok(()),
-            // The port refused the packet; the queue is still taken.
-            Err(ShellCommand::Outpost(message)) if command_tx.is_open() => {
-                Err(verbatim_supervisor::Undelivered::Refused(message))
-            }
-            Err(_) => Err(verbatim_supervisor::Undelivered::Gone),
-        }
+    verbatim_supervisor::EventSink::posting(command_tx, ShellCommand::Outpost, |command| {
+        let ShellCommand::Outpost(message) = command else {
+            unreachable!("the sink is given back only the command it posted")
+        };
+        message
     })
     .watched(
         move || progress.progress(),

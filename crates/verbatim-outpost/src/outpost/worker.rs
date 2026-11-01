@@ -246,15 +246,32 @@ pub(super) fn take_calls() -> CallCounts {
 /// application (`docs/design/focus-pipeline.md`, section 19.2).
 pub(super) fn spawn(
     context: Arc<Context>,
-    warm: bool,
+    (generation, warm): (u64, bool),
     jobs: crossbeam_channel::Receiver<Job>,
     charge: Arc<Charge>,
-) -> thread::JoinHandle<()> {
+) -> std::io::Result<thread::JoinHandle<()>> {
+    // A thread the system cannot start, as one out of memory refuses it.
+    #[cfg(any(test, feature = "faults"))]
+    if verbatim_faults::hit(
+        verbatim_faults::Fault::ThreadStart,
+        &(WORKER_THREAD, generation),
+    ) {
+        return Err(std::io::Error::from_raw_os_error(ERROR_NOT_ENOUGH_MEMORY));
+    }
+    #[cfg(not(any(test, feature = "faults")))]
+    let _ = generation;
     thread::Builder::new()
-        .name("verbatim-worker".to_owned())
+        .name(WORKER_THREAD.to_owned())
         .spawn(move || run(&context, warm, &jobs, &charge))
-        .expect("spawn a worker")
 }
+
+/// A worker's thread name.
+const WORKER_THREAD: &str = "verbatim-worker";
+
+/// The error the system refuses a thread with when it is out of memory,
+/// `ERROR_NOT_ENOUGH_MEMORY`.
+#[cfg(any(test, feature = "faults"))]
+const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
 
 /// The worker's thread: its loop, then the release of the UIA objects
 /// `verbatim-uia` kept for this thread, before the thread exits rather than

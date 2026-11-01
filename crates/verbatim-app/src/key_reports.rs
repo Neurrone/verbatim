@@ -9,8 +9,13 @@
 //! when the hook starts and never changed, the posts are completion-port
 //! posts, and `cargo xtask ci` checks this module as it checks the hook's
 //! own (`xtask/src/ownership.rs`, the hook rule).
+//!
+//! A post a port refuses, which only a system out of memory does, is kept
+//! on the hook thread and posted again ahead of the next key's posts
+//! ([`Ports`]), with no lock and no timer.
 
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use verbatim_input::{EmittedGesture, KeySpeechEffect, KeyboardLayout, ScriptAction, ToggleKey};
@@ -53,22 +58,134 @@ impl Tables {
     }
 }
 
+/// One of the hook's posts: a command for the reducer's port, or a key's
+/// cancel for the speech queue's.
+enum Post {
+    Command(ShellCommand),
+    Cancel(KeySeq),
+}
+
+/// What the hook's fault point is told of a post: which port it is for,
+/// and the key it is of, when it has one.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PostSubject {
+    speech: bool,
+    key_seq: Option<KeySeq>,
+}
+
+thread_local! {
+    /// The hook thread's posts a port refused while it was still taken,
+    /// with the key each is of, in the hook's order: empty but while a
+    /// system out of memory refuses packets.
+    static KEPT: RefCell<VecDeque<(Post, Option<KeySeq>)>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// The two ports the hook's callbacks post to, through one function on the
+/// hook thread ([`Ports::post`]): a post a port refuses is kept and posted
+/// again, ahead of the next one, so no command or cancel overtakes a
+/// refused one, and a key's cancel and the reducer's `SpeechCancelled`
+/// are both kept or both made. One whose port has closed is dropped, its
+/// taker having gone.
+#[derive(Clone)]
+pub(crate) struct Ports {
+    commands: Poster<ShellCommand>,
+    control: SpeechControl,
+}
+
+impl Ports {
+    /// The reducer's port, `commands`, and the speech queue's, `control`.
+    pub(crate) fn new(commands: Poster<ShellCommand>, control: SpeechControl) -> Self {
+        Self { commands, control }
+    }
+
+    /// Posts `post`, of key `key_seq` if any: at once while nothing is
+    /// kept; otherwise behind what is kept, which is posted from its front
+    /// until a port refuses again.
+    fn post(&self, post: Post, key_seq: Option<KeySeq>) {
+        KEPT.with_borrow_mut(|kept| {
+            if kept.is_empty() {
+                if let Some(refused) = self.try_post(post, key_seq) {
+                    kept.push_back((refused, key_seq));
+                }
+                return;
+            }
+            kept.push_back((post, key_seq));
+            while let Some((post, key_seq)) = kept.pop_front() {
+                if let Some(refused) = self.try_post(post, key_seq) {
+                    kept.push_front((refused, key_seq));
+                    return;
+                }
+            }
+        });
+    }
+
+    /// Posts `post`, and gives it back when its port refused it and is
+    /// still taken; one taken, or whose port has closed, is gone.
+    fn try_post(&self, post: Post, key_seq: Option<KeySeq>) -> Option<Post> {
+        #[cfg(test)]
+        let refused = verbatim_faults::hit(
+            verbatim_faults::Fault::KeyPostRefused,
+            &PostSubject {
+                speech: matches!(post, Post::Cancel(_)),
+                key_seq,
+            },
+        );
+        #[cfg(not(test))]
+        let refused = {
+            let _ = key_seq;
+            false
+        };
+        match post {
+            Post::Command(command) => {
+                let given_back = if refused {
+                    Err(command)
+                } else {
+                    self.commands.send(command)
+                };
+                match given_back {
+                    Ok(()) => None,
+                    Err(command) => self.commands.is_open().then_some(Post::Command(command)),
+                }
+            }
+            Post::Cancel(key) => {
+                if !refused && self.control.cancel_through(key) {
+                    return None;
+                }
+                self.control.is_open().then_some(Post::Cancel(key))
+            }
+        }
+    }
+}
+
 /// The hook's speech effect: a cancel names the key's number to the speech
 /// queue, which fences off speech earlier keys caused, and tells the
 /// reducer, whose say-all stops; Shift's pause toggles.
-pub(crate) fn speech_effect(
-    control: SpeechControl,
-    commands: Poster<ShellCommand>,
-) -> Box<dyn Fn(KeySpeechEffect, KeySeq) + Send> {
+pub(crate) fn speech_effect(ports: Ports) -> Box<dyn Fn(KeySpeechEffect, KeySeq) + Send> {
     Box::new(move |effect, key_seq| match effect {
         KeySpeechEffect::Cancel => {
-            control.cancel_through(key_seq);
-            let _ = commands.send(ShellCommand::Input(Box::new(Input::SpeechCancelled {
-                at_ms: crate::latency::now_ms(),
-            })));
+            ports.post(Post::Cancel(key_seq), Some(key_seq));
+            ports.post(
+                Post::Command(ShellCommand::Input(Box::new(Input::SpeechCancelled {
+                    at_ms: crate::latency::now_ms(),
+                }))),
+                Some(key_seq),
+            );
         }
-        KeySpeechEffect::TogglePause => control.toggle_pause(),
+        KeySpeechEffect::TogglePause => ports.control.toggle_pause(),
     })
+}
+
+/// The key a report is of, when it names one.
+fn key_of(report: &KeyReport) -> Option<KeySeq> {
+    match report {
+        KeyReport::Observed { key_seq, .. }
+        | KeyReport::Held { key_seq, .. }
+        | KeyReport::Passed { key_seq, .. }
+        | KeyReport::Typed { key_seq, .. }
+        | KeyReport::Gesture { key_seq, .. } => Some(*key_seq),
+        KeyReport::Deferred { .. } | KeyReport::Handled(_) => None,
+    }
 }
 
 /// The hook's report callback: notes each key the latency line counts
@@ -76,7 +193,7 @@ pub(crate) fn speech_effect(
 pub(crate) fn reports(
     tables: Tables,
     ledger: Arc<LatencyLedger>,
-    commands: Poster<ShellCommand>,
+    ports: Ports,
 ) -> Box<dyn Fn(KeyReport) + Send> {
     Box::new(move |report| {
         // Every key the hook saw, for the latency line's time from the
@@ -88,8 +205,9 @@ pub(crate) fn reports(
             | KeyReport::Passed { pressed_at_us, .. } => ledger.key_seen(*pressed_at_us, false),
             _ => {}
         }
+        let key_seq = key_of(&report);
         commands_for(report, &tables, |command| {
-            let _ = commands.send(command);
+            ports.post(Post::Command(command), key_seq);
         });
     })
 }
@@ -394,6 +512,141 @@ mod tests {
             mapped(gesture(trace_id, "kb:verbatim+q", 0)),
             Vec::<String>::new()
         );
+    }
+
+    /// The reducer's port and the speech queue's, real completion-port
+    /// queues, as the hook posts to them, with their taking ends.
+    fn ports() -> (
+        Ports,
+        verbatim_process::port_queue::PortQueue<ShellCommand>,
+        verbatim_process::port_queue::PortQueue<verbatim_speech::QueueItem>,
+    ) {
+        let (commands, commands_taken) =
+            verbatim_process::port_queue::port_queue().expect("the reducer's port");
+        let (speech, speech_taken) =
+            verbatim_process::port_queue::port_queue().expect("the speech queue's port");
+        let control = SpeechControl::with_inbox(Arc::new(crate::PortInbox(speech)));
+        (Ports::new(commands, control), commands_taken, speech_taken)
+    }
+
+    /// The key each command waiting on `port` is of, typed text being the
+    /// only command these tests post, and `None` for a cancel's
+    /// `SpeechCancelled`.
+    fn typed_keys(
+        port: &mut verbatim_process::port_queue::PortQueue<ShellCommand>,
+    ) -> Vec<Option<KeySeq>> {
+        std::iter::from_fn(|| port.try_recv())
+            .map(|command| match command {
+                ShellCommand::Input(input) => match *input {
+                    Input::CharacterTyped { key_seq, .. } => Some(key_seq),
+                    Input::SpeechCancelled { .. } => None,
+                    other => panic!("the hook posted {other:?}"),
+                },
+                _ => panic!("the hook posted something other than an input"),
+            })
+            .collect()
+    }
+
+    /// The key each cancel waiting on `port` names.
+    fn cancelled_keys(
+        port: &mut verbatim_process::port_queue::PortQueue<verbatim_speech::QueueItem>,
+    ) -> Vec<Option<KeySeq>> {
+        std::iter::from_fn(|| port.try_recv())
+            .map(|item| item.cancels_through())
+            .collect()
+    }
+
+    fn typed(key_seq: KeySeq) -> KeyReport {
+        KeyReport::Typed {
+            trace_id: TraceId::mint(),
+            key_seq,
+            text: "a".to_owned(),
+            pressed_at_us: PRESSED_AT_US,
+        }
+    }
+
+    /// A key's command the reducer's port refuses is kept on the hook
+    /// thread and posted ahead of the next key's: each is taken once, in
+    /// the hook's order.
+    #[test]
+    fn a_refused_key_command_is_posted_before_the_next_keys_commands() {
+        // Keys no other test posts, so the selector names this test's post.
+        let (first, second) = (KeySeq::new(91_001), KeySeq::new(91_002));
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::KeyPostRefused,
+            move |post: &PostSubject| {
+                *post
+                    == PostSubject {
+                        speech: false,
+                        key_seq: Some(first),
+                    }
+            },
+            1,
+        );
+        let (ports, mut commands, _speech) = ports();
+        let report = reports(
+            Tables::for_layout(KeyboardLayout::Desktop),
+            Arc::new(LatencyLedger::new(1, 1, Arc::default())),
+            ports,
+        );
+
+        report(typed(first));
+        assert_eq!(typed_keys(&mut commands), [], "the refused command is kept");
+        report(typed(second));
+        assert_eq!(
+            typed_keys(&mut commands),
+            [Some(first), Some(second)],
+            "the kept command first, then the next key's"
+        );
+        drop(refusal);
+    }
+
+    /// A key's cancel the speech queue's port refuses is kept, and the
+    /// `SpeechCancelled` the key posts after it waits behind it; both are
+    /// posted ahead of the next key's posts, each taken once.
+    #[test]
+    fn a_refused_speech_cancel_is_posted_before_the_next_keys_posts() {
+        // Keys no other test posts, so the selector names this test's post.
+        let (first, second) = (KeySeq::new(92_001), KeySeq::new(92_002));
+        // Refused as the key posts it, and again as the key's own
+        // `SpeechCancelled` is posted behind it.
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::KeyPostRefused,
+            move |post: &PostSubject| {
+                *post
+                    == PostSubject {
+                        speech: true,
+                        key_seq: Some(first),
+                    }
+            },
+            2,
+        );
+        let (ports, mut commands, mut speech) = ports();
+        let effect = speech_effect(ports);
+
+        effect(KeySpeechEffect::Cancel, first);
+        assert_eq!(
+            cancelled_keys(&mut speech),
+            [],
+            "the refused cancel is kept"
+        );
+        assert_eq!(
+            typed_keys(&mut commands),
+            [],
+            "the key's SpeechCancelled waits behind its cancel"
+        );
+        effect(KeySpeechEffect::Cancel, second);
+        assert_eq!(
+            cancelled_keys(&mut speech),
+            [Some(first), Some(second)],
+            "the kept cancel first, then the next key's"
+        );
+        assert_eq!(
+            typed_keys(&mut commands),
+            [None, None],
+            "each key's SpeechCancelled, once"
+        );
+        drop(refusal);
     }
 
     #[test]

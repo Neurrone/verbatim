@@ -77,9 +77,14 @@ cargo hakari manage-deps
 runs, in its `ci`, `ci-arm64` and `ci-linux` jobs. On Windows its steps are
 the crate tier check, the scans below, the documentation
 check, the workspace-hack check above, rustfmt, and pedantic Clippy with
-warnings denied and unit tests for the whole workspace, all for the host's
+warnings denied and unit tests for the whole workspace, then the fault step,
+`cargo xtask faults` (Clippy of each crate with a `faults` feature with that
+feature on, one package at a time, then the fault test targets;
+[the verbatim-faults guide](../crates/verbatim-faults.md)), all for the host's
 own architecture into `target/debug`; no build names a target, so an ARM64
-machine checks ARM64. On Linux, where the `ci-linux` job runs it on
+machine checks ARM64. The fault step rebuilds the crates whose feature it
+turns on, and relinks `mockapp.exe`, the one executable it rewrites, which
+the end-to-end suite's own build relinks. On Linux, where the `ci-linux` job runs it on
 `ubuntu-latest`, it runs the tier check, the scans and the
 documentation check, then Clippy and unit tests only for the crates in
 `LINUX_CRATES` (`xtask/src/main.rs`): the platform-neutral tier, the

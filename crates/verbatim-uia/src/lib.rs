@@ -100,6 +100,8 @@ pub use shape::{
     Request, RoleCore, SelectedItem, SelectionContainer, Shape, ShellButton, Shortcut, States,
     SuggestionsRefresh, TextAreaPattern, TextEvent, Ungated, ValueSet, WindowLookup,
 };
+#[cfg(feature = "faults")]
+pub use subscribe::kept_for_tests;
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
     NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,

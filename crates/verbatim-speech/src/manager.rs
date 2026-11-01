@@ -220,8 +220,27 @@ impl SpeechControl {
     /// way; NVDA runs a key's cancel in order behind the earlier keys'
     /// scripts (`docs/nvda/input.md`, "What a key press does to speech"),
     /// and this keeps that order without making the cancel wait.
-    pub fn cancel_through(&self, key: KeySeq) {
-        let _ = inbox::post(&*self.inbox, QueueEvent::Cancel(Some(key)));
+    ///
+    /// Returns whether the queue's inbox took the cancel; one given back,
+    /// refused or with the queue gone ([`is_open`](Self::is_open) says
+    /// which), is the caller's to post again or drop.
+    #[must_use]
+    pub fn cancel_through(&self, key: KeySeq) -> bool {
+        inbox::post(&*self.inbox, QueueEvent::Cancel(Some(key))).is_ok()
+    }
+
+    /// Whether the speech queue still takes what is posted
+    /// ([`SpeechInbox::is_open`]).
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.inbox.is_open()
+    }
+
+    /// A handle posting to `inbox`, for a test that reads what a key
+    /// press's cancel posts without a speech pipeline.
+    #[must_use]
+    pub fn with_inbox(inbox: Arc<dyn SpeechInbox>) -> Self {
+        Self { inbox }
     }
 
     /// Pauses speech where it is, or resumes it when paused.

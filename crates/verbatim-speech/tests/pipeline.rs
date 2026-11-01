@@ -997,7 +997,10 @@ fn a_cancel_wakes_a_driver_waiting_for_its_synthesizer() {
 #[test]
 fn speech_an_earlier_key_caused_is_dropped_after_a_later_keys_cancel() {
     let harness = control_manager();
-    harness.manager.control().cancel_through(KeySeq::new(2));
+    assert!(
+        harness.manager.control().cancel_through(KeySeq::new(2)),
+        "the queue took the cancel"
+    );
     let earlier =
         harness
             .manager

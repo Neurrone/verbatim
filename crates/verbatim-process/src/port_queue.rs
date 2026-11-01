@@ -139,7 +139,7 @@ impl<T> std::fmt::Debug for Poster<T> {
     }
 }
 
-impl<T: Send> Poster<T> {
+impl<T: Send + 'static> Poster<T> {
     /// Posts `item`, behind everything posted before it from any thread.
     /// Never waits.
     ///
@@ -149,6 +149,11 @@ impl<T: Send> Poster<T> {
     /// port refuses the packet, which only a system out of memory does.
     pub fn send(&self, item: T) -> Result<(), T> {
         if !self.shared.open.load(Ordering::SeqCst) {
+            return Err(item);
+        }
+        // A refused packet gives the item back, as below.
+        #[cfg(any(test, feature = "faults"))]
+        if verbatim_faults::hit(verbatim_faults::Fault::PortRefusesPost, &item) {
             return Err(item);
         }
         // Counted first, so the taken count never passes the posted one.

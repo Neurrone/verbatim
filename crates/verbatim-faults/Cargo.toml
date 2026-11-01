@@ -1,0 +1,13 @@
+[package]
+name = "verbatim-faults"
+description = "Fault points at the hand-offs whose failure paths the tests run, compiled only into tests"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[lints]
+workspace = true

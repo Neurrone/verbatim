@@ -197,7 +197,9 @@ receives the event's own element, judges and reads a UIA focus
   was last moved away from, is the pure `Schedule::step`, an input in
   (`ScheduleInput`: `Push`, `Next`, `Returned`, `Tick`, `Learned`,
   `Armed`, `MovedOn`, `Published`, `Foreground`, `MsaaFocus`,
-  `OutpostEnded`, `WhenIdle`, `SpawnFailed`, `Stop`) and its effects out,
+  `OutpostEnded`, `WhenIdle`, `SpawnFailed`, the reading thread's start
+  having failed, which a unit test causes through the `ThreadStart` fault
+  point ([verbatim-faults](verbatim-faults.md)), `Stop`) and its effects out,
   in order (`ScheduleEffect`: `Outcome`, `Spawn`, `Wake`, `Unwatch`,
   `ForgetLast`, `Alarm`, `RunIdle`, `Job`, and the asks `AskMovedOn` and
   `Publish`), with time as microseconds from the shell's start and no

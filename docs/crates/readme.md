@@ -65,6 +65,8 @@ changed crate's own guide leaves those claims stale.
 - [verbatim-listener-logic](verbatim-listener-logic.md) — the focus
   listener's read scheduler, menu end's grace, foreground watch and focus
   vocabulary, pure.
+- [verbatim-faults](verbatim-faults.md) — fault points at the hand-offs
+  whose failure paths the tests run; built only into tests.
 - [verbatim-win32](verbatim-win32.md) — the local window and process
   queries more than one role makes.
 - [verbatim-uia](verbatim-uia.md) — the UIA client stack.

@@ -122,11 +122,17 @@ Public API:
   hook's thread cancels speech through it on every key;
   `channel_inbox()` makes a crossbeam pair, for this crate's tests and
   any pipeline no hook posts to, whose post takes the channel's waker
-  lock.
+  lock. `SpeechInbox::is_open()` says whether a post given back was
+  refused for now or the queue has gone (true by default, for an inbox
+  that cannot tell); `QueueItem::cancels_through()` names the key a key
+  press's cancel carries, for a test that reads what was posted.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
   any thread without blocking, which the keyboard hook and the reducer's
   effects use: `cancel()` cancels current and queued speech and ends a
-  pause; `toggle_pause()` pauses speech where it is, or resumes it when
+  pause; `cancel_through(key)` does so for key press `key` and returns
+  whether the inbox took it, and `is_open()` whether a cancel given back
+  may be posted again, so the hook keeps a refused one;
+  `with_inbox(inbox)` makes a handle over an inbox of a test's; `toggle_pause()` pauses speech where it is, or resumes it when
   paused; `drop_expired(now)` drops focus speech whose `FocusValidity` no
   longer holds for the `FocusNow` given (see "When speech is cut off"
   below). `SpeechManager::paused()` says whether speech is paused, as

@@ -278,6 +278,10 @@ pub(super) struct Shell {
     /// carries out an abandonment, one fewer as one returns.
     abandoned: usize,
     closing: bool,
+    /// Whether a worker creates its UIA client at once, as the first one
+    /// was started: a worker started at a dispatch, its generation's start
+    /// having failed, is started so too.
+    warm: bool,
 }
 
 /// The elements the focus-following subscription follows, by the tokens
@@ -451,6 +455,7 @@ impl Shell {
             threads: Vec::new(),
             abandoned: 0,
             closing: false,
+            warm,
         };
         shell.spawn_worker(0, warm);
         thread::Builder::new()
@@ -459,16 +464,29 @@ impl Shell {
             .expect("spawn the reducer's thread")
     }
 
-    /// Starts worker generation `generation`.
+    /// Starts worker generation `generation`. A worker that cannot be
+    /// started leaves the generation with none, which the shell already
+    /// handles: each program is answered as failed, and each dispatch tries
+    /// once to start one ([`Shell::dispatch`]).
     fn spawn_worker(&mut self, generation: u64, warm: bool) {
         let (jobs, receiver) = crossbeam_channel::unbounded();
         let charge = Arc::new(Charge::default());
-        let thread = worker::spawn(
+        let thread = match worker::spawn(
             Arc::clone(&self.context),
-            warm,
+            (generation, warm),
             receiver,
             Arc::clone(&charge),
-        );
+        ) {
+            Ok(thread) => thread,
+            Err(error) => {
+                tracing::error!(
+                    generation,
+                    %error,
+                    "a worker could not be started; its programs are answered as failed until one is"
+                );
+                return;
+            }
+        };
         self.threads.retain(|thread| !thread.is_finished());
         self.threads.push(thread);
         self.generations
@@ -800,18 +818,33 @@ impl Shell {
     }
 
     /// Hands `program` to the worker in charge, with what the shell has let
-    /// go of for it to drop.
+    /// go of for it to drop. A generation whose worker could not be started
+    /// is tried once more here, warm as the first worker was; with still no
+    /// worker, the shell keeps what it let go of, which holds the
+    /// application's objects, whose release the reducer's thread must never
+    /// make, and the next worker to start drops it.
     fn dispatch(&mut self, program: Program) {
-        let garbage = std::mem::take(&mut self.garbage);
-        let job = Job { program, garbage };
-        let request = job.program.request;
-        let sent = match self.generations.get(&self.reducer.generation()) {
-            Some(generation) => generation.jobs.send(job).is_ok(),
+        let in_charge = self.reducer.generation();
+        if !self.generations.contains_key(&in_charge) {
+            self.spawn_worker(in_charge, self.warm);
+        }
+        let request = program.request;
+        let sent = match self.generations.get(&in_charge) {
+            Some(generation) => {
+                let garbage = std::mem::take(&mut self.garbage);
+                match generation.jobs.send(Job { program, garbage }) {
+                    Ok(()) => true,
+                    Err(crossbeam_channel::SendError(job)) => {
+                        self.garbage = job.garbage;
+                        false
+                    }
+                }
+            }
             None => false,
         };
         if !sent {
             // Its end is posted, so the reducer goes on.
-            tracing::error!("the worker in charge is gone; its program is dropped");
+            tracing::error!("the generation in charge has no worker; its program is dropped");
             self.context.mailbox.post(Posted::Finished {
                 request,
                 reported: false,
@@ -1088,6 +1121,7 @@ mod tests {
             threads: Vec::new(),
             abandoned: 0,
             closing: false,
+            warm: false,
         };
         shell.take(Posted::Entry {
             entry: Entry::own(

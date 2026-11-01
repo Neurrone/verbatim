@@ -1035,6 +1035,7 @@ dependencies = [
  "serde",
  "serde_json",
  "verbatim-core",
+ "verbatim-faults",
  "verbatim-ia2",
  "verbatim-listener",
  "verbatim-listener-logic",
@@ -1878,6 +1879,7 @@ dependencies = [
  "verbatim-config",
  "verbatim-control",
  "verbatim-core",
+ "verbatim-faults",
  "verbatim-gui",
  "verbatim-i18n",
  "verbatim-input",
@@ -1985,6 +1987,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "verbatim-faults"
+version = "0.1.0"
+dependencies = [
+ "workspace-hack",
+]
+
+[[package]]
 name = "verbatim-gui"
 version = "0.1.0"
 dependencies = [
@@ -2072,6 +2081,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-core",
+ "verbatim-faults",
  "verbatim-ia2",
  "verbatim-listener-logic",
  "verbatim-model",
@@ -2111,6 +2121,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "verbatim-core",
+ "verbatim-faults",
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-outpost-logic",
@@ -2145,6 +2156,7 @@ dependencies = [
  "simdutf8",
  "tracing",
  "tracing-subscriber",
+ "verbatim-faults",
  "verbatim-model",
  "windows",
  "workspace-hack",
@@ -2183,6 +2195,7 @@ dependencies = [
  "crossbeam-channel",
  "tracing",
  "verbatim-core",
+ "verbatim-faults",
  "verbatim-model",
  "verbatim-process",
  "verbatim-win32",
@@ -2304,6 +2317,7 @@ name = "verbatim-uia"
 version = "0.1.0"
 dependencies = [
  "tracing",
+ "verbatim-faults",
  "verbatim-model",
  "verbatim-text",
  "verbatim-win32",

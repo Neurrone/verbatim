@@ -483,6 +483,37 @@ thread_local! {
     static REGISTERING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The error a fault point's call fails with, as a call into an
+/// application that failed returns it.
+fn failed_call() -> windows::core::Error {
+    windows::core::Error::from(E_FAIL)
+}
+
+/// How many closed or failed registrations the registering thread keeps
+/// because a removal of theirs failed, as it last counted them, for a
+/// fault test ([`kept_for_tests`]).
+#[cfg(feature = "faults")]
+static KEPT: AtomicU32 = AtomicU32::new(0);
+
+/// Notes how many registrations the registering thread keeps, `kept`, for
+/// [`kept_for_tests`], before it answers the command that changed it.
+fn note_kept(kept: usize) {
+    #[cfg(feature = "faults")]
+    KEPT.store(u32::try_from(kept).unwrap_or(u32::MAX), Ordering::SeqCst);
+    #[cfg(not(feature = "faults"))]
+    let _ = kept;
+}
+
+/// How many closed or failed registrations the registering thread keeps
+/// because a removal of theirs failed, as of its last answer, 0 once it
+/// has ended: a desktop-wide focus handler is invisible to an
+/// application's own count of the registrations it was advised of.
+#[cfg(feature = "faults")]
+#[must_use]
+pub fn kept_for_tests() -> usize {
+    usize::try_from(KEPT.load(Ordering::SeqCst)).unwrap_or(usize::MAX)
+}
+
 /// The error for a registering thread that ended before it answered.
 fn ended() -> windows::core::Error {
     windows::core::Error::new(
@@ -949,6 +980,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
                     }
                     Err((error, live)) => {
                         unremoved.extend(live.map(|live| *live));
+                        note_kept(unremoved.len());
                         let _ = ready.send(Err(error));
                     }
                 },
@@ -980,6 +1012,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
                     {
                         unremoved.push(live);
                     }
+                    note_kept(unremoved.len());
                     let _ = done.send(());
                 }
                 Command::End => break 'serving,
@@ -1001,6 +1034,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
     drop(queue);
     drop(followers);
     drop(unremoved);
+    note_kept(0);
     drop(client);
     crate::com::leave_mta();
 }
@@ -1136,11 +1170,23 @@ impl Follower {
                 _ => None,
             })
             .collect();
-        for (handler, cache) in focus {
+        for (index, (handler, cache)) in focus.into_iter().enumerate() {
             let started = Instant::now();
-            // SAFETY: the cache and handler are live and owned by this
-            // thread's client, which keeps its own references to both.
-            let added = unsafe { uia.client().AddFocusChangedEventHandler(&cache, &handler) };
+            #[cfg(any(test, feature = "faults"))]
+            let refused =
+                verbatim_faults::hit(verbatim_faults::Fault::AddFocusHandler, &(id, index));
+            #[cfg(not(any(test, feature = "faults")))]
+            let refused = {
+                let _ = index;
+                false
+            };
+            let added = if refused {
+                Err(failed_call())
+            } else {
+                // SAFETY: the cache and handler are live and owned by this
+                // thread's client, which keeps its own references to both.
+                unsafe { uia.client().AddFocusChangedEventHandler(&cache, &handler) }
+            };
             let elapsed_ms = started.elapsed().as_millis();
             if started.elapsed() > crate::CONNECTION_TIMEOUT {
                 tracing::warn!(
@@ -1257,12 +1303,23 @@ impl Follower {
         let mut failed = Vec::new();
         for registered in registered {
             let started = Instant::now();
-            // SAFETY: the element and the group added there are live and
-            // owned by this thread's client.
-            let removed = unsafe {
-                client
-                    .client
-                    .RemoveEventHandlerGroup(&registered.element, &registered.handlers)
+            #[cfg(any(test, feature = "faults"))]
+            let refused = verbatim_faults::hit(
+                verbatim_faults::Fault::RemoveGroup,
+                &(self.id, crate::com::runtime_id(&registered.element)),
+            );
+            #[cfg(not(any(test, feature = "faults")))]
+            let refused = false;
+            let removed = if refused {
+                Err(failed_call())
+            } else {
+                // SAFETY: the element and the group added there are live
+                // and owned by this thread's client.
+                unsafe {
+                    client
+                        .client
+                        .RemoveEventHandlerGroup(&registered.element, &registered.handlers)
+                }
             };
             log_call(
                 ("RemoveEventHandlerGroup", true),
@@ -1288,11 +1345,28 @@ impl Follower {
         let mut registered = std::mem::take(&mut self.registered);
         registered.append(&mut self.unremoved);
         self.unremoved = self.remove(client, registered);
-        for handler in std::mem::take(&mut self.focus_handlers) {
+        for (index, handler) in std::mem::take(&mut self.focus_handlers)
+            .into_iter()
+            .enumerate()
+        {
             let started = Instant::now();
-            // SAFETY: the handler is live and was registered on this
-            // client.
-            let removed = unsafe { client.uia.client().RemoveFocusChangedEventHandler(&handler) };
+            #[cfg(any(test, feature = "faults"))]
+            let refused = verbatim_faults::hit(
+                verbatim_faults::Fault::RemoveFocusHandler,
+                &(self.id, index),
+            );
+            #[cfg(not(any(test, feature = "faults")))]
+            let refused = {
+                let _ = index;
+                false
+            };
+            let removed = if refused {
+                Err(failed_call())
+            } else {
+                // SAFETY: the handler is live and was registered on this
+                // client.
+                unsafe { client.uia.client().RemoveFocusChangedEventHandler(&handler) }
+            };
             let elapsed = started.elapsed();
             let elapsed_ms = elapsed.as_millis();
             if elapsed > crate::CONNECTION_TIMEOUT {

@@ -59,10 +59,20 @@ read it, and numbers the messages that carry node ids
 ends its outpost: `Frames` drops that outpost's later frames at once,
 handing on only its end, and the relay drops every frame from an outpost
 it has already ended. Messages go through the `EventSink` given to `new` (a
-channel converts into one; `EventSink::new` takes the app's posting
-function). `Undelivered` says why one was not: `Gone`, or `Refused`, when
+channel converts into one; `EventSink::new` takes a delivering function,
+and `EventSink::posting(poster, wrap, unwrap)` posts each message to a
+completion port's queue, as the app's reducer takes it, mapping an item
+given back while the queue is open to `Refused` and one given back after
+to `Gone`). `Undelivered` says why one was not: `Gone`, or `Refused`, when
 the relay keeps it and everything after it and delivers them again in order
-(`crates/verbatim-supervisor/tests/target_gone.rs`).
+at its next send and at every heartbeat
+(`crates/verbatim-supervisor/tests/target_gone.rs`, and, through the port
+queue's fault point, `crates/verbatim-supervisor/tests/fault_paths.rs`).
+With the `faults` feature, `refuse_shutdown_wake()` arms the mailbox's
+fault point, `RelayWake`, to refuse the wake of `shutdown`'s message once,
+since its subject is private to the crate ([verbatim-faults](verbatim-faults.md));
+`fault_paths` checks that such a shutdown still ends, at the next
+heartbeat.
 `EventSink::watched(progress, stalled)` reports a `ReducerStall` once the
 reducer thread has taken nothing for three heartbeats while inputs waited;
 nothing is ended for it (`docs/design/communication.md`, section 6.8).

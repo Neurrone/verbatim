@@ -12,9 +12,18 @@ serde_json.workspace = true
 simdutf8.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+verbatim-faults = { workspace = true, optional = true }
 verbatim-model.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+verbatim-faults.workspace = true
+
+[features]
+# The fault point of `port_queue::Poster::send`, for another crate's fault
+# tests; only `cargo xtask faults` turns it on.
+faults = ["dep:verbatim-faults"]
 
 [lints]
 workspace = true

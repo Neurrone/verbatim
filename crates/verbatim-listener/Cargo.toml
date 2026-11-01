@@ -20,5 +20,8 @@ verbatim-win32.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[dev-dependencies]
+verbatim-faults.workspace = true
+
 [lints]
 workspace = true

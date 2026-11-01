@@ -460,7 +460,17 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`reducer::WaitingCaret`), which a caret key's check asks after. The inbox
   is a plain channel of jobs the worker waits on; the shell lets go of an
   abandoned generation's sender, which ends its worker once it returns.
-  The worker keeps nothing between programs.
+  The worker keeps nothing between programs. A worker the system cannot
+  start, the first at `Shell::start` or a replacement, leaves its
+  generation with none (`worker::spawn` returns the error, logged at
+  error level), and the outpost keeps running: each dispatch tries once
+  to start the generation's worker, warm as the first was, and with still
+  none answers its program as failed ("the outpost failed handling the
+  query") and keeps what the shell let go of, whose release can call into
+  a hung application, for the next worker to drop. `worker::spawn` carries
+  the `ThreadStart` fault point under the `faults` feature
+  ([verbatim-faults](verbatim-faults.md)), which mockapp's `failure_paths`
+  tests use.
 - The focus-following subscription (`docs/design/focus-pipeline.md`, section
   17): one registration with NVDA's two groups. The base group, given every
   UIA focus whose element the outpost has, holds name, value, and state

@@ -75,6 +75,7 @@ verbatim-core = { path = "crates/verbatim-core" }
 verbatim-e2e = { path = "crates/verbatim-e2e" }
 verbatim-ext = { path = "crates/verbatim-ext" }
 verbatim-ext-api = { path = "crates/verbatim-ext-api" }
+verbatim-faults = { path = "crates/verbatim-faults" }
 verbatim-gui = { path = "crates/verbatim-gui" }
 verbatim-i18n = { path = "crates/verbatim-i18n" }
 verbatim-ia2 = { path = "crates/verbatim-ia2" }

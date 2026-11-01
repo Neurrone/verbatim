@@ -84,6 +84,10 @@ impl<T> Clone for Mailbox<T> {
     }
 }
 
+/// The error a port out of memory refuses a post with,
+/// `ERROR_NOT_ENOUGH_MEMORY`.
+const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
+
 /// The owner has ended, so nothing sent to it is read.
 #[derive(Debug)]
 pub(super) struct OwnerGone;
@@ -92,7 +96,7 @@ fn lock<T>(queue: &Mutex<Queue<T>>) -> MutexGuard<'_, Queue<T>> {
     queue.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-impl<T> Mailbox<T> {
+impl<T: Send + 'static> Mailbox<T> {
     /// Sends `item` to the owner, and wakes it if the queue was empty.
     ///
     /// The wake is posted outside the lock. A wake the port refuses, which
@@ -104,17 +108,33 @@ impl<T> Mailbox<T> {
     ///
     /// Returns [`OwnerGone`] when the owner has ended; `item` is dropped.
     pub(super) fn send(&self, item: T) -> Result<(), OwnerGone> {
-        let was_empty = {
+        let (was_empty, refused) = {
             let mut queue = lock(&self.queue);
             if queue.closed {
                 return Err(OwnerGone);
             }
             let was_empty = queue.items.is_empty();
             queue.items.push_back(item);
-            was_empty
+            // The wake about to be posted, refused as a port out of memory
+            // refuses it.
+            #[cfg(any(test, feature = "faults"))]
+            let refused = was_empty
+                && queue.items.back().is_some_and(|item| {
+                    verbatim_faults::hit(verbatim_faults::Fault::RelayWake, item)
+                });
+            #[cfg(not(any(test, feature = "faults")))]
+            let refused = false;
+            (was_empty, refused)
         };
-        if was_empty && let Err(error) = self.port.post(OWNER_KEY) {
-            tracing::error!(%error, "the relay could not be woken; it takes its mailbox at its next heartbeat");
+        if was_empty {
+            let posted = if refused {
+                Err(io::Error::from_raw_os_error(ERROR_NOT_ENOUGH_MEMORY))
+            } else {
+                self.port.post(OWNER_KEY)
+            };
+            if let Err(error) = posted {
+                tracing::error!(%error, "the relay could not be woken; it takes its mailbox at its next heartbeat");
+            }
         }
         Ok(())
     }
@@ -396,6 +416,7 @@ mod tests {
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
+    use crate::owner::OwnerEvent;
     use crate::policy::{HeldFact, HeldFacts};
     use crate::writer::{Outgoing, QueueError, received_now};
     use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, EventTiming, ListenerToCore};
@@ -452,6 +473,61 @@ mod tests {
                 name(&command)
             })
             .collect()
+    }
+
+    /// A wake the port refuses leaves no completion on the port, and the
+    /// item waits in the queue for the take the heartbeat makes; the next
+    /// send, into the then empty queue, posts its wake.
+    #[test]
+    fn a_refused_wake_leaves_the_item_for_the_heartbeat_take() {
+        // Rounds no other test sends, so the selector names this test's
+        // send alone.
+        const REFUSED: u64 = u64::MAX - 11;
+        const NEXT: u64 = u64::MAX - 12;
+        let port = Arc::new(Port::new().expect("a port"));
+        let (mailbox, inbox) = mailbox::<OwnerEvent>(Arc::clone(&port));
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::RelayWake,
+            |event: &OwnerEvent| matches!(event, OwnerEvent::IdleRound(REFUSED)),
+            1,
+        );
+        let mut completions = Completions::with_capacity(4);
+        let rounds = |taken: VecDeque<OwnerEvent>| -> Vec<u64> {
+            taken
+                .into_iter()
+                .map(|event| match event {
+                    OwnerEvent::IdleRound(round) => round,
+                    _ => panic!("only idle rounds were sent"),
+                })
+                .collect()
+        };
+
+        mailbox
+            .send(OwnerEvent::IdleRound(REFUSED))
+            .expect("the owner is there");
+        assert_eq!(
+            port.wait(&mut completions, Some(Duration::ZERO))
+                .expect("waited"),
+            0,
+            "the refused wake left no completion"
+        );
+        assert_eq!(rounds(inbox.take()), [REFUSED], "the heartbeat's take");
+
+        mailbox
+            .send(OwnerEvent::IdleRound(NEXT))
+            .expect("the owner is there");
+        assert_eq!(
+            port.wait(&mut completions, Some(Duration::ZERO))
+                .expect("waited"),
+            1,
+            "the send into the empty queue posted its wake"
+        );
+        assert_eq!(
+            completions.iter().next().map(|completion| completion.key),
+            Some(OWNER_KEY)
+        );
+        assert_eq!(rounds(inbox.take()), [NEXT]);
+        drop(refusal);
     }
 
     /// The owner's order through the relay's writer: facts held while the

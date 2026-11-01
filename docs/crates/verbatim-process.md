@@ -129,7 +129,10 @@ Public API:
   `Poster::progress()` gives the counts posted and taken (`Progress`,
   with `waiting()`), which the supervisor's relay reads to watch the
   reducer. Items still on the port when everything is dropped are
-  dropped with it.
+  dropped with it. `send` carries the fault point `PortRefusesPost`,
+  with the item as subject, which gives the item back as a refused
+  packet does; it is compiled only into this crate's tests and under its
+  `faults` feature ([verbatim-faults](verbatim-faults.md)).
 - `scheduling` (`docs/design/communication.md`, section 6.1) —
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);

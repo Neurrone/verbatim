@@ -89,6 +89,9 @@ pub const TIERS: &[(Tier, &[&str])] = &[
             "verbatim-audio-wasapi",
             "verbatim-control",
             "verbatim-ext",
+            // Only tests build it: every fault point is behind `cfg(test)`
+            // or a crate's `faults` feature.
+            "verbatim-faults",
             "verbatim-gui",
             "verbatim-ia2",
             "verbatim-input-windows",

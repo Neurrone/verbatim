@@ -2032,6 +2032,13 @@ impl<R: Reading> Readers<R> {
     }
 }
 
+/// A reading thread's name.
+const READING_THREAD: &str = "verbatim-listener-read";
+
+/// The error the system refuses a thread with when it is out of memory,
+/// `ERROR_NOT_ENOUGH_MEMORY`.
+const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
+
 /// Starts a reading thread in charge of `pid`'s events as `generation`;
 /// with no thread to be had, its waiting events are dropped.
 fn spawn<R: Reading>(
@@ -2042,9 +2049,21 @@ fn spawn<R: Reading>(
 ) {
     state.wakes.entry(pid).or_default();
     let reading = Arc::clone(shared);
-    let spawned = thread::Builder::new()
-        .name("verbatim-listener-read".to_owned())
-        .spawn(move || run(&reading, pid, generation));
+    // A thread the system cannot start, as one out of memory refuses it.
+    #[cfg(test)]
+    let refused = verbatim_faults::hit(
+        verbatim_faults::Fault::ThreadStart,
+        &(READING_THREAD, pid, generation),
+    );
+    #[cfg(not(test))]
+    let refused = false;
+    let spawned = if refused {
+        Err(std::io::Error::from_raw_os_error(ERROR_NOT_ENOUGH_MEMORY))
+    } else {
+        thread::Builder::new()
+            .name(READING_THREAD.to_owned())
+            .spawn(move || run(&reading, pid, generation))
+    };
     match spawned {
         Ok(thread) => {
             state.threads.retain(|thread| !thread.is_finished());
@@ -3447,6 +3466,54 @@ mod tests {
             .map(|(marker, _)| marker)
             .collect();
         assert_eq!(read, [1, 2], "events 3, 4 and 5 were never read");
+    }
+
+    /// A reading thread that cannot start answers its application's
+    /// events as dropped with no thread to read them, the idle barrier
+    /// waiting on them is answered, the application's next event starts a
+    /// thread whose read is delivered, and the readers stop.
+    #[test]
+    fn a_reading_thread_that_cannot_start_answers_its_events_and_the_next_event_is_read() {
+        // An application no other test pushes events for, so the selector
+        // names this test's first thread start alone.
+        const APPLICATION: Pid = Pid(9_901);
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::ThreadStart,
+            |&(name, pid, _): &(&'static str, Pid, u64)| {
+                name == READING_THREAD && pid == APPLICATION
+            },
+            1,
+        );
+        let fixture = fixture(Duration::from_secs(60));
+        fixture.push(APPLICATION, meta(1), (1, None, Vec::new()));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (APPLICATION, 1, "no thread to read it")
+        );
+        let outcomes = fixture
+            .readers
+            .shared
+            .reading
+            .outcomes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        fixture.readers.when_idle(Box::new(move || {
+            let _ = outcomes.send((Pid(0), 0, "idle"));
+        }));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(0), 0, "idle"),
+            "the idle barrier is answered"
+        );
+        fixture.push(APPLICATION, meta(2), (2, None, Vec::new()));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (APPLICATION, 2, "read"),
+            "the next event started a thread that read it"
+        );
+        assert_eq!(fixture.readers.stop(), 1);
+        drop(refusal);
     }
 
     #[test]
