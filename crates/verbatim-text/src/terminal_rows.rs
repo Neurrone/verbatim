@@ -26,35 +26,13 @@
 //! counted from the read's first row, so what refers to a row of the last
 //! read is unchanged by the trim.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
 
 mod align;
 
 use align::Likeness;
-
-/// Row hashes, sorted and without repeats, for the alignment's lookups by
-/// binary search.
-struct Hashes(Vec<u64>);
-
-impl Hashes {
-    fn of(hashes: impl Iterator<Item = u64>) -> Self {
-        let mut sorted: Vec<u64> = hashes.collect();
-        sorted.sort_unstable();
-        sorted.dedup();
-        Self(sorted)
-    }
-
-    /// The place of `hash` among the hashes, if it is one of them.
-    fn at(&self, hash: u64) -> Option<usize> {
-        self.0.binary_search(&hash).ok()
-    }
-
-    fn contains(&self, hash: u64) -> bool {
-        self.at(hash).is_some()
-    }
-}
 
 /// How long a gone row lingers ("Lingering"), in milliseconds.
 pub const LINGERING_MS: u64 = 2000;
@@ -1505,24 +1483,24 @@ fn shift_votes(old: &[Row], old_range: Range<usize>, rows: &[Row], within: Range
         low,
         counts: Vec::new(),
     };
-    let mut at: Vec<(u64, usize)> = old_range
-        .filter(|&from| !old[from].is_blank())
-        .map(|from| (old[from].hash, from))
-        .collect();
+    let mut at: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for from in old_range {
+        if !old[from].is_blank() {
+            at.entry(old[from].hash).or_default().push(from);
+        }
+    }
     if at.is_empty() {
         return votes;
     }
-    at.sort_unstable();
     votes.counts = vec![0; span];
     for to in within {
-        if rows[to].is_blank() {
-            continue;
-        }
-        let hash = rows[to].hash;
-        let first = at.partition_point(|&(kept, _)| kept < hash);
-        for &(_, from) in at[first..].iter().take_while(|&&(kept, _)| kept == hash) {
-            let slot = usize::try_from(isize_of(to) - isize_of(from) - low).unwrap_or(0);
-            votes.counts[slot] += 1;
+        if let Some(froms) = at.get(&rows[to].hash)
+            && !rows[to].is_blank()
+        {
+            for &from in froms {
+                let slot = usize::try_from(isize_of(to) - isize_of(from) - low).unwrap_or(0);
+                votes.counts[slot] += 1;
+            }
         }
     }
     votes
@@ -1558,31 +1536,30 @@ fn align_read(
     let old_text: Vec<usize> = (0..old.len())
         .filter(|&from| !old[from].is_blank())
         .collect();
-    let old_hashes = Hashes::of(old_text.iter().map(|&from| old[from].hash));
+    let old_hashes: BTreeSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
     // A row whose text is once among the old rows and once in the read is
     // kept where that text went, so it does not grow elsewhere and no other
     // row grows into it.
     let count = |hash: u64, rows: &[Row]| rows.iter().filter(|row| row.hash == hash).count();
-    let went = Hashes::of(
-        old_text
-            .iter()
-            .map(|&from| old[from].hash)
-            .filter(|&hash| count(hash, old) == 1 && count(hash, rows) == 1),
-    );
+    let went: BTreeSet<u64> = old_text
+        .iter()
+        .map(|&from| old[from].hash)
+        .filter(|&hash| count(hash, old) == 1 && count(hash, rows) == 1)
+        .collect();
     let grows = |from: usize, to: usize| {
         trusted
             && from >= history
             && from < old.len()
             && !old[from].is_blank()
-            && !went.contains(old[from].hash)
-            && !went.contains(rows[to].hash)
+            && !went.contains(&old[from].hash)
+            && !went.contains(&rows[to].hash)
             && rows[to].text.len() > old[from].text.len()
             && rows[to].text.starts_with(&*old[from].text)
     };
     let window: Vec<usize> = (0..rows.len())
         .filter(|&to| {
             !rows[to].is_blank()
-                && (old_hashes.contains(rows[to].hash)
+                && (old_hashes.contains(&rows[to].hash)
                     || usize::try_from(isize_of(to) - base).is_ok_and(|from| grows(from, to)))
         })
         .collect();
@@ -1695,9 +1672,9 @@ fn align_whole(
     let old_text: Vec<usize> = (0..old.len())
         .filter(|&from| !old[from].is_blank())
         .collect();
-    let hashes = Hashes::of(old_text.iter().map(|&from| old[from].hash));
+    let hashes: BTreeSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
     let window: Vec<usize> = (within..rows.len())
-        .filter(|&to| !rows[to].is_blank() && hashes.contains(rows[to].hash))
+        .filter(|&to| !rows[to].is_blank() && hashes.contains(&rows[to].hash))
         .collect();
     // The hashes side by side, as the subsequence compares every old row
     // with text with every row of the window.
@@ -1806,19 +1783,19 @@ fn classify(
         .filter(|&from| fates[from] == (OldRow::Gone { lingering: false }) && !old[from].is_blank())
         .collect();
     // The read's rows with each gone row's text, found in one pass.
-    let texts = Hashes::of(gone.iter().map(|&from| old[from].hash));
-    let mut with_text: Vec<Vec<usize>> = vec![Vec::new(); texts.0.len()];
+    let mut with_text: BTreeMap<u64, Vec<usize>> = gone
+        .iter()
+        .map(|&from| (old[from].hash, Vec::new()))
+        .collect();
     if !with_text.is_empty() {
         for (to, row) in rows.iter().enumerate() {
-            if let Some(at) = texts.at(row.hash) {
-                with_text[at].push(to);
+            if let Some(found) = with_text.get_mut(&row.hash) {
+                found.push(to);
             }
         }
     }
     for from in gone {
-        let found = texts
-            .at(old[from].hash)
-            .map_or(&[][..], |at| &with_text[at][..])
+        let found = with_text[&old[from].hash]
             .iter()
             .copied()
             .filter(|&to| new[to] == NewRow::New)

@@ -290,9 +290,9 @@ With `verbatim-input`, below, that is eight crates. `workspace-hack` holds no co
 
 ### The hash maps and sets
 
-The audit found 44 in the covered crates. Two, the batch plan's `hung` and the tests' `Recorded::hung`, went with the local reads; the other 42 are `BTreeMap`s or `BTreeSet`s, but for the terminal alignment's five transient lookups below. Iteration order reached an effect in one place: the outpost's text facts collect the ranges a release drops into `Effect::ForgetRanges` in node order. `Input::Released`'s sets changed with the outpost's shell and store, Core's terminal review takes the held anchors' set as it is rather than a copy, and the listener's scheduler no longer sorts the process ids its map now orders.
+The audit found 44 in the covered crates. Two, the batch plan's `hung` and the tests' `Recorded::hung`, went with the local reads; the other 42 are `BTreeMap`s or `BTreeSet`s. Iteration order reached an effect in one place: the outpost's text facts collect the ranges a release drops into `Effect::ForgetRanges` in node order. `Input::Released`'s sets changed with the outpost's shell and store, Core's terminal review takes the held anchors' set as it is rather than a copy, and the listener's scheduler no longer sorts the process ids its map now orders.
 
-The terminal alignment of a lost read is the worst case: it looks up every row of the whole document by hash. Kept in `BTreeMap`s and `BTreeSet`s, its five transient lookups by row hash (`at`, `old_hashes`, `went`, `hashes` and `with_text`) cost 12 to 31% more than the fixed-hasher maps they replaced, so the design's fallback was built: each is one sorted vector of hashes, searched by binary search (`Hashes` in `crates/verbatim-text/src/terminal_rows.rs`), still ordered and with no hasher, at 1 to 9% more ("Performance on the event path"). The `Spread` hasher is removed. `Aside::rows` stays a `BTreeMap`, so Core's state and the dump format are untouched: its JSON form is a map in key order, and a dump written before reads back.
+The terminal alignment of a lost read is the worst case: it looks up every row of the whole document by hash. Its five transient lookups by row hash (`at`, `old_hashes`, `went`, `hashes` and `with_text` in `crates/verbatim-text/src/terminal_rows.rs`) are `BTreeMap`s and `BTreeSet`s like the rest, at 12 to 62% more time than the fixed-hasher maps they replaced ("Performance on the event path"), because the simpler code is preferred to a sorted vector searched by binary search, which cost 1 to 9% more (Dickson, 2026-11-01). The `Spread` hasher is removed. `Aside::rows` stays a `BTreeMap`, so Core's state and the dump format are untouched: its JSON form is a map in key order, and a dump written before reads back.
 
 The second build converted 12 more, outside the logic crates' reducers: `verbatim-input`'s 7 (`GestureMap`'s `bound` and `observed`, the decision machine's `held_modifiers` and `swallowed_downs`, and 3 in `scripts.rs`'s tests), the request table's `entries` and the outbound backlog's `reported`. The supervisor shell's `records`, `apps` and `spare_children` went in the first build, with `due_starts`.
 
@@ -569,10 +569,9 @@ The maps on the event path that became `BTreeMap`s, the outpost's verdicts, the 
 The terminal alignment of a lost read, by `verbatim-text`'s `terminal_cost` (`cargo test --release -p verbatim-text --test terminal_cost -- --ignored --nocapture`), release build, 120 by 30, medians of six runs each interleaved before and after, 2026-11-01 (`docs/performance.md`, "A terminal's rotation"):
 
 - Before, with the fixed-hasher maps: a rotation of 1,000 rows over 9,001 rows, a lost read, 1.23 to 1.26 ms; an overflow keeping nothing 1.06 to 1.07 ms.
-- In `BTreeMap`s and `BTreeSet`s: the lost reads 12 to 26% more, the overflow 30 to 31% more, a clear and reprint 26 to 28% more, the bimodal wide lines 36 to 62%.
-- As sorted vectors, as built: the lost reads 1 to 9% more, the overflow and the clear 1 to 3%, the wide lines about 9% at their least.
-- Over a console buffer enlarged to 32,766 rows, a case the build adds: 4.1 ms before, 4.9 ms in `BTree` collections (20% more), 4.2 ms as built (2 to 3% more). It is past the reducer's 2 ms budget for a read before and after the build, as predicted.
-- A screen of 29 Chinese rows each rewritten, every row paired with its old one by likeness, a case the build adds for `Likeness::other`'s lookups: 1.7 ms before, 1.0 ms after, its map of characters now a `BTreeMap`.
+- In `BTreeMap`s and `BTreeSet`s, as built: the lost reads 12 to 26% more, the overflow 30 to 31% more, a clear and reprint 26 to 28% more, the bimodal wide lines 36 to 62%.
+- Over a console buffer enlarged to 32,766 rows, a case the build adds: 4.1 ms before, 4.9 ms after (20% more). It is past the reducer's 2 ms budget for a read before and after the build, as predicted.
+- A screen of 29 Chinese rows each rewritten, every row paired with its old one by likeness, a case the build adds for `Likeness::other`'s lookups: 1.7 ms before, 1.0 ms with its map of characters a `BTreeMap`, measured while the alignment's lookups by row hash were sorted vectors.
 
 The oracle tests of `verbatim-term-sim` took 26.4 to 28.4 s before and 26.4 to 26.5 s after, in debug builds.
 
@@ -610,7 +609,7 @@ Each commit has its unit tests, and the crate guides are updated where an API ch
 
 - Third-party code is checked by reading it when it is added, and again only when a version change is reviewed. M4.6's run of each case twice is the backstop.
 - A published walk's content follows how far the worker got by its bound. That is the system's timing, and it reaches the reducer as `Published`'s input, so a replay is exact.
-- A lost read over a buffer enlarged to 32,766 rows takes 4.2 ms, past the reducer's 2 ms budget, as before the build (Dickson, 2026-10-31).
+- A lost read over a buffer enlarged to 32,766 rows takes 4.9 ms, past the reducer's 2 ms budget, as before the build (Dickson, 2026-10-31).
 - The hung-window test is a call the worker makes on a live window, so no unit test holds it; the scenarios with UIA entries hold its passing path, and none makes a window hung.
 - The shell's test shows an ask answered within the one step of the shell's; that the answer is given once is held by the shape of `Shell::carry_out`, which returns one input per asking effect.
 - A `tracing` event's field expressions run only when the event is enabled, so a field with a side effect would make the logic depend on the subscriber. That is a review rule.
@@ -628,7 +627,7 @@ Each commit has its unit tests, and the crate guides are updated where an API ch
 - A 32,766-row lost read past the 2 ms budget is recorded as a limit (Dickson, 2026-10-31).
 - Making the owners pure should make them simpler where it can, with types that rule out invalid states (Dickson, 2026-10-31).
 - The UIA hung-window test runs where each entry is handled, on the entry's own cached window (0 passing), first in the worker's UIA event and focus handling, covering the listener's focus reads too. It drops what the batch plan's test dropped, and also a focus read whose window became hung while it waited, which could be spoken from a half-read focus at its walk's bound (Dickson, 2026-10-31).
-- The terminal alignment's lookups by row hash are kept in `BTree` collections if that costs less than 30% against the fixed-hasher maps at 9,001 and 32,766 rows, with no fixed-hasher exception; at 30% or more the figures go to Dickson (Dickson, 2026-11-01). In `BTree` collections the overflow case cost 30 to 31% and the bimodal wide lines more, so the design's fallback, sorted vectors with no hasher, was built, at 1 to 9% (the builder, 2026-11-01, pending Dickson's acceptance).
+- The terminal alignment's five lookups by row hash are `BTreeMap`s and `BTreeSet`s, with no fixed-hasher exception and no sorted vectors, accepting 12 to 62% more time on those lookups' cases than the fixed-hasher maps, because the simpler code is preferred (Dickson, 2026-11-01).
 
 ## Failure paths and locks (a build of its own)
 

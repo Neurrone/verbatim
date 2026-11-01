@@ -9,7 +9,7 @@
 //! hook's thread cancels speech through it on every key. This crate's own
 //! tests use [`channel_inbox`], correct where no hook thread posts.
 
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -62,69 +62,36 @@ pub trait SpeechInboxTaker: Send {
 #[must_use]
 pub fn channel_inbox() -> (Arc<dyn SpeechInbox>, Box<dyn SpeechInboxTaker>) {
     let (sender, receiver) = unbounded();
-    let taker = Arc::new(());
     (
-        Arc::new(ChannelInbox {
-            sender,
-            taker: Arc::downgrade(&taker),
-        }),
-        Box::new(ChannelTaker {
-            receiver,
-            _alive: taker,
-        }),
+        Arc::new(ChannelInbox(sender)),
+        Box::new(ChannelTaker(receiver)),
     )
 }
 
-/// [`channel_inbox`]'s posting end. The channel has no way to ask whether
-/// its receiver has gone without sending, so the taker holds a token whose
-/// drop, with the receiver's, tells [`is_open`](SpeechInbox::is_open).
-struct ChannelInbox {
-    sender: Sender<QueueItem>,
-    taker: Weak<()>,
-}
+/// [`channel_inbox`]'s posting end.
+struct ChannelInbox(Sender<QueueItem>);
 
 impl SpeechInbox for ChannelInbox {
     fn post(&self, item: QueueItem) -> Result<(), QueueItem> {
-        self.sender.send(item).map_err(|error| error.0)
+        self.0.send(item).map_err(|error| error.0)
     }
 
+    /// Always true: a channel inbox cannot see its taker go.
     fn is_open(&self) -> bool {
-        self.taker.strong_count() > 0
+        true
     }
 }
 
 /// [`channel_inbox`]'s taking end.
-struct ChannelTaker {
-    receiver: Receiver<QueueItem>,
-    _alive: Arc<()>,
-}
+struct ChannelTaker(Receiver<QueueItem>);
 
 impl SpeechInboxTaker for ChannelTaker {
     fn take(&mut self) -> Option<QueueItem> {
-        self.receiver.recv().ok()
+        self.0.recv().ok()
     }
 }
 
 /// Posts `event` to `inbox`, giving it back when it was refused.
 pub(crate) fn post(inbox: &dyn SpeechInbox, event: QueueEvent) -> Result<(), QueueEvent> {
     inbox.post(QueueItem(event)).map_err(|item| item.0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The channel inbox is open while its taker lives, and closed, its
-    /// post given back, once the taker has gone.
-    #[test]
-    fn a_channel_inbox_is_closed_once_its_taker_has_gone() {
-        let (inbox, taker) = channel_inbox();
-        assert!(inbox.is_open(), "open while the taker lives");
-        drop(taker);
-        assert!(
-            inbox.post(QueueItem(QueueEvent::TogglePause)).is_err(),
-            "the post is given back"
-        );
-        assert!(!inbox.is_open(), "closed once the taker has gone");
-    }
 }

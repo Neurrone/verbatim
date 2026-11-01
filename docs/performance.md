@@ -1783,21 +1783,22 @@ back pages or not):
   document.
 
 Measured again on 2026-11-01, medians of six runs, after the alignment's
-lookups by row hash became ordered (`docs/design/logic-foundations.md`,
-"Determinism"): sorted vectors searched by binary search, with no hasher.
-Against the hashed maps they replaced on the same day, the lost reads
-above cost 1 to 9% more (a rotation of 1,000 rows 1.34 ms against 1.23 to
-1.26), the overflow and the clear 1 to 3% more, and the bimodal wide
-lines about 9% more at their least. Kept in `BTreeMap`s and `BTreeSet`s
-instead, the same lookups cost 12 to 31% more. Two cases were added:
+lookups by row hash became `BTreeMap`s and `BTreeSet`s
+(`docs/design/logic-foundations.md`, "Determinism"). Against the hashed
+maps they replaced on the same day (a rotation of 1,000 rows 1.23 to 1.26
+ms, an overflow 1.06 to 1.07), the lost reads above cost 12 to 26% more,
+the overflow 30 to 31% more, the clear and reprint 26 to 28% more, and
+the bimodal wide lines 36 to 62% more. Two cases were added:
 
 - A rotation of 1,000 rows over a console buffer enlarged to its greatest
-  height, 32,766 rows, a lost read and the whole document of 4.0 MB: 4.2
+  height, 32,766 rows, a lost read and the whole document of 4.0 MB: 4.9
   ms, against 4.1 with hashed maps, past the reducer's 2 ms budget for a
   read (`docs/design/terminal-model.md`, "Costs").
 - A screen of 29 rows of Chinese text each rewritten with its last
   character changed, every row paired with its old row by likeness: 1.0
-  ms, against 1.7 when likeness looked its characters up in a hashed map.
+  ms, against 1.7 when likeness looked its characters up in a hashed map,
+  measured before the alignment's lookups by row hash became `BTree`
+  collections.
 
 The bound is what the work must touch: hashing and copying every row's
 text once (about 0.1 ms a megabyte each), the vectors kept per row, and in

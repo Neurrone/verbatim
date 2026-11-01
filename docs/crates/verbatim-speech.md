@@ -124,7 +124,8 @@ Public API:
   any pipeline no hook posts to, whose post takes the channel's waker
   lock. `SpeechInbox::is_open()`, which every inbox implements, says
   whether a post given back was refused for now or the queue has gone;
-  the channel inbox's is closed once its taker has been dropped; `QueueItem::cancels_through()` names the key a key
+  the channel inbox's is always true, as it cannot see its taker go;
+  `QueueItem::cancels_through()` names the key a key
   press's cancel carries, for a test that reads what was posted.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
   any thread without blocking, which the keyboard hook and the reducer's
