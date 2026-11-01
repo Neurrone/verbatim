@@ -8,7 +8,7 @@ A change has failed review when any of these holds:
 
 - a parity claim that the pinned NVDA source or a capture contradicts, or a spoken expectation taken from anywhere but a capture;
 - a test that accepts two outcomes, times something, exercises a copy of the production logic, or passes under a mutation that removes the behaviour it names;
-- a call, wake-up, lock, timer or allocation added on the event or speech path that the ledger (`docs/performance.md`) does not state;
+- a call into another process, wake-up, lock or timer added on the event or speech path that the ledger (`docs/performance.md`) does not state; an allocation, a copy or a local call is a finding only when a measurement shows it costs, since code shaped to avoid one adds complexity for nothing, and the ledger records only substantially slow things such as accessibility calls;
 - a race hidden by a retry, a sleep or a bound added without evidence that the proper fix is not enough;
 - a document that describes a removed mechanism, or a decision attributed to Dickson that he did not take;
 - a removal or a protocol change that a remaining caller, document or wire version still depends on.
