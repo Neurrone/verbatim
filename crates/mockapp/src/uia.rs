@@ -216,6 +216,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             }
             raise_text_changed(tree, hwnd, index)?;
         }
+        Command::Flood(count, interval, kind) => flood(tree, hwnd, count, interval, kind)?,
         Command::CaretEvent(id) => {
             let index = tree
                 .lock()
@@ -478,6 +479,50 @@ fn raise_text_changed(tree: &SharedTree, hwnd: HWND, index: usize) -> Result<(),
     // SAFETY: `provider` is a live COM object for the node.
     unsafe { UiaRaiseAutomationEvent(&provider, UIA_Text_TextChangedEventId) }
         .map_err(|error| format!("the text changed event could not be raised: {error}"))
+}
+
+/// `flood`: raises `count` events of `kind`, the `n`th, counting from 0,
+/// `n` intervals after the first, each paced from the start rather than
+/// from the one before, so a wait that overruns is made up. Between two
+/// events the window thread answers calls ([`crate::window::wait_pumping`]);
+/// with no interval it raises them back to back and answers none until
+/// the last is raised.
+fn flood(
+    tree: &SharedTree,
+    hwnd: HWND,
+    count: u32,
+    interval: std::time::Duration,
+    kind: crate::stdin::FloodKind,
+) -> Result<(), String> {
+    use crate::stdin::FloodKind;
+    let index = match kind {
+        FloodKind::Name => 0,
+        FloodKind::Text => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes
+            .iter()
+            .position(|node| node.text.is_some())
+            .ok_or("the fixture has no text node")?,
+    };
+    let started = std::time::Instant::now();
+    for raised in 0..count {
+        if !interval.is_zero() {
+            crate::window::wait_pumping(started + interval * raised)
+                .map_err(|error| format!("the wait between two events failed: {error}"))?;
+        }
+        match kind {
+            FloodKind::Name => {
+                tree.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .nodes[index]
+                    .name = Some(format!("Flood {}", raised + 1));
+                raise_property_changed(tree, hwnd, index, UIA_NamePropertyId)?;
+            }
+            FloodKind::Text => raise_text_changed(tree, hwnd, index)?,
+        }
+    }
+    Ok(())
 }
 
 /// Raises UIA's active text position changed event from the text node at

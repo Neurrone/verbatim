@@ -585,6 +585,73 @@ pub(crate) fn acknowledge(line: &str) {
     let _ = stdout.flush();
 }
 
+/// Waits on the window thread until `until`, answering its messages
+/// meanwhile, as an application's message loop does between two pieces
+/// of its work: every message but mockapp's own posted ones (`WM_APP` up
+/// to the registered messages), which stay queued for the message loop, so
+/// a command is never applied inside another. A high-resolution timer ends
+/// the wait, finer than the system's clock tick.
+pub(crate) fn wait_pumping(until: std::time::Instant) -> windows::core::Result<()> {
+    use windows::Win32::Foundation::{CloseHandle, WAIT_FAILED};
+    use windows::Win32::System::Threading::{
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateWaitableTimerExW, INFINITE, SetWaitableTimer,
+        TIMER_ALL_ACCESS,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx, PM_REMOVE,
+        PeekMessageW, QS_ALLINPUT,
+    };
+    // SAFETY: an unnamed timer with default security; the handle is closed
+    // below.
+    let timer = unsafe {
+        CreateWaitableTimerExW(
+            None,
+            PCWSTR::null(),
+            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+            TIMER_ALL_ACCESS.0,
+        )
+    }?;
+    let waited = (|| loop {
+        let mut msg = MSG::default();
+        // Registered messages start at 0xC000, past the `WM_APP` range.
+        for (low, high) in [(0, WM_APP - 1), (0xC000, u32::MAX)] {
+            // SAFETY: `msg` outlives the call, which writes it.
+            while unsafe { PeekMessageW(&raw mut msg, None, low, high, PM_REMOVE) }.as_bool() {
+                // SAFETY: `msg` was filled by `PeekMessageW` just above.
+                let _ = unsafe { TranslateMessage(&raw const msg) };
+                // SAFETY: as above.
+                unsafe { DispatchMessageW(&raw const msg) };
+            }
+        }
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Ok(());
+        }
+        // Relative due times are negative, in 100-nanosecond units.
+        let due = -i64::try_from(left.as_nanos() / 100)
+            .unwrap_or(i64::MAX)
+            .max(1);
+        // SAFETY: `timer` is the live timer made above; `due` outlives the
+        // call.
+        unsafe { SetWaitableTimer(timer, &raw const due, 0, None, None, false) }?;
+        // SAFETY: `timer` is live for the call.
+        let woke = unsafe {
+            MsgWaitForMultipleObjectsEx(
+                Some(&[timer]),
+                INFINITE,
+                QS_ALLINPUT,
+                MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS(0),
+            )
+        };
+        if woke == WAIT_FAILED {
+            return Err(windows::core::Error::from_thread());
+        }
+    })();
+    // SAFETY: the timer made above, closed once.
+    let _ = unsafe { CloseHandle(timer) };
+    waited
+}
+
 /// Brackets a provider call that `command` makes late or fails with two
 /// lines on stdout, `<command> started <us>` and `<command> ended <us>`,
 /// each with the time in microseconds since the Unix epoch on the run's

@@ -502,7 +502,10 @@ Each file's module comment says exactly what it asserts; in outline:
   text position change are each observed by the matching
   `verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`, one
   registration of all three hears each, and a registration on a focus
-  hears its changes and neither its group's nor a sibling's. These use
+  hears its changes and neither its group's nor a sibling's. A `flood` of
+  name changes raised back to back is heard whole, each event carrying
+  the last name, since UIA fills an event's cache with calls into the
+  window, which answers none until the flood ends. These use
   property, selection and notification changes rather than focus, so they
   never depend on real keyboard focus.
 - `controller_for.rs`: `verbatim_uia::Uia::controlled_descendant` finds a

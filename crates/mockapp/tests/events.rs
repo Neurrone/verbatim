@@ -1,6 +1,6 @@
 //! Cross-process event delivery (architecture section 13, layer 2).
 //!
-//! After a `set-name`, `set-value`, `select`, `notify`, or
+//! After a `set-name`, `flood`, `set-value`, `select`, `notify`, or
 //! `active-text-position` stdin command, asserts that the matching real
 //! client-side registration observes exactly the change: one event, from
 //! the element the command changed, carrying the changed data, read through
@@ -153,6 +153,36 @@ fn uia_set_name_raises_a_property_changed_event() {
             (verbatim_model::Role::Slider, Some("Marker".to_owned())),
             (verbatim_model::Role::List, Some("Options".to_owned()))
         ]
+    );
+
+    app.quit();
+}
+
+/// `flood` raises each of its name changes from the root. Raised back to
+/// back, the window thread answers no call until the last is raised, and
+/// UIA fills each event's cache with calls into the window, so every one
+/// carries the last name.
+fn uia_flood_raises_each_name_change() {
+    let title = common::unique_title("mockapp-events-uia-flood");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let (_registration, changes) = property_changes(hwnd);
+
+    app.send("flood 3 0");
+    app.send("set-name btn1 Marker");
+    let renamed = |name: &str| PropertyChange {
+        name: Some(name.to_owned()),
+        value: None,
+        property: UIA_NamePropertyId.0,
+    };
+    expect_events(
+        &changes,
+        &[
+            renamed("Flood 3"),
+            renamed("Flood 3"),
+            renamed("Flood 3"),
+            renamed("Marker"),
+        ],
     );
 
     app.quit();
@@ -777,6 +807,10 @@ fn main() {
         (
             "uia_set_name_raises_a_property_changed_event",
             uia_set_name_raises_a_property_changed_event,
+        ),
+        (
+            "uia_flood_raises_each_name_change",
+            uia_flood_raises_each_name_change,
         ),
         (
             "uia_set_value_raises_a_property_changed_event",

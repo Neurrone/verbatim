@@ -393,6 +393,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ReportWindow(_) => {
             return Err("report-window is not supported on the msaa backend".into());
         }
+        Command::Flood(..) => {
+            return Err("flood is not supported on the msaa backend".into());
+        }
         Command::Stall(..)
         | Command::OnActivate(_)
         | Command::Slow(_)

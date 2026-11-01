@@ -136,6 +136,19 @@ parses them.
   `slow <ms>` does for every provider call; filling an element's cache
   makes such requests and a walk to its nearest window does not. 0
   answers them at once again.
+- `flood <count> <interval_ms> [name|text]` (UIA only) raises `count`
+  events from the window thread, each `interval_ms` after the one before,
+  paced from the first so a late wait is made up; the interval may be a
+  decimal, such as `0.1` for 10,000 events a second. `name` (the default)
+  renames the root node `Flood 1`, `Flood 2` and so on, raising each name
+  change; `text` raises UIA's text changed event from the fixture's first
+  text node. Between two events the window thread answers calls into the
+  window, as an application's message loop does, but applies no other
+  command; with an interval of 0 the events go back to back and no call
+  is answered until the last, so every event's cache, which UIA fills
+  with calls into the window, holds the last name. It is acknowledged
+  `applied` once the last event is raised, for measuring how a client
+  copes with an application raising many events a second.
 - `refuse-text on` and `refuse-text off` (UIA only): while on, every
   request for a node's text pattern fails with `E_FAIL`, as a provider not
   yet ready does.

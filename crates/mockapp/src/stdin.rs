@@ -10,6 +10,7 @@
 //! `screen <id> <rows>`, `active-text-position <id> <start> <end>`,
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
+//! `flood <count> <interval_ms> [name|text]`,
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`,
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
@@ -56,6 +57,17 @@ pub(crate) enum ParentAnswer {
     Missing,
     /// The call answers the node's parent.
     Usual,
+}
+
+/// Which event `flood` raises.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FloodKind {
+    /// A name change of the root node, which is renamed `Flood <n>` for
+    /// the `n`th event, counting from 1.
+    Name,
+    /// UIA's text changed event from the fixture's first text node, its
+    /// text left as it is.
+    Text,
 }
 
 /// One parsed stdin command.
@@ -183,6 +195,16 @@ pub(crate) enum Command {
     /// (`GetPatternProvider`), which filling an element's cache makes and a
     /// walk to its nearest window does not; 0 answers them at once again.
     SlowPatterns(u64),
+    /// `flood <count> <interval_ms> [name|text]`: raises `count` events of
+    /// the kind named (`name` when it is left out) from the window thread,
+    /// the `n`th, counting from 0, `n` intervals after the first, as an
+    /// application whose content changes many times a second does; the
+    /// interval may be a decimal number of milliseconds. Between two events
+    /// the window thread answers calls into the window, but applies no
+    /// other command; 0 raises them back to back, answering no call until
+    /// the last is raised. Acknowledged once the last event is raised.
+    /// UIA-only.
+    Flood(u32, std::time::Duration, FloodKind),
     /// `refuse-text on` or `refuse-text off`: while on, every request for a
     /// node's text pattern fails (`E_FAIL`) rather than answering, as a
     /// provider that is not ready yet does while its application starts.
@@ -384,6 +406,24 @@ fn stall(rest: &str) -> Option<Command> {
     Some(Command::Stall(ms, Some((at, Box::new(command)))))
 }
 
+/// `flood`'s arguments: how many events, the interval between them in
+/// milliseconds, and optionally their kind.
+fn flood(rest: &str) -> Option<Command> {
+    let mut parts = rest.split_whitespace();
+    let count = parts.next()?.parse().ok()?;
+    let interval: f64 = parts.next()?.parse().ok()?;
+    let interval = std::time::Duration::try_from_secs_f64(interval / 1000.0).ok()?;
+    let kind = match parts.next() {
+        None | Some("name") => FloodKind::Name,
+        Some("text") => FloodKind::Text,
+        Some(_) => return None,
+    };
+    parts
+        .next()
+        .is_none()
+        .then_some(Command::Flood(count, interval, kind))
+}
+
 /// `answer-property`'s arguments, a property's numeric id and how it is
 /// answered.
 fn answer_property(rest: &str) -> Option<Command> {
@@ -499,6 +539,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "on-activate" => parse_command(rest).map(|command| Command::OnActivate(Box::new(command))),
         "slow" => rest.parse().ok().map(Command::Slow),
         "slow-patterns" => rest.parse().ok().map(Command::SlowPatterns),
+        "flood" => flood(rest),
         "refuse-text" => match rest {
             "on" => Some(Command::RefuseText(true)),
             "off" => Some(Command::RefuseText(false)),
@@ -822,6 +863,24 @@ mod tests {
         ));
         assert!(parse_command("fail-acc-parent").is_none());
         assert!(parse_command("fail-acc-parent item other").is_none());
+    }
+
+    #[test]
+    fn parses_flood() {
+        assert!(matches!(
+            parse_command("flood 1000 0.1"),
+            Some(Command::Flood(1000, interval, FloodKind::Name))
+                if interval == std::time::Duration::from_micros(100)
+        ));
+        assert!(matches!(
+            parse_command("flood 5 10 text"),
+            Some(Command::Flood(5, interval, FloodKind::Text))
+                if interval == std::time::Duration::from_millis(10)
+        ));
+        assert!(parse_command("flood 5").is_none());
+        assert!(parse_command("flood 5 -1").is_none());
+        assert!(parse_command("flood 5 10 focus").is_none());
+        assert!(parse_command("flood 5 10 name extra").is_none());
     }
 
     #[test]
