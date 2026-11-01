@@ -752,11 +752,15 @@ impl Shell {
                 dead,
                 replacement,
                 reason,
+                in_hand,
             } => {
                 self.abandoned += 1;
                 tracing::warn!(
                     abandoned = self.abandoned,
                     reason,
+                    in_hand = in_hand.work,
+                    trace = in_hand.trace.map(|trace| trace.to_string()),
+                    window = in_hand.window.map(|window| format!("{window:#x}")),
                     "the worker is abandoned and replaced"
                 );
                 if let Some(generation) = self.generations.remove(&dead) {

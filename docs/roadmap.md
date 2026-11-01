@@ -136,16 +136,19 @@ Further follow-ups from the focus work and the ownership builds:
   the outpost's first call into it passes its deadline (3 of 20 measure
   runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
   host not responding at its outpost's first call"). The kept artifacts
-  show the console host hung on its own; to find what holds it, have the
-  agent log the window thread's wait chain (`GetThreadWaitChain`) when the
-  harness's wait fails on a window not responding, and have the outpost's
-  abandoned-worker warning name the call it was in.
+  show the console host hung on its own. The harness now records the wait
+  chain of each not-responding window's thread and of the launched
+  process's threads when its window wait fails (`wait-chains.txt`), and
+  the outpost's abandoned-worker warning names the entry its worker had in
+  hand; read the next failure's chains to find what holds the window's
+  thread.
 - A new application's window sometimes does not appear within the
   harness's 30 seconds: Notepad five times locally and a mockapp Windows
   Forms window once on GitHub's runner, on 2026-11-01 ([the flaky
   tests](flaky-tests.md), "A new application's window not shown in
-  time"). Find, from a failed run's kept artifacts, whether an outpost's
-  first call holds the new window, as the console host entry above may.
+  time"). Find, from a failed run's kept artifacts and its
+  `wait-chains.txt`, whether an outpost's first call holds the new window,
+  as the console host entry above may.
 - `verbatim-model`'s comment on `DeliveredFact::key` cites NVDA source
   files, which the provenance rule forbids in a platform-neutral crate;
   rewrite it to cite the parity docs.

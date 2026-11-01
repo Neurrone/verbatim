@@ -28,7 +28,9 @@ Public API:
   the shell's close. `Effect`: dispatch a `Program`, send a message,
   release, move the subscription (`Subscription`), drop elements or
   objects, abandon a worker generation (`Abandon`, with the dead
-  generation, its replacement and the reason in words; the shell alone
+  generation, its replacement, the reason in words and what the program
+  had in hand, `InHand`: the kind of entry or other work, the entry's
+  trace and the window it waits on, for the log; the shell alone
   counts the abandoned workers that have not returned), publish the
   facts' marks, given after a transition that changed them and ahead of
   its other effects, or the verdicts, set the gap record's timer, given
