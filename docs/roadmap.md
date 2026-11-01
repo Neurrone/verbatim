@@ -590,7 +590,7 @@ Exit: Eloquence speaks through Verbatim under the sandbox; the latency
 scenario is green in Dickson's run of the `eloquence_` scenarios, recorded
 here.
 
-## M6.1 — MSAA, UIA and Windows call cancellation
+## M6.1 — Hung and flooding applications
 
 Scheduled after M6 and before M7, whose IAccessible2 work adds many COM
 calls into browsers (Dickson, 2026-10-29). Separate from the focus
@@ -607,6 +607,32 @@ is left is MSAA cancellation:
   NVDA's watchdog does, through each call's own cancel object, which
   means fewer abandoned threads in MSAA and IAccessible2 outposts, mostly
   browsers in M7; it removes no mechanism.
+
+Found while weighing the process layout (2026-11-01;
+`docs/uia-bugs.md`, "A hung window named in a system focus event holds
+a process's UIA events"):
+
+- The ghost window: when a window stops answering, Windows shows its
+  ghost, "(Not Responding)", which takes the foreground, and Verbatim
+  speaks nothing, neither then nor when the window answers again.
+  Captured with NVDA first; speech that differs from NVDA's is
+  Dickson's.
+- An event flood wedges the process receiving it: at about 10,000 UIA
+  events a second from one application, UIA's worker thread in the
+  receiving process stops delivering any event and keeps one core busy
+  for at least 90 seconds. A flood of name, value or text changes wedges
+  that application's outpost, and a flood of the events the listener
+  registers desktop-wide (focus, selection, menu opened, notifications)
+  would wedge the listener and with it every application's UIA focus.
+  Nothing detects either, since no call of Verbatim's is stuck. First
+  measured: the rates real applications reach, a terminal's output and
+  bursts of notifications.
+- Queues an application can fill have no count limit: the listener's and
+  the outposts' queues merge by key only, and the outpost mailbox and
+  Core's port queue are unbounded.
+- The listener was held 7.8 seconds by a focus event naming the
+  long-running test window `hung-msaa`, twice the 3.8 seconds against a
+  new one; the cause is not known.
 
 ## M6.2 — Outpost retirement
 
