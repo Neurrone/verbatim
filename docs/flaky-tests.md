@@ -69,6 +69,14 @@ Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release bu
 - Cause: not found. Whether the outpost's first call holds the console host or only waits on it is not in the info-level logs.
 - Fix: none yet; a roadmap follow-up under M4.
 
+## A new application's window not shown in time
+
+Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_typed_words` locally, and mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` under `cargo xtask ci` on GitHub's runner.
+
+- How: setup fails with "no window titled ... opened within 30s" and no Notepad window among the visible ones, before any key is sent; the mockapp test fails with "the window is shown: Timeout". Locally five times on 2026-11-01, in bursts of up to three runs in a row, then passing; on the runner once (run 41254405706). Twelve runs in a row, six idle and six under a release build's load, all passed.
+- Cause: not found. Load from a concurrent build did not reproduce it. Whether an outpost's first call holds the new window, as in the console host entry above, is not yet known; the local batch script now keeps a failed run's artifacts.
+- Fix: none yet; a roadmap follow-up under M4.
+
 ## Mockapp tests under `cargo xtask ci`
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary` and `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`

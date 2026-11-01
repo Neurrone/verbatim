@@ -12,9 +12,11 @@ VM), and M3 (desktop usability core) are complete, and what each
 delivered is in [Completed milestones](roadmap-done.md). M4 is in
 progress; its completed parts, M4.1 (stability) among them, are listed
 there too, and M4.1's open follow-ups are under M4, "Follow-ups from
-M4.1". Next: the keep-id fix, the focus pipeline rework's first step;
-M4.5 (logic foundations); the rework's second build; M4.6 (generated
-tests); then the rework's third build (Dickson, 2026-10-31).
+M4.1". M4.5 (logic foundations) is complete. Next: the simplification
+of code shaped only to avoid allocations (Dickson, 2026-11-01); the
+focus pipeline rework's second build, its design restated against
+M4.5's code; M4.6 (generated tests); then the rework's third build
+(Dickson, 2026-10-31).
 
 ## M4 — Text, editing, and terminals
 
@@ -75,9 +77,8 @@ against mockapp's `object_equality.json` fixture.
 
 Paused after those steps (Dickson, 2026-10-30): reviews kept finding races
 between processes' copies of one fact, so the ownership refactor below
-comes first. The rework then resumes with the keep-id review's fix, half
-built and uncommitted in the worktree `verbatim-wt-fix2`; then M4.5,
-then the second of the remaining builds in
+comes first. The keep-id review's fix and M4.5 are built; the rework
+resumes with the second of the remaining builds in
 [the remaining builds](design/focus-pipeline-rework-remaining.md), then
 M4.6, then the third (Dickson, 2026-10-31). The second build's design,
 written against today's `intake.rs` and `focus_read.rs`, is restated
@@ -135,6 +136,12 @@ Further follow-ups from the focus work and the ownership builds:
   runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
   host not responding at its outpost's first call"). Find which call it
   is, at debug level, and whether it holds the console host.
+- A new application's window sometimes does not appear within the
+  harness's 30 seconds: Notepad five times locally and a mockapp Windows
+  Forms window once on GitHub's runner, on 2026-11-01 ([the flaky
+  tests](flaky-tests.md), "A new application's window not shown in
+  time"). Find, from a failed run's kept artifacts, whether an outpost's
+  first call holds the new window, as the console host entry above may.
 - `verbatim-model`'s comment on `DeliveredFact::key` cites NVDA source
   files, which the provenance rule forbids in a platform-neutral crate;
   rewrite it to cite the parity docs.
@@ -270,78 +277,6 @@ Text and selection:
 
 - `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. The caret and selection rework removes the first check and runs the scenario ten times; if it still fails, the likely cause, unconfirmed, is Core comparing "alpha" while the outpost's word unit reads "alpha " with its white space.
 - The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it; the caret and selection rework's captures settle it.
-
-## M4.5 — Logic foundations
-
-Built after the keep-id fix and before the focus pipeline rework's
-remaining builds (Dickson, 2026-10-31). The design, its rules, the
-alternatives weighed and its limits are in
-[logic tests](design/logic-tests.md); the evidence and the review are in
-`experiments/logic-tests-study/readme.md`.
-
-- `verbatim-outpost` split by role: `verbatim-outpost` and
-  `verbatim-listener`, each its own executable, and `verbatim-supervisor`,
-  with one-way dependencies; their logic in `verbatim-outpost-logic`,
-  `verbatim-listener-logic` and `verbatim-reader-rules` (the rules both
-  readers apply before reading), in the GPL tier with no Windows
-  dependency, and the supervisor's pure decisions in `verbatim-core`; the
-  shared window code in `verbatim-win32`, and the message layer, launch
-  arguments and alarm in `verbatim-process`. A `cargo xtask ci` check that
-  the logic crates depend on no Windows crate, and that no
-  platform-neutral crate depends on a GPL-tier crate, closing the holes
-  the platform-neutral check has (build dependencies, `winapi`, and
-  Windows-only workspace crates). The full end-to-end suite runs once at
-  the end, since how the listener starts changes.
-- The outpost's program bookkeeping simplified, moved from M6.1 (Dickson,
-  2026-10-31): test settles merged into the idle query, so one barrier
-  remains; verdicts posted as a message of their own, so a dead
-  generation's commits are refused with no exception; each program given
-  fresh copies of the reducer's facts at dispatch, so the worker keeps
-  none between programs; whether the console poll must yield to other
-  programs, or a simpler rule, such as a program waiting behind it for at
-  most its 50 ms, removes its slot and the re-dispatch behind it (the poll
-  itself stays, since the console host raises caret events only on its
-  cursor's blink); and a program's one commit and its end posted as one
-  message, if a measurement shows the hop costs. Each part is judged on
-  wake-ups and latency as well as on the states it removes.
-- Fault injection at the six hand-off operations whose failure paths held
-  defects (de7f481e, d6f627a5, 76180512, 1bfb6f87, 61a4bfa1, 0d1e7802),
-  each with a test that the request is still answered, the work still
-  taken and the shutdown finished.
-- Flags shared between threads that decide a wake, such as the relay
-  mailbox's `posted`, removed, the wake decided by reading the state; a
-  mark used within one thread made a guard that clears it when dropped.
-- A debug-build check that fails when a call into an application is
-  counted while one of the outpost's locks is held (d0ec3a89, fc899340),
-  its cost stated in the performance ledger.
-- `xtask` built on any platform, its Windows-only commands applying only on
-  Windows, and a Linux job in CI that builds and tests the logic crates
-  and `verbatim-core` and runs `cargo xtask docs` and the scans.
-- Determinism enforced in the pure crates (Dickson, 2026-10-31): no
-  standard hash map or set, whose order changes with each process, no
-  clock, no randomness, no thread and no environment read, checked by
-  Clippy's disallowed types and methods per crate and by the ownership
-  scan, after an audit of the standard hash maps and sets there.
-- The reducers simplified (Dickson, 2026-10-31), from
-  `experiments/logic-tests-study/radical-simplification-study.md` and the
-  purity audit beside it, in this order, each with its own design and
-  review: the caret watch decided wholly by the outpost's reducer, with
-  the held caret key's second bound, first, since the watch has had six
-  rounds of fixes; then the determinism builds of
-  [the logic foundations](design/logic-foundations.md), "Determinism",
-  with the outpost's three local reads made inputs; one pure worker
-  charge shared by the outpost and the listener, after the first; Core's
-  outstanding queries in one table owned by its reducer, with a shell
-  item's wait under two deadlines in a row, and the hook's hold decision
-  in the keyboard decision machine, after the second; the simpler
-  owners last. One child record in a pure supervisor is M6.2's.
-- `CLAUDE.md` updated for the third kind of crate and for the Linux job
-  beside `cargo xtask ci` in its Commands section.
-- Before and after: wake-ups, processor time, each child's memory, and
-  `cargo xtask ci`'s time.
-
-Exit: `cargo xtask ci` and the Linux job pass; the full end-to-end suite
-passes once; each fault point has a test.
 
 ## M4.6 — Generated tests
 
@@ -1080,6 +1015,12 @@ each of them end to end.
   sends on reach elevated windows, so they are held there too
   ([holding caret keys](design/key-holding.md), "Elevated windows";
   Dickson, 2026-10-22).
+- In the keyboard decision machine, a release whose key's press still
+  waits in the line waits behind it whatever the permit, so a key
+  released as a window Verbatim cannot hold keys in comes to the front
+  is not left down; with UIAccess no send Verbatim makes is dropped, so
+  the rule holds in every window ([the logic foundations](design/logic-foundations.md),
+  "The hook's hold decision", Limitations; Dickson, 2026-11-01).
 - The secure desktop and the lock screen wait for UIAccess support,
   without which Verbatim cannot read the secure desktop (Dickson,
   2026-10-12).

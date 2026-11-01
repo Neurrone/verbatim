@@ -851,7 +851,7 @@ The order of work: measure before; the enumerated test against today's code, sho
 ### Limitations
 
 - The permit is gathered before the machine decides, so the window in front is read for keys that end neither held nor deferred.
-- When the permit falls to `None` (a window Core has no view of, or an elevated one, comes to the front) while a deferred press waits in the line, its release passes at once and can reach the application before the shell's send of the press, leaving the key down in Windows when that send is delivered. Fixing it needs a permit that says whether the shell's sends will be dropped, since `None` cannot tell a window that drops them from one that does not; that is a question for Dickson.
+- When the permit falls to `None` (a window Core has no view of, or an elevated one, comes to the front) while a deferred press waits in the line, its release passes at once and can reach the application before the shell's send of the press, leaving the key down in Windows when that send is delivered. `None` cannot tell a window that drops the shell's sends from one that does not, so the fix waits for UIAccess (M8.1), with which no send is dropped: a release whose key's press still waits in the line then waits behind it whatever the permit (Dickson, 2026-11-01).
 
 ### Decisions
 

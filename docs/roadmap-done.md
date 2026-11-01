@@ -104,6 +104,22 @@ M4.1 is complete (Dickson, 2026-10-21): Verbatim stopped crashing and stalling a
 - No outpost connects to a new window after its probe, so a new File Explorer window's first item is queued within about 320 ms of its event ([the listener design](design/listener-without-connections.md), risk 11).
 - The suggestions-closed sound played twice in Settings' search box matches NVDA (`docs/parity/changes-and-selection.md`, "Suggestions appearing and going away").
 
+## M4.5, logic foundations
+
+Complete (2026-11-01). The design, its decisions and its limits are in [the logic foundations](design/logic-foundations.md) and [logic tests](design/logic-tests.md); the evidence is in `experiments/logic-tests-study/`. Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
+
+- the outpost split by role into `verbatim-outpost`, `verbatim-listener` and `verbatim-supervisor`, their logic in `verbatim-outpost-logic`, `verbatim-listener-logic` and `verbatim-reader-rules`, with a tier check in `cargo xtask ci`;
+- `xtask` on Linux and the `ci-linux` job;
+- the outpost's program bookkeeping simplified;
+- the caret watch decided wholly by the outpost's reducer, with the held caret key's one bound;
+- determinism enforced in the crates on a reducer's path, in three builds: ordered maps and sets, times and trace ids as inputs, the outpost's local reads as asks, the other pure owners, and simpler types;
+- the work in flight, one record shared by the outpost and the listener;
+- Core's query table, one owner for every query Core asks;
+- the hook's hold decision in the keyboard decision machine, fixing the stuck key;
+- fault points at the failure paths, wakes decided by reading the state, and a debug-build check that no call is made under an outpost lock.
+
+Exit met: `cargo xtask ci` and the Linux job pass, the full end-to-end suite passed once (run 41250342483), and each fault point has a test. The before-and-after figures for each child's memory and `cargo xtask ci`'s time were dropped from the exit (Dickson, 2026-11-01); each build's wake-ups and processor time are in its section of the design.
+
 ## M4.4, message types in their final home
 
 The messages exchanged with the outposts and the listener are `verbatim_model::protocol`'s plain serde types, one enum per direction and role, each variant of a declared kind, with merging declared by the type and the supervisor's generations as typestates ([the messages build](design/ownership.md)). It came before M5 because M5's extension API exposes those types.
