@@ -1,5 +1,5 @@
 //! The relay's failure paths, each run through its fault point
-//! (`docs/design/logic-foundations.md`, "Failure paths and locks"): a
+//! (`docs/design/logic-tests.md`, "Failure paths and locks"): a
 //! message the app's port refuses is delivered again, in order, and a
 //! shutdown whose mailbox wake the relay's port refuses still ends.
 //!

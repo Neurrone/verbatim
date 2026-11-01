@@ -1,5 +1,5 @@
 //! Fault points: the hand-offs whose failure paths the tests run
-//! (`docs/design/logic-foundations.md`, "Failure paths and locks").
+//! (`docs/design/logic-tests.md`, "Failure paths and locks").
 //!
 //! A fault point is a call to [`hit`] placed immediately before the
 //! operation it stands for, with a subject naming that call: the item

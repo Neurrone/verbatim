@@ -75,7 +75,7 @@
 //!
 //! Each application's read under way is its work in flight in the
 //! schedule (`verbatim_reader_rules::in_flight`,
-//! `docs/design/logic-foundations.md`, "The work in flight, shared by both
+//! `docs/design/logic-tests.md`, "The work in flight, shared by both
 //! readers"), which abandons a thread whose read runs past
 //! [`READ_DEADLINE`], the budget and the one call that can be under way
 //! when the budget passes, and, as NVDA's watchdog cancels a slow call

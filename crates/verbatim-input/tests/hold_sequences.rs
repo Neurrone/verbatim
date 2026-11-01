@@ -1,7 +1,7 @@
 //! Every short sequence of keys, pass-ons and permit changes through the
 //! decision machine, checked against a reference model of what the
-//! application should receive (`docs/design/logic-foundations.md`, "The
-//! hook's hold decision", "Tests").
+//! application should receive (`docs/design/logic-tests.md`, "The
+//! hook's hold decision").
 //!
 //! The alphabet is eleven steps: Right Arrow's press (an auto-repeat when
 //! it is already down) and release, A's, Shift's and the Verbatim

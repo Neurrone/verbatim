@@ -1,7 +1,7 @@
 //! The outpost's one kind of lock: every lock `verbatim-outpost` declares
 //! is a [`Lock`], which records, in debug builds, that the thread holds it,
 //! so a call into an application made while it is held fails the check of
-//! `verbatim_win32::held_locks` (`docs/design/logic-foundations.md`,
+//! `verbatim_win32::held_locks` (`docs/design/logic-tests.md`,
 //! "Failure paths and locks"). The crate's `clippy.toml` disallows
 //! `std::sync::Mutex`, so no lock escapes the check. In release builds a
 //! `Lock` is the mutex and its guard, with nothing recorded.

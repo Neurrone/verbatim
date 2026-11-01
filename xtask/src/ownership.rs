@@ -25,7 +25,7 @@
 //!   inside an allowed type is a review rule, held by the mixer's
 //!   allocation test.
 //!
-//! - The determinism rule (`docs/design/logic-foundations.md`,
+//! - The determinism rule (`docs/design/logic-tests.md`,
 //!   "Determinism"), over every crate on a reducer's path, which the tier
 //!   check derives from the dependency graph ([`determinism`]): each keeps
 //!   a `clippy.toml` identical to `verbatim-core`'s, which names every
@@ -623,7 +623,7 @@ fn expand(tree: &str) -> Vec<String> {
 
 /// What each covered crate's `clippy.toml` must name, as Clippy's
 /// `disallowed-types` and `disallowed-methods` entries
-/// (`docs/design/logic-foundations.md`, "The enforcement").
+/// (`docs/design/logic-tests.md`, "Determinism").
 const DETERMINISM_ENTRIES: [&str; 122] = [
     "std::collections::HashMap",
     "std::collections::HashSet",
@@ -750,8 +750,8 @@ const DETERMINISM_ENTRIES: [&str; 122] = [
 ];
 /// The files that may `expect` `clippy::disallowed_types` and
 /// `clippy::disallowed_methods`, with a reason, and no other file of a
-/// covered crate may (`docs/design/logic-foundations.md`, "The
-/// enforcement"): the two cost measurements, which time with `Instant`;
+/// covered crate may (`docs/design/logic-tests.md`, "Determinism"): the
+/// two cost measurements, which time with `Instant`;
 /// the replay fixture's test, which reads its file; the mint's own test;
 /// and the conformance corpus's reader and its test.
 const EXPECT_EXCEPTIONS: [&str; 6] = [
@@ -804,7 +804,7 @@ const FORBIDDEN_MODULES: [&str; 5] = [
 /// variables, seed at random and persist failures to files; the prelude's
 /// `ProptestConfig` is listed by name, since a match after a letter is not
 /// a match
-/// (`docs/design/logic-foundations.md`, "Third-party crates").
+/// (`docs/design/logic-tests.md`, "Third-party crates").
 const FORBIDDEN_CALLS: [&str; 9] = [
     "enabled!",
     "event_enabled!",
@@ -831,7 +831,7 @@ const LINT_FLAGS: [&str; 8] = [
 
 /// Runs the determinism rule over the `covered` crates, each in
 /// `crates/<name>`, from the workspace root `root`
-/// (`docs/design/logic-foundations.md`, "The enforcement"), returning the
+/// (`docs/design/logic-tests.md`, "Determinism"), returning the
 /// findings as the error.
 pub fn determinism(root: &Path, covered: &BTreeSet<String>) -> Result<(), String> {
     let mut report = String::new();
@@ -881,7 +881,7 @@ pub fn determinism(root: &Path, covered: &BTreeSet<String>) -> Result<(), String
         Ok(())
     } else {
         Err(format!(
-            "a crate on a reducer's path breaks the determinism rule (docs/design/logic-foundations.md, \"Determinism\"):\n{report}"
+            "a crate on a reducer's path breaks the determinism rule (docs/design/logic-tests.md, \"Determinism\"):\n{report}"
         ))
     }
 }

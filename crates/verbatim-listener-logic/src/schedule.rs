@@ -9,7 +9,7 @@
 //! microseconds on the shell's monotonic clock, and returns the
 //! [`ScheduleEffect`]s, in the order the shell applies them under its lock.
 //! Each application's read under way is its work in flight
-//! ([`InFlight`], `docs/design/logic-foundations.md`, "The work in flight,
+//! ([`InFlight`], `docs/design/logic-tests.md`, "The work in flight,
 //! shared by both readers"), which decides its abandonment, its
 //! publication at its bound and the half-second judgment of whether the
 //! user has moved on; what it needs of Windows it asks by an effect

@@ -300,9 +300,6 @@ is [logic tests](design/logic-tests.md), "M4.6".
 - Fixed seeds and case counts in `cargo xtask ci` (Dickson, 2026-10-31); a
   separate exploration job with new seeds, whose failures become fixed
   cases.
-- A recorder of reducer inputs in end-to-end and NVDA capture sessions,
-  and replay tests comparing what is spoken, exactly, with the captures,
-  after checking whether the captures hold enough of the inputs.
 - `cargo-mutants` on the reducer crates, limited to changed code.
 - Each generated case run twice in the gate and its effects compared, so a
   leak of nondeterminism fails at once.
@@ -1022,8 +1019,8 @@ each of them end to end.
   waits in the line waits behind it whatever the permit, so a key
   released as a window Verbatim cannot hold keys in comes to the front
   is not left down; with UIAccess no send Verbatim makes is dropped, so
-  the rule holds in every window ([the logic foundations](design/logic-foundations.md),
-  "The hook's hold decision", Limitations; Dickson, 2026-11-01).
+  the rule holds in every window ([logic tests](design/logic-tests.md),
+  "The hook's hold decision"; Dickson, 2026-11-01).
 - The secure desktop and the lock screen wait for UIAccess support,
   without which Verbatim cannot read the secure desktop (Dickson,
   2026-10-12).

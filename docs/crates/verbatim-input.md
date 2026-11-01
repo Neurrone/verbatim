@@ -28,7 +28,7 @@ Public API:
   `EmittedGesture` — the pure state machine, which owns its `GestureMap`,
   given at construction, and reads no clock, trace id or shared state.
   It decides each key transition whole; the hook gathers its inputs,
-  carries out the verdict and reports (`docs/design/logic-foundations.md`,
+  carries out the verdict and reports (`docs/design/logic-tests.md`,
   "The hook's hold decision"). `on_key(input)` takes a `KeyInput`: the
   event; the time in microseconds on the run's shared clock, which the
   hook reads once for each key, so tests script entire key streams with

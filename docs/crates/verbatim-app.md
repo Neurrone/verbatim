@@ -499,8 +499,9 @@ knowing for review:
   reduction before an outpost answered) apart from its handling of the
   answer, so the line names the hook to Core, the request's way to the
   outpost, and caret wait stages as well. Every key the hook reports
-  (`key_seen`, called on the hook thread, one atomic store) is kept as the
-  last key, and each line ends with the time from it to the speech
+  (`key_seen`, called on the hook thread, one atomic store of a time and
+  a flag packed in one `AtomicU64`, since no lock may be taken on the hook
+  thread) is kept as the last key, and each line ends with the time from it to the speech
   queued, whatever trace the speech came on. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
   `core_read_at_us` on the way back; `docs/design/communication.md`, section 10.1),

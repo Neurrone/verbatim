@@ -2101,7 +2101,7 @@ fn the_ground_truth_reader_passes_the_corpus() {
 /// Random streams, from the oracle's fixed configuration: run by a
 /// `TestRunner` built from it rather than by the `proptest!` macro, which
 /// the determinism rule leaves out of the crates on a reducer's path
-/// (`docs/design/logic-foundations.md`, "Third-party crates").
+/// (`docs/design/logic-tests.md`, "Third-party crates").
 #[test]
 fn the_ground_truth_reader_passes_random_streams() {
     let mut runner = proptest::test_runner::TestRunner::new(random_config());

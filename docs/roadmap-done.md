@@ -106,7 +106,7 @@ M4.1 is complete (Dickson, 2026-10-21): Verbatim stopped crashing and stalling a
 
 ## M4.5, logic foundations
 
-Complete (2026-11-01). The design, its decisions and its limits are in [the logic foundations](design/logic-foundations.md) and [logic tests](design/logic-tests.md); the evidence is in `experiments/logic-tests-study/`. Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
+Complete (2026-11-01). The design, its decisions and its limits are in [logic tests](design/logic-tests.md), "M4.5: the foundations"; the evidence is in `experiments/logic-tests-study/`. Built, each with its design review, implementation review and related scenarios, and pushed after the full suite ran on GitHub:
 
 - the outpost split by role into `verbatim-outpost`, `verbatim-listener` and `verbatim-supervisor`, their logic in `verbatim-outpost-logic`, `verbatim-listener-logic` and `verbatim-reader-rules`, with a tier check in `cargo xtask ci`;
 - `xtask` on Linux and the `ci-linux` job;
@@ -118,7 +118,7 @@ Complete (2026-11-01). The design, its decisions and its limits are in [the logi
 - the hook's hold decision in the keyboard decision machine, fixing the stuck key;
 - fault points at the failure paths, wakes decided by reading the state, and a debug-build check that no call is made under an outpost lock.
 
-Exit met: `cargo xtask ci` and the Linux job pass, the full end-to-end suite passed once (run 41250342483), and each fault point has a test. The before-and-after figures for each child's memory and `cargo xtask ci`'s time were dropped from the exit (Dickson, 2026-11-01); each build's wake-ups and processor time are in its section of the design.
+Exit met: `cargo xtask ci` and the Linux job pass, the full end-to-end suite passed once (run 41250342483), and each fault point has a test. The before-and-after figures for each child's memory and `cargo xtask ci`'s time were dropped from the exit (Dickson, 2026-11-01); each build's wake-ups and processor time are summarized in that section, "Measured before and after".
 
 ## M4.4, message types in their final home
 

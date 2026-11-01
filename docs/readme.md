@@ -70,11 +70,10 @@ suite, the VM harness, NVDA captures and troubleshooting.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.
-  - [logic-tests.md](design/logic-tests.md) — the crates split by role,
-    failure-path tests and the outpost's simplified bookkeeping (M4.5), and
+  - [logic-tests.md](design/logic-tests.md) — what M4.5 decided and why
+    (the crates by role, determinism, the work in flight, Core's query
+    table, the hook's hold decision, failure paths and the cost rule), and
     generated tests of the reducers against reference models (M4.6).
-  - [logic-foundations.md](design/logic-foundations.md) — the designs of
-    M4.5's builds, starting with the crate split by role.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound.
   - [focus-pipeline.md](design/focus-pipeline.md) — how focus events
@@ -102,9 +101,6 @@ suite, the VM harness, NVDA captures and troubleshooting.
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
     declared with its request.
-  - [allocation-simplification.md](design/allocation-simplification.md)
-    — removing code shaped only to avoid allocations, and the ledger's
-    entries of that size, with the instructions that caused them.
   - [wake-ups.md](design/wake-ups.md) — the sources of Verbatim's
     wake-ups and the reason for each fix.
   - [terminal-model.md](design/terminal-model.md) — how terminal screens

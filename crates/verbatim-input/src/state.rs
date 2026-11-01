@@ -605,7 +605,7 @@ impl DecisionMachine {
     }
 
     /// The verdict on a transition the rules above passed or swallowed,
-    /// recording what it did to its key (`docs/design/logic-foundations.md`,
+    /// recording what it did to its key (`docs/design/logic-tests.md`,
     /// "The hook's hold decision"): a caret key's press is held while the
     /// permit lets it be; any other transition that would pass is deferred
     /// while a transition waits in the line and the permit lets it be,

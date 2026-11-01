@@ -1,8 +1,8 @@
 //! The check of the crate tiers, `cargo xtask ci`'s first step
-//! (`docs/design/logic-foundations.md`, "The tier check in `cargo xtask
-//! ci`"): every workspace member is classed in one tier, and what each
-//! tier's crates may reach is read from the dependency graph, so the
-//! boundaries are facts of the graph rather than conventions.
+//! (`docs/design/logic-tests.md`, "Crates by role"): every workspace
+//! member is classed in one tier, and what each tier's crates may reach
+//! is read from the dependency graph, so the boundaries are facts of the
+//! graph rather than conventions.
 //!
 //! The graph is `cargo metadata`'s, read once with no platform filter, over
 //! normal and build edges, development edges left out: an edge gated on
@@ -29,7 +29,7 @@
 //!   one-way dependencies.
 //!
 //! It also derives the crates the determinism rule covers
-//! (`docs/design/logic-foundations.md`, "Determinism"), from the graph with
+//! (`docs/design/logic-tests.md`, "Determinism"), from the graph with
 //! its development edges ([`covered`]), and holds each of their direct
 //! third-party dependencies to [`DETERMINISTIC_THIRD_PARTY`].
 
@@ -163,7 +163,7 @@ pub const REDUCERS: &[&str] = &[
 
 /// The third-party crates a crate on a reducer's path may depend on
 /// directly, by a normal, build or development edge
-/// (`docs/design/logic-foundations.md`, "Third-party crates").
+/// (`docs/design/logic-tests.md`, "Third-party crates").
 ///
 /// The rule for adding one: the functions called from the path, and the
 /// crate's own dependencies they reach, are checked from its source for a

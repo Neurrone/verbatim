@@ -1,5 +1,5 @@
 //! The work in flight: a reader's record of the one slow-call item a
-//! worker is running (`docs/design/logic-foundations.md`, "The work in
+//! worker is running (`docs/design/logic-tests.md`, "The work in
 //! flight, shared by both readers"). A worker is an outpost's worker
 //! thread, or one of the focus listener's reading threads; each reader
 //! embeds its own [`InFlight`], the outpost one and the listener one per

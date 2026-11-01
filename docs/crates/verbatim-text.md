@@ -254,7 +254,11 @@ milliseconds for the costliest (a lost read's whole document, an overflow
 that keeps nothing, a clear and reprint, or the subsequence's worst case);
 handling a whole-document read raises the peak by a few megabytes. The
 figures are in `docs/performance.md`, "A terminal's rotation" and "A
-terminal's reads in Core".
+terminal's reads in Core". The alignment's lookups by row hash are
+`BTreeMap`s and `BTreeSet`s, as the determinism rule asks of every crate
+on a reducer's path, at 12 to 62% more time on those cases than the
+fixed-hasher maps they replaced, kept as the simpler code
+(`docs/design/logic-tests.md`, "Determinism").
 
 ### Tests
 

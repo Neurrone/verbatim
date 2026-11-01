@@ -44,7 +44,7 @@ Public API:
   to the foreground window, the rules the test ends with, which an outpost
   also reports in an event's window facts.
 - `in_flight` — the work in flight: a reader's record of the one slow-call
-  item a worker is running (`docs/design/logic-foundations.md`, "The work
+  item a worker is running (`docs/design/logic-tests.md`, "The work
   in flight, shared by both readers"). `InFlight<T>` holds the worker
   generation in charge and the last request number given, and the item
   running: its `Request` (generation and number), its start and deadline,

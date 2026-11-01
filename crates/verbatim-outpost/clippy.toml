@@ -1,6 +1,6 @@
 # Every lock this crate declares is an `outpost::lock::Lock`, which records
 # in debug builds that its thread holds it, so a call into an application
-# made under it fails the check (docs/design/logic-foundations.md, "Failure
+# made under it fails the check (docs/design/logic-tests.md, "Failure
 # paths and locks"). A plain mutex would escape the check.
 
 disallowed-types = [

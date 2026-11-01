@@ -2,7 +2,7 @@
 
 Fault points: the hand-offs whose failure paths held defects, made to fail
 on demand so a test runs the production failure path
-(`docs/design/logic-foundations.md`, "Failure paths and locks"). It is a
+(`docs/design/logic-tests.md`, "Failure paths and locks"). It is a
 Windows-tier crate that depends only on `workspace-hack`, and only tests
 build it: every point is compiled under `cfg(any(test, feature = "faults"))`
 in the crate that places it, so a release build and the end-to-end build
