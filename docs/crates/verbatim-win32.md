@@ -11,6 +11,20 @@ Windows-specific crate and depends on `verbatim-model`,
 
 Public API:
 
+- `held_locks` — the debug-build lock check: `hold(location)` records in
+  the calling thread's eight slots that it holds a lock taken there,
+  returning a `Held` whose drop empties that slot, so the record is right
+  whatever order guards drop in; `check(what)` fails when any slot is
+  filled, writing a message naming `what`, its place and every lock's
+  place to standard error and the log, then panicking with a
+  `LockHeldAcrossCall` payload; a ninth lock held at once fails the same
+  way. `abort_if_lock_check(payload)` ends the process when a panic caught
+  around application calls carries that payload, so no catch hides it.
+  `acquisitions()` counts the locks taken through `hold`. In release
+  builds `hold` and `check` do nothing. The outpost's `Lock` takes the
+  slot; the backends check at every counted call and agile reference
+  ([verbatim-outpost](verbatim-outpost.md)).
+
 - `window` — queries by window handle. The general ones: `window_exists`,
   `window_is_visible`, `is_enabled`, `is_child`, `desktop_window`,
   `window_class_name`, `window_thread`, `style`, `rect`, `parent`,

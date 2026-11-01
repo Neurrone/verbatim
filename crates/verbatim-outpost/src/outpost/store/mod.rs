@@ -53,8 +53,10 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use super::lock::{Lock, LockGuard};
 
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
@@ -89,7 +91,6 @@ pub(super) struct Removed {
     uia: Vec<verbatim_uia::Released>,
     msaa: Vec<verbatim_ia2::Released>,
     /// Elements a lookup replaced as a node's ([`Nodes::keep`]).
-    #[expect(dead_code, reason = "kept only to be dropped by the holder")]
     elements: Vec<Agile<Kept>>,
     patterns: Vec<Patterns>,
     /// UIA ranges of text positions.
@@ -97,6 +98,15 @@ pub(super) struct Removed {
     terminals: Vec<Terminal>,
     /// Objects entries came with, never taken.
     parked: Vec<Parked>,
+}
+
+impl Drop for Removed {
+    /// Releasing an application's object can call into its process, so it
+    /// is never made under one of the outpost's locks, checked in debug
+    /// builds; the fields are dropped after this.
+    fn drop(&mut self) {
+        verbatim_win32::held_locks::check("the release of the store's removed objects");
+    }
 }
 
 impl Removed {
@@ -290,7 +300,7 @@ pub(super) struct Store {
     anchor_numbers: Arc<AtomicU64>,
     /// The last key given a UIA range.
     range_keys: AtomicU64,
-    state: Mutex<State>,
+    state: Lock<State>,
 }
 
 impl Default for Store {
@@ -312,7 +322,7 @@ impl Store {
             requests: AtomicU64::new(0),
             anchor_numbers: anchors,
             range_keys: AtomicU64::new(0),
-            state: Mutex::new(State {
+            state: Lock::new(State {
                 nodes: HashMap::new(),
                 anchors: HashMap::new(),
                 anchor_nodes: HashMap::new(),
@@ -326,8 +336,9 @@ impl Store {
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    #[track_caller]
+    fn lock(&self) -> LockGuard<'_, State> {
+        self.state.lock()
     }
 
     /// Parks `object`, returning the key it is parked under.
@@ -361,7 +372,7 @@ impl Store {
             store: self,
             generation: tag.generation,
             request: AtomicU64::new(tag.request),
-            replaced: Mutex::new(Vec::new()),
+            replaced: Lock::new(Vec::new()),
         }
     }
 
@@ -790,7 +801,7 @@ pub(super) struct Nodes<'a> {
     /// [`retag`](Self::retag) changes when the worker starts owed work.
     generation: u64,
     request: AtomicU64,
-    replaced: Mutex<Vec<Agile<Kept>>>,
+    replaced: Lock<Vec<Agile<Kept>>>,
 }
 
 impl Nodes<'_> {
@@ -805,12 +816,10 @@ impl Nodes<'_> {
     /// The elements this handle's lookups replaced, for the caller to drop
     /// once no lock is held.
     pub(super) fn take_removed(&self) -> Removed {
-        Removed {
-            elements: std::mem::take(
-                &mut *self.replaced.lock().unwrap_or_else(PoisonError::into_inner),
-            ),
-            ..Removed::default()
-        }
+        let elements = std::mem::take(&mut *self.replaced.lock());
+        let mut removed = Removed::default();
+        removed.elements = elements;
+        removed
     }
 
     /// The kept UIA node for `runtime_id`, if there is one, looked up.
@@ -854,10 +863,7 @@ impl Nodes<'_> {
             state.tag_node(node, self.tag());
             (node, replaced)
         };
-        self.replaced
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend(replaced);
+        self.replaced.lock().extend(replaced);
         node
     }
 }

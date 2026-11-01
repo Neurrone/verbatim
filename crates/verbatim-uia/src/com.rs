@@ -64,7 +64,9 @@ pub fn timed_out(error: &windows::core::Error) -> bool {
 /// logged and the event dropped, as the outpost's worker drops an entry
 /// whose handling panicked.
 pub(crate) fn guarded(handler: &str, body: impl FnOnce()) {
-    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_err() {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+        // A failed lock check is never hidden by the catch.
+        verbatim_win32::held_locks::abort_if_lock_check(&*payload);
         tracing::error!(
             handler,
             "a UIA event callback panicked; the event is dropped"

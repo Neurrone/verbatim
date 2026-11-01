@@ -440,6 +440,19 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   costs one wake. Every lock its thread takes is a short hold with no
   call: the mailbox's, the backlog's with the store's inside it for a
   release, the store's for a commit's writes, and a worker's charge.
+- Locks (`outpost::lock`): every lock the crate declares is a
+  `Lock<T>`, a mutex whose `lock` is `#[track_caller]` and, in debug
+  builds, records in the thread's slots where it was taken
+  (`verbatim_win32::held_locks`); its `LockGuard` empties the slot when
+  dropped. The crate's `clippy.toml` disallows `std::sync::Mutex`, so no
+  lock escapes the record. A call into an application made while a slot
+  is filled fails the debug-build check: every call the backends count,
+  every agile reference, a bounded client's wait and the drop of the
+  store's `Removed` check. The worker's catch around a program
+  (`worker::catching`), UIA's around its event callbacks and the bounded
+  client's around its operations end the process when the panic is the
+  check's. An outpost logs its lock acquisitions at shutdown in a debug
+  build (`docs/performance.md`, "The debug-build lock check").
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret

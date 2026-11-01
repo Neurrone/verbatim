@@ -738,6 +738,25 @@ added: every walk makes the calls it made before.
   the carried ones, and also frees nodes and anchors no message carried
   once their request ends, which before were kept for the outpost's life.
 
+### The debug-build lock check
+
+Debug builds only; a release build records nothing and checks nothing
+(`docs/design/logic-foundations.md`, "Failure paths and locks"). No
+wake-up and no call into an application is added.
+
+- Each acquisition of one of the outpost's locks fills a slot of its
+  thread's record and counts the acquisition, and each release empties
+  the slot: about 60 ns added per acquisition, 83 to 88 ns against 25 ns
+  for the plain mutex, in a debug build on this x64 machine (three runs of
+  `measure_lock_check`, `crates/verbatim-outpost/src/outpost/lock.rs`).
+- Each counted call, agile reference, bounded wait and release of the
+  store's removed objects scans the calling thread's eight slots.
+- An outpost logs at its shutdown, in a debug build, how many locks it
+  took ("the outpost's lock acquisitions"), from which the acquisitions per
+  focus change on `measure_focus_text_box` and per key on
+  `measure_keys_notepad` are read, and with the cost above the time added
+  to each.
+
 ### A focus change, MSAA, cold
 
 - Minimum and today: 28 MSAA calls and 1 window message, the steady

@@ -493,12 +493,12 @@ mod tests {
     #[test]
     fn the_walk_is_out_of_time_at_its_last_call_time_or_its_budget() {
         let start = std::time::Instant::now();
-        let elapsed = std::sync::Arc::new(std::sync::Mutex::new(Duration::ZERO));
+        let elapsed = std::sync::Arc::new(crate::outpost::lock::Lock::new(Duration::ZERO));
         let read = std::sync::Arc::clone(&elapsed);
-        let clock: Clock = std::sync::Arc::new(move || start + *read.lock().expect("clock"));
+        let clock: Clock = std::sync::Arc::new(move || start + *read.lock());
         let shared = Cell::new(1_000_000_u64);
         let set = |at: Duration| {
-            *elapsed.lock().expect("clock") = at;
+            *elapsed.lock() = at;
             shared.set(1_000_000 + u64::try_from(at.as_micros()).expect("small"));
         };
         let early = walk_limit(&clock, || shared.get(), 1_800_000);

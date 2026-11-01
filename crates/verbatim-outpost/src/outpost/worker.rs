@@ -34,8 +34,10 @@
 #![forbid(unsafe_code)]
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, PoisonError};
+
+use super::lock::{Lock, LockGuard};
 use std::thread;
 use std::time::Instant;
 
@@ -103,7 +105,7 @@ pub(super) struct Job {
 /// walk's bound.
 #[derive(Default)]
 pub(super) struct Charge {
-    state: Mutex<ChargeState>,
+    state: Lock<ChargeState>,
 }
 
 #[derive(Default)]
@@ -149,8 +151,9 @@ pub(super) enum Returned {
 }
 
 impl Charge {
-    fn lock(&self) -> std::sync::MutexGuard<'_, ChargeState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    #[track_caller]
+    fn lock(&self) -> LockGuard<'_, ChargeState> {
+        self.state.lock()
     }
 
     /// Whether the generation was abandoned.
@@ -312,6 +315,17 @@ fn run(
 
 /// Runs one program, after dropping what the shell let go of, and posts its
 /// end.
+/// Runs a program's body, catching a panic, which answers the program as
+/// panicked; a failed lock check's panic ends the process instead, in
+/// debug builds, so no caught panic hides it.
+pub(super) fn catching(body: impl FnOnce()) -> std::thread::Result<()> {
+    let handled = catch_unwind(AssertUnwindSafe(body));
+    if let Err(payload) = &handled {
+        verbatim_win32::held_locks::abort_if_lock_check(&**payload);
+    }
+    handled
+}
+
 fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<Charge>) {
     let Job { program, garbage } = job;
     // Objects the shell let go of: releasing one can call into the
@@ -330,7 +344,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         RequestContext::for_program(context, tag, (request, facts, waiting), Arc::clone(charge));
     let mut reported = false;
     let mut cut = None;
-    let handled = catch_unwind(AssertUnwindSafe(|| match work {
+    let handled = catching(|| match work {
         Work::Entry {
             entry,
             handling,
@@ -371,7 +385,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         Work::Finish { cut, waiting } => {
             Worker::new(&request_context, client, 0, cut.timing).finish(*cut, waiting);
         }
-    }));
+    });
     // Text writes no commit after them carried: a program's text calls
     // write nothing but through a commit.
     request_context.commit_text();

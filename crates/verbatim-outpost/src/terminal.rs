@@ -15,9 +15,9 @@
 
 pub mod reading;
 
+use crate::outpost::lock::Lock;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, PoisonError};
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
@@ -260,12 +260,12 @@ const SPARES: usize = 2;
 /// Buffers a terminal's text and screen are converted into, given back
 /// once the read that used them has been written to Core, so an ordinary
 /// read allocates nothing for them.
-static SPARE: Mutex<VecDeque<(TerminalText, TerminalText)>> = Mutex::new(VecDeque::new());
+static SPARE: Lock<VecDeque<(TerminalText, TerminalText)>> = Lock::new(VecDeque::new());
 
 /// Gives the buffers of `snapshot`, written to Core, back for the next
 /// read, emptied and kept to at most [`SPARE_KEPT_BYTES`] each.
 pub fn recycle(snapshot: TerminalSnapshot) {
-    let mut spare = SPARE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut spare = SPARE.lock();
     if spare.len() >= SPARES {
         return;
     }
@@ -283,11 +283,7 @@ pub fn recycle(snapshot: TerminalSnapshot) {
 /// A pair of buffers for a read's text and screen: spare ones when there
 /// are, new ones otherwise.
 fn spare() -> (TerminalText, TerminalText) {
-    SPARE
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .pop_front()
-        .unwrap_or_default()
+    SPARE.lock().pop_front().unwrap_or_default()
 }
 
 /// `units`, UTF-16 as a terminal's provider gives its text, in `into`'s

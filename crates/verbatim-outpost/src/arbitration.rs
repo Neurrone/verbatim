@@ -75,7 +75,9 @@
 //! change.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crate::outpost::lock::{Lock, LockGuard};
 use std::time::{Duration, Instant};
 
 use verbatim_ia2::WindowCache;
@@ -396,7 +398,7 @@ fn provider_usable(
 /// lists or a kept verdict of `judgement`'s, at its observation: local
 /// calls only.
 pub(crate) fn known_to_use_uia(
-    arbitrator: &Mutex<Arbitrator>,
+    arbitrator: &Lock<Arbitrator>,
     judgement: &dyn Judgement,
     hwnd: isize,
 ) -> bool {
@@ -411,7 +413,7 @@ pub(crate) fn known_to_use_uia(
 /// timed out is read through MSAA, and kept as a "no" for
 /// [`NEGATIVE_VERDICT_LIFETIME`] from the probe's end.
 pub(crate) fn uses_uia(
-    arbitrator: &Mutex<Arbitrator>,
+    arbitrator: &Lock<Arbitrator>,
     judgement: &dyn Judgement,
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
@@ -431,7 +433,7 @@ pub(crate) fn uses_uia(
 /// ([`PostProbeCheck::Console`]), which an outpost reads by the window's
 /// handle ([`verbatim_uia::console_reports_formatting`]).
 fn decide(
-    arbitrator: &Mutex<Arbitrator>,
+    arbitrator: &Lock<Arbitrator>,
     judgement: &dyn Judgement,
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
@@ -525,11 +527,7 @@ impl EventWindows {
     /// the thread that takes in an outpost's `WinEvents`.
     pub(crate) fn known_to_use_uia(
         &mut self,
-        (arbitrator, verdicts, overrides): (
-            &Mutex<Arbitrator>,
-            impl FnOnce() -> Arc<Verdicts>,
-            u64,
-        ),
+        (arbitrator, verdicts, overrides): (&Lock<Arbitrator>, impl FnOnce() -> Arc<Verdicts>, u64),
         (hwnd, owner): (isize, u32),
         classes_of: impl FnOnce(isize) -> WindowClasses,
     ) -> bool {
@@ -561,10 +559,9 @@ impl EventWindows {
 
 /// `arbitrator`, locked: a poisoned lock is taken as it is, as its state
 /// stays consistent.
-fn lock(arbitrator: &Mutex<Arbitrator>) -> std::sync::MutexGuard<'_, Arbitrator> {
-    arbitrator
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+#[track_caller]
+fn lock(arbitrator: &Lock<Arbitrator>) -> LockGuard<'_, Arbitrator> {
+    arbitrator.lock()
 }
 
 #[cfg(test)]
@@ -583,7 +580,7 @@ mod tests {
     /// read of its classes counted in `reads`.
     fn uia_window_known(
         windows: &mut EventWindows,
-        arbitrator: &Mutex<Arbitrator>,
+        arbitrator: &Lock<Arbitrator>,
         reads: &std::cell::Cell<u32>,
     ) -> bool {
         let verdicts = || Arc::new(Verdicts::default());
@@ -595,7 +592,7 @@ mod tests {
 
     #[test]
     fn the_event_thread_reads_a_windows_classes_once_for_its_events() {
-        let arbitrator = Mutex::new(Arbitrator::default());
+        let arbitrator = Lock::new(Arbitrator::default());
         let mut windows = EventWindows::default();
         let reads = std::cell::Cell::new(0);
         for _ in 0..3 {
@@ -606,7 +603,7 @@ mod tests {
 
     #[test]
     fn the_event_thread_forgets_a_destroyed_window() {
-        let arbitrator = Mutex::new(Arbitrator::default());
+        let arbitrator = Lock::new(Arbitrator::default());
         let mut windows = EventWindows::default();
         let reads = std::cell::Cell::new(0);
         assert!(uia_window_known(&mut windows, &arbitrator, &reads));
@@ -649,7 +646,7 @@ mod tests {
     /// An arbitrator with the reducer's record of verdicts, as the tests
     /// judge `WINDOW` with them.
     struct Judged {
-        arb: Mutex<Arbitrator>,
+        arb: Lock<Arbitrator>,
         /// The reducer's record.
         record: RefCell<Verdicts>,
         /// The worker generation in charge.
@@ -703,18 +700,14 @@ mod tests {
     /// An arbitrator whose observation clock reads the time the test sets
     /// in the returned cell, in microseconds, which starts at 0, and whose
     /// probe answers `probe`, with an empty record.
-    fn arbitrator_on_test_clock(probe: verbatim_uia::RawProbe) -> (Judged, Arc<Mutex<u64>>) {
-        let time = Arc::new(Mutex::new(0));
+    fn arbitrator_on_test_clock(probe: verbatim_uia::RawProbe) -> (Judged, Arc<Lock<u64>>) {
+        let time = Arc::new(Lock::new(0));
         let mut arb = Arbitrator::new(&[]);
         let read = Arc::clone(&time);
-        arb.set_observation_clock(Arc::new(move || {
-            *read
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        }));
+        arb.set_observation_clock(Arc::new(move || *read.lock()));
         arb.set_probe(probe);
         let judged = Judged {
-            arb: Mutex::new(arb),
+            arb: Lock::new(arb),
             record: RefCell::new(Verdicts::default()),
             in_charge: Cell::new(0),
         };
@@ -722,8 +715,8 @@ mod tests {
     }
 
     /// The test clock's cell set to `us`.
-    fn set(time: &Mutex<u64>, us: u64) {
-        *time.lock().unwrap() = us;
+    fn set(time: &Lock<u64>, us: u64) {
+        *time.lock() = us;
     }
 
     /// The window the tests judge: not a real window, so its classes are
@@ -789,20 +782,16 @@ mod tests {
     #[test]
     fn a_walks_time_limit_runs_out_by_the_arbitrators_clock() {
         let start = Instant::now();
-        let time = Arc::new(std::sync::Mutex::new(start));
+        let time = Arc::new(Lock::new(start));
         let mut arb = Arbitrator::new(&[]);
         let read = Arc::clone(&time);
-        arb.set_clock(Arc::new(move || {
-            *read
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        }));
+        arb.set_clock(Arc::new(move || *read.lock()));
         let budget = Duration::from_secs(1);
         let clock = arb.clock();
         let out_of_time = time_limit(&clock, budget);
-        *time.lock().unwrap() = start + budget.saturating_sub(Duration::from_millis(1));
+        *time.lock() = start + budget.saturating_sub(Duration::from_millis(1));
         assert!(!out_of_time());
-        *time.lock().unwrap() = start + budget;
+        *time.lock() = start + budget;
         assert!(out_of_time());
     }
 

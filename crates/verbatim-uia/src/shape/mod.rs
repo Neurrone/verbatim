@@ -431,7 +431,10 @@ impl<S: Shape> Cached<S> {
     /// # Errors
     ///
     /// The COM error if the agile reference cannot be made.
+    #[track_caller]
     pub fn agile(&self) -> windows::core::Result<Agile<S>> {
+        // Making one can call into the element's process.
+        verbatim_win32::held_locks::check("an agile reference");
         Ok(Agile {
             element: AgileReference::new(&self.live.element)?,
             gates: self.gates,

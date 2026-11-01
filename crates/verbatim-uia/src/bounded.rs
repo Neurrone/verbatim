@@ -79,16 +79,23 @@ impl BoundedClient {
     /// [`Unanswered::DeadlinePassed`] as above; [`Unanswered::NoClient`]
     /// when the thread could not create its client, or `operation`
     /// panicked, or this client is closed.
+    #[track_caller]
     pub fn run<T: Send + 'static>(
         &self,
         deadline: Duration,
         operation: impl FnOnce(&Uia) -> T + Send + 'static,
     ) -> Result<T, Unanswered> {
+        // A wait on another thread's call into an application.
+        verbatim_win32::held_locks::check("a bounded wait on a call into an application");
         let (answer_tx, answer_rx) = mpsc::sync_channel::<(T, CallCounts, u32)>(1);
         let job: Job = Box::new(move |uia| {
             // A panic drops the way back, which the caller hears as no
             // client, and leaves the thread serving.
             let answer = catch_unwind(AssertUnwindSafe(|| operation(uia)));
+            if let Err(payload) = &answer {
+                // A failed lock check is never hidden by the catch.
+                verbatim_win32::held_locks::abort_if_lock_check(&**payload);
+            }
             let calls = crate::calls::take();
             let failed_reads = crate::calls::take_failed_reads();
             if let Ok(answer) = answer {

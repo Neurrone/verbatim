@@ -1,0 +1,9 @@
+# Every lock this crate declares is an `outpost::lock::Lock`, which records
+# in debug builds that its thread holds it, so a call into an application
+# made under it fails the check (docs/design/logic-foundations.md, "Failure
+# paths and locks"). A plain mutex would escape the check.
+
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "use outpost::lock::Lock, which the debug-build lock check records" },
+    { path = "std::sync::MutexGuard", reason = "use outpost::lock::LockGuard, which the debug-build lock check records" },
+]

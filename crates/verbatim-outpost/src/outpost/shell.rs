@@ -19,9 +19,11 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use super::lock::{Lock, LockGuard};
 use std::thread;
 use std::time::Instant;
 
@@ -114,7 +116,7 @@ pub(super) enum Posted {
 /// reducer's marks and verdicts that the producers' drops are judged by.
 #[derive(Default)]
 pub(super) struct Mailbox {
-    state: Mutex<MailboxState>,
+    state: Lock<MailboxState>,
     /// The shell's wait: its event ends the wait when something is
     /// appended, and its high-resolution timer when the reducer's next
     /// timer comes.
@@ -136,8 +138,9 @@ struct MailboxState {
 }
 
 impl Mailbox {
-    fn lock(&self) -> MutexGuard<'_, MailboxState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    #[track_caller]
+    fn lock(&self) -> LockGuard<'_, MailboxState> {
+        self.state.lock()
     }
 
     /// Appends `posted`, waking the shell if it waits. Nothing is taken
@@ -224,7 +227,7 @@ impl Mailbox {
     }
 
     /// Releases `state`, ending the shell's wait if it waits.
-    fn rouse(&self, mut state: MutexGuard<'_, MailboxState>) {
+    fn rouse(&self, mut state: LockGuard<'_, MailboxState>) {
         let asleep = std::mem::take(&mut state.asleep);
         drop(state);
         if asleep {

@@ -10,7 +10,10 @@
 //!   for a console window is its console host, not the client Windows names
 //!   as its owner.
 //! - [`integrity`]: a process's integrity level.
+//! - [`held_locks`]: the debug-build check that no call into an
+//!   application is made under one of the outpost's locks.
 
+pub mod held_locks;
 pub mod integrity;
 pub mod provider;
 pub mod window;

@@ -455,7 +455,6 @@ fn measure_conversion() {
         let after_faults = (page_faults() - faults) / RUNS;
         let spare: usize = super::SPARE
             .lock()
-            .expect("the spare buffers")
             .iter()
             .map(|(text, screen)| text.text.capacity() + screen.text.capacity())
             .sum();

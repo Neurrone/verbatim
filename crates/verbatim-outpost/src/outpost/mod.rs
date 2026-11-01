@@ -43,6 +43,7 @@
 mod bound;
 mod commit;
 mod focus_path;
+pub(crate) mod lock;
 mod narrowing;
 mod outbound;
 mod read;
@@ -58,7 +59,9 @@ use std::collections::HashMap;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, OnceLock};
+
+use lock::{Lock, LockGuard};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
@@ -175,7 +178,7 @@ pub(crate) struct Context {
     /// ([`verbatim_model::WindowFacts::application`]), by process: the
     /// application's own, read when it is assigned, and a console client's,
     /// read the first time a focus in its console window is reported.
-    application_names: Mutex<ApplicationNames>,
+    application_names: Lock<ApplicationNames>,
     outbound: Outbound,
     /// What every producer appends to and the reducer's shell drains
     /// ([`shell`]).
@@ -184,17 +187,17 @@ pub(crate) struct Context {
     epoch: Instant,
     /// What times the gap record's bound in place of the reducer's own
     /// timer, when a test sets one ([`Outpost::set_gap_timer`]).
-    gap_timer: Mutex<Option<Arc<dyn GapTimer>>>,
+    gap_timer: Lock<Option<Arc<dyn GapTimer>>>,
     /// Abandoned workers that have not yet returned, as the reducer last
     /// counted them: an atomic, so the I/O thread answers a ping without
     /// waiting on anything.
     abandoned: AtomicUsize,
     /// The reducer's thread, which returns every worker thread started.
-    shell: Mutex<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
+    shell: Lock<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
     /// Every application object the outpost keeps, and the identity it
     /// gives each ([`store`]).
     store: store::Store,
-    arbitrator: Mutex<Arbitrator>,
+    arbitrator: Lock<Arbitrator>,
     /// The clock the outpost's own hook and subscriptions stamp their
     /// events' observations with, and its arbitrator its verdicts' keeps
     /// by: the run's shared clock, unless a test sets its own
@@ -218,27 +221,27 @@ pub(crate) struct Context {
     /// window's lifetime, since a window's provider does not change. Each
     /// is kept with the thread that owned it, so a reused handle, whose
     /// destroy event was lost, is not read the classic way by mistake.
-    classic_windows: Mutex<HashMap<isize, u32>>,
+    classic_windows: Lock<HashMap<isize, u32>>,
     /// The details the active theme wants read for each node
     /// ([`CoreToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
     /// their cache requests; MSAA reads skip their calls, through the MSAA
     /// registry, which holds the same.
-    fetches: Mutex<Fetches>,
+    fetches: Lock<Fetches>,
     /// How the worker reads the element that has the keyboard focus, for a
     /// focus-now query: a UIA focus event's element comes from the focus
     /// listener's read instead.
     focused_element: FocusedElementReader,
     /// How the worker reads the foreground window when it records the
     /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
-    foreground: Mutex<ForegroundReader>,
+    foreground: Lock<ForegroundReader>,
     /// How a focus-now query reads the window with the keyboard focus
     /// ([`Outpost::set_focus_window_reader`]).
-    focus_window: Mutex<FocusWindowReader>,
+    focus_window: Lock<FocusWindowReader>,
     /// How the worker judges whether a window can be read, or is no
     /// window, a ghost's or a hung application's
     /// ([`Outpost::set_window_readability_reader`]).
-    window_readability: Mutex<WindowReadabilityReader>,
+    window_readability: Lock<WindowReadabilityReader>,
     /// The events application support asked for from any window of the
     /// application, whatever the foreground ([`acceptance`]).
     requested_events: acceptance::RequestedEvents,
@@ -569,10 +572,7 @@ impl Context {
     /// module; empty when it cannot be read. Read once per process, then
     /// remembered while the process runs ([`ApplicationNames`]).
     fn application_name(&self, pid: u32) -> String {
-        self.application_names
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .name(pid)
+        self.application_names.lock().name(pid)
     }
 
     /// [`Outpost::failed_reads`].
@@ -586,18 +586,14 @@ impl Context {
             .saturating_add(callbacks)
     }
 
-    fn arbitrator(&self) -> MutexGuard<'_, Arbitrator> {
-        self.arbitrator
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    #[track_caller]
+    fn arbitrator(&self) -> LockGuard<'_, Arbitrator> {
+        self.arbitrator.lock()
     }
 
     /// The gap record's timer a test set, if one did.
     fn gap_timer(&self) -> Option<Arc<dyn GapTimer>> {
-        self.gap_timer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.gap_timer.lock().clone()
     }
 
     /// Now on the clock the outpost stamps its own events' observations
@@ -615,36 +611,21 @@ impl Context {
     /// The handle of the window with the keyboard focus, by the reader the
     /// outpost was given ([`Outpost::set_focus_window_reader`]).
     fn focus_window(&self) -> Option<isize> {
-        let reader = Arc::clone(
-            &self
-                .focus_window
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
+        let reader = Arc::clone(&self.focus_window.lock());
         reader()
     }
 
     /// Why window `hwnd` cannot be read, `None` when it can, by the reader
     /// the outpost was given ([`Outpost::set_window_readability_reader`]).
     fn window_unreadable(&self, hwnd: isize) -> Option<&'static str> {
-        let reader = Arc::clone(
-            &self
-                .window_readability
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
+        let reader = Arc::clone(&self.window_readability.lock());
         reader(hwnd)
     }
 
     /// The foreground window's handle, by the reader the outpost was given
     /// ([`Outpost::set_foreground_reader`]).
     fn foreground_window(&self) -> isize {
-        let reader = Arc::clone(
-            &self
-                .foreground
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
+        let reader = Arc::clone(&self.foreground.lock());
         reader()
     }
 
@@ -669,15 +650,14 @@ impl Context {
         self.outbound.publish(self.store.record(message));
     }
 
-    fn classic_windows(&self) -> MutexGuard<'_, HashMap<isize, u32>> {
-        self.classic_windows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    #[track_caller]
+    fn classic_windows(&self) -> LockGuard<'_, HashMap<isize, u32>> {
+        self.classic_windows.lock()
     }
 
     /// The details the active theme wants read for each node.
     fn fetches(&self) -> Fetches {
-        *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
+        *self.fetches.lock()
     }
 
     /// The request a node is fetched with, for the details the active
@@ -1058,26 +1038,26 @@ impl Outpost {
     ) -> Self {
         let context = Arc::new(Context {
             target_pid: AtomicU32::new(0),
-            application_names: Mutex::default(),
+            application_names: Lock::default(),
             outbound,
             mailbox: Mailbox::default(),
             epoch: Instant::now(),
-            gap_timer: Mutex::new(None),
+            gap_timer: Lock::new(None),
             abandoned: AtomicUsize::new(0),
-            shell: Mutex::new(None),
+            shell: Lock::new(None),
             store: store::Store::new(),
-            arbitrator: Mutex::new(Arbitrator::new(&[])),
+            arbitrator: Lock::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
             ignored: verbatim_process::held::IgnoredProcesses::from_env(),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             remote_operations: options.remote_operations,
-            classic_windows: Mutex::new(HashMap::new()),
-            fetches: Mutex::new(Fetches::default()),
+            classic_windows: Lock::new(HashMap::new()),
+            fetches: Lock::new(Fetches::default()),
             focused_element,
-            foreground: Mutex::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
-            focus_window: Mutex::new(Arc::new(verbatim_win32::window::focus_window)),
-            window_readability: Mutex::new(Arc::new(
+            foreground: Lock::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
+            focus_window: Lock::new(Arc::new(verbatim_win32::window::focus_window)),
+            window_readability: Lock::new(Arc::new(
                 verbatim_win32::window::event_window_unreadable,
             )),
             requested_events: acceptance::RequestedEvents::default(),
@@ -1092,7 +1072,7 @@ impl Outpost {
         }
 
         let shell = Shell::start(&context, warm);
-        *context.shell.lock().unwrap_or_else(PoisonError::into_inner) = Some(shell);
+        *context.shell.lock() = Some(shell);
 
         // The MSAA hooks, process-scoped (decision D13), installed once the
         // outpost has its application: focus, foreground, menu opening,
@@ -1354,11 +1334,7 @@ impl Outpost {
     /// reached ([`gap_bound_reacher`](Self::gap_bound_reacher)) rather than
     /// waiting for it.
     pub fn set_gap_timer(&self, timer: Arc<dyn GapTimer>) {
-        *self
-            .context
-            .gap_timer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(timer);
+        *self.context.gap_timer.lock() = Some(timer);
         self.context.mailbox.post(Posted::GapTimerGiven);
     }
 
@@ -1397,11 +1373,7 @@ impl Outpost {
     /// ancestor: a test whose application runs on a desktop where no window
     /// can take the foreground says which window is the foreground.
     pub fn set_foreground_reader(&self, reader: ForegroundReader) {
-        *self
-            .context
-            .foreground
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = reader;
+        *self.context.foreground.lock() = reader;
     }
 
     /// Reads the window with the keyboard focus with `reader` from now on,
@@ -1410,11 +1382,7 @@ impl Outpost {
     /// test whose application runs on a desktop where no window can take
     /// the keyboard focus says which window has it.
     pub fn set_focus_window_reader(&self, reader: FocusWindowReader) {
-        *self
-            .context
-            .focus_window
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = reader;
+        *self.context.focus_window.lock() = reader;
     }
 
     /// Judges whether a window can be read with `reader` rather than by
@@ -1422,11 +1390,7 @@ impl Outpost {
     /// Windows does only after the application has not answered for five
     /// seconds.
     pub fn set_window_readability_reader(&self, reader: WindowReadabilityReader) {
-        *self
-            .context
-            .window_readability
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = reader;
+        *self.context.window_readability.lock() = reader;
     }
 
     /// Tells the outpost that no focus listener forwards its application's
@@ -1519,10 +1483,7 @@ impl Outpost {
                 });
             }
             CoreToOutpost::Fetches(fetches) => {
-                *context
-                    .fetches
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = *fetches;
+                *context.fetches.lock() = *fetches;
                 context.store.set_fetches(*fetches);
             }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
@@ -1828,11 +1789,7 @@ fn read_answer(item: &Item) -> Option<GapAnswer> {
 /// its call, however long UIA takes to end a call the application does not
 /// answer. Returns how many worker threads were waited for.
 fn stop(context: &Context) -> usize {
-    let shell = context
-        .shell
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .take();
+    let shell = context.shell.lock().take();
     let Some(shell) = shell else {
         return 0;
     };
@@ -1932,6 +1889,14 @@ pub fn run_pipe(
         (Err(error), None) => Err(error),
     };
     outpost.shut_down(Some(&mut io));
+    if cfg!(debug_assertions) {
+        // For the measure of the lock check's cost (`docs/performance.md`,
+        // "The debug-build lock check").
+        tracing::info!(
+            acquisitions = verbatim_win32::held_locks::acquisitions(),
+            "the outpost's lock acquisitions, each recorded by the debug-build lock check"
+        );
+    }
     // The process has finished with UIA: only its exit gives back the
     // process-wide hold, which ends the registering thread every
     // registration in the process shares.

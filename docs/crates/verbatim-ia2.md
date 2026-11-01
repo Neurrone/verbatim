@@ -421,6 +421,9 @@ by Core on entering the window: one acquisition; `progress`, an
   as NVDA strips the direction marks from list view items and the clock.
 - `calls` — the count of the cross-process calls `acquire` makes, kept per
   thread like `verbatim-uia`'s: `calls::count(kind)` and `calls::take()`.
+  `count`, and the making of an object's agile reference, call the
+  debug-build lock check (`verbatim_win32::held_locks::check`), which
+  fails when the thread holds one of the outpost's locks.
   Every `IAccessible` method, `IAccIdentity`'s identity string, the
   acquisitions (`AccessibleObjectFromEvent`, `AccessibleObjectFromWindow`,
   `AccessibleChildren`, `WindowFromAccessibleObject`), and a

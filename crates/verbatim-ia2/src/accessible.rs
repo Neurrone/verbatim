@@ -127,7 +127,10 @@ impl Accessible {
 
     /// An agile reference to the object, for the registry to keep. Not a
     /// counted call.
+    #[track_caller]
     pub(crate) fn agile(&self) -> Option<AgileReference<IAccessible>> {
+        // Making one can call into the object's process.
+        verbatim_win32::held_locks::check("an agile reference");
         AgileReference::new(&self.object).ok()
     }
 

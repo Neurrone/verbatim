@@ -45,7 +45,11 @@ thread_local! {
 }
 
 /// Counts one cross-process call of `kind` on this thread.
+#[track_caller]
 pub fn count(kind: CallKind) {
+    // No counted call is made under one of the outpost's locks, checked in
+    // debug builds.
+    verbatim_win32::held_locks::check("a counted call into an application");
     COUNTS.with(|counts| {
         let mut current = counts.get();
         current.record(kind);
