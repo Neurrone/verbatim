@@ -210,8 +210,64 @@ impl MessagePipe {
 /// focus, set by the test before it hands the outpost a UIA focus.
 pub type FocusSlot = Arc<Mutex<Option<AgileReference<IUIAutomationElement>>>>;
 
-/// Where the outpost's read of the foreground window waits while a test
-/// holds its worker ([`OutpostUnderTest::hold_worker`]),
+/// Has `outpost` read `foreground` as the foreground window, counting its
+/// reads, and hold its worker as a foreground change's program begins
+/// while the test closes the gate returned: the program runs after the
+/// outpost's test of the change, made as its reducer took it in.
+fn read_the_tests_foreground(
+    outpost: &Outpost,
+    foreground: &Arc<AtomicIsize>,
+) -> (Arc<ReadCount>, Arc<WorkerGate>) {
+    let reader = Arc::clone(foreground);
+    let foreground_reads = Arc::new(ReadCount::default());
+    let reads = Arc::clone(&foreground_reads);
+    outpost.set_foreground_reader(Arc::new(move || {
+        reads.count();
+        reader.load(Ordering::Relaxed)
+    }));
+    let gate = Arc::new(WorkerGate::default());
+    let worker_gate = Arc::clone(&gate);
+    outpost.observe_foreground_programs(Arc::new(move |_| worker_gate.pass()));
+    (foreground_reads, gate)
+}
+
+/// How many times something was read, with the condition a test waits on
+/// for it to reach a count.
+#[derive(Default)]
+struct ReadCount {
+    count: Mutex<u64>,
+    changed: std::sync::Condvar,
+}
+
+impl ReadCount {
+    /// Counts one read.
+    fn count(&self) {
+        *self.count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        self.changed.notify_all();
+    }
+
+    /// The reads so far.
+    fn read(&self) -> u64 {
+        *self.count.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits until the reads reach `count`.
+    fn wait_for(&self, count: u64) {
+        let reads = self.count.lock().unwrap_or_else(PoisonError::into_inner);
+        let (reads, timeout) = self
+            .changed
+            .wait_timeout_while(reads, super::WAIT_TIMEOUT, |reads| *reads < count)
+            .unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            !timeout.timed_out(),
+            "the outpost read the foreground window {} times, never {count}",
+            *reads
+        );
+    }
+}
+
+/// Where the outpost's worker waits, as a foreground change's program
+/// begins, while a test holds it ([`OutpostUnderTest::hold_worker`]),
 /// so that events the test raises meanwhile wait in the outpost's intake and
 /// are planned as one batch once it lets the worker go on.
 #[derive(Default)]
@@ -222,13 +278,13 @@ struct WorkerGate {
 
 #[derive(Default)]
 struct GateState {
-    /// Whether the next read waits.
+    /// Whether the next foreground change's program waits.
     closed: bool,
-    /// Whether a read is waiting.
+    /// Whether one is waiting.
     waiting: bool,
-    /// How many times a read has come to wait at the gate.
+    /// How many times one has come to wait at the gate.
     arrivals: u64,
-    /// How many waiting reads may go on while the gate stays closed
+    /// How many waiting programs may go on while the gate stays closed
     /// ([`OutpostUnderTest::step_worker`]).
     passes: u64,
 }
@@ -262,14 +318,14 @@ impl WorkerGate {
         assert!(!timeout.timed_out(), "the test never let the worker go on");
     }
 
-    /// On the test: lets the read waiting at the closed gate and the
-    /// `reads - 1` after it go on, and waits for the worker to wait at the
-    /// gate with the read after those.
-    fn step(&self, reads: u64) {
+    /// On the test: lets the program waiting at the closed gate and the
+    /// `changes - 1` after it go on, and waits for the worker to wait at
+    /// the gate with the program after those.
+    fn step(&self, changes: u64) {
         let mut state = self.lock();
         assert!(state.waiting, "the worker is not waiting at the gate");
-        let arrived = state.arrivals + reads;
-        state.passes += reads;
+        let arrived = state.arrivals + changes;
+        state.passes += changes;
         self.changed.notify_all();
         let (state, timeout) = self
             .changed
@@ -474,8 +530,7 @@ pub struct OutpostUnderTest {
     heard: Receiver<Heard>,
     next_request: u64,
     pub focus: FocusSlot,
-    /// Where the outpost's read of the foreground window waits while the
-    /// test holds its worker.
+    /// Where the outpost's worker waits while the test holds it.
     gate: Arc<WorkerGate>,
     /// The time the outpost and the listener's reader read.
     time: Arc<Mutex<Instant>>,
@@ -487,6 +542,9 @@ pub struct OutpostUnderTest {
     system_time: Arc<AtomicBool>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
+    /// How many times the outpost has read the foreground window, which a
+    /// test waits on as the evidence of the outpost's test of an entry.
+    foreground_reads: Arc<ReadCount>,
     /// The focus listener's reader, standing in for the listener's thread
     /// for mockapp's application.
     reader: RefCell<FocusReader>,
@@ -703,13 +761,7 @@ impl OutpostUnderTest {
         });
         outpost.set_clock(Arc::clone(&clock));
         let (observation, gap_timer) = observe_on_the_tests_time(&outpost, observation_time);
-        let reader = Arc::clone(&foreground);
-        let gate = Arc::new(WorkerGate::default());
-        let worker_gate = Arc::clone(&gate);
-        outpost.set_foreground_reader(Arc::new(move || {
-            worker_gate.pass();
-            reader.load(Ordering::Relaxed)
-        }));
+        let (foreground_reads, gate) = read_the_tests_foreground(&outpost, &foreground);
         // And the window with the keyboard focus is that window too.
         let focus_window = Arc::clone(&foreground);
         outpost
@@ -741,6 +793,7 @@ impl OutpostUnderTest {
             jump_after,
             system_time,
             foreground,
+            foreground_reads,
             reader: RefCell::new(reader),
             listener_queued: Cell::new(0),
             listener_left_at: Cell::new(0),
@@ -854,6 +907,18 @@ impl OutpostUnderTest {
     /// on.
     pub fn set_foreground(&self, hwnd: HWND) {
         self.foreground.store(hwnd.0 as isize, Ordering::Relaxed);
+    }
+
+    /// How many times the outpost has read the foreground window so far.
+    pub fn foreground_reads(&self) -> u64 {
+        self.foreground_reads.read()
+    }
+
+    /// Waits until the outpost has read the foreground window `count`
+    /// times in all: the evidence that it has tested an entry against the
+    /// foreground, while nothing else reads it.
+    pub fn wait_for_foreground_reads(&self, count: u64) {
+        self.foreground_reads.wait_for(count);
     }
 
     /// Moves the time the outpost and the listener's reader read on by `by`.
@@ -1253,38 +1318,36 @@ impl OutpostUnderTest {
     }
 
     /// Holds the outpost's idle worker: hands it a foreground change of
-    /// mockapp's window, whose acceptance test's read of the foreground
-    /// window waits until [`Self::release_worker`], and returns once the
-    /// worker is waiting there. Events the test then has the application
-    /// raise wait in the outpost's intake, and are planned as one batch
-    /// when the worker goes on. The change itself says nothing: UIA owns
-    /// mockapp's window in its UIA backend, the only one this is for. The
-    /// worker waits under the change's deadline, so a step that holds it
-    /// must be brief.
+    /// mockapp's window, whose program waits as it begins until
+    /// [`Self::release_worker`] ([`Outpost::observe_foreground_programs`]),
+    /// and returns once the worker is waiting there. Events the test then
+    /// has the application raise wait in the outpost's intake, and are
+    /// planned as one batch when the worker goes on. The change itself says
+    /// nothing: UIA owns mockapp's window in its UIA backend, the only one
+    /// this is for. The worker waits under the change's deadline, so a step
+    /// that holds it must be brief.
     pub fn hold_worker(&self) {
         self.hold_worker_on(self.foreground.load(Ordering::Relaxed));
     }
 
     /// [`Self::hold_worker`] on a foreground change of window `hwnd`, for
-    /// any backend: the worker waits in that change's first read of the
-    /// foreground window. A change of a window that is not the foreground
-    /// window then says nothing.
+    /// any backend: the worker waits as that change's program begins. A
+    /// change of a window that is not the foreground window then says
+    /// nothing.
     pub fn hold_worker_on(&self, hwnd: isize) {
         self.gate.set_closed(true);
         self.deliver(DeliveredFact::Foreground { hwnd });
         self.gate.wait_for_worker();
     }
 
-    /// Lets the worker [`Self::hold_worker`] held go on through `reads`
-    /// reads of the foreground window, the one it waits in included, and
-    /// returns once it waits in the read after them. A foreground change
-    /// of mockapp's window reads it twice, its acceptance test and its
-    /// check that the window is in front, and reads nothing more, since
-    /// UIA owns the window: stepping two reads from one held foreground
-    /// change to the next has the worker handle everything handed to it
-    /// between the two and hold it again.
-    pub fn step_worker(&self, reads: u64) {
-        self.gate.step(reads);
+    /// Lets the worker [`Self::hold_worker`] held go on through the
+    /// foreground change it waits in and `changes - 1` after it, and
+    /// returns once it waits as the next foreground change's program
+    /// begins: stepping one from one held foreground change to the next
+    /// has the worker handle everything handed to it between the two and
+    /// hold it again.
+    pub fn step_worker(&self, changes: u64) {
+        self.gate.step(changes);
     }
 
     /// Lets the worker [`Self::hold_worker`] held go on.

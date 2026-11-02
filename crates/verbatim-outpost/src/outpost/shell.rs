@@ -570,10 +570,14 @@ impl Shell {
     fn take(&mut self, posted: Posted) {
         let input = match posted {
             Posted::Entry {
-                entry,
+                mut entry,
                 source,
                 read_answer,
             } => {
+                // The one test of an MSAA focus or a foreground change
+                // against the foreground, made as the reducer takes it in,
+                // never on the worker ([`super::reducer::Front`]).
+                entry.front = self.context.front_test(&entry.item);
                 if let Item::Query { request_id, .. } = &entry.item
                     && !self.closing
                 {

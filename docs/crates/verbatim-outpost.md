@@ -373,6 +373,9 @@ the same tables and code, which the arbitrator's own lists are built from.
   `FocusedElementReader` in place of `Uia::focused`);
   `set_foreground_reader` (a `verbatim_win32::window::ForegroundReader` in place of
   `GetForegroundWindow`, for acceptance and the window a focus entered);
+  `observe_foreground_programs` (a `ForegroundProgramObserver`, told on the
+  worker the window of each foreground change a program is about to
+  handle, so a test can hold the worker there);
   `set_focus_window_reader` (a `FocusWindowReader` for focus-now and the
   gap's read); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
   for the outpost's own events' stamps and its verdicts' keeps); and
@@ -559,7 +562,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   (`verbatim_reader_rules::acceptance`; `docs/parity/focus-events.md`,
   "Event acceptance"): `accepts_event`, a pure function of the event, its
   window, `WindowQueries` (local calls in
-  `verbatim_win32::window::SystemWindows`), and `RequestedEvents`;
+  `verbatim_win32::window::SystemWindows`), and `RequestedEvents`; for an
+  MSAA focus and a foreground change the test was made on the reducer's
+  thread as the entry was taken in, and the program uses the result its
+  entry carries (`reducer::Front`);
   its `foreground_relation` goes in the window facts
   (`verbatim_core::focus_rules::ForegroundRelation`). It takes the backend
   crates' per-thread call counts into each published `EventTiming`; a
@@ -700,10 +706,15 @@ and the inherited pipe handles.
 ### Foreground changes and focus-now
 
 - A batch with a foreground fact is handed out at once. A foreground fact
-  whose window is not in front when handled is dropped, as NVDA's
-  `processForegroundWinEvent` drops it, since Windows raises its own event
-  once the change is made (`docs/parity/focus-events.md`, "Stale focus
-  events"). It counts among its thread's other events and among focus events
+  whose window is not in front at the outpost's one test is dropped, as
+  NVDA's `processForegroundWinEvent` drops it, since Windows raises its own
+  event once the change is made (`docs/parity/focus-events.md`, "Stale
+  focus events"). The test is made on the reducer's thread as the reducer
+  takes the entry from the mailbox (`Context::front_test`, carried on the
+  entry as `reducer::Front`), never on the worker, which can wait behind a
+  call into a held application; an MSAA focus's acceptance test is made
+  there too (`docs/design/focus-pipeline-rework-remaining.md`, "The
+  outpost's foreground tests, on its reducer's thread"). It counts among its thread's other events and among focus events
   in the batch limits, so later focus events do not crowd it out.
 - A foreground fact in front is reported, whatever the focus: NVDA's two
   tests against its last queued focus are Core's, which refuses a
@@ -713,13 +724,14 @@ and the inherited pipe handles.
   (`verbatim_model::FocusGroup`), so Core takes the older entry only when
   it refused the change; a reported change of any other window ends the
   group, as a reported focus does.
-- It is reported at once as a focus on the window, stamped when
-  confirmed in front. The window's own object is read (`window_element`, or
+- It is reported at once as a focus on the window, stamped when its test
+  found it in front, never before its observation. The window's own object is read (`window_element`, or
   `OBJID_CLIENT`), so a focus on its client area is the same node; a popup
   menu window (`#32768`) reads as a menu (`read::window_snapshot`). An
   unreadable window is reported from local data, and an empty name takes
-  the window text (`InternalGetWindowText`). A report whose window has left
-  the front by sending time is dropped.
+  the window text (`InternalGetWindowText`). A window that leaves the front
+  during its read is still reported, as NVDA makes no test after its
+  object is made; Core judges it by its foreground record.
 - A foreground event for a UIA window is dropped, as NVDA drops every MSAA
   event for one; the window is announced from the focus's ancestry
   (`docs/design/focus-pipeline.md`, section 16.4). A console window's title

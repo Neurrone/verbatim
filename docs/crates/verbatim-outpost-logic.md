@@ -76,7 +76,10 @@ Public API:
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
 - The vocabulary of its state, used by the shell and the worker: the
-  intake's `Entry`, `Item`, `Source`, `Marks` (with `TerminalMark`) and `Object`; the follow
+  intake's `Entry`, `Item`, `Source`, `Marks` (with `TerminalMark`) and `Object`;
+  `Front`, the outpost's one test of an MSAA focus or a foreground change
+  against the foreground, which the shell makes from Windows' state as it
+  hands the entry to the reducer and the entry carries to its program; the follow
   state (`Follow`, `FollowState`, `Target`, `Owed`); the caret key's
   watch (`Watch`, `OpenWatch`, `Checked`, below); the
   reports Core may hold (`Held`, `Focus`, `Evidence`, `InFront`); the verdicts

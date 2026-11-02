@@ -248,6 +248,10 @@ pub(crate) struct Context {
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
+    /// Who is told, on the worker, of each foreground change a program is
+    /// about to handle ([`Outpost::observe_foreground_programs`]), if
+    /// anyone.
+    foreground_programs: OnceLock<ForegroundProgramObserver>,
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
@@ -285,6 +289,10 @@ pub enum Heard {
 
 /// Told of each event an outpost takes in ([`Outpost::observe_heard`]).
 pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
+
+/// Told, on the worker, of the window of each foreground change a program
+/// is about to handle ([`Outpost::observe_foreground_programs`]).
+pub type ForegroundProgramObserver = Arc<dyn Fn(isize) + Send + Sync>;
 
 /// Reads the handle of the window with the keyboard focus, `None` when
 /// there is none. An outpost reads the system's (`GetGUIThreadInfo`); a
@@ -629,6 +637,43 @@ impl Context {
         reader()
     }
 
+    /// The outpost's one test of `item` against the system's foreground,
+    /// made from Windows' state on the reducer's thread as the reducer takes
+    /// the entry from the mailbox, with local calls only: NVDA's acceptance
+    /// test of an MSAA focus (`acceptance::accepts_event`, whose reads of
+    /// the foreground window, the ancestors, the classes and the threads
+    /// are local), and of a foreground change whether its window is the
+    /// foreground window, and when that was found, on the observation clock
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
+    /// foreground tests, on its reducer's thread"). Nothing else is tested.
+    fn front_test(&self, item: &Item) -> reducer::Front {
+        use verbatim_reader_rules::acceptance::{self, EventName};
+        let fact = match item {
+            Item::Fact(DeliveredFact::UiaMarked { fact, .. }, _) => &**fact,
+            Item::Fact(fact, _) => fact,
+            _ => return reducer::Front::Untested,
+        };
+        match *fact {
+            DeliveredFact::Foreground { hwnd } => {
+                let in_front = self.foreground_window() == hwnd;
+                reducer::Front::InFront(in_front.then(|| self.observed_now()))
+            }
+            DeliveredFact::MsaaFocus { hwnd, .. } => {
+                let windows = verbatim_win32::window::SystemWindows {
+                    foreground: self.foreground_window(),
+                };
+                let accepted = acceptance::accepts_event(
+                    EventName::GainFocus,
+                    verbatim_reader_rules::Window::new(hwnd),
+                    &windows,
+                    &self.requested_events,
+                );
+                reducer::Front::Accepted(accepted)
+            }
+            _ => reducer::Front::Untested,
+        }
+    }
+
     /// Whether window `hwnd`'s top-level window belongs to a process
     /// Verbatim ignores. Local calls, made only while one is ignored.
     fn in_ignored_window(&self, hwnd: isize) -> bool {
@@ -721,6 +766,7 @@ impl Context {
                 trace,
                 observed_at_us,
                 timing,
+                front: reducer::Front::Untested,
             },
             source,
             read_answer,
@@ -1062,6 +1108,7 @@ impl Outpost {
             )),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
+            foreground_programs: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
             override_changes: AtomicU64::new(0),
             first_uia_focus_us: AtomicU64::new(0),
@@ -1410,6 +1457,17 @@ impl Outpost {
     /// observer counts; later calls change nothing.
     pub fn observe_heard(&self, observer: HeardObserver) {
         let _ = self.context.heard.set(observer);
+    }
+
+    /// Tells `observer`, on the worker, the window of each foreground
+    /// change a program is about to handle, before it handles it, so that a
+    /// test can hold the worker in that program while it has the
+    /// application raise events, which then wait in the intake. The
+    /// outpost's test of the change against the foreground was made as the
+    /// reducer took it in, before this. Only the first observer counts;
+    /// later calls change nothing.
+    pub fn observe_foreground_programs(&self, observer: ForegroundProgramObserver) {
+        let _ = self.context.foreground_programs.set(observer);
     }
 
     /// Handles one command from Core, on the I/O thread. Pings are

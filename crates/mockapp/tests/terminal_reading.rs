@@ -1094,7 +1094,7 @@ fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: console.0 as isize,
     });
-    outpost.step_worker(2);
+    outpost.step_worker(1);
     app.send("caret text 1");
     outpost.release_worker();
     let TextReply::Caret(reply) = answer_to(&outpost, key) else {

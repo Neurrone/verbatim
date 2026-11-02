@@ -208,6 +208,7 @@ mod tests {
             trace: TraceId::from_raw(1),
             observed_at_us: u64::from(time),
             timing: EventTiming::default(),
+            front: crate::Front::Untested,
         }
     }
 
@@ -224,6 +225,7 @@ mod tests {
             trace: TraceId::from_raw(2),
             observed_at_us,
             timing: EventTiming::default(),
+            front: crate::Front::Untested,
         }
     }
 

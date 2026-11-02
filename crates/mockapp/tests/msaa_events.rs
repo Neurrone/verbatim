@@ -941,6 +941,104 @@ fn a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported() {
     app.quit();
 }
 
+/// The outpost's next message, which must be a foreground report: the
+/// window's name, and its stamp.
+fn stamped_foreground_report(outpost: &OutpostUnderTest) -> (Option<String>, u64) {
+    match outpost.next() {
+        OutpostToCore::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    foreground: true,
+                    ..
+                },
+            observed_at_us,
+            ..
+        } => (node.name, observed_at_us),
+        other => panic!("the outpost said {other:?}, not a foreground report"),
+    }
+}
+
+/// A foreground change is tested against the foreground once, as the
+/// outpost's reducer takes it in, never when its worker gets to it, as
+/// NVDA tests a foreground event in its pump: with the worker held in a
+/// call into mockapp's window for a focus, the change of mockapp's
+/// window, in front when it comes, is reported once the call returns,
+/// though another window is in front by then, stamped before the switch,
+/// when its test found it in front.
+fn a_foreground_change_is_tested_in_front_while_the_worker_is_held() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-tested-held");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.set_foreground(hwnd);
+
+    app.send("set-focus item2");
+    app.hold();
+    outpost.deliver(msaa_focus_fact(hwnd, ITEM_TWO));
+    assert_eq!(app.held(), HELD_CALL, "the worker reads the focus");
+    let tested = outpost.foreground_reads() + 1;
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    outpost.wait_for_foreground_reads(tested);
+    let switched_at_us = common::now_us();
+    outpost.set_foreground(common::another_applications_window());
+    app.release();
+
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the focus is reported first");
+    };
+    assert_eq!(node.name.as_deref(), Some("Two"));
+    let (name, observed_at_us) = stamped_foreground_report(&outpost);
+    assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
+    assert!(
+        observed_at_us < switched_at_us,
+        "stamped at its test, {observed_at_us}, before the switch at {switched_at_us}"
+    );
+    outpost.settled();
+    app.quit();
+}
+
+/// A foreground change whose window leaves the front while the outpost
+/// reads the window is still reported, stamped when its one test found it
+/// in front, before the switch: NVDA makes no test after it has made the
+/// window's object, and Core's foreground record judges the report.
+fn a_foreground_change_whose_window_leaves_the_front_during_its_read_is_reported() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-left-during-read");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.set_foreground(hwnd);
+
+    app.hold();
+    let tested = outpost.foreground_reads() + 1;
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    assert_eq!(app.held(), HELD_CALL, "the worker reads the window");
+    outpost.wait_for_foreground_reads(tested);
+    let switched_at_us = common::now_us();
+    outpost.set_foreground(common::another_applications_window());
+    app.release();
+
+    let (name, observed_at_us) = stamped_foreground_report(&outpost);
+    assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
+    assert!(
+        observed_at_us < switched_at_us,
+        "stamped at its test, {observed_at_us}, before the switch at {switched_at_us}"
+    );
+    outpost.settled();
+    app.quit();
+}
+
+/// The first call the outpost makes into mockapp's window for a list
+/// item's focus or for a foreground change, the window's `WM_GETOBJECT`,
+/// which mockapp's `hold` holds.
+const HELD_CALL: &str = "GetObject";
+
 /// The counts fixture's third list item, by its index in mockapp's tree.
 const ITEM_THREE: usize = 7;
 
@@ -1448,6 +1546,14 @@ fn main() {
         (
             "a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported",
             a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported,
+        ),
+        (
+            "a_foreground_change_is_tested_in_front_while_the_worker_is_held",
+            a_foreground_change_is_tested_in_front_while_the_worker_is_held,
+        ),
+        (
+            "a_foreground_change_whose_window_leaves_the_front_during_its_read_is_reported",
+            a_foreground_change_whose_window_leaves_the_front_during_its_read_is_reported,
         ),
         (
             "a_spare_given_to_an_application_reports_each_focus_once",

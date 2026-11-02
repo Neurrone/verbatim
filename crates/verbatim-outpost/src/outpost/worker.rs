@@ -69,7 +69,7 @@ use super::commit::{Committed, Effects, Follow, Stale, Target};
 use super::focus_path;
 use super::read::{self, Client, ReadError};
 use super::reducer::{
-    self, Cut, Entry, Evidence, Finish, FocusPath, GapNote, GapRead, Handling, Item, Object,
+    self, Cut, Entry, Evidence, Finish, FocusPath, Front, GapNote, GapRead, Handling, Item, Object,
     OpenWatch, Owed, OwedWork, Program, Report, Request, UiaEvent, UiaKind, VerdictChange,
     WatchChange, WinKind, Work,
 };
@@ -840,6 +840,7 @@ impl Worker<'_> {
             item,
             trace,
             observed_at_us,
+            front,
             ..
         } = entry;
         match item {
@@ -858,7 +859,7 @@ impl Worker<'_> {
                 observed_at_us,
             ),
             Item::Uia(event) => self.uia_event(event, trace, observed_at_us),
-            Item::Fact(fact, _) => self.fact(fact, trace, observed_at_us),
+            Item::Fact(fact, _) => self.fact(fact, front, trace, observed_at_us),
             Item::Query { request_id, query } => self.query(request_id, &query, trace),
             // Read now that nothing else waits, unless a read since saw it.
             Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_us),
@@ -2231,15 +2232,6 @@ impl Worker<'_> {
         accepted
     }
 
-    /// Whether `hwnd` is the system's foreground window now, read by the
-    /// reader the outpost was given (`Outpost::set_foreground_reader`). A
-    /// foreground fact whose window is not is not reported, as NVDA's
-    /// `processForegroundWinEvent` drops it; the reducer accepts every
-    /// foreground fact on the strength of this check.
-    fn in_front(&self, hwnd: isize) -> bool {
-        self.context.foreground_window() == hwnd
-    }
-
     /// Whether the event's own window, `hwnd`, can be read: NVDA's checks
     /// after acceptance and before the window's UIA test and the object's
     /// acquisition (`verbatim_win32::window::event_window_unreadable`). A dropped event is
@@ -3138,14 +3130,18 @@ impl Worker<'_> {
     /// A fact routed from the listener, or one the outpost's own hook took
     /// in: an MSAA focus, foreground change, menu opening, alert, or
     /// tooltip, whichever brought it.
-    fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_us: u64) {
+    /// A fact, with the outpost's test of it against the foreground, made
+    /// as the reducer took it in ([`Front`]).
+    fn fact(&mut self, fact: DeliveredFact, front: Front, trace: TraceId, observed_at_us: u64) {
         match fact {
-            DeliveredFact::Foreground { hwnd } => self.foreground(hwnd, trace, observed_at_us),
+            DeliveredFact::Foreground { hwnd } => {
+                self.foreground(hwnd, front, trace, observed_at_us);
+            }
             DeliveredFact::MsaaFocus {
                 hwnd,
                 id_object,
                 id_child,
-            } => self.msaa_focus(hwnd, id_object, id_child, trace, observed_at_us),
+            } => self.msaa_focus((hwnd, id_object, id_child), front, trace, observed_at_us),
             DeliveredFact::UiaFocusRead { read, .. } => {
                 self.uia_focus(&read, trace, observed_at_us);
             }
@@ -3154,7 +3150,9 @@ impl Worker<'_> {
             | DeliveredFact::UiaFocusDropped { .. }
             | DeliveredFact::UiaFocusReadsEnded => {}
             // The intake unwraps a marked event as it takes it in.
-            DeliveredFact::UiaMarked { fact, .. } => self.fact(*fact, trace, observed_at_us),
+            DeliveredFact::UiaMarked { fact, .. } => {
+                self.fact(*fact, front, trace, observed_at_us);
+            }
             DeliveredFact::UiaSelection {
                 hwnd,
                 focus_window,
@@ -3203,6 +3201,7 @@ impl Worker<'_> {
                     trace,
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
+                    front: Front::Untested,
                 });
             }
         }
@@ -3287,18 +3286,22 @@ impl Worker<'_> {
     }
 
     /// A foreground change: reported at once, named or not, as a focus on
-    /// the window, unless the window is not the system's foreground window
-    /// when the change is handled or when it is read, or is read through
-    /// UI Automation.
+    /// the window, unless the outpost's one test, made on the reducer's
+    /// thread as the change was taken in (`front`), found the window not to
+    /// be the system's foreground window, or the window is read through UI
+    /// Automation. The test is not made here, since this worker can wait
+    /// behind a call into a held application
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
+    /// foreground tests, on its reducer's thread").
     ///
-    /// It is stamped with the time its window was confirmed as the
-    /// foreground, read after the window's name, not the time Windows
-    /// raised the event, so the old foreground window's own focus events
-    /// handled meanwhile are never newer than the change. NVDA judges a
-    /// foreground event against the foreground window when it processes
-    /// the event, and drops it when they differ (`processForegroundWinEvent`,
-    /// `IAccessibleHandler/__init__.py` 834 to 841); so does this, without
-    /// waiting for the window to come in front. Measured live: the system's
+    /// It is stamped with the time that test found its window in front,
+    /// never before the event was observed, so the old foreground window's
+    /// own focus events raised before the switch are never newer than the
+    /// change. NVDA tests a foreground event once against the foreground
+    /// window, and drops it when they differ (`processForegroundWinEvent`,
+    /// `IAccessibleHandler/__init__.py` 834 to 841), with no test after its
+    /// object is made; so does this, without waiting for the window to come
+    /// in front. Measured live: the system's
     /// foreground event reached an out-of-context hook only once
     /// `GetForegroundWindow` named its window, and the events that did not
     /// were stale or raised early by the application itself, as File
@@ -3306,7 +3309,7 @@ impl Worker<'_> {
     /// follows once the window is in front (`docs/crates/verbatim-outpost.md`,
     /// "Foreground changes and focus-now").
     ///
-    /// A window not yet in front is dropped and never kept, as NVDA drops
+    /// A window not in front at the test is dropped and never kept, as NVDA drops
     /// it; so is a window read through UI Automation, for which NVDA drops
     /// every MSAA event, a foreground event included (`winEventToNVDAEvent`,
     /// `IAccessibleHandler/__init__.py` 576 to 582). Either window is
@@ -3330,15 +3333,22 @@ impl Worker<'_> {
     /// line, which Core may refuse, and every report of the group carries
     /// its rank, so Core takes the older entry only when it refused the
     /// change. A change reported of any other window ends the group.
-    fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_us: u64) {
+    fn foreground(&mut self, hwnd: isize, front: Front, trace: TraceId, observed_at_us: u64) {
+        if let Some(observer) = self.context.foreground_programs.get() {
+            observer(hwnd);
+        }
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
         }
-        if !self.accepts(EventName::GainFocus, hwnd) || !self.in_front(hwnd) {
+        let Front::InFront(Some(in_front_at_us)) = front else {
+            debug_assert!(
+                matches!(front, Front::InFront(None)),
+                "a foreground change is tested as it is taken in"
+            );
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
             return;
-        }
+        };
         // NVDA makes the foreground's object as it makes any MSAA event's
         // (`processForegroundWinEvent` through `winEventToNVDAEvent`): a
         // window gone, ghosted, or hung is dropped before the UIA test.
@@ -3367,12 +3377,16 @@ impl Worker<'_> {
             }
             Some(false) => {}
         }
-        self.report_foreground(hwnd, trace, observed_at_us);
+        // Ordered by when its window was found in front, which is never
+        // before the event was observed.
+        self.report_foreground(hwnd, trace, in_front_at_us.max(observed_at_us));
     }
 
-    /// Reads the foreground window `hwnd`'s name and reports it, unless it
-    /// is no longer the foreground window by then.
-    fn report_foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_us: u64) {
+    /// Reads the foreground window `hwnd`'s name and reports it, stamped
+    /// `confirmed_at_us`, when the outpost's one test found it in front: a
+    /// window that leaves the front during the read is still reported, and
+    /// judged by Core's foreground record.
+    fn report_foreground(&mut self, hwnd: isize, trace: TraceId, confirmed_at_us: u64) {
         // Whether the window holds an unreleased node of a report's line,
         // judged before this change is recorded among the reports: then
         // the group's next older entry is tried after it.
@@ -3384,16 +3398,6 @@ impl Worker<'_> {
                 .focuses()
                 .any(|focus| focus.top_level == top_level);
         let (backend, node) = read::foreground_window(self.context, self.client, hwnd);
-        if !self.in_front(hwnd) {
-            tracing::info!(
-                hwnd,
-                "foreground report dropped: no longer the foreground window"
-            );
-            return;
-        }
-        // Ordered by when its window was confirmed as the foreground, which
-        // is never before the event was observed.
-        let confirmed_at_us = now_us().max(observed_at_us);
         self.emit_focus(
             trace,
             confirmed_at_us,
@@ -3410,18 +3414,33 @@ impl Worker<'_> {
     }
 
     /// An MSAA focus fact.
+    ///
+    /// NVDA's acceptance test against the foreground window was made on the
+    /// reducer's thread as the fact was taken in (`front`), as NVDA makes it
+    /// in its pump, not here, where this worker can wait behind a call into
+    /// a held application.
     fn msaa_focus(
         &mut self,
-        hwnd: isize,
-        id_object: i32,
-        id_child: i32,
+        (hwnd, id_object, id_child): (isize, i32, i32),
+        front: Front,
         trace: TraceId,
         observed_at_us: u64,
     ) {
         if id_child == CHILDID_SELF && window_belongs_to_hidden_frame(hwnd) {
             return;
         }
-        if !self.accepts(EventName::GainFocus, hwnd) || !Self::readable(hwnd) {
+        debug_assert!(
+            matches!(front, Front::Accepted(_)),
+            "an MSAA focus is tested as it is taken in"
+        );
+        if front != Front::Accepted(true) {
+            tracing::debug!(
+                hwnd,
+                "event dropped: its window is not related to the foreground window"
+            );
+            return;
+        }
+        if !Self::readable(hwnd) {
             return;
         }
         let Some(uia_owns) = read::own_window_verdict(self.context, hwnd) else {

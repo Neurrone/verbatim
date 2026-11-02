@@ -93,7 +93,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: hwnd.0 as isize,
     });
-    outpost.step_worker(2);
+    outpost.step_worker(1);
     // The first read's answer is in flight, the second's and the idle
     // answer wait behind it; only now does Core read.
     whole_text(&outpost, first);

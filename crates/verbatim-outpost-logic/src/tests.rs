@@ -157,6 +157,7 @@ fn entry(item: Item, at_ms: u64) -> Entry {
         trace: TraceId::from_raw(at_ms),
         observed_at_us: at_ms * 1_000,
         timing: EventTiming::default(),
+        front: crate::Front::Untested,
     }
 }
 
@@ -2579,4 +2580,34 @@ fn a_publication_answered_while_stopping_judges_nothing() {
     );
     assert_eq!(kinds(&effects), ["publish", "send"]);
     assert!(replay.reducer.busy(), "the program runs on");
+}
+
+/// An MSAA focus carries the outpost's acceptance test, made as the
+/// reducer took it in, to its program unchanged, though the program runs
+/// only once the program before it ends: the worker makes no test against
+/// the foreground itself, and a focus refused there is dropped by its
+/// program unread.
+#[test]
+fn an_msaa_focus_is_tested_for_acceptance_as_it_is_taken_in() {
+    let mut replay = Replay::new();
+    let first = program(&replay.push(focus_now(1), Source::Other, 0)).request;
+    let mut tested = entry(msaa_focus(1, 5), 5);
+    tested.front = Front::Accepted(false);
+    let waiting = replay.input(
+        Input::Entry {
+            entry: tested,
+            source: Source::Other,
+            read_answer: None,
+        },
+        5,
+    );
+    assert!(programs(&waiting).is_empty(), "the focus-now runs");
+    let effects = replay.finish(first, false, 6);
+    let Work::Entry { entry, .. } = &program(&effects).work else {
+        panic!("the focus's program");
+    };
+    assert_eq!(
+        (entry.observed_at_us, entry.front),
+        (5_000, Front::Accepted(false))
+    );
 }

@@ -1437,6 +1437,7 @@ mod tests {
                 trace: TraceId::from_raw(1),
                 observed_at_us: u64::try_from(child).unwrap_or(0),
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
         }
     }
@@ -1459,6 +1460,7 @@ mod tests {
                 trace: TraceId::from_raw(2),
                 observed_at_us,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
         }
     }
@@ -1523,6 +1525,7 @@ mod tests {
                 trace: TraceId::from_raw(3),
                 observed_at_us: 0,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
         }
     }
@@ -2000,6 +2003,7 @@ mod tests {
                 trace: TraceId::from_raw(4),
                 observed_at_us: 2,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
         };
         let waiting = vec![
@@ -2116,6 +2120,7 @@ mod tests {
                     trace: TraceId::from_raw(5),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
+                    front: crate::Front::Untested,
                 },
                 None,
             );
@@ -2168,6 +2173,7 @@ mod tests {
                     trace: TraceId::from_raw(6),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
+                    front: crate::Front::Untested,
                 },
                 None,
             );
@@ -2203,6 +2209,7 @@ mod tests {
                     trace: TraceId::from_raw(7),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
+                    front: crate::Front::Untested,
                 },
                 None,
             );
@@ -2238,6 +2245,7 @@ mod tests {
                     trace: TraceId::from_raw(8),
                     observed_at_us,
                     timing: verbatim_model::protocol::EventTiming::default(),
+                    front: crate::Front::Untested,
                 },
                 None,
             );
@@ -2262,6 +2270,7 @@ mod tests {
                     trace: TraceId::from_raw(9),
                     observed_at_us: 0,
                     timing: verbatim_model::protocol::EventTiming::default(),
+                    front: crate::Front::Untested,
                 },
                 None,
             );
@@ -2287,6 +2296,7 @@ mod tests {
                 trace: TraceId::from_raw(10),
                 observed_at_us: 0,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
             None,
         );
@@ -2327,6 +2337,7 @@ mod tests {
                 trace: TraceId::from_raw(7),
                 observed_at_us: 0,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
             None,
         );
@@ -2349,6 +2360,7 @@ mod tests {
                 trace: TraceId::from_raw(11),
                 observed_at_us,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
             None,
         );
@@ -2535,6 +2547,7 @@ mod tests {
                 trace: TraceId::from_raw(13),
                 observed_at_us: 1_500,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
             None,
         );
@@ -2551,6 +2564,7 @@ mod tests {
                 trace: TraceId::from_raw(14),
                 observed_at_us: 501_000,
                 timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
             },
             None,
         );

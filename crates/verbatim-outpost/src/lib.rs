@@ -21,6 +21,6 @@ pub mod terminal;
 pub mod text;
 
 pub use outpost::{
-    FocusWindowReader, FocusedElementReader, GapTimer, Heard, HeardObserver, Outpost, run_attach,
-    run_pipe,
+    FocusWindowReader, FocusedElementReader, ForegroundProgramObserver, GapTimer, Heard,
+    HeardObserver, Outpost, run_attach, run_pipe,
 };

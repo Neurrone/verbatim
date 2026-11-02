@@ -228,6 +228,28 @@ impl Item {
     }
 }
 
+/// The outpost's one test of an entry against the system's foreground,
+/// made from Windows' state on the reducer's thread as the entry is taken
+/// from the mailbox, and carried on the entry to the worker, which makes
+/// none (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
+/// foreground tests, on its reducer's thread"): the worker can wait behind
+/// a call into a held application, so a test made there can be made
+/// seconds after the event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Front {
+    /// Not an entry the outpost tests: anything but an MSAA focus and a
+    /// foreground change.
+    #[default]
+    Untested,
+    /// An MSAA focus: whether NVDA's acceptance test against the
+    /// foreground window accepted its window.
+    Accepted(bool),
+    /// A foreground change: when the test found its window to be the
+    /// system's foreground window, on the observation clock, or `None`
+    /// when it was not.
+    InFront(Option<u64>),
+}
+
 /// An item with its trace and observation time, in microseconds on the
 /// run's shared clock.
 #[derive(Clone, Debug)]
@@ -240,6 +262,9 @@ pub struct Entry {
     pub observed_at_us: u64,
     /// When it was raised, observed, and relayed, for the latency log.
     pub timing: EventTiming,
+    /// The outpost's test of it against the foreground, made as the
+    /// reducer took it in.
+    pub front: Front,
 }
 
 impl Entry {
@@ -251,6 +276,7 @@ impl Entry {
             trace,
             observed_at_us,
             timing: EventTiming::default(),
+            front: Front::Untested,
         }
     }
 }

@@ -52,7 +52,9 @@ use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleW
 
 use self::watch::Reached;
 
-pub use self::entry::{Asker, Entry, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property};
+pub use self::entry::{
+    Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
+};
 pub use self::follow::{
     Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, GapNote, Group, Owed,
     OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
@@ -865,6 +867,7 @@ impl Reducer {
                 trace,
                 observed_at_us,
                 timing,
+                front: crate::Front::Untested,
             });
         }
         let mut applied = follow::apply(
