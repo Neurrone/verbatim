@@ -39,7 +39,13 @@ Public API:
   `TestGapBound`, the gap record's test at its bound of its top-level
   window against the foreground, with its window text sent as a
   whole-window focus when the window is in front, minted under a request
-  of its own that no program runs as; `AskMovedOn`,
+  of its own that no program runs as, asked after the same tick's ask of
+  the program in flight and so answered after that ask's answer: a record
+  that answer's report closed commits nothing, and a generation that answer
+  abandoned still owns the request the text is committed under, without
+  the acceptance test, since the text is the shell's own read made in line,
+  not a worker's result; no record is tested, or timed, once the outpost
+  stops; `AskMovedOn`,
   whether the user has left the program's window for another thread of
   its application, and `Publish`, the publication of a walk armed, with
   the facts it is judged against and `then_abandon`, the abandonment

@@ -818,6 +818,16 @@ impl Reducer {
     /// marker queued before it, so the worker makes the gap's read when it
     /// is free, while one waiting for the window's title has no read of its
     /// own. The record stays open until a report closes it.
+    ///
+    /// The test is asked in the tick that found the bound passed, after
+    /// that tick's ask of the program in flight, if any, whose answer the
+    /// shell gives first. That answer may have reported the focus, which
+    /// closed the record, and then nothing is committed: the title is said
+    /// only when no focus of the window has been reported. It may also have
+    /// abandoned the generation `request` belongs to; the window text is
+    /// committed under `request` all the same, without the acceptance test
+    /// a program's commit needs, since it is the shell's own read, made in
+    /// line from local data, not a result of the worker that was abandoned.
     fn gap_bound_tested(
         &mut self,
         request: Request,
@@ -826,6 +836,9 @@ impl Reducer {
         now: Now,
         effects: &mut Vec<Effect>,
     ) {
+        if !self.intake.gap().is_open() {
+            return;
+        }
         if !related {
             self.intake.gap_mut().close();
             return;

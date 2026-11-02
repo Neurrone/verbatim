@@ -2890,3 +2890,46 @@ fn a_focus_published_at_its_bound_closes_the_record() {
     assert_eq!(replay.answers.published, [request]);
     assert_eq!(gap_timers(&effects), [None]);
 }
+
+/// Found by the outpost's generated test (`docs/design/logic-tests.md`,
+/// "The outpost's reducer"): a tick past both a walk's bound and the gap
+/// record's asks for the publication and then the gap's test; the shell
+/// answers the publication first, whose report of the focus closes the
+/// record, and the test's window text, read for a record no longer open,
+/// is not sent.
+#[test]
+fn a_record_closed_by_a_publication_in_its_tick_sends_no_title() {
+    let mut replay = Replay::new();
+    let request = program(&replay.push(name_change(1), Source::Hook, 1)).request;
+    replay.commit(request, copy_dropped(), 1);
+    replay.input(
+        Input::Armed {
+            request,
+            bound: Duration::from_millis(1_001),
+        },
+        1,
+    );
+    replay
+        .answers
+        .publications
+        .push_back(report_in(2, 0x10, 1_001_000, false));
+    replay
+        .answers
+        .titles
+        .push_back(report_in(3, 0x10, 1_000, true));
+    let effects = replay.tick(1_001);
+    assert_eq!(replay.answers.published, [request]);
+    assert_eq!(replay.answers.tested, [0x10]);
+    let focuses: Vec<bool> = sent(&effects)
+        .into_iter()
+        .filter_map(|message| match message {
+            OutpostToCore::Event {
+                event: NormalizedEvent::FocusChanged { whole_window, .. },
+                ..
+            } => Some(*whole_window),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(focuses, [false], "the published focus alone");
+    assert!(!replay.reducer.intake.gap().is_open());
+}
