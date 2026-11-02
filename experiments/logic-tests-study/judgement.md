@@ -401,13 +401,15 @@ Each missed mutant classed on 2026-11-02 against `docs/design/logic-tests.md`, "
 
 Two exclusions beyond the design's own list: `FocusPath` in `follow.rs` (11), worker code with no caller in the reducer, tested from `verbatim-outpost`; and the watch answer's timing in `lib.rs` (6), measurement contents no decision reads.
 
-Counts:
+Counts, after the role crates' tests were run on the missed mutants (below, "Killed by the role crates' tests"):
 
 - verbatim-reader-rules (4): equivalent 0, excluded 0, target 4.
 - verbatim-outpost-logic (101): equivalent 3, excluded 61, target 37.
-- verbatim-listener-logic (22): equivalent 2, excluded 0, target 20.
+- verbatim-listener-logic (22): equivalent 2, excluded 0, target 9, and 11 killed by `verbatim-listener`'s tests.
 - verbatim-core (24): equivalent 1, excluded 2, target 21.
-- All (151): equivalent 6, excluded 63, target 82. The threshold, 30% of the targets, is 25 killed, and at least one in each crate.
+- All (151): equivalent 6, excluded 63, killed by the role crates' tests 11, target 71. The threshold, 30% of the targets, is 22 killed, and at least one in each crate.
+
+The outpost's 10 mutants killed by `verbatim-outpost`'s tests were all excluded, so its counts stand. The role crates' runs cover their unit and integration tests, not `crates/mockapp/tests`, whose tests exercise the subscription and the verdicts against a real application and are too slow to run once per mutant; an excluded mutant left here may still be caught there.
 
 Checks added for the targets no listed check covered: the work in flight's `running()`, `deadline()` and `item_mut()` against the model after every step; the hold's release on forwarding ended and reads ended; client-area events generated with the literal value -4; in the intake's test, batch numbers, a keyed entry's replacement, and the limiter's counts; in the listener's, `stopping()`, `focus_pending`, each job's `after_elsewhere` and the applications held after an outpost's end; in Core's, an open entry's trace unchanged after the step that made it.
 
