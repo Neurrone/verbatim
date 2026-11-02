@@ -188,6 +188,58 @@ what its answer continues (`Then`).
   the caret keys', text commands' and held keys' entries; an entry with
   `Nothing` holds nothing.
 
+What the shell and the outposts guarantee the reducer here, which its
+generated test relies on and gives no stronger
+(`docs/design/logic-tests.md`, "Core's reducer"): the focus listener's
+foreground stamps never decrease, though a focus may be stamped as late as
+one; answers do not come in the order of their requests in general, and an
+answer may come from another outpost than the one asked or come again,
+both of which Core drops; every outpost generation of one application
+reports its process; an outpost generation's id is never given again,
+and once it has ended (`Input::OutpostEnded`) nothing more of it comes.
+That Core never asks an ended generation is checked, not assumed.
+
+Tests: the query table's unit tests, every sequence of up to three steps
+from a text box, a held key's watch and a console, enumerated against the
+table's invariants (`crates/verbatim-core/src/queries/tests.rs`), and a generated test of the
+reducer's slice of queries, focus lifecycle and generations against a
+reference model (`crates/verbatim-core/src/queries/generated.rs`;
+`docs/design/logic-tests.md`, "Core's reducer"): lists of actions run
+through proptest's `TestRunner::run` under a fixed seed and 300 cases
+(about 6.8 s in a debug build), each made valid against the model as it
+is applied. The actions are focuses from the oldest or newest live
+generation on a text box, a button or the terminal, with what the reader
+read of the element it held, in the front's window or with no window
+facts, observed now, before, or at no known time; terminal snapshots, and
+the first snapshots of 16 other terminals; answers to the oldest or
+newest open request, done, gone or failed, and at low weight to one
+ended, to one never asked and from another outpost; caret keys, held keys
+and their due times, typing and speech cut off; review commands; foreground
+changes, now or at the newest focus's stamp; outposts' ends and new
+generations. Only focuses whose fate the model decides plainly are
+generated. After every input the enumeration's invariants are checked
+against the wire's view of the requests, and the model's: every open
+entry but Core's own names a live generation and no effect asks an ended
+one; ids only rise and an ended id never returns; each new entry's trace
+is its input's or its key's, and an older entry's is unchanged; the held
+keys' awaited watch names an open entry; no held node is of an ended
+generation; the focus's node, life and whether it was left are the
+model's, a stale, duplicate or taken focus each as the model predicts; at
+most 16 models, each generation new when made and none of an ended
+outpost, one going only when evicted as the oldest for a new one, its
+node's text forgotten or its outpost ended, the others in their order of
+reading; and every memory entry a live model's. A foreground change gives
+no effect and changes nothing but the foreground record and whether the
+focus was left; an outpost's end asks nothing of it and leaves nothing of
+it, and another outpost's entry ends then only by a withdrawal; an answer
+to a model no longer live runs nothing; speech cut off asks nothing. The
+state round-trips through its serialisation after every action, each case
+runs twice with the same effects, ends with every request answered and
+only Core's own entries left, and the gate fails if any listed state is
+never reached. Two fixed cases keep what the generated cases reach too
+seldom: a model's request answered after a newer model of the same
+terminal replaced it, and a foreground change at the newest focus's stamp.
+
 ## The request table
 
 `RequestTable<A>` records every query the shell sends an outpost for its

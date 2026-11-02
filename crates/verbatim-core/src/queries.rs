@@ -540,4 +540,8 @@ fn continued(state: &mut SrState, trace_id: TraceId, then: Then, ending: Ending)
 }
 
 #[cfg(test)]
+mod explore;
+#[cfg(test)]
+mod generated;
+#[cfg(test)]
 mod tests;

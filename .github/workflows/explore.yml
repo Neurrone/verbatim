@@ -28,6 +28,7 @@ env:
     verbatim-reader-rules
     verbatim-outpost-logic
     verbatim-listener-logic
+    verbatim-core
   COVERED: >-
     crates/verbatim-reader-rules/src/in_flight.rs
     crates/verbatim-outpost-logic/src/lib.rs
@@ -39,6 +40,9 @@ env:
     crates/verbatim-outpost-logic/src/intake.rs
     crates/verbatim-listener-logic/src/schedule.rs
     crates/verbatim-listener-logic/src/foreground.rs
+    crates/verbatim-core/src/queries.rs
+    crates/verbatim-core/src/reduce.rs
+    crates/verbatim-core/src/terminal_model.rs
 
 jobs:
   explore:

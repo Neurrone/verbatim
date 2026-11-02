@@ -21,9 +21,9 @@ const EDIT_OUTPOST: OutpostId = OutpostId(1);
 /// The console's outpost.
 const CONSOLE_OUTPOST: OutpostId = OutpostId(2);
 /// Every held key's trace, so `HeldKeyDue` names the key held last.
-const HELD: TraceId = TraceId::from_raw(50);
+pub(super) const HELD: TraceId = TraceId::from_raw(50);
 
-fn node(outpost: OutpostId, number: u64, role: Role, name: &str) -> NodeSnapshot {
+pub(super) fn node(outpost: OutpostId, number: u64, role: Role, name: &str) -> NodeSnapshot {
     NodeSnapshot {
         id: NodeId::in_outpost(outpost, number),
         backend: Backend::Uia,
@@ -35,7 +35,7 @@ fn node(outpost: OutpostId, number: u64, role: Role, name: &str) -> NodeSnapshot
     }
 }
 
-fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
+pub(super) fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
     TextChunk {
         unit: TextUnit::Line,
         text: text.to_owned(),
@@ -49,7 +49,7 @@ fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
     }
 }
 
-fn caret(anchor: u64, offset: u32) -> CaretReport {
+pub(super) fn caret(anchor: u64, offset: u32) -> CaretReport {
     CaretReport {
         line: line("hello world", anchor, offset),
         selection: None,
@@ -90,7 +90,7 @@ fn focus(
 }
 
 /// A read of a console showing a prompt, its caret after it.
-fn console_read(read: u64, at_ms: u64) -> TerminalSnapshot {
+pub(super) fn console_read(read: u64, at_ms: u64) -> TerminalSnapshot {
     TerminalSnapshot {
         text: TerminalText::unpadded("PS> "),
         screen: TerminalText::unpadded("PS> "),
@@ -239,7 +239,7 @@ enum Which {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Outcome {
+pub(super) enum Outcome {
     Done,
     Gone,
     Failed,
@@ -280,14 +280,14 @@ fn steps() -> Vec<Step> {
 /// end or a withdrawal ended. It knows no continuation and no
 /// supersession.
 #[derive(Clone, Debug, Default)]
-struct Wire {
-    open: BTreeMap<QueryId, (OutpostId, Asked)>,
-    last_ended: Option<(QueryId, OutpostId, Asked)>,
+pub(super) struct Wire {
+    pub(super) open: BTreeMap<QueryId, (OutpostId, Asked)>,
+    pub(super) last_ended: Option<(QueryId, OutpostId, Asked)>,
 }
 
 /// What a request asked, for an answer that fits it.
 #[derive(Clone, Debug)]
-enum Asked {
+pub(super) enum Asked {
     Navigate,
     Activate,
     Text(TextOp),
@@ -438,7 +438,7 @@ impl Wire {
     }
 
     /// Takes in what `input` ended, and the requests `effects` made.
-    fn apply(&mut self, input: &Input, effects: &[Effect]) {
+    pub(super) fn apply(&mut self, input: &Input, effects: &[Effect]) {
         match input {
             Input::Answered {
                 query_id, outpost, ..
@@ -465,7 +465,12 @@ fn start_role(start: OutpostId) -> Role {
 }
 
 /// An answer to `query_id`, which asked `asked`, from `outpost`.
-fn answer(query_id: QueryId, outpost: OutpostId, asked: &Asked, outcome: Outcome) -> Input {
+pub(super) fn answer(
+    query_id: QueryId,
+    outpost: OutpostId,
+    asked: &Asked,
+    outcome: Outcome,
+) -> Input {
     let outcome = match outcome {
         Outcome::Gone => QueryOutcome::Gone,
         Outcome::Failed => QueryOutcome::Failed("failed".to_owned()),
@@ -526,12 +531,12 @@ fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
 }
 
 /// What one input of a sequence did.
-struct Visit<'a> {
-    before: &'a SrState,
-    input: &'a Input,
-    state: &'a SrState,
-    effects: &'a [Effect],
-    wire: &'a Wire,
+pub(super) struct Visit<'a> {
+    pub(super) before: &'a SrState,
+    pub(super) input: &'a Input,
+    pub(super) state: &'a SrState,
+    pub(super) effects: &'a [Effect],
+    pub(super) wire: &'a Wire,
 }
 
 /// Runs every sequence of up to `depth` steps from `start`, calling
@@ -657,7 +662,7 @@ fn one_of(then: &Then) -> Option<String> {
 
 /// Checks the table's invariants after `visit`, against the wire's view,
 /// returning whether it was an answer to the held keys' watch alone.
-fn check(path: &[usize], visit: &Visit<'_>) -> bool {
+pub(super) fn check(path: &[usize], visit: &Visit<'_>) -> bool {
     let Visit {
         before,
         input,
@@ -734,7 +739,13 @@ fn check(path: &[usize], visit: &Visit<'_>) -> bool {
             let first = expected.queries.next();
             expected.queries.end(*query_id);
             expected.held_keys.awaiting_watch = None;
-            let resume = crate::editing::held_watch_answered(&mut expected);
+            let mut resume = crate::editing::held_watch_answered(&mut expected);
+            // As the reducer does after every input, a terminal Core reads
+            // is given the settings and its text answered from its memory.
+            if !expected.terminals.is_empty() {
+                resume.extend(crate::terminal_model::sync_settings(&mut expected));
+                resume = crate::terminal_model::intercept(&mut expected, resume, Some(*trace_id));
+            }
             expected.queries.set_traces(first, &resume, Some(*trace_id));
             assert_eq!(*state, &expected, "{at}");
             assert_eq!(*effects, resume, "{at}");

@@ -8,12 +8,14 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
 verbatim-model.workspace = true
 verbatim-text = { workspace = true, features = ["serde"] }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+proptest.workspace = true
 serde_json.workspace = true
 verbatim-term-sim.workspace = true
 
