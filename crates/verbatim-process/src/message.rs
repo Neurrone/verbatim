@@ -242,9 +242,9 @@ pub fn decode_message<T: Message>(parts: Parts<'_>) -> io::Result<T> {
 mod tests {
     use super::*;
     use verbatim_model::protocol::{
-        DeliveredFact, DumpedTree, EventTiming, FocusNow, FocusedControl, GapAnswer, ListenerFact,
-        Query, QueryOutcome, QueryResult, RequestId, UiaAncestorFact, UiaFocusRead,
-        UiaSnapshotFact, Urgent, WinEventStamp,
+        DeliveredFact, DumpedTree, EventTiming, FocusNow, FocusedControl, ListenerFact, Query,
+        QueryOutcome, QueryResult, RequestId, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
+        Urgent, WinEventStamp,
     };
     use verbatim_model::{
         Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
@@ -598,7 +598,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,
-                answer: GapAnswer::LeavesOpen,
+                no_window: false,
             },
             DeliveredFact::UiaFocusReadsEnded,
         ] {

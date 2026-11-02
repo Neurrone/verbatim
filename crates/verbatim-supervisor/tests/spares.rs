@@ -173,7 +173,7 @@ fn scripted_facts() -> Vec<ListenerToCore> {
                 "drop" => DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
+                    no_window: false,
                 },
                 "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),

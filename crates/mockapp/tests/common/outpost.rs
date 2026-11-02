@@ -102,7 +102,7 @@ use verbatim_model::protocol::{
     QueryOutcome, QueryResult, RequestId, WinEventStamp,
 };
 use verbatim_model::{
-    CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
+    Backend, CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
     WindowFacts, WindowHandle,
 };
 use verbatim_outpost::{GapTimer, Heard, Outpost};
@@ -113,7 +113,6 @@ use verbatim_process::transport::BlockingReader;
 use verbatim_uia::{Cached, ListenerEvent, Live};
 use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
-use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor};
 use windows::core::AgileReference;
 
 /// How much the outpost's pipe to Core holds unread. A test reads the
@@ -211,13 +210,15 @@ impl MessagePipe {
 pub type FocusSlot = Arc<Mutex<Option<AgileReference<IUIAutomationElement>>>>;
 
 /// Has `outpost` read `foreground` as the foreground window, counting its
-/// reads, and hold its worker as a foreground change's program begins
-/// while the test closes the gate returned: the program runs after the
-/// outpost's test of the change, made as its reducer took it in.
+/// reads, and as the window with the keyboard focus unless the test sets
+/// another in the window returned, and hold its worker as a foreground
+/// change's program begins while the test closes the gate returned: the
+/// program runs after the outpost's test of the change, made as its
+/// reducer took it in.
 fn read_the_tests_foreground(
     outpost: &Outpost,
     foreground: &Arc<AtomicIsize>,
-) -> (Arc<ReadCount>, Arc<WorkerGate>) {
+) -> (Arc<ReadCount>, Arc<WorkerGate>, Arc<AtomicIsize>) {
     let reader = Arc::clone(foreground);
     let foreground_reads = Arc::new(ReadCount::default());
     let reads = Arc::clone(&foreground_reads);
@@ -228,7 +229,15 @@ fn read_the_tests_foreground(
     let gate = Arc::new(WorkerGate::default());
     let worker_gate = Arc::clone(&gate);
     outpost.observe_foreground_programs(Arc::new(move |_| worker_gate.pass()));
-    (foreground_reads, gate)
+    let focus_window = Arc::new(AtomicIsize::new(0));
+    let (apart, front) = (Arc::clone(&focus_window), Arc::clone(foreground));
+    outpost.set_focus_window_reader(Arc::new(move || {
+        Some(match apart.load(Ordering::Relaxed) {
+            0 => front.load(Ordering::Relaxed),
+            window => window,
+        })
+    }));
+    (foreground_reads, gate, focus_window)
 }
 
 /// How many times something was read, with the condition a test waits on
@@ -545,6 +554,10 @@ pub struct OutpostUnderTest {
     /// How many times the outpost has read the foreground window, which a
     /// test waits on as the evidence of the outpost's test of an entry.
     foreground_reads: Arc<ReadCount>,
+    /// The window the outpost reads as the one with the keyboard focus,
+    /// when the test set one apart from the foreground window; 0 when it
+    /// is the foreground window.
+    focus_window: Arc<AtomicIsize>,
     /// The focus listener's reader, standing in for the listener's thread
     /// for mockapp's application.
     reader: RefCell<FocusReader>,
@@ -761,11 +774,8 @@ impl OutpostUnderTest {
         });
         outpost.set_clock(Arc::clone(&clock));
         let (observation, gap_timer) = observe_on_the_tests_time(&outpost, observation_time);
-        let (foreground_reads, gate) = read_the_tests_foreground(&outpost, &foreground);
-        // And the window with the keyboard focus is that window too.
-        let focus_window = Arc::clone(&foreground);
-        outpost
-            .set_focus_window_reader(Arc::new(move || Some(focus_window.load(Ordering::Relaxed))));
+        let (foreground_reads, gate, focus_window) =
+            read_the_tests_foreground(&outpost, &foreground);
         let (heard_tx, heard) = mpsc::channel();
         outpost.observe_heard(Arc::new(move |event| {
             // The test may have finished with what the outpost hears.
@@ -794,6 +804,7 @@ impl OutpostUnderTest {
             system_time,
             foreground,
             foreground_reads,
+            focus_window,
             reader: RefCell::new(reader),
             listener_queued: Cell::new(0),
             listener_left_at: Cell::new(0),
@@ -873,19 +884,9 @@ impl OutpostUnderTest {
 
     /// Hands the outpost what the listener sends for the UIA focus event
     /// `marker` names when its outcome is `judged`, observed at
-    /// `observed_at_us`, a drop placed, as the listener places it, in the
-    /// top-level window of `window`, the sender's own window or its nearest
-    /// window its read found (`None` for neither).
-    pub fn listener_outcome(
-        &self,
-        marker: u64,
-        judged: Judged,
-        (observed_at_us, window): (u64, Option<isize>),
-    ) {
-        self.hand_over(
-            judged.into_fact(marker, FocusEvent::Focus, top_level(window)),
-            observed_at_us,
-        );
+    /// `observed_at_us`.
+    pub fn listener_outcome(&self, marker: u64, judged: Judged, observed_at_us: u64) {
+        self.hand_over(judged.into_fact(marker, FocusEvent::Focus), observed_at_us);
     }
 
     /// Hands the outpost `fact`, observed at `observed_at_us`, as the
@@ -907,6 +908,13 @@ impl OutpostUnderTest {
     /// on.
     pub fn set_foreground(&self, hwnd: HWND) {
         self.foreground.store(hwnd.0 as isize, Ordering::Relaxed);
+    }
+
+    /// Makes `hwnd` the window the outpost reads as the one with the
+    /// keyboard focus from now on, apart from the foreground window, as a
+    /// child window holds the focus inside a top-level window.
+    pub fn set_focus_window(&self, hwnd: HWND) {
+        self.focus_window.store(hwnd.0 as isize, Ordering::Relaxed);
     }
 
     /// How many times the outpost has read the foreground window so far.
@@ -1302,7 +1310,7 @@ impl OutpostUnderTest {
     /// once it has read it, which must not be dropped.
     pub fn listener_fact(&self, element: &Cached<ListenerEvent>) -> DeliveredFact {
         match self.listener_read(element).0 {
-            read @ Judged::Read(_) => read.into_fact(0, FocusEvent::Focus, None),
+            read @ Judged::Read(_) => read.into_fact(0, FocusEvent::Focus),
             dropped @ Judged::Dropped(_) => {
                 panic!("the listener dropped the focus: {dropped:?}")
             }
@@ -1318,16 +1326,16 @@ impl OutpostUnderTest {
     }
 
     /// Holds the outpost's idle worker: hands it a foreground change of
-    /// mockapp's window, whose program waits as it begins until
-    /// [`Self::release_worker`] ([`Outpost::observe_foreground_programs`]),
-    /// and returns once the worker is waiting there. Events the test then
-    /// has the application raise wait in the outpost's intake, and are
-    /// planned as one batch when the worker goes on. The change itself says
-    /// nothing: UIA owns mockapp's window in its UIA backend, the only one
-    /// this is for. The worker waits under the change's deadline, so a step
-    /// that holds it must be brief.
+    /// another application's window, not in front, whose program waits as
+    /// it begins until [`Self::release_worker`]
+    /// ([`Outpost::observe_foreground_programs`]), and returns once the
+    /// worker is waiting there. Events the test then has the application
+    /// raise wait in the outpost's intake, and are planned as one batch
+    /// when the worker goes on. The change itself says nothing and opens no
+    /// gap record, its window not in front. The worker waits under the
+    /// change's deadline, so a step that holds it must be brief.
     pub fn hold_worker(&self) {
-        self.hold_worker_on(self.foreground.load(Ordering::Relaxed));
+        self.hold_worker_on(super::another_applications_window().0 as isize);
     }
 
     /// [`Self::hold_worker`] on a foreground change of window `hwnd`, for
@@ -1367,6 +1375,33 @@ impl OutpostUnderTest {
     pub fn focus(&self, fact: DeliveredFact) -> Reported {
         self.deliver(fact);
         self.reported_focus()
+    }
+
+    /// The window text the outpost sends next, at its gap record's bound
+    /// with no focus of the window reported: a whole-window focus of the
+    /// plain window, read from local data, named `title`, as the
+    /// responsive switch says the window
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
+    /// application's title"). Returns its stamp.
+    pub fn window_text(&self, title: &str) -> u64 {
+        match self.next() {
+            OutpostToCore::Event {
+                event:
+                    NormalizedEvent::FocusChanged {
+                        node,
+                        whole_window: true,
+                        ancestors,
+                        ..
+                    },
+                observed_at_us,
+                backend: Backend::Msaa,
+                ..
+            } if node.role == verbatim_model::Role::Window && ancestors.is_empty() => {
+                assert_eq!(node.name.as_deref(), Some(title), "the window's text");
+                observed_at_us
+            }
+            other => panic!("the outpost said {other:?}, not the window's text"),
+        }
     }
 
     /// The focus the outpost reports next, which must be the next thing it
@@ -1445,7 +1480,7 @@ impl OutpostUnderTest {
             panic!("the listener dropped the focus: {judged:?}");
         };
         let listener_failed_reads = verbatim_uia::calls::take_failed_reads();
-        let mut reported = self.focus(judged.into_fact(0, FocusEvent::Focus, None));
+        let mut reported = self.focus(judged.into_fact(0, FocusEvent::Focus));
         reported.calls += calls;
         reported.failed_reads += listener_failed_reads;
         reported
@@ -1540,16 +1575,6 @@ impl OutpostUnderTest {
 /// hook stamps a caret key's press.
 pub fn now_ms() -> u64 {
     verbatim_process::clock::now_us() / 1_000
-}
-
-/// `window`'s top-level window (`GetAncestor` with `GA_ROOT`), `None` for
-/// none.
-fn top_level(window: Option<isize>) -> Option<isize> {
-    let window = window.filter(|&window| window != 0)?;
-    // SAFETY: GetAncestor tolerates any handle, returning null for an
-    // invalid one.
-    let top = unsafe { GetAncestor(HWND(window as *mut _), GA_ROOT) }.0 as isize;
-    (top != 0).then_some(top)
 }
 
 /// Microseconds since the Unix epoch on the run's shared clock, as the

@@ -3341,9 +3341,13 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
             return;
         }
-        let Front::InFront(Some(in_front_at_us)) = front else {
+        let Front::Foreground {
+            in_front_at_us: Some(in_front_at_us),
+            ..
+        } = front
+        else {
             debug_assert!(
-                matches!(front, Front::InFront(None)),
+                matches!(front, Front::Foreground { .. }),
                 "a foreground change is tested as it is taken in"
             );
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
@@ -3355,20 +3359,6 @@ impl Worker<'_> {
         if !Self::readable(hwnd) {
             return;
         }
-        // Accepted: it restamps the gap record open in its window, so the
-        // record's read after a return carries the return's stamp, or
-        // answers one open in another of the application's top-level
-        // windows, before its window's verdict, whichever it is.
-        self.commit(Effects {
-            gap: vec![GapNote::Accepted {
-                window: hwnd,
-                top_level: top_level_of(hwnd),
-                at_us: observed_at_us,
-                trace,
-                restamps: true,
-            }],
-            ..Effects::default()
-        });
         match read::own_window_verdict(self.context, hwnd) {
             None => return,
             Some(true) => {
@@ -3454,18 +3444,6 @@ impl Worker<'_> {
             self.copy_dropped_for_uia((hwnd, top_level), trace, observed_at_us);
             return;
         }
-        // Handled through MSAA, it answers a gap record open in another of
-        // the application's top-level windows.
-        self.commit(Effects {
-            gap: vec![GapNote::Accepted {
-                window: hwnd,
-                top_level,
-                at_us: observed_at_us,
-                trace,
-                restamps: false,
-            }],
-            ..Effects::default()
-        });
         // A control taking the focus raised focus on itself and then on its
         // focused child, and the control's event was already reported as
         // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA reports
@@ -4648,6 +4626,45 @@ pub(super) fn publication(context: &RequestContext<'_>, walk: &FocusProgress) ->
         result: Some(message),
         report: Some(Report::Reported(judged, evidence)),
         follow: Some(follow),
+        ..Effects::default()
+    }
+}
+
+/// The window text of top-level window `hwnd`, sent at the gap record's
+/// bound when no focus of the window has come
+/// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
+/// application's title"): a whole-window focus of the plain window read
+/// from local data (`read::plain_window`, under the window's MSAA key), so
+/// it is said as the responsive switch says the window, traced `trace` and
+/// stamped `stamp_us`, the record's. Made on the reducer's thread with no
+/// call into the application; a window, it is not followed.
+pub(super) fn window_text(
+    context: &RequestContext<'_>,
+    hwnd: isize,
+    (trace, stamp_us): (TraceId, u64),
+) -> Effects {
+    let node = read::plain_window(context, hwnd);
+    let judged = judged_focus(context, (&node, &[]), (Some(hwnd), true), None);
+    let (node_id, role) = (node.id, node.role);
+    let message = event_message(
+        context,
+        EventTiming::default(),
+        (trace, stamp_us),
+        (Backend::Msaa, Some(hwnd)),
+        NormalizedEvent::FocusChanged {
+            node,
+            whole_window: true,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier: None,
+            group: None,
+        },
+    );
+    Effects {
+        result: Some(message),
+        report: Some(Report::Reported(judged, Evidence::Msaa)),
+        foreground: Some((node_id, role, 0)),
         ..Effects::default()
     }
 }

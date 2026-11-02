@@ -371,9 +371,10 @@ a walk of the window's whole tree would wait on its
   budget is spent only where the test says. The test hands the outpost
   focus facts as the listener would, and the outpost reads the focused
   element from the test rather than the system. The outpost under test
-  keeps its own gap record: each drop handed over carries its answer and
-  top-level window (`listener_outcome` places it as the listener does),
-  and the test injects the record's timer's firing rather than waiting for
+  keeps its own gap record, closed by the reports it sends: each drop
+  handed over carries whether its sender had no window
+  (`listener_outcome`), at the bound it sends the window's text, which a
+  test takes with `window_text`, and the test injects the record's timer's firing rather than waiting for
   it, once the time it passes (`pass_time`) reaches the bound the outpost
   set, rounded up to a tenth of a second, or at once, from a thread of its
   own, for a bound already past (`gap_timer_set` says whether one is set).

@@ -1586,19 +1586,10 @@ pub(crate) trait Reading: Send + Sync + 'static {
     /// dropped unanswered answers the marker itself, so no path that loses
     /// an event leaves its outpost waiting on the marker.
     type Owed: Send + 'static;
-    /// Sends what became of an event of `pid`'s, placed, for its
-    /// application's gap record, in the top-level window `placed` when its
-    /// read found one ([`gap_answer`]), through `owed`, the event's own
-    /// answer. Called under the readers' lock, so what one application's
-    /// events became is sent in the order they arrived.
-    fn outcome(
-        &self,
-        pid: Pid,
-        meta: Meta,
-        owed: Self::Owed,
-        judged: Judged,
-        placed: Option<isize>,
-    );
+    /// Sends what became of an event of `pid`'s through `owed`, the event's
+    /// own answer. Called under the readers' lock, so what one
+    /// application's events became is sent in the order they arrived.
+    fn outcome(&self, pid: Pid, meta: Meta, owed: Self::Owed, judged: Judged);
     /// `window`'s top-level window, 0 for none: a local call
     /// ([`top_level_of`], the default), made outside the readers' lock.
     fn top_level(&self, window: isize) -> isize {
@@ -1688,14 +1679,9 @@ fn step<R: Reading>(
     let mut asks = Vec::new();
     for effect in effects {
         match effect {
-            ScheduleEffect::Outcome {
-                pid,
-                meta,
-                judged,
-                placed,
-            } => {
+            ScheduleEffect::Outcome { pid, meta, judged } => {
                 if let Some(owed) = state.owed.remove(&meta.marker) {
-                    shared.reading.outcome(pid, meta, owed, judged, placed);
+                    shared.reading.outcome(pid, meta, owed, judged);
                 } else {
                     tracing::error!(%pid, marker = meta.marker, "an outcome for a marker nothing is owed for");
                     debug_assert!(false, "an outcome for marker {}, owed nothing", meta.marker);
@@ -1820,7 +1806,6 @@ fn answer<R: Reading>(
                 pid,
                 request,
                 read: watched.and_then(WatchedRead::prepare_publish).map(Box::new),
-                top: watched.and_then(|watched| Window::new(watched.top_level())),
                 then_abandon,
             }
         }
@@ -2092,16 +2077,6 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
         let judged = shared
             .reading
             .read(reader.as_mut(), meta, job, (&window, queue));
-        // The top-level window of the window the read found, which places
-        // a focus's drop for its application's gap record, kept in its
-        // outpost: found by the read, or a local call, made before the
-        // readers' lock is taken.
-        let placed = (meta.kind == FocusEvent::Focus && window.window() != 0)
-            .then(|| match window.top_level() {
-                0 => shared.reading.top_level(window.window()),
-                top => top,
-            })
-            .filter(|&top| top != 0);
         // The reading thread's end, for the latency ledger's split of the
         // listener's handling from its queue and its write.
         meta.timing.listener_handled_at_us = now_us();
@@ -2128,7 +2103,6 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
                 request,
                 meta,
                 judged,
-                placed,
                 top: Window::new(top),
             },
             Some(ThreadSide {
@@ -2327,7 +2301,7 @@ impl Reading for ThreadReading {
     /// Nothing is owed: every outcome is sent to the test's receiver.
     type Owed = ();
 
-    fn outcome(&self, _: Pid, meta: Meta, (): (), judged: Judged, _: Option<isize>) {
+    fn outcome(&self, _: Pid, meta: Meta, (): (), judged: Judged) {
         // The test may have finished with the outcomes.
         let _ = self
             .outcomes
@@ -2406,7 +2380,7 @@ mod tests {
     use verbatim_listener_logic::focus::{MOVED_ON, NOT_IN_TIME};
 
     use super::*;
-    use verbatim_model::protocol::{EventTiming, GapAnswer, Responder};
+    use verbatim_model::protocol::{EventTiming, Responder};
 
     /// The window every stand-in event's sender is, unless a test says
     /// its senders are not windows.
@@ -2566,14 +2540,7 @@ mod tests {
         /// The answer to the event's marker, sent as a fact to the test.
         type Owed = Responder<DeliveredFact>;
 
-        fn outcome(
-            &self,
-            pid: Pid,
-            meta: Meta,
-            owed: Responder<DeliveredFact>,
-            judged: Judged,
-            placed: Option<isize>,
-        ) {
+        fn outcome(&self, pid: Pid, meta: Meta, owed: Responder<DeliveredFact>, judged: Judged) {
             let reason = match judged {
                 Judged::Dropped(reason) => reason,
                 Judged::Read(_) => "it was read",
@@ -2581,7 +2548,7 @@ mod tests {
                     panic!("the stand-in neither drops nor reads: {other:?}")
                 }
             };
-            owed.answer(judged.into_fact(meta.marker, meta.kind, placed));
+            owed.answer(judged.into_fact(meta.marker, meta.kind));
             self.order
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -2605,21 +2572,9 @@ mod tests {
     }
 
     impl Fixture {
-        /// Has the stand-in's reads read their focus, `None`, or drop it
-        /// for `reason`.
-        fn set_reads(&self, reads: Option<&'static str>) {
-            *self
-                .readers
-                .shared
-                .reading
-                .reads
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = reads;
-        }
-
         /// Queues `job`, of `pid`'s event `meta`, its marker answered as
         /// the listener answers one: by its outcome, or, dropped unanswered,
-        /// as a drop that leaves its application's gap record open.
+        /// as a drop that leaves its application's gap record to its bound.
         fn push(&self, pid: Pid, meta: Meta, job: <Script as Reading>::Job) {
             let facts = self
                 .readers
@@ -2634,7 +2589,7 @@ mod tests {
                 let _ = facts.send(fact.unwrap_or(DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    answer: GapAnswer::LeavesOpen,
+                    no_window: false,
                 }));
             });
             self.readers.push(pid, meta, job, owed);
@@ -2759,12 +2714,13 @@ mod tests {
 
     /// A focus whose nearest window's class is on NVDA's MSAA class list,
     /// and not under a shell window, is skipped with no call, by the class
-    /// verdict the outposts' arbitrators give, and its drop answers the
-    /// record in its top-level window; one on no list, or under a shell
+    /// verdict the outposts' arbitrators give, and its drop carries no fact
+    /// for the gap record, which the outpost closes by its own reports; one
+    /// on no list, or under a shell
     /// window, is read, and so is any focus while a backend override
     /// forcing UIA holds for its application.
     #[test]
-    fn a_focus_whose_windows_class_is_on_the_msaa_list_is_skipped_and_answers_the_record() {
+    fn a_focus_whose_windows_class_is_on_the_msaa_list_is_skipped() {
         let edit = WindowClasses::new("Edit", "Notepad");
         assert!(skipped_by_class(&edit, false));
         assert!(!skipped_by_class(&edit, true), "the override forcing UIA");
@@ -2777,41 +2733,13 @@ mod tests {
             false
         ));
         assert_eq!(
-            Judged::Dropped(MSAA_CLASS).into_fact(9, FocusEvent::Focus, Some(70)),
+            Judged::Dropped(MSAA_CLASS).into_fact(9, FocusEvent::Focus),
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
                 focus: true,
-                answer: GapAnswer::Answers(Some(70)),
+                no_window: false,
             }
         );
-    }
-
-    /// Each drop the reading threads send carries its answer to its
-    /// application's gap record and the top-level window it is placed in:
-    /// that of the sender's own window from the event's cache, or of the
-    /// nearest window its read found for a sender with none, or none when
-    /// it found neither, which answers a copy in any window.
-    #[test]
-    fn a_drop_carries_its_answer_and_its_top_level_window() {
-        let cases = [
-            ((WINDOW, 0), Some(WINDOW)),
-            ((0, NEAREST), Some(NEAREST)),
-            ((0, 0), None),
-        ];
-        for ((hwnd, nearest), placed) in cases {
-            let fixture = fixture_of(WAIT, (hwnd, nearest));
-            fixture.set_reads(Some(HUNG));
-            fixture.push(Pid(1), meta(1), (1, None, Vec::new()));
-            assert_eq!(
-                fixture.facts.recv_timeout(WAIT),
-                Ok(DeliveredFact::UiaFocusDropped {
-                    marker: 1,
-                    focus: true,
-                    answer: GapAnswer::Answers(placed),
-                }),
-                "a sender of window {hwnd} whose nearest window is {nearest}"
-            );
-        }
     }
 
     #[test]
@@ -2905,7 +2833,7 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    answer: GapAnswer::LeavesOpen,
+                    no_window: false,
                 } => (marker, false),
                 other => panic!("not a focus's read or drop: {other:?}"),
             })
@@ -2956,7 +2884,7 @@ mod tests {
                 let _ = facts.send(fact.unwrap_or(DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    answer: GapAnswer::LeavesOpen,
+                    no_window: false,
                 }));
             })
         };

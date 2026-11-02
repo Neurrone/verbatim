@@ -1609,7 +1609,7 @@ fn the_listener_makes_no_connection() {
             listener_calls.connections, 0,
             "the listener's connections reading the focus on {name}"
         );
-        let _ = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+        let _ = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
     }
     drop(outpost);
     app.quit();
@@ -1719,7 +1719,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
 
         common::reset_hits(parent);
-        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
         // The parent or owner as a plain window, with no call into the
         // other process. UIA's client side still sends a parent its
         // connection message as the outpost's read of the focus returns
@@ -1924,7 +1924,7 @@ fn uia_focus_chains_name_a_parent_with_a_provider_as_a_plain_window() {
         let focused = under_test.focused(hwnd);
         let (judged, _) = outpost.listener_read(&focused);
         common::reset_hits(parent);
-        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
         // The parent a plain window, named by its title, with no call.
         let expected_chain = [
             Some(parent_title.as_str()),
@@ -2111,7 +2111,7 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
     let (judged, _) = outpost.listener_read(&focused);
     common::reset_hits(parent);
     parent_app.stall(stall);
-    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
     let reported_at = common::now_us();
     let ended = parent_app.stall_ended(stall);
     assert!(
@@ -2164,7 +2164,7 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
     let outpost = judging_hung;
     outpost.judge_hung(parent);
     let (judged, _) = outpost.listener_read(&focused);
-    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
     assert_eq!(
         above_boundary(&reported),
         [
@@ -2278,7 +2278,7 @@ fn a_parent_step_into_another_process_is_not_read_further() {
         "the step's connection to the other window, and its MSAA proxy's"
     );
     common::reset_hits(parent);
-    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
     assert_eq!(
         reported.chain(),
         [

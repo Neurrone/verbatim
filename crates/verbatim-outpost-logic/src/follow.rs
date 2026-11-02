@@ -298,20 +298,6 @@ pub enum GapNote {
         /// The copy's trace.
         trace: TraceId,
     },
-    /// An event of `window` accepted: a foreground change, which
-    /// `restamps`, or a copy handled through MSAA.
-    Accepted {
-        /// The event's window.
-        window: isize,
-        /// The window's top-level window.
-        top_level: isize,
-        /// The event's observation, in microseconds.
-        at_us: u64,
-        /// The event's trace.
-        trace: TraceId,
-        /// Whether it restamps the record: a foreground change.
-        restamps: bool,
-    },
     /// `window` was destroyed.
     WindowDestroyed(isize),
 }

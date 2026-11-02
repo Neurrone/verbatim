@@ -244,10 +244,18 @@ pub enum Front {
     /// An MSAA focus: whether NVDA's acceptance test against the
     /// foreground window accepted its window.
     Accepted(bool),
-    /// A foreground change: when the test found its window to be the
-    /// system's foreground window, on the observation clock, or `None`
-    /// when it was not.
-    InFront(Option<u64>),
+    /// A foreground change.
+    Foreground {
+        /// When the test found its window to be the system's foreground
+        /// window, on the observation clock, or `None` when it was not, or
+        /// was Core's hidden frame, which no outpost reports.
+        in_front_at_us: Option<u64>,
+        /// Whether the outpost judges its window UIA by a kept verdict or
+        /// the class lists, read locally and with no probe, by which the
+        /// gap record it opens waits for the application's focus rather
+        /// than the window's title.
+        uia: bool,
+    },
 }
 
 /// An item with its trace and observation time, in microseconds on the

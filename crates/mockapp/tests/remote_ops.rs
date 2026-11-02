@@ -827,7 +827,7 @@ fn a_nearest_window_lookup_that_fails_fast_leaves_the_gap_record_open() {
         "the lookup is the read's only call"
     );
 
-    outpost.deliver(judged.into_fact(0, FocusEvent::Focus, None));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     outpost.settled();
     assert!(outpost.gap_timer_set(), "the drop left the record open");
     drop(outpost);
@@ -1162,6 +1162,7 @@ fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_goes_on_from_i
     outpost.settled();
     outpost.pass_time(Duration::from_secs(1));
     outpost.settle();
+    outpost.window_text(&fixture.app.title);
     match outpost.next() {
         OutpostToCore::Event {
             event: NormalizedEvent::FocusChanged {

@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn a_selection_or_a_background_notification_may_not_start_an_outpost() {
-        use verbatim_model::protocol::{GapAnswer, UiaSnapshotFact};
+        use verbatim_model::protocol::UiaSnapshotFact;
         use verbatim_model::{
             NodeDetails, Notification, NotificationKind, NotificationProcessing, Role, StateSet,
         };
@@ -763,7 +763,7 @@ mod tests {
         assert!(!may_start_outpost(&DeliveredFact::UiaFocusDropped {
             marker: 1,
             focus: true,
-            answer: GapAnswer::LeavesOpen,
+            no_window: false,
         }));
         assert!(!may_start_outpost(&DeliveredFact::UiaFocusReadsEnded));
         for fact in [

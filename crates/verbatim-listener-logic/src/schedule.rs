@@ -78,8 +78,8 @@ pub enum ScheduleInput<J> {
         generation: u64,
     },
     /// A reading thread of `pid` returned from its read `request` of
-    /// `meta`'s event with `judged`, placed in top-level window `placed`
-    /// for its gap record, and of top-level window `top`, if any.
+    /// `meta`'s event with `judged`, and of top-level window `top`, if
+    /// any.
     Returned {
         /// The thread's application.
         pid: Pid,
@@ -89,8 +89,6 @@ pub enum ScheduleInput<J> {
         meta: Meta,
         /// What became of it.
         judged: Judged,
-        /// The top-level window it is placed in for its gap record.
-        placed: Option<isize>,
         /// The top-level window of the read, if any.
         top: Option<Window>,
     },
@@ -135,8 +133,6 @@ pub enum ScheduleInput<J> {
         request: Request,
         /// The read as published, if its progress was there to publish.
         read: Option<Box<UiaFocusRead>>,
-        /// Its top-level window, if any.
-        top: Option<Window>,
         /// The abandonment the ask carried, made once the publication is
         /// sent.
         then_abandon: Option<Reason>,
@@ -207,8 +203,6 @@ pub enum ScheduleEffect<J> {
         meta: Meta,
         /// What became of it.
         judged: Judged,
-        /// The top-level window it is placed in for its gap record.
-        placed: Option<isize>,
     },
     /// A thread is in charge of `pid`'s events as `generation`: a new one,
     /// or, with `reuse`, the thread whose abandoned read just returned.
@@ -501,9 +495,8 @@ impl<J> Schedule<J> {
                 request,
                 meta,
                 judged,
-                placed,
                 top,
-            } => self.returned(&mut effects, (pid, request), meta, (judged, placed, top)),
+            } => self.returned(&mut effects, (pid, request), meta, (judged, top)),
             ScheduleInput::Tick => {
                 // The alarm went off, and its timer goes off once: set it
                 // again below to whatever is still due, even a time that
@@ -548,9 +541,8 @@ impl<J> Schedule<J> {
                 pid,
                 request,
                 read,
-                top,
                 then_abandon,
-            } => self.published(&mut effects, now, (pid, request), (read, top), then_abandon),
+            } => self.published(&mut effects, now, (pid, request), read, then_abandon),
             ScheduleInput::Foreground {
                 top_level,
                 running_tops,
@@ -612,7 +604,6 @@ impl<J> Schedule<J> {
                 pid,
                 meta,
                 judged: Judged::Dropped(SHUTTING_DOWN),
-                placed: None,
             });
             return;
         }
@@ -629,7 +620,6 @@ impl<J> Schedule<J> {
                         pid,
                         meta: waiting.meta,
                         judged: Judged::Dropped(REPLACED),
-                        placed: None,
                     });
                 } else {
                     kept.push_back(waiting);
@@ -752,7 +742,7 @@ impl<J> Schedule<J> {
         effects: &mut Vec<ScheduleEffect<J>>,
         (pid, request): (Pid, Request),
         meta: Meta,
-        (judged, placed, top): (Judged, Option<isize>, Option<Window>),
+        (judged, top): (Judged, Option<Window>),
     ) {
         let stopping = self.stopping;
         let Some(app) = self.apps.get_mut(&pid) else {
@@ -770,12 +760,7 @@ impl<J> Schedule<J> {
                         "a UIA focus read published at its bound returned; its result is discarded"
                     );
                 }
-                Some((_, false)) => effects.push(ScheduleEffect::Outcome {
-                    pid,
-                    meta,
-                    judged,
-                    placed,
-                }),
+                Some((_, false)) => effects.push(ScheduleEffect::Outcome { pid, meta, judged }),
                 None => {
                     tracing::error!(%pid, "a read returned that its thread was not reading");
                     debug_assert!(false, "a read returned that its thread was not reading");
@@ -919,7 +904,6 @@ impl<J> Schedule<J> {
                 pid,
                 meta: running.meta,
                 judged: Judged::Dropped(why),
-                placed: None,
             });
         }
         if waiting {
@@ -945,7 +929,7 @@ impl<J> Schedule<J> {
         effects: &mut Vec<ScheduleEffect<J>>,
         now: u64,
         (pid, request): (Pid, Request),
-        (read, top): (Option<Box<UiaFocusRead>>, Option<Window>),
+        read: Option<Box<UiaFocusRead>>,
         then_abandon: Option<Reason>,
     ) {
         let Some(app) = self.apps.get_mut(&pid) else {
@@ -967,7 +951,6 @@ impl<J> Schedule<J> {
                     pid,
                     meta,
                     judged: Judged::Read(read),
-                    placed: top.map(Window::get),
                 });
                 true
             }
@@ -1009,7 +992,6 @@ impl<J> Schedule<J> {
                 pid,
                 meta: queued.meta,
                 judged: Judged::Dropped(WAITED_TOO_LONG),
-                placed: None,
             });
         }
         self.wake_idle_waiters(effects);
@@ -1063,7 +1045,6 @@ impl<J> Schedule<J> {
                 pid,
                 meta: queued.meta,
                 judged: Judged::Dropped(NO_THREAD),
-                placed: None,
             });
         }
         self.wake_idle_waiters(effects);
@@ -1303,7 +1284,6 @@ mod tests {
             request,
             meta: meta(marker, FocusEvent::Focus),
             judged: Judged::Dropped("read"),
-            placed: None,
             top: None,
         }
     }
@@ -1565,7 +1545,6 @@ mod tests {
                     pid: Pid(1),
                     request: asked,
                     read: Some(a_read()),
-                    top: Some(WINDOW),
                     then_abandon: Some(Reason::MovedOn),
                 },
                 GRACE,
@@ -1607,7 +1586,6 @@ mod tests {
                     pid: Pid(1),
                     request: asked,
                     read: Some(a_read()),
-                    top: Some(WINDOW),
                     then_abandon: None,
                 },
                 300_000,
@@ -1721,7 +1699,6 @@ mod tests {
                     request: request(1, 1),
                     meta: meta(1, FocusEvent::Focus),
                     judged: Judged::Read(a_read()),
-                    placed: Some(WINDOW.get()),
                     top: Some(WINDOW),
                 },
                 1,

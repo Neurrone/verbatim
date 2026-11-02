@@ -103,18 +103,16 @@ receives the event's own element, judges and reads a UIA focus
 - The read (`DeliveredFact::UiaFocusRead`, whose `focus` says focus or menu
   opening) or the drop (`DeliveredFact::UiaFocusDropped`, whose `focus`
   says the same) follows the marker through verbatim.exe, never coalesced
-  or dropped. Every drop carries its answer to its outpost's gap record
-  (`answer`, a `protocol::GapAnswer` from `focus_read::gap_answer`), placed
-  in the top-level window of the window its read found, the cached window
-  or the nearest window (`Reading::outcome`'s `placed`, one local
-  `GetAncestor`), or in none when it found neither. A focus whose nearest
+  or dropped. A focus's drop carries one fact for its outpost's gap
+  record, whether its sender had no window above it (`no_window`); the
+  outpost closes the record by its own reports, and the listener places
+  nothing. A focus whose nearest
   window's lookup failed with `UIA_E_TIMEOUT` is dropped with no other
   call, its reason chosen by `focus_read::nearest_timeout_reason`: after
   `focus_read::NEAREST_FAILED_FAST_BOUND` (a second) or more,
-  as timed out (`focus_read::NEAREST_TIMED_OUT`), which answers the gap
-  record in any window; sooner, as failing fast
-  (`focus_read::NEAREST_FAILED_FAST`), which leaves the record open, so
-  the outpost's gap read at the bound reads the focus. An application
+  as timed out (`focus_read::NEAREST_TIMED_OUT`); sooner, as failing fast
+  (`focus_read::NEAREST_FAILED_FAST`). Either leaves the record to its
+  bound, so the outpost's gap read there reads the focus. An application
   whose lookups keep failing fast has every focus spoken through the gap,
   up to a second late, and the focuses between two gap reads not spoken.
 - Budget and bound. NVDA's checks have `READ_BUDGET` (2 seconds) from
@@ -230,58 +228,78 @@ responder out of it.
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
 The gap record (`reducer::gap_record`, in the reducer's intake;
-`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated fact",
-the gap's evidence; `docs/design/listener-without-connections.md`,
+`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by the
+outpost's own reports"; `docs/design/listener-without-connections.md`,
 decision 11). UI Automation sometimes delivers an application's focus late
-or never while its `WinEvent` focus comes, so the outpost keeps, beside the
-verdict that dropped its own copy, one record: a focus copy it dropped
-because it judged the window UIA, with its window, top-level window
-(`verbatim_win32::window::top_level_of`), stamp, and the bound's due time, on one clock.
+or never while its `WinEvent` focus comes, and an application whose thread
+is held raises none, so the outpost keeps, beside the verdict that dropped
+its own copy, one record: a focus copy it dropped because it judged the
+window UIA, or a foreground change into one of its windows, with its
+window, top-level window, stamp, what it waits for, and the bound's due
+time, on one clock.
 
 - Opening. The worker opens it when it drops a focus copy, its own hook's
   or the listener's forwarded before the hook is in, because its verdict
   on the copy's window is UIA (`Worker::copy_dropped_for_uia`, its
-  program's commit carrying a `GapNote`, applied by
-  `Intake::gap_copy_dropped`). It looks back first: an answer kept for the
-  copy's top-level window or for any window, observed up to 100 ms before
-  the copy or after it (`gap_record::ANSWERED_BEFORE_US`), stands for it,
-  and nothing opens; otherwise a drop for no window above the sender
-  observed so has the focus read at once in the copy's place, stamped with
-  the copy's observation, the reducer's next program. A copy handled through MSAA opens nothing.
-- Restamps. While it is open, a later copy the worker drops for UIA in its
-  top-level window, or a foreground change into that window the worker
-  accepts (after its acceptance, front, repeat and readability tests and
-  before its window's verdict), gives it that event's observation and
-  window, its bound unchanged (`GapRecord::copy_dropped`,
-  `GapRecord::accepted`). The stamp only moves forward: an older event, as
-  in a focus run tried newest first, neither restamps nor answers it.
-- Answers. Each UIA focus's outcome is applied as it resolves its marker
-  (`Intake::push`, with no program dispatched): a focus's read placed in
-  its own window's top-level window, or its nearest window's, one local
-  `GetAncestor`, and a drop by the answer it carries. An answer for the
-  record's top-level window, or for any window, observed up to 100 ms
-  before its stamp or after it, closes it, and is kept, the newest per
-  top-level window, pruned when the window is destroyed
-  (`Intake::gap_window_destroyed`), and the newest for any window. A drop
-  for no window closes the record it answers and takes its marker's place
-  as the record's read (`Item::GapRead`), and is kept as the newest
-  no-window stamp. A drop for no keyboard focus, one replaced, and any
-  other drop that could not establish the focus leave it open, as does
-  anything but a focus. A newer copy accepted in another top-level window,
-  through either backend, or an accepted foreground change into one,
-  answers it. Every answer is final.
-- The bound (`gap_record::BOUND_US`, one second from the first copy) is
-  one of the reducer's timers, read from the open record itself
-  (`GapRecord::waiting_due_us`), so no copy of it is kept; the shell's
-  timed wait ends at it. When it passes, `Item::GapBound` is pushed into
-  the intake, behind every marker queued before it, and the record notes
-  its entry queued, so the reducer is not woken again for it while the
-  entry waits. Handled with the record open and its bound passed by
-  the observation clock (`Intake::gap_bound_reached`), the record closes
-  and is read; a bound reached early is waited for again. A test
-  sets a timer of its own (`Outpost::set_gap_timer`, behind the
-  `GapTimer` trait) in place of the reducer's, and reaches the bound
-  itself (`Outpost::gap_bound_reacher`).
+  program's commit carrying a `GapNote`), to wait for the application's
+  focus. It looks back first: a report the outpost sent in the copy's
+  top-level window, observed up to 100 ms before the copy or after it
+  (`gap_record::ANSWERED_BEFORE_US`), stands for it, and nothing opens;
+  otherwise a drop for no window above the sender observed so has the
+  focus read at once in the copy's place, stamped with the copy's
+  observation, the reducer's next program. A copy handled through MSAA
+  opens nothing. The reducer also opens it as it takes in a foreground
+  change into one of the application's windows that the outpost's one
+  test found in front, the hook's copy or the listener's, a held copy as
+  it is released, stamped with the event's observation: waiting for the
+  application's focus when the outpost judges the window UIA by a kept
+  verdict or the class lists, read locally with no probe
+  (`arbitration::known_to_use_uia`), and for the window's title otherwise
+  (`gap_record::Awaits`). It does not wait for a copy, which an
+  application whose thread is held may never raise.
+- Restamps. While it is open, a later copy the worker drops for UIA in
+  its top-level window gives it that copy's observation and window, its
+  bound unchanged; a later foreground change into it does too, and arms a
+  new bound a second from the change, so every visit to a held
+  application says its title at one second. The stamp only moves forward:
+  an older event, as in a focus run tried newest first, neither restamps
+  nor closes it.
+- Closing, by the outpost's own reports
+  (`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by
+  the outpost's own reports"): the reducer applies every focus it sends
+  Core, an event's or a focus-now answer's, placed by its window facts'
+  top-level window (`GapRecord::reported`). One in the record's top-level
+  window observed no earlier than 100 ms before its stamp closes it, but a
+  whole-window focus there closes only a record waiting for the window's
+  title; one in another top-level window, or with no window facts, closes
+  it only when observed after the stamp. The newest report per top-level
+  window, a whole-window focus never among them, is kept for the
+  look-back, pruned when the window is destroyed. A drop carries one fact
+  for the record, whether its sender had no window above it
+  (`no_window`): such a drop closes the record it answers and takes its
+  marker's place as the record's read (`Item::GapRead`), and is kept as
+  the newest no-window stamp. Every other drop, a give-up included, and a
+  listener's read the outpost drops, leave the record to its bound.
+- The bound (`gap_record::BOUND_US`, one second from the first copy or
+  the newest foreground change) is one of the reducer's timers, read from
+  the open record itself (`GapRecord::waiting_due_us`). When it passes,
+  whatever program is in flight, the reducer asks the shell to test the
+  record's top-level window against the foreground (`Effect::TestGapBound`,
+  answered by `Input::GapBoundTested`), with local calls on its thread
+  (`acceptance::foreground_relation`). An unrelated window closes the
+  record with nothing sent or read. Otherwise, when the window is the
+  foreground window itself, the shell sends its window text as a
+  whole-window focus, the plain window read from local data
+  (`worker::window_text`, `read::plain_window`), minted under a request
+  tag of its own, stamped with the record's stamp; and for a record
+  waiting for the application's focus, `Item::GapBound` is pushed into
+  the intake, behind every marker queued before it. Handled with the
+  record open and its bound passed by the observation clock
+  (`GapRecord::bound_reached`), it is read; a bound reached early is
+  waited for again. The record stays open until a report closes it, with
+  no timer. A test sets a timer of its own (`Outpost::set_gap_timer`,
+  behind the `GapTimer` trait) in place of the reducer's, and reaches the
+  bound itself (`Outpost::gap_bound_reacher`).
 - The read (`Worker::gap_read`, `read::gap_focus_read`, trigger
   `read::FocusRead::Gap`) is the focus-now read through UIA only, made
   once: refused with local calls when the foreground thread's focus window
@@ -297,17 +315,17 @@ because it judged the window UIA, with its window, top-level window
   before the stamp (`uia_focus_before`) and whether the record's window was
   gone (`sender_gone`); a late UIA focus of the same element is reported
   under the read's node, which Core takes as a duplicate.
-- The idle barrier's answer waits while the record is open
-  (`Reducer::answer_idle`); the reducer judges it again after every input,
-  so a drop that closes the record as its marker resolves, leaving the
-  worker nothing to handle, still lets the answer go.
+- The idle barrier's answer waits while the record's bound is still to
+  be handled (`GapRecord::pending`, `Reducer::answer_idle`); the reducer
+  judges it again after every input, so a report that closes the record,
+  leaving the worker nothing to handle, still lets the answer go.
 
 The verdicts. The outpost's verdict is the one verdict per window; the
 listener makes none (`docs/design/focus-pipeline-rework.md`, "Who owns
 each duplicated fact", the verdicts). A listener's read in a window the
 outpost judges not UIA, by the read's nearest window, judged at the read's
-observation, is dropped (`Worker::uia_focus`), its answer having already
-been applied to the gap record.
+observation, is dropped (`Worker::uia_focus`), and leaves the gap record
+to its bound.
 
 ## Public API
 

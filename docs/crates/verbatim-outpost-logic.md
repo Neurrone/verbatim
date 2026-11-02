@@ -24,7 +24,7 @@ Public API:
   due; and `next_timer(now)`, the time of the shell's timed wait. It makes
   no call of any kind.
 - `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
-  program finished, a release's answer, the gap record's bound, the answers to its asks (`MovedOn`, `Published`), and
+  program finished, a release's answer, the gap record's bound, the answers to its asks (`MovedOn`, `Published`, `GapBoundTested`), and
   the shell's close. `Effect`: dispatch a `Program`, send a message,
   release, move the subscription (`Subscription`), drop elements or
   objects, abandon a worker generation (`Abandon`, with the dead
@@ -34,7 +34,11 @@ Public API:
   counts the abandoned workers that have not returned), publish the
   facts' marks, given after a transition that changed them and ahead of
   its other effects, or the verdicts, set the gap record's timer, given
-  after a transition that changed the open record's bound, and two asks: `AskMovedOn`,
+  after a transition that changed the open record's bound, and three asks:
+  `TestGapBound`, the gap record's test at its bound of its top-level
+  window against the foreground, with its window text sent as a
+  whole-window focus when the window is in front, minted under a request
+  of its own that no program runs as; `AskMovedOn`,
   whether the user has left the program's window for another thread of
   its application, and `Publish`, the publication of a walk armed, with
   the facts it is judged against and `then_abandon`, the abandonment
@@ -65,8 +69,10 @@ Public API:
   keeping the read's deadline, walk and rule.
 - The rule for asks: the shell answers each ask exactly once, as the
   reducer's next input, before it takes another message, and the reducer
-  applies an answer only while its request is the program in flight. A
-  transition makes at most one ask: a tick judges the deadline first
+  applies an answer only while its request is the program in flight, but
+  `GapBoundTested`, which concerns the gap record, not a program, and is
+  applied whatever is in flight. Of the program's asks a transition makes
+  at most one: a tick judges the deadline first
   (abandoning, by one `Publish` with `then_abandon` when a walk is armed),
   then the walk's bound (`Publish`), then the moved-on rule's next
   judgment (`AskMovedOn`), the first that applies deciding; a judgment

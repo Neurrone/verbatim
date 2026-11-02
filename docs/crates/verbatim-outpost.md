@@ -97,8 +97,9 @@ first events start its outpost:
 The listener judges and reads each UIA focus from the event's own element,
 since an element cannot be handed to another process; how is
 [verbatim-listener](verbatim-listener.md)'s. The read reaches the outpost
-as a `UiaFocusRead`, or its drop as a `UiaFocusDropped` with its answer to
-the gap record, behind the marker the listener sent first, and the
+as a `UiaFocusRead`, or its drop as a `UiaFocusDropped`, which says
+whether its sender had no window above it, behind the marker the listener
+sent first, and the
 outpost's reducer keeps the intake's order and the gap record
 ([verbatim-outpost-logic](verbatim-outpost-logic.md)).
 
@@ -961,7 +962,7 @@ foreground application for its focus unless a newer focus was applied.
 ### Window destruction and held objects
 
 - Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
-  the gap record's answer kept for it (through its program's commit), its
+  the gap record's report kept for it (through its program's commit), its
   classic mark, and its MSAA nodes.
 - Held objects: the object store (`outpost::store`;
   `docs/design/ownership.md`) owns both

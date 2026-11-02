@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use verbatim_model::protocol::{
-    EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+    DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
     WALK_DEADLINE,
 };
 use verbatim_model::{CallCounts, FocusGroup, NodeId, TextOp, TraceId};
@@ -59,7 +59,7 @@ pub use self::follow::{
     Applied, Change, DialogMemo, Facts, FocusPath, Follow, FollowState, GapNote, Group, Owed,
     OwedWork, Report, Route, Subscription, Target, WatchChange, apply_local,
 };
-pub use self::gap_record::{CopyDropped, GapRead};
+pub use self::gap_record::{Awaits, CopyDropped, GapRead};
 pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
 pub use self::text::{
@@ -291,6 +291,29 @@ pub enum Effect {
     /// Set the gap record's timer for this observation time, or cancel it:
     /// given after a transition that changed the open record's bound.
     GapTimer(Option<u64>),
+    /// The gap record's bound has passed: test the record's top-level
+    /// window, `top_level`, against the system's foreground from Windows'
+    /// state with local calls (`acceptance::foreground_relation`), and,
+    /// when it is the foreground window itself, send its window text as a
+    /// whole-window focus: the plain window read from local data, minted
+    /// under `request`'s tag, stamped `stamp_us` and traced `trace`, judged
+    /// against `facts` and written into the store as a commit
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
+    /// application's title"). Answered by [`Input::GapBoundTested`] before
+    /// the shell takes another message.
+    TestGapBound {
+        /// The request the window text is minted under, which no program
+        /// runs as.
+        request: Request,
+        /// The record's top-level window.
+        top_level: Window,
+        /// The record's stamp.
+        stamp_us: u64,
+        /// The record's trace.
+        trace: TraceId,
+        /// The facts the window text's report is judged against.
+        facts: Box<Facts>,
+    },
     /// Ask whether the user has left `window`, the window of `request`'s
     /// program, for another thread of its application: answered by
     /// [`Input::MovedOn`] before the shell takes another message.
@@ -335,15 +358,12 @@ pub enum Effect {
     reason = "an entry moves by value from the mailbox into the intake, as it always has"
 )]
 pub enum Input {
-    /// An entry from a producer: where it came from, and, for a UIA
-    /// focus's read, what it answers of the gap record.
+    /// An entry from a producer, and where it came from.
     Entry {
         /// The entry.
         entry: Entry,
         /// Where it came from.
         source: Source,
-        /// For a UIA focus's read, what it answers of the gap record.
-        read_answer: Option<GapAnswer>,
     },
     /// The outpost's hook is in, and a listener forwards to it.
     Hooked,
@@ -413,6 +433,18 @@ pub enum Input {
     GapTimerGiven,
     /// The gap record's bound was reached by a timer the shell was given.
     GapBound,
+    /// The shell's answer to [`Effect::TestGapBound`]: whether the record's
+    /// top-level window is related to the foreground, and the window text
+    /// sent as a whole-window focus, as a commit of `request`'s, when the
+    /// window was the foreground window itself.
+    GapBoundTested {
+        /// The request the test was asked under.
+        request: Request,
+        /// Whether the record's window is related to the foreground.
+        related: bool,
+        /// The window text's whole-window focus, when one is sent.
+        title: Option<Box<Change>>,
+    },
     /// The shell's answer to [`Effect::AskMovedOn`].
     MovedOn {
         /// The program asked about.
@@ -614,7 +646,8 @@ impl Reducer {
         }
         if let Some(due_us) = self
             .intake
-            .gap_waiting_due_us()
+            .gap()
+            .waiting_due_us()
             .filter(|_| !self.gap_timer_given)
         {
             let left = due_us.saturating_sub(now.observed_us);
@@ -628,11 +661,7 @@ impl Reducer {
         let before = self.observed();
         let mut effects = Vec::new();
         match input {
-            Input::Entry {
-                entry,
-                source,
-                read_answer,
-            } => self.entry(entry, source, read_answer, &mut effects),
+            Input::Entry { entry, source } => self.entry(entry, source, &mut effects),
             Input::Hooked => self.hold.hooked(),
             Input::WithoutListener => {
                 let held = self.hold.without_listener();
@@ -676,7 +705,12 @@ impl Reducer {
                 objects,
             } => self.released(&nodes, &anchors, objects, now, &mut effects),
             Input::GapTimerGiven => self.gap_timer_given = true,
-            Input::GapBound => self.gap_bound_entry(now),
+            Input::GapBound => self.gap_bound(&mut effects),
+            Input::GapBoundTested {
+                request,
+                related,
+                title,
+            } => self.gap_bound_tested(request, related, title, now, &mut effects),
             Input::MovedOn { request, moved_on } => {
                 if !self.stopping {
                     let decision = self.flight.moved_on(request, moved_on);
@@ -713,10 +747,11 @@ impl Reducer {
         if !self.gap_timer_given
             && self
                 .intake
-                .gap_waiting_due_us()
+                .gap()
+                .waiting_due_us()
                 .is_some_and(|due_us| now.observed_us >= due_us)
         {
-            self.gap_bound_entry(now);
+            self.gap_bound(&mut effects);
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
@@ -728,7 +763,7 @@ impl Reducer {
     /// marks, for the mailbox, and the open gap record's bound, for a
     /// test's timer ([`changed`](Self::changed)).
     fn observed(&self) -> (Marks, Option<u64>) {
-        (self.facts.marks.clone(), self.intake.gap_due_us())
+        (self.facts.marks.clone(), self.intake.gap().due_us())
     }
 
     /// Gives the shell what a transition changed of what it keeps a copy
@@ -740,22 +775,67 @@ impl Reducer {
         if self.facts.marks != marks {
             effects.insert(0, Effect::Marks(self.facts.marks.clone()));
         }
-        let due_us = self.intake.gap_due_us();
+        let due_us = self.intake.gap().due_us();
         if due_us != gap_due_us {
             effects.push(Effect::GapTimer(due_us));
         }
     }
 
-    /// The gap record's bound has been reached: its entry, under the
-    /// record's trace, waits behind every marker queued before it, and the
-    /// record notes it queued. With no record open there is nothing for it
-    /// to read, so none is queued.
-    fn gap_bound_entry(&mut self, now: Now) {
-        if let Some(trace) = self.intake.gap_trace() {
-            self.intake.push_gap_bound(
+    /// The gap record's bound has been reached: the shell is asked to test
+    /// the record's top-level window against the foreground, and to send
+    /// its window text when it is in front, whatever program is in flight,
+    /// since a second is the silence budget (Dickson, 2026-11-02;
+    /// `docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
+    /// application's title"). With no record waiting for its bound there
+    /// is nothing to test; a record with no top-level window closes.
+    fn gap_bound(&mut self, effects: &mut Vec<Effect>) {
+        let Some(at) = self.intake.gap_mut().at_bound() else {
+            return;
+        };
+        let Some(top_level) = Window::new(at.top_level) else {
+            self.intake.gap_mut().close();
+            return;
+        };
+        effects.push(Effect::TestGapBound {
+            request: self.flight.next_request(),
+            top_level,
+            stamp_us: at.stamp_us,
+            trace: at.trace,
+            facts: Box::new(self.facts.clone()),
+        });
+    }
+
+    /// The shell's test of the gap record's window at its bound: an
+    /// unrelated window closes the record, with nothing sent or read.
+    /// Otherwise its window text, when sent, is committed as `request`'s,
+    /// its report recorded and its message sent; and a record waiting for
+    /// the application's focus has its bound's entry queued, behind every
+    /// marker queued before it, so the worker makes the gap's read when it
+    /// is free, while one waiting for the window's title has no read of its
+    /// own. The record stays open until a report closes it.
+    fn gap_bound_tested(
+        &mut self,
+        request: Request,
+        related: bool,
+        title: Option<Box<Change>>,
+        now: Now,
+        effects: &mut Vec<Effect>,
+    ) {
+        if !related {
+            self.intake.gap_mut().close();
+            return;
+        }
+        let reads = self.intake.gap().awaits() == Some(Awaits::Focus);
+        let trace = self.intake.gap().trace();
+        if let Some(change) = title {
+            self.commit(request, &change, now, effects);
+        }
+        match trace {
+            Some(trace) if reads && self.intake.gap().is_open() => self.intake.push_gap_bound(
                 Entry::own(Item::GapBound, trace, now.observed_us),
                 &self.facts.marks,
-            );
+            ),
+            _ => self.intake.gap_mut().bound_passed(),
         }
     }
 
@@ -776,22 +856,16 @@ impl Reducer {
     /// Takes in `entry`, from `source`: held while the hand-over's hold
     /// lasts if it came from the hook, and pushed into the intake
     /// otherwise.
-    fn entry(
-        &mut self,
-        entry: Entry,
-        source: Source,
-        read_answer: Option<GapAnswer>,
-        effects: &mut Vec<Effect>,
-    ) {
+    fn entry(&mut self, entry: Entry, source: Source, effects: &mut Vec<Effect>) {
         match source {
             Source::Hook => {
                 if let Some(entry) = self.hold.hooked_copy(entry) {
-                    self.push(entry, read_answer, effects);
+                    self.push(entry, effects);
                 }
             }
             Source::Listener => {
                 self.hold.listener_copy(&entry);
-                self.push(entry, read_answer, effects);
+                self.push(entry, effects);
             }
             Source::Other => {
                 let ends_reads = matches!(
@@ -801,7 +875,7 @@ impl Reducer {
                         _
                     )
                 );
-                self.push(entry, read_answer, effects);
+                self.push(entry, effects);
                 if ends_reads && let Some(released) = self.hold.reads_ended() {
                     self.push_all(released, effects);
                 }
@@ -812,25 +886,57 @@ impl Reducer {
     /// Pushes `entries` into the intake in order, as one batch.
     fn push_all(&mut self, entries: Vec<Entry>, effects: &mut Vec<Effect>) {
         for entry in entries {
-            self.push(entry, None, effects);
+            self.push(entry, effects);
         }
     }
 
-    /// Pushes `entry` into the intake, recording a query.
-    fn push(&mut self, entry: Entry, read_answer: Option<GapAnswer>, effects: &mut Vec<Effect>) {
+    /// Pushes `entry` into the intake, recording a query. A foreground
+    /// change its test found in front opens the gap record, or restamps an
+    /// open one, and arms its bound, as it is taken in, whatever its window,
+    /// waiting for the application's focus in a window the outpost judges
+    /// UIA and for the window's title otherwise: an application whose
+    /// thread is held raises no focus copy, on a second visit or entered
+    /// already hung (`docs/design/focus-pipeline-rework-remaining.md`, "The
+    /// gap, closed by the outpost's own reports").
+    fn push(&mut self, entry: Entry, effects: &mut Vec<Effect>) {
         if let Item::Query { request_id, .. } = entry.item
             && !self.stopping
         {
             self.queries.insert(request_id);
         }
-        let pushed = self.intake.push(entry, read_answer, &self.facts.marks);
+        if let (
+            Item::Fact(DeliveredFact::Foreground { hwnd }, _),
+            Front::Foreground {
+                in_front_at_us: Some(in_front_at_us),
+                uia,
+            },
+        ) = (&entry.item, entry.front)
+        {
+            let awaits = if uia { Awaits::Focus } else { Awaits::Title };
+            // Stamped with its event's observation; one with none known, by
+            // its test's.
+            let at_us = match entry.observed_at_us {
+                0 => in_front_at_us,
+                observed_at_us => observed_at_us,
+            };
+            self.intake
+                .gap_mut()
+                .foreground(*hwnd, (at_us, entry.trace), awaits);
+        }
+        let pushed = self.intake.push(entry, &self.facts.marks);
         if !pushed.unparked.is_empty() {
             effects.push(Effect::Unpark(pushed.unparked));
         }
     }
 
-    /// Sends `message`; a reply answers its query.
+    /// Sends `message`; a reply answers its query, and a focus closes the
+    /// gap record it answers ([`gap_report`]).
     fn send(&mut self, message: OutpostToCore, effects: &mut Vec<Effect>) {
+        if let Some((top_level, at_us, whole_window)) = gap_report(&message) {
+            self.intake
+                .gap_mut()
+                .reported(top_level, at_us, whole_window);
+        }
         if let OutpostToCore::Reply { request_id, .. } = &message {
             self.queries.remove(request_id);
             if let Some(current) = self.flight.item_mut().filter(|current| {
@@ -996,7 +1102,8 @@ impl Reducer {
             } => {
                 let dropped = self
                     .intake
-                    .gap_copy_dropped(window, top_level, (at_us, trace));
+                    .gap_mut()
+                    .copy_dropped(window, top_level, (at_us, trace));
                 if dropped == CopyDropped::ReadNow {
                     // Read at once, in the copy's place, as part of the
                     // same try of its group.
@@ -1012,18 +1119,7 @@ impl Reducer {
                         .push_front((Entry::own(Item::GapRead { window }, trace, at_us), group));
                 }
             }
-            GapNote::Accepted {
-                window,
-                top_level,
-                at_us,
-                trace,
-                restamps,
-            } => {
-                let _ = self
-                    .intake
-                    .gap_accepted(window, top_level, (at_us, trace), restamps);
-            }
-            GapNote::WindowDestroyed(hwnd) => self.intake.gap_window_destroyed(hwnd),
+            GapNote::WindowDestroyed(hwnd) => self.intake.gap_mut().window_destroyed(hwnd),
         }
     }
 
@@ -1233,7 +1329,7 @@ impl Reducer {
 
     /// Answers the idle barrier's query once no deferred work is pending:
     /// the hook's copies are not held at the start, no caret key's watch is
-    /// open, the gap record is closed, and
+    /// open, the gap record's bound is not still to be handled, and
     /// the program in flight neither reads it nor holds the watch. The program in flight is otherwise not waited for:
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
@@ -1244,7 +1340,7 @@ impl Reducer {
                 .running()
                 .is_some_and(|(_, current, _)| current.deferred)
             || !self.facts.follow.watch.is_none()
-            || self.intake.gap_open()
+            || self.intake.gap().pending()
         {
             return;
         }
@@ -1420,8 +1516,8 @@ impl Reducer {
                 });
             }
             Item::GapBound => {
-                if let Some(GapRead { window, stamp_us }) =
-                    self.intake.gap_bound_reached(now.observed_us)
+                if let Ok(Some(GapRead { window, stamp_us })) =
+                    self.intake.gap_mut().bound_reached(now.observed_us)
                 {
                     let read = Entry {
                         item: Item::GapRead { window },
@@ -1755,5 +1851,32 @@ pub fn watch_ended(open: &OpenWatch, published_at_us: u64) -> OutpostToCore {
             published_at_us,
             ..open.timing
         },
+    }
+}
+
+/// What `message` reports to the gap record, when it is a focus the
+/// outpost sends Core: its window facts' top-level window, when it has any,
+/// its observation, and whether it is a whole-window focus. An event's
+/// focus, and a focus-now answer's focused control at the time its read
+/// began.
+fn gap_report(message: &OutpostToCore) -> Option<(Option<isize>, u64, bool)> {
+    let top_level = |facts: Option<&verbatim_model::WindowFacts>| {
+        facts.map(|facts| isize::from_ne_bytes(facts.top_level.0.to_ne_bytes()))
+    };
+    match message {
+        OutpostToCore::Event {
+            event: verbatim_model::NormalizedEvent::FocusChanged { whole_window, .. },
+            window,
+            observed_at_us,
+            ..
+        } => Some((top_level(window.as_ref()), *observed_at_us, *whole_window)),
+        OutpostToCore::Reply {
+            outcome: QueryOutcome::Done(QueryResult::Focus(now)),
+            ..
+        } => now
+            .focus
+            .as_ref()
+            .map(|focus| (top_level(focus.window.as_ref()), now.observed_at_us, false)),
+        _ => None,
     }
 }

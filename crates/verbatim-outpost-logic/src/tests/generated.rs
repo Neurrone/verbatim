@@ -260,7 +260,6 @@ impl Gen {
         self.input(Input::Entry {
             entry: entry(item, at),
             source: Source::Other,
-            read_answer: None,
         })
     }
 

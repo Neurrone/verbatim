@@ -86,8 +86,8 @@ use verbatim_uia::{
 use crate::arbitration::{Arbitrator, EventWindows};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, RequestId,
-    UiaSnapshotFact, Urgent, WinEventStamp,
+    CoreToOutpost, DeliveredFact, EventTiming, OutpostToCore, Query, RequestId, UiaSnapshotFact,
+    Urgent, WinEventStamp,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -645,9 +645,34 @@ impl Context {
     /// are local), and of a foreground change whether its window is the
     /// foreground window, and when that was found, on the observation clock
     /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
-    /// foreground tests, on its reducer's thread"). Nothing else is tested.
-    fn front_test(&self, item: &Item) -> reducer::Front {
+    /// foreground tests, on its reducer's thread"), with whether the outpost
+    /// judges the window UIA by a kept verdict or the class lists, for the
+    /// gap record the change opens. Nothing else is tested.
+    fn front_test(&self, item: &Item, observed_at_us: u64) -> reducer::Front {
         use verbatim_reader_rules::acceptance::{self, EventName};
+        /// The take's judgement of a window's backend: the push-time copy
+        /// of the reducer's verdicts, at the event's observation, with no
+        /// probe and nothing recorded.
+        struct AtTake {
+            verdicts: Arc<reducer::Verdicts>,
+            at_us: u64,
+        }
+        impl crate::arbitration::Judgement for AtTake {
+            fn judged_at(&self, _: &crate::arbitration::Arbitrator) -> u64 {
+                self.at_us
+            }
+            fn verdicts(&self) -> Arc<reducer::Verdicts> {
+                Arc::clone(&self.verdicts)
+            }
+            fn record(&self, _: VerdictChange) {}
+        }
+        let known_to_use_uia = |hwnd| {
+            let judgement = AtTake {
+                verdicts: self.mailbox.verdicts(),
+                at_us: observed_at_us,
+            };
+            crate::arbitration::known_to_use_uia(&self.arbitrator, &judgement, hwnd)
+        };
         let fact = match item {
             Item::Fact(DeliveredFact::UiaMarked { fact, .. }, _) => &**fact,
             Item::Fact(fact, _) => fact,
@@ -657,8 +682,14 @@ impl Context {
             DeliveredFact::Foreground { hwnd } => {
                 // The test's time, read as the test begins.
                 let tested_at_us = self.observed_now();
-                let in_front = self.foreground_window() == hwnd;
-                reducer::Front::InFront(in_front.then_some(tested_at_us))
+                // Core's hidden frame is never reported, so never in front
+                // for the outpost.
+                let in_front = self.foreground_window() == hwnd
+                    && !verbatim_win32::window::window_belongs_to_hidden_frame(hwnd);
+                reducer::Front::Foreground {
+                    in_front_at_us: in_front.then_some(tested_at_us),
+                    uia: in_front && known_to_use_uia(hwnd),
+                }
             }
             DeliveredFact::MsaaFocus { hwnd, .. } => {
                 let windows = verbatim_win32::window::SystemWindows {
@@ -761,7 +792,6 @@ impl Context {
         (trace, observed_at_us, timing): (TraceId, u64, EventTiming),
         source: Source,
     ) {
-        let read_answer = read_answer(&item);
         self.mailbox.push(
             Entry {
                 item,
@@ -771,7 +801,6 @@ impl Context {
                 front: reducer::Front::Untested,
             },
             source,
-            read_answer,
         );
     }
 
@@ -1816,30 +1845,6 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
             None
         }
     }
-}
-
-/// What a focus's read in `item` answers of the gap record: a copy in the
-/// top-level window of its own window, else of its nearest window, or in
-/// any window when it has neither; `None` for anything else, a menu
-/// opening's read among them. One local call, `GetAncestor`, made as the
-/// read is pushed, so the reducer makes none.
-fn read_answer(item: &Item) -> Option<GapAnswer> {
-    let Item::Fact(
-        DeliveredFact::UiaFocusRead {
-            read, focus: true, ..
-        },
-        _,
-    ) = item
-    else {
-        return None;
-    };
-    let window = if read.hwnd != 0 {
-        read.hwnd
-    } else {
-        read.window.unwrap_or(0)
-    };
-    let top = (window != 0).then(|| verbatim_win32::window::top_level_of(window));
-    Some(GapAnswer::Answers(top.filter(|&top| top != 0)))
 }
 
 /// Stops the reducer and the workers for the outpost's shutdown, once the

@@ -1084,7 +1084,6 @@ fn a_console_hosts_poll_is_bounded_from_the_keys_time() {
 /// poll reading: a caret moved after it, with no event, answers the key.
 fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
     let (mut app, outpost, area, key) = console_watch("mockapp-console-event-then-move", 0);
-    let console = common::find_window(&app.title);
     outpost.hold_worker();
     app.send("console-caret 0 0");
     outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
@@ -1092,7 +1091,7 @@ fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
     // has handled the event, whose check finds the caret where it was, and
     // whose read of the terminal finds nothing new to report.
     outpost.deliver(DeliveredFact::Foreground {
-        hwnd: console.0 as isize,
+        hwnd: common::another_applications_window().0 as isize,
     });
     outpost.step_worker(1);
     app.send("caret text 1");

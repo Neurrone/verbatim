@@ -356,29 +356,6 @@ impl ListenerFact {
     }
 }
 
-/// What a UIA focus's outcome says of its application's gap record, the
-/// outpost's wait, after a `WinEvent` focus it dropped because it judged
-/// the window UIA, for a UIA focus that answers it
-/// (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-/// fact", the gap's evidence). The listener computes it from each drop
-/// and sends it with the drop; the outpost places a read itself. It goes
-/// on the pipe as JSON; the listener, the supervisor and the outposts are
-/// one build of this definition, so it needs no version.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GapAnswer {
-    /// It answers a copy in the top-level window given, or, with `None`,
-    /// a copy in any window of the application.
-    Answers(Option<isize>),
-    /// It answers a copy in any window of the application, which is to be
-    /// read at once in its place: the event came, and its sender has no
-    /// window above it, as a sender gone before its read has, so the event
-    /// for where the focus went may never come
-    /// (`docs/design/listener-without-connections.md`, risk 13).
-    ReadsNow,
-    /// It leaves the record open.
-    LeavesOpen,
-}
-
 /// A fact the supervisor delivers to a target outpost (decision D13): what
 /// the listener captured, minus the pid, since routing is already done. The
 /// outpost's worker reads, arbitrates, and reports it exactly as it does the
@@ -417,9 +394,16 @@ pub enum DeliveredFact {
         /// Whether the event dropped was a focus rather than a menu
         /// opening, a selection, or a notification.
         focus: bool,
-        /// What the drop says of its application's gap record, placed in
-        /// the top-level window of the window its read found.
-        answer: GapAnswer,
+        /// Whether the focus was dropped because its sender had no window
+        /// above it, as a sender gone before its read has: the event for
+        /// where the focus went may never come, so the outpost reads its
+        /// gap record at once (`docs/design/listener-without-connections.md`,
+        /// risk 13). The one fact a drop carries for the gap record, which
+        /// the outpost alone closes, by its own reports
+        /// (`docs/design/focus-pipeline-rework-remaining.md`, "The gap,
+        /// closed by the outpost's own reports").
+        #[serde(default)]
+        no_window: bool,
     },
     /// The focus listener that sent the markers still waiting has ended:
     /// none of them will be resolved, so none is waited for any more. Made

@@ -1,69 +1,107 @@
 //! The outpost's gap record: the wait, after a `WinEvent` focus copy the
-//! worker dropped because it judged the copy's window UIA, for a UIA focus
-//! that answers it (`docs/design/focus-pipeline-rework.md`, "Who owns each
-//! duplicated fact", the gap's evidence; `docs/design/listener-without-connections.md`,
-//! decision 11).
+//! worker dropped because it judged the copy's window UIA, or a foreground
+//! change into one of the application's windows, for the application's
+//! focus to be told to Core (`docs/design/focus-pipeline-rework-remaining.md`,
+//! "The gap, closed by the outpost's own reports";
+//! `docs/design/listener-without-connections.md`, decision 11).
 //!
 //! UI Automation sometimes delivers an application's focus events late or
 //! never while the `WinEvent` focus still comes, or after their senders are
-//! gone. The record is kept beside the verdict that dropped the copy, in the
+//! gone, and an application whose thread is held raises no focus at all.
+//! The record is kept beside the verdict that dropped the copy, in the
 //! outpost's reducer ([`super`]), so nothing judges the copy's window again,
 //! and every stamp it compares is on the run's one clock. It is a plain
-//! record with no call and no timer of its own: the reducer applies each
-//! UIA focus's outcome to it as the outcome resolves its marker, a
-//! program's judgements of copies and foreground changes as the program's
-//! commit, and its bound as one of the reducer's timers.
+//! record with no call and no timer of its own: the reducer applies to it a
+//! program's judgements of copies, each foreground change as the reducer
+//! takes it in, each report the outpost sends Core, the one fact a drop
+//! carries, and its bound as one of the reducer's timers.
 //!
-//! The answers and the look-back: a UIA focus can reach the listener up to
-//! 25.5 ms before its `WinEvent` (5 of 1,680 measured), so an answer
-//! observed up to [`ANSWERED_BEFORE_US`] before a copy, or after it, answers
-//! it. The newest answer is kept per top-level window, pruned when the
-//! window is destroyed ([`GapRecord::window_destroyed`]), and one for any
-//! window, so an answer resolved before an earlier copy of another window
-//! is judged cannot stand in for that copy's own. A drop for no window
-//! above the sender is kept apart, its newest stamp having a copy that comes
-//! after it read at once, and closing an open record it answers with the
-//! record's read made at once.
+//! What closes it: a report, every focus the outpost sends Core but a
+//! whole-window focus in the record's own top-level window, while the
+//! record waits for the application's focus ([`Awaits::Focus`]); any report
+//! in its top-level window, a whole-window focus included, while it waits
+//! for a window's title ([`Awaits::Title`]). A report in the record's
+//! top-level window closes it when observed no earlier than
+//! [`ANSWERED_BEFORE_US`] before the record's stamp, since a UIA focus can
+//! reach the listener up to 25.5 ms before its `WinEvent` (5 of 1,680
+//! measured); one in another top-level window, or with no window facts,
+//! only when observed after it. The newest report per top-level window,
+//! a whole-window focus never among them, is kept for the look-back, so a
+//! copy judged after a report of its own focus opens nothing; it is pruned
+//! when the window is destroyed ([`GapRecord::window_destroyed`]). A drop
+//! for no window above the sender is kept apart: a copy that comes after
+//! it is read at once, and an open record it answers is read at once.
 //!
 //! The restamp: while a record is open, a later copy the worker drops for
-//! UIA in its top-level window, or an accepted foreground change into that
-//! window, gives it its observation and window, so the read after the
-//! user's return carries the return's stamp, and an older focus's outcome
-//! does not answer a newer copy. The stamp only moves forward: an older
-//! copy or change, as in a focus run tried newest first, neither restamps
-//! the record nor answers it. The bound stays a second from the first copy.
+//! UIA in its top-level window gives it its observation and window,
+//! leaving its bound; a later foreground change into it does too, and arms
+//! a new bound a second from the change, so every visit to a held
+//! application says its title a second after it. The stamp only moves
+//! forward: an older copy or change, as in a focus run tried newest first,
+//! neither restamps the record nor answers it.
+//!
+//! The bound: when it passes, the reducer has the shell test the record's
+//! top-level window against the foreground ([`GapRecord::at_bound`]); an
+//! unrelated window closes the record. Otherwise the record stays open
+//! until a report closes it, its bound passed ([`Bound::Passed`]), so it
+//! is not waited for again until a foreground change arms it anew.
 
 use std::collections::BTreeMap;
 
 use verbatim_model::TraceId;
-use verbatim_model::protocol::GapAnswer;
 
-/// How long a record waits, from its first copy's observation, for a UIA
-/// focus, in microseconds. The UIA focus of a `WinEvent` focus usually
-/// comes within 1 to 35 ms in Settings, and in the same millisecond at the
-/// median in File Explorer; a newly started File Explorer process's first
-/// one came 222 to 514 ms after the first item's `WinEvent` in
-/// `explorer_folder_window`, and 515 to 2,694 ms after the process's first
-/// focus `WinEvent` in a UIA window in 55 new windows of
+/// How long a record waits, from the observation that opened or armed it,
+/// for the application's focus, in microseconds. The UIA focus of a
+/// `WinEvent` focus usually comes within 1 to 35 ms in Settings, and in the
+/// same millisecond at the median in File Explorer; a newly started File
+/// Explorer process's first one came 222 to 514 ms after the first item's
+/// `WinEvent` in `explorer_folder_window`, and 515 to 2,694 ms after the
+/// process's first focus `WinEvent` in a UIA window in 55 new windows of
 /// `measure_focus_explorer` (2026-10-21), all but two under a second; when
 /// UI Automation's delivery fails none comes, in Settings for 14.5 seconds.
 /// A read made before a late UIA focus costs one read and nothing heard
 /// twice, since Core takes the late focus as a duplicate of the read's; a
 /// read made late leaves the user in silence. So the bound is a second
-/// rather than above every late delivery measured. It is the UIA focus
-/// wait both readers share ([`verbatim_reader_rules::UIA_FOCUS_WAIT`]).
+/// rather than above every late delivery measured: the silence budget. It
+/// is the UIA focus wait both readers share
+/// ([`verbatim_reader_rules::UIA_FOCUS_WAIT`]).
 #[expect(
     clippy::cast_possible_truncation,
     reason = "a second in microseconds fits a u64"
 )]
 pub const BOUND_US: u64 = verbatim_reader_rules::UIA_FOCUS_WAIT.as_micros() as u64;
 
-/// How long before a copy's observation a UIA focus may have been observed
-/// and still answer it: a UIA focus can reach the listener before the
-/// `WinEvent` of the same focus, by up to 25.5 ms in the runs measured
-/// (5 of 1,680 `WinEvent` focuses in UIA windows, `measure_focus_explorer`,
-/// 2026-10-21).
+/// How long before a record's stamp a report in its top-level window may
+/// have been observed and still close it: a UIA focus can reach the
+/// listener before the `WinEvent` of the same focus, by up to 25.5 ms in
+/// the runs measured (5 of 1,680 `WinEvent` focuses in UIA windows,
+/// `measure_focus_explorer`, 2026-10-21).
 pub const ANSWERED_BEFORE_US: u64 = 100_000;
+
+/// What an open record waits for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Awaits {
+    /// The application's focus: a record opened by a copy, or by a
+    /// foreground change into a window the outpost judges UIA by a kept
+    /// verdict or the class lists. A whole-window focus does not close it.
+    Focus,
+    /// The window's title: a record opened by a foreground change into any
+    /// other window, whose own report is owed by the worker. Any report in
+    /// its top-level window closes it, and no gap read is made for it.
+    Title,
+}
+
+/// Where an open record's bound stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Bound {
+    /// Not reached: the reducer's timer waits for it.
+    Waiting,
+    /// Reached and being handled: its test asked, or its entry queued.
+    Queued,
+    /// Handled: the record waits, with no timer, for a report or a
+    /// foreground change.
+    Passed,
+}
 
 /// The open record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,20 +111,22 @@ struct Open {
     /// That window's top-level window.
     top_level: isize,
     /// The newest copy's or foreground change's observation, which its
-    /// read is stamped with.
+    /// read and its title are stamped with.
     stamp_us: u64,
     /// The newest copy's or foreground change's trace, which its bound's
-    /// entry carries.
+    /// entry and its title carry.
     trace: TraceId,
-    /// When its bound passes: a second from its first copy's observation.
+    /// When its bound passes: a second from its first copy's observation,
+    /// or from its newest foreground change's.
     due_us: u64,
-    /// Whether its bound's entry is queued, so its bound is not waited for
-    /// again ([`GapRecord::queue_bound`]).
-    bound_queued: bool,
+    /// Where its bound stands.
+    bound: Bound,
+    /// What it waits for.
+    awaits: Awaits,
 }
 
-/// The read a record that closed is to be made with: the record's window
-/// and stamp.
+/// The read a record's bound or a drop for no window has made, with the
+/// record's window and stamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GapRead {
     /// The newest copy's or foreground change's window.
@@ -95,17 +135,31 @@ pub struct GapRead {
     pub stamp_us: u64,
 }
 
+/// An open record at its bound, for the shell's test of its top-level
+/// window against the foreground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtBound {
+    /// The record's top-level window.
+    pub top_level: isize,
+    /// Its stamp, which its title is stamped with.
+    pub stamp_us: u64,
+    /// Its trace, which its title carries.
+    pub trace: TraceId,
+    /// What it waits for.
+    pub awaits: Awaits,
+}
+
 /// What the worker's drop of a copy because its window is UIA did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyDropped {
-    /// An answer observed with it, or a newer copy of the record already,
+    /// A report observed with it, or a newer copy of the record already,
     /// stands for it: nothing opens.
     Answered,
     /// A drop for no window above the sender observed with it has its
     /// focus read at once, in its place, stamped with its observation.
     ReadNow,
     /// It opened the record, whose bound passes at `due_us`; an open record
-    /// of another top-level window, if any, was answered first.
+    /// of another top-level window, if any, was closed first.
     Opened {
         /// When the bound passes.
         due_us: u64,
@@ -114,55 +168,42 @@ pub enum CopyDropped {
     Restamped,
 }
 
-/// What an event the worker accepted did to the record, besides a copy it
-/// dropped for UIA ([`GapRecord::copy_dropped`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Accepted {
-    /// Nothing: no record is open, the event is older than its stamp, or a
-    /// copy handled through MSAA in the record's own top-level window.
-    Unchanged,
-    /// It restamped the record.
-    Restamped,
-    /// It answered the record, which closed.
-    Answered,
-}
-
-/// What a UIA focus's outcome did to the record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    /// It left the record as it was.
-    Unchanged,
-    /// It answered the record, which closed.
-    Answered,
-    /// It answered the record, which closed, to be read at once in the
-    /// outcome's place.
-    ReadNow(GapRead),
-}
-
-/// The record, and the answers kept for the look-back.
+/// The record, and the reports kept for the look-back.
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Default)]
 pub struct GapRecord {
     open: Option<Open>,
-    /// The newest answer for each top-level window, by its observation.
-    answered: BTreeMap<isize, u64>,
-    /// The newest answer for any window.
-    answered_anywhere: Option<u64>,
+    /// The newest report for each top-level window, by its observation,
+    /// a whole-window focus never among them.
+    reported: BTreeMap<isize, u64>,
     /// The newest observation of a UIA focus whose sender had no window
     /// above it.
     last_no_window_us: Option<u64>,
 }
 
-/// Whether an answer observed at `answered_us` answers a copy observed at
-/// `copy_us`: up to [`ANSWERED_BEFORE_US`] before it, or after it.
-fn answers(answered_us: u64, copy_us: u64) -> bool {
-    answered_us.saturating_add(ANSWERED_BEFORE_US) >= copy_us
+/// Whether a report observed at `reported_us` answers a copy observed at
+/// `copy_us` in its own top-level window: up to [`ANSWERED_BEFORE_US`]
+/// before it, or after it.
+fn answers(reported_us: u64, copy_us: u64) -> bool {
+    reported_us.saturating_add(ANSWERED_BEFORE_US) >= copy_us
 }
 
 impl GapRecord {
     /// Whether a record is open.
     pub fn is_open(&self) -> bool {
         self.open.is_some()
+    }
+
+    /// Whether an open record's bound has not been handled yet, which the
+    /// idle answer waits for: past it, the record waits for the
+    /// application with no timer, as long as the application takes.
+    pub fn pending(&self) -> bool {
+        self.open.is_some_and(|open| open.bound != Bound::Passed)
+    }
+
+    /// What the open record waits for.
+    pub fn awaits(&self) -> Option<Awaits> {
+        self.open.map(|open| open.awaits)
     }
 
     /// The open record's trace: its newest copy's or foreground change's.
@@ -175,32 +216,54 @@ impl GapRecord {
         self.open.map(|open| open.due_us)
     }
 
-    /// When the open record's bound passes, while its bound's entry is not
-    /// queued: what a timer waits for.
+    /// When the open record's bound passes, while it is waited for: what a
+    /// timer waits for.
     pub fn waiting_due_us(&self) -> Option<u64> {
         self.open
-            .filter(|open| !open.bound_queued)
+            .filter(|open| open.bound == Bound::Waiting)
             .map(|open| open.due_us)
     }
 
-    /// The open record's bound's entry is queued, so its bound is not
-    /// waited for again; the entry handled before its bound passes waits
-    /// for it again ([`bound_reached`](Self::bound_reached)).
-    pub fn queue_bound(&mut self) {
+    /// The open record at its bound, whose bound is now being handled, so
+    /// it is not waited for again ([`Bound::Queued`]); `None` with no record
+    /// waiting for its bound.
+    pub fn at_bound(&mut self) -> Option<AtBound> {
+        let open = self
+            .open
+            .as_mut()
+            .filter(|open| open.bound == Bound::Waiting)?;
+        open.bound = Bound::Queued;
+        Some(AtBound {
+            top_level: open.top_level,
+            stamp_us: open.stamp_us,
+            trace: open.trace,
+            awaits: open.awaits,
+        })
+    }
+
+    /// The open record's bound is handled with no read of its own: it waits
+    /// for a report with no timer.
+    pub fn bound_passed(&mut self) {
         if let Some(open) = self.open.as_mut() {
-            open.bound_queued = true;
+            open.bound = Bound::Passed;
         }
+    }
+
+    /// Closes the open record, its window found unrelated to the
+    /// foreground at its bound.
+    pub fn close(&mut self) {
+        self.open = None;
     }
 
     /// The worker dropped a copy in `window`, of top-level window
     /// `top_level`, observed at `at_us`, because it judges the window UIA.
     /// With a record open in its top-level window it restamps it, when
-    /// newer; an older copy changes nothing. A newer copy of another
-    /// top-level window answers the record open there first. With no
-    /// record open, the look-back: an answer for its top-level window or
-    /// for any window, observed with it, stands for it; otherwise a drop
-    /// for no window observed with it has it read at once; otherwise it
-    /// opens the record.
+    /// newer, to wait for the application's focus, its bound unchanged; an
+    /// older copy changes nothing. A newer copy of another top-level window
+    /// closes the record open there first. With no record open, the
+    /// look-back: a report for its top-level window observed with it stands
+    /// for it; otherwise a drop for no window observed with it has it read
+    /// at once; otherwise it opens the record.
     pub fn copy_dropped(
         &mut self,
         window: isize,
@@ -216,16 +279,17 @@ impl GapRecord {
                     window,
                     stamp_us: at_us,
                     trace,
+                    awaits: Awaits::Focus,
                     ..open
                 });
                 return CopyDropped::Restamped;
             }
             self.open = None;
         }
-        let answered = self.answered.get(&top_level).copied().into_iter();
-        if answered
-            .chain(self.answered_anywhere)
-            .any(|answered_us| answers(answered_us, at_us))
+        if self
+            .reported
+            .get(&top_level)
+            .is_some_and(|&reported_us| answers(reported_us, at_us))
         {
             return CopyDropped::Answered;
         }
@@ -242,115 +306,101 @@ impl GapRecord {
             stamp_us: at_us,
             trace,
             due_us,
-            bound_queued: false,
+            bound: Bound::Waiting,
+            awaits: Awaits::Focus,
         });
         CopyDropped::Opened { due_us }
     }
 
-    /// The worker accepted an event in `window`, of top-level window
-    /// `top_level`, observed at `at_us`, other than a copy it dropped for
-    /// UIA: a foreground change into the window (`restamps`), or a copy it
-    /// handles through MSAA. A newer one in the record's top-level window
-    /// restamps it, a foreground change only; a newer one in another
-    /// top-level window answers it.
-    pub fn accepted(
-        &mut self,
-        window: isize,
-        top_level: isize,
-        (at_us, trace): (u64, TraceId),
-        restamps: bool,
-    ) -> Accepted {
-        let Some(open) = self.open else {
-            return Accepted::Unchanged;
+    /// A foreground change into `window`, a top-level window of the
+    /// application in front by the outpost's test, observed at `at_us`,
+    /// waiting for what `awaits` says: it opens the record, closing one
+    /// open in another top-level window, or restamps the one open in its
+    /// own; either way it arms a new bound a second from the change. A
+    /// record waiting for a focus keeps waiting for one. An older change
+    /// changes nothing.
+    pub fn foreground(&mut self, window: isize, (at_us, trace): (u64, TraceId), awaits: Awaits) {
+        let awaits = match self.open {
+            Some(open) if at_us <= open.stamp_us => return,
+            Some(open) if open.top_level == window && open.awaits == Awaits::Focus => Awaits::Focus,
+            _ => awaits,
         };
-        if at_us <= open.stamp_us {
-            return Accepted::Unchanged;
-        }
-        if open.top_level != top_level {
-            self.open = None;
-            return Accepted::Answered;
-        }
-        if !restamps {
-            return Accepted::Unchanged;
-        }
         self.open = Some(Open {
             window,
+            top_level: window,
             stamp_us: at_us,
             trace,
-            ..open
+            due_us: at_us.saturating_add(BOUND_US),
+            bound: Bound::Waiting,
+            awaits,
         });
-        Accepted::Restamped
     }
 
-    /// A UIA focus's outcome, observed at `at_us`, said `answer`: an answer
-    /// is kept for the look-back, and answers the record when observed up
-    /// to [`ANSWERED_BEFORE_US`] before its stamp, or after it, in its
-    /// top-level window, or for any window; a drop for no window is kept,
-    /// and has the record it answers read at once.
-    pub fn outcome(&mut self, answer: GapAnswer, at_us: u64) -> Outcome {
-        match answer {
-            GapAnswer::LeavesOpen => Outcome::Unchanged,
-            GapAnswer::Answers(top_level) => {
-                let newest = match top_level {
-                    Some(top_level) => self.answered.entry(top_level).or_insert(at_us),
-                    None => self.answered_anywhere.get_or_insert(at_us),
-                };
-                *newest = (*newest).max(at_us);
-                match self.open {
-                    Some(open)
-                        if top_level.is_none_or(|top| top == open.top_level)
-                            && answers(at_us, open.stamp_us) =>
-                    {
-                        self.open = None;
-                        Outcome::Answered
-                    }
-                    _ => Outcome::Unchanged,
-                }
-            }
-            GapAnswer::ReadsNow => {
-                let newest = self.last_no_window_us.get_or_insert(at_us);
-                *newest = (*newest).max(at_us);
-                match self.open {
-                    Some(open) if answers(at_us, open.stamp_us) => {
-                        self.open = None;
-                        Outcome::ReadNow(GapRead {
-                            window: open.window,
-                            stamp_us: open.stamp_us,
-                        })
-                    }
-                    _ => Outcome::Unchanged,
-                }
-            }
+    /// The outpost sent Core a focus observed at `at_us`, in top-level
+    /// window `top_level` when its window facts name one, a whole-window
+    /// focus when `whole_window`: kept for the look-back unless a
+    /// whole-window focus, and closing the open record it answers. Whether
+    /// it closed the record.
+    pub fn reported(&mut self, top_level: Option<isize>, at_us: u64, whole_window: bool) -> bool {
+        if !whole_window && let Some(top_level) = top_level {
+            let newest = self.reported.entry(top_level).or_insert(at_us);
+            *newest = (*newest).max(at_us);
         }
+        let Some(open) = self.open else {
+            return false;
+        };
+        let closes = if top_level == Some(open.top_level) {
+            answers(at_us, open.stamp_us) && (!whole_window || open.awaits == Awaits::Title)
+        } else {
+            at_us > open.stamp_us
+        };
+        if closes {
+            self.open = None;
+        }
+        closes
+    }
+
+    /// The listener dropped a UIA focus observed at `at_us` because its
+    /// sender had no window above it: kept, and the open record it answers
+    /// is closed, to be read at once.
+    pub fn no_window(&mut self, at_us: u64) -> Option<GapRead> {
+        let newest = self.last_no_window_us.get_or_insert(at_us);
+        *newest = (*newest).max(at_us);
+        let open = self.open.filter(|open| answers(at_us, open.stamp_us))?;
+        self.open = None;
+        Some(GapRead {
+            window: open.window,
+            stamp_us: open.stamp_us,
+        })
     }
 
     /// The bound's entry is handled at `now_us`: the record still open, its
-    /// bound passed, closes, and is to be read; `Err` with its due time
-    /// when the bound has not passed yet, as when the timer fired a little
-    /// early, or for an earlier record, and the bound is waited for again;
-    /// `Ok(None)` with no record open.
+    /// bound passed, is to be read, and stays open until a report closes
+    /// it; `Err` with its due time when the bound has not passed yet, as
+    /// when the timer fired a little early, or a foreground change armed a
+    /// new bound since, and the bound is waited for again; `Ok(None)` with
+    /// no record open.
     pub fn bound_reached(&mut self, now_us: u64) -> Result<Option<GapRead>, u64> {
         match self.open.as_mut() {
             None => Ok(None),
             Some(open) if now_us < open.due_us => {
-                open.bound_queued = false;
+                open.bound = Bound::Waiting;
                 Err(open.due_us)
             }
             Some(open) => {
-                let read = GapRead {
+                open.bound = Bound::Passed;
+                Ok(Some(GapRead {
                     window: open.window,
                     stamp_us: open.stamp_us,
-                };
-                self.open = None;
-                Ok(Some(read))
+                }))
             }
         }
     }
 
-    /// `hwnd` was destroyed: the answer kept for it as a top-level window
+    /// `hwnd` was destroyed: the report kept for it as a top-level window
     /// goes.
     pub fn window_destroyed(&mut self, hwnd: isize) {
-        self.answered.remove(&hwnd);
+        self.reported.remove(&hwnd);
     }
 }
 
@@ -368,8 +418,7 @@ mod tests {
     }
 
     /// The open record's trace is its newest copy's or foreground change's,
-    /// for its bound's entry; an older copy or an accepted copy that does
-    /// not restamp leaves it.
+    /// for its bound's entry; an older copy leaves it.
     #[test]
     fn the_records_trace_is_its_newest_stamps() {
         let mut record = GapRecord::default();
@@ -379,30 +428,23 @@ mod tests {
         record.copy_dropped(0x12, TOP, at(2_000));
         assert_eq!(record.trace(), Some(TraceId::from_raw(2_000)));
         record.copy_dropped(0x12, TOP, at(1_500));
-        record.accepted(WINDOW, TOP, at(3_000), false);
         assert_eq!(record.trace(), Some(TraceId::from_raw(2_000)));
-        record.accepted(WINDOW, TOP, at(4_000), true);
+        record.foreground(TOP, at(4_000), Awaits::Title);
         assert_eq!(record.trace(), Some(TraceId::from_raw(4_000)));
-        let _ = record.bound_reached(1_000 + BOUND_US);
-        assert_eq!(record.trace(), None);
     }
 
-    /// A UIA focus's drop observed just after its copy, because its element
-    /// no longer has the keyboard focus, as in fast navigation, says
-    /// nothing of the copy's focus: the record stays open, and at its bound
-    /// it is read with the copy's window and stamp.
+    /// A record whose focus never comes is read at its bound with its
+    /// window and stamp, and stays open until a report closes it, with no
+    /// timer: its bound is passed, which the idle answer no longer waits
+    /// for.
     #[test]
-    fn a_drop_for_no_keyboard_focus_leaves_the_gap_record_open() {
+    fn a_record_read_at_its_bound_stays_open_until_a_report_closes_it() {
         let mut record = GapRecord::default();
         assert_eq!(
             record.copy_dropped(WINDOW, TOP, at(1_000)),
             CopyDropped::Opened {
                 due_us: 1_000 + BOUND_US
             }
-        );
-        assert_eq!(
-            record.outcome(GapAnswer::LeavesOpen, 2_000),
-            Outcome::Unchanged
         );
         assert_eq!(record.bound_reached(BOUND_US), Err(1_000 + BOUND_US));
         assert_eq!(
@@ -412,51 +454,97 @@ mod tests {
                 stamp_us: 1_000
             }))
         );
+        assert!(record.is_open());
+        assert!(!record.pending());
+        assert_eq!(record.waiting_due_us(), None);
+        assert!(record.reported(Some(TOP), 1_000, false));
         assert!(!record.is_open());
     }
 
-    /// A queued bound is not waited for, until its entry is handled before
-    /// the bound passes; a restamp keeps it queued.
+    /// A record at its bound is not waited for again while its bound is
+    /// handled; its entry handled before the bound passes waits for it
+    /// again; a copy's restamp keeps the bound.
     #[test]
-    fn a_queued_bound_is_waited_for_again_when_handled_early() {
+    fn a_bound_being_handled_is_waited_for_again_when_handled_early() {
         let mut record = GapRecord::default();
         let _ = record.copy_dropped(WINDOW, TOP, at(1_000));
         assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
-        record.queue_bound();
+        assert_eq!(
+            record.at_bound(),
+            Some(AtBound {
+                top_level: TOP,
+                stamp_us: 1_000,
+                trace: TraceId::from_raw(1_000),
+                awaits: Awaits::Focus,
+            })
+        );
         assert_eq!(record.waiting_due_us(), None);
+        assert!(record.pending());
         let _ = record.copy_dropped(WINDOW, TOP, at(2_000));
-        assert_eq!(record.waiting_due_us(), None, "the restamp keeps it queued");
+        assert_eq!(record.waiting_due_us(), None, "the restamp keeps it");
         assert_eq!(record.due_us(), Some(1_000 + BOUND_US));
         assert_eq!(record.bound_reached(BOUND_US), Err(1_000 + BOUND_US));
         assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
     }
 
-    /// A windowless sender's read is placed by the top-level window of its
-    /// nearest window: in another top-level window than the copy's, it
-    /// leaves the record open; in the copy's, it answers it.
+    /// A report placed by its window facts' top-level window closes the
+    /// record open there, and one in another top-level window only when
+    /// observed after the record's stamp.
     #[test]
-    fn a_windowless_senders_read_answers_the_record_in_its_nearest_windows_top_level_window() {
+    fn a_report_is_placed_by_its_window_facts_top_level_window() {
         let mut record = GapRecord::default();
-        record.copy_dropped(WINDOW, TOP, at(1_000));
-        assert_eq!(
-            record.outcome(GapAnswer::Answers(Some(OTHER_TOP)), 2_000),
-            Outcome::Unchanged
-        );
+        record.copy_dropped(WINDOW, TOP, at(200_000));
+        assert!(!record.reported(Some(OTHER_TOP), 150_000, false));
         assert!(record.is_open());
-        assert_eq!(
-            record.outcome(GapAnswer::Answers(Some(TOP)), 3_000),
-            Outcome::Answered
-        );
+        assert!(record.reported(Some(TOP), 150_000, false), "within 100 ms");
         assert!(!record.is_open());
     }
 
-    /// A UIA focus's answer resolved before the worker judges its copy,
+    /// A report in another top-level window, or with no window facts,
+    /// closes only a record stamped before it.
+    #[test]
+    fn a_report_of_another_window_closes_only_an_older_record() {
+        let mut record = GapRecord::default();
+        record.copy_dropped(WINDOW, TOP, at(1_000));
+        assert!(!record.reported(Some(OTHER_TOP), 1_000, false));
+        assert!(!record.reported(None, 900, false));
+        assert!(record.is_open());
+        assert!(record.reported(None, 1_001, false));
+        assert!(!record.is_open());
+        record.copy_dropped(WINDOW, TOP, at(5_000));
+        assert!(record.reported(Some(OTHER_TOP), 5_001, false));
+    }
+
+    /// A whole-window focus in a record's own top-level window neither
+    /// closes a record waiting for the application's focus nor stands for
+    /// a copy in the look-back, so a frame's report does not stand for its
+    /// list's copy; one waiting for the window's title it closes.
+    #[test]
+    fn a_whole_window_focus_neither_closes_nor_stands_for_its_own_windows_record() {
+        let mut record = GapRecord::default();
+        assert!(!record.reported(Some(TOP), 1_000, true));
+        assert_eq!(
+            record.copy_dropped(WINDOW, TOP, at(1_050)),
+            CopyDropped::Opened {
+                due_us: 1_050 + BOUND_US
+            },
+            "the frame's report stands for nothing"
+        );
+        assert!(!record.reported(Some(TOP), 1_100, true));
+        assert!(record.is_open());
+        record.close();
+        record.foreground(TOP, at(2_000), Awaits::Title);
+        assert!(record.reported(Some(TOP), 2_000, true));
+        assert!(!record.is_open());
+    }
+
+    /// A report of a copy's own focus resolved before the copy is judged,
     /// observed up to 100 ms before the copy, stands for it: the copy opens
     /// no record. One observed earlier still does not.
     #[test]
-    fn an_answer_resolved_before_its_copy_is_judged_opens_no_record() {
+    fn a_report_before_its_copy_is_judged_opens_no_record() {
         let mut record = GapRecord::default();
-        record.outcome(GapAnswer::Answers(Some(TOP)), 1_000_000);
+        record.reported(Some(TOP), 1_000_000, false);
         assert_eq!(
             record.copy_dropped(WINDOW, TOP, at(1_000_000 + ANSWERED_BEFORE_US)),
             CopyDropped::Answered
@@ -470,48 +558,39 @@ mod tests {
         );
     }
 
-    /// An answer in another top-level window, resolved after a copy's own,
-    /// leaves the copy's own answer standing for it.
+    /// A report in another top-level window, sent after a copy's own,
+    /// leaves the copy's own report standing for it.
     #[test]
-    fn an_answer_in_another_top_level_window_leaves_a_copys_own_answer_standing() {
+    fn a_report_in_another_top_level_window_leaves_a_copys_own_report_standing() {
         let mut record = GapRecord::default();
-        record.outcome(GapAnswer::Answers(Some(TOP)), 1_000);
-        record.outcome(GapAnswer::Answers(Some(OTHER_TOP)), 5_000);
+        record.reported(Some(TOP), 1_000, false);
+        record.reported(Some(OTHER_TOP), 5_000, false);
         assert_eq!(
             record.copy_dropped(WINDOW, TOP, at(2_000)),
             CopyDropped::Answered
         );
     }
 
-    /// A newer copy the worker accepts in another top-level window of the
-    /// application, handled through MSAA, or a newer accepted foreground
-    /// change into one, answers the record; a copy handled through MSAA in
-    /// the record's own top-level window does not.
+    /// A give-up of the listener's, as every drop but one for no window,
+    /// carries nothing for the record, which stays open to its bound.
     #[test]
-    fn an_accepted_focus_in_another_top_level_window_answers_the_record() {
+    fn a_give_up_leaves_the_record_to_its_bound() {
         let mut record = GapRecord::default();
         record.copy_dropped(WINDOW, TOP, at(1_000));
+        assert!(record.pending());
         assert_eq!(
-            record.accepted(WINDOW, TOP, at(2_000), false),
-            Accepted::Unchanged
+            record.bound_reached(1_000 + BOUND_US),
+            Ok(Some(GapRead {
+                window: WINDOW,
+                stamp_us: 1_000
+            }))
         );
-        assert_eq!(
-            record.accepted(0x21, OTHER_TOP, at(3_000), false),
-            Accepted::Answered
-        );
-        assert!(!record.is_open());
-        record.copy_dropped(WINDOW, TOP, at(4_000));
-        assert_eq!(
-            record.accepted(OTHER_TOP, OTHER_TOP, at(5_000), true),
-            Accepted::Answered
-        );
-        assert!(!record.is_open());
     }
 
     /// A later copy the worker drops for UIA in the record's top-level
-    /// window restamps it, its bound unchanged: an outcome observed more
-    /// than 100 ms before the new stamp no longer answers it, and its read
-    /// is stamped at the new copy.
+    /// window restamps it, its bound unchanged: a report observed more than
+    /// 100 ms before the new stamp no longer closes it, and its read is
+    /// stamped at the new copy.
     #[test]
     fn a_later_copy_in_the_records_window_restamps_it() {
         let mut record = GapRecord::default();
@@ -520,10 +599,7 @@ mod tests {
             record.copy_dropped(0x12, TOP, at(150_000)),
             CopyDropped::Restamped
         );
-        assert_eq!(
-            record.outcome(GapAnswer::Answers(Some(TOP)), 5_000),
-            Outcome::Unchanged
-        );
+        assert!(!record.reported(Some(TOP), 5_000, false));
         assert_eq!(
             record.bound_reached(BOUND_US),
             Ok(Some(GapRead {
@@ -533,10 +609,33 @@ mod tests {
         );
     }
 
+    /// A foreground change opens a record waiting for what it says, and a
+    /// later one into the same window restamps it and arms a new bound a
+    /// second from it, its bound waited for again, while a record waiting
+    /// for a focus keeps waiting for one; an older change changes nothing.
+    #[test]
+    fn a_foreground_change_opens_or_restamps_the_record_and_arms_its_bound() {
+        let mut record = GapRecord::default();
+        record.foreground(TOP, at(1_000), Awaits::Title);
+        assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
+        record.bound_passed();
+        assert_eq!(record.waiting_due_us(), None);
+        record.foreground(TOP, at(5_000), Awaits::Title);
+        assert_eq!(record.waiting_due_us(), Some(5_000 + BOUND_US));
+        record.foreground(TOP, at(4_000), Awaits::Title);
+        assert_eq!(record.trace(), Some(TraceId::from_raw(5_000)));
+        record.copy_dropped(WINDOW, TOP, at(6_000));
+        record.foreground(TOP, at(7_000), Awaits::Title);
+        assert_eq!(
+            record.at_bound().map(|at| at.awaits),
+            Some(Awaits::Focus),
+            "a copy showed the window UIA"
+        );
+    }
+
     /// The stamp only moves forward: an older copy, as in a focus run
     /// tried newest first, neither restamps the record nor answers it, in
-    /// either top-level window, and neither does an older foreground
-    /// change.
+    /// either top-level window.
     #[test]
     fn an_older_copy_neither_restamps_nor_answers_the_record() {
         let mut record = GapRecord::default();
@@ -550,14 +649,6 @@ mod tests {
             record.copy_dropped(0x21, OTHER_TOP, at(10_000)),
             CopyDropped::Answered,
             "an older copy in another window answers nothing"
-        );
-        assert_eq!(
-            record.accepted(0x21, OTHER_TOP, at(20_000), false),
-            Accepted::Unchanged
-        );
-        assert_eq!(
-            record.accepted(TOP, TOP, at(30_000), true),
-            Accepted::Unchanged
         );
         assert_eq!(
             record.bound_reached(50_000 + BOUND_US),
@@ -574,7 +665,7 @@ mod tests {
     #[test]
     fn a_drop_for_no_window_before_its_copy_has_the_copy_read_at_once() {
         let mut record = GapRecord::default();
-        assert_eq!(record.outcome(GapAnswer::ReadsNow, 0), Outcome::Unchanged);
+        assert_eq!(record.no_window(0), None);
         assert_eq!(
             record.copy_dropped(WINDOW, TOP, at(20_000)),
             CopyDropped::ReadNow
@@ -590,8 +681,8 @@ mod tests {
         let mut record = GapRecord::default();
         record.copy_dropped(WINDOW, TOP, at(0));
         assert_eq!(
-            record.outcome(GapAnswer::ReadsNow, 10_000),
-            Outcome::ReadNow(GapRead {
+            record.no_window(10_000),
+            Some(GapRead {
                 window: WINDOW,
                 stamp_us: 0
             })
@@ -599,13 +690,13 @@ mod tests {
         assert!(!record.is_open());
     }
 
-    /// An answer kept for a top-level window goes when the window is
+    /// A report kept for a top-level window goes when the window is
     /// destroyed, so a later copy in a window reusing its handle opens a
     /// record.
     #[test]
-    fn a_destroyed_windows_answer_is_pruned() {
+    fn a_destroyed_windows_report_is_pruned() {
         let mut record = GapRecord::default();
-        record.outcome(GapAnswer::Answers(Some(TOP)), 1_000);
+        record.reported(Some(TOP), 1_000, false);
         record.window_destroyed(TOP);
         assert_eq!(
             record.copy_dropped(WINDOW, TOP, at(2_000)),

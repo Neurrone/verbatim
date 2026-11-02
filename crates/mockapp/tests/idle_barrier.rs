@@ -91,7 +91,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     // A foreground change behind the query holds the worker again once it
     // has handled everything before it.
     outpost.deliver(DeliveredFact::Foreground {
-        hwnd: hwnd.0 as isize,
+        hwnd: common::another_applications_window().0 as isize,
     });
     outpost.step_worker(1);
     // The first read's answer is in flight, the second's and the idle

@@ -28,9 +28,7 @@ use std::thread;
 use std::time::Instant;
 
 use verbatim_model::TraceId;
-use verbatim_model::protocol::{
-    EventTiming, GapAnswer, OutpostToCore, QueryOutcome, RequestId, Responder,
-};
+use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
 use verbatim_uia::{Agile, Kept};
 
 use super::commit::{Effects, Writes};
@@ -61,13 +59,8 @@ pub trait GapTimer: Send + Sync {
     reason = "an entry moves by value from its producer into the mailbox, as it always has"
 )]
 pub(super) enum Posted {
-    /// An entry, from where it came, with what a UIA focus's read answers
-    /// of the gap record.
-    Entry {
-        entry: Entry,
-        source: Source,
-        read_answer: Option<GapAnswer>,
-    },
+    /// An entry, and where it came from.
+    Entry { entry: Entry, source: Source },
     /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
     /// The outpost's hook is in.
@@ -168,16 +161,12 @@ impl Mailbox {
 
     /// Appends `entry`, from `source`, unless the reducer's marks drop it
     /// as it is pushed, waking nobody ([`Marks::drops_on_arrival`]).
-    pub(super) fn push(&self, entry: Entry, source: Source, read_answer: Option<GapAnswer>) {
+    pub(super) fn push(&self, entry: Entry, source: Source) {
         let mut state = self.lock();
         if state.closed || state.marks.drops_on_arrival(&entry.item) {
             return;
         }
-        state.posted.push_back(Posted::Entry {
-            entry,
-            source,
-            read_answer,
-        });
+        state.posted.push_back(Posted::Entry { entry, source });
         self.rouse(state);
     }
 
@@ -566,29 +555,76 @@ impl Shell {
         ))
     }
 
+    /// The gap record's test at its bound, of its top-level window
+    /// `top_level` against the system's foreground, made from Windows'
+    /// state with local calls only on this thread: whether the window is
+    /// related to the foreground window by the acceptance test
+    /// (`acceptance::foreground_relation`: the same top-level window or
+    /// root owner, topmost, or a `Windows.UI.Core` window under the active
+    /// window), and, when it is the foreground window itself, its window
+    /// text sent as a whole-window focus stamped `stamp_us`: the plain
+    /// window read from local data, minted under `request`'s tag with the
+    /// store's lock, a short hold, and written as a commit of its
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
+    /// application's title"). No call is made into the application.
+    fn gap_bound_test(
+        &mut self,
+        request: Request,
+        top_level: verbatim_reader_rules::Window,
+        (stamp_us, trace): (u64, TraceId),
+        facts: Facts,
+    ) -> (bool, Option<Change>) {
+        let foreground = self.context.foreground_window();
+        let class = verbatim_win32::window::window_class_name(top_level.get());
+        let related = verbatim_reader_rules::acceptance::foreground_relation(
+            top_level,
+            &class,
+            &verbatim_win32::window::SystemWindows { foreground },
+        )
+        .related();
+        if !related || foreground != top_level.get() {
+            tracing::debug!(
+                top_level = top_level.get(),
+                foreground,
+                related,
+                "the gap record's bound: no window text is sent"
+            );
+            return (related, None);
+        }
+        let tag = tag_of(request);
+        let context = RequestContext::new(&self.context, tag, facts);
+        let effects = worker::window_text(&context, top_level.get(), (trace, stamp_us));
+        self.garbage.store.push(context.take_removed());
+        tracing::info!(
+            %trace,
+            top_level = top_level.get(),
+            "the gap record's bound passed with no focus reported; the window's text is sent"
+        );
+        let change = write(
+            &self.context.store,
+            tag,
+            effects,
+            &mut self.elements,
+            &mut self.garbage,
+        );
+        (true, Some(change))
+    }
+
     /// Takes one posted input into the reducer and applies what it asks.
     fn take(&mut self, posted: Posted) {
         let input = match posted {
-            Posted::Entry {
-                mut entry,
-                source,
-                read_answer,
-            } => {
+            Posted::Entry { mut entry, source } => {
                 // The one test of an MSAA focus or a foreground change
                 // against the foreground, made as the reducer takes it in,
                 // never on the worker ([`super::reducer::Front`]).
-                entry.front = self.context.front_test(&entry.item);
+                entry.front = self.context.front_test(&entry.item, entry.observed_at_us);
                 if let Item::Query { request_id, .. } = &entry.item
                     && !self.closing
                 {
                     self.tokens
                         .insert(*request_id, token(&self.context, *request_id, entry.trace));
                 }
-                Input::Entry {
-                    entry,
-                    source,
-                    read_answer,
-                }
+                Input::Entry { entry, source }
             }
             Posted::Settle(done) => {
                 let Some(input) = self.settle(done) else {
@@ -678,7 +714,6 @@ impl Shell {
         Some(Input::Entry {
             entry: Entry::own(barrier, TraceId::mint(), self.now().wall_us),
             source: Source::Other,
-            read_answer: None,
         })
     }
 
@@ -703,6 +738,10 @@ impl Shell {
     }
 
     /// Carries out `effect`, returning the answer to one that asks.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per effect, each carried out in place or by a function of its own"
+    )]
     fn carry_out(&mut self, effect: Effect) -> Option<Input> {
         match effect {
             Effect::Dispatch(program) => self.dispatch(*program),
@@ -730,6 +769,21 @@ impl Shell {
                     request,
                     change: self.publication(request, *facts).map(Box::new),
                     then_abandon,
+                });
+            }
+            Effect::TestGapBound {
+                request,
+                top_level,
+                stamp_us,
+                trace,
+                facts,
+            } => {
+                let (related, title) =
+                    self.gap_bound_test(request, top_level, (stamp_us, trace), *facts);
+                return Some(Input::GapBoundTested {
+                    request,
+                    related,
+                    title: title.map(Box::new),
                 });
             }
             Effect::Subscribe(subscription) => self.subscribe(&subscription),
@@ -1051,7 +1105,6 @@ mod tests {
             Input::Entry {
                 entry,
                 source: Source::Other,
-                read_answer: None,
             },
             Now::default(),
         );
@@ -1144,7 +1197,6 @@ mod tests {
                 1,
             ),
             source: Source::Other,
-            read_answer: None,
         });
         let request = Request {
             generation: 0,

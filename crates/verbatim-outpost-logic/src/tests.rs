@@ -8,8 +8,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use verbatim_model::protocol::{
-    DeliveredFact, EventTiming, GapAnswer, OutpostToCore, Query, QueryOutcome, QueryResult,
-    WinEventStamp,
+    DeliveredFact, EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, WinEventStamp,
 };
 use verbatim_model::{
     Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, Role, StateSet, TextOp,
@@ -28,6 +27,14 @@ struct Answers {
     moved_on: bool,
     publications: VecDeque<Change>,
     published: Vec<Request>,
+    /// Whether the gap record's window is found unrelated to the
+    /// foreground at its bound.
+    unrelated: bool,
+    /// The window texts the shell sends at the gap record's bounds, in
+    /// order, for windows found in front.
+    titles: VecDeque<Change>,
+    /// The top-level windows the shell was asked to test at a bound.
+    tested: Vec<isize>,
 }
 
 impl Answers {
@@ -51,6 +58,21 @@ impl Answers {
                     request: *request,
                     change,
                     then_abandon: *then_abandon,
+                })
+            }
+            Effect::TestGapBound {
+                request, top_level, ..
+            } => {
+                self.tested.push(top_level.get());
+                let related = !self.unrelated;
+                Some(Input::GapBoundTested {
+                    request: *request,
+                    related,
+                    title: if related {
+                        self.titles.pop_front().map(Box::new)
+                    } else {
+                        None
+                    },
                 })
             }
             _ => None,
@@ -110,7 +132,6 @@ impl Replay {
             Input::Entry {
                 entry: entry(item, at_ms),
                 source,
-                read_answer: None,
             },
             at_ms,
         )
@@ -335,6 +356,81 @@ fn abandons(effects: &[Effect]) -> bool {
         .any(|effect| matches!(effect, Effect::Abandon { .. }))
 }
 
+/// The window facts of a window of top-level window `top_level`.
+fn facts_in(top_level: isize) -> verbatim_model::WindowFacts {
+    let handle = verbatim_model::WindowHandle(u64::from_ne_bytes(top_level.to_ne_bytes()));
+    verbatim_model::WindowFacts {
+        top_level: handle,
+        root_owner: handle,
+        topmost: false,
+        under_active_window: None,
+        in_foreground: true,
+        foreground_window: handle,
+        class: String::new(),
+        application: String::new(),
+        alt_held: false,
+    }
+}
+
+/// The commit of a report of node `id` in top-level window `top_level`,
+/// observed at `at_us`, a whole-window focus when `whole_window`.
+fn report_in(id: u64, top_level: isize, at_us: u64, whole_window: bool) -> Change {
+    let focus = node(
+        id,
+        if whole_window {
+            Role::Window
+        } else {
+            Role::Button
+        },
+    );
+    Change {
+        result: Some(OutpostToCore::Event {
+            trace_id: TraceId::from_raw(at_us),
+            observed_at_us: at_us,
+            backend: Backend::Msaa,
+            window: Some(facts_in(top_level)),
+            application: None,
+            timing: EventTiming::default(),
+            event: NormalizedEvent::FocusChanged {
+                node: focus,
+                whole_window,
+                ancestors: Vec::new(),
+                selected_child: None,
+                text: None,
+                earlier: None,
+                group: None,
+            },
+        }),
+        ..Change::default()
+    }
+}
+
+/// The gap record's timers `effects` set or cancel.
+fn gap_timers(effects: &[Effect]) -> Vec<Option<u64>> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::GapTimer(due) => Some(*due),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A foreground change into top-level window 0x10, observed at 1 ms, in
+/// front by the outpost's test, a window it judges UIA when `uia`.
+fn foreground_change(uia: bool) -> Entry {
+    Entry {
+        front: Front::Foreground {
+            in_front_at_us: Some(1_000),
+            uia,
+        },
+        ..entry(
+            Item::Fact(DeliveredFact::Foreground { hwnd: 0x10 }, None),
+            1,
+        )
+    }
+}
+
 /// A copy of a `WinEvent` focus dropped for UIA in window 0x11 of
 /// top-level window 0x10, observed at 1 ms.
 fn copy_dropped() -> Change {
@@ -366,7 +462,7 @@ fn what_arrives_after_a_focus_marker_waits_for_its_read() {
             DeliveredFact::UiaFocusDropped {
                 marker: 7,
                 focus: true,
-                answer: GapAnswer::LeavesOpen,
+                no_window: false,
             },
             None,
         ),
@@ -402,25 +498,13 @@ fn the_gap_records_timer_follows_the_record_in_the_order_it_changes() {
         Some(Duration::from_millis(1_001)),
         "the record's bound"
     );
-    // A UIA focus's outcome answers it: the timer is cancelled.
-    let effects = replay.push(
-        Item::Fact(
-            DeliveredFact::UiaFocusDropped {
-                marker: 9,
-                focus: true,
-                answer: GapAnswer::Answers(Some(0x10)),
-            },
-            None,
-        ),
-        Source::Other,
-        4,
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::GapTimer(None)))
-    );
-    assert_eq!(replay.reducer.next_timer(now(4)), None);
+    // A report of the application's focus in its top-level window closes
+    // it: the timer is cancelled.
+    let request = program(&replay.push(name_change(2), Source::Hook, 4)).request;
+    let effects = replay.commit(request, report_in(5, 0x10, 4_000, false), 4);
+    assert_eq!(gap_timers(&effects), [None]);
+    replay.finish(request, true, 5);
+    assert_eq!(replay.reducer.next_timer(now(5)), None);
 }
 
 #[test]
@@ -437,7 +521,7 @@ fn a_drop_that_leaves_the_record_open_has_it_read_at_its_bound() {
             DeliveredFact::UiaFocusDropped {
                 marker: 4,
                 focus: true,
-                answer: GapAnswer::LeavesOpen,
+                no_window: false,
             },
             None,
         ),
@@ -457,8 +541,9 @@ fn a_drop_that_leaves_the_record_open_has_it_read_at_its_bound() {
 }
 
 /// The bound's entry, queued behind a focus marker, is not waited for
-/// again while it waits; the read it makes closes the record, which cancels
-/// the timer given for it.
+/// again while it waits; the read it makes leaves the record open, with no
+/// timer, and the read's report closes it, which cancels the timer given
+/// for it.
 #[test]
 fn a_queued_bound_is_not_waited_for_again_and_its_read_cancels_the_timer() {
     let mut replay = Replay::new();
@@ -482,15 +567,16 @@ fn a_queued_bound_is_not_waited_for_again_and_its_read_cancels_the_timer() {
             DeliveredFact::UiaFocusDropped {
                 marker: 4,
                 focus: true,
-                answer: GapAnswer::LeavesOpen,
+                no_window: false,
             },
             None,
         ),
         Source::Other,
         1_002,
     );
+    let read = program(&effects);
     assert!(matches!(
-        program(&effects).work,
+        read.work,
         Work::Entry {
             entry: Entry {
                 item: Item::GapRead { window: 0x11 },
@@ -499,7 +585,10 @@ fn a_queued_bound_is_not_waited_for_again_and_its_read_cancels_the_timer() {
             ..
         }
     ));
-    assert!(matches!(effects.last(), Some(Effect::GapTimer(None))));
+    let request = read.request;
+    assert_eq!(gap_timers(&effects), [], "no timer is given or cancelled");
+    let effects = replay.commit(request, report_in(5, 0x10, 1_000, false), 1_003);
+    assert_eq!(gap_timers(&effects), [None]);
 }
 
 /// The bound's entry handled before the bound has passed reads nothing,
@@ -587,7 +676,7 @@ fn a_copy_read_at_once_is_read_under_its_trace() {
             DeliveredFact::UiaFocusDropped {
                 marker: 4,
                 focus: true,
-                answer: GapAnswer::ReadsNow,
+                no_window: true,
             },
             None,
         ),
@@ -846,7 +935,6 @@ fn a_late_tick_past_the_bound_and_the_deadline_publishes_once_then_abandons() {
             Input::Entry {
                 entry: entry(item, at_ms),
                 source: Source::Hook,
-                read_answer: None,
             },
             now(at_ms),
         )
@@ -901,7 +989,6 @@ fn moving_on_during_a_walk_publishes_then_abandons_and_a_late_answer_is_dropped(
     let entry_of = |item: Item, at_ms: u64| Input::Entry {
         entry: entry(item, at_ms),
         source: Source::Hook,
-        read_answer: None,
     };
     let request = program(&reducer.input(entry_of(msaa_focus(1, 1), 1), now(1))).request;
     reducer.input(
@@ -1457,7 +1544,6 @@ fn the_bound_is_reached_by_the_shared_clock_with_the_observation_clock_frozen() 
         Input::Entry {
             entry: entry(caret_key(7), 1),
             source: Source::Other,
-            read_answer: None,
         },
         frozen(1),
     );
@@ -2597,7 +2683,6 @@ fn an_msaa_focus_is_tested_for_acceptance_as_it_is_taken_in() {
         Input::Entry {
             entry: tested,
             source: Source::Other,
-            read_answer: None,
         },
         5,
     );
@@ -2610,4 +2695,153 @@ fn an_msaa_focus_is_tested_for_acceptance_as_it_is_taken_in() {
         (entry.observed_at_us, entry.front),
         (5_000, Front::Accepted(false))
     );
+}
+
+/// A UIA window's record at its bound, its window in front: the shell
+/// tests it and sends its window text, a whole-window focus, whatever is in
+/// flight, and the bound's entry is queued, so the worker makes the gap's
+/// read; the record stays open, the window text not closing a record that
+/// waits for the application's focus.
+#[test]
+fn a_bound_in_front_sends_the_window_text_and_queues_the_gap_read() {
+    let mut replay = Replay::new();
+    let change = program(&replay.input(
+        Input::Entry {
+            entry: foreground_change(true),
+            source: Source::Hook,
+        },
+        1,
+    ))
+    .request;
+    replay.finish(change, false, 2);
+    assert_eq!(
+        replay.reducer.next_timer(now(2)),
+        Some(Duration::from_millis(1_001))
+    );
+    replay
+        .answers
+        .titles
+        .push_back(report_in(8, 0x10, 1_000, true));
+    let effects = replay.tick(1_001);
+    assert_eq!(replay.answers.tested, [0x10]);
+    assert_eq!(kinds(&effects), ["send", "dispatch"]);
+    assert!(matches!(
+        sent(&effects)[..],
+        [OutpostToCore::Event {
+            event: NormalizedEvent::FocusChanged {
+                whole_window: true,
+                ..
+            },
+            observed_at_us: 1_000,
+            ..
+        }]
+    ));
+    assert!(matches!(
+        program(&effects).work,
+        Work::Entry {
+            entry: Entry {
+                item: Item::GapRead { window: 0x10 },
+                observed_at_us: 1_000,
+                ..
+            },
+            ..
+        }
+    ));
+    assert_eq!(gap_timers(&effects), [], "the record stays open");
+}
+
+/// A record whose window has left the front at its bound, for a window
+/// unrelated to it, closes with nothing sent or read.
+#[test]
+fn a_bound_whose_window_left_the_front_closes_with_nothing() {
+    let mut replay = Replay::new();
+    let change = program(&replay.input(
+        Input::Entry {
+            entry: foreground_change(true),
+            source: Source::Hook,
+        },
+        1,
+    ))
+    .request;
+    replay.finish(change, false, 2);
+    replay.answers.unrelated = true;
+    let effects = replay.tick(1_001);
+    assert_eq!(replay.answers.tested, [0x10]);
+    assert_eq!(kinds(&effects), [] as [&str; 0]);
+    assert_eq!(gap_timers(&effects), [None]);
+    assert_eq!(replay.reducer.next_timer(now(1_001)), None);
+}
+
+/// After the window text, the gap's read reports the application's focus,
+/// which closes the record.
+#[test]
+fn the_gap_read_after_the_window_text_closes_the_record() {
+    let mut replay = Replay::new();
+    let change = program(&replay.input(
+        Input::Entry {
+            entry: foreground_change(true),
+            source: Source::Hook,
+        },
+        1,
+    ))
+    .request;
+    replay.finish(change, false, 2);
+    replay
+        .answers
+        .titles
+        .push_back(report_in(8, 0x10, 1_000, true));
+    let read = program(&replay.tick(1_001)).request;
+    let effects = replay.commit(read, report_in(9, 0x10, 1_000, false), 1_002);
+    assert_eq!(gap_timers(&effects), [None]);
+    let effects = replay.finish(read, true, 1_003);
+    assert_eq!(kinds(&effects), [] as [&str; 0]);
+}
+
+/// A window read through MSAA whose foreground report has not been sent
+/// by the bound says its window text the same way, which closes the
+/// record waiting for it, and no gap read is made.
+#[test]
+fn a_bound_in_front_of_a_window_read_through_msaa_sends_its_text_alone() {
+    let mut replay = Replay::new();
+    let change = program(&replay.input(
+        Input::Entry {
+            entry: foreground_change(false),
+            source: Source::Hook,
+        },
+        1,
+    ))
+    .request;
+    replay.finish(change, false, 2);
+    replay
+        .answers
+        .titles
+        .push_back(report_in(8, 0x10, 1_000, true));
+    let effects = replay.tick(1_001);
+    assert_eq!(kinds(&effects), ["send"]);
+    assert_eq!(gap_timers(&effects), [None]);
+}
+
+/// A focus published at its walk's bound, which the shell makes, closes the
+/// gap record as any report the outpost sends Core does.
+#[test]
+fn a_focus_published_at_its_bound_closes_the_record() {
+    let mut replay = Replay::new();
+    let request = program(&replay.push(name_change(1), Source::Hook, 1)).request;
+    replay.commit(request, copy_dropped(), 2);
+    replay.finish(request, false, 3);
+    let request = program(&replay.push(msaa_focus(1, 4), Source::Hook, 4)).request;
+    replay.input(
+        Input::Armed {
+            request,
+            bound: Duration::from_millis(500),
+        },
+        5,
+    );
+    replay
+        .answers
+        .publications
+        .push_back(report_in(1, 0x10, 4_000, false));
+    let effects = replay.tick(500);
+    assert_eq!(replay.answers.published, [request]);
+    assert_eq!(gap_timers(&effects), [None]);
 }

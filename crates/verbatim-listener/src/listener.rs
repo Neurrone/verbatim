@@ -85,12 +85,11 @@
 //! events from the start.
 //!
 //! The wait for a UIA focus that never comes is the outpost's, beside the
-//! verdict that dropped its own copy of the `WinEvent` focus
-//! (`docs/design/focus-pipeline-rework.md`, "Who owns each duplicated
-//! fact", the gap's evidence): each drop of a UIA focus the listener sends
-//! carries its answer to that wait, placed in the top-level window of the
-//! window its read found ([`verbatim_listener_logic::focus::gap_answer`]), and the
-//! outpost places a read by the read's own window. The listener makes no
+//! verdict that dropped its own copy of the `WinEvent` focus, closed by
+//! what the outpost itself reports (`docs/design/focus-pipeline-rework-remaining.md`,
+//! "The gap, closed by the outpost's own reports"): a drop of a UIA focus
+//! the listener sends carries one fact for it, whether the sender had no
+//! window above it, and nothing is placed here. The listener makes no
 //! backend verdict; it skips a focus only by its window's class
 //! (`verbatim_listener_logic::focus::MSAA_CLASS`), unless a backend override forcing
 //! UIA holds for the application
@@ -905,19 +904,11 @@ impl Reading for UiaFocusReading {
 
     type Owed = MarkerOwed;
 
-    fn outcome(
-        &self,
-        pid: Pid,
-        meta: Meta,
-        owed: MarkerOwed,
-        judged: Judged,
-        placed: Option<isize>,
-    ) {
+    fn outcome(&self, pid: Pid, meta: Meta, owed: MarkerOwed, judged: Judged) {
         if let Some(reason) = judged.dropped_reason() {
-            tracing::debug!(%pid, marker = meta.marker, reason, ?placed, "UIA focus dropped");
+            tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
         }
-        owed.0
-            .answer(judged.into_fact(meta.marker, meta.kind, placed));
+        owed.0.answer(judged.into_fact(meta.marker, meta.kind));
     }
 }
 
@@ -937,11 +928,8 @@ impl MarkerOwed {
         let outgoing = Arc::clone(outgoing);
         Self(Responder::new(move |fact: Option<DeliveredFact>| {
             let fact = fact.unwrap_or_else(|| {
-                Judged::Dropped("the listener ended before it was read").into_fact(
-                    meta.marker,
-                    meta.kind,
-                    None,
-                )
+                Judged::Dropped("the listener ended before it was read")
+                    .into_fact(meta.marker, meta.kind)
             });
             outgoing.focus_read(pid, fact, meta);
         }))
@@ -1425,15 +1413,11 @@ fn queue_for_reading(
         ),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
-            // Its drop leaves its application's gap record open
-            // (`focus_read::gap_answer`).
+            // Its drop leaves its application's gap record to its bound.
             outgoing.focus_read(
                 pid,
-                Judged::Dropped("its element could not be kept for its read").into_fact(
-                    meta.marker,
-                    kind,
-                    None,
-                ),
+                Judged::Dropped("its element could not be kept for its read")
+                    .into_fact(meta.marker, kind),
                 meta,
             );
         }
@@ -1942,7 +1926,7 @@ mod tests {
         outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 2 }, meta(2));
         outgoing.focus_read(
             Pid(5),
-            Judged::Dropped("read").into_fact(1, FocusEvent::Focus, None),
+            Judged::Dropped("read").into_fact(1, FocusEvent::Focus),
             meta(1),
         );
         outgoing.focus_read(
@@ -1950,7 +1934,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 2,
                 focus: true,
-                answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
+                no_window: false,
             },
             meta(2),
         );
@@ -1969,12 +1953,12 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
                     focus: true,
-                    answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
+                    no_window: false,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,
                     focus: true,
-                    answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
+                    no_window: false,
                 },
             ]
         );
@@ -2487,7 +2471,7 @@ mod tests {
             DeliveredFact::UiaFocusDropped {
                 marker: 1,
                 focus: true,
-                answer: verbatim_model::protocol::GapAnswer::LeavesOpen,
+                no_window: false,
             },
             meta,
         );

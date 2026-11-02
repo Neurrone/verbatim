@@ -255,7 +255,7 @@ that carries them on the pipes, `Message`, is
   child is ended as failed.
   - `CoreToOutpost`: `SetBackendOverride` (one backend for every window,
     or normal arbitration); `DeliverFact` (a routed fact: a UIA focus's
-    marker, read, or drop with its `GapAnswer`, an MSAA focus or
+    marker, read, or drop with whether its sender had no window, an MSAA focus or
     menu-popup address, a foreground window, with the listener's trace
     id, its `EventTiming`, whose `observed_at_us` orders the fact, and
     for a `WinEvent` its `WinEventStamp`); `ForwardingEnded`; `Query`

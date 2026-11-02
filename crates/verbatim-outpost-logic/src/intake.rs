@@ -137,17 +137,18 @@
 //!   reported, which lags a focus read taken in but not yet handled, so
 //!   a state change of that read's element queued behind the next focus
 //!   inside it is not moved: a stated limit.
-//! - The gap record ([`super::gap_record`]) is kept here: each UIA
-//!   focus's outcome, a read placed by its own window's top-level window
-//!   or a drop by the answer it carries, is applied to it as the outcome
-//!   resolves its marker; a drop for no window that answers an open record
-//!   takes its marker's place as the record's read ([`Item::GapRead`]).
-//!   Programs' judgements of copies and foreground changes are applied
-//!   with their commits, and the bound's entry ([`Item::GapBound`]),
-//!   pushed when the reducer's timer for it fires, waits behind every
-//!   marker queued before it, so a UIA focus already being read decides
-//!   first (`docs/design/focus-pipeline-rework.md`, "Who owns each
-//!   duplicated fact", the gap's evidence).
+//! - The gap record ([`super::gap_record`]) is kept here: a UIA focus's
+//!   drop for no window above its sender, the one fact a drop carries for
+//!   it, is applied to it as the drop resolves its marker, and when it
+//!   answers an open record it takes its marker's place as the record's
+//!   read ([`Item::GapRead`]). The reducer applies the rest: programs'
+//!   judgements of copies with their commits, each foreground change as it
+//!   is pushed, and each report as it is sent; and the bound's entry
+//!   ([`Item::GapBound`]), pushed once the bound's test found the record's
+//!   window related to the foreground, waits behind every marker queued
+//!   before it, so a UIA focus already being read decides first
+//!   (`docs/design/focus-pipeline-rework-remaining.md`, "The gap, closed by
+//!   the outpost's own reports").
 //! - A batch that holds a foreground change is handed out at once, never
 //!   held for its window to become the foreground window: Windows raises
 //!   the foreground event once the change is made, so a foreground event
@@ -163,12 +164,12 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use verbatim_model::protocol::{DeliveredFact, GapAnswer, RequestId, WinEventStamp};
+use verbatim_model::protocol::{DeliveredFact, RequestId, WinEventStamp};
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
 use verbatim_reader_rules::Window;
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind, is_state_property};
-use super::gap_record::{Accepted, CopyDropped, GapRead, GapRecord, Outcome};
+use super::gap_record::GapRecord;
 
 /// The object id of a window's client area (`OBJID_CLIENT`), which the
 /// hook gives an event on a window object, as NVDA's event callback does.
@@ -424,38 +425,35 @@ impl Intake {
         }
     }
 
-    /// Applies `entry`, a UIA focus's outcome, to the gap record, a read's
-    /// answer being `read_answer`, and returns it with the marker it
-    /// resolves: a drop for no window that answered the open record
-    /// becomes the record's read ([`Item::GapRead`]), which takes the
-    /// drop's marker's place, stamped with the record's stamp.
-    fn apply_gap_outcome(
-        &mut self,
-        entry: Entry,
-        read_answer: Option<GapAnswer>,
-    ) -> (Entry, Option<u64>) {
-        let answer = match &entry.item {
-            Item::Fact(DeliveredFact::UiaFocusDropped { answer, .. }, _) => *answer,
-            _ => match read_answer {
-                Some(answer) => answer,
-                None => return (entry, None),
+    /// Applies `entry`, a UIA focus's drop for no window above its sender,
+    /// to the gap record, and returns it with the marker it resolves: one
+    /// that answered the open record becomes the record's read
+    /// ([`Item::GapRead`]), which takes the drop's marker's place, stamped
+    /// with the record's stamp. Any other entry is returned as it is.
+    fn apply_gap_outcome(&mut self, entry: Entry) -> (Entry, Option<u64>) {
+        let Item::Fact(
+            DeliveredFact::UiaFocusDropped {
+                marker,
+                no_window: true,
+                ..
             },
+            _,
+        ) = entry.item
+        else {
+            return (entry, None);
         };
-        match self.gap.outcome(answer, entry.observed_at_us) {
-            Outcome::Unchanged | Outcome::Answered => (entry, None),
-            Outcome::ReadNow(read) => match entry.item {
-                Item::Fact(DeliveredFact::UiaFocusDropped { marker, .. }, _) => (
-                    Entry {
-                        item: Item::GapRead {
-                            window: read.window,
-                        },
-                        observed_at_us: read.stamp_us,
-                        ..entry
+        match self.gap.no_window(entry.observed_at_us) {
+            None => (entry, None),
+            Some(read) => (
+                Entry {
+                    item: Item::GapRead {
+                        window: read.window,
                     },
-                    Some(marker),
-                ),
-                item => (Entry { item, ..entry }, None),
-            },
+                    observed_at_us: read.stamp_us,
+                    ..entry
+                },
+                Some(marker),
+            ),
         }
     }
 
@@ -472,13 +470,12 @@ impl Intake {
     /// 67); the hook gives an event on a window object as its client
     /// object, as NVDA's callback does.
     ///
-    /// A UIA focus's outcome is applied to the gap record as it resolves
-    /// its marker: a focus's read placed by `read_answer`, the answer the
-    /// mailbox found with one local call as the read was pushed, and a
-    /// drop by the answer it carries. A focus's read moving into a child of
-    /// the focus in `marks` is placed after the old focus's own events.
-    /// Returns the parked objects of the entries a newer one replaced.
-    pub fn push(&mut self, entry: Entry, read_answer: Option<GapAnswer>, marks: &Marks) -> Pushed {
+    /// A UIA focus's drop for no window above its sender is applied to the
+    /// gap record as it resolves its marker. A focus's read moving into a
+    /// child of the focus in `marks` is placed after the old focus's own
+    /// events. Returns the parked objects of the entries a newer one
+    /// replaced.
+    pub fn push(&mut self, entry: Entry, marks: &Marks) -> Pushed {
         let mut pushed = Pushed::default();
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -497,7 +494,7 @@ impl Intake {
             pushed.unparked = entry.item.parked();
             return pushed;
         }
-        let (entry, gap_read_resolves) = self.apply_gap_outcome(entry, read_answer);
+        let (entry, gap_read_resolves) = self.apply_gap_outcome(entry);
         if self.resolves_without_read(&entry) {
             return pushed;
         }
@@ -557,76 +554,21 @@ impl Intake {
         pushed
     }
 
-    /// The gap record's bound has been reached at `now_us`, on the
-    /// observation clock ([`GapRecord::bound_reached`]): its entry waits
-    /// behind every marker queued before it, so a UIA focus already being
-    /// read decides first; the record notes its entry queued
-    /// ([`GapRecord::queue_bound`]).
+    /// The gap record's bound's entry, its test having found the record's
+    /// window related to the foreground: it waits behind every marker
+    /// queued before it, so a UIA focus already being read decides first.
     pub fn push_gap_bound(&mut self, entry: Entry, marks: &Marks) {
-        self.gap.queue_bound();
-        let _ = self.push(entry, None, marks);
+        let _ = self.push(entry, marks);
     }
 
-    /// A program dropped a copy in `window`, of top-level window
-    /// `top_level`, observed at `at_us`, because it judges the window UIA
-    /// ([`GapRecord::copy_dropped`]).
-    pub fn gap_copy_dropped(
-        &mut self,
-        window: isize,
-        top_level: isize,
-        stamp: (u64, TraceId),
-    ) -> CopyDropped {
-        self.gap.copy_dropped(window, top_level, stamp)
+    /// The gap record and the reports it looks back on.
+    pub fn gap(&self) -> &GapRecord {
+        &self.gap
     }
 
-    /// A program accepted an event of `window`, of top-level window
-    /// `top_level`, observed at `at_us`: a foreground change, which
-    /// `restamps`, or a copy it handles through MSAA
-    /// ([`GapRecord::accepted`]).
-    pub fn gap_accepted(
-        &mut self,
-        window: isize,
-        top_level: isize,
-        stamp: (u64, TraceId),
-        restamps: bool,
-    ) -> Accepted {
-        self.gap.accepted(window, top_level, stamp, restamps)
-    }
-
-    /// When the open gap record's bound passes ([`GapRecord::due_us`]).
-    pub fn gap_due_us(&self) -> Option<u64> {
-        self.gap.due_us()
-    }
-
-    /// When the open gap record's bound passes, while its entry is not
-    /// queued: what the reducer's timer waits for
-    /// ([`GapRecord::waiting_due_us`]).
-    pub fn gap_waiting_due_us(&self) -> Option<u64> {
-        self.gap.waiting_due_us()
-    }
-
-    /// The bound's entry is handled at `now_us`
-    /// ([`GapRecord::bound_reached`]): the record's read, if its bound has
-    /// passed; none with no record open, or with its bound not passed,
-    /// which is then waited for again.
-    pub fn gap_bound_reached(&mut self, now_us: u64) -> Option<GapRead> {
-        self.gap.bound_reached(now_us).ok().flatten()
-    }
-
-    /// `hwnd` was destroyed: its answer as a top-level window goes.
-    pub fn gap_window_destroyed(&mut self, hwnd: isize) {
-        self.gap.window_destroyed(hwnd);
-    }
-
-    /// Whether the gap record is open, which the idle answer waits for.
-    pub fn gap_open(&self) -> bool {
-        self.gap.is_open()
-    }
-
-    /// The open gap record's trace, which its bound's entry carries
-    /// ([`GapRecord::trace`]).
-    pub fn gap_trace(&self) -> Option<TraceId> {
-        self.gap.trace()
+    /// The gap record, for the reducer's changes to it.
+    pub fn gap_mut(&mut self) -> &mut GapRecord {
+        &mut self.gap
     }
 
     /// The next entry to handle and the number of its batch, planning a new
@@ -1374,8 +1316,8 @@ mod tests {
     }
 
     impl WithMarks {
-        fn push(&mut self, entry: Entry, read_answer: Option<GapAnswer>) -> Pushed {
-            self.intake.push(entry, read_answer, &self.marks)
+        fn push(&mut self, entry: Entry) -> Pushed {
+            self.intake.push(entry, &self.marks)
         }
 
         fn next(&mut self) -> Option<(Planned, u64)> {
@@ -2114,16 +2056,13 @@ mod tests {
         // that have not started.
         let mut intake = WithMarks::default();
         let push = |intake: &mut WithMarks, item: Item, observed_at_us: u64| {
-            intake.push(
-                Entry {
-                    item,
-                    trace: TraceId::from_raw(5),
-                    observed_at_us,
-                    timing: verbatim_model::protocol::EventTiming::default(),
-                    front: crate::Front::Untested,
-                },
-                None,
-            );
+            intake.push(Entry {
+                item,
+                trace: TraceId::from_raw(5),
+                observed_at_us,
+                timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
+            });
         };
         let name_change = |child: i32| Item::Msaa {
             kind: WinKind::NameChange,
@@ -2161,22 +2100,19 @@ mod tests {
     fn a_newer_event_for_the_same_object_replaces_the_waiting_one() {
         let mut intake = WithMarks::default();
         let push = |intake: &mut WithMarks, child: i32, observed_at_us: u64| {
-            intake.push(
-                Entry {
-                    item: Item::Msaa {
-                        kind: WinKind::ValueChange,
-                        hwnd: 0,
-                        id_object: -4,
-                        id_child: child,
-                        raiser: 0,
-                    },
-                    trace: TraceId::from_raw(6),
-                    observed_at_us,
-                    timing: verbatim_model::protocol::EventTiming::default(),
-                    front: crate::Front::Untested,
+            intake.push(Entry {
+                item: Item::Msaa {
+                    kind: WinKind::ValueChange,
+                    hwnd: 0,
+                    id_object: -4,
+                    id_child: child,
+                    raiser: 0,
                 },
-                None,
-            );
+                trace: TraceId::from_raw(6),
+                observed_at_us,
+                timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
+            });
         };
         push(&mut intake, 1, 10);
         push(&mut intake, 2, 20);
@@ -2197,22 +2133,19 @@ mod tests {
     fn an_msaa_event_replaces_only_the_one_waiting_from_its_own_thread() {
         let mut intake = WithMarks::default();
         let push = |intake: &mut WithMarks, thread: u32, observed_at_us: u64| {
-            intake.push(
-                Entry {
-                    item: Item::Msaa {
-                        kind: WinKind::ValueChange,
-                        hwnd: 9,
-                        id_object: -4,
-                        id_child: 1,
-                        raiser: thread,
-                    },
-                    trace: TraceId::from_raw(7),
-                    observed_at_us,
-                    timing: verbatim_model::protocol::EventTiming::default(),
-                    front: crate::Front::Untested,
+            intake.push(Entry {
+                item: Item::Msaa {
+                    kind: WinKind::ValueChange,
+                    hwnd: 9,
+                    id_object: -4,
+                    id_child: 1,
+                    raiser: thread,
                 },
-                None,
-            );
+                trace: TraceId::from_raw(7),
+                observed_at_us,
+                timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
+            });
         };
         push(&mut intake, 7, 1);
         push(&mut intake, 8, 2);
@@ -2229,26 +2162,23 @@ mod tests {
     fn an_msaa_focus_replaces_only_the_one_waiting_from_its_own_thread() {
         let mut intake = WithMarks::default();
         let push = |intake: &mut WithMarks, thread: u32, observed_at_us: u64| {
-            intake.push(
-                Entry {
-                    item: Item::Fact(
-                        DeliveredFact::MsaaFocus {
-                            hwnd: 9,
-                            id_object: -4,
-                            id_child: 1,
-                        },
-                        Some(WinEventStamp {
-                            thread,
-                            time: u32::try_from(observed_at_us).unwrap_or(0),
-                        }),
-                    ),
-                    trace: TraceId::from_raw(8),
-                    observed_at_us,
-                    timing: verbatim_model::protocol::EventTiming::default(),
-                    front: crate::Front::Untested,
-                },
-                None,
-            );
+            intake.push(Entry {
+                item: Item::Fact(
+                    DeliveredFact::MsaaFocus {
+                        hwnd: 9,
+                        id_object: -4,
+                        id_child: 1,
+                    },
+                    Some(WinEventStamp {
+                        thread,
+                        time: u32::try_from(observed_at_us).unwrap_or(0),
+                    }),
+                ),
+                trace: TraceId::from_raw(8),
+                observed_at_us,
+                timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
+            });
         };
         push(&mut intake, 7, 1);
         push(&mut intake, 8, 2);
@@ -2260,20 +2190,17 @@ mod tests {
     fn a_newer_list_of_held_nodes_replaces_the_waiting_one_and_is_never_limited() {
         let mut intake = WithMarks::default();
         for acknowledged in [1, 2] {
-            intake.push(
-                Entry {
-                    item: Item::NodesHeld {
-                        nodes: Vec::new(),
-                        anchors: Vec::new(),
-                        acknowledged,
-                    },
-                    trace: TraceId::from_raw(9),
-                    observed_at_us: 0,
-                    timing: verbatim_model::protocol::EventTiming::default(),
-                    front: crate::Front::Untested,
+            intake.push(Entry {
+                item: Item::NodesHeld {
+                    nodes: Vec::new(),
+                    anchors: Vec::new(),
+                    acknowledged,
                 },
-                None,
-            );
+                trace: TraceId::from_raw(9),
+                observed_at_us: 0,
+                timing: verbatim_model::protocol::EventTiming::default(),
+                front: crate::Front::Untested,
+            });
         }
         let Some((Planned::Run(entry), _)) = intake.next() else {
             panic!("the list is planned");
@@ -2290,16 +2217,13 @@ mod tests {
     }
 
     fn push_fact(intake: &mut WithMarks, fact: DeliveredFact) {
-        intake.push(
-            Entry {
-                item: Item::Fact(fact, None),
-                trace: TraceId::from_raw(10),
-                observed_at_us: 0,
-                timing: verbatim_model::protocol::EventTiming::default(),
-                front: crate::Front::Untested,
-            },
-            None,
-        );
+        intake.push(Entry {
+            item: Item::Fact(fact, None),
+            trace: TraceId::from_raw(10),
+            observed_at_us: 0,
+            timing: verbatim_model::protocol::EventTiming::default(),
+            front: crate::Front::Untested,
+        });
     }
 
     #[test]
@@ -2328,19 +2252,16 @@ mod tests {
     #[test]
     fn a_query_that_has_not_started_can_be_cancelled() {
         let mut intake = WithMarks::default();
-        intake.push(
-            Entry {
-                item: Item::Query {
-                    request_id: RequestId::shell(5),
-                    query: Query::DumpTree { locations: false },
-                },
-                trace: TraceId::from_raw(7),
-                observed_at_us: 0,
-                timing: verbatim_model::protocol::EventTiming::default(),
-                front: crate::Front::Untested,
+        intake.push(Entry {
+            item: Item::Query {
+                request_id: RequestId::shell(5),
+                query: Query::DumpTree { locations: false },
             },
-            None,
-        );
+            trace: TraceId::from_raw(7),
+            observed_at_us: 0,
+            timing: verbatim_model::protocol::EventTiming::default(),
+            front: crate::Front::Untested,
+        });
         assert_eq!(
             intake.cancel(RequestId::shell(5)),
             Some(TraceId::from_raw(7)),
@@ -2354,16 +2275,13 @@ mod tests {
     }
 
     fn push_item(intake: &mut WithMarks, item: Item, observed_at_us: u64) {
-        intake.push(
-            Entry {
-                item,
-                trace: TraceId::from_raw(11),
-                observed_at_us,
-                timing: verbatim_model::protocol::EventTiming::default(),
-                front: crate::Front::Untested,
-            },
-            None,
-        );
+        intake.push(Entry {
+            item,
+            trace: TraceId::from_raw(11),
+            observed_at_us,
+            timing: verbatim_model::protocol::EventTiming::default(),
+            front: crate::Front::Untested,
+        });
     }
 
     fn name_change(child: i32) -> Item {
@@ -2458,7 +2376,7 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 7,
                     focus: true,
-                    answer: GapAnswer::LeavesOpen,
+                    no_window: false,
                 },
                 None,
             ),
@@ -2475,7 +2393,7 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 8,
                     focus: true,
-                    answer: GapAnswer::LeavesOpen,
+                    no_window: false,
                 },
                 None,
             ),
@@ -2500,7 +2418,7 @@ mod tests {
                 DeliveredFact::UiaFocusDropped {
                     marker: 7,
                     focus: true,
-                    answer: GapAnswer::LeavesOpen,
+                    no_window: false,
                 },
                 None,
             ),
@@ -2520,55 +2438,43 @@ mod tests {
         assert!(!intake.busy());
     }
 
-    /// A UIA focus's drop answers the gap record as it resolves its marker,
-    /// with nothing handed to the worker and the timer cancelled; a drop for
-    /// no window that answers the record takes its marker's place as the
-    /// record's read, stamped with the record's stamp.
+    /// A UIA focus's drop for no window above its sender that answers the
+    /// open gap record takes its marker's place as the record's read,
+    /// stamped with the record's stamp, the record closed; any other drop
+    /// resolves its marker with nothing handed to the worker and leaves the
+    /// record open.
     #[test]
-    fn a_drops_answer_is_applied_as_its_marker_resolves() {
+    fn a_drop_for_no_window_is_applied_as_its_marker_resolves() {
         let mut intake = WithMarks::default();
-        let dropped = |marker, answer| {
+        let dropped = |marker, no_window| {
             Item::Fact(
                 DeliveredFact::UiaFocusDropped {
                     marker,
                     focus: true,
-                    answer,
+                    no_window,
                 },
                 None,
             )
         };
-        let opened = intake.gap_copy_dropped(0x11, 0x10, (1_000, TraceId::from_raw(1)));
-        assert_eq!(opened, CopyDropped::Opened { due_us: 1_001_000 });
-        assert_eq!(intake.gap_due_us(), Some(1_001_000));
-        push_item(&mut intake, marker(7), 1_500);
-        let _ = intake.push(
-            Entry {
-                item: dropped(7, GapAnswer::Answers(Some(0x10))),
-                trace: TraceId::from_raw(13),
-                observed_at_us: 1_500,
-                timing: verbatim_model::protocol::EventTiming::default(),
-                front: crate::Front::Untested,
-            },
-            None,
-        );
-        assert_eq!(intake.gap_due_us(), None);
-        assert!(!intake.gap_open());
+        let drop_of = |item, at_us| Entry {
+            item,
+            trace: TraceId::from_raw(at_us),
+            observed_at_us: at_us,
+            timing: verbatim_model::protocol::EventTiming::default(),
+            front: crate::Front::Untested,
+        };
+        let _ = intake
+            .intake
+            .gap_mut()
+            .copy_dropped(0x11, 0x10, (500_000, TraceId::from_raw(2)));
+        push_item(&mut intake, marker(7), 500_500);
+        let _ = intake.push(drop_of(dropped(7, false), 500_500));
+        assert!(intake.intake.gap().is_open());
         assert!(!intake.busy(), "nothing for the worker");
-
-        let _ = intake.gap_copy_dropped(0x11, 0x10, (500_000, TraceId::from_raw(2)));
         push_item(&mut intake, marker(8), 501_000);
         push_item(&mut intake, name_change(3), 502_000);
-        let _ = intake.push(
-            Entry {
-                item: dropped(8, GapAnswer::ReadsNow),
-                trace: TraceId::from_raw(14),
-                observed_at_us: 501_000,
-                timing: verbatim_model::protocol::EventTiming::default(),
-                front: crate::Front::Untested,
-            },
-            None,
-        );
-        assert_eq!(intake.gap_due_us(), None);
+        let _ = intake.push(drop_of(dropped(8, true), 501_000));
+        assert!(!intake.intake.gap().is_open());
         let (planned, _) = intake.next().expect("the record's read");
         assert!(
             matches!(
