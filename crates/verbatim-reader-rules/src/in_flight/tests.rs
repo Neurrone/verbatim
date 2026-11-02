@@ -1,7 +1,10 @@
 //! Replay tests of [`InFlight`], one per rule, and one generated test that
 //! compares it with a reference model.
 
-use proptest::strategy::{Strategy, ValueTree};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+
+use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed, TestRunner};
 
 use super::*;
@@ -231,7 +234,11 @@ fn a_succeeded_generation_takes_charge() {
     assert!(!in_flight.accepts(request));
 }
 
-/// One step of a generated sequence.
+
+/// One step of a generated case. An action names its target by role and is
+/// made valid when it is applied: a start or a succession with an item
+/// running ends that item first, and an answer to a dead request names the
+/// newest request no longer running, doing nothing when there is none.
 #[derive(Clone, Copy, Debug)]
 enum Action {
     /// Starts an item with no window (0), a window to learn (1) or a known
@@ -242,7 +249,8 @@ enum Action {
     /// The item's walk is armed, its bound this many milliseconds from now
     /// less 200, so some bounds are already past.
     Armed(u16),
-    /// Time advances this many milliseconds, and the reader ticks.
+    /// Time advances this many milliseconds, and the reader ticks unless it
+    /// has stopped.
     Advance(u16),
     /// The item's walk returns, past its bound or not.
     WalkReturned(bool),
@@ -250,24 +258,57 @@ enum Action {
     HandOn,
     /// The item ends.
     End,
-    /// A new generation takes charge, when nothing is running.
+    /// A new generation takes charge.
     Succeed,
+    /// A request for work the record does not keep, such as a reader's
+    /// last drop as it stops.
+    NextRequest,
+    /// An answer to the newest request no longer running.
+    Stale(Stale),
+}
+
+/// An answer to a request no longer running.
+#[derive(Clone, Copy, Debug)]
+enum Stale {
+    Learned,
+    Armed,
+    Returned,
+    MovedOn,
+    Published(Option<Reason>),
+    End,
 }
 
 fn action() -> impl Strategy<Value = Action> {
     use proptest::prelude::*;
+    let stale = prop_oneof![
+        Just(Stale::Learned),
+        Just(Stale::Armed),
+        Just(Stale::Returned),
+        Just(Stale::MovedOn),
+        prop_oneof![
+            Just(None),
+            Just(Some(Reason::Deadline)),
+            Just(Some(Reason::MovedOn))
+        ]
+        .prop_map(Stale::Published),
+        Just(Stale::End),
+    ];
+    // Weighted toward the lifecycle: starts, ends, hand-ons, successions
+    // and the time that abandons.
     prop_oneof![
-        (0..3u8, 0..4u8).prop_map(|(window, deadline)| Action::Start { window, deadline }),
-        Just(Action::Learned),
-        (0..3_200u16).prop_map(Action::Armed),
-        (0..1_200u16).prop_map(Action::Advance),
+        4 => (0..3u8, 0..4u8).prop_map(|(window, deadline)| Action::Start { window, deadline }),
+        2 => Just(Action::Learned),
+        3 => (0..3_200u16).prop_map(Action::Armed),
+        3 => (0..1_200u16).prop_map(Action::Advance),
         // Steps that land on the grace's, the bounds' and the deadlines'
         // own times.
-        prop_oneof![Just(100u16), Just(200), Just(400), Just(500)].prop_map(Action::Advance),
-        any::<bool>().prop_map(Action::WalkReturned),
-        Just(Action::HandOn),
-        Just(Action::End),
-        Just(Action::Succeed),
+        2 => prop_oneof![Just(100u16), Just(200), Just(400), Just(500)].prop_map(Action::Advance),
+        2 => any::<bool>().prop_map(Action::WalkReturned),
+        2 => Just(Action::HandOn),
+        3 => Just(Action::End),
+        1 => Just(Action::Succeed),
+        1 => Just(Action::NextRequest),
+        2 => stale.prop_map(Action::Stale),
     ]
 }
 
@@ -339,7 +380,8 @@ impl Timeline {
     /// past its deadline, or when the user is found to have moved on at a
     /// judgment of its window: the grace after its start, or after the
     /// window is learned, and each grace after the last. A judgment is a
-    /// tick, or a window learned past the grace.
+    /// tick, or a window learned past the grace; a stopped reader makes
+    /// neither.
     fn fate(&self, answers: &Answers) -> Fate {
         let grace_end = self.start + GRACE;
         let mut next = self.window.known().map(|_| grace_end);
@@ -399,9 +441,35 @@ impl Timeline {
     }
 }
 
+/// What a test's runs reached, by name: each lifecycle state.
+type Reached = BTreeMap<&'static str, u64>;
+
+/// The lifecycle states the gate's cases must each reach at least once.
+const LISTED: [&str; 19] = [
+    "started with no window",
+    "started with a window to learn",
+    "started with a known window",
+    "a window learned past the grace judged at once",
+    "armed after its publication",
+    "published at its bound",
+    "published, then abandoned at the deadline",
+    "published, then abandoned as moved on",
+    "abandoned at the deadline",
+    "abandoned as moved on",
+    "abandoned with its walk published",
+    "ended with its walk published",
+    "ended unpublished",
+    "handed on",
+    "succeeded",
+    "a request the record does not keep",
+    "a dead request answered",
+    "stopped",
+    "published while stopped, judging nothing",
+];
+
 /// One generated run: the record, the time, the answers, the item running
-/// and its request, the fate of one that left in the step, and every item
-/// that has left, by id.
+/// and its request, the fate of one that left in the step, every item
+/// that has left, by id, and what the run decided and reached.
 struct Run {
     in_flight: InFlight<u32>,
     now: u64,
@@ -412,13 +480,80 @@ struct Run {
     left: Vec<u32>,
     succeeded: u64,
     abandonments: u64,
+    /// Whether the reader has stopped: it ticks no more, starts nothing,
+    /// and a publication's answer judges nothing.
+    stopped: bool,
+    /// Every request issued, by number: none recurs.
+    issued: BTreeSet<u64>,
+    /// The newest request no longer running.
+    dead: Option<Request>,
+    /// Every decision, in order, by its `Debug` text, for the double run.
+    log: Vec<String>,
+    reached: Reached,
     trail: Vec<String>,
 }
 
 impl Run {
+    fn new(answers: Vec<bool>) -> Self {
+        Self {
+            in_flight: InFlight::new(),
+            now: 0,
+            answers: Answers(answers),
+            items: 0,
+            item: None,
+            left_as: None,
+            left: Vec::new(),
+            succeeded: 0,
+            abandonments: 0,
+            stopped: false,
+            issued: BTreeSet::new(),
+            dead: None,
+            log: Vec::new(),
+            reached: Reached::new(),
+            trail: Vec::new(),
+        }
+    }
+
+    /// Runs one case: its actions, the reader stopping after the step
+    /// `stop` names, then the drain.
+    fn case(actions: &[Action], answers: &[bool], stop: Option<usize>) -> Self {
+        let mut run = Self::new(answers.to_vec());
+        for (index, &action) in actions.iter().enumerate() {
+            run.step(action);
+            if stop == Some(index) {
+                run.trail.push("stop".to_owned());
+                run.stopped = true;
+                run.reach("stopped");
+            }
+        }
+        run.drain();
+        run
+    }
+
+    fn reach(&mut self, what: &'static str) {
+        *self.reached.entry(what).or_default() += 1;
+    }
+
+    /// Notes a request issued: of the generation in charge, and never
+    /// issued before.
+    fn issued(&mut self, request: Request) {
+        assert_eq!(
+            request.generation,
+            self.in_flight.generation(),
+            "issued under the generation in charge: {:?}",
+            self.trail
+        );
+        assert!(
+            self.issued.insert(request.number),
+            "request {request:?} issued twice: {:?}",
+            self.trail
+        );
+    }
+
     /// Answers each ask at once, by the time, until nothing more is asked.
     fn settle(&mut self, mut decision: Decision<u32>) {
         loop {
+            self.log.push(format!("{decision:?}"));
             let (_, request) = self.item.as_ref().expect("an item decided on");
             let request = *request;
             match decision {
@@ -426,7 +561,15 @@ impl Run {
                 Decision::Abandon(abandoned) => {
                     assert_eq!(abandoned.replacement, abandoned.dead + 1);
                     assert_eq!(abandoned.replacement, self.in_flight.generation());
+                    assert_eq!(abandoned.dead, request.generation, "{:?}", self.trail);
                     self.abandonments += 1;
+                    self.reach(match abandoned.reason {
+                        Reason::Deadline => "abandoned at the deadline",
+                        Reason::MovedOn => "abandoned as moved on",
+                    });
+                    if abandoned.published {
+                        self.reach("abandoned with its walk published");
+                    }
                     self.left_as = Some((
                         abandoned.item,
                         Fate::Abandoned(abandoned.reason, abandoned.published),
@@ -437,6 +580,7 @@ impl Run {
                     request: asked,
                     window,
                 }) => {
+                    assert!(!self.stopped, "a stopped reader judges nothing");
                     assert_eq!((asked, window), (request, WINDOW), "{:?}", self.trail);
                     let answer = self.answers.moved_on(self.now);
                     decision = self.in_flight.moved_on(request, answer);
@@ -447,9 +591,21 @@ impl Run {
                 }) => {
                     assert_eq!(asked, request, "{:?}", self.trail);
                     let got = self.answers.published(self.now);
-                    decision = self
-                        .in_flight
-                        .published(request, got, then_abandon, self.now);
+                    if got {
+                        self.reach(match then_abandon {
+                            None => "published at its bound",
+                            Some(Reason::Deadline) => "published, then abandoned at the deadline",
+                            Some(Reason::MovedOn) => "published, then abandoned as moved on",
+                        });
+                    }
+                    decision = if self.stopped {
+                        self.reach("published while stopped, judging nothing");
+                        self.in_flight
+                            .published_judging_nothing(request, got, then_abandon)
+                    } else {
+                        self.in_flight
+                            .published(request, got, then_abandon, self.now)
+                    };
                 }
             }
         }
@@ -462,13 +618,35 @@ impl Run {
         }
     }
 
+    /// What can be seen of the record, to show that an answer to a dead
+    /// request changed nothing.
+    fn seen(&self) -> impl PartialEq + std::fmt::Debug + use<> {
+        (
+            self.in_flight
+                .running()
+                .map(|(request, id, published)| (request, *id, published)),
+            self.in_flight.generation(),
+            self.in_flight.next_wake(),
+            self.in_flight.deadline(),
+        )
+    }
+
+    #[expect(clippy::too_many_lines, reason = "one arm for each kind of step")]
     fn step(&mut self, action: Action) {
+        // Made valid when applied: a start or a succession ends the item
+        // running first.
+        if matches!(action, Action::Start { .. } | Action::Succeed)
+            && self.item.is_some()
+            && !self.stopped
+        {
+            self.step(Action::End);
+        }
         self.trail.push(format!("{action:?} at {}", self.now));
         let generation = self.in_flight.generation();
         let running = self.item.as_ref().map(|(_, request)| *request);
         match action {
             Action::Start { window, deadline } => {
-                if running.is_some() {
+                if self.stopped {
                     return;
                 }
                 self.items += 1;
@@ -477,8 +655,14 @@ impl Run {
                     RuleWindow::Unknown,
                     RuleWindow::Known(WINDOW),
                 ][usize::from(window)];
+                self.reach(match window {
+                    RuleWindow::Never => "started with no window",
+                    RuleWindow::Unknown => "started with a window to learn",
+                    RuleWindow::Known(_) => "started with a known window",
+                });
                 let deadline = DEADLINES[usize::from(deadline)];
                 let request = self.in_flight.start(self.items, deadline, window, self.now);
+                self.issued(request);
                 let timeline = Timeline {
                     id: self.items,
                     start: self.now,
@@ -489,23 +673,36 @@ impl Run {
                 self.item = Some((timeline, request));
             }
             Action::Learned => {
-                let Some(request) = running else {
+                let Some(request) = running.filter(|_| !self.stopped) else {
                     return;
                 };
                 self.record(Event::Learned);
                 let decision = self.in_flight.learned(request, WINDOW, self.now);
+                if decision != Decision::Nothing {
+                    self.reach("a window learned past the grace judged at once");
+                }
                 self.settle(decision);
             }
             Action::Armed(offset) => {
                 let Some(request) = running else {
                     return;
                 };
+                if self
+                    .in_flight
+                    .running()
+                    .is_some_and(|(_, _, published)| published)
+                {
+                    self.reach("armed after its publication");
+                }
                 let bound = (self.now + u64::from(offset) * MS).saturating_sub(200 * MS);
                 self.record(Event::Armed(bound));
                 self.in_flight.armed(request, bound);
             }
             Action::Advance(ms) => {
                 self.now += u64::from(ms) * MS;
+                if self.stopped {
+                    return;
+                }
                 let decision = self.in_flight.tick(self.now);
                 if running.is_some() {
                     self.record(Event::Tick);
@@ -534,9 +731,11 @@ impl Run {
                     return;
                 };
                 let handed = handed.expect("an item running is handed on");
-                assert_eq!(handed.generation, request.generation);
-                assert!(handed.number > request.number);
-                *request = handed;
+                let old = std::mem::replace(request, handed);
+                assert_eq!(handed.generation, old.generation);
+                self.issued(handed);
+                self.dead = Some(old);
+                self.reach("handed on");
             }
             Action::End => {
                 let Some(request) = running else {
@@ -545,14 +744,56 @@ impl Run {
                 self.record(Event::End);
                 let ended = self.in_flight.end(request).expect("the item running ends");
                 assert_eq!(self.in_flight.end(request), None, "the item leaves once");
+                self.reach(if ended.1 {
+                    "ended with its walk published"
+                } else {
+                    "ended unpublished"
+                });
                 self.left_as = Some((ended.0, Fate::Ended(ended.1)));
             }
             Action::Succeed => {
-                if running.is_some() {
+                if self.stopped {
                     return;
                 }
                 self.succeeded += 1;
                 assert_eq!(self.in_flight.succeed(), generation + 1);
+                self.reach("succeeded");
+            }
+            Action::NextRequest => {
+                let request = self.in_flight.next_request();
+                self.issued(request);
+                assert!(!self.in_flight.accepts(request), "a request not kept");
+                self.dead = Some(request);
+                self.reach("a request the record does not keep");
+            }
+            Action::Stale(stale) => {
+                let Some(dead) = self.dead else {
+                    return;
+                };
+                let before = self.seen();
+                let decision = match stale {
+                    Stale::Learned => self.in_flight.learned(dead, WINDOW, self.now),
+                    Stale::Armed => {
+                        self.in_flight.armed(dead, self.now);
+                        Decision::Nothing
+                    }
+                    Stale::Returned => self.in_flight.walk_returned(dead, true),
+                    Stale::MovedOn => self.in_flight.moved_on(dead, true),
+                    Stale::Published(then_abandon) if self.stopped => self
+                        .in_flight
+                        .published_judging_nothing(dead, true, then_abandon),
+                    Stale::Published(then_abandon) => {
+                        self.in_flight
+                            .published(dead, true, then_abandon, self.now)
+                    }
+                    Stale::End => {
+                        assert_eq!(self.in_flight.end(dead), None, "{:?}", self.trail);
+                        Decision::Nothing
+                    }
+                };
+                assert_eq!(decision, Decision::Nothing, "{:?}", self.trail);
+                assert_eq!(self.seen(), before, "{:?}", self.trail);
+                self.reach("a dead request answered");
             }
         }
         self.check(generation, running);
@@ -566,6 +807,7 @@ impl Run {
             if let Some((id, left_as)) = self.left_as.take() {
                 assert_eq!((id, left_as), (timeline.id, fate), "{trail:?}");
                 self.left.push(id);
+                self.dead = Some(*request);
                 self.item = None;
             } else {
                 let Fate::Running(published) = fate else {
@@ -599,15 +841,7 @@ impl Run {
             "the generation rises by one per abandonment or succession: {trail:?}"
         );
         assert!(self.in_flight.generation() >= generation);
-        let mut left = self.left.clone();
-        left.sort_unstable();
-        left.dedup();
-        assert_eq!(left.len(), self.left.len(), "an item left twice: {trail:?}");
-        assert_eq!(
-            u32::try_from(self.left.len()).expect("few items") + u32::from(self.item.is_some()),
-            self.items,
-            "every item but the running one has left once: {trail:?}"
-        );
+        self.check_left(false);
         if let Some(before) = before
             && self
                 .item
@@ -619,7 +853,8 @@ impl Run {
                 "a request that left or was handed on is refused"
             );
         }
-        if let Some(due) = self.in_flight.next_wake()
+        if !self.stopped
+            && let Some(due) = self.in_flight.next_wake()
             && due <= self.now
         {
             let mut ticked = self.in_flight.clone();
@@ -630,13 +865,54 @@ impl Run {
             );
         }
     }
+
+    /// Each item leaves at most once, and every item but the running one
+    /// has left; with `whole`, once the case is drained, every item has
+    /// left exactly once.
+    fn check_left(&self, whole: bool) {
+        let mut left = self.left.clone();
+        left.sort_unstable();
+        left.dedup();
+        assert_eq!(
+            left.len(),
+            self.left.len(),
+            "an item left twice: {:?}",
+            self.trail
+        );
+        assert_eq!(
+            u32::try_from(self.left.len()).expect("few items") + u32::from(self.item.is_some()),
+            self.items,
+            "every item but the running one has left once: {:?}",
+            self.trail
+        );
+        if whole {
+            assert!(self.item.is_none(), "an item left running: {:?}", self.trail);
+            assert!(self.in_flight.running().is_none(), "{:?}", self.trail);
+        }
+    }
+
+    /// Ends the case: a running reader's item is ticked past its deadline,
+    /// and a stopped reader's ends; then every item has left exactly once.
+    fn drain(&mut self) {
+        if let Some((timeline, _)) = &self.item {
+            if self.stopped {
+                self.step(Action::End);
+            } else {
+                let due = timeline.start + timeline.deadline;
+                let ms = u16::try_from((due - self.now) / MS).expect("a deadline in reach");
+                self.step(Action::Advance(ms));
+            }
+        }
+        self.check_left(true);
+    }
 }
 
-/// The generated test's configuration: a fixed seed, no failure
-/// persistence, no fork and no timeout, as `verbatim-term-sim`'s.
-fn config() -> Config {
+/// A generated test's configuration: the seed and case count given, no
+/// failure persistence, no fork and no timeout, every field written out
+/// (`docs/design/logic-tests.md`, "Tests against reference models").
+fn config(seed: u64, cases: u32) -> Config {
     Config {
-        cases: 2_000,
+        cases,
         max_local_rejects: 65_536,
         max_global_rejects: 1024,
         max_flat_map_regens: 1_000_000,
@@ -651,40 +927,67 @@ fn config() -> Config {
         result_cache: proptest::test_runner::noop_result_cache,
         verbose: 0,
         rng_algorithm: RngAlgorithm::ChaCha,
-        rng_seed: RngSeed::Fixed(20_261_101),
+        rng_seed: RngSeed::Fixed(seed),
         _non_exhaustive: (),
     }
 }
 
-/// Generated sequences of starts, learned windows, armed walks, ticks as
-/// time advances, returned walks, hand-ons and ends, each ask answered at
-/// once by a value drawn by its time, give each item the fate a scan of its
-/// timeline names, with every invariant holding after every step.
-#[test]
-fn generated_sequences_match_the_reference_model() {
+/// Runs the generated cases `config` draws, each twice from a new record,
+/// shrinking a failure to its smallest case; what the cases reached.
+///
+/// # Panics
+///
+/// On a failing case, naming the smallest.
+fn run_generated(config: Config) -> Reached {
     use proptest::collection::vec;
     use proptest::prelude::any;
-    let mut runner = TestRunner::new(config());
-    let strategy = (vec(action(), 1..60), vec(any::<bool>(), 1..16));
-    for _ in 0..config().cases {
-        let (actions, answers) = strategy
-            .new_tree(&mut runner)
-            .expect("a sequence")
-            .current();
-        let mut run = Run {
-            in_flight: InFlight::new(),
-            now: 0,
-            answers: Answers(answers),
-            items: 0,
-            item: None,
-            left_as: None,
-            left: Vec::new(),
-            succeeded: 0,
-            abandonments: 0,
-            trail: Vec::new(),
-        };
-        for action in actions {
-            run.step(action);
+    let reached = RefCell::new(Reached::new());
+    let mut runner = TestRunner::new(config);
+    let strategy = (
+        vec(action(), 1..60),
+        vec(any::<bool>(), 1..16),
+        proptest::option::of(0..60usize),
+    );
+    let result = runner.run(&strategy, |(actions, answers, stop)| {
+        let first = Run::case(&actions, &answers, stop);
+        let second = Run::case(&actions, &answers, stop);
+        assert_eq!(first.log, second.log, "two runs of one case differ");
+        let mut reached = reached.borrow_mut();
+        for (what, count) in first.reached {
+            *reached.entry(what).or_default() += count;
         }
+        Ok(())
+    });
+    if let Err(error) = result {
+        panic!("{error}");
     }
+    reached.into_inner()
 }
+
+/// The gate's seed and case count.
+const SEED: u64 = 20_261_101;
+const CASES: u32 = 2_000;
+
+/// Generated cases of starts, learned windows, armed walks, ticks as time
+/// advances, returned walks, hand-ons, ends, successions, requests the
+/// record does not keep, answers to dead requests and a reader that stops,
+/// each ask answered at once by a value drawn by its time, give each item
+/// the fate a scan of its timeline names, with every invariant holding
+/// after every step and every item gone exactly once after the drain; each
+/// case run twice gives the same decisions, and every listed state is
+/// reached.
+#[test]
+fn generated_cases_match_the_reference_model() {
+    let reached = run_generated(config(SEED, CASES));
+    let missed: Vec<&str> = LISTED
+        .into_iter()
+        .filter(|state| !reached.contains_key(state))
+        .collect();
+    assert_eq!(
+        missed,
+        Vec::<&str>::new(),
+        "states never reached; reached {reached:?}"
+    );
+}
+
+mod explore;

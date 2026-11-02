@@ -1,0 +1,94 @@
+# The nightly exploration of the generated tests (docs/design/logic-tests.md,
+# "Tests against reference models"): each owner's exploration test, named
+# explore_ and ignored so that no other run includes it, run with the run
+# number as its seed; and cargo-mutants on the covered files changed in the
+# last day, or on all of them when started by hand for a measurement of the
+# judgement. A failure the exploration finds is shrunk, and the smallest
+# case is added to the owner's fixed cases as a list of actions, never kept
+# as a seed. Linux: the logic crates build there and nothing else is needed.
+#
+# An owner's generated test joins by its package in OWNERS and its covered
+# files in COVERED.
+
+name: Explore
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      whole:
+        description: Run cargo-mutants on every covered file, for a measurement of the judgement
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  OWNERS: >-
+    verbatim-reader-rules
+  COVERED: >-
+    crates/verbatim-reader-rules/src/in_flight.rs
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      # Release, so a night's cases run in minutes rather than an hour.
+      - name: Run the exploration tests with the run number as the seed
+        env:
+          VERBATIM_EXPLORE_SEED: ${{ github.run_number }}
+          VERBATIM_EXPLORE_CASES: "200000"
+        shell: bash
+        run: |
+          packages=()
+          for owner in $OWNERS; do packages+=(-p "$owner"); done
+          cargo test --release "${packages[@]}" --lib -- --ignored explore_
+
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      # Exit status 2 says some mutants survived and 3 that some timed out:
+      # both are what the judgement counts, in the report kept below, not a
+      # failure of the job.
+      - name: Run cargo-mutants on the covered files
+        env:
+          WHOLE: ${{ inputs.whole }}
+        shell: bash
+        run: |
+          packages=()
+          for owner in $OWNERS; do packages+=(-p "$owner"); done
+          files=()
+          for file in $COVERED; do files+=(--file "$file"); done
+          diff=()
+          if [ "$WHOLE" != "true" ]; then
+            since=$(git rev-list -1 --before="1 day ago" HEAD)
+            git diff "${since:-$(git rev-list --max-parents=0 HEAD)}" HEAD -- $COVERED > covered.diff
+            if [ ! -s covered.diff ]; then
+              echo "No covered file changed in the last day."
+              exit 0
+            fi
+            diff=(--in-diff covered.diff)
+          fi
+          set +e
+          cargo mutants --no-shuffle "${packages[@]}" "${files[@]}" "${diff[@]}"
+          status=$?
+          case $status in
+            0|2|3) exit 0 ;;
+            *) exit $status ;;
+          esac
+      - name: Keep the mutants report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-out
+          path: mutants.out/
+          if-no-files-found: ignore

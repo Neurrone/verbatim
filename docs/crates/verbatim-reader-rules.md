@@ -103,12 +103,29 @@ Public API:
 Tests: the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the acceptance test rule by rule
 against a made-up desk, and the work in flight: a replay test per rule,
-and a generated test under a fixed seed that drives sequences of starts,
-learned windows, armed walks, ticks, returned walks, hand-ons and ends,
-answers each ask at once with a value drawn by the time it is asked at,
-compares each item's fate (running, ended, or abandoned with its reason,
-each with whether it was published) with the one a scan of its timeline
-names, and checks its invariants after every step (each item leaves once,
-the generation rises by one per abandonment, a published walk followed an
-armed one, and a wake that is due is acted on). It is the crate's one
-development dependency, `proptest`.
+and a generated test (`docs/design/logic-tests.md`, "Tests against
+reference models") under a fixed seed and case count that drives lists of
+actions weighted toward the lifecycle: starts, learned windows, armed walks
+(after a publication too), ticks, returned walks, hand-ons, ends,
+successions, requests the record does not keep, answers to a dead request
+of every kind, and a reader that stops, after which it ticks no more and a
+publication judges nothing. An action is made valid when applied: a start
+or a succession ends the item running, and an answer to a dead request
+names the newest request no longer running. Each ask is answered at once
+with a value drawn by the time it is asked at. It compares each item's fate
+(running, ended, or abandoned with its reason, each with whether it was
+published) with the one a scan of its timeline names, and checks its
+invariants after every step: each item leaves at most once, the generation
+rises by one per abandonment or succession and an abandonment names the
+item's generation as dead, a published walk followed an armed one, a wake
+that is due is acted on, every request is of the generation in charge and
+no request number recurs, and an answer to a dead request decides nothing
+and changes nothing. Each case ends by draining, the item ticked past its
+deadline or, once stopped, ended, and then every item has left exactly
+once. Each case runs twice and the two runs' decisions are compared, and
+the test fails if a listed lifecycle state is never reached. A failure
+shrinks to its smallest case through proptest's `TestRunner::run`. Beside
+it, `explore_in_flight` runs the same cases under the seed and case count
+in `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`; it is ignored, and
+only the nightly workflow (`.github/workflows/explore.yml`) runs it. The
+crate's one development dependency is `proptest`.

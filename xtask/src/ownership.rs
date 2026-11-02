@@ -753,24 +753,27 @@ const DETERMINISM_ENTRIES: [&str; 122] = [
 /// covered crate may (`docs/design/logic-tests.md`, "Determinism"): the
 /// two cost measurements, which time with `Instant`;
 /// the replay fixture's test, which reads its file; the mint's own test;
-/// and the conformance corpus's reader and its test.
-const EXPECT_EXCEPTIONS: [&str; 6] = [
+/// the conformance corpus's reader and its test; and each generated test's
+/// exploration test, which reads its seed and case count.
+const EXPECT_EXCEPTIONS: [&str; 7] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
     "crates/verbatim-model/src/lib.rs",
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
+    "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
 ];
 
 /// The files the rule of whole modules excepts: the exceptions above but
 /// the mint's test, which names no module.
-const MODULE_EXCEPTIONS: [&str; 5] = [
+const MODULE_EXCEPTIONS: [&str; 6] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
+    "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
 ];
 
 /// The lint names a covered crate may not `allow` or `expect`, since each
