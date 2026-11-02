@@ -617,14 +617,14 @@ mod tests {
         let mut record = GapRecord::default();
         record.reported(Some(TOP), 1_000_000, false);
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, at(1_000_000 + ANSWERED_BEFORE_US)),
+            record.copy_dropped(WINDOW, TOP, at(1_100_000)),
             CopyDropped::Answered
         );
         assert!(!record.is_open());
         assert_eq!(
-            record.copy_dropped(WINDOW, TOP, at(1_000_001 + ANSWERED_BEFORE_US)),
+            record.copy_dropped(WINDOW, TOP, at(1_100_001)),
             CopyDropped::Opened {
-                due_us: 1_000_001 + ANSWERED_BEFORE_US + BOUND_US
+                due_us: 1_100_001 + BOUND_US
             }
         );
     }
