@@ -2098,6 +2098,7 @@ dependencies = [
 name = "verbatim-listener-logic"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "tracing",
  "verbatim-model",
  "verbatim-reader-rules",

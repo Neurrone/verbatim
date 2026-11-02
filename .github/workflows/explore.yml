@@ -27,6 +27,7 @@ env:
   OWNERS: >-
     verbatim-reader-rules
     verbatim-outpost-logic
+    verbatim-listener-logic
   COVERED: >-
     crates/verbatim-reader-rules/src/in_flight.rs
     crates/verbatim-outpost-logic/src/lib.rs
@@ -36,6 +37,8 @@ env:
     crates/verbatim-outpost-logic/src/verdicts.rs
     crates/verbatim-outpost-logic/src/hold.rs
     crates/verbatim-outpost-logic/src/intake.rs
+    crates/verbatim-listener-logic/src/schedule.rs
+    crates/verbatim-listener-logic/src/foreground.rs
 
 jobs:
   explore:

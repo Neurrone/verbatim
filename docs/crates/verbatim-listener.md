@@ -233,6 +233,25 @@ receives the event's own element, judges and reads a UIA focus
   by the listener's threadpool timer. `cargo xtask ci` reads the module
   against an allow-list (`xtask/src/ownership.rs`), which also keeps any
 responder out of it.
+- What the shell guarantees the schedule, which the schedule's generated
+  test relies on and gives no stronger
+  (`docs/design/logic-tests.md`, "The listener's scheduler"): a reading
+  thread asks for its next event (`Next`) only with no read under way, as
+  its own loop alternates the two, and only under the generation it was
+  last given; a read returns once per job, from the thread given it, and a
+  return the schedule does not count as in charge comes only from a thread
+  abandoned in its read; a failed start (`SpawnFailed`) comes only for a
+  new thread's generation, never a reused thread's; a foreground event's
+  running applications (`running_tops`) are exactly those with reads under
+  way, the shell's watched reads, published ones among them; a selection
+  and a notification carry no window for the moved-on rule
+  (`RuleWindow::Never`), and only a read judged by the rule is told its
+  window or its bound, while a focus and a menu opening carry their window
+  or an unknown one; a notification carries no limiter key; an event's
+  `Meta` names its own kind; idle waiter numbers are unique and none is
+  stepped once the readers stop; the readers stop once; arming and
+  learning may name a request no longer under way; and the schedule's
+  clock never goes back.
 - When the listener is replaced, the supervisor tells every outpost its
   reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 

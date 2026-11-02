@@ -66,7 +66,7 @@ pub struct Step {
 }
 
 /// The listener's state for the window in front.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ForegroundWatch {
     /// Whether [`ForegroundWatch::start`] has run: until then the
     /// console's events, hooked with the rest of the listener's set, are
@@ -352,5 +352,165 @@ mod tests {
             "a newer event in front"
         );
         assert_eq!(watch.event_seen(20, 3_700), Step::default());
+    }
+
+    /// One step of a sequence of the foreground watch.
+    #[derive(Clone, Copy, Debug)]
+    enum Input {
+        /// The listener starts with this window in front.
+        Start(Front),
+        /// A foreground event for this window, in front as it is handled
+        /// or not.
+        Foreground(Front, bool),
+        /// A focus event finds this window in front.
+        Seen(isize),
+        /// A console's event on this window, raised by thread 201.
+        Console(isize),
+    }
+
+    /// Each step a sequence may take.
+    const INPUTS: [Input; 6] = [
+        Input::Start(EDITOR),
+        Input::Start(CONSOLE),
+        Input::Foreground(EDITOR, true),
+        Input::Foreground(EXPLORER, false),
+        Input::Seen(30),
+        Input::Console(20),
+    ];
+
+    /// How many steps a sequence has at most.
+    const DEPTH: usize = 6;
+
+    /// A sequence, run beside its model.
+    #[derive(Clone, Debug, Default)]
+    struct Run {
+        watch: ForegroundWatch,
+        trail: Vec<Input>,
+        started: bool,
+        /// The console in front whose thread no event has named.
+        unnamed: Option<isize>,
+        /// Whether the shell has unhooked every console's events, which it
+        /// installs hooked with the rest.
+        unhooked: bool,
+        /// The window not in front at its foreground event, waiting.
+        pending: Option<Front>,
+    }
+
+    impl Run {
+        /// Takes `input` at time `at`, checking its exact step against the
+        /// model's and the watch's rules.
+        fn step(&mut self, input: Input) {
+            self.trail.push(input);
+            let at = u64::try_from(self.trail.len()).unwrap_or(0) * 1_000;
+            let (step, report) = match input {
+                Input::Start(front) => {
+                    self.started = true;
+                    self.unnamed = front.console.then_some(front.window);
+                    let report = if front.console {
+                        Front { thread: 0, ..front }
+                    } else {
+                        front
+                    };
+                    (self.watch.start(Some(front)), Some(report))
+                }
+                Input::Foreground(front, in_front) => {
+                    let front = Front {
+                        observed_at_us: at,
+                        ..front
+                    };
+                    let report = if !self.started {
+                        None
+                    } else if in_front {
+                        // Sent at once, none replacing another, and any
+                        // wait for a console's thread is over.
+                        self.pending = None;
+                        self.unnamed = None;
+                        Some(front)
+                    } else {
+                        // It replaces the window waiting.
+                        self.pending = Some(front);
+                        None
+                    };
+                    (self.watch.foreground(front, in_front), report)
+                }
+                Input::Seen(window) => {
+                    let report = match self.pending {
+                        Some(pending) if self.started && pending.window == window => {
+                            self.pending = None;
+                            self.unnamed = None;
+                            Some(Front {
+                                observed_at_us: at,
+                                ..pending
+                            })
+                        }
+                        _ => None,
+                    };
+                    (self.watch.event_seen(window, at), report)
+                }
+                Input::Console(window) => {
+                    let report = (self.started && self.unnamed == Some(window)).then(|| {
+                        self.unnamed = None;
+                        Front {
+                            window,
+                            thread: 201,
+                            console: true,
+                            observed_at_us: at,
+                        }
+                    });
+                    (self.watch.console_event(window, 201, at), report)
+                }
+            };
+            assert_eq!(step.report, report, "{:?}", self.trail);
+            // The console's events change only when they are to, and once
+            // started they are hooked exactly while a console's thread is
+            // unnamed.
+            if let Some(hooked) = step.console_events {
+                assert_ne!(hooked, !self.unhooked, "{:?}", self.trail);
+                self.unhooked = !hooked;
+            }
+            if self.started {
+                assert_eq!(!self.unhooked, self.unnamed.is_some(), "{:?}", self.trail);
+            }
+            assert_eq!(
+                self.watch.has_pending(),
+                self.started && self.pending.is_some(),
+                "{:?}",
+                self.trail
+            );
+        }
+    }
+
+    /// Runs every sequence that extends `run` up to [`DEPTH`] steps, the
+    /// listener starting once; how many sequences were run.
+    fn every_sequence(run: &Run) -> u64 {
+        if run.trail.len() == DEPTH {
+            return 1;
+        }
+        let mut count = 1;
+        for input in INPUTS {
+            if matches!(input, Input::Start(_)) && run.started {
+                continue;
+            }
+            let mut next = run.clone();
+            next.step(input);
+            count += every_sequence(&next);
+        }
+        count
+    }
+
+    /// Every sequence of up to six steps of the foreground watch (the
+    /// start with a window or a console in front, foreground events in
+    /// front and not, a focus event finding the waiting window in front,
+    /// and a console's event) reports exactly what the model gives: nothing
+    /// before the start; every foreground event in front at once, with its
+    /// own observation, none replacing another; a window not in front once,
+    /// with the observation of the event that found it, unless a newer
+    /// foreground event replaced it; and a console's thread from its own
+    /// event. The console's events are hooked, once started, exactly while
+    /// a console in front waits for its thread to be named, and a change is
+    /// given only when they change.
+    #[test]
+    fn every_short_sequence_keeps_the_watchs_rules() {
+        assert_eq!(every_sequence(&Run::default()), 20_935);
     }
 }

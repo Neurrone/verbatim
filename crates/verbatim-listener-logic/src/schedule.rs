@@ -194,6 +194,7 @@ pub enum AlarmChange {
 }
 
 /// One effect of a step, applied by the shell in order under its lock.
+#[derive(Debug)]
 pub enum ScheduleEffect<J> {
     /// What became of `pid`'s event `meta`, sent to its outpost.
     Outcome {
@@ -258,6 +259,7 @@ pub enum ScheduleEffect<J> {
 }
 
 /// The event a reading thread reads next.
+#[derive(Debug)]
 pub struct Job<J> {
     /// The event's application.
     pub pid: Pid,
@@ -1073,7 +1075,7 @@ impl<J> Schedule<J> {
 }
 
 /// What waits for a menu end's grace to pass (`listener`'s `MenuEnd`).
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GraceState {
     /// The end: when it ended, its stamps, and when its grace is over, in
     /// microseconds on the shell's monotonic clock.
@@ -1173,6 +1175,11 @@ impl GraceState {
         }
     }
 }
+
+#[cfg(test)]
+mod explore;
+#[cfg(test)]
+mod generated;
 
 #[cfg(test)]
 mod tests {
