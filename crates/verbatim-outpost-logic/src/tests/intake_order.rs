@@ -57,6 +57,8 @@ enum Kind {
     Read(u8),
     /// The drop of the oldest open marker.
     Dropped,
+    /// A read whose marker the intake never saw, of one of two elements.
+    LoneRead(u8),
     /// The end of the listener's reads.
     ReadsEnded,
     /// A held terminal's noted caret, kept apart.
@@ -76,6 +78,8 @@ enum Action {
     Noted,
     /// The outpost closes.
     Close,
+    /// A burst of a dozen name changes from one thread, of many children.
+    Burst(u8),
 }
 
 fn kind() -> impl Strategy<Value = Kind> {
@@ -93,6 +97,7 @@ fn kind() -> impl Strategy<Value = Kind> {
         1 => Just(Kind::NodesHeld),
         2 => Just(Kind::Marker),
         2 => (0..2u8).prop_map(Kind::Read),
+        1 => (0..2u8).prop_map(Kind::LoneRead),
         1 => Just(Kind::Dropped),
         1 => Just(Kind::ReadsEnded),
     ]
@@ -106,6 +111,7 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::Cancel),
         1 => Just(Action::Noted),
         1 => Just(Action::Close),
+        1 => (3..5u8).prop_map(Action::Burst),
     ]
 }
 
@@ -194,6 +200,15 @@ impl Run {
         self.trail.push(action);
         match action {
             Action::Push(kind) => self.push(kind),
+            Action::Burst(thread) => {
+                for at in 0..12u8 {
+                    self.push(Kind::NameChange {
+                        window: at % 2,
+                        child: 1 + at / 2,
+                        thread,
+                    });
+                }
+            }
             Action::Next => self.take(),
             Action::Cancel => {
                 let oldest = self
@@ -370,6 +385,10 @@ impl Run {
                     },
                     None,
                 )
+            }
+            Kind::LoneRead(element) => {
+                let marker = self.fresh();
+                Item::Fact(focus_read(marker, element), None)
             }
             Kind::Noted => unreachable!("a noted caret is kept apart"),
             Kind::ReadsEnded => {
@@ -788,7 +807,7 @@ fn key(kind: Kind) -> Option<String> {
         Kind::Uia(element) => format!("uia {element}"),
         Kind::Menu(window) => format!("menu {window}"),
         Kind::NodesHeld => "held".to_owned(),
-        Kind::Read(element) => format!("read {element}"),
+        Kind::Read(element) | Kind::LoneRead(element) => format!("read {element}"),
         Kind::Query
         | Kind::Round
         | Kind::Marker
