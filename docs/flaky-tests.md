@@ -13,6 +13,14 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: the listener's ancestor walk for the focus passes its 500 ms bound, so the window's entry is missing from the chain.
 - Fix: out of scope until [the focus pipeline rework's remaining design](design/focus-pipeline-rework-remaining.md), which holds it.
 
+## Windows Terminal's terminal said again as it minimizes at launch
+
+- Scenarios: `windows_terminal_clear_flood`, `windows_terminal_close_tab`, `windows_terminal_editing`, `windows_terminal_line_key_flood`, `windows_terminal_shift_flood` and `windows_terminal_up_typing`, and any Windows Terminal scenario that launches a window.
+- How: after "<title> window", "<title> terminal", "blank", the terminal and "blank" are said again, uncut, where "ready>" is expected.
+- How often: 6 of about 36 Windows Terminal scenarios in one full run on GitHub's runner (run 41414227699, 2026-11-02), and `windows_terminal_clear_flood` in run 41331655970; 0 of 10 runs of `windows_terminal_up_typing` locally (2026-11-02).
+- Cause: Windows Terminal raises its terminal's focus twice at launch, then minimizes itself before the harness restores it. The listener reads the sender's keyboard focus before the focus leaves, and the earlier element's keyboard focus for the keep-id evidence only afterwards, so the second report says the earlier element is not focused and Core takes it as a new focus. NVDA reads the earlier focus first and drops the repeat.
+- Fix: read the earlier element's keyboard focus before the sender's, in the focus pipeline rework ([its remaining design](design/focus-pipeline-rework-remaining.md)).
+
 ## Windows Terminal launch speech, not this cause
 
 - Scenarios: the `*_up_typing`, `*_typing` and `*_commands` Windows Terminal scenarios.
