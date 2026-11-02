@@ -1719,11 +1719,7 @@ fn step<R: Reading>(
                 pid,
                 generation,
                 reuse: false,
-            } => {
-                if !spawn(shared, state, pid, generation) {
-                    failed.push(ScheduleInput::SpawnFailed { pid, generation });
-                }
-            }
+            } => failed.extend(spawn(shared, state, pid, generation)),
             ScheduleEffect::Wake(Waking::Thread(pid)) => {
                 if let Some(wake) = state.wakes.get(&pid) {
                     wake.notify_one();
@@ -2050,15 +2046,15 @@ const READING_THREAD: &str = "verbatim-listener-read";
 /// `ERROR_NOT_ENOUGH_MEMORY`.
 const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
 
-/// Starts a reading thread in charge of `pid`'s events as `generation`,
-/// answering whether it started: with no thread to be had, the caller
-/// steps the schedule with the failure, which drops its waiting events.
+/// Starts a reading thread in charge of `pid`'s events as `generation`:
+/// with no thread to be had, the failure, for the caller to step the
+/// schedule with, which drops its waiting events.
 fn spawn<R: Reading>(
     shared: &Arc<Shared<R>>,
     state: &mut ReadersState<R::Job, R::Owed>,
     pid: Pid,
     generation: u64,
-) -> bool {
+) -> Option<ScheduleInput<R::Job>> {
     state.wakes.entry(pid).or_default();
     let reading = Arc::clone(shared);
     // A thread the system cannot start, as one out of memory refuses it.
@@ -2080,11 +2076,11 @@ fn spawn<R: Reading>(
         Ok(thread) => {
             state.threads.retain(|thread| !thread.is_finished());
             state.threads.push(thread);
-            true
+            None
         }
         Err(error) => {
             tracing::error!(%pid, %error, "a reading thread could not be started");
-            false
+            Some(ScheduleInput::SpawnFailed { pid, generation })
         }
     }
 }
