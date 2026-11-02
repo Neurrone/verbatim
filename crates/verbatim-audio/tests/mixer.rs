@@ -93,6 +93,9 @@ struct DeviceState {
     /// How many times the mixer has begun to wait for the device: once at
     /// the end of every pass, when it has done all it could.
     waits: u64,
+    /// Whether the mixer is in a wait now, between beginning it and
+    /// returning from it.
+    in_wait: bool,
     /// The time limit of every wait the mixer has begun, in order.
     wait_limits: Vec<Duration>,
     /// How many times the mixer has opened the device.
@@ -223,22 +226,31 @@ impl ManualDevice {
     /// Returns once the mixer has made a whole pass that began after this
     /// call, so everything the test did before it is reflected in what the
     /// mixer has written and sent to its delivery thread (it sends during
-    /// the pass, before it waits). The mixer is woken first; if it was in
-    /// the middle of a pass, that pass ends in a wait which the wake-up
-    /// cuts short, and the pass after it is a whole one. Fails at [`WAIT`].
+    /// the pass, before it waits), and is in its wait with no wake pending,
+    /// so that its next pass begins only after what the test does next,
+    /// such as [`hold`](Self::hold). The mixer is woken only while it is in
+    /// a wait: if it was in the middle of a pass, that pass ends in a wait,
+    /// which is woken, and the pass after it is a whole one. Fails at
+    /// [`WAIT`].
     fn settle(&self) {
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
         let target = state.waits + 2;
         let deadline = std::time::Instant::now() + WAIT;
-        while state.waits < target {
+        loop {
+            let waiting = state.in_wait && !state.woken;
+            if waiting && state.waits >= target {
+                return;
+            }
+            if waiting {
+                state.woken = true;
+                condvar.notify_all();
+            }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             assert!(
                 !remaining.is_zero(),
                 "the mixer made no whole pass within {WAIT:?}"
             );
-            state.woken = true;
-            condvar.notify_all();
             state = condvar.wait_timeout(state, remaining).unwrap().0;
         }
     }
@@ -299,6 +311,7 @@ impl AudioDevice for ManualDevice {
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
         state.waits += 1;
+        state.in_wait = true;
         state.wait_limits.push(timeout);
         // For `settle`, which waits on the same condition variable.
         condvar.notify_all();
@@ -306,6 +319,7 @@ impl AudioDevice for ManualDevice {
             .wait_timeout_while(state, timeout, |state| !state.woken || state.held)
             .unwrap();
         state.woken = false;
+        state.in_wait = false;
     }
 
     fn waker(&self) -> Waker {
