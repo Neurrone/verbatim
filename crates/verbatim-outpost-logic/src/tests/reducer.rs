@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, TestRunner};
-use verbatim_model::protocol::{UiaFocusRead, UiaSnapshotFact};
+use verbatim_model::protocol::{UiaFocusRead, UiaSnapshotFact, tick_is_after};
 
 use super::*;
 
@@ -409,6 +409,11 @@ struct Model {
     hold: u8,
     /// The newest stamp of a copy, for the end of forwarding.
     newest_stamp: u32,
+    /// The hook's copies held, in the order they came, each with when it was
+    /// raised when it is a copy of a kind the listener forwards; and the
+    /// newest such time among the listener's copies handled while holding.
+    held_order: Vec<(TraceId, Option<u32>)>,
+    newest_forwarded: Option<u32>,
     /// The queries recorded and not yet replied to, and every query's
     /// replies; their order of arrival, and those taken from the intake.
     queries: BTreeSet<u64>,
@@ -749,6 +754,7 @@ impl Run {
 
     /// Takes `action`, then the shell's tick after the drain, unless more
     /// of the drain is to come.
+    #[expect(clippy::too_many_lines, reason = "one arm for each kind of action")]
     fn step(&mut self, action: Action) {
         self.trail.push(format!("{action:?}"));
         let tick = match action {
@@ -764,13 +770,21 @@ impl Run {
                 true
             }
             Action::WithoutListener => {
-                self.release_hold();
+                let released =
+                    (self.model.hold == 1).then(|| self.reducer.hold.clone().without_listener());
+                self.release_hold(None, released);
                 self.input(Input::WithoutListener);
                 true
             }
             Action::ForwardingEnded => {
-                self.release_hold();
                 let through = self.model.newest_stamp;
+                let released = self.reducer.hold.clone().forwarding_ended(through);
+                if self.model.hold == 0 {
+                    // Released with no hold: nothing is held from then on.
+                    self.model.hold = 2;
+                } else {
+                    self.release_hold(Some(through), released);
+                }
                 self.input(Input::ForwardingEnded(through));
                 true
             }
@@ -937,7 +951,7 @@ impl Run {
                 Item::Msaa {
                     kind: WinKind::ValueChange,
                     hwnd: EDIT,
-                    id_object: intake::OBJID_CLIENT,
+                    id_object: -4,
                     id_child: 0,
                     raiser: 3,
                 }
@@ -1022,8 +1036,32 @@ impl Run {
         };
         // The model, as the entry is taken in.
         let model = &mut self.model;
+        let forwarded_at = match (&item, what) {
+            (Item::Fact(_, Some(stamp)), What::MsaaFocus(_) | What::Foreground { .. }) => {
+                Some(stamp.time)
+            }
+            _ => None,
+        };
         if let Item::Fact(_, Some(stamp)) = &item {
             model.newest_stamp = model.newest_stamp.max(stamp.time);
+        }
+        if source == Source::Listener
+            && model.hold == 1
+            && let Some(time) = forwarded_at
+            && model
+                .newest_forwarded
+                .is_none_or(|newest| tick_is_after(time, newest))
+        {
+            model.newest_forwarded = Some(time);
+        }
+        // The hold keeps the hook's copies after the close too.
+        if model.stopping && source == Source::Hook && model.hold == 1 {
+            model
+                .held
+                .insert(TraceId::from_raw(trace), Pending { what, query });
+            model
+                .held_order
+                .push((TraceId::from_raw(trace), forwarded_at));
         }
         if !model.stopping {
             if let Some(number) = query {
@@ -1046,6 +1084,9 @@ impl Run {
                 model
                     .held
                     .insert(TraceId::from_raw(trace), Pending { what, query });
+                model
+                    .held_order
+                    .push((TraceId::from_raw(trace), forwarded_at));
                 self.reach("a hook copy held");
             } else {
                 self.take_in(what, trace, query, observed);
@@ -1069,7 +1110,9 @@ impl Run {
             front,
         };
         if matches!(what, What::ReadsEnded) && self.model.hold == 1 {
-            self.release_hold();
+            let through = self.model.newest_forwarded;
+            let released = self.reducer.hold.clone().reads_ended();
+            self.release_hold(through, released);
         }
         self.input(Input::Entry { entry, source });
     }
@@ -1107,17 +1150,42 @@ impl Run {
         }
     }
 
-    /// The hold is over: the copies held are taken in, but those the
-    /// listener forwarded, which the hold drops; which those are is the
-    /// hold's to decide, so each copy held may be handled once.
-    fn release_hold(&mut self) {
-        if self.model.hold == 1 {
-            self.reach("held copies released");
-        }
+    /// The hold is over: the copies held are taken in, in the hook's order,
+    /// but those of the kinds the listener forwards raised at or before
+    /// `through`, when it is given; `released` is what
+    /// the reducer's hold gives back, checked against that.
+    fn release_hold(&mut self, through: Option<u32>, released: Option<Vec<Entry>>) {
+        let holding = self.model.hold == 1;
         self.model.hold = 2;
         let held = std::mem::take(&mut self.model.held);
+        let order = std::mem::take(&mut self.model.held_order);
+        if !holding {
+            assert!(
+                released.is_none(),
+                "a release with no hold: {:?}",
+                self.trail
+            );
+            return;
+        }
+        self.reach("held copies released");
+        let kept: Vec<TraceId> = order
+            .into_iter()
+            .filter(|(_, raised)| match (raised, through) {
+                (Some(raised), Some(through)) => tick_is_after(*raised, through),
+                _ => true,
+            })
+            .map(|(trace, _)| trace)
+            .collect();
+        assert_eq!(
+            released.map(|entries| entries.iter().map(|entry| entry.trace).collect::<Vec<_>>()),
+            Some(kept.clone()),
+            "the copies a release gives back: {:?}",
+            self.trail
+        );
         if !self.model.stopping {
-            self.model.pending.extend(held);
+            for trace in kept {
+                self.model.pending.insert(trace, held[&trace]);
+            }
         }
     }
 
