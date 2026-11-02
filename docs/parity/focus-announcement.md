@@ -225,7 +225,7 @@ no end-to-end scenario covers it).
 ### Focus announcement cases not yet built
 
 Verbatim: **not yet (unscheduled)**, but for the display model's case,
-which is M14.
+which is M17.
 
 - In Windows 11 Notepad, opening a file in a Notepad already running:
   NVDA announces the window again as its title changes to the file's
@@ -237,7 +237,7 @@ which is M14.
   copies the name and value, where NVDA spells and copies the name and
   the same text it read.
 - An owner-drawn list view's display text, which needs a display model
-  (M14).
+  (M17).
 - UIA read-only state from a text pattern's document range, which NVDA
   falls back to when `ValueIsReadOnly` is unsupported.
 - Events NVDA handles that Verbatim does not subscribe to: UIA

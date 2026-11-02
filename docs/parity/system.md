@@ -75,7 +75,7 @@ goes quiet in the admin prompt" is this, not a bug.
 
 ### Braille
 
-NVDA: [Braille](../nvda/braille.md). Verbatim: **not yet (M15)**,
+NVDA: [Braille](../nvda/braille.md). Verbatim: **not yet (M18)**,
 designed for under D7; the inputs braille needs preserved are listed at
 the end of [Braille](../nvda/braille.md).
 

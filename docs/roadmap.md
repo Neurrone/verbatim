@@ -540,9 +540,10 @@ package reader get generated tests of their own.
   the rework's first step found no keyboard route to the MSAA focus on
   File Explorer's `Start` window.
 
-Out of M5 by decision (Dickson, 2026-10-22): module settings and storage,
-the utterance, settings-changed, timer and response hooks, asynchronous
-imports, updating or reordering installed extensions,
+Out of M5 by decision (Dickson, 2026-10-22): module settings and storage
+and the timer and asynchronous imports (M13), the utterance,
+settings-changed and response hooks, updating or reordering installed
+extensions,
 scripted modules and the interpreter console (M10), and the
 `verbatim:synth` world with its tone synthesizer (M6, where the host work
 is).
@@ -551,7 +552,7 @@ Exit: an app module can be edited and hot-reloaded without restarting
 Verbatim; a host function a module did not import is unreachable from it,
 a surface item outside the design is refused at load, and both are tested;
 the inbox built-ins' scenarios are green. This milestone opens the
-app-module porting track (see the section after M15), which then runs
+app-module porting track (see the section after M18), which then runs
 continuously alongside every later milestone.
 
 ## M6 — Native synth host + Eloquence
@@ -931,7 +932,7 @@ Security work other milestones carry, each with its test:
 - M8.1: the UIAccess measurement first (B1), then the lock and secure-screen rules (B3 to B8) with the secure instance's menu and dialogs as an allowlist, no file choice, and the toolkit's dialogs routed to the log (G1, G2, G4), tested by a list of every window and command the secure instance can reach equalling the allowlist, and by each of NVDA's secure-screen advisories as a scenario; the administrator's copy for secure screens following no links (X13), tested with a planted junction; developer mode in UIAccess builds turned on only in Verbatim's own window (C1); the secure instance's children started without SYSTEM (B10), tested by reading their tokens; "Secure Desktop" announced on the switch (B11); and the secure instance's own curtain.
 - M9: no content in logs at default levels (L3), tested by scanning a full suite run's logs for the planted text.
 - M12: Remote's end-to-end encryption, announcements and lock behaviour (C8, B9), tested with a relay that tries to read and alter traffic and a session that locks.
-- M15: braille drivers in model A or B (section 6.11), tested with a device sending malformed reports.
+- M18: braille drivers in model A or B (section 6.11), tested with a device sending malformed reports.
 
 ## M7 — Browse mode, browsers, and the injection helper
 
@@ -971,7 +972,7 @@ Security work other milestones carry, each with its test:
   and IA2 character extents give exact per-character geometry, batched
   through the new helper — with rectangle interpolation as the fallback for
   name-plus-rectangle elements. OCR joins as a second text source in M8 and
-  the display model as a third in M14; the review commands and cursor stay
+  the display model as a third in M17; the review commands and cursor stay
   the same throughout, only the source improves underneath.
 - Typed-character echo of composed text from the D2 injection helper, as
   NVDA echoes what the application receives: Windows' text-service
@@ -1016,6 +1017,11 @@ near) parity; screen review reads a modern app's screen correctly.
   OneCore's SSML always uses the current voice's language (language audit,
   2026-10-08). Terminal output switches language only where the terminal
   reports a language per line (decided 2026-10-07).
+- Layered commands (Dickson, 2026-11-02): a command layer in the input
+  crate's decision machine, active after its prefix key until one of its
+  commands runs or Escape is pressed, named by input help; extensions
+  declare layers as data from M13. 24 NVDA add-ons use one, and the
+  decision machine's gesture map is fixed while Verbatim runs today.
 - Input help mode; the gesture-remapping configuration GUI; full
   pronunciation/symbol dictionaries and their configuration UI (the
   data-driven infrastructure exists from M3/M4). The built-in
@@ -1038,6 +1044,9 @@ near) parity; screen review reads a modern app's screen correctly.
 - OCR capability (Windows.Media.Ocr) exposed to extensions; synthetic-subtree
   review of an image/window; OCR becomes screen review's second text source,
   for windows whose pixels contain text that no API exposes.
+- Speech history (Dickson, 2026-11-02): reviewing recent utterances,
+  moving back and forward through them and copying one, beside copying
+  the last spoken text below; extensions read it from M13.
 - Installer/updater skeleton.
 - From NVDA's changes up to 663e4b679 (reviewed 2026-10-06): copying the
   last spoken text to the clipboard (NVDA+Control+X) and a controller
@@ -1167,11 +1176,97 @@ theme's output is unchanged from before M11.
   Verbatim as the control plane does, with no async runtime
   ([logic tests](design/logic-tests.md), "Alternatives weighed"; Dickson,
   2026-10-31).
+- Remote Desktop, Citrix and similar products (Dickson, 2026-11-02): a
+  channel plug-in, built into Verbatim, that the product's client loads and
+  that carries the remote protocol over the product's own virtual channel,
+  so a Verbatim inside a remote session speaks through the local Verbatim
+  with no relay or pairing, as NVDA's rdAccess add-on does. The plug-in
+  runs inside the other vendor's client process, a trust boundary its
+  design states, and registering it for Citrix needs administrator rights.
 
 Exit: control a second Verbatim instance (between the VM and the host)
 end-to-end.
 
-## M13 — Java Access Bridge
+## M13 — Extensions v2
+
+The extension surface grown from a survey of NVDA's add-ons, once M5 has
+proven the surface on the built-in app modules, which is M5's goal
+(Dickson, 2026-11-02). Every item has add-ons that need it, as the
+extension API growth rule asks.
+
+- Acting in the module's own application, bounded by the application
+  boundary of the extensions design (section 4.6) and allowed only while
+  the application holds attention: node actions (invoke, focus, select,
+  expand or collapse, toggle, scroll, and named accessible actions);
+  sending keys and inserting text, typed by Core so no extension holds an
+  input-injection handle; prompts shown by Core; commands scoped to a
+  node; silencing the focus moves a module's own command causes; synthetic
+  nodes over the module's own window; the module's own top-level windows;
+  toast notification actions performed by Core.
+- Text and events: text ranges by unit with format fields, caret and
+  selection; a text provider hook; caret-key declarations; typed-character
+  and caret events to `on-event`; a controller speech hook for the
+  module's application; declared read-only window messages to the
+  module's own application.
+- Output: packaged sounds, tone sequences with pan, a capped PCM lane, and
+  speaking a node or saying all of its subtree.
+- Module settings shown by Core, a secret store outside the settings file,
+  and a size-capped key-value store per extension.
+- The deferred imports: a timer with a minimum interval that fires only
+  while the module's application holds attention; fetch to named hosts;
+  clipboard reads and a clipboard-changed event from Windows' clipboard
+  listener, never polled; the mouse; global modules with their read
+  boundary; reading speech history, shown at install as receiving all the
+  text Verbatim speaks.
+- The speech-text stage module kind (Dickson, 2026-11-02): an ordered chain
+  in Core's speech queue, each stage a Wasm module in its extension's host
+  that takes an utterance's text segments and language tags and returns new
+  ones, for translation, untagged-language detection and text rewrites.
+  The original text is never spoken: a stage that fails or misses its
+  deadline gives the failure indication it declares, "Translation failed"
+  for a translator. A stage reads its own folder, and the package limit
+  admits language models (Dialingo's is 16.5 MiB). The deadline per stage
+  and the latency budget are set in its design.
+- The recogniser provider module kind (Dickson, 2026-11-02): Core captures
+  the navigator object, a window or the screen through Windows Graphics
+  Capture, which works under the screen curtain, and hands only the image
+  to the module, which returns text, word boxes or a description; local
+  inference runs in a native recogniser host on the synthesizer host's
+  pattern.
+
+Out by decision (Dickson, 2026-11-02): a channel from components inside
+applications to extensions. Much later: the synthesizer container's
+further grants (a GPU, network engines, data downloads, licence
+activation).
+
+Exit: every item above is used by at least one ported add-on or built-in,
+each boundary rule has its test, and the call ledger shows no cost for a
+module that imports none of them.
+
+## M14 — Maths
+
+MathML and LaTeX reading and navigation built into Verbatim, after M13
+(Dickson, 2026-11-02). MathCAT, a Rust library NVDA uses, is the candidate
+engine; adopting it is a major-dependency decision taken with this
+milestone's design. Wording in other languages, such as Greek, comes as
+rule sets.
+
+Exit: MathML in a browser document is spoken and navigable by
+subexpression.
+
+## M15 — Positional sound
+
+Sounds placed in space (Dickson, 2026-11-02), after maths (M14):
+the mixer plays a sound at a position, so an earcon can say where an
+object is on the screen or where it sits in a list, as NVDA's Unspoken and
+audio-theme add-ons do. A theme names a position as an attribute of an
+indication's sound, and extensions get positioned playback through M13's
+packaged sounds.
+
+Exit: an earcon theme with positions ships, and a scripted scenario hears
+an object's sound panned by its place on the screen.
+
+## M16 — Java Access Bridge
 
 JAB is a committed backend, deliberately last among the accessibility APIs
 (D1): far fewer apps need it than UIA and MSAA/IA2.
@@ -1185,7 +1280,7 @@ JAB is a committed backend, deliberately last among the accessibility APIs
 
 Exit: a mainstream Swing application is readable and navigable end-to-end.
 
-## M14 — Display model (gated)
+## M17 — Display model (gated)
 
 A GDI display model in the NVDA tradition, deliberately last among the
 text sources (D11), and opened by an explicit re-triage gate: test the
@@ -1212,16 +1307,21 @@ Exit: the re-triage decision is recorded; if built, a PuTTY session is
 readable with live output announcement and the existing screen-review
 commands, with no fidelity regression anywhere else.
 
-## M15 — Braille (deliberately last, D7)
+## M18 — Braille (deliberately last, D7)
 
 - liblouis integration; `BrailleDisplay` trait implementations for common
   displays; braille viewer (on-screen virtual display) so development and
   E2E tests need no hardware; routing keys, cursor tethering, speech-braille
   sync via existing index marks.
+- Drivers reach their devices by model A or B of the
+  [security model](design/security-model.md) (section 6.11). Nearly every
+  driver, NVDA's included, needs only a handle opened outside its host;
+  Bluetooth LE, vendor libraries that open the device themselves, and
+  BRLTTY's pipe are the exceptions.
 - A braille display's gestures are user inputs that are not keys, so
   they need key numbers ordered against the keyboard's: the keyboard
   hook's thread is the one minter and takes only keys
-  (`docs/design/ownership.md`), so M15's design
+  (`docs/design/ownership.md`), so M18's design
   decides how a braille gesture is numbered, as NVDA queues its speech
   cancel behind what is already queued.
 
@@ -1263,7 +1363,7 @@ Tiers, gated by the capabilities each module needs:
   workflows are core M4 behavior, and mintty is triaged on its own after M4
   (its ConPTY integration may make it readable stock). PuTTY, SecureCRT,
   and Tera Term draw their screens through GDI with no accessibility API at
-  all, so they are gated on the M14 display model — with ssh from Windows
+  all, so they are gated on the M17 display model — with ssh from Windows
   Terminal as the recommended interim answer.
 - **Tier C — after M7 browse mode** (web-content-hosting apps): WebView2
   hosts, VS Code, WhatsApp, deeper Teams support, Thunderbird, Kindle and
@@ -1279,7 +1379,7 @@ Tiers, gated by the capabilities each module needs:
   document, which Chinese input methods flood with them
   (`IAccessibleHandler/__init__.py`, lines 641 to 657); Verbatim handles
   them as a caret event on every UIA focus until then.
-- **Tier E — after the JAB backend lands (M13)**: javaw and Eclipse.
+- **Tier E — after the JAB backend lands (M16)**: javaw and Eclipse.
 
 ## Ongoing tracks (every milestone)
 

@@ -105,7 +105,7 @@ for correctness; not yet built (M7).
 NVDA: GDI hooks power screen review
 ([The display model](../nvda/display-model.md)). Verbatim: **different (D11)** —
 screen review will be a spatial projection of the tree (M7); GDI
-model deliberately last (M14, gated).
+model deliberately last (M17, gated).
 
 ### Spoken vocabulary and key layouts
 

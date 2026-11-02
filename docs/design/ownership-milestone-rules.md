@@ -61,9 +61,9 @@ The ownership refactor's builds are all built: [the one judge build](ownership.m
 - M10: the console reads Core only by queries; its node reads are requests with responders.
 - M11: a theme switch is an input and an effect ordered with `Speak`.
 - M12: remote input enters the one route; the protocol is versioned and validated.
-- M13: Java objects are released by the release rule; establish first whether the bridge is thread-affine.
-- M14: drawing threads only append; one helper thread owns the model, sending numbered snapshots that Core judges.
-- M15.
+- M16: Java objects are released by the release rule; establish first whether the bridge is thread-affine.
+- M17: drawing threads only append; one helper thread owns the model, sending numbered snapshots that Core judges.
+- M18.
   - Core alone decides content and tethering.
   - Braille keys enter the one route with the buffer generation and a key number.
   - Speech and braille stay in step through the existing marks.

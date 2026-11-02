@@ -397,7 +397,7 @@ unverified; IA2 text and hypertext consumption is not yet (M7).
 
 ### JAB
 
-Verbatim: **not yet (M13)**.
+Verbatim: **not yet (M16)**.
 
 ### Remoted UIA trees
 

@@ -14,7 +14,7 @@ screen reader in both rendered and source form.
 - **D1, dual accessibility backends.** UIA and MSAA/IA2 are both
   first-class client stacks behind the normalized model, with
   per-application arbitration picking the richest source; JAB joins last
-  (roadmap M13). Why: UIA alone serves WinUI, Terminal and modern Office,
+  (roadmap M16). Why: UIA alone serves WinUI, Terminal and modern Office,
   while browsers and much of Win32 are richest through MSAA/IA2. Decided
   2026-07-13.
 - **D2, injection never required for correctness.** An in-process helper,
@@ -80,7 +80,7 @@ screen reader in both rendered and source form.
   translations ship apart from binaries. Decided 2026-07-13.
 - **D11, no display model until last.** Screen review projects the
   normalized tree spatially, with character extents where text interfaces
-  give them, in M7, and OCR in M8; a GDI display model comes last (M14),
+  give them, in M7, and OCR in M8; a GDI display model comes last (M17),
   gated, and only legacy GDI terminals wait for it. Why: it sees only
   GDI-drawn text, a shrinking share of the screen. Decided 2026-07-15.
 - **D12, utterances stay structured.** The reducer emits semantic spans,
@@ -652,7 +652,7 @@ Two client stacks feed one model. Per-app (occasionally per-window)
 Win32. Arbitration lives in the outpost, is config-overridable per app (and
 tweakable by app-module extensions), and is invisible above the normalized
 model. A third backend, JAB, joins the same arbitration later (D1, roadmap
-M13) for Java applications.
+M16) for Java applications.
 
 ### UIA
 
@@ -890,7 +890,7 @@ internals), the same machinery provides Narrator-style scan mode in ordinary
 apps. Screen review is the same projection specialized to geometry (D11):
 visible nodes ordered by bounding rectangle and grouped into visual lines,
 extent-backed where text interfaces exist, with OCR (M8) and eventually the
-display model (M14) as further text sources behind the same review commands.
+display model (M17) as further text sources behind the same review commands.
 
 ## 9. Observability
 
@@ -1061,7 +1061,7 @@ otherwise.
 - `verbatim-uia` and `verbatim-uia-rops` — UIA client stack; remote
   operations.
 - `verbatim-ia2` — MSAA/IA2 client stack (WinEvents, IAccessible2).
-- `verbatim-jab` — Java Access Bridge client stack (planned, M13).
+- `verbatim-jab` — Java Access Bridge client stack (planned, M16).
 - `verbatim-outpost` — the outpost actor and per-app outpost binary;
   `verbatim-outpost-logic`, its reducer, pure.
 - `verbatim-listener` — the focus listener and its binary (D13);

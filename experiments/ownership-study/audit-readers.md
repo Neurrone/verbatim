@@ -154,7 +154,7 @@ Each rule is listed with its evidence and the compile-time form that would enfor
    - Evidence: the idle barrier's dependence on watches ending, 0b5826cd, and the study's review finding 3.
 5. Reduction-preserving merges (section 2, the outbound merge).
 6. A static holds only a cache or process lifecycle, never a judged fact. Today's statics comply (`SPARE`, `REFUSALS`, `REGISTRAR`, `NEXT_READER`). Keep. The rule is stated so that M5 and M7 keep it.
-7. Thread-affine backends. A backend whose objects or calls are bound to one thread cannot have its worker replaced by abandonment. That backend's recovery is kill-and-replace only. The rules do not cover this. It matters for M13 (section 5), and for the in-process helper's work, which runs on the application's own thread in M7.
+7. Thread-affine backends. A backend whose objects or calls are bound to one thread cannot have its worker replaced by abandonment. That backend's recovery is kill-and-replace only. The rules do not cover this. It matters for M16 (section 5), and for the in-process helper's work, which runs on the application's own thread in M7.
 
 ## 4. The judge for terminals, text and the caret watch, and the listener's shape
 
@@ -231,11 +231,11 @@ The listener: same shape, smaller. Its scheduler is the pure part, under the rea
     - The outpost's calls to the helper go over a pipe and can be cancelled with `CancelIoEx`, so they need no abandonment.
     - The helper's work on the application's UI thread is thread-affine (rule 7).
     - The registry keys IA2 nodes by window and unique id, as one node per identity.
-- M13, the Java Access Bridge.
+- M16, the Java Access Bridge.
   - New: a bridge thread with its message loop in the outpost, and calls that are not COM, so `CoCancelCall` does not apply.
   - Java objects need `ReleaseJavaObject`, under the position rule.
   - To establish before design: whether the bridge's calls and callbacks are bound to the thread that initialized it. If they are, rule 7 applies, and the outpost's recovery is kill-and-replace only.
-- M14, the display model.
+- M17, the display model.
   - New: GDI hooks in the helper, called on every drawing thread of the application.
   - Rule: drawing threads only append to a queue that never blocks. One helper thread owns the text model. The model goes to Core as numbered snapshots, and Core's terminal model judges them, keeping ec7c88c8's split of reads in the reader and judgement in Core.
 

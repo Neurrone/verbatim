@@ -244,7 +244,7 @@ Every process Verbatim starts gets the least privilege it can work with, on ever
 
 A portable copy runs from any folder with its settings, logs and dumps beside it. It is a less valuable target by construction: Windows grants UIAccess only to signed programs in a secure location, and only the installer registers for sign-in, so a portable copy holds the user's rights and nothing more. X2 keeps a DLL planted beside it from loading; its configuration names no code; it loads no extension it did not install through its own confirmation; it leaves nothing of the user's in a borrowed machine's profile, the compiled-code cache included; it never runs elevated; and its updates are verified by signature.
 
-### 6.11 Braille display drivers (M15)
+### 6.11 Braille display drivers (M18)
 
 A sandbox cannot open devices by itself, but a handle opened outside keeps working inside, and Chromium never hands a sandboxed process a device handle (the survey, "Braille drivers"). Each driver uses one of two models, chosen per driver:
 

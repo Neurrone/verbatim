@@ -21,7 +21,7 @@ Terms:
 - Everything else here is "keep as is".
 - The study's rules do not cover two kinds of message my area depends on:
   - configuration views (`Fetches`, the hook's map and config, and in M5 the rule tables and the modules' settings view);
-  - the order of user input across its sources (keyboard, control plane, M5 module commands, M15 braille keys).
+  - the order of user input across its sources (keyboard, control plane, M5 module commands, M18 braille keys).
 
   The section "What the rules do not cover" proposes a rule for each.
 
@@ -33,7 +33,7 @@ Terms:
 - The speech queue, synth and audio threads. They own the lanes, the utterances handed on, the pause state and the playback position. They read `FocusNow`, which arrives ordered on their own channel, and the theme, through a `RwLock` the GUI writes.
 - The GUI thread and the control plane. Changes they make reach Core as inputs. The exceptions are the theme, the synthesizer settings and the configuration file, below.
 - The relay and supervisor are another audit's. My area's link to them is `send_views`: attention and held nodes, `NodesHeld`, and `Fetches`.
-- Planned threads: the extension host in Core (M5: loader, directory watch, compilation), the console thread (M10), and the braille output and display-input threads (M15).
+- Planned threads: the extension host in Core (M5: loader, directory watch, compilation), the console thread (M10), and the braille output and display-input threads (M18).
 
 ## The facts, their owners, copies and defects
 
@@ -234,7 +234,7 @@ This covers `caret`, `caret_history`, `pending_caret`, `superseded_caret`, `term
   - Rules:
     - Keep presentation a pure function of the utterance and the theme, so D12 holds.
     - Make the theme switch an `Input` and an effect ordered with `Speak`, so the recorder replays it and no utterance is presented under a theme whose fetches it was not read for.
-- M15, braille.
+- M18, braille.
   - New threads: display I/O (possibly a host process, as for synthesizers, where a vendor driver can hang), translation, and display key input.
   - New facts: the braille buffer and its regions, tethering, routing keys, and the cell-to-text map.
   - Rules:

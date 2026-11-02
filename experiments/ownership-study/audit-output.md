@@ -74,7 +74,7 @@ Read-only audit, 2026-10-30, of main at 5797c075, against the rules of `architec
    - Change, with evidence:
      - The hook takes a lock that the reducer also takes. `docs/design/communication.md` section 6.2 says the hook "never blocks on a lock".
      - A trace whose origin has left the 1,024-entry table loses its fence silently.
-     - M15's braille keys would be a third writer.
+     - M18's braille keys would be a third writer.
 
      The change: carry the key number in the input the hook already posts, as a field of the fact, and delete the table. No incident has been recorded, so this is low priority.
    - Compile-time rule: the reducer's `Speak` effect carries its cause as a typed field, not a lookup.
@@ -221,7 +221,7 @@ Read-only audit, 2026-10-30, of main at 5797c075, against the rules of `architec
 - M11, audio formatting.
   - Theme switching is runtime configuration owned by Core (item 13).
   - Positional sounds take position and pan from the utterance, decided in the presenter and applied in the mixer, with no new thread.
-- M15, braille.
+- M18, braille.
   - What it adds: a braille host process like the synth host, the reducer's `Braille` effect, and display keys arriving as inputs.
   - Rules it must follow:
     - cursor tethering and the braille content belong to the reducer;

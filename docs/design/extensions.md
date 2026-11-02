@@ -375,7 +375,7 @@ The porting track runs from M5 onward. The order is chosen so that each module c
 
 In M5, every Windows inbox application: Explorer (the staging windows, the shell roots and the snap results as rules; the desktop-icon duplicate-focus veto, the tab-switch announcement and the taskbar and context-menu name fixes as hooks), Windows Terminal (the twin rule), Notepad (the status bar provider and the go-to-line role), Calculator (the display-updated notification read, the pass-through result keys), Task Manager (two rules, proven by `mockapp` until UIAccess lets it be read end to end), Settings (the volume meter is not a progress bar), Start and search (the bad-UIA rule for the Chromium render widget, the suggestion count name, the search field description; the ancestry-override part waits), Quick Settings and Open With. Sleep mode becomes a core per-application list toggled by NVDA's key and seeded with the five executables NVDA's sleep-only modules name, rather than five modules.
 
-After M5, on the track: foobar2000 and Poedit, whose value is commands; Audacity; Notepad++, after a core Scintilla text provider in the outpost that reads the control by its window messages and a buffer allocated in the target process, as NVDA's `scintilla.py` does, since Scintilla exposes no usable UIA or MSAA text; the emoji panel after IME candidate support; lock screen and logon after M8.1; VS Code, Thunderbird and the WebView2 hosts after M7; Word, Excel, Outlook, PowerPoint, LibreOffice and Visual Studio after the object-model bridge; Eclipse after M13. Skipped, with the reason in appendix A: modules for discontinued software, display-model terminals until M14, and modules that read another process's memory.
+After M5, on the track: foobar2000 and Poedit, whose value is commands; Audacity; Notepad++, after a core Scintilla text provider in the outpost that reads the control by its window messages and a buffer allocated in the target process, as NVDA's `scintilla.py` does, since Scintilla exposes no usable UIA or MSAA text; the emoji panel after IME candidate support; lock screen and logon after M8.1; VS Code, Thunderbird and the WebView2 hosts after M7; Word, Excel, Outlook, PowerPoint, LibreOffice and Visual Studio after the object-model bridge; Eclipse after M16. Skipped, with the reason in appendix A: modules for discontinued software, display-model terminals until M17, and modules that read another process's memory.
 
 A module is done when its NVDA behaviours are captured on the VM with the pinned build, one end-to-end scenario per behaviour asserts the captured utterance, its own tests pass, and the parity ledger lists each behaviour with the scenario that pins it.
 
@@ -398,7 +398,7 @@ Pinned source `nvda/source/appModules`, 78 modules. For each: target and status,
 - dllhost (22). Early Windows 10 property sheets. Skip.
 - doctts (5). Unidentified self-voicing app. Sleep only; the core sleep list.
 - dosvox (5). DOSVOX. Sleep only; the core sleep list.
-- eclipse (208; also DBeaver, Spring Tool Suite, Zend). Current. Focus veto on unfocused tree items, an editable-text-with-suggestions overlay with three scripts. After M13.
+- eclipse (208; also DBeaver, Spring Tool Suite, Zend). Current. Focus veto on unfocused tree items, an editable-text-with-suggestions overlay with three scripts. After M16.
 - egui (16). Probably an older ESET GUI. Skip.
 - esysuite (17; also esybraille). Eurobraille suite. Sleep only; the core sleep list.
 - excel (144). Current. Good-UIA by version, overlays with a reparenting override, a focus redirect that polls, display-model edit box. Tier D.
@@ -408,7 +408,7 @@ Pinned source `nvda/source/appModules`, 78 modules. For each: target and status,
 - hxmail (57; also commsapps, hxoutlook). Mail and Calendar, ended 2024. Skip.
 - instantbird (25). Discontinued. Skip.
 - itunes (123). Legacy. Skip.
-- javaw (53). Host resolution for Java applications by parent process and command line. Tier E, after M13.
+- javaw (53). Host resolution for Java applications by parent process and command line. Tier E, after M16.
 - kindle (464). Kindle for PC 1.x book view, IA2. Custom browse-mode interceptor. Tier C.
 - lockapp (106). Windows lock screen, current. Overlays, input capture, review position save and restore. After M8.1.
 - lockapphost (15). Legacy. Skip.
@@ -416,9 +416,9 @@ Pinned source `nvda/source/appModules`, 78 modules. For each: target and status,
 - loudtalks (42). Renamed Zello. Skip.
 - lync (99). Skype for Business, discontinued. Skip.
 - microsoftedge (20), microsoftedgecp (32). EdgeHTML, discontinued. Skip.
-- mintty (7). Current; subclasses putty with its window class. Display model; M14.
+- mintty (7). Current; subclasses putty with its window class. Display model; M17.
 - miranda32 (282; also miranda64). Custom window messages with remote memory. Skip.
-- mirc (41). Current. Display-model live text. M14.
+- mirc (41). Current. Display-model live text. M17.
 - mmc (80). Management Console, current. `AfxWnd42u` overlays, synthetic focus from selection, bad-UIA list view. Tier A, later.
 - mplayerc (14; also mpc-hc). Fork maintained. Init hook sets a status bar role by class and control id. Tier A, later.
 - msedgewebview2 (25). WebView2 host resolution by parent process. Tier E, in M5's identity table.
@@ -433,9 +433,9 @@ Pinned source `nvda/source/appModules`, 78 modules. For each: target and status,
 - outlook (791). Classic Outlook, current. Good and bad UIA by version, `requestEvents`, COM object model, in-process MAPI reads, custom browse mode for mail. Tier D.
 - poedit (297). Current. Four scripts with repeat counts and a browseable message, tones, lookups by control id. Tier A, on the track.
 - powerpnt (1743). Current. COM object model with event sinks, a synthetic object tree, slide show interceptors. Tier D.
-- putty (34). Current. Display-model terminal. M14.
+- putty (34). Current. Display-model terminal. M17.
 - searchui (98; also searchapp, searchhost). Start and search, current. Bad-UIA for the Chromium render widget, overlays with ancestry overrides, suggestion count name. Tier A, partly later.
-- securecrt (31). Current. Display-model terminal. M14.
+- securecrt (31). Current. Display-model terminal. M17.
 - shellexperiencehost (83; also shellhost). Quick Settings, current. Good-UIA `ControlCenterWindow`, toggle values from item status, calendar day headers. Tier A.
 - skype (12). Discontinued. Skip.
 - soffice (653). LibreOffice, current. IA2 text and table interfaces, compound documents. Tier D, after M7.
@@ -447,7 +447,7 @@ Pinned source `nvda/source/appModules`, 78 modules. For each: target and status,
 - teamtalk4classic (23). Legacy. Skip.
 - thunderbird (58). Current. Menu item names from IA2, status bar on a busy document, name change forwarded as state change. Tier C.
 - totalcmd (49; also totalcmd64). Current. Panel announcement, `reportFocus` override. Later.
-- ttermpro (27). Tera Term, current. Display-model terminal. M14.
+- ttermpro (27). Tera Term, current. Display-model terminal. M17.
 - tween (76). Discontinued. Skip.
 - utorrent (74). Display-model fallback. Skip.
 - vipmud (57). Niche. Later.
