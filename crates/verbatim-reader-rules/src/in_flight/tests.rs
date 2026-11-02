@@ -234,7 +234,6 @@ fn a_succeeded_generation_takes_charge() {
     assert!(!in_flight.accepts(request));
 }
 
-
 /// One step of a generated case. An action names its target by role and is
 /// made valid when it is applied: a start or a succession with an item
 /// running ends that item first, and an answer to a dead request names the
@@ -783,8 +782,7 @@ impl Run {
                         .in_flight
                         .published_judging_nothing(dead, true, then_abandon),
                     Stale::Published(then_abandon) => {
-                        self.in_flight
-                            .published(dead, true, then_abandon, self.now)
+                        self.in_flight.published(dead, true, then_abandon, self.now)
                     }
                     Stale::End => {
                         assert_eq!(self.in_flight.end(dead), None, "{:?}", self.trail);
@@ -886,7 +884,11 @@ impl Run {
             self.trail
         );
         if whole {
-            assert!(self.item.is_none(), "an item left running: {:?}", self.trail);
+            assert!(
+                self.item.is_none(),
+                "an item left running: {:?}",
+                self.trail
+            );
             assert!(self.in_flight.running().is_none(), "{:?}", self.trail);
         }
     }
