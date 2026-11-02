@@ -88,15 +88,9 @@ suite, the VM harness, NVDA captures and troubleshooting.
     refactor.
   - [focus-pipeline-audit.md](design/focus-pipeline-audit.md) — every
     difference from NVDA's focus handling found on 2026-10-29.
-  - [outpost-focused-element-study.md](design/outpost-focused-element-study.md)
-    — whether an outpost can read its own application's focus with no
-    risk of connecting to another.
   - [cross-process-calls-study.md](design/cross-process-calls-study.md)
     — every call that can reach another application, measured, with a
     verdict on the rule that only an application's own outpost calls it.
-  - [focus-backend-ownership-study.md](design/focus-backend-ownership-study.md)
-    — the outpost's one verdict per window for both routes and its gap
-    record beside it, so a focus is spoken twice only where NVDA does.
   - [caret-selection-rework.md](design/caret-selection-rework.md) — one
     caret baseline and one request per key.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read

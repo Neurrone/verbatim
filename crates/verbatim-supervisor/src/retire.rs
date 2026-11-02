@@ -29,9 +29,11 @@ use super::writer::{Outgoing, ToChild};
 /// classic call and a remote operation's `Execute` alike, as mockapp's
 /// `remote_ops` tests pin), and the connection timeout, which Verbatim sets
 /// to 2 seconds (`verbatim_uia::CONNECTION_TIMEOUT`), ends a call to a
-/// provider that cannot be reached. A timeout bounds each provider call,
-/// not an operation, so an operation of several calls, such as a search,
-/// waits a full timeout for each one the application does not answer; the
+/// provider that cannot be reached. A timeout bounds each request and
+/// window message, not an operation (`docs/uia-bugs.md`), so an operation
+/// of several requests waits a full timeout for each one the application
+/// does not answer, as a search does when it first reads its start element
+/// and then walks from it in one request inside the provider; the
 /// 20 seconds were chosen when Verbatim left UIA's 20-second transaction
 /// timeout as it was, to cover one call UIA ends by itself, and the second
 /// on top covers the shutdown's own work; the limit has not been revisited

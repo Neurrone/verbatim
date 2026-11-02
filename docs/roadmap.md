@@ -14,9 +14,9 @@ progress; its completed parts, M4.1 (stability) among them, are listed
 there too, and M4.1's open follow-ups are under M4, "Follow-ups from
 M4.1". M4.5 (logic foundations) is complete. The process and thread
 layout was weighed again and kept: an outpost process per application
-and a separate focus listener (D9, D13; Dickson, 2026-11-02). Next: the
-focus pipeline rework's second and third builds, then M4.6 (generated
-tests).
+and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
+pipeline rework's second build is built (2026-11-02). Next: M4.6
+(generated tests), then the rework's third build.
 
 ## M4 — Text, editing, and terminals
 
@@ -93,13 +93,11 @@ between processes' copies of one fact, so the ownership refactor below
 comes first. The keep-id review's fix and M4.5 are built; the rework
 resumes with the second of the remaining builds in
 [the remaining builds](design/focus-pipeline-rework-remaining.md), then
-M4.6, then the third (Dickson, 2026-10-31). The second build's design
-was restated against the code after M4.5 on 2026-11-02 and revised the
-same day for Dickson's decisions on the foreground, the held
-application's window text, the return after any window that took the
-foreground and the moved-on rule; it also reads the keep-id evidence in
-NVDA's order, which fixes Windows Terminal's repeated launch
-announcement, and waits for its implementation. The third build updates
+M4.6, then the third (Dickson, 2026-10-31). The second build was built
+on 2026-11-02: one foreground message from the listener, the left mark,
+the title rule, the held application's window text and the gap record
+closed by the outpost's own reports, with the keep-id evidence read in
+NVDA's order. The third build updates
 M4.6's generators for the inputs it changes, adds invariants for its new
 mechanisms, and writes the listener's checks before reading as pure
 functions of what its calls return.
