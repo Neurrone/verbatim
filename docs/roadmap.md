@@ -710,7 +710,20 @@ second real engine (Dickson, 2026-10-29).
   device (every utterance ends once, a cancel ends only older ones, nothing
   plays after its cancel, marks in order, a waiting producer always woken)
   (`docs/performance.md`, "Threads after the output build"), with no state
-  shared between threads; the silence written keeps waking the audio
+  shared between threads; before them, a test driver that runs the
+  mixer's pass (`AudioLoop::pass`) on the test thread with events
+  delivered in the same step, onto which the mixer tests that check its
+  decisions (what is written, when an utterance starts, reaches a mark or
+  ends, cancels and format changes, about 23 of 27) move, so that holding
+  is not stepping, settling is stepping until a pass waits with nothing
+  done, and nothing waits on time; the tests of the threading itself (a
+  producer woken for room and at shutdown, a write waiting while too far
+  ahead, the allocation test) stay on the real threads, each waiting only
+  on evidence; today's tests judge from outside when the mixer is idle,
+  which caused both races fixed on 2026-11-02 and leaves the allocation
+  test's timeout unexplained (`docs/flaky-tests.md`, "The mixer's
+  allocation test under load"), which is reproduced in the stepped form or
+  ruled out (Dickson, 2026-11-02); the silence written keeps waking the audio
   thread every device period while the stream stays awake, a cost the
   period setting weighs; first measure key press to first audio heard for
   NVDA and Verbatim on one machine, then try a larger device buffer, which

@@ -91,6 +91,14 @@ Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_ty
   - Cause: not found. The speech platform's first activation in a fresh runner session can take more than ten seconds, which is why the unit-test jobs run `cargo xtask warm-speech` first; whether that warm-up did not hold here is not known.
   - Fix: none yet.
 
+## The mixer's allocation test under load
+
+- `verbatim-audio`'s `mixer` test `the_audio_thread_allocates_and_frees_nothing_while_it_plays`
+  - How: times out waiting for a playback event, "a playback event arrives: Timeout", in its warm-up's first utterance, whose end never comes after the harness plays its frames (`exercise` in `crates/verbatim-audio/tests/mixer.rs`).
+  - How often: 1 of 640 runs with eight copies running at once on the 12-core development machine, both before and after f3284cf9 fixed `settle` (2026-11-02); never seen alone.
+  - Cause: not found. The tests run the real audio and delivery threads and judge from outside when the mixer is idle, so it is not known whether this is the harness's guess or a lost wake in the mixer.
+  - Fix: [M6.3](roadmap.md#m63--speech-and-audio-pipeline), the mixer's decision tests driven pass by pass on the test thread, where it is reproduced or ruled out.
+
 ## A failed group removal test on GitHub's ARM64 runner
 
 - `mockapp`'s `failure_paths` test `a_group_whose_removals_all_failed_is_removed_when_the_registering_thread_ends`
