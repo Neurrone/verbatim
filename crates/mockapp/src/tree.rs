@@ -99,6 +99,11 @@ pub(crate) struct NodeData {
     /// provider answers `NativeWindowHandle` with (`report-window`), and
     /// `None` for its usual answer.
     pub(crate) reports_window: Option<isize>,
+    /// The owned popup window that hosts the node (`popup`), which its UIA
+    /// provider names as its host and its window handle, so UIA moves the
+    /// popup from the desktop's children to the node's place in the tree;
+    /// `None` for a node with no window of its own.
+    pub(crate) popup: Option<isize>,
     /// Whether UIA counts the node as content (`IsContentElement`).
     pub(crate) content: bool,
     /// Whether MSAA reads the node's role as a window's client area's
@@ -391,6 +396,7 @@ fn insert(
         location_fails: false,
         generation: 0,
         reports_window: None,
+        popup: None,
         content: node.content,
         client_role: node.client_role,
     });

@@ -16,6 +16,7 @@
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
 //! `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
 //! `fail-acc-location <id>`, `recreate <id>`, `report-window <id>`,
+//! `popup <id>`,
 //! `take-runtime-id <id> <from>`, `share-runtime-id <id> <from>`,
 //! `replace-items <id>`, `disconnect <id>`,
 //! `disconnect-at-first-child <id>`,
@@ -265,6 +266,15 @@ pub(crate) enum Command {
     /// node as that window's element, runtime id `[42, handle]`, with no
     /// parent. UIA-only.
     ReportWindow(String),
+    /// `popup <id>`: makes an owned popup window, a top-level window of
+    /// its own owned by the host window, hidden as the host is unless
+    /// `--show`, which hosts node `id`: its `WM_GETOBJECT` answers the
+    /// node's provider, and the node's provider names the popup as its host
+    /// and its window handle, so UIA moves the popup from the desktop's
+    /// children to the node's place under its parent, and the popup's
+    /// accessibility parent is in its owner, as a combo box's drop-down
+    /// list is the combo box's child. UIA-only.
+    Popup(String),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -564,6 +574,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             Some(Command::Recreate(rest.to_owned()))
         }
         "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
+        "popup" if !rest.is_empty() => Some(Command::Popup(rest.to_owned())),
         "take-runtime-id" => runtime_id_from(rest, Command::TakeRuntimeId),
         "share-runtime-id" => runtime_id_from(rest, Command::ShareRuntimeId),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),

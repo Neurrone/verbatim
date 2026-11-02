@@ -61,6 +61,17 @@ pub(crate) fn hide_window_handle() {
     HIDE_WINDOW_HANDLE.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Node `index`'s provider, served by the host window `hwnd`'s tree: the
+/// provider an owned popup hosting the node answers `WM_GETOBJECT` with
+/// ([`crate::popup`]).
+pub(crate) fn node_provider(
+    tree: SharedTree,
+    hwnd: HWND,
+    index: usize,
+) -> windows::core::Result<IRawElementProviderSimple> {
+    props::provider_for(tree, hwnd, index).cast()
+}
+
 /// The root's provider, as a fragment: a [`RootProvider`], or a
 /// [`CountingRootProvider`] around one when registrations are counted.
 pub(crate) fn root_fragment(tree: SharedTree, hwnd: HWND) -> IRawElementProviderFragment {
@@ -358,6 +369,19 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(child) }
                 .map_err(|error| format!("destroying the child window: {error}"))?;
             guard.nodes[index].reports_window = Some(child.0 as isize);
+        }
+        Command::Popup(id) => {
+            let index = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .index_of(&id)
+                .ok_or_else(|| unknown(&id))?;
+            let popup = crate::popup::create(std::sync::Arc::clone(tree), hwnd, index)
+                .map_err(|error| format!("the popup window: {error}"))?;
+            tree.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[index]
+                .popup = Some(popup.0 as isize);
         }
         // Handled by the window thread before dispatch.
         Command::Stall(..)
@@ -910,7 +934,9 @@ mod props {
         } else if id == UIA_ProcessIdPropertyId.0 {
             i32_variant(i32::try_from(std::process::id()).unwrap_or(0))
         } else if id == UIA_NativeWindowHandlePropertyId.0 {
-            if let Some(reported) = node.reports_window {
+            if let Some(popup) = node.popup {
+                i32_variant(i32::try_from(popup).unwrap_or(0))
+            } else if let Some(reported) = node.reports_window {
                 i32_variant(i32::try_from(reported).unwrap_or(0))
             } else if index == 0
                 && !super::HIDE_WINDOW_HANDLE.load(std::sync::atomic::Ordering::Relaxed)
@@ -1017,13 +1043,24 @@ mod props {
     }
 
     pub(super) fn host_raw_element_provider(
+        tree: &SharedTree,
         hwnd: HWND,
         index: usize,
     ) -> WinResult<IRawElementProviderSimple> {
+        let popup = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[index]
+            .popup;
         if index == 0 {
             // SAFETY: `hwnd` is the mockapp window's own handle, live for the
             // process's lifetime.
             unsafe { UiaHostProviderFromHwnd(hwnd) }
+        } else if let Some(popup) = popup {
+            // SAFETY: the popup `popup` made for the node, live for the
+            // process's lifetime. Named as the node's host, it moves the
+            // popup to the node's place in the tree.
+            unsafe { UiaHostProviderFromHwnd(HWND(popup as *mut core::ffi::c_void)) }
         } else {
             Err(Error::empty())
         }
@@ -1316,7 +1353,7 @@ mod handler {
         }
         fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
             hits::hit(hits::Method::HostRawElementProvider);
-            props::host_raw_element_provider(self.hwnd, self.index)
+            props::host_raw_element_provider(&self.tree, self.hwnd, self.index)
         }
     }
 
@@ -1411,7 +1448,7 @@ mod handler {
         fn HostRawElementProvider(&self) -> WinResult<IRawElementProviderSimple> {
             hits::hit(hits::Method::HostRawElementProvider);
             props::alive(&self.tree, self.index)?;
-            props::host_raw_element_provider(self.hwnd, self.index)
+            props::host_raw_element_provider(&self.tree, self.hwnd, self.index)
         }
     }
 

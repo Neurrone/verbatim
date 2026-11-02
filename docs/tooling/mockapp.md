@@ -200,6 +200,15 @@ parses them.
   `[42, handle]`, with no parent. A live window's handle would not do:
   UIA navigates from such an element by its window, up to the top-level
   window.
+- `popup <id>` (UIA only) makes an owned popup, a top-level window of
+  its own owned by the host window, hidden unless the host is shown,
+  which hosts node `id`: its `WM_GETOBJECT` answers the node's provider,
+  and the node's provider names the popup as its host and its
+  `NativeWindowHandle`. UIA then moves the popup from the desktop's
+  children to the node's place under its parent, so the popup's
+  accessibility parent is in its owner, as a combo box's drop-down list
+  is the combo box's child (`crates/mockapp/tests/fixtures/popup.json`).
+  Its window class is `VerbatimMockAppPopup`.
 - `take-runtime-id <id> <from>` (UIA only) removes node `from` from the
   tree, every call on its elements failing with
   `UIA_E_ELEMENTNOTAVAILABLE`, and gives node `id` its runtime id, as File

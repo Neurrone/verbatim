@@ -1,0 +1,24 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Popup Fixture",
+  "children": [
+    {
+      "id": "hour",
+      "role": "combo_box",
+      "name": "Hour",
+      "states": ["focusable", "expanded"],
+      "children": [
+        {
+          "id": "hours",
+          "role": "list",
+          "name": "Hours",
+          "children": [
+            { "id": "nine", "role": "list_item", "name": "Nine", "states": ["focusable", "selectable"] },
+            { "id": "ten", "role": "list_item", "name": "Ten", "states": ["focusable", "selectable"] }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1556,6 +1556,73 @@ fn a_listener_read_the_outpost_drops_leaves_the_record_to_its_bound() {
     app.quit();
 }
 
+/// A combo box's drop-down, as mockapp's owned popup hosting the list
+/// (`popup`), a top-level window of its own whose accessibility parent is
+/// the combo box in its owner: the `WinEvent` focus copy in the popup is
+/// dropped for UIA and opens the record in the popup's top-level window,
+/// and the listener's read of the item, observed 50 ms before the copy and
+/// handled after it, is placed by its window facts' top-level window, the
+/// popup, not by its owner or its chain, so it closes the copy's record:
+/// nothing is sent at the bound.
+fn a_popup_items_report_closes_its_own_copys_record() {
+    let title = common::unique_title("mockapp-popup-report");
+    let mut app = common::spawn("popup.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+
+    app.send("popup hours");
+    let popup = owned_popup(hwnd);
+    app.send("set-focus nine");
+    outpost.set_focus_window(popup);
+    let item = client.focused();
+    outpost.read_focus_as(item.live().element());
+    let read_at_us = outpost.observed_now();
+    let read = outpost.listener_fact(&item);
+    outpost.pass_time(Duration::from_millis(50));
+    winevent_focus(&outpost, popup);
+    outpost.settled();
+    assert!(outpost.gap_timer_set(), "the copy opened a record");
+    outpost.deliver_stamped(read, read_at_us);
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        reported.chain(),
+        [
+            Some("Mockapp Popup Fixture"),
+            Some("Hour"),
+            Some("Hours"),
+            Some("Nine")
+        ]
+    );
+    let facts = reported.facts.expect("the report's window facts");
+    assert_eq!(
+        (facts.top_level, facts.root_owner),
+        (handle(popup), handle(hwnd)),
+        "placed in the popup, owned by mockapp's window"
+    );
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The popup mockapp's `popup` made, owned by its window `owner`.
+fn owned_popup(owner: HWND) -> HWND {
+    use windows::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow};
+    let mut after = None;
+    loop {
+        // SAFETY: a local search of the top-level windows by class.
+        let popup = unsafe { FindWindowExW(None, after, w!("VerbatimMockAppPopup"), None) }
+            .expect("mockapp made the popup");
+        // SAFETY: a local read of a window's owner.
+        if unsafe { GetWindow(popup, GW_OWNER) }.ok() == Some(owner) {
+            return popup;
+        }
+        after = Some(popup);
+    }
+}
+
 /// The listener's copy of a `WinEvent` focus on the client object of
 /// mockapp's window, a UIA window, with no UIA focus event of its own.
 fn winevent_focus(outpost: &OutpostUnderTest, hwnd: HWND) {
@@ -4378,6 +4445,10 @@ fn main() {
         (
             "a_protected_fields_focus_comes_with_its_caret_and_selected_text",
             a_protected_fields_focus_comes_with_its_caret_and_selected_text,
+        ),
+        (
+            "a_popup_items_report_closes_its_own_copys_record",
+            a_popup_items_report_closes_its_own_copys_record,
         ),
         (
             "a_winevent_focus_its_uia_focus_follows_is_reported_once",

@@ -181,6 +181,14 @@ reviewable surface.
   provider as the host's, over a tree of its own: the node, as its root,
   and its children. Windows' own window objects answer MSAA for it. At
   most one per fixture.
+- `popup`: the owned popup the `popup <id>` command makes, a top-level
+  window owned by the host, which hosts one node of the host's own tree:
+  its `WM_GETOBJECT` answers that node's provider, and the node's
+  provider names the popup as its host (`HostRawElementProvider`) and
+  its `NativeWindowHandle`, so UIA moves the popup from the desktop's
+  children to the node's place, its accessibility parent in its owner,
+  as UIA's provider repositioning does for a combo box's drop-down
+  (`tests/fixtures/popup.json`).
 - `hits`: the provider-side hit counters (below).
 
 ### The UIA text pattern
@@ -554,7 +562,10 @@ Each file's module comment says exactly what it asserts; in outline:
   foreground event for a UIA-read window is dropped and the focus that
   follows reported alone; and over `described_group.json` an unnamed
   grouping with a description is reported as focus context without the
-  description when the theme turns descriptions off.
+  description when the theme turns descriptions off; and over
+  `popup.json`, with the list in a `popup`, the item's report closes the
+  gap record its copy opened in the popup, placed by its own top-level
+  window, not its owner's.
 - `slow_application.rs`: a real outpost reports a focus on an
   `msaa`-backend mockapp whose window thread is stalled with `stall`, the
   read having started before the stall ended.
