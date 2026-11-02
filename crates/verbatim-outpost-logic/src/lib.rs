@@ -626,8 +626,8 @@ impl Reducer {
     /// program in flight next has due (its deadline, its walk's bound, or
     /// its next judgment of the moved-on rule), the watch's due time while
     /// no program is in flight, no release is pending and the outpost is
-    /// not stopping (only then is it acted on), and the gap record's bound,
-    /// on the shell's clock.
+    /// not stopping (only then is it acted on), and the gap record's bound
+    /// while the outpost is not stopping, on the shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
@@ -648,7 +648,7 @@ impl Reducer {
             .intake
             .gap()
             .waiting_due_us()
-            .filter(|_| !self.gap_timer_given)
+            .filter(|_| !self.gap_timer_given && !self.stopping)
         {
             let left = due_us.saturating_sub(now.observed_us);
             times.push(now.at + Duration::from_micros(left));
@@ -787,8 +787,13 @@ impl Reducer {
     /// since a second is the silence budget (Dickson, 2026-11-02;
     /// `docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
     /// application's title"). With no record waiting for its bound there
-    /// is nothing to test; a record with no top-level window closes.
+    /// is nothing to test; a record with no top-level window closes. Once
+    /// the outpost stops nothing is tested, so no window text reaches Core
+    /// after the close.
     fn gap_bound(&mut self, effects: &mut Vec<Effect>) {
+        if self.stopping {
+            return;
+        }
         let Some(at) = self.intake.gap_mut().at_bound() else {
             return;
         };

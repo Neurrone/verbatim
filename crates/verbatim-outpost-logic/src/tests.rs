@@ -508,6 +508,30 @@ fn the_gap_records_timer_follows_the_record_in_the_order_it_changes() {
     assert_eq!(replay.reducer.next_timer(now(5)), None);
 }
 
+/// Found by the outpost's generated test (`docs/design/logic-tests.md`,
+/// "The outpost's reducer", invariant 16): a foreground change taken in
+/// after the close still opens the gap record, whose bound is then neither
+/// timed nor tested, so no window text reaches Core after the close.
+#[test]
+fn a_gap_record_opened_after_the_close_is_never_tested() {
+    let mut replay = Replay::new();
+    replay
+        .answers
+        .titles
+        .push_back(report_in(5, 0x10, 1_000, true));
+    assert!(replay.input(Input::Close, 1).is_empty());
+    replay.input(
+        Input::Entry {
+            entry: foreground_change(false),
+            source: Source::Other,
+        },
+        1,
+    );
+    assert_eq!(replay.reducer.next_timer(now(1)), None);
+    assert!(replay.tick(1_001).is_empty());
+    assert_eq!(replay.answers.tested, Vec::<isize>::new());
+}
+
 #[test]
 fn a_drop_that_leaves_the_record_open_has_it_read_at_its_bound() {
     let mut replay = Replay::new();
