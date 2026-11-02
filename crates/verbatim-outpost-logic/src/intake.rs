@@ -661,6 +661,24 @@ impl Intake {
                 .is_some_and(|waiting| waiting.marker.is_none())
     }
 
+    /// The traces of the entries waiting, in their order, and of those
+    /// planned in the batch being handed out: what the generated test sees
+    /// each call keep or remove.
+    #[cfg(test)]
+    pub(crate) fn traces(&self) -> (Vec<TraceId>, Vec<TraceId>) {
+        (
+            self.waiting
+                .iter()
+                .map(|waiting| waiting.entry.trace)
+                .collect(),
+            self.batch
+                .iter()
+                .flat_map(Planned::entries)
+                .map(|entry| entry.trace)
+                .collect(),
+        )
+    }
+
     /// Whether anything is waiting to be handled, planned or not, a UIA
     /// focus's marker waiting for its read included, and the entry kept for
     /// when nothing else is ready left out ([`take_idle`](Self::take_idle)).

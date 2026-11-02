@@ -31,6 +31,7 @@ use verbatim_model::{
 use super::Asked as Waited;
 use super::Then;
 use super::tests::{self, Visit, Wire};
+use crate::foreground::Front;
 use crate::reduce;
 use crate::state::SrState;
 
@@ -136,6 +137,10 @@ struct Model {
     focus: Option<Focus>,
     /// The front: its window and when it was observed.
     front: Option<(WindowHandle, u64)>,
+    /// The entered window: the top-level window of the newest focus taken
+    /// with window facts, each generated in the front, which it enters; a
+    /// foreground change never sets it.
+    entered: Option<WindowHandle>,
     latest: Option<Stamp>,
     /// The terminal models, least recently read first, as node and
     /// generation, and the newest generation made.
@@ -582,6 +587,11 @@ impl Run {
                 self.model.focus
             } else {
                 self.reach("a focus taken");
+                // Generated in the front, a focus with window facts enters
+                // its window.
+                if top.is_some() {
+                    self.model.entered = top;
+                }
                 Some(Focus {
                     node: node.id,
                     alive: true,
@@ -605,7 +615,7 @@ impl Run {
     /// is into another window after the newest focus stamp, and changes
     /// nothing else of the slice.
     fn foreground(&mut self, change: ForegroundWindow) {
-        let entered = self.state.foreground.entered();
+        let entered = self.model.entered;
         if let Some(focus) = self.model.focus.as_mut()
             && let Some(top) = focus.top
             && self
@@ -636,17 +646,65 @@ impl Run {
         let input = Input::Foreground(change);
         let effects = self.input(&input);
         // It speaks nothing, asks nothing, and changes nothing but the
-        // foreground record and whether the focus was left.
+        // foreground record and whether the focus was left: the record
+        // holds the change as the hook's view, the front and attention,
+        // keeps the entered window the model predicts, and keeps its
+        // object and stamps.
         assert_eq!(
             effects,
             [],
             "a foreground change's effects: {:?}",
             self.trail
         );
+        let record = &self.state.foreground;
+        let was = &before.foreground;
+        assert_eq!(
+            (
+                record.window(),
+                record.front(),
+                record.attention().map(|attention| (
+                    attention.source,
+                    attention
+                        .window
+                        .as_ref()
+                        .map(|facts| (facts.top_level, facts.root_owner))
+                )),
+                record.entered(),
+            ),
+            (
+                Some(change),
+                Some(Front {
+                    window: change.window,
+                    root_owner: change.root_owner,
+                    observed_at_us: change.observed_at_us,
+                }),
+                Some((change.process, Some((change.window, change.root_owner)))),
+                self.model.entered,
+            ),
+            "a foreground change's record: {:?}",
+            self.trail
+        );
+        assert_eq!(
+            (
+                record.object(),
+                record.changed_at(),
+                record.latest_focus(),
+                record.applied_at()
+            ),
+            (
+                was.object(),
+                was.changed_at(),
+                was.latest_focus(),
+                was.applied_at()
+            ),
+            "a foreground change kept the record's object and stamps: {:?}",
+            self.trail
+        );
         let mut expected = before;
+        // Each part of the record is checked above.
         expected.foreground = self.state.foreground.clone();
-        if let (Some(focus), Some(now)) = (expected.focus.as_mut(), self.state.focus.as_ref()) {
-            focus.left = now.left;
+        if let (Some(focus), Some(model)) = (expected.focus.as_mut(), self.model.focus) {
+            focus.left = model.left;
         }
         assert_eq!(
             expected, self.state,

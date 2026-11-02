@@ -230,7 +230,11 @@ outpost, one going only when evicted as the oldest for a new one, its
 node's text forgotten or its outpost ended, the others in their order of
 reading; and every memory entry a live model's. A foreground change gives
 no effect and changes nothing but the foreground record and whether the
-focus was left; an outpost's end asks nothing of it and leaves nothing of
+focus was left, which the model predicts from its own front, stamp and
+entered window (set by each focus taken with window facts); the record
+then holds the change as the hook's view, the front and attention, keeps
+the entered window the model predicts, and keeps its object and stamps;
+an outpost's end asks nothing of it and leaves nothing of
 it, and another outpost's entry ends then only by a withdrawal; an answer
 to a model no longer live runs nothing; speech cut off asks nothing. The
 state round-trips through its serialisation after every action, each case

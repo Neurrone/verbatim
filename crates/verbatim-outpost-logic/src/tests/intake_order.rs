@@ -3,8 +3,9 @@
 //! when nothing else is ready, and the close, given to the intake alone,
 //! with the reducer's one use of `push_ahead` (a barrier reached with a
 //! noted caret kept goes behind it) done as the reducer does it. It checks
-//! only three rules, from what the test itself knows of each entry it
-//! pushed, never from the intake's own keys:
+//! these rules, from what the test knows of each entry it pushed and which
+//! entries each call left waiting, never from the intake's own keys, and
+//! never by planning a batch itself:
 //!
 //! - each entry pushed is handed out at most once, and by the end exactly
 //!   once or dropped for a reason the test names: replaced by a newer
@@ -12,6 +13,15 @@
 //!   past the batch limits, a focus on a window's client area removed by
 //!   the window's foreground change raised after it, an older menu opening,
 //!   cancelled, closed, or a marker or a drop, which is never handed out;
+//! - a push leaves no two waiting entries of one key, nor a window's
+//!   foreground change and a focus on its client area from its thread,
+//!   without an idle query between them;
+//! - a batch is what waited before the first marker, through the first idle
+//!   query; the entries it keeps are among those, within the limiter's
+//!   counts (the newest four focus events and foreground changes, the
+//!   newest ten other events of each thread, a foreground change kept by
+//!   either), an entry dropped only when each of its counts is reached by
+//!   newer entries kept, and of its menu openings the newest alone;
 //! - nothing is handed out ahead of an earlier arrival, but under the
 //!   documented exceptions, each named: a run of MSAA focus events and
 //!   foreground changes tried at the place of its newest, a menu opening
@@ -149,10 +159,9 @@ struct Run {
     closed: bool,
     /// The noted caret kept, by trace.
     noted: Option<u64>,
-    /// The model: what waits, by trace in its order; the batch being handed
-    /// out, by trace; the number of the last batch; and the entries dropped,
-    /// with why.
-    waiting: Vec<u64>,
+    /// The batch being handed out, by trace, as the intake planned it; the
+    /// number of the last batch; and the entries the intake dropped, with
+    /// the reason each drop was checked against.
     batch: BTreeSet<u64>,
     last_batch: u64,
     fate: BTreeMap<u64, &'static str>,
@@ -230,7 +239,6 @@ impl Run {
                         self.trail
                     );
                     self.pushed.get_mut(&trace).expect("pushed").cancelled = true;
-                    self.waiting.retain(|&waiting| waiting != trace);
                     self.batch.remove(&trace);
                 }
             }
@@ -271,7 +279,6 @@ impl Run {
                     }
                 }
                 self.noted = None;
-                self.waiting.clear();
                 self.batch.clear();
                 self.reach("closed");
             }
@@ -411,9 +418,7 @@ impl Run {
                 closed: self.closed,
             },
         );
-        if !self.closed {
-            self.queue(trace, kind, resolved);
-        }
+        let before = self.waiting();
         let _ = self.intake.push(
             Entry {
                 item,
@@ -424,6 +429,170 @@ impl Run {
             },
             &self.marks,
         );
+        if !self.closed {
+            self.check_push(trace, kind, resolved, &before);
+        }
+    }
+
+    /// The entries waiting in the intake, by trace, in their order.
+    fn waiting(&self) -> Vec<u64> {
+        self.intake.traces().0.into_iter().map(raw).collect()
+    }
+
+    /// The entries the intake has planned and not yet handed out, by trace.
+    fn planned(&self) -> Vec<u64> {
+        self.intake.traces().1.into_iter().map(raw).collect()
+    }
+
+    /// Whether an idle query stands in `list` strictly between places `a`
+    /// and `b`.
+    fn divided(&self, list: &[u64], a: usize, b: usize) -> bool {
+        let (low, high) = (a.min(b), a.max(b));
+        high > low
+            && list[low + 1..high]
+                .iter()
+                .any(|trace| self.pushed[trace].kind == Kind::Round)
+    }
+
+    /// Checks what the push of entry `trace` of `kind`, resolving the open
+    /// marker `resolved`, if any, did to what waited (`before`), as the
+    /// intake's documentation says: it removed only the markers it
+    /// resolves, at most one waiting entry of its key with no idle query
+    /// between it and the new entry's place (its marker's, for a read), and
+    /// for a foreground change of window 9 at most one focus on its client
+    /// area from its thread with none between; and after it no waiting entry
+    /// of its key, nor such a focus, stands beside it with no idle query
+    /// between. Each entry removed is given its reason.
+    fn check_push(&mut self, trace: u64, kind: Kind, resolved: Option<u64>, before: &[u64]) {
+        let after = self.waiting();
+        let trail = format!("{:?}", self.trail);
+        let at = resolved
+            .and_then(|marker| before.iter().position(|&waiting| waiting == marker))
+            .unwrap_or(before.len());
+        let client = |was: Kind| matches!((kind, was), (Kind::Foreground { window: 0, thread }, Kind::Focus { child: 0, thread: of }) if thread == of);
+        let (mut replaced, mut removed) = (0, 0);
+        for (place, &gone) in before.iter().enumerate() {
+            if after.contains(&gone) {
+                continue;
+            }
+            let was = self.pushed[&gone].kind;
+            let undivided = !self.divided(before, place, at);
+            if was == Kind::Marker {
+                assert!(
+                    Some(gone) == resolved || kind == Kind::ReadsEnded,
+                    "marker {gone} removed by {trace} ({kind:?}), which does not resolve it: {trail}"
+                );
+            } else if undivided && key(was).is_some() && key(was) == key(kind) {
+                replaced += 1;
+                self.fate.insert(gone, "replaced");
+            } else if undivided && client(was) {
+                removed += 1;
+                self.fate
+                    .insert(gone, "a client focus removed by its foreground change");
+            } else {
+                panic!(
+                    "entry {gone} ({was:?}) removed by the push of {trace} ({kind:?}) for no documented reason: {trail}"
+                );
+            }
+        }
+        assert!(
+            replaced <= 1 && removed <= 1,
+            "the push of {trace} removed {replaced} of its key and {removed} client focuses: {trail}"
+        );
+        let Some(new) = after.iter().position(|&waiting| waiting == trace) else {
+            return;
+        };
+        for (place, &other) in after.iter().enumerate() {
+            if other == trace || self.divided(&after, place, new) {
+                continue;
+            }
+            let was = self.pushed[&other].kind;
+            assert!(
+                key(kind).is_none() || key(was) != key(kind),
+                "entries {other} and {trace} of one key both wait with no idle query between: {trail}"
+            );
+            assert!(
+                !client(was),
+                "the focus {other} on the client area waits beside its window's foreground change {trace}: {trail}"
+            );
+        }
+    }
+
+    /// Checks the batch the intake planned from `waiting`, what waited
+    /// before, keeping `kept`: it is everything before the first marker,
+    /// through the first idle query; it keeps only what it took; each entry
+    /// the limiter counts is kept exactly when, in one of its groups, fewer
+    /// newer entries than the group's limit are kept; and of its menu
+    /// openings it keeps the newest alone. Each entry dropped is given its
+    /// reason.
+    fn check_batch(&mut self, waiting: &[u64], kept: &BTreeSet<u64>) {
+        let after = self.waiting();
+        let trail = format!("{:?}", self.trail);
+        assert!(
+            after.len() < waiting.len() && waiting.ends_with(&after),
+            "a batch is planned from the front of what waits, and takes something: {trail}"
+        );
+        let ready = &waiting[..waiting.len() - after.len()];
+        let kind = |trace: &u64| self.pushed[trace].kind;
+        let round = ready.iter().position(|trace| kind(trace) == Kind::Round);
+        assert!(
+            !ready.iter().any(|trace| kind(trace) == Kind::Marker)
+                && round.is_none_or(|at| at + 1 == ready.len())
+                && (round.is_some()
+                    || after
+                        .first()
+                        .is_none_or(|first| kind(first) == Kind::Marker)),
+            "a batch is what waits before the first marker, through the first idle query: {trail}"
+        );
+        assert!(
+            kept.iter().all(|trace| ready.contains(trace)),
+            "a batch keeps an entry it did not take: {trail}"
+        );
+        let mut fates = Vec::new();
+        for (at, trace) in ready.iter().enumerate() {
+            let counted = groups(kind(trace));
+            let newer = &ready[at + 1..];
+            let within = counted.iter().any(|&(group, limit)| {
+                newer
+                    .iter()
+                    .filter(|newer| {
+                        kept.contains(newer)
+                            && groups(kind(newer)).iter().any(|&(of, _)| of == group)
+                    })
+                    .count()
+                    < limit
+            });
+            if kept.contains(trace) {
+                assert!(
+                    counted.is_empty() || within,
+                    "entry {trace} ({:?}) kept with each of its limits reached by newer entries: {trail}",
+                    kind(trace)
+                );
+            } else if matches!(kind(trace), Kind::Menu(_)) {
+                assert!(
+                    newer
+                        .iter()
+                        .any(|newer| kept.contains(newer) && matches!(kind(newer), Kind::Menu(_))),
+                    "the menu opening {trace} dropped with no newer one kept: {trail}"
+                );
+                fates.push((*trace, "an older menu opening"));
+            } else {
+                assert!(
+                    !counted.is_empty() && !within,
+                    "entry {trace} ({:?}) dropped within its limits: {trail}",
+                    kind(trace)
+                );
+                fates.push((*trace, "past the batch limits"));
+            }
+        }
+        assert!(
+            kept.iter()
+                .filter(|trace| matches!(kind(trace), Kind::Menu(_)))
+                .count()
+                <= 1,
+            "two menu openings kept in one batch: {trail}"
+        );
+        self.fate.extend(fates);
     }
 
     /// The oldest open marker, resolved now.
@@ -434,141 +603,6 @@ impl Run {
         Some(self.open_markers.remove(0))
     }
 
-    /// The model's part of a push, of entry `trace` of `kind`, resolving the
-    /// open marker `resolved`, if any: a drop or the end of the listener's
-    /// reads removes markers; a read takes its marker's place; a keyed entry
-    /// replaces the waiting entry of its key that no idle barrier divides
-    /// from its place, nearest before it first; and a foreground change of
-    /// window 9 removes the waiting focus on its client area from its
-    /// thread, raised before it, as the intake's documentation says.
-    fn queue(&mut self, trace: u64, kind: Kind, resolved: Option<u64>) {
-        match kind {
-            Kind::Dropped => {
-                self.waiting.retain(|&waiting| Some(waiting) != resolved);
-                return;
-            }
-            Kind::ReadsEnded => {
-                let pushed = &self.pushed;
-                self.waiting
-                    .retain(|waiting| pushed[waiting].kind != Kind::Marker);
-                return;
-            }
-            _ => {}
-        }
-        let mut at = match (kind, resolved) {
-            (Kind::Read(_), Some(marker)) => {
-                self.waiting.iter().position(|&waiting| waiting == marker)
-            }
-            _ => None,
-        };
-        if let Some(wanted) = key(kind) {
-            let from = at.unwrap_or(self.waiting.len());
-            if let Some(found) =
-                self.find_waiting(from, |pushed| key(pushed.kind) == Some(wanted.clone()))
-            {
-                let old = self.waiting.remove(found);
-                self.fate.insert(old, "replaced");
-                if let Some(at) = at.as_mut()
-                    && found < *at
-                {
-                    *at -= 1;
-                }
-            }
-            if let Kind::Foreground { window: 0, thread } = kind {
-                let from = self.waiting.len();
-                if let Some(found) = self.find_waiting(from, |pushed| {
-                    pushed.kind == Kind::Focus { child: 0, thread }
-                }) {
-                    let old = self.waiting.remove(found);
-                    self.fate
-                        .insert(old, "a client focus removed by its foreground change");
-                }
-            }
-        }
-        match at {
-            Some(at) => self.waiting[at] = trace,
-            None => self.waiting.push(trace),
-        }
-    }
-
-    /// The place of the first waiting entry `wanted` names among those no
-    /// idle barrier divides from place `at`: nearest before it, then from it
-    /// on.
-    fn find_waiting(&self, at: usize, wanted: impl Fn(&Pushed) -> bool) -> Option<usize> {
-        let pushed = |place: usize| &self.pushed[&self.waiting[place]];
-        let before = (0..at)
-            .rev()
-            .take_while(|&place| pushed(place).kind != Kind::Round)
-            .find(|&place| wanted(pushed(place)));
-        before.or_else(|| {
-            (at..self.waiting.len())
-                .take_while(|&place| pushed(place).kind != Kind::Round)
-                .find(|&place| wanted(pushed(place)))
-        })
-    }
-
-    /// What is ready to be planned: everything waiting before the first
-    /// open marker, ending at the first idle barrier, which it includes.
-    fn ready(&self) -> Vec<u64> {
-        let mut ready = Vec::new();
-        for &trace in &self.waiting {
-            match self.pushed[&trace].kind {
-                Kind::Marker => break,
-                Kind::Round => {
-                    ready.push(trace);
-                    break;
-                }
-                _ => ready.push(trace),
-            }
-        }
-        ready
-    }
-
-    /// Plans the batch `ready`, by the limiter's counts: of the MSAA focus
-    /// events and foreground changes the newest four, of the other MSAA
-    /// events the newest ten of each thread that raised them, a foreground
-    /// change counted among both and kept by either; then of the menu
-    /// openings kept, the newest alone.
-    fn plan(&mut self, ready: &[u64]) {
-        let mut focus = 0;
-        let mut per_thread: BTreeMap<u8, usize> = BTreeMap::new();
-        let mut kept = vec![true; ready.len()];
-        for (at, trace) in ready.iter().enumerate().rev() {
-            let mut count = |thread: u8| {
-                let count = per_thread.entry(thread).or_default();
-                *count += 1;
-                *count
-            };
-            kept[at] = match self.pushed[trace].kind {
-                Kind::Focus { .. } => {
-                    focus += 1;
-                    focus <= 4
-                }
-                Kind::Foreground { thread, .. } => {
-                    focus += 1;
-                    let among = focus <= 4;
-                    count(thread) <= 10 || among
-                }
-                Kind::NameChange { thread, .. } => count(thread) <= 10,
-                Kind::Console(_) => count(5) <= 10,
-                _ => true,
-            };
-        }
-        let newest_menu = ready
-            .iter()
-            .zip(&kept)
-            .rposition(|(trace, &kept)| kept && matches!(self.pushed[trace].kind, Kind::Menu(_)));
-        for (at, (&trace, &kept)) in ready.iter().zip(&kept).enumerate() {
-            if !kept {
-                self.fate.insert(trace, "past the batch limits");
-            } else if matches!(self.pushed[&trace].kind, Kind::Menu(_)) && Some(at) != newest_menu {
-                self.fate.insert(trace, "an older menu opening");
-            } else {
-                self.batch.insert(trace);
-            }
-        }
-    }
-
     /// Takes the next planned item, checking it against what arrived
     /// before it.
     #[expect(
@@ -576,9 +610,16 @@ impl Run {
         reason = "one check after another of a hand-out"
     )]
     fn take(&mut self) {
+        let waiting = self.waiting();
+        // Nothing is ready when nothing is planned and what waits, if
+        // anything, waits behind a marker.
+        let idle = self.planned().is_empty()
+            && waiting
+                .first()
+                .is_none_or(|first| self.pushed[first].kind == Kind::Marker);
         let Some((planned, batch)) = self.intake.next(&self.marks) else {
             assert!(
-                self.closed || (self.batch.is_empty() && self.ready().is_empty()),
+                self.closed || idle,
                 "nothing handed out with entries ready: {:?}",
                 self.trail
             );
@@ -586,6 +627,13 @@ impl Run {
         };
         assert!(!self.closed, "a hand-out after close: {:?}", self.trail);
         assert_eq!(self.intake.batch_number(), batch, "{:?}", self.trail);
+        self.log.push(format!("{planned:?} {batch}"));
+        let (entries, menu) = match &planned {
+            Planned::Run(entry) => (vec![entry.clone()], false),
+            Planned::Menu(entry) => (vec![entry.clone()], true),
+            Planned::Focus(entries) => (entries.clone(), false),
+        };
+        let traces: Vec<u64> = entries.iter().map(|entry| raw(entry.trace)).collect();
         if batch != self.last_batch {
             assert_eq!(
                 batch,
@@ -598,29 +646,18 @@ impl Run {
                 "a batch planned before the last was handed out: {:?}",
                 self.trail
             );
-            let ready = self.ready();
-            assert!(
-                !ready.is_empty(),
-                "a batch of nothing ready: {:?}",
-                self.trail
-            );
-            self.waiting.drain(..ready.len());
-            self.plan(&ready);
+            let mut kept: BTreeSet<u64> = self.planned().into_iter().collect();
+            kept.extend(&traces);
+            self.check_batch(&waiting, &kept);
+            self.batch = kept;
             self.last_batch = batch;
         }
-        self.log.push(format!("{planned:?} {batch}"));
-        let (entries, menu) = match &planned {
-            Planned::Run(entry) => (vec![entry.clone()], false),
-            Planned::Menu(entry) => (vec![entry.clone()], true),
-            Planned::Focus(entries) => (entries.clone(), false),
-        };
         if menu {
             self.reach("a menu opening at its batch's end");
         }
         if entries.len() > 1 {
             self.reach("a focus group of several");
         }
-        let traces: Vec<u64> = entries.iter().map(|entry| raw(entry.trace)).collect();
         // The reducer puts a barrier reached with a noted caret kept
         // directly behind it.
         if let [entry] = entries.as_slice()
@@ -632,8 +669,6 @@ impl Run {
         {
             assert!(self.batch.remove(&traces[0]), "{:?}", self.trail);
             let kept = self.noted.take().expect("a noted caret kept");
-            self.waiting.insert(0, kept);
-            self.waiting.insert(1, traces[0]);
             self.pushed.get_mut(&kept).expect("pushed").ahead = true;
             let barrier = Entry {
                 item: Item::Barrier {
@@ -669,7 +704,7 @@ impl Run {
                 // Only the noted caret kept apart is handed out outside a
                 // batch, and only when nothing else is ready.
                 assert!(
-                    self.noted == Some(trace) && self.batch.is_empty() && self.ready().is_empty(),
+                    self.noted == Some(trace) && self.batch.is_empty() && idle,
                     "entry {trace} handed out outside its batch: {:?}",
                     self.trail
                 );
@@ -817,6 +852,22 @@ fn key(kind: Kind) -> Option<String> {
             return None;
         }
     })
+}
+
+/// The limiter's groups an entry of `kind` is counted in, each with how
+/// many of its newest a batch keeps, as the intake's documentation says:
+/// the MSAA focus events and foreground changes (group 0), four; each
+/// thread's other MSAA events, by the thread, the console host's counted
+/// by its own thread 5, ten; a foreground change counted in both, and kept
+/// by either. Nothing else is counted.
+fn groups(kind: Kind) -> Vec<(u8, usize)> {
+    match kind {
+        Kind::Focus { .. } => vec![(0, 4)],
+        Kind::Foreground { thread, .. } => vec![(0, 4), (thread, 10)],
+        Kind::NameChange { thread, .. } => vec![(thread, 10)],
+        Kind::Console(_) => vec![(5, 10)],
+        _ => Vec::new(),
+    }
 }
 
 /// The number a trace was minted from.

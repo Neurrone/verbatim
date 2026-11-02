@@ -117,13 +117,14 @@ holding it ends it; and with no program in flight, no release pending
 and nothing else ready, its due time ends a waiting watch at its bound
 or dispatches a poll read (`Work::PollRead`). A report on another node or
 a replaced node ends it in any state, and a release of its node ends it.
-The one report the reducer commits for itself, the gap record's window
-text at its bound, leaves the watch while a program is in flight, since the
-program's copy holds it: the reducer changes the watch only at a dispatch,
-at a publication that claims the program, or with no program in flight.
-The end that report would have made is judged at the program's end, its
-abandonment or a publication that claims it, and the watch ends then
-unless the newest report is of its node.
+A committed foreground fact on another node ends it at once, even while
+the program in flight holds it: the gap record's window text, the one
+report the reducer commits for itself, does so whatever program is in
+flight, and that program's later check is ignored, since
+`WatchChange::Checked` applies only to a watch that is `Checking`
+(Claude, 2026-11-03, pending Dickson's acceptance). The reducer otherwise
+changes the watch only at a dispatch, at a publication that claims the
+program, or with no program in flight.
 `next_timer` gives its due time only when it would be acted on.
 
 `cargo xtask ci` reads every file of the crate by the pure rule
@@ -148,7 +149,7 @@ The reducer has a generated test against a reference model
 (`crates/verbatim-outpost-logic/src/tests/reducer.rs`,
 `docs/design/logic-tests.md`, "The outpost's reducer"): lists of actions
 weighted toward the lifecycle, run through proptest's `TestRunner::run`
-under a fixed seed and 1,500 cases (about 4.8 s in a debug build), each
+under a fixed seed and 1,500 cases (about 4.3 s in a debug build), each
 action made valid when applied by resolving its target against the model
 (the program in flight, the oldest open query, the newest request no
 longer live) and carrying the answers to the asks it may cause, which are
@@ -163,8 +164,13 @@ amounts. The model tracks the generation and the requests issued, the
 program in flight (its kind, its query, its walk, its deadline by its
 kind's budget, its window), the entries pending as a set rather than the
 intake's plan, the open queries, settles and rounds, the watch's query
-and whether a program holds it, the gap record, the hold, a release, the
-owed work and stopping. After every call it checks the design's sixteen
+and whether a program holds it, the hold, a release, the owed work and
+stopping. The gap record is not modelled: each call's change of it is
+checked against what the design lets change it (opened or restamped by a
+foreground change found in front or a copy dropped in its window, closed
+by a report it answers, an unrelated window at its bound, a drop for no
+window or a copy elsewhere, its bound passed only once due), never against
+its stamps' arithmetic. After every call it checks the design's sixteen
 invariants and its postconditions: each dispatch under the next request
 with its kind's deadline, a late shell query answered with nothing read,
 a cancel, a commit's message ahead of its other effects, a cut read's
@@ -190,22 +196,25 @@ listener, never as the hook's held copy.
 
 The intake has a generated test of its own
 (`crates/verbatim-outpost-logic/src/tests/intake_order.rs`, 800 cases,
-about 1.3 s): pushes of every kind of entry it orders, hand-outs, cancels,
+about 2.0 s): pushes of every kind of entry it orders, hand-outs, cancels,
 a noted caret and the close, with a barrier reached while a noted caret
-is kept put behind it as the reducer does. Its model follows what waits
-from the intake's documented rules, never from its keys or code: a read
-takes its marker's place, a drop or the end of the listener's reads
-removes markers, a keyed entry replaces the waiting entry of its object,
-kind and thread that no idle barrier divides from it, a window's
-foreground change removes the waiting focus on its client area raised
-before it, and a batch is what waits before the first open marker,
-through the first idle barrier, kept by the limiter's counts (the newest
-four focus events and foreground changes, the newest ten other events per
-thread, a foreground change kept by either) and of its menu openings the
-newest alone. It checks that each batch's number rises by one, that each
-entry handed out belongs to its batch, the noted caret alone handed out
-outside one and only when nothing is ready, that each entry is handed out
-once or dropped for the reason the model gave, that nothing is handed out
+is kept put behind it as the reducer does. It plans nothing itself: it
+sees which entries each call leaves waiting (`Intake::traces`, a test
+accessor) and checks each change against the intake's documented rules,
+never its keys or code. A push removes only the markers it resolves, at
+most one waiting entry of its object, kind and thread with no idle
+barrier between them, and for a window's foreground change at most one
+waiting focus on its client area from its thread, and leaves no such pair
+undivided. A batch is what waited before the first marker, through the
+first idle barrier; it keeps only entries it took; an entry the limiter
+counts (the newest four focus events and foreground changes, the newest
+ten other events per thread, a foreground change counted by both) is kept
+exactly when fewer newer entries than one of its groups' limits are kept;
+and of its menu openings it keeps the newest alone. It also checks that
+each batch's number rises by one, that each entry handed out belongs to
+its batch, the noted caret alone handed out outside one and only when
+nothing is ready, that each entry is handed out once or dropped for one
+of those reasons, that nothing is handed out
 ahead of an earlier arrival but by a named exception (a focus run tried
 at its newest's place, a menu opening at its batch's end, a read in its
 marker's place, the noted caret and its barrier put ahead), and that an

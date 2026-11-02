@@ -1,14 +1,15 @@
 # The nightly exploration of the generated tests (docs/design/logic-tests.md,
 # "Tests against reference models"): each owner's exploration test, named
 # explore_ and ignored so that no other run includes it, run with the run
-# number as its seed; and cargo-mutants on the covered files changed in the
-# last day, or on all of them when started by hand for a measurement of the
-# judgement. A failure the exploration finds is shrunk, and the smallest
-# case is added to the owner's fixed cases as a list of actions, never kept
-# as a seed. Linux: the logic crates build there and nothing else is needed.
+# number as its seed; and cargo-mutants on the covered files changed since
+# the workflow's last successful run, or on all of them when started by hand
+# for a measurement of the judgement. A failure the exploration finds is
+# shrunk, and the smallest case is added to the owner's fixed cases as a
+# list of actions, never kept as a seed. Linux: the logic crates build there
+# and nothing else is needed.
 #
 # An owner's generated test joins by its package in OWNERS and its covered
-# files in COVERED.
+# files in GROUPS.
 
 name: Explore
 
@@ -29,20 +30,18 @@ env:
     verbatim-outpost-logic
     verbatim-listener-logic
     verbatim-core
-  COVERED: >-
-    crates/verbatim-reader-rules/src/in_flight.rs
-    crates/verbatim-outpost-logic/src/lib.rs
-    crates/verbatim-outpost-logic/src/watch.rs
-    crates/verbatim-outpost-logic/src/gap_record.rs
-    crates/verbatim-outpost-logic/src/follow.rs
-    crates/verbatim-outpost-logic/src/verdicts.rs
-    crates/verbatim-outpost-logic/src/hold.rs
-    crates/verbatim-outpost-logic/src/intake.rs
-    crates/verbatim-listener-logic/src/schedule.rs
-    crates/verbatim-listener-logic/src/foreground.rs
-    crates/verbatim-core/src/queries.rs
-    crates/verbatim-core/src/reduce.rs
-    crates/verbatim-core/src/terminal_model.rs
+  # The covered files as the mutation baseline ran them
+  # (experiments/logic-tests-study/judgement.md), one run a line: the
+  # package, whose own tests alone are run, its files, and the functions
+  # the generated test covers where it covers only some of a file's, so
+  # that every run's counts compare with the baseline's.
+  GROUPS: |
+    verbatim-reader-rules;crates/verbatim-reader-rules/src/in_flight.rs;
+    verbatim-outpost-logic;crates/verbatim-outpost-logic/src/lib.rs crates/verbatim-outpost-logic/src/watch.rs crates/verbatim-outpost-logic/src/gap_record.rs crates/verbatim-outpost-logic/src/follow.rs crates/verbatim-outpost-logic/src/verdicts.rs crates/verbatim-outpost-logic/src/hold.rs crates/verbatim-outpost-logic/src/intake.rs;
+    verbatim-listener-logic;crates/verbatim-listener-logic/src/schedule.rs crates/verbatim-listener-logic/src/foreground.rs;
+    verbatim-core;crates/verbatim-core/src/queries.rs;
+    verbatim-core;crates/verbatim-core/src/reduce.rs;foreground_changed|leaves_focus|observed_before_foreground_change|outpost_ended
+    verbatim-core;crates/verbatim-core/src/terminal_model.rs;ask_model|model_asks|answered_read|reply|answerable
 
 jobs:
   explore:
@@ -50,11 +49,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
-      # Release, so a night's cases run in minutes rather than an hour.
+      # Release, so a night's cases run in minutes rather than an hour, with
+      # debug assertions and overflow checks on as in the gate, since the
+      # owners check their own rules with debug_assert!.
       - name: Run the exploration tests with the run number as the seed
         env:
           VERBATIM_EXPLORE_SEED: ${{ github.run_number }}
           VERBATIM_EXPLORE_CASES: "200000"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
         shell: bash
         run: |
           packages=()
@@ -63,6 +66,9 @@ jobs:
 
   mutants:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -73,33 +79,49 @@ jobs:
           tool: cargo-mutants
       # Exit status 2 says some mutants survived and 3 that some timed out:
       # both are what the judgement counts, in the report kept below, not a
-      # failure of the job.
+      # failure of the job. The nightly run takes the covered files changed
+      # since the commit of the workflow's last successful run, or since the
+      # first commit when there is none or it is no longer in the history.
       - name: Run cargo-mutants on the covered files
         env:
           WHOLE: ${{ inputs.whole }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          packages=()
-          for owner in $OWNERS; do packages+=(-p "$owner"); done
-          files=()
-          for file in $COVERED; do files+=(--file "$file"); done
+          covered=$(printf '%s\n' "$GROUPS" | cut -d';' -f2 | tr ' ' '\n' | sed '/^$/d')
           diff=()
           if [ "$WHOLE" != "true" ]; then
-            since=$(git rev-list -1 --before="1 day ago" HEAD)
-            git diff "${since:-$(git rev-list --max-parents=0 HEAD)}" HEAD -- $COVERED > covered.diff
+            since=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow explore.yml \
+              --branch "$GITHUB_REF_NAME" --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // empty')
+            if [ -z "$since" ] || ! git cat-file -e "$since^{commit}" 2>/dev/null; then
+              since=$(git rev-list --max-parents=0 HEAD)
+            fi
+            git diff "$since" HEAD -- $covered > covered.diff
             if [ ! -s covered.diff ]; then
-              echo "No covered file changed in the last day."
+              echo "No covered file changed since $since."
               exit 0
             fi
             diff=(--in-diff covered.diff)
           fi
-          set +e
-          cargo mutants --no-shuffle "${packages[@]}" "${files[@]}" "${diff[@]}"
-          status=$?
-          case $status in
-            0|2|3) exit 0 ;;
-            *) exit $status ;;
-          esac
+          worst=0
+          run=0
+          while IFS=';' read -r package files filter; do
+            [ -n "$package" ] || continue
+            run=$((run + 1))
+            args=(-p "$package")
+            for file in $files; do args+=(--file "$file"); done
+            if [ -n "$filter" ]; then args+=(-F "$filter"); fi
+            set +e
+            cargo mutants --no-shuffle "${args[@]}" "${diff[@]}" --output "mutants.out/$run"
+            status=$?
+            set -e
+            case $status in
+              0|2|3) ;;
+              *) worst=$status ;;
+            esac
+          done <<< "$GROUPS"
+          exit $worst
       - name: Keep the mutants report
         if: always()
         uses: actions/upload-artifact@v7

@@ -11,9 +11,11 @@
 //! deadline and window); the entries pending as a set, not the intake's
 //! plan, which has its own test; the open queries, settles and idle rounds
 //! with the replies and answers each got; the watch's open query and
-//! whether a program holds it; the gap record (closed, or awaiting a focus
-//! or a title, its bound waiting, queued or passed); the hold, a release,
-//! owed work and stopping; and the three clocks, each advancing on its own.
+//! whether a program holds it; the hold, a release, owed work and
+//! stopping; and the three clocks, each advancing on its own. The gap
+//! record is not modelled: each call's change of it is checked against
+//! what the design lets change it (`Run::check_gap`), not against its
+//! stamps' arithmetic, which `gap_record.rs`'s own tests hold.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,13 +36,6 @@ const EDIT: isize = 9;
 
 /// The moved-on grace, in microseconds.
 const GRACE_US: u64 = 500_000;
-
-/// How long a gap record waits for its bound, in microseconds.
-const GAP_BOUND_US: u64 = 1_000_000;
-
-/// How far before a record's stamp a report in its top-level window
-/// answers it, in microseconds.
-const ANSWERED_BEFORE_US: u64 = 100_000;
 
 /// What an entry is.
 #[derive(Clone, Copy, Debug)]
@@ -364,28 +359,55 @@ struct Flight {
     window: bool,
     /// Its copy of the facts, with its own commits applied.
     copy: Facts,
-    /// Whether it has committed a check of the watch, after which its
-    /// copy may show a poll the reducer ended by its clock, which the copy
-    /// does not read (docs/design/logic-tests.md, "Limitations").
-    checked: bool,
+    /// Whether its copy of the watch is compared no more: after it has
+    /// committed a check of the watch, its copy may show a poll the reducer
+    /// ended by its clock, which the copy does not read; and after a gap
+    /// title's foreground fact ended the watch while it was in flight, its
+    /// copy still shows the watch the reducer no longer has
+    /// (docs/design/logic-tests.md, "Limitations").
+    uncompared: bool,
 }
 
-/// The gap record's bound.
+/// The open gap record as the reducer holds it, seen from outside: its
+/// top-level window, its newest stamp's trace, what it waits for, when its
+/// bound passes and whether its bound is still to be handled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Bound {
-    Waiting,
-    Queued,
-    Passed,
-}
-
-/// The open gap record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Gap {
+struct GapSeen {
     top: isize,
-    stamp: u64,
-    due: u64,
-    bound: Bound,
+    trace: TraceId,
     focus: bool,
+    due: u64,
+    pending: bool,
+}
+
+impl GapSeen {
+    fn of(gap: &crate::gap_record::GapRecord) -> Option<Self> {
+        Some(Self {
+            top: gap.top_level()?,
+            trace: gap.trace()?,
+            focus: gap.awaits()? == Awaits::Focus,
+            due: gap.due_us()?,
+            pending: gap.pending(),
+        })
+    }
+
+    /// The record's identity: a change of it is an opening or a restamp.
+    fn identity(self) -> (isize, TraceId, bool, u64) {
+        (self.top, self.trace, self.focus, self.due)
+    }
+}
+
+/// What the design lets change the gap record, as the inputs since the
+/// last call gave it: the top-level windows of the foreground changes
+/// found in front, each with whether it was judged UIA, and of the copies
+/// dropped for UIA; whether a drop for no window above its sender came;
+/// and whether a bound's test found its window unrelated.
+#[derive(Clone, Debug, Default)]
+struct GapCauses {
+    foreground: Vec<(isize, bool)>,
+    copies: Vec<isize>,
+    no_window: bool,
+    unrelated: bool,
 }
 
 /// A pending entry: what it is and where it came from.
@@ -445,11 +467,10 @@ struct Model {
     /// Whether a release's drop is due, and whether one is under way.
     to_drop: bool,
     releasing: bool,
-    /// The gap record, the reports kept for its look-back, the newest drop
-    /// for no window, and the reads it may have made.
-    gap: Option<Gap>,
-    reported: BTreeMap<isize, u64>,
-    no_window: Option<u64>,
+    /// What may change the gap record, gathered until the next call; and
+    /// the gap reads a drop for no window or a copy may have made, one
+    /// each at most.
+    gap_causes: GapCauses,
     gap_reads: u32,
     /// A noted caret, kept for when nothing else is ready.
     noted: bool,
@@ -464,105 +485,6 @@ struct Model {
     /// The focus groups a try reported, or was published in, by number:
     /// none of their older entries is tried after.
     ended_groups: BTreeSet<u64>,
-}
-
-impl Model {
-    /// The gap record after a foreground change into `window`, observed at
-    /// `at`, judged UIA or not.
-    fn foreground(&mut self, window: isize, at: u64, uia: bool) {
-        let focus = match self.gap {
-            Some(open) if at <= open.stamp => return,
-            Some(open) if open.top == window && open.focus => true,
-            _ => uia,
-        };
-        self.gap = Some(Gap {
-            top: window,
-            stamp: at,
-            due: at + GAP_BOUND_US,
-            bound: Bound::Waiting,
-            focus,
-        });
-    }
-
-    /// The gap record after a focus sent to Core, in `top`, observed at
-    /// `at`, a whole-window focus or not.
-    fn report(&mut self, top: Option<isize>, at: u64, whole: bool) {
-        if !whole && let Some(top) = top {
-            let newest = self.reported.entry(top).or_insert(at);
-            *newest = (*newest).max(at);
-        }
-        if let Some(open) = self.gap {
-            let closes = if top == Some(open.top) {
-                at + ANSWERED_BEFORE_US >= open.stamp && (!whole || !open.focus)
-            } else {
-                at > open.stamp
-            };
-            if closes {
-                self.gap = None;
-            }
-        }
-    }
-
-    /// The gap record after a copy dropped for UIA in a window of `top`,
-    /// observed at `at`.
-    fn copy_dropped(&mut self, top: isize, at: u64) {
-        if let Some(open) = self.gap {
-            if at <= open.stamp {
-                return;
-            }
-            if open.top == top {
-                let (due, bound) = if open.bound == Bound::Passed {
-                    (at + GAP_BOUND_US, Bound::Waiting)
-                } else {
-                    (open.due, open.bound)
-                };
-                self.gap = Some(Gap {
-                    stamp: at,
-                    due,
-                    bound,
-                    focus: true,
-                    ..open
-                });
-                return;
-            }
-            self.gap = None;
-        }
-        if self
-            .reported
-            .get(&top)
-            .is_some_and(|&reported| reported + ANSWERED_BEFORE_US >= at)
-        {
-            return;
-        }
-        if self
-            .no_window
-            .is_some_and(|no_window| no_window + ANSWERED_BEFORE_US >= at)
-        {
-            self.gap_reads += 1;
-            return;
-        }
-        self.gap = Some(Gap {
-            top,
-            stamp: at,
-            due: at + GAP_BOUND_US,
-            bound: Bound::Waiting,
-            focus: true,
-        });
-    }
-
-    /// The gap record after a drop for no window above its sender,
-    /// observed at `at`.
-    fn no_window(&mut self, at: u64) {
-        let newest = self.no_window.get_or_insert(at);
-        *newest = (*newest).max(at);
-        if let Some(open) = self.gap
-            && open.focus
-            && at + ANSWERED_BEFORE_US >= open.stamp
-        {
-            self.gap = None;
-            self.gap_reads += 1;
-        }
-    }
 }
 
 /// The program a dispatch gives, by kind.
@@ -1098,7 +1020,7 @@ impl Run {
                     .push((TraceId::from_raw(trace), forwarded_at));
                 self.reach("a hook copy held");
             } else {
-                self.take_in(what, trace, query, observed);
+                self.take_in(what, trace, query);
             }
         } else if let What::Foreground {
             window,
@@ -1109,7 +1031,9 @@ impl Run {
             // The reducer applies a foreground change to the gap record as
             // it takes it in, before its closed intake drops it.
             self.model
-                .foreground(TOPS[usize::from(window)], observed, uia);
+                .gap_causes
+                .foreground
+                .push((TOPS[usize::from(window)], uia));
         }
         let entry = Entry {
             item,
@@ -1127,21 +1051,21 @@ impl Run {
     }
 
     /// The model takes in an entry the reducer pushes into its intake.
-    fn take_in(&mut self, what: What, trace: u64, query: Option<u64>, observed: u64) {
+    fn take_in(&mut self, what: What, trace: u64, query: Option<u64>) {
         let model = &mut self.model;
         match what {
             What::Foreground {
                 window,
                 front: 2,
                 uia,
-            } => {
-                let before = model.gap;
-                model.foreground(TOPS[usize::from(window)], observed, uia);
-                if model.gap != before {
-                    self.reach("the gap record opened by a foreground change");
-                }
+            } => model
+                .gap_causes
+                .foreground
+                .push((TOPS[usize::from(window)], uia)),
+            What::Dropped { no_window: true } => {
+                model.gap_causes.no_window = true;
+                model.gap_reads += 1;
             }
-            What::Dropped { no_window: true } => model.no_window(observed),
             _ => {}
         }
         if !matches!(
@@ -1396,8 +1320,10 @@ impl Run {
             });
             return;
         }
-        // The program's copy of the watch agrees with the reducer's.
-        if !flight.checked {
+        // The program's copy of the watch agrees with the reducer's, until
+        // a gap title's foreground fact ends the watch, which the reducer
+        // does at once, the program in flight holding it or not.
+        if !flight.uncompared {
             assert_eq!(
                 untimed(&flight.copy.follow.watch),
                 untimed(&self.reducer.facts.follow.watch),
@@ -1408,7 +1334,7 @@ impl Run {
         self.commit_model(&change, &flight);
         if let Some(flight) = self.model.flight.as_mut() {
             let _ = apply_local(&mut flight.copy, flight.request.generation, &change);
-            flight.checked |= matches!(change.watch, Some(WatchChange::Checked(_)));
+            flight.uncompared |= matches!(change.watch, Some(WatchChange::Checked(_)));
         }
         let result = change.result.is_some();
         let effects = self.input(Input::Commit {
@@ -1445,18 +1371,11 @@ impl Run {
             model.owed = None;
         }
         for note in &change.gap {
-            if let GapNote::CopyDropped {
-                top_level, at_us, ..
-            } = note
-            {
-                let before = self.model.gap;
-                self.model.copy_dropped(*top_level, *at_us);
-                if self.model.gap.is_some() && self.model.gap != before {
-                    self.reach("the gap record opened by a copy");
-                }
+            if let GapNote::CopyDropped { top_level, .. } = note {
+                model.gap_causes.copies.push(*top_level);
+                model.gap_reads += 1;
             }
         }
-        let model = &mut self.model;
         if change.noted_caret.is_some() {
             model.noted = true;
         }
@@ -1641,25 +1560,38 @@ impl Run {
         let now = self.now();
         let marks = self.reducer.facts.marks.clone();
         let gap_due = self.reducer.intake.gap().due_us();
+        let gap_before = GapSeen::of(self.reducer.intake.gap());
         let flight_before = self.model.flight.clone();
-        // The reducer changes the watch only at a dispatch, at a
-        // publication that claims the program or with no program in
-        // flight: a gap's test leaves the watch the program's copy holds.
-        let held_watch = (matches!(input, Some(Input::GapBoundTested { .. }))
-            && self.reducer.busy())
-        .then(|| self.reducer.facts.follow.watch.clone());
+        // A committed foreground fact elsewhere ends the caret watch at
+        // once, even one the program in flight holds (Claude, 2026-11-03,
+        // pending Dickson's acceptance): the gap's window text, committed
+        // while its record is open, is a report on a node no watch is on.
+        let title_ends = matches!(
+            &input,
+            Some(Input::GapBoundTested {
+                related: true,
+                title: Some(_),
+                ..
+            })
+        ) && self.reducer.intake.gap().is_open()
+            && !self.reducer.facts.follow.watch.is_none();
         let effects = match input {
             Some(input) => self.reducer.input(input, now),
             None => self.reducer.tick(now),
         };
-        if let Some(watch) = held_watch {
-            assert_eq!(
-                self.reducer.facts.follow.watch, watch,
-                "a gap's test changed the watch of the program in flight: {:?}",
+        if title_ends {
+            assert!(
+                self.reducer.facts.follow.watch.is_none(),
+                "a gap title's commit left the watch open: {:?}",
                 self.trail
             );
+            if let Some(flight) = self.model.flight.as_mut() {
+                flight.uncompared = true;
+            }
+            self.reach("the watch ended by a title");
         }
         self.log.push(hash(&format!("{effects:?}")));
+        self.check_gap(gap_before, &effects);
         self.check_call(kind, &effects, &marks, gap_due, flight_before.as_ref());
         // The gap's test's request is issued as the call makes it.
         for effect in &effects {
@@ -1670,8 +1602,9 @@ impl Run {
         let mut answered = Vec::new();
         for effect in effects {
             self.apply(&effect);
-            let reads = self.model.gap.is_some_and(|gap| gap.focus);
-            let closed = matches!(effect, Effect::TestGapBound { .. }) && self.model.gap.is_none();
+            let gap = self.reducer.intake.gap();
+            let reads = gap.awaits() == Some(Awaits::Focus);
+            let closed = matches!(effect, Effect::TestGapBound { .. }) && !gap.is_open();
             let answer = self.answer(&effect);
             let tested = match (&effect, &answer) {
                 (
@@ -1697,11 +1630,90 @@ impl Run {
                 );
                 answered.extend(more);
             }
-            if let (Some(_), false, Some(gap)) = (tested, reads, self.model.gap.as_mut()) {
-                gap.bound = Bound::Passed;
-            }
         }
         answered
+    }
+
+    /// Checks the gap record's change in one call, from `before`, against
+    /// what the design lets change it (`docs/design/logic-tests.md`, "The
+    /// outpost's reducer"), never against its stamps' arithmetic: it opens,
+    /// or is restamped, only by a foreground change found in front or a
+    /// copy dropped for UIA in its top-level window, waiting for a focus
+    /// after a copy, a change judged UIA, or a record of its window that
+    /// waited for one, and for a title otherwise, its bound to be handled;
+    /// it closes only by a report it answers (a whole-window focus in its
+    /// own window never closes one waiting for a focus), its window found
+    /// unrelated at its bound, a drop for no window above its sender while
+    /// it waits for a focus, or a copy in another top-level window; and its
+    /// bound passes only at or after its due time.
+    fn check_gap(&mut self, before: Option<GapSeen>, effects: &[Effect]) {
+        let after = GapSeen::of(self.reducer.intake.gap());
+        let causes = std::mem::take(&mut self.model.gap_causes);
+        let trail = &self.trail;
+        match (before, after) {
+            (_, Some(now)) if before.map(GapSeen::identity) != Some(now.identity()) => {
+                let foreground: Vec<bool> = causes
+                    .foreground
+                    .iter()
+                    .filter(|(top, _)| *top == now.top)
+                    .map(|&(_, uia)| uia)
+                    .collect();
+                let copy = causes.copies.contains(&now.top);
+                assert!(
+                    copy || !foreground.is_empty(),
+                    "the gap record opened or restamped in {:#x} with no foreground change or copy there: {before:?} to {now:?}, {trail:?}",
+                    now.top
+                );
+                let focus = copy
+                    || foreground.contains(&true)
+                    || before.is_some_and(|was| was.top == now.top && was.focus);
+                assert_eq!(
+                    now.focus, focus,
+                    "what the opened gap record waits for: {trail:?}"
+                );
+                assert!(
+                    now.pending,
+                    "a gap record opened with its bound handled: {trail:?}"
+                );
+                self.reach(if copy {
+                    "the gap record opened by a copy"
+                } else {
+                    "the gap record opened by a foreground change"
+                });
+            }
+            (Some(was), None) => {
+                let reported = effects.iter().any(|effect| match effect {
+                    Effect::Send(message) => match &**message {
+                        OutpostToCore::Event {
+                            event: NormalizedEvent::FocusChanged { whole_window, .. },
+                            window,
+                            ..
+                        } => {
+                            let top = window
+                                .as_ref()
+                                .map(|facts| isize::from_ne_bytes(facts.top_level.0.to_ne_bytes()));
+                            !(*whole_window && top == Some(was.top) && was.focus)
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                });
+                assert!(
+                    reported
+                        || causes.unrelated
+                        || (causes.no_window && was.focus)
+                        || causes.copies.iter().any(|&top| top != was.top),
+                    "the gap record closed with no report, unrelated window, drop for no window or copy elsewhere: {was:?}, {trail:?}"
+                );
+            }
+            (Some(was), Some(now)) if was.pending && !now.pending => {
+                assert!(
+                    self.observed >= was.due,
+                    "the gap record's bound passed before its due time: {trail:?}"
+                );
+            }
+            _ => {}
+        }
     }
 
     /// Checks one call's effects as a whole, against the state before it:
@@ -1757,15 +1769,16 @@ impl Run {
                     self.model.generation + abandoned as u64,
                     "the gap's test under a generation not in charge: {trail:?}"
                 );
-                // Asked as the call finds the bound passed: an ask answered
-                // before it may read the record or close it.
-                let gap = self.model.gap.as_mut().expect("a gap record at its bound");
+                // Asked of the open record as the call finds its bound
+                // passed, which is then no longer waited for.
+                let gap = reducer.intake.gap();
                 assert!(
-                    gap.bound != Bound::Passed && self.observed >= gap.due,
+                    gap.pending()
+                        && gap.waiting_due_us().is_none()
+                        && gap.due_us().is_some_and(|due| self.observed >= due),
                     "the gap bound tested before it passed: {trail:?}"
                 );
-                assert_eq!(top_level.get(), gap.top, "{trail:?}");
-                gap.bound = Bound::Queued;
+                assert_eq!(Some(top_level.get()), gap.top_level(), "{trail:?}");
             }
         }
         // At most one ask to the program, and at most one program.
@@ -2003,17 +2016,6 @@ impl Run {
                     );
                     self.reach("an idle round answered");
                 }
-                OutpostToCore::Event {
-                    event: NormalizedEvent::FocusChanged { whole_window, .. },
-                    window,
-                    observed_at_us,
-                    ..
-                } => {
-                    let top = window
-                        .as_ref()
-                        .map(|facts| isize::from_ne_bytes(facts.top_level.0.to_ne_bytes()));
-                    self.model.report(top, *observed_at_us, *whole_window);
-                }
                 _ => {}
             },
             Effect::Abandon {
@@ -2216,11 +2218,7 @@ impl Run {
                 let Work::Entry { entry, .. } = &program.work else {
                     unreachable!("an entry's program");
                 };
-                if self.model.bound_reads.remove(&entry.trace) {
-                    if let Some(gap) = self.model.gap.as_mut() {
-                        gap.bound = Bound::Passed;
-                    }
-                } else {
+                if !self.model.bound_reads.remove(&entry.trace) {
                     assert!(
                         self.model.gap_reads > 0,
                         "a gap read the record did not ask for: {trail:?}"
@@ -2279,7 +2277,7 @@ impl Run {
             deadline,
             window,
             copy: program.facts.clone(),
-            checked: false,
+            uncompared: false,
         });
     }
 
@@ -2333,7 +2331,7 @@ impl Run {
                 ..
             } => {
                 let related = self.asks.related;
-                let open = self.model.gap.is_some();
+                let open = self.reducer.intake.gap().is_open();
                 let title = (related && self.asks.title).then(|| {
                     if open {
                         self.reach("a title committed");
@@ -2345,7 +2343,7 @@ impl Run {
                 } else if related {
                     self.reach("the gap bound tested, related");
                 } else {
-                    self.model.gap = None;
+                    self.model.gap_causes.unrelated = true;
                     self.reach("the gap bound tested, unrelated");
                 }
                 Some(Input::GapBoundTested {
@@ -2411,20 +2409,6 @@ impl Run {
             ),
             (model.watch, model.watch_held),
             "the watch: {trail:?}"
-        );
-        let gap = reducer.intake.gap();
-        assert_eq!(
-            (
-                gap.is_open(),
-                gap.awaits() == Some(Awaits::Focus),
-                gap.pending()
-            ),
-            (
-                model.gap.is_some(),
-                model.gap.is_some_and(|gap| gap.focus),
-                model.gap.is_some_and(|gap| gap.bound != Bound::Passed)
-            ),
-            "the gap record: {trail:?}"
         );
         assert_eq!(
             reducer
@@ -2601,7 +2585,8 @@ const TO_TIMER: Action = Action::Advance(Advance::ToTimer {
 /// generation the same tick's moved-on answer abandoned
 /// (`docs/design/logic-tests.md`, "To check in the build"); from the
 /// mutation baseline, a take of a node no watch is on while one waits; and
-/// a title committed while the program in flight holds the watch.
+/// a title committed while the program in flight holds the watch, which
+/// ends it at once.
 fn fixed() -> Vec<Vec<(Action, Asks)>> {
     let in_front = What::Foreground {
         window: 0,
@@ -2697,13 +2682,20 @@ fn fixed() -> Vec<Vec<(Action, Asks)>> {
 }
 
 /// Every fixed case keeps the reducer's rules, and gives the same effects
-/// when run twice.
+/// when run twice; the last ends the held watch by a title.
 #[test]
 fn fixed_cases_keep_the_reducers_rules() {
+    let mut ended = 0;
     for case in fixed() {
         let first = Run::case(&case);
         assert_eq!(first.log, Run::case(&case).log, "{case:?}");
+        ended += first
+            .reached
+            .get("the watch ended by a title")
+            .copied()
+            .unwrap_or(0);
     }
+    assert_eq!(ended, 1, "the title's case ends the held watch");
 }
 
 /// The source an entry from `from` is given as.

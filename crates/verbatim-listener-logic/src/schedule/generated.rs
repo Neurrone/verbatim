@@ -2,9 +2,8 @@
 //! listener's scheduler"): lists of actions, each made valid when it is
 //! applied by resolving its target against the model, given to
 //! [`Schedule::step`] as the listener's shell gives them: every effect
-//! applied in order, a failed spawn stepped where its spawn stands, and
-//! the step's asks answered after all its other effects, each as a step of
-//! its own. After every step its effects are checked against a reference
+//! applied in order, then each failed spawn stepped, and then the step's
+//! asks answered, each as a step of its own. After every step its effects are checked against a reference
 //! model far simpler than the schedule, and after every action the
 //! schedule's state is compared with the model's and the invariants the
 //! design lists are checked. Each case ends by draining: every read

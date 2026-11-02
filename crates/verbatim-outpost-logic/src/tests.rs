@@ -2940,12 +2940,12 @@ fn a_record_closed_by_a_publication_in_its_tick_sends_no_title() {
 /// Found by the outpost's generated test (`docs/design/logic-tests.md`,
 /// "The outpost's reducer"): a foreground change's program takes the open
 /// caret key's watch, and a tick past the gap record's bound finds its
-/// window in front and sends its window text. The text's commit, a report
-/// on another node, leaves the watch the program holds, so the program's
-/// check puts it back as its copy has it; the program's end then ends it,
-/// the newest report being of another node.
+/// window in front and sends its window text. The text's foreground fact,
+/// on another node, ends the watch at once, though the program in flight
+/// holds it; the program's later check is ignored, and its end does
+/// nothing more (Claude, 2026-11-03, pending Dickson's acceptance).
 #[test]
-fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_the_programs_end() {
+fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_once() {
     let mut replay = Replay::new();
     let key = program(&replay.push(caret_key(7), Source::Other, 1)).request;
     replay.commit(key, opens(7, false), 1);
@@ -2958,7 +2958,9 @@ fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_the_programs_end
         1,
     );
     let front = program(&effects).request;
-    replay.commit(front, takes(), 2);
+    let effects = replay.commit(front, takes(), 2);
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(matches!(watch_of(&replay), Watch::Checking { .. }));
     // The window text as the shell sends it: a report, recorded, and the
     // foreground's tracking.
     let title = Change {
@@ -2968,14 +2970,41 @@ fn a_title_committed_while_a_program_holds_the_watch_ends_it_at_the_programs_end
     };
     replay.answers.titles.push_back(title);
     let effects = replay.tick(1_100);
-    assert_eq!(replay.answers.tested, [0x10]);
-    assert_eq!(replies(&effects), []);
-    assert!(matches!(watch_of(&replay), Watch::Checking { .. }));
-    assert_eq!(replies(&replay.commit(front, watching(0), 1_101)), []);
-    assert!(matches!(watch_of(&replay), Watch::Waiting { .. }));
-    assert_eq!(
-        replies(&replay.finish(front, false, 1_102)),
-        [(7, "watch ended")]
+    assert!(
+        matches!(
+            &effects[..],
+            [
+                Effect::AskMovedOn { request: asked, .. },
+                Effect::TestGapBound {
+                    top_level,
+                    stamp_us: 1_000,
+                    ..
+                },
+                Effect::Send(text),
+                Effect::WatchEnded {
+                    why: "the focus moved",
+                    ..
+                },
+                Effect::Send(_),
+                Effect::GapTimer(None),
+            ] if *asked == front
+                && top_level.get() == 0x10
+                && matches!(
+                    &**text,
+                    OutpostToCore::Event {
+                        event: NormalizedEvent::FocusChanged { node, whole_window: true, .. },
+                        ..
+                    } if node.id == NodeId::new(3)
+                )
+        ),
+        "{effects:#?}"
     );
+    assert_eq!(replies(&effects), [(7, "watch ended")]);
+    assert_eq!(*watch_of(&replay), Watch::None);
+    let effects = replay.commit(front, watching(0), 1_101);
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(*watch_of(&replay), Watch::None);
+    let effects = replay.finish(front, false, 1_102);
+    assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(*watch_of(&replay), Watch::None);
 }

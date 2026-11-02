@@ -210,6 +210,13 @@ impl GapRecord {
         self.open.map(|open| open.awaits)
     }
 
+    /// The open record's top-level window, for the generated test's checks
+    /// of what changed it.
+    #[cfg(test)]
+    pub(crate) fn top_level(&self) -> Option<isize> {
+        self.open.map(|open| open.top_level)
+    }
+
     /// The open record's trace: its newest copy's or foreground change's.
     pub fn trace(&self) -> Option<TraceId> {
         self.open.map(|open| open.trace)
