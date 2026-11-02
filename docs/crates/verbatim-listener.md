@@ -304,7 +304,9 @@ time, on one clock.
   record open and its bound passed by the observation clock
   (`GapRecord::bound_reached`), it is read; a bound reached early is
   waited for again. The record stays open until a report closes it, with
-  no timer. A test sets a timer of its own (`Outpost::set_gap_timer`,
+  no timer, until a later copy in its window arms a new bound a second
+  from the copy, so a focus after a gap read the worker could not finish
+  is still read. A test sets a timer of its own (`Outpost::set_gap_timer`,
   behind the `GapTimer` trait) in place of the reducer's, and reaches the
   bound itself (`Outpost::gap_bound_reacher`).
 - The read (`Worker::gap_read`, `read::gap_focus_read`, trigger

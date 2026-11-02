@@ -34,7 +34,8 @@
 //!
 //! The restamp: while a record is open, a later copy the worker drops for
 //! UIA in its top-level window gives it its observation and window,
-//! leaving its bound; a later foreground change into it does too, and arms
+//! leaving its bound, or arming a new one a second from the copy when the
+//! bound has passed; a later foreground change into it does too, and arms
 //! a new bound a second from the change, so every visit to a held
 //! application says its title a second after it. The stamp only moves
 //! forward: an older copy or change, as in a focus run tried newest first,
@@ -159,12 +160,15 @@ pub enum CopyDropped {
     /// focus read at once, in its place, stamped with its observation.
     ReadNow,
     /// It opened the record, whose bound passes at `due_us`; an open record
-    /// of another top-level window, if any, was closed first.
+    /// of another top-level window, if any, was closed first. Also a
+    /// restamp of the record open in its own top-level window whose bound
+    /// had passed, which arms a new one.
     Opened {
         /// When the bound passes.
         due_us: u64,
     },
-    /// It restamped the record open in its top-level window.
+    /// It restamped the record open in its top-level window, whose bound
+    /// still waits or is being handled.
     Restamped,
 }
 
@@ -258,8 +262,9 @@ impl GapRecord {
     /// The worker dropped a copy in `window`, of top-level window
     /// `top_level`, observed at `at_us`, because it judges the window UIA.
     /// With a record open in its top-level window it restamps it, when
-    /// newer, to wait for the application's focus, its bound unchanged; an
-    /// older copy changes nothing. A newer copy of another top-level window
+    /// newer, to wait for the application's focus, its bound unchanged
+    /// unless it has passed, when the copy arms a new one, as opening does;
+    /// an older copy changes nothing. A newer copy of another top-level window
     /// closes the record open there first. With no record open, the
     /// look-back: a report for its top-level window observed with it stands
     /// for it; otherwise a drop for no window observed with it has it read
@@ -275,14 +280,29 @@ impl GapRecord {
                 return CopyDropped::Answered;
             }
             if open.top_level == top_level {
+                // A record whose bound has passed waits for no timer, so
+                // the copy arms its own, as it would on opening a record:
+                // otherwise a focus whose UIA event never comes, after a
+                // gap read the worker could not finish, is never read.
+                let (due_us, bound) = if open.bound == Bound::Passed {
+                    (at_us.saturating_add(BOUND_US), Bound::Waiting)
+                } else {
+                    (open.due_us, open.bound)
+                };
                 self.open = Some(Open {
                     window,
                     stamp_us: at_us,
                     trace,
+                    due_us,
+                    bound,
                     awaits: Awaits::Focus,
                     ..open
                 });
-                return CopyDropped::Restamped;
+                return if bound == open.bound {
+                    CopyDropped::Restamped
+                } else {
+                    CopyDropped::Opened { due_us }
+                };
             }
             self.open = None;
         }
@@ -366,7 +386,11 @@ impl GapRecord {
     pub fn no_window(&mut self, at_us: u64) -> Option<GapRead> {
         let newest = self.last_no_window_us.get_or_insert(at_us);
         *newest = (*newest).max(at_us);
-        let open = self.open.filter(|open| answers(at_us, open.stamp_us))?;
+        // A record waiting for a title has its own report owed by the
+        // worker, and never a gap read.
+        let open = self
+            .open
+            .filter(|open| open.awaits == Awaits::Focus && answers(at_us, open.stamp_us))?;
         self.open = None;
         Some(GapRead {
             window: open.window,
@@ -488,6 +512,43 @@ mod tests {
         assert_eq!(record.due_us(), Some(1_000 + BOUND_US));
         assert_eq!(record.bound_reached(BOUND_US), Err(1_000 + BOUND_US));
         assert_eq!(record.waiting_due_us(), Some(1_000 + BOUND_US));
+    }
+
+    /// A record whose bound passed with its gap read unanswered, as when
+    /// the worker was abandoned in it: a later copy in its window arms a
+    /// new bound a second from the copy, so that copy's focus is read.
+    #[test]
+    fn a_copy_restamping_a_record_past_its_bound_arms_a_new_one() {
+        let mut record = GapRecord::default();
+        let _ = record.copy_dropped(WINDOW, TOP, at(1_000));
+        let _ = record.at_bound();
+        assert_eq!(
+            record.bound_reached(1_000 + BOUND_US),
+            Ok(Some(GapRead {
+                window: WINDOW,
+                stamp_us: 1_000,
+            }))
+        );
+        assert_eq!(record.waiting_due_us(), None);
+        assert!(!record.pending());
+        assert_eq!(
+            record.copy_dropped(WINDOW, TOP, at(5_000_000)),
+            CopyDropped::Opened {
+                due_us: 5_000_000 + BOUND_US
+            }
+        );
+        assert_eq!(record.waiting_due_us(), Some(5_000_000 + BOUND_US));
+        assert!(record.pending());
+    }
+
+    /// The listener's drop for no window above its sender leaves a record
+    /// waiting for a window's title alone: its report is the worker's.
+    #[test]
+    fn a_drop_for_no_window_leaves_a_record_waiting_for_a_title() {
+        let mut record = GapRecord::default();
+        record.foreground(TOP, at(1_000), Awaits::Title);
+        assert_eq!(record.no_window(1_500), None);
+        assert_eq!(record.awaits(), Some(Awaits::Title));
     }
 
     /// A report placed by its window facts' top-level window closes the
