@@ -265,10 +265,6 @@ Today's enumeration of every sequence of up to three steps (`queries/tests.rs`) 
 
 Not covered (Dickson, 2026-11-02): it is already as simple as a model of it would be, and its eight unit tests stay as they are.
 
-### Found while designing
-
-- The listener's scheduler does not run idle waiters when a push replaces the event blocking them (`schedule.rs:615-629`): the waiter runs at the next step that checks, usually the newer event's end. A delay, not a loss. The idle-waiter invariant as stated fails on this path, so it is fixed in M4.6's build as a defect in the mechanism tested.
-
 ### Not built: recorded inputs replayed against NVDA
 
 Recorded inputs are not replayed against NVDA's captures (Dickson, 2026-11-01): NVDA is the starting point for what Verbatim says, not a target to match, and deliberate differences are recorded in the parity ledger; `cargo xtask nvda compare` serves the research use, and the end-to-end scenarios pin what Verbatim says.

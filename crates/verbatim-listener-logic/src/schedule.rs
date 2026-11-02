@@ -612,6 +612,7 @@ impl<J> Schedule<J> {
         app.ending = false;
         // NVDA's UIA limiter keeps one waiting event per element and kind:
         // a newer one erases the older, which is reported dropped.
+        let mut replaced = false;
         if let Some(key) = &key {
             let mut kept = VecDeque::with_capacity(app.queue.len());
             for waiting in app.queue.drain(..) {
@@ -621,11 +622,16 @@ impl<J> Schedule<J> {
                         meta: waiting.meta,
                         judged: Judged::Dropped(REPLACED),
                     });
+                    replaced = true;
                 } else {
                     kept.push_back(waiting);
                 }
             }
             app.queue = kept;
+        }
+        // The event replaced may be the last an idle waiter waited for.
+        if replaced {
+            self.wake_idle_waiters(effects);
         }
         self.queued += 1;
         let place = self.queued;
@@ -1847,6 +1853,36 @@ mod tests {
                 DEADLINE,
             ),
             []
+        );
+    }
+
+    /// Found by the read scheduler's generated test
+    /// (`docs/design/logic-tests.md`, "The listener's scheduler"): an idle
+    /// waiter runs in the push whose replacement gives the one event
+    /// queued before it its outcome, not at a later step.
+    #[test]
+    fn a_waiter_runs_as_a_push_replaces_the_event_it_waited_for() {
+        let mut schedule = schedule();
+        let keyed = |marker| ScheduleInput::Push {
+            pid: Pid(1),
+            meta: meta(marker, FocusEvent::MenuOpened),
+            job: marker,
+            kind: FocusEvent::MenuOpened,
+            key: Some(vec![0]),
+            window: RuleWindow::Unknown,
+        };
+        assert_eq!(step(&mut schedule, keyed(1), 0), [Seen::Spawn(1, 1, false)]);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::WhenIdle { waiter: 7 }, 0),
+            []
+        );
+        assert_eq!(
+            step(&mut schedule, keyed(2), 1),
+            [
+                Seen::Outcome(1, 1, REPLACED),
+                Seen::RunIdle(7),
+                Seen::Wake(Waking::Thread(Pid(1))),
+            ]
         );
     }
 }
