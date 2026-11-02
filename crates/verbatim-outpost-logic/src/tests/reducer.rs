@@ -236,7 +236,7 @@ fn commit() -> impl Strategy<Value = Commit> {
         4 => (0..3u8, any::<bool>(), any::<bool>())
             .prop_map(|(top, whole, owes)| Commit::Report { top, whole, owes }),
         3 => any::<bool>().prop_map(|console| Commit::OpenWatch { console }),
-        2 => Just(Commit::Take),
+        5 => Just(Commit::Take),
         2 => any::<bool>().prop_map(|answered| Commit::Checked { answered }),
         2 => (0..2u8).prop_map(|top| Commit::CopyDropped { top }),
         1 => Just(Commit::NotedCaret),
@@ -260,6 +260,12 @@ fn action() -> impl Strategy<Value = Action> {
         3 => (0..3u8, 0..3u8).prop_map(|(observed, wall)| Advance::ToTimer { observed, wall }),
         1 => (0..700u16, 0..700u16, 0..700u16)
             .prop_map(|(at, observed, wall)| Advance::By { at, observed, wall }),
+        // A late tick, past every bound and deadline at once.
+        1 => Just(Advance::By {
+            at: 12_000,
+            observed: 12_000,
+            wall: 12_000,
+        }),
     ];
     // Weighted toward the lifecycle: entries that start programs, their
     // ends, abandonments by time, and the walk's publication.
