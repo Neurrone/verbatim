@@ -14,7 +14,7 @@ The evidence behind `docs/design/logic-tests.md`: which of the defects fixed on 
   - P, performance only.
 - For L1 and L2, whether the faulty file is pure today. Files that have since moved into the outpost's reducer (`intake`, the gap record) and the listener's scheduler's defects were counted as pure by hand.
 - `design-review-1.md` is the adversarial review of the plan, and `decisions-2026-10-31.md` Dickson's decisions on it.
-- `research/` holds the research of 2026-10-31 on property-based, model-based and deterministic simulation testing elsewhere, the Rust tools, and how screen readers test: the report drawn from four researchers' notes (`research/report.md`).
+- `research/` holds the research of 2026-10-31 on property-based, model-based and deterministic simulation testing elsewhere, the Rust tools, and how screen readers test: four researchers' notes and the report drawn from them (`research/report.md`).
 - `fix-commits.tsv` holds every commit's category, the faulty file, the invariant that would catch it, an earlier commit fixing the same defect, and a sentence of evidence.
 
 ## Results
