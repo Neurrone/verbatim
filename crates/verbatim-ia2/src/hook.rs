@@ -664,7 +664,8 @@ pub fn suspend_kinds(suspended: &[WinEventKind]) -> Result<(), String> {
 
 /// Whether `class` is Program Manager's or the taskbar's, whose foreground
 /// events NVDA never takes for a foreground change.
-fn is_shell_foreground_class(class: &str) -> bool {
+#[must_use]
+pub fn is_shell_foreground_class(class: &str) -> bool {
     matches!(class, "Progman" | "Shell_TrayWnd")
 }
 

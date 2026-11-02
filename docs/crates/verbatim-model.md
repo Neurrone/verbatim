@@ -35,7 +35,9 @@ recorder unchanged. What the reducer does with each type is in
   whether a `Windows.UI.Core` window is under the input thread's active
   window, whether it is in the system's foreground window, that foreground
   window itself, from the same read, by which Core's title rule decides
-  whether a focus entered the window in front, and its class;
+  whether a focus entered the window in front, whether that window is
+  Program Manager's or the taskbar's (`foreground_is_shell`), which say
+  no title, and its class;
   on a focus change also the application's name as NVDA names an
   application module (`explorer`) and whether Alt was held (`alt_held`).
   The reducer classifies events with these

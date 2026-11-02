@@ -40,6 +40,7 @@ impl Attention {
                 class: String::new(),
                 application: String::new(),
                 alt_held: false,
+                foreground_is_shell: false,
             }),
         }
     }
@@ -212,7 +213,13 @@ impl Foreground {
         match fact {
             ForegroundFact::Changed(change) => {
                 self.window = Some(change);
-                if !change.own {
+                // Verbatim's own window in front, its menu's hidden frame
+                // or one of its dialogs, takes the user out of the entered
+                // window, so the focus of the return says its title even
+                // when it is the return's only report.
+                if change.own {
+                    self.entered = None;
+                } else {
                     self.attention = Some(Attention::of(&change));
                     self.front = Some(Front {
                         window: change.window,
@@ -271,7 +278,8 @@ impl Foreground {
 
     /// The entered window: the top-level window the user's focus line was
     /// last in, set by a whole-window focus taken and a focus taken in the
-    /// window in front, never by a foreground change.
+    /// window in front, never by a foreground change, and cleared by a
+    /// foreground change into one of Verbatim's own windows.
     pub(crate) fn entered(&self) -> Option<WindowHandle> {
         self.entered
     }

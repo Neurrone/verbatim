@@ -78,6 +78,7 @@ fn window(handle: u64) -> WindowFacts {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_is_shell: false,
         foreground_window: WindowHandle(0),
     }
 }

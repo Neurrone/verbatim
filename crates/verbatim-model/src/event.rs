@@ -48,6 +48,10 @@ fn no_process() -> Pid {
 /// calls when the event is observed. The reducer classifies every event
 /// against its attention record with these (decision D14;
 /// `docs/parity/focus-events.md`, "Event acceptance").
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of one read, each a yes or no on the wire"
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowFacts {
     /// The event's top-level window.
@@ -105,6 +109,13 @@ pub struct WindowFacts {
     /// when `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub alt_held: bool,
+    /// Whether `foreground_window` is Program Manager's or the taskbar's
+    /// (class `Progman` or `Shell_TrayWnd`), read with it: Core's title
+    /// rule says no title for them, since NVDA takes no foreground event
+    /// for them (`docs/parity/focus-context.md`, "Window announcement on
+    /// switching applications"). Left out of the message when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub foreground_is_shell: bool,
 }
 
 /// The window that came to the system's foreground, as the focus listener

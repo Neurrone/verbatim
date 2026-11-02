@@ -66,7 +66,8 @@ pub use com::CHILDID_SELF;
 pub use fact::fact_of_win_event;
 pub use hook::{
     APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker, SyncMarkerCallback, WinEvent,
-    WinEventCallback, WinEventHook, WinEventKind, WindowCache, event_clock, suspend_kinds,
+    WinEventCallback, WinEventHook, WinEventKind, WindowCache, event_clock,
+    is_shell_foreground_class, suspend_kinds,
 };
 pub use registry::{
     Facts, Found, Held, Interning, Kept, KeptObject, MsaaKey, NodeIdRegistry, Released,

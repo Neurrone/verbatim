@@ -1171,7 +1171,9 @@ fn enter_window(
         window.top_level,
         report.ancestors.first().map(ObjectKey::of),
     ));
-    Some(window.top_level)
+    // Program Manager and the taskbar are entered with no title, as NVDA
+    // takes no foreground event for them.
+    (!window.foreground_is_shell).then_some(window.top_level)
 }
 
 /// The title a focus entering the top-level window `top_level` says: the

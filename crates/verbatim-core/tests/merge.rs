@@ -52,6 +52,7 @@ fn window() -> WindowFacts {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_is_shell: false,
         foreground_window: verbatim_model::WindowHandle(0),
     }
 }

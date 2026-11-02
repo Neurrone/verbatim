@@ -259,6 +259,7 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_is_shell: false,
         foreground_window: verbatim_model::WindowHandle(0),
     };
     Input::Event {

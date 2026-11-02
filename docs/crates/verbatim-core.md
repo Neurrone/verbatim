@@ -429,7 +429,10 @@ code is in `reduce.rs` unless named.
   the cut and before the other entered containers, unless its line
   already speaks it or it has no name. A whole-window focus taken enters
   its window too, so the focus after it says nothing more; a focus in a
-  popup changes nothing.
+  popup changes nothing. A focus in Program Manager or the taskbar
+  (`WindowFacts::foreground_is_shell`) enters with no title, and a
+  foreground change into one of Verbatim's own windows clears the
+  entered window, so the return from Verbatim's menu says the title.
 - The foreground record (`foreground.rs`): one `Foreground` with private
   fields, written only by `apply` with one `ForegroundFact` per writer
   (`Changed`, `Object`, `Entered`, `LineCut`, `Observed`, `Applied`) and

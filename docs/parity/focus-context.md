@@ -201,7 +201,13 @@ entered containers, unless its line already speaks it or it has no name;
 a whole-window focus taken first enters its window, so the focus after
 it says nothing more. So the title does not depend on whether a
 foreground change and its focus shared an outpost's batch, which NVDA's
-own result does by pump timing. Core's `tests/foreground.rs`.
+own result does by pump timing. Program Manager and the taskbar are
+entered with no title (`WindowFacts::foreground_is_shell`), as NVDA
+takes no foreground event for them (`internalWinEventHandler.py`), so
+the desktop says "Desktop list" alone. A foreground change into one of
+Verbatim's own windows, its menu or a dialog, clears the entered window,
+so the return from it says the title even when the application's focus
+is its only report. Core's `tests/foreground.rs`.
 
 - Different, deliberately: a Windows Forms form or dialog brought to the
   front with its focus within NVDA's 10 ms pump says its title, where

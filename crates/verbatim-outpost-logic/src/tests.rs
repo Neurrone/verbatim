@@ -369,6 +369,7 @@ fn facts_in(top_level: isize) -> verbatim_model::WindowFacts {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_is_shell: false,
     }
 }
 

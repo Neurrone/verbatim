@@ -84,7 +84,7 @@ pub(super) fn hwnd_of(handle: WindowHandle) -> isize {
 /// `Windows.UI.Core` window only, whether it is the input thread's active
 /// window or inside it — NVDA's test for UWP windows — whether it is in
 /// the system's foreground window right now, that foreground window, from
-/// the same read, by which Core's title rule decides whether a focus has
+/// the same read, and whether it is Program Manager's or the taskbar's, by which Core's title rule decides whether a focus has
 /// entered the window in front, and its class, which Core's rules for an
 /// application's windows match (decision D6).
 pub(super) fn window_facts(handle: isize) -> WindowFacts {
@@ -130,6 +130,9 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         class,
         application: String::new(),
         alt_held: false,
+        foreground_is_shell: verbatim_ia2::is_shell_foreground_class(&window_class_name(
+            foreground,
+        )),
     }
 }
 

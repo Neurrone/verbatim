@@ -154,6 +154,7 @@ fn facts(top: u64, root_owner: u64, foreground: u64) -> WindowFacts {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_is_shell: false,
     }
 }
 
@@ -1027,6 +1028,81 @@ fn a_return_from_verbatims_menu_says_the_title() {
                 foreground: Some(400),
             },
             said("Note", Some(Role::EditableText)),
+        ]
+    );
+}
+
+/// The return from Verbatim's menu whose only report is the form's focus,
+/// its whole-window focus left untried in its batch: the menu took the user
+/// out of the entered window, so the focus says the title.
+#[test]
+fn a_return_from_verbatims_menu_with_its_focus_alone_says_the_title() {
+    let mut core = in_the_edit();
+    let (text_box, chain) = form_box(40, "second-application");
+    core.input(change_to(4, 40, 200));
+    core.input(focus(4, in_front(40), text_box.clone(), chain.clone(), 210));
+    let menu = Input::Foreground(ForegroundWindow {
+        own: true,
+        ..match change_to(9, 90, 220) {
+            Input::Foreground(change) => change,
+            _ => unreachable!("a foreground change"),
+        }
+    });
+    core.input(menu);
+    core.input(focus(
+        9,
+        facts(91, 91, 90),
+        node(911, Role::MenuItem, "Settings..."),
+        vec![node(900, Role::Window, "Verbatim")],
+        230,
+    ));
+    core.input(change_to(4, 40, 240));
+    assert_eq!(
+        core.input(focus(4, in_front(40), text_box, chain, 250)),
+        [
+            Heard::Expire {
+                focus: 401,
+                ancestors: vec![400],
+                foreground: Some(400),
+            },
+            Heard::Stop,
+            title("second-application"),
+            said("Note", Some(Role::EditableText)),
+        ]
+    );
+}
+
+/// A focus on the desktop, in Program Manager's window in front, says no
+/// title: NVDA takes no foreground event for Program Manager or the taskbar.
+#[test]
+fn a_focus_in_program_manager_says_no_title() {
+    let mut core = in_the_edit();
+    core.input(change_to(7, 70, 200));
+    let desktop = WindowFacts {
+        foreground_is_shell: true,
+        ..in_front(70)
+    };
+    let mut list = node(710, Role::List, "Desktop");
+    list.backend = Backend::Msaa;
+    let mut item = node(711, Role::ListItem, "NVDA");
+    item.backend = Backend::Msaa;
+    assert_eq!(
+        core.input(focus(
+            7,
+            desktop,
+            item,
+            vec![quiet_pane(700, "Program Manager", 70), list],
+            210
+        )),
+        [
+            Heard::Expire {
+                focus: 711,
+                ancestors: vec![700, 710],
+                foreground: Some(700),
+            },
+            Heard::Stop,
+            said("Desktop", Some(Role::List)),
+            said("NVDA", None),
         ]
     );
 }
