@@ -50,7 +50,7 @@ pub fn focus() -> Input {
             states: StateSet::new(),
             details: NodeDetails::default(),
         },
-        foreground: false,
+        whole_window: false,
         ancestors: Vec::new(),
         selected_child: None,
         text: None,

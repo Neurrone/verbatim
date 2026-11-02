@@ -14,18 +14,19 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    ActionName, Earcon, EarlierElement, Effect, FetchResult, Input, Message, NodeId, NodeSnapshot,
-    NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase, Pid, ProgressReading,
-    PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
-    StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
+    ActionName, Earcon, EarlierElement, Effect, FetchResult, ForegroundWindow, Input, Message,
+    NodeId, NodeSnapshot, NormalizedEvent, Notification, NotificationProcessing, OutpostId, Phrase,
+    Pid, ProgressReading, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent,
+    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource,
+    WindowFacts,
 };
 use verbatim_model::{
     Backend, FocusGroup, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle,
 };
 
 use crate::focus_rules::{
-    ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, change_target,
-    is_sensitive_slider, meeting, repeats_focus, selection_target,
+    ChangeKind, ChangeTarget, RepeatEvidence, SelectionTarget, change_target, is_sensitive_slider,
+    meeting, repeats_focus, selection_target,
 };
 use crate::foreground::{Attention, ForegroundFact, LatestFocus};
 use crate::queries::Then;
@@ -48,6 +49,7 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     let focus = state.focus.as_ref().map(|focus| focus.snapshot.id);
+    let was_left = state.focus.as_ref().is_some_and(|focus| focus.left);
     let first_query = state.queries.next();
     // A user input's number, recorded by its trace before anything it
     // causes is spoken (`crate::keys`).
@@ -58,7 +60,10 @@ pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     // from their memory.
     if !state.terminals.is_empty() {
         let now = state.focus.as_ref().map(|focus| focus.snapshot.id);
-        if now != focus {
+        // A left focus taken again is blurred and focused anew, as the same
+        // switch with no stall leaves it (`FocusContext::left`).
+        let taken_again = was_left && state.focus.as_ref().is_some_and(|focus| !focus.left);
+        if now != focus || taken_again {
             // The terminal's reading rules count in milliseconds.
             let at_ms = match input {
                 Input::Event { observed_at_us, .. } => whole_ms(*observed_at_us),
@@ -172,6 +177,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             state.fetches = *fetches;
             Vec::new()
         }
+        Input::Foreground(change) => foreground_changed(state, *change),
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
@@ -296,44 +302,42 @@ enum Acceptance {
     Dropped,
 }
 
-/// Classifies one event against the attention record, or, for a focus with
-/// window facts, against the system's foreground window as its outpost read
-/// it. A foreground change is always attended: its intake has already
-/// confirmed the window is the system's foreground window. With no attention yet, everything is
-/// attended, since there is nothing to compare against. `focus_source` is
-/// the application the focus belongs to, which UIA notifications are judged
-/// by.
+/// Classifies one event, observed at `observed_at_us`, against the
+/// attention record, or, for a focus with window facts, against the
+/// record's front. With no attention yet, everything is attended, since
+/// there is nothing to compare against. The focus Core holds names the
+/// application UIA notifications are judged by.
 fn classify(
-    attention: Option<&Attention>,
-    focus_source: Option<Pid>,
-    source: Pid,
+    state: &SrState,
+    (source, observed_at_us): (Pid, u64),
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Acceptance {
-    let Some(attention) = attention else {
+    let Some(attention) = state.foreground.attention() else {
         return Acceptance::Attended;
     };
+    let focus_source = state.focus_source();
     match event {
-        // A foreground change is always attended. A controlled selection is
-        // spoken only while its controller is the focus, which is attended
-        // wherever the controlled list's window is.
-        NormalizedEvent::FocusChanged {
-            foreground: true, ..
-        }
-        | NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
-        // Any other focus is judged against the system's foreground window
-        // as its outpost found it when it published the event, not against
-        // the attention record: a focus can reach Core before the
-        // foreground change that moved the foreground away from its window
-        // (D14, amended 2026-10-05). With no window facts, the application
-        // decides. The rule is the acceptance test's own
-        // ([`ForegroundRelation::related`]), made again on the facts the
-        // outpost read as it reported the focus; NVDA makes it once, before
-        // reading (`docs/parity/focus-events.md`, "Event acceptance").
+        // A controlled selection is spoken only while its controller is the
+        // focus, which is attended wherever the controlled list's window
+        // is.
+        NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
+        // Every focus with window facts, a whole-window focus among them,
+        // is judged against the record's front, the window the focus
+        // listener last reported in front: dropped when the front was
+        // observed after it and is a window it is unrelated to, so a
+        // popup, an owned dialog and a focus in an owned window pass. The
+        // reader's own test at the event cannot see a foreground change
+        // after it, and NVDA tests when it handles the event, so a focus
+        // whose read was held past a switch to an unrelated window is
+        // refused there (`docs/parity/focus-events.md`, "Event
+        // acceptance"). With no window facts, the application decides.
         NormalizedEvent::FocusChanged { .. } => {
             let attended = match window {
-                Some(event) => ForegroundRelation::of_facts(event).related(),
-                None => window_is_attended(attention, source, None),
+                Some(facts) => !state.foreground.front().is_some_and(|front| {
+                    front.observed_after(observed_at_us) && !front.relates(facts)
+                }),
+                None => window_is_attended(state, attention, source, None),
             };
             if attended {
                 Acceptance::Attended
@@ -343,7 +347,7 @@ fn classify(
         }
         // A toast is spoken from anywhere.
         NormalizedEvent::Alert { .. } => {
-            if window_is_attended(attention, source, window) {
+            if window_is_attended(state, attention, source, window) {
                 Acceptance::Attended
             } else {
                 Acceptance::Background
@@ -367,7 +371,7 @@ fn classify(
             }
         }
         _ => {
-            if window_is_attended(attention, source, window) {
+            if window_is_attended(state, attention, source, window) {
                 Acceptance::Attended
             } else {
                 Acceptance::Dropped
@@ -436,17 +440,22 @@ fn is_stale_focus(
 /// node still alive in Core is the evidence. An outpost reports an MSAA
 /// focus only once the object or an ancestor has the focused state, read
 /// live, and drops an event naming the address of its last focus itself.
+///
+/// A focus Core marked left, the user having gone to another top-level
+/// window since it was taken, is no duplicate: the return is spoken as the
+/// same switch with no stall is (`FocusContext::left`).
 fn is_duplicate_focus(
     state: &SrState,
     node: &NodeSnapshot,
     earlier: Option<EarlierElement>,
 ) -> bool {
     state.focus.as_ref().is_some_and(|focus| {
-        repeats_focus(RepeatEvidence {
-            same_element: focus.snapshot.id == node.id,
-            still_focused: earlier
-                .map_or(focus.alive, |earlier| earlier == EarlierElement::Focused),
-        })
+        !focus.left
+            && repeats_focus(RepeatEvidence {
+                same_element: focus.snapshot.id == node.id,
+                still_focused: earlier
+                    .map_or(focus.alive, |earlier| earlier == EarlierElement::Focused),
+            })
     })
 }
 
@@ -523,9 +532,17 @@ fn whole_ms(observed_at_us: u64) -> u64 {
 /// foreground test, made against the attention record — or a window its
 /// outpost found in the system's foreground window when it read the event.
 /// When either side has no window facts there is nothing to compare, so the
-/// application decides. Focus events with window facts are judged by
-/// [`ForegroundRelation::related`] instead.
-fn window_is_attended(attention: &Attention, source: Pid, window: Option<&WindowFacts>) -> bool {
+/// application decides: attention's, or that of Core's focus while that
+/// focus is in the attention window, as a Settings page's content is in
+/// `ApplicationFrameHost`'s frame, which attention names (`docs/parity/focus-events.md`,
+/// "Event acceptance"). Focus events with window facts are judged by the
+/// record's front instead ([`classify`]).
+fn window_is_attended(
+    state: &SrState,
+    attention: &Attention,
+    source: Pid,
+    window: Option<&WindowFacts>,
+) -> bool {
     match (attention.window.as_ref(), window) {
         (Some(attended), Some(event)) => {
             event.top_level == attended.top_level
@@ -534,8 +551,61 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<&Window
                 || event.under_active_window == Some(true)
                 || event.in_foreground
         }
-        _ => source == attention.source,
+        _ => {
+            source == attention.source
+                || state.focus.as_ref().is_some_and(|focus| {
+                    focus.source == source
+                        && matches!(
+                            (focus.window.as_ref(), attention.window.as_ref()),
+                            (Some(focus), Some(attended)) if focus.top_level == attended.top_level
+                        )
+                })
+        }
     }
+}
+
+/// The focus listener's report that a window came to the foreground, the
+/// only report of one (`docs/design/focus-pipeline-rework-remaining.md`,
+/// "One foreground change, from the listener"): it gives the keyboard
+/// hook's view of the foreground and, unless the window is one of
+/// Verbatim's own, attention and the record's front. When its window is
+/// neither the top-level window of Core's focus nor the entered window,
+/// its root owner is not the root owner of Core's focus's top-level window,
+/// and it was observed after the ordering stamp, Core's focus is marked
+/// left ([`FocusContext::left`]). Judged by that stamp, a change that
+/// reaches Core after the reports of the user's return cannot mark the
+/// focus the user is back in. It speaks nothing, cuts nothing, sets no
+/// ordering stamp, and changes no node, focus group or navigator: nothing
+/// is heard while the user is in an application that does not answer.
+fn foreground_changed(state: &mut SrState, change: ForegroundWindow) -> Vec<Effect> {
+    let leaves = !change.own
+        && state
+            .focus
+            .as_ref()
+            .is_some_and(|focus| leaves_focus(state, focus, &change));
+    state.foreground.apply(ForegroundFact::Changed(change));
+    if leaves && let Some(focus) = state.focus.as_mut() {
+        focus.left = true;
+    }
+    Vec::new()
+}
+
+/// Whether the foreground change `change` leaves `focus`, Core's focus
+/// ([`foreground_changed`]). A focus with no window facts cannot be
+/// related to any window, and is not left.
+fn leaves_focus(state: &SrState, focus: &FocusContext, change: &ForegroundWindow) -> bool {
+    let Some(facts) = focus.window.as_ref() else {
+        return false;
+    };
+    let after_the_stamp = change.observed_at_us != 0
+        && state
+            .foreground
+            .latest_focus()
+            .is_none_or(|latest| latest.observed_at_us < change.observed_at_us);
+    after_the_stamp
+        && change.window != facts.top_level
+        && Some(change.window) != state.foreground.entered()
+        && change.root_owner != facts.root_owner
 }
 
 /// Speaks what an activation did: the action's name, NVDA's "Activate" for
@@ -583,7 +653,7 @@ fn focus_dropped_first(
 ) -> bool {
     let NormalizedEvent::FocusChanged {
         node,
-        foreground,
+        whole_window,
         earlier,
         group,
         ..
@@ -600,7 +670,7 @@ fn focus_dropped_first(
     if group.is_some_and(|group| older_than_taken(state, node.id.outpost(), group)) {
         return true;
     }
-    if !foreground && crate::applications::refuses_focus(window, node) {
+    if !whole_window && crate::applications::refuses_focus(window, node) {
         return true;
     }
     is_stale_focus(state, node.id.outpost(), observed_at_us, window)
@@ -730,13 +800,7 @@ fn reduce_event(
     if focus_dropped_first(state, observed_at_us, window, event) {
         return Vec::new();
     }
-    match classify(
-        state.foreground.attention(),
-        state.focus_source(),
-        source,
-        window,
-        event,
-    ) {
+    match classify(state, (source, observed_at_us), window, event) {
         Acceptance::Dropped => return Vec::new(),
         Acceptance::Background => return reduce_background(state, trace_id, observed_at_us, event),
         Acceptance::Attended => {}
@@ -748,7 +812,7 @@ fn reduce_event(
     let effects = match event {
         NormalizedEvent::FocusChanged {
             node,
-            foreground,
+            whole_window,
             ancestors,
             selected_child,
             text,
@@ -764,7 +828,7 @@ fn reduce_event(
                 &FocusReport {
                     node,
                     observed_at_us,
-                    foreground: *foreground,
+                    whole_window: *whole_window,
                     ancestors,
                     selected_child: selected_child.as_ref(),
                     text: text.as_deref(),
@@ -888,7 +952,8 @@ struct FocusReport<'a> {
     node: &'a NodeSnapshot,
     /// When its outpost observed it, in microseconds; 0 when not known.
     observed_at_us: u64,
-    foreground: bool,
+    /// Whether it is a whole-window focus.
+    whole_window: bool,
     /// Its ancestors, outermost first, complete to the desktop.
     ancestors: &'a [NodeSnapshot],
     selected_child: Option<&'a NodeSnapshot>,
@@ -922,17 +987,15 @@ impl FocusReport<'_> {
 /// Handles an accepted focus change (`docs/parity/focus-announcement.md`,
 /// "Focus announcement content and property order"):
 ///
-/// - A foreground change moves attention to its application and window, and
-///   is otherwise ignored when focus is already in that window, compared by
-///   window handle because the same window has different node ids in
-///   different outposts. Only a foreground change moves attention, as only
-///   the system's foreground window counts for NVDA: a topmost popup menu
-///   takes focus without becoming the foreground, and focus returning from
-///   it must still be attended.
-/// - A foreground window with no name becomes the focus silently: a bare
+/// - A whole-window focus makes its window the foreground object, and is
+///   otherwise refused when Core's focus is in that window and not left,
+///   compared by window handle because the same window has different node
+///   ids in different outposts. It never moves attention, which only the
+///   focus listener's foreground change moves (D14).
+/// - A whole-window focus with no name becomes the focus silently: a bare
 ///   "window" says nothing, and the window is not announced later.
-/// - While the focus is dead (its outpost ended), a report of the same focus
-///   from a replacement outpost is taken silently.
+/// - While the focus is dead (its outpost ended) and not left, a report of
+///   the same focus from a replacement outpost is taken silently.
 /// - A focus the same as the one already announced has been dropped before
 ///   this, by NVDA's duplicate rule ([`is_duplicate_focus`]).
 /// - Otherwise the new chain is joined to the previous focus line where
@@ -943,9 +1006,14 @@ impl FocusReport<'_> {
 ///   follows focus. When the two lines differ just below the desktop,
 ///   speech is cut off first, and the new top-level window, its outermost
 ///   ancestor, is one of the entered containers, spoken by the same rule as
-///   the others whether or not a foreground report came for it
-///   (`docs/parity/focus-context.md`, "Window announcement on switching
-///   applications").
+///   the others (`docs/parity/focus-context.md`, "Window announcement on
+///   switching applications").
+/// - The title rule: a focus that enters the window in front, one that is
+///   not the entered window or that Core's focus was left for, says the
+///   window's title when its line does not already speak it
+///   ([`window_title`]).
+/// - A left focus reported again is taken as a focus from another
+///   top-level window is ([`FocusContext::left`]).
 fn reduce_focus_changed(
     state: &mut SrState,
     trace_id: TraceId,
@@ -953,11 +1021,7 @@ fn reduce_focus_changed(
     window: Option<&WindowFacts>,
     report: &FocusReport<'_>,
 ) -> Vec<Effect> {
-    if report.foreground {
-        state.foreground.apply(ForegroundFact::Reported(Attention {
-            source,
-            window: window.cloned(),
-        }));
+    if report.whole_window {
         // Written before the refusal below, so that a refused report of the
         // window holding the focus still makes it the foreground object, as
         // NVDA's is while its focus is in that window ([`change_on`]).
@@ -965,32 +1029,37 @@ fn reduce_focus_changed(
             .foreground
             .apply(ForegroundFact::Object(ObjectKey::of(report.node)));
         if let Some(focus) = state.focus.as_ref()
+            && !focus.left
             && let (Some(focus_window), Some(window)) = (focus.window.as_ref(), window)
             && focus_window.top_level == window.top_level
         {
             return Vec::new();
         }
-    } else if let Some(window) = window {
-        follow_an_unreported_foreground(state, source, window, report);
     }
+    let previous_left = state.focus.as_ref().is_some_and(|focus| focus.left);
+    let title = enter_window(state, window, report, previous_left);
 
     let line = focus_line(state.focus.as_ref(), window, report);
     let ancestors = Arc::clone(&line.ancestors);
     let focus_window = window.cloned();
+    // A left focus is followed as a focus from another top-level window is:
+    // nothing of the line left behind carries over.
+    let previous = state.focus.as_ref().filter(|focus| !focus.left);
     let new_focus = FocusContext {
         source,
         window: focus_window.clone(),
         snapshot: report.node.clone(),
-        spoken: Some(spoken_record(state.focus.as_ref(), report, &ancestors)),
+        spoken: Some(spoken_record(previous, report, &ancestors)),
         ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
+        left: false,
     };
 
-    if let Some(focus) = state.focus.as_ref()
+    if let Some(focus) = previous
         && !focus.alive
         && reads_the_same(focus, report.node, report.ancestors)
     {
@@ -1030,18 +1099,23 @@ fn reduce_focus_changed(
         focus: ObjectKey::of(report.node),
         ancestors: new_focus.ancestors.iter().map(ObjectKey::of).collect(),
         foreground: state.foreground.object(),
-        menu_item_of_focus: menu_item_of_focus(state.focus.as_ref(), report.node),
+        menu_item_of_focus: menu_item_of_focus(previous, report.node),
     })];
     // Entering a menu cuts speech too, at its place among the entered
     // containers (`focus_speech`).
-    end_text_activity(state, report.node.id, foreground_changed, &mut effects);
+    end_text_activity(
+        state,
+        report.node.id,
+        (foreground_changed, previous_left),
+        &mut effects,
+    );
     state.focus = Some(new_focus);
     record_taken(state, report);
     state.navigator = Some(navigator);
-    // A nameless foreground window, and any focus in the shell's staging
+    // A nameless whole-window focus, and any focus in the shell's staging
     // windows, say nothing; speech was cut above if the foreground window
     // changed.
-    if report.foreground && !has_text(report.node.name.as_deref())
+    if report.whole_window && !has_text(report.node.name.as_deref())
         || crate::applications::is_shell_staging_window(window)
     {
         return effects;
@@ -1049,7 +1123,8 @@ fn reduce_focus_changed(
 
     // A new focus is a new object, whose formatting has not been reported.
     state.reported_format = None;
-    let speech = focus_speech(state, trace_id, report, entered);
+    let title = title.and_then(|top_level| window_title(top_level, report.ancestors, &entered));
+    let speech = focus_speech(state, trace_id, report, (title, entered));
     effects.extend(speech);
     effects.extend(editing::focus_text(
         state,
@@ -1058,6 +1133,68 @@ fn reduce_focus_changed(
         (report.text, report.observed_at_ms()),
     ));
     effects
+}
+
+/// The entered window as a focus Core takes changes it, and the window
+/// whose title the focus is to say, if any (`docs/parity/focus-context.md`,
+/// "Window announcement on switching applications"): a whole-window focus
+/// enters its window, saying no title but its own; a focus whose own
+/// top-level window is the window in front when it was published
+/// (`WindowFacts::foreground_window`) enters it when it is not the entered
+/// window or Core's focus was left, making its chain's outermost entry the
+/// foreground object, as NVDA's `doPreGainFocus` moves its foreground
+/// object from the focus's ancestry, and says its title. A focus in a
+/// popup, whose top-level window is not the foreground window, changes
+/// nothing. A foreground change never sets the entered window: a report
+/// read in a window as another came in front carries the window in front
+/// at its publication, and setting the entered window from it would lose
+/// that window's title.
+fn enter_window(
+    state: &mut SrState,
+    window: Option<&WindowFacts>,
+    report: &FocusReport<'_>,
+    previous_left: bool,
+) -> Option<WindowHandle> {
+    let window = window?;
+    if report.whole_window {
+        state
+            .foreground
+            .apply(ForegroundFact::Entered(window.top_level));
+        return None;
+    }
+    let enters = window.top_level == window.foreground_window
+        && (state.foreground.entered() != Some(window.top_level) || previous_left);
+    if !enters {
+        return None;
+    }
+    state.foreground.apply(ForegroundFact::EnteredBy(
+        window.top_level,
+        report.ancestors.first().map(ObjectKey::of),
+    ));
+    Some(window.top_level)
+}
+
+/// The title a focus entering the top-level window `top_level` says: the
+/// window's own entry in its chain, `ancestors`, the outermost entry with
+/// that window handle, which stands for the window (its UIA element, MSAA
+/// window or client object, or plain window), unless its line already
+/// speaks it among the `entered` containers. An entry with no name, and a
+/// chain with no entry for the window, add nothing.
+fn window_title<'a>(
+    top_level: WindowHandle,
+    ancestors: &'a [NodeSnapshot],
+    entered: &[&NodeSnapshot],
+) -> Option<&'a NodeSnapshot> {
+    let entry = ancestors
+        .iter()
+        .find(|ancestor| ancestor.details.window == Some(top_level))?;
+    let spoken = entered.iter().any(|container| {
+        container.id == entry.id
+            && !is_menu(container)
+            && (is_sensitive_slider(container) || is_presentable_container(container))
+            && !container_segments(container).is_empty()
+    });
+    (!spoken && has_text(entry.name.as_deref())).then_some(entry)
 }
 
 /// The spoken record of a new focus, `report`'s node under `ancestors`
@@ -1080,46 +1217,21 @@ fn spoken_record(
     SpokenRecord::of(report.node, entries)
 }
 
-/// Moves attention and the foreground to a focus in the system's
-/// foreground window that is unrelated to the attention window: the
-/// foreground moved without a foreground fact, so attention follows. The
-/// foreground object moves with it, to the top of the focus's ancestry,
-/// its top-level window, so speech for the window left behind is no
-/// longer held valid as the foreground's; NVDA asks for the real
-/// foreground window instead and takes the ancestry only when that fails
-/// (`docs/nvda/events.md`, step 3 of a focus change).
-fn follow_an_unreported_foreground(
-    state: &mut SrState,
-    source: Pid,
-    window: &WindowFacts,
-    report: &FocusReport<'_>,
-) {
-    let attended = state
-        .foreground
-        .attention()
-        .and_then(|attention| attention.window.as_ref())
-        .is_some_and(|attended| {
-            attended.top_level == window.top_level || attended.root_owner == window.root_owner
-        });
-    if !window.in_foreground || attended {
-        return;
-    }
-    state.foreground.apply(ForegroundFact::Unreported(
-        Attention {
-            source,
-            window: Some(window.clone()),
-        },
-        report.ancestors.first().map(ObjectKey::of),
-    ));
-}
-
 /// Ends what the previous focus's text was doing when the focus moves to
 /// `node`: a say-all reading it (its speech is cut off too, since say-all's
 /// speech is not focus speech the speech manager would drop), a caret key
 /// still waiting for evidence (the focus announcement wins, as NVDA's wait
 /// gives way to a pending focus event), and the typing being echoed. Speech
-/// is cut off when `cut` says so or say-all was reading.
-fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut Vec<Effect>) {
+/// is cut off when `cut` says so or say-all was reading. When the focus
+/// was `left`, what is kept of its node is reset as for another node: the
+/// terminal's speech state and its caret, as the same switch with no stall
+/// leaves them ([`FocusContext::left`]).
+fn end_text_activity(
+    state: &mut SrState,
+    node: NodeId,
+    (cut, left): (bool, bool),
+    effects: &mut Vec<Effect>,
+) {
     let reading = state.say_all.is_some();
     effects.extend(say_all::stop(state));
     if cut || reading {
@@ -1127,30 +1239,53 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     }
     state.queries.forget(|then| matches!(then, Then::Caret(_)));
     state.typed_word.clear();
-    crate::terminal::focus_moved(state, node);
-    if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
+    crate::terminal::focus_moved(state, node, left);
+    if state
+        .caret
+        .as_ref()
+        .is_some_and(|caret| left || caret.node != node)
+    {
         state.forget_caret();
     }
 }
 
-/// The speech for a new focus: each entered container as its own
-/// utterance, outermost first, valid while the focus is inside it, an
-/// entered menu cutting speech in its place instead ([`is_menu`]), then the
-/// focus, valid while it is the focus. When the focus has entered another
-/// top-level window, the window is the outermost entered container, spoken
-/// first whenever it is presentable, whether or not a foreground report
-/// came for it, as NVDA speaks a window it took from the focus's ancestry
-/// ([`is_presentable_container`]). A focus that may have text leaves its
-/// value out, since its text follows (`editing::focus_text`).
+/// The speech for a new focus: the window's title the title rule adds, if
+/// any, spoken with the words of a whole-window focus of the window
+/// ([`window_title`]), then each entered container as its own utterance,
+/// outermost first, valid while the focus is inside it, an entered menu
+/// cutting speech in its place instead ([`is_menu`]), then the focus, valid
+/// while it is the focus. When the focus has entered another top-level
+/// window, the window is the outermost entered container, spoken first
+/// whenever it is presentable, as NVDA speaks a window it took from the
+/// focus's ancestry ([`is_presentable_container`]). A focus that may have
+/// text leaves its value out, since its text follows
+/// (`editing::focus_text`).
 fn focus_speech(
     state: &mut SrState,
     trace_id: TraceId,
     report: &FocusReport<'_>,
-    entered: Vec<&NodeSnapshot>,
+    (title, entered): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>),
 ) -> Vec<Effect> {
     let last_level = &mut state.last_tree_level;
     let reads_text = editing::may_have_text(report.node.role);
     let mut effects = Vec::new();
+    if let Some(title) = title {
+        effects.push(Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Queued,
+                segments: node_segments(title, Reason::Focus, &mut None),
+                source: Some(source_of(title)),
+                say_all: false,
+                validity: Some(FocusValidity {
+                    node: title.id,
+                    had_focus: false,
+                    window: title.details.window,
+                }),
+            },
+            None,
+        ));
+    }
     for container in entered {
         // Entering a menu bar, menu, or menu item cuts speech and says
         // nothing, in its place among the entered containers, outermost
@@ -2585,6 +2720,15 @@ fn focus_line<'a>(
             cut: false,
         };
     };
+    // A left focus is followed as a focus from another top-level window is:
+    // the lines meet only at the desktop, and speech is cut.
+    if previous.left {
+        return FocusLine {
+            ancestors: Arc::from(report.ancestors),
+            entered: report.ancestors,
+            cut: true,
+        };
+    }
     let old_line = || {
         previous
             .ancestors

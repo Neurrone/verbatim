@@ -255,7 +255,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
             window,
             event: NormalizedEvent::FocusChanged {
                 node,
-                foreground,
+                whole_window: foreground,
                 ancestors,
                 selected_child,
                 text,
@@ -492,6 +492,7 @@ mod tests {
             class: "Notepad".to_owned(),
             application: String::new(),
             alt_held: false,
+            foreground_window: verbatim_model::WindowHandle(0),
         }
     }
 
@@ -544,7 +545,7 @@ mod tests {
                 window: Some(control_facts),
                 event: NormalizedEvent::FocusChanged {
                     node: control,
-                    foreground: false,
+                    whole_window: false,
                     ancestors,
                     selected_child,
                     text: Some(Box::new(FocusText::NoText)),
@@ -594,7 +595,7 @@ mod tests {
                 window: Some(facts.clone()),
                 event: NormalizedEvent::FocusChanged {
                     node: window.clone(),
-                    foreground: true,
+                    whole_window: true,
                     ancestors: Vec::new(),
                     selected_child: None,
                     text: None,
@@ -632,7 +633,7 @@ mod tests {
                 window: Some(facts),
                 event: NormalizedEvent::FocusChanged {
                     node: control,
-                    foreground: false,
+                    whole_window: false,
                     ancestors: Vec::new(),
                     selected_child: None,
                     text: None,
@@ -682,7 +683,7 @@ mod tests {
                 window: None,
                 event: NormalizedEvent::FocusChanged {
                     node: control,
-                    foreground: false,
+                    whole_window: false,
                     ancestors: Vec::new(),
                     selected_child: None,
                     text: None,

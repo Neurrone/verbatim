@@ -1105,9 +1105,13 @@ impl ReducerThread<'_> {
             OutpostMessage::MenuOrSwitchEnded { ended_at_us } => {
                 self.apply(Input::MenuOrSwitchEnded { ended_at_us });
             }
-            OutpostMessage::ForegroundWindow(report) => {
-                self.apply(Input::ForegroundWindow(ForegroundWindow {
+            OutpostMessage::Foreground(report) => {
+                self.apply(Input::Foreground(ForegroundWindow {
                     window: WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes())),
+                    root_owner: WindowHandle(u64::from_ne_bytes(report.root_owner.to_ne_bytes())),
+                    process: Pid(report.process),
+                    observed_at_us: report.observed_at_us,
+                    own: report.process == std::process::id(),
                     thread: report.thread,
                     console: report.console,
                     integrity: report.integrity,

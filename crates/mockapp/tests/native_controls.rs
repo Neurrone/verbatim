@@ -54,7 +54,7 @@ fn spoken(reported: &Reported) -> Vec<Vec<SegmentContent>> {
 fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent>> {
     let mut event = NormalizedEvent::FocusChanged {
         node: reported.node.clone(),
-        foreground: false,
+        whole_window: false,
         ancestors: reported.ancestors.clone(),
         selected_child: reported.selected_child.clone(),
         text: None,

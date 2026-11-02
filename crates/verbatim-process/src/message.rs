@@ -459,7 +459,7 @@ mod tests {
             window: None,
             application: Some(Pid(20)),
             event: NormalizedEvent::FocusChanged {
-                foreground: false,
+                whole_window: false,
                 ancestors: Vec::new(),
                 selected_child: None,
                 node: NodeSnapshot {

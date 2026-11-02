@@ -106,7 +106,9 @@ impl Merge for OutpostToCore {
         let kind = std::mem::discriminant(event);
         let (node, detail) = match event {
             NormalizedEvent::FocusChanged {
-                node, foreground, ..
+                node,
+                whole_window: foreground,
+                ..
             } => (node.id, Detail::Foreground(*foreground)),
             NormalizedEvent::PropertyChanged {
                 node_id, change, ..

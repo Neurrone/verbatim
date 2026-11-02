@@ -353,7 +353,7 @@ fn a_terminal_stays_followed_through_a_foreground_report() {
         OutpostToCore::Event {
             event:
                 NormalizedEvent::FocusChanged {
-                    foreground: true, ..
+                    whole_window: true, ..
                 },
             ..
         } => {}

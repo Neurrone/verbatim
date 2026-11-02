@@ -288,7 +288,7 @@ pub(crate) fn speech(
     if !state.focus_matches(node) {
         return Vec::new();
     }
-    focus_moved(state, node);
+    focus_moved(state, node, false);
     state.terminal.node = Some(node);
     // Read before speech was last cut off, or before the outpost took the
     // cancel: the output pending then is dropped, as NVDA drops it.
@@ -1190,10 +1190,15 @@ pub(crate) fn utterance_cancelled(
     if waits { cut(state, at_ms) } else { Vec::new() }
 }
 
-/// The focus moved to `node`: another node's output is forgotten, and the
+/// The focus moved to `node`: another node's output, or its own when the
+/// focus was `left` for another window and is taken again, is forgotten, and the
 /// answers to the requests Core made of it are taken by nothing.
-pub(crate) fn focus_moved(state: &mut SrState, node: NodeId) {
-    if state.terminal.node.is_some_and(|terminal| terminal != node) {
+pub(crate) fn focus_moved(state: &mut SrState, node: NodeId, left: bool) {
+    if state
+        .terminal
+        .node
+        .is_some_and(|terminal| left || terminal != node)
+    {
         state.terminal = TerminalSpeechState::default();
         state
             .queries

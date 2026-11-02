@@ -83,8 +83,10 @@ pub(super) fn hwnd_of(handle: WindowHandle) -> isize {
 /// its owner chain, whether it or its top-level window is topmost, and, for a
 /// `Windows.UI.Core` window only, whether it is the input thread's active
 /// window or inside it — NVDA's test for UWP windows — whether it is in
-/// the system's foreground window right now, and its class, which Core's
-/// rules for an application's windows match (decision D6).
+/// the system's foreground window right now, that foreground window, from
+/// the same read, by which Core's title rule decides whether a focus has
+/// entered the window in front, and its class, which Core's rules for an
+/// application's windows match (decision D6).
 pub(super) fn window_facts(handle: isize) -> WindowFacts {
     let window = hwnd(handle);
     // SAFETY: GetAncestor tolerates any handle, returning null for an
@@ -99,6 +101,7 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         root_owner
     };
     let class = window_class_name(handle);
+    let foreground = verbatim_win32::window::foreground_window_handle();
     // How the window stands to the foreground window, by the acceptance
     // test's own rule (`acceptance::foreground_relation`), against the system's
     // foreground window now.
@@ -113,9 +116,7 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
             verbatim_reader_rules::acceptance::foreground_relation(
                 window,
                 &class,
-                &verbatim_win32::window::SystemWindows {
-                    foreground: verbatim_win32::window::foreground_window_handle(),
-                },
+                &verbatim_win32::window::SystemWindows { foreground },
             )
         },
     );
@@ -125,6 +126,7 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         topmost: relation.topmost,
         under_active_window: relation.under_active_window,
         in_foreground: relation.in_foreground,
+        foreground_window: window_handle(foreground),
         class,
         application: String::new(),
         alt_held: false,

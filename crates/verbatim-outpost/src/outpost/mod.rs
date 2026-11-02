@@ -655,8 +655,10 @@ impl Context {
         };
         match *fact {
             DeliveredFact::Foreground { hwnd } => {
+                // The test's time, read as the test begins.
+                let tested_at_us = self.observed_now();
                 let in_front = self.foreground_window() == hwnd;
-                reducer::Front::InFront(in_front.then(|| self.observed_now()))
+                reducer::Front::InFront(in_front.then_some(tested_at_us))
             }
             DeliveredFact::MsaaFocus { hwnd, .. } => {
                 let windows = verbatim_win32::window::SystemWindows {

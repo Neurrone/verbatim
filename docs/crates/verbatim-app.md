@@ -580,12 +580,13 @@ knowing for review:
   asking the current foreground application for its focus once at
   startup with a focus-now query (`ShellCommand::FocusNow`), since the
   listener thereafter reports foreground changes as facts — no thread of
-  Core's hooks the foreground, the keyboard hook's included; a foreground
-  change reaches the reducer as a focus on the window, which moves its
-  attention, and the listener's report of the window in front
-  (`OutpostMessage::ForegroundWindow`) as `Input::ForegroundWindow`, with
-  Verbatim's own integrity level read once, from which Core decides the
-  keyboard hook's view of the foreground), the reducer thread
+  Core's hooks the foreground, the keyboard hook's included; the
+  listener's report of a window that came to the foreground
+  (`OutpostMessage::Foreground`) reaches the reducer as `Input::Foreground`,
+  with Verbatim's own integrity level read once and whether the window is
+  Verbatim's own process's, from which Core decides the keyboard hook's
+  view of the foreground, attention and its foreground record), the
+  reducer thread
   (`ReducerThread`, described below), the keyboard hook (given
   `key_reports`' callbacks), the control
   server with its

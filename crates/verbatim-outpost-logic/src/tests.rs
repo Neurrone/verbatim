@@ -295,7 +295,7 @@ fn focus_change(id: u64, owes: bool) -> Change {
             timing: EventTiming::default(),
             event: NormalizedEvent::FocusChanged {
                 node: focus.clone(),
-                foreground: false,
+                whole_window: false,
                 ancestors: Vec::new(),
                 selected_child: None,
                 text: None,

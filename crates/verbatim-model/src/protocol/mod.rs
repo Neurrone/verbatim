@@ -627,9 +627,6 @@ pub enum FactKey {
     Alert(isize, i32, i32, u32),
     /// A tooltip shown at this address, raised by this thread.
     Show(isize, i32, i32, u32),
-    /// The window in the foreground, whichever it is: only the newest
-    /// report waits ([`ListenerToCore::ForegroundWindow`]).
-    ForegroundWindow,
 }
 
 /// Messages from verbatim.exe to an outpost.
@@ -1272,17 +1269,35 @@ pub enum ListenerToCore {
         #[serde(default)]
         timing: EventTiming,
     },
-    /// A window came to the system's foreground, for the keyboard hook's
-    /// view of it (architecture section 5). Sent only by the listener, for
-    /// every foreground `WinEvent`, whatever process raised it and whether
-    /// or not its fact is forwarded; once when the listener starts, for the
-    /// window then in front; and again for a console window in front whose
-    /// thread no event had named, once one of its events names it. Only
-    /// the newest waits. The supervisor passes it to the app, which gives
-    /// it to Core.
-    ForegroundWindow {
+    /// A window came to the system's foreground: the only report of one,
+    /// from which Core takes the keyboard hook's view of the foreground
+    /// (architecture section 5), attention and its foreground record. Sent
+    /// only by the listener, for every foreground `WinEvent` whose window
+    /// `GetForegroundWindow` names, Program Manager's, the taskbar's and an
+    /// ignored process's included, whatever process raised it and whether
+    /// or not its fact is forwarded; for one whose window was not in front,
+    /// once a later focus or foreground `WinEvent` finds it there, unless a
+    /// newer foreground event came first; once when the listener starts,
+    /// for the window then in front; and again for a console window in
+    /// front whose thread no event had named, once one of its events names
+    /// it. None replaces another. The supervisor passes it to the app,
+    /// which gives it to Core
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "One foreground
+    /// change, from the listener").
+    Foreground {
         /// The window.
         window: isize,
+        /// The top of its owner chain (`GetAncestor` with `GA_ROOTOWNER`).
+        #[serde(default)]
+        root_owner: isize,
+        /// The process its facts go to: its owner, or for a console window
+        /// whose thread an event named, the console host.
+        #[serde(default)]
+        process: u32,
+        /// When the listener's callback observed the event that sent it,
+        /// in microseconds on the run's shared clock.
+        #[serde(default)]
+        observed_at_us: u64,
         /// The thread that raised its event, the console host's own for a
         /// console window; 0 for a console window whose thread no event
         /// has named yet.
@@ -1651,7 +1666,7 @@ impl ListenerToCore {
             ListenerToCore::IdleAnswer { .. } => Kind::Answer,
             ListenerToCore::Fault { .. }
             | ListenerToCore::MenuOrSwitchEnded { .. }
-            | ListenerToCore::ForegroundWindow { .. } => Kind::Report,
+            | ListenerToCore::Foreground { .. } => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
             | ListenerToCore::ForwardingEnded { .. } => Kind::Lifecycle,
@@ -1672,7 +1687,7 @@ impl ListenerToCore {
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
             ListenerToCore::Ready { .. }
             | ListenerToCore::ForwardingEnded { .. }
-            | ListenerToCore::ForegroundWindow { .. }
+            | ListenerToCore::Foreground { .. }
             | ListenerToCore::Fault { .. }
             | ListenerToCore::IdleAnswer { .. } => {}
         }

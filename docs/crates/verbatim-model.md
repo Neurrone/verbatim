@@ -33,16 +33,21 @@ recorder unchanged. What the reducer does with each type is in
   number, and the facts about an event's window its outpost reads with
   local calls: top-level window, root owner, whether it is topmost,
   whether a `Windows.UI.Core` window is under the input thread's active
-  window, whether it is in the system's foreground window, and its class;
+  window, whether it is in the system's foreground window, that foreground
+  window itself, from the same read, by which Core's title rule decides
+  whether a focus entered the window in front, and its class;
   on a focus change also the application's name as NVDA names an
   application module (`explorer`) and whether Alt was held (`alt_held`).
   The reducer classifies events with these
   (`docs/architecture.md`, section 2, "Attention and acceptance (D14)").
-- `ForegroundWindow` and `HookForeground`: the window the focus listener
-  reported in front (its handle, the thread its event named, whether it is
-  a console host window, its process's integrity level and Verbatim's
-  own), carried in `Input::ForegroundWindow`, and what Core decides from it
-  for the keyboard hook: whether keys may be held back for that window and
+- `ForegroundWindow` and `HookForeground`: a window the focus listener
+  reported came to the foreground (its handle, its root owner, the process
+  its facts go to, when the listener observed it, the thread its event
+  named, whether it is a console host window, whether it is Verbatim's
+  own, its process's integrity level and Verbatim's own), carried in
+  `Input::Foreground`, the only report of one, from which Core takes
+  attention and its foreground record, and what Core decides from it for
+  the keyboard hook: whether keys may be held back for that window and
   which thread's keyboard layout translates its keys (architecture
   section 5).
 - `Backend`: `Uia` or `Msaa`, which client stack sourced a node or event;
@@ -86,8 +91,10 @@ recorder unchanged. What the reducer does with each type is in
 - `NormalizedEvent`, `PropertyChange`, `ProgressReading`, `Notification`,
   `NotificationKind`, `NotificationProcessing`: the events an outpost
   sends.
-  - `FocusChanged`: a full snapshot; `foreground`, set when the focus is a
-    window that just became the system's foreground window; the ancestor
+  - `FocusChanged`: a full snapshot; `whole_window`, set when the node is
+    a top-level window standing for the application's focus in it, no
+    control in it read (an outpost's report of a foreground change into a
+    window it reads through MSAA, and a held UIA application's title); the ancestor
     chain, outermost first, complete to the desktop, which is not in it,
     windows a walk did not reach being plain windows read from Windows'
     own state; a selection container's selected child; for a focus
@@ -141,7 +148,7 @@ recorder unchanged. What the reducer does with each type is in
     `ApplicationNotResponding`, `LockKeyToggled` (a `LockKey` and its
     state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
     `ShellItemUnclickable`, `PreviewSpeech`, `PreviewEarcon`,
-    `MenuOrSwitchEnded`, and `ForegroundWindow`. The text inputs are under
+    `MenuOrSwitchEnded`, and `Foreground`. The text inputs are under
     "The text protocol".
   - Effects are `Speak` (an utterance and the number of the user input
     that caused it, which Core stamps as its last step; every

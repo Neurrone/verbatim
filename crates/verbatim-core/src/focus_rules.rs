@@ -20,13 +20,14 @@
 //! `docs/parity/focus-context.md`.
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, NodeId, Role, StateSet, WindowFacts, WindowHandle};
+use verbatim_model::{Backend, NodeId, Role, StateSet, WindowHandle};
 
 /// How a window stands to the system's foreground window, the facts the
 /// acceptance test ends with (`docs/parity/focus-events.md`, "Event
-/// acceptance"): read before an event is read, and again by an outpost
-/// when it reports the event ([`WindowFacts`]), so the reducer judges a
-/// focus by the same rule after the read.
+/// acceptance"): read by a reader before an event is read, and again by an
+/// outpost when it reports the event ([`WindowFacts`]), for the attendance
+/// of events other than focuses. Core judges a focus by its foreground
+/// record's front instead, made from the focus listener's one report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForegroundRelation {
     /// The window is in the foreground window: it shares the foreground
@@ -42,16 +43,6 @@ pub struct ForegroundRelation {
 }
 
 impl ForegroundRelation {
-    /// The relation an event's window facts record.
-    #[must_use]
-    pub fn of_facts(facts: &WindowFacts) -> Self {
-        Self {
-            in_foreground: facts.in_foreground,
-            topmost: facts.topmost,
-            under_active_window: facts.under_active_window,
-        }
-    }
-
     /// Whether the window is related to the foreground window: in it,
     /// topmost, or a `Windows.UI.Core` window under the active window.
     #[must_use]

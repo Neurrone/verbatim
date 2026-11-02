@@ -52,6 +52,7 @@ fn window() -> WindowFacts {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_window: verbatim_model::WindowHandle(0),
     }
 }
 
@@ -84,7 +85,7 @@ fn line_ancestors() -> Vec<NodeSnapshot> {
 fn focus_on(node: NodeSnapshot) -> NormalizedEvent {
     NormalizedEvent::FocusChanged {
         node,
-        foreground: false,
+        whole_window: false,
         ancestors: line_ancestors(),
         selected_child: None,
         text: None,

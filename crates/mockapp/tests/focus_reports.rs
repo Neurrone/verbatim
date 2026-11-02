@@ -691,7 +691,7 @@ fn focus_without_a_path(
             event:
                 NormalizedEvent::FocusChanged {
                     node,
-                    foreground: false,
+                    whole_window: false,
                     selected_child: None,
                     text: None,
                     earlier: None,

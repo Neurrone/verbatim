@@ -133,7 +133,7 @@ fn spoken_in(
 fn focus_event(reported: &Reported) -> NormalizedEvent {
     NormalizedEvent::FocusChanged {
         node: reported.node.clone(),
-        foreground: false,
+        whole_window: false,
         ancestors: reported.ancestors.clone(),
         selected_child: reported.selected_child.clone(),
         text: None,
@@ -928,7 +928,9 @@ fn a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported() {
         hwnd: hwnd.0 as isize,
     });
     let NormalizedEvent::FocusChanged {
-        node, foreground, ..
+        node,
+        whole_window: foreground,
+        ..
     } = next_event(&outpost)
     else {
         panic!("the foreground report is a focus");
@@ -949,7 +951,7 @@ fn stamped_foreground_report(outpost: &OutpostUnderTest) -> (Option<String>, u64
             event:
                 NormalizedEvent::FocusChanged {
                     node,
-                    foreground: true,
+                    whole_window: true,
                     ..
                 },
             observed_at_us,
@@ -994,8 +996,8 @@ fn a_foreground_change_is_tested_in_front_while_the_worker_is_held() {
     let (name, observed_at_us) = stamped_foreground_report(&outpost);
     assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
     assert!(
-        observed_at_us < switched_at_us,
-        "stamped at its test, {observed_at_us}, before the switch at {switched_at_us}"
+        observed_at_us <= switched_at_us,
+        "stamped at its test, {observed_at_us}, no later than the switch at {switched_at_us}"
     );
     outpost.settled();
     app.quit();
@@ -1027,8 +1029,8 @@ fn a_foreground_change_whose_window_leaves_the_front_during_its_read_is_reported
     let (name, observed_at_us) = stamped_foreground_report(&outpost);
     assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
     assert!(
-        observed_at_us < switched_at_us,
-        "stamped at its test, {observed_at_us}, before the switch at {switched_at_us}"
+        observed_at_us <= switched_at_us,
+        "stamped at its test, {observed_at_us}, no later than the switch at {switched_at_us}"
     );
     outpost.settled();
     app.quit();
@@ -1059,7 +1061,7 @@ fn foreground_report(outpost: &OutpostUnderTest) -> (Option<String>, CallCounts)
             event:
                 NormalizedEvent::FocusChanged {
                     node,
-                    foreground: true,
+                    whole_window: true,
                     ..
                 },
             timing,

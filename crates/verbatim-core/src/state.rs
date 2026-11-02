@@ -75,6 +75,17 @@ pub(crate) struct FocusContext {
     /// when the reading stands in ([`FocusContext::spoken`]).
     #[serde(default)]
     pub(crate) spoken: Option<SpokenRecord>,
+    /// Whether the user has left the focus for another top-level window:
+    /// written only by the focus listener's foreground change into a window
+    /// unrelated to it, observed after every report Core has judged since
+    /// it took the focus, and gone with the next focus taken. A focus left
+    /// and reported again is taken as a focus from another top-level window
+    /// is, so the return from an application that never answered says what
+    /// the same switch with no stall says
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "One foreground
+    /// change, from the listener").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) left: bool,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,

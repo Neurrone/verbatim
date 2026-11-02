@@ -30,8 +30,9 @@ guide maps those behaviors onto the crate's types and modules.
   Windows-specific crates.
   - `ForegroundRelation`: how a window stands to the foreground window (in
     it, topmost, or a `Windows.UI.Core` window under the active window),
-    which an outpost reports in an event's window facts, and which the
-    reducer judges a focus by, `of_facts(facts).related()`.
+    which an outpost reports in an event's window facts, for the
+    attendance of events other than focuses; Core judges a focus by its
+    foreground record's front instead.
   - `RepeatEvidence` and `repeats_focus(evidence)`: a focus repeats the
     held one when it names the element of the focus Core holds and that
     element still has the focus; only Core judges repeats.
@@ -360,11 +361,11 @@ code is in `reduce.rs` unless named.
   text, judges by `already_entered`.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
-  listener last reported (`Input::ForegroundWindow`) and published by the
-  shell after each input: keys may be held only when the window's process
-  integrity is known and no higher than Verbatim's, and a console host's
-  keys are translated with the layout of the thread its event named
-  (architecture section 5).
+  listener last reported (`Input::Foreground`), one of Verbatim's own
+  included, and published by the shell after each input: keys may be held
+  only when the window's process integrity is known and no higher than
+  Verbatim's, and a console host's keys are translated with the layout of
+  the thread its event named (architecture section 5).
 - Rules for particular applications' windows (`applications.rs`; decision
   D6 keeps them in Core until application modules run in the extension
   host). The shell's staging windows are taken as focus silently
@@ -373,44 +374,84 @@ code is in `reduce.rs` unless named.
   reached with Alt held is taken with no containers
   (`applications::drops_ancestry`; "The Alt+Tab switcher's pane").
   `tests/reduce.rs` checks all three.
+- The foreground change (`Input::Foreground`;
+  `docs/design/focus-pipeline-rework-remaining.md`, "One foreground
+  change, from the listener"): the focus listener's report that a window
+  came to the foreground, the only one, applied at one point
+  (`foreground_changed`). It gives the keyboard hook's view and, unless
+  the window is one of Verbatim's own, attention, its process and window,
+  and the record's front, its window, root owner and stamp. When its
+  window is neither the top-level window of Core's focus nor the entered
+  window, its root owner is not that focus's root owner, and it was
+  observed after the ordering stamp, Core's focus is marked left
+  (`FocusContext::left`). It speaks nothing, cuts nothing, sets no
+  ordering stamp, and changes no node, focus group or navigator.
+- A left focus reported again is taken as a focus from another top-level
+  window is: no duplicate, a whole-window focus of its window is not
+  refused, a replacement outpost's report is not taken silently, its line
+  meets the previous line only at the desktop with speech cut, its spoken
+  record comes from its reading, its caret and terminal speech state are
+  forgotten, and the terminal model is blurred and focused anew, so the
+  return from an application that never answered says, and leaves, what
+  the same switch with no stall does (`tests/foreground.rs` compares both
+  the speech and the whole state).
 - Event acceptance (`docs/architecture.md`, section 2, "Attention and
   acceptance (D14)"; `docs/parity/focus-events.md`, "Event acceptance").
-  The state keeps an attention record, the application and window facts
-  of the most recent foreground change. A foreground change is always
-  accepted; another focus is attended when
-  `ForegroundRelation::related` holds for its window facts, or by its
-  application when it has none; any other event when its window facts
-  share the attention window's top-level window or root owner, are
-  topmost, or are related to the foreground. UIA notifications are
-  filtered by the focus's application, except the snap results.
-  Background kinds from elsewhere are spoken queued and never move focus
-  or the navigator; everything else from elsewhere is dropped. With no
-  attention yet, everything is accepted.
+  The state keeps an attention record, the application and window of the
+  newest foreground change the listener reported. A focus with window
+  facts, a whole-window focus among them, is judged against the record's
+  front: dropped when the front was observed after it and is a window it
+  is unrelated to (neither its top-level window nor its root owner is the
+  front's window or the front's root owner), attended otherwise; a focus
+  with no window facts by its application. Any other event is attended
+  when its window facts share the attention window's top-level window or
+  root owner, are topmost, or are related to the foreground, or, with no
+  window facts, when it comes from attention's application or from that
+  of Core's focus while that focus is in the attention window, as a
+  Settings page's content is in `ApplicationFrameHost`'s frame. UIA
+  notifications are filtered by the focus's application, except the snap
+  results. Background kinds from elsewhere are spoken queued and never
+  move focus or the navigator; everything else from elsewhere is dropped.
+  With no attention yet, everything is accepted.
 - Windows (`docs/parity/focus-context.md`, "Window announcement on
-  switching applications"). A foreground change is a focus on the window,
-  ignored when its top-level window handle equals the current focus's
-  (handles, since node ids differ between outposts); a nameless one moves
-  focus and attention silently.
+  switching applications"). A whole-window focus (`whole_window`), an
+  outpost's report of a foreground change into a window it reads through
+  MSAA or a held UIA application's title, makes its window the foreground
+  object and is refused when Core's focus is in its top-level window and
+  not left (handles, since node ids differ between outposts); a nameless
+  one is taken silently. It never moves attention. The title rule
+  (`enter_window`, `window_title`): a focus Core takes whose top-level
+  window is the foreground window it was published with
+  (`WindowFacts::foreground_window`), when that window is not the entered
+  window or Core's focus was left, enters it, making its chain's
+  outermost entry the foreground object, and says the window's own entry,
+  the outermost with its handle, with a whole-window focus's words, after
+  the cut and before the other entered containers, unless its line
+  already speaks it or it has no name. A whole-window focus taken enters
+  its window too, so the focus after it says nothing more; a focus in a
+  popup changes nothing.
 - The foreground record (`foreground.rs`): one `Foreground` with private
   fields, written only by `apply` with one `ForegroundFact` per writer
-  (`Reported`, `Unreported`, `Object`, `LineCut`, `Window`, `Observed`,
-  `Applied`) and read through accessors. It holds the attention record,
-  the foreground object, the time of the newest foreground change, the
-  listener's foreground window, and two stamps: the ordering stamp
-  (`latest_focus`), written for every attended focus observation, taken,
-  a duplicate or a refused foreground report, which the stale rule reads;
-  and the applied stamp, written only for a focus taken, which a menu's
-  end reads. `SrState` flattens it into the keys it held before, and a
-  dump without the applied stamp takes the ordering stamp for it.
+  (`Changed`, `Object`, `Entered`, `LineCut`, `Observed`, `Applied`) and
+  read through accessors. It holds the attention record, the front, the
+  entered window, the foreground object, the time of the newest
+  foreground change, the listener's foreground window for the hook, and
+  two stamps: the ordering stamp (`latest_focus`), written for every
+  attended focus observation, taken, a duplicate or a refused
+  whole-window focus, which the stale rule and the left mark read; and the
+  applied stamp, written only for a focus taken, which a menu's end
+  reads. `SrState` flattens it into the keys it held before, and a dump
+  without the applied stamp takes the ordering stamp for it.
 - Repeats and staleness (`docs/parity/focus-events.md`, "Duplicate focus
   suppression" and "Stale focus events"). A focus is judged in this
   order: an older entry of a focus group whose newer report Core took is
   dropped (`FocusGroup`, keyed by the report's outpost generation and the
   group's number); an application's rule; the stale rule, which drops a
   focus from another outpost generation observed before the ordering
-  stamp (`observed_at_us`, a tie being no earlier); the foreground test
+  stamp (`observed_at_us`, a tie being no earlier); the front test
   (`classify`); then the ordering stamp is written, and a focus that
-  `repeats_focus` judges a repeat is dropped, its newer reading kept
+  `repeats_focus` judges a repeat, unless Core's focus was left, is
+  dropped, its newer reading kept
   unspoken; what Core last spoke of the focus is left as it was, so a
   change the repeat carried in is spoken when its event comes.
 - Background speech across a foreground change
@@ -525,8 +566,7 @@ since NVDA starts that timer when the key is pressed, outside its script
 queue. `MenuOrSwitchEnded` asks for the
 foreground application's focus (`Effect::ReadForegroundFocus`, NVDA's
 fake focus) unless a focus observed since has been applied
-(`docs/parity/backends.md`). `ForegroundWindow` says nothing; it is kept
-for `hook_foreground`. `tests/shell.rs` checks each rule.
+(`docs/parity/backends.md`). `tests/shell.rs` checks each rule.
 
 ## Text
 

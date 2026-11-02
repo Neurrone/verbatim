@@ -100,7 +100,7 @@ fn focus_event(node: NodeSnapshot, ancestors: Vec<NodeSnapshot>) -> Input {
         window: None,
         event: NormalizedEvent::FocusChanged {
             node,
-            foreground: false,
+            whole_window: false,
             ancestors,
             selected_child: None,
             text: None,

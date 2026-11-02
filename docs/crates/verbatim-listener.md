@@ -345,16 +345,26 @@ section 6.3).
 - A menu's or the Alt+Tab switcher's end goes to Core (`MenuOrSwitchEnded`)
   once its 50 ms grace passes with no later end, from a threadpool timer
   that a later end sets again; a callback that runs early sends nothing.
-- For every foreground event, whatever its process, the listener sends
-  `ForegroundWindow` (window, the event's thread, whether a console host
-  window, integrity level by `verbatim_win32::integrity::process_integrity`;
-  `verbatim_win32::integrity::own_integrity` is verbatim.exe's), only the newest waiting
-  (`FactKey::ForegroundWindow`), and once its hooks are in, the window then
-  in front (`NUDGE_FOREGROUND_START`). The console's events stay unhooked
+- For every foreground event whose window `GetForegroundWindow` names on
+  the `WinEvent` thread, whatever its process, Program Manager's and the
+  taskbar's included, the listener sends `Foreground` (window, its root
+  owner by `GetAncestor` with `GA_ROOTOWNER`, the process its facts go to,
+  the console host's for a console window whose thread an event named,
+  when the callback observed the event, the event's thread, whether a
+  console host window, integrity level by
+  `verbatim_win32::integrity::process_integrity`;
+  `verbatim_win32::integrity::own_integrity` is verbatim.exe's), none
+  replacing another, and once its hooks are in, the window then in front
+  (`NUDGE_FOREGROUND_START`). An event whose window is not in front is
+  kept as the watch's pending window and sent with the observation of a
+  later focus or foreground event that finds it in front, unless a newer
+  foreground event replaces it (`foreground::ForegroundWatch`;
+  `docs/design/focus-pipeline-rework-remaining.md`, "One foreground
+  change, from the listener"). It is the only report that a window came to
+  the foreground. The console's events stay unhooked
   (`verbatim_ia2::suspend_kinds`) unless it starts with a console window in
-  front, until one of that window's events names its thread
-  (`foreground::ForegroundWatch`). The app receives it as
-  `OutpostMessage::ForegroundWindow` (a `ForegroundReport`).
+  front, until one of that window's events names its thread. The app
+  receives it as `OutpostMessage::Foreground` (a `ForegroundReport`).
 - It handles `Ping`, `HookInstalled`, `HookRemoved` (which also ends the
   application's reading thread and its override), `SetBackendOverride`
   with a `pid` (an override forcing UIA, after which that application's

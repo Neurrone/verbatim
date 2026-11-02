@@ -49,7 +49,7 @@ fn focus(state: &mut SrState, snapshot: NodeSnapshot) {
         state,
         &event(NormalizedEvent::FocusChanged {
             node: snapshot,
-            foreground: false,
+            whole_window: false,
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
@@ -3128,7 +3128,7 @@ fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
                 value: Some("gamma\n".to_owned()),
                 ..node(5, Role::Document, StateSet::new())
             },
-            foreground: false,
+            whole_window: false,
             ancestors: Vec::new(),
             selected_child: None,
             text: Some(Box::new(caret_at_anchor(200))),
@@ -3159,7 +3159,7 @@ fn focus_with_value(
         state,
         &event(NormalizedEvent::FocusChanged {
             node: snapshot,
-            foreground: false,
+            whole_window: false,
             ancestors: Vec::new(),
             selected_child: None,
             text: Some(Box::new(text)),
@@ -3256,7 +3256,7 @@ fn a_focused_field_with_text_selected_says_the_selection() {
                 value: Some("alpha\rdelta epsilon\r".to_owned()),
                 ..node(5, Role::Document, StateSet::new())
             },
-            foreground: false,
+            whole_window: false,
             ancestors: Vec::new(),
             selected_child: None,
             text: Some(Box::new(caret_read(

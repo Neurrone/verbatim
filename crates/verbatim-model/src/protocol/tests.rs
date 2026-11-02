@@ -134,13 +134,16 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             ended_at_us: 1,
             timing: timing(),
         },
-        ListenerToCore::MenuOrSwitchEnded { .. } => ListenerToCore::ForegroundWindow {
+        ListenerToCore::MenuOrSwitchEnded { .. } => ListenerToCore::Foreground {
             window: 1,
+            root_owner: 1,
+            process: 2,
+            observed_at_us: 1,
             thread: 1,
             console: false,
             integrity: None,
         },
-        ListenerToCore::ForegroundWindow { .. } => ListenerToCore::Pong {
+        ListenerToCore::Foreground { .. } => ListenerToCore::Pong {
             seq: 1,
             parked_count: 0,
             written_at_us: 0,
@@ -231,7 +234,7 @@ fn every_variant_has_its_reviewed_kind() {
             "FocusFact: Routed",
             "ForwardingEnded: Lifecycle",
             "MenuOrSwitchEnded: Report",
-            "ForegroundWindow: Report",
+            "Foreground: Report",
             "Pong: Lifecycle",
             "Fault: Report",
             "IdleAnswer: Answer",
@@ -325,7 +328,7 @@ fn a_message_names_its_nodes_and_its_texts_anchors() {
         application: None,
         event: NormalizedEvent::FocusChanged {
             node: snapshot(1),
-            foreground: false,
+            whole_window: false,
             ancestors: vec![snapshot(2)],
             selected_child: Some(snapshot(3)),
             text: Some(Box::new(FocusText::Caret {
@@ -383,7 +386,7 @@ fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
         application: None,
         event: NormalizedEvent::FocusChanged {
             node: snapshot(1),
-            foreground: false,
+            whole_window: false,
             ancestors: vec![snapshot(2)],
             selected_child: Some(snapshot(3)),
             text: None,

@@ -98,7 +98,7 @@ pub(super) enum OwnerEvent {
     /// closed.
     MenuOrSwitchEnded { ended_at_us: u64 },
     /// Read from the listener's pipe: a window came to the foreground.
-    ForegroundWindow(crate::ForegroundReport),
+    Foreground(crate::ForegroundReport),
     /// Read from a child's pipe: the child sent `Ready`.
     Ready(OutpostId),
     /// Read from a child's pipe: the child answered a ping.
@@ -728,13 +728,19 @@ impl Owner {
                 );
                 OwnerEvent::MenuOrSwitchEnded { ended_at_us }
             }
-            ListenerToCore::ForegroundWindow {
+            ListenerToCore::Foreground {
                 window,
+                root_owner,
+                process,
+                observed_at_us,
                 thread,
                 console,
                 integrity,
-            } => OwnerEvent::ForegroundWindow(crate::ForegroundReport {
+            } => OwnerEvent::Foreground(crate::ForegroundReport {
                 window,
+                root_owner,
+                process,
+                observed_at_us,
                 thread,
                 console,
                 integrity,
@@ -799,8 +805,8 @@ impl Owner {
                 self.outbox
                     .send(OutpostMessage::MenuOrSwitchEnded { ended_at_us });
             }
-            OwnerEvent::ForegroundWindow(report) => {
-                self.outbox.send(OutpostMessage::ForegroundWindow(report));
+            OwnerEvent::Foreground(report) => {
+                self.outbox.send(OutpostMessage::Foreground(report));
             }
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
             OwnerEvent::Pong { outpost, abandoned } => {

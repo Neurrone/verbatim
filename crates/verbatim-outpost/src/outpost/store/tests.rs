@@ -42,7 +42,7 @@ fn focus(nodes: &[NodeId]) -> OutpostToCore {
         timing: EventTiming::default(),
         event: NormalizedEvent::FocusChanged {
             node: snapshot(nodes[0]),
-            foreground: false,
+            whole_window: false,
             ancestors: nodes[1..].iter().copied().map(snapshot).collect(),
             selected_child: None,
             text: None,

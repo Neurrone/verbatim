@@ -267,12 +267,19 @@ pub fn refuse_shutdown_wake() -> verbatim_faults::Guard {
     )
 }
 
-/// The window in the foreground as the focus listener reported it
-/// ([`verbatim_model::protocol::ListenerToCore::ForegroundWindow`]).
+/// A window that came to the foreground, as the focus listener reported it
+/// ([`verbatim_model::protocol::ListenerToCore::Foreground`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForegroundReport {
     /// The window.
     pub window: isize,
+    /// The top of its owner chain.
+    pub root_owner: isize,
+    /// The process its facts go to.
+    pub process: u32,
+    /// When the listener observed it, in microseconds on the run's shared
+    /// clock.
+    pub observed_at_us: u64,
     /// The thread that raised its event, the console host's own for a
     /// console window; 0 for a console window whose thread no event has
     /// named yet.
@@ -369,8 +376,9 @@ pub enum OutpostMessage {
     },
     /// A window came to the system's foreground, as the focus listener
     /// learned it: the app gives it to Core, which decides the keyboard
-    /// hook's view of the foreground (architecture section 5).
-    ForegroundWindow(ForegroundReport),
+    /// hook's view of the foreground (architecture section 5), attention
+    /// and its foreground record.
+    Foreground(ForegroundReport),
     /// An outpost generation ended. Its node ids are dead from now on.
     Ended {
         /// The generation that ended.

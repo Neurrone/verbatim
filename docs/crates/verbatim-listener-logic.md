@@ -55,11 +55,16 @@ Public API:
   shutdown's. A foreground event only moves applications away for menu
   currentness. `GraceState::step` is the menu end's grace, which the
   listener's threadpool timer and its callers drive.
-- `foreground` — what the listener learns of the window in the foreground
-  for the keyboard hook: `ForegroundWatch` takes the window in front at
-  the start (`start`), each foreground event (`foreground`) and each
-  console event (`console_event`), and answers a `Step`: what to report,
-  and whether to hook or unhook the console's events.
+- `foreground` — what the listener learns of each window that came to
+  the foreground, for Core: `ForegroundWatch` takes the window in front at
+  the start (`start`), each foreground event with whether its window was
+  in front as it was handled (`foreground`), a focus event while a window
+  not in front waits (`event_seen`, with `has_pending`), and each console
+  event (`console_event`), and answers a `Step`: the window to report, with
+  when it was observed, and whether to hook or unhook the console's
+  events. A window not in front at its event is kept, replacing any kept
+  before, until a later event finds it in front or a newer foreground
+  event replaces it; none sent replaces another.
 
 `cargo xtask ci` reads `schedule.rs` by the pure rule
 (`xtask/src/ownership.rs`).

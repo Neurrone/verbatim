@@ -55,7 +55,7 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
         backend: Backend::Uia,
         window: None,
         event: NormalizedEvent::FocusChanged {
-            foreground: false,
+            whole_window: false,
             node: snapshot,
             ancestors: Vec::new(),
             selected_child: None,
@@ -78,6 +78,7 @@ fn window(handle: u64) -> WindowFacts {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_window: WindowHandle(0),
     }
 }
 
@@ -86,6 +87,7 @@ fn window(handle: u64) -> WindowFacts {
 fn foreground_window(handle: u64) -> WindowFacts {
     WindowFacts {
         in_foreground: true,
+        foreground_window: WindowHandle(handle),
         ..window(handle)
     }
 }
@@ -114,7 +116,7 @@ fn focus_in(
         Some(facts),
         NormalizedEvent::FocusChanged {
             node: snapshot,
-            foreground: false,
+            whole_window: false,
             ancestors,
             selected_child: None,
             text: None,
@@ -138,7 +140,7 @@ fn focus_in_after(
         Some(facts),
         NormalizedEvent::FocusChanged {
             node: snapshot,
-            foreground: false,
+            whole_window: false,
             ancestors,
             selected_child: None,
             text: None,
@@ -159,7 +161,7 @@ fn foreground_in(source: Pid, facts: WindowFacts, mut snapshot: NodeSnapshot) ->
         Some(facts),
         NormalizedEvent::FocusChanged {
             node: snapshot,
-            foreground: true,
+            whole_window: true,
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
@@ -200,13 +202,33 @@ fn a_focus_read_on_request_is_ordered_by_its_read_time() {
     );
 }
 
-/// Switches to application `source`: a foreground change to a window of its
-/// own, so attention moves there as it does when the user switches
-/// applications.
+/// The focus listener's report that window `handle` of application
+/// `source`, its own root owner, came to the foreground, observed at
+/// `observed_at_us`.
+fn change_to(source: Pid, handle: u64, observed_at_us: u64) -> Input {
+    Input::Foreground(verbatim_model::ForegroundWindow {
+        window: WindowHandle(handle),
+        root_owner: WindowHandle(handle),
+        process: source,
+        observed_at_us,
+        own: false,
+        thread: 0,
+        console: false,
+        integrity: None,
+        own_integrity: None,
+    })
+}
+
+/// Switches to application `source`: the focus listener's foreground
+/// change to a window of its own, which moves attention there, and the
+/// outpost's whole-window focus of it, as the user switching applications
+/// brings them, with no observation times.
 fn switch_to(state: &SrState, source: Pid) -> SrState {
     let handle = u64::from(source.0) * 1000;
+    let (state, effects) = reduce(state, &change_to(source, handle, 0));
+    assert_eq!(effects, [], "a foreground change says nothing");
     let window_node = node(handle, Role::Window, Some("App"), None, StateSet::new());
-    reduce(state, &foreground_in(source, window(handle), window_node)).0
+    reduce(&state, &foreground_in(source, window(handle), window_node)).0
 }
 
 /// One effect as these tests compare it. Every effect the reducer returns
@@ -721,7 +743,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
             None,
             NormalizedEvent::FocusChanged {
                 node: button,
-                foreground: false,
+                whole_window: false,
                 ancestors: vec![header],
                 selected_child: None,
                 text: None,
@@ -1350,7 +1372,7 @@ fn sample_script() -> Vec<Input> {
             backend: Backend::Uia,
             window: None,
             event: NormalizedEvent::FocusChanged {
-                foreground: false,
+                whole_window: false,
                 node: checkbox,
                 ancestors: Vec::new(),
                 selected_child: None,
@@ -1469,7 +1491,7 @@ fn focus_event_with_ancestors(
         backend: Backend::Uia,
         window: None,
         event: NormalizedEvent::FocusChanged {
-            foreground: false,
+            whole_window: false,
             node: snapshot,
             ancestors,
             selected_child: None,
@@ -1988,7 +2010,7 @@ fn focus_event_with_selection(
         backend: Backend::Uia,
         window: None,
         event: NormalizedEvent::FocusChanged {
-            foreground: false,
+            whole_window: false,
             node: snapshot,
             ancestors: Vec::new(),
             selected_child,
@@ -3363,7 +3385,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
         window: Some(facts.clone()),
         event: NormalizedEvent::FocusChanged {
             node: client.clone(),
-            foreground: true,
+            whole_window: true,
             ancestors: vec![],
             selected_child: None,
             text: None,
@@ -4500,31 +4522,36 @@ fn a_container_entered_before_a_menu_is_cut_off_by_it() {
 
 // ---- Attention (decision D14) ----
 
-#[test]
-fn a_focus_from_a_window_outside_attention_is_dropped() {
-    let state = switch_to(&SrState::new(), Pid(1));
-    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
-
-    let (state, effects) = reduce(&state, &focus_in(Pid(2), window(20), button, vec![]));
-
-    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
-    assert_eq!(state.attention(), Some(Pid(1)));
-    assert_eq!(state.focused().map(|(pid, _)| pid), Some(Pid(1)));
+/// `event` observed at `observed_at_us`.
+fn observed(mut event: Input, observed_at_us: u64) -> Input {
+    if let Input::Event {
+        observed_at_us: at, ..
+    } = &mut event
+    {
+        *at = observed_at_us;
+    }
+    event
 }
 
 #[test]
-fn a_focus_read_after_its_window_lost_the_foreground_is_dropped() {
-    // The desktop holds attention; Notepad has become the foreground, but
-    // its report has not reached Core yet when a desktop focus, read after
-    // the change, arrives. NVDA judges a focus against the real foreground
-    // window, so it is dropped although the attention record still names
-    // the desktop's window (D14, amended 2026-10-05).
-    let source = Pid(1);
+fn a_focus_observed_before_a_switch_to_an_unrelated_window_is_dropped() {
+    // The desktop holds attention; the user switches to Notepad, and a
+    // desktop focus observed before the switch reaches Core after the
+    // listener's foreground change: the front, Notepad's window, was
+    // observed after it and is unrelated to it, so it is dropped, as NVDA,
+    // testing when it handles the event, drops it (`docs/parity/focus-events.md`,
+    // "Event acceptance").
     let desktop = window_node(1, Backend::Uia, Role::Pane, "Program Manager", 10);
+    let (state, _) = reduce(&SrState::new(), &change_to(Pid(1), 10, 100));
     let (state, _) = reduce(
-        &SrState::new(),
-        &foreground_in(source, foreground_window(10), desktop.clone()),
+        &state,
+        &observed(
+            foreground_in(Pid(1), foreground_window(10), desktop.clone()),
+            150,
+        ),
     );
+    let (state, effects) = reduce(&state, &change_to(Pid(2), 20, 1_000));
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
     let item = node(
         2,
         Role::ListItem,
@@ -4532,26 +4559,61 @@ fn a_focus_read_after_its_window_lost_the_foreground_is_dropped() {
         None,
         StateSet::new(),
     );
-
     let (state, effects) = reduce(
         &state,
-        &focus_in(source, window(10), item.clone(), vec![desktop.clone()]),
+        &observed(
+            focus_in(Pid(1), foreground_window(10), item, vec![desktop]),
+            900,
+        ),
     );
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
-    assert_eq!(state.attention(), Some(source));
+    assert_eq!(state.attention(), Some(Pid(2)));
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id.number()),
+        Some(1),
+        "the desktop's window stays the focus"
+    );
 
-    let (_, effects) = reduce(
+    // Notepad's own focus, observed after the switch, is taken.
+    let edit = node(3, Role::EditableText, Some("Text"), None, StateSet::new());
+    let (state, _) = reduce(
         &state,
-        &focus_in(source, foreground_window(10), item, vec![desktop]),
+        &observed(focus_in(Pid(2), foreground_window(20), edit, vec![]), 1_100),
+    );
+    assert_eq!(state.focused().map(|(pid, _)| pid), Some(Pid(2)));
+}
+
+#[test]
+fn a_focus_of_a_form_observed_before_its_owned_dialog_came_in_front_is_taken() {
+    // A focus in form M observed before its owned dialog D came in front
+    // reaches Core after D's foreground change: it is related to D through
+    // D's root owner, M, and taken, as NVDA takes it.
+    let (state, _) = reduce(&SrState::new(), &change_to(Pid(1), 30, 100));
+    let dialog = Input::Foreground(verbatim_model::ForegroundWindow {
+        window: WindowHandle(31),
+        root_owner: WindowHandle(30),
+        process: Pid(1),
+        observed_at_us: 600,
+        own: false,
+        thread: 0,
+        console: false,
+        integrity: None,
+        own_integrity: None,
+    });
+    let (state, _) = reduce(&state, &dialog);
+    let button = node(2, Role::Button, Some("Open"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed(focus_in(Pid(1), window(30), button, vec![]), 500),
     );
     assert_eq!(
         heard(&effects),
         focus_heard(
-            focus_now(OutpostId(1), 2, &[1], Some((OutpostId(1), 1))),
-            vec![vec![UtteranceSegment::label("Recycle Bin")]]
-        ),
-        "read while its window was the foreground"
+            focus_now(OutpostId(1), 2, &[], None),
+            vec![vec![UtteranceSegment::label("Open"), role(Role::Button)]]
+        )
     );
+    assert_eq!(state.focused().map(|(_, node)| node.id.number()), Some(2));
 }
 
 #[test]
@@ -4565,6 +4627,7 @@ fn topmost_shared_owner_and_active_uwp_windows_are_attended() {
         // reads it as in the foreground.
         WindowFacts {
             root_owner: WindowHandle(1000),
+            foreground_window: WindowHandle(1000),
             ..foreground_window(30)
         },
         WindowFacts {
@@ -4619,11 +4682,27 @@ fn without_window_facts_the_application_decides() {
 }
 
 #[test]
-fn a_foreground_change_is_always_accepted_and_moves_attention() {
+fn a_foreground_change_moves_attention_and_says_nothing() {
     let state = switch_to(&SrState::new(), Pid(1));
-    let other = node(2, Role::Window, Some("Calculator"), None, StateSet::new());
+    let (state, effects) = reduce(&state, &change_to(Pid(2), 20, 1_000));
+    assert_eq!(
+        effects,
+        [] as [verbatim_model::Effect; 0],
+        "nothing is said"
+    );
+    assert_eq!(state.attention(), Some(Pid(2)));
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id.number()),
+        Some(1000),
+        "the focus is unchanged"
+    );
 
-    let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), other));
+    // The outpost's whole-window focus of the window is spoken.
+    let other = node(2, Role::Window, Some("Calculator"), None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed(foreground_in(Pid(2), window(20), other), 1_000),
+    );
     assert_eq!(
         heard(&effects),
         vec![
@@ -4635,11 +4714,14 @@ fn a_foreground_change_is_always_accepted_and_moves_attention() {
             ]),
         ]
     );
-    assert_eq!(state.attention(), Some(Pid(2)));
 
-    // The previous application is now in the background.
+    // The previous application's focus observed before the switch is now
+    // dropped.
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
-    let (_, effects) = reduce(&state, &focus_in(Pid(1), window(1000), button, vec![]));
+    let (_, effects) = reduce(
+        &state,
+        &observed(focus_in(Pid(1), window(1000), button, vec![]), 900),
+    );
     assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
 }
 
@@ -5018,10 +5100,11 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
 }
 
 #[test]
-fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_fact() {
+fn a_focus_in_the_window_in_front_does_not_move_attention() {
     // Windows raised the new window's foreground event while refusing it the
-    // foreground, so that fact was dropped; when it got the foreground later
-    // no second event came. Its focus says it is in the foreground window.
+    // foreground, and raised none when it got the foreground later, so the
+    // listener sent no foreground change. Its focus is spoken, but only a
+    // foreground change moves attention (D14): a stated limit.
     let state = switch_to(&SrState::new(), Pid(1));
     let item = node(
         2,
@@ -5030,10 +5113,7 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
         None,
         StateSet::new(),
     );
-    let facts = WindowFacts {
-        in_foreground: true,
-        ..window(30)
-    };
+    let facts = foreground_window(30);
     // The window, unnamed, which both focuses are in.
     let frame = window_node(4, Backend::Uia, Role::Window, "", 30);
 
@@ -5048,7 +5128,7 @@ fn a_focus_in_the_system_foreground_window_moves_attention_without_a_foreground_
         ],
         "the focus is spoken, cutting off speech for the window left"
     );
-    assert_eq!(state.attention(), Some(Pid(2)), "attention follows it");
+    assert_eq!(state.attention(), Some(Pid(1)), "attention stays");
     let button = node(3, Role::Button, Some("OK"), None, StateSet::new());
     let (_, effects) = reduce(
         &state,
@@ -5173,8 +5253,8 @@ fn a_focus_entering_another_top_level_window_speaks_its_entered_ancestors_outerm
     );
     assert_eq!(
         state.attention(),
-        Some(Pid(2)),
-        "attention follows the focus"
+        Some(Pid(1)),
+        "attention moves only on a foreground change"
     );
 }
 
@@ -5259,10 +5339,11 @@ fn focus_returning_from_a_topmost_popup_is_still_attended() {
 }
 
 #[test]
-fn a_nameless_foreground_window_moves_attention_silently() {
+fn a_nameless_whole_window_focus_becomes_the_focus_silently() {
     let state = switch_to(&SrState::new(), Pid(1));
     let nameless = node(5, Role::Window, None, None, StateSet::new());
 
+    let (state, _) = reduce(&state, &change_to(Pid(2), 20, 0));
     let (state, effects) = reduce(&state, &foreground_in(Pid(2), window(20), nameless));
     assert_eq!(
         heard(&effects),
@@ -5302,7 +5383,7 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
         None,
         NormalizedEvent::FocusChanged {
             node: list,
-            foreground: false,
+            whole_window: false,
             ancestors: vec![pane],
             selected_child: Some(item),
             text: None,
@@ -6777,7 +6858,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
         backend: snapshot.backend,
         window: None,
         event: NormalizedEvent::FocusChanged {
-            foreground: false,
+            whole_window: false,
             node: snapshot,
             ancestors,
             selected_child: None,

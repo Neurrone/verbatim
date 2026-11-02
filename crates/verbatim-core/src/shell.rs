@@ -3,8 +3,7 @@
 //! sounds, the error sound, an application that stopped responding, a lock
 //! key's new state, the time and date, the clipboard's result, a shell
 //! item that has gone, the theme page's previews, and the fake focus after
-//! a menu or the Alt+Tab switcher closes; and the window in the foreground,
-//! from which Core decides what the keyboard hook reads of it. The shell
+//! a menu or the Alt+Tab switcher closes. The shell
 //! reads each fact (a key's state, the clock, the clipboard) and the
 //! reducer decides what is said and how, so all speech is ordered,
 //! cancellable and recorded in one place. The scripts of the gestures that
@@ -58,14 +57,6 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
         Input::MenuOrSwitchEnded { ended_at_us } => menu_or_switch_ended(state, *ended_at_us),
-        Input::ForegroundWindow(foreground) => {
-            // Decided into the keyboard hook's view of the foreground
-            // (`SrState::hook_foreground`); nothing is said.
-            state
-                .foreground
-                .apply(crate::foreground::ForegroundFact::Window(*foreground));
-            Vec::new()
-        }
         _ => Vec::new(),
     }
 }

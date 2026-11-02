@@ -1020,7 +1020,7 @@ impl OutpostUnderTest {
                 event:
                     NormalizedEvent::FocusChanged {
                         node,
-                        foreground,
+                        whole_window: foreground,
                         ancestors,
                         ..
                     },
@@ -1379,7 +1379,7 @@ impl OutpostUnderTest {
                 event:
                     NormalizedEvent::FocusChanged {
                         node,
-                        foreground: false,
+                        whole_window: false,
                         ancestors,
                         selected_child,
                         text,

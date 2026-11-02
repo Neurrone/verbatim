@@ -610,6 +610,7 @@ mod tests {
             class: "ConsoleWindowClass".to_owned(),
             application: "pwsh".to_owned(),
             alt_held: false,
+            foreground_window: verbatim_model::WindowHandle(0),
         }
     }
 

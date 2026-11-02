@@ -34,6 +34,16 @@ impl std::fmt::Display for Pid {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WindowHandle(pub u64);
 
+/// No window, the default of a window handle a message left out.
+fn no_window() -> WindowHandle {
+    WindowHandle(0)
+}
+
+/// No process, the default of a process a message left out.
+fn no_process() -> Pid {
+    Pid(0)
+}
+
 /// Facts about the window an event concerns, read by its outpost with local
 /// calls when the event is observed. The reducer classifies every event
 /// against its attention record with these (decision D14;
@@ -61,6 +71,15 @@ pub struct WindowFacts {
     /// learns the foreground moved without a foreground fact.
     #[serde(default)]
     pub in_foreground: bool,
+    /// The system's foreground window when the event was read, from the
+    /// same `GetForegroundWindow` as `in_foreground`, so no call is added:
+    /// a fact of this report, by which Core decides whether the focus has
+    /// entered the window in front (`docs/parity/focus-context.md`,
+    /// "Window announcement on switching applications"). It is never the
+    /// foreground record, which only the focus listener's foreground
+    /// change sets.
+    #[serde(default = "no_window")]
+    pub foreground_window: WindowHandle,
     /// The class of the event's own window, which Core's rules for an
     /// application's windows match, as NVDA's app modules match a window's
     /// class (decision D6). Only a focus change, the one event those rules
@@ -89,13 +108,37 @@ pub struct WindowFacts {
 }
 
 /// The window that came to the system's foreground, as the focus listener
-/// learned it from the foreground `WinEvent`, or from its own local reads
-/// when it starts (architecture section 5): what Core needs to decide how
-/// the keyboard hook treats the keys that go to it ([`HookForeground`]).
+/// learned it from the foreground `WinEvent`, once its window was in front,
+/// or from its own local reads when it starts (architecture section 5): the
+/// only report that a window came to the foreground, from which Core
+/// decides how the keyboard hook treats the keys that go to it
+/// ([`HookForeground`]), where the user's attention is, and its foreground
+/// record (`docs/design/focus-pipeline-rework-remaining.md`, "One
+/// foreground change, from the listener").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForegroundWindow {
     /// The window.
     pub window: WindowHandle,
+    /// The top of the window's owner chain (`GetAncestor` with
+    /// `GA_ROOTOWNER`), by which an owned dialog, a popup or a progress
+    /// window is related to the window it belongs to.
+    #[serde(default = "no_window")]
+    pub root_owner: WindowHandle,
+    /// The process its facts go to: the window's owner, or for a console
+    /// window the console host, once one of its events has named its
+    /// thread.
+    #[serde(default = "no_process")]
+    pub process: Pid,
+    /// When the listener's callback observed the event, in microseconds on
+    /// the run's shared clock, which orders it with every outpost's
+    /// reports; 0 when not known.
+    #[serde(default)]
+    pub observed_at_us: u64,
+    /// Whether the window is Verbatim's own process's, its hidden frame or
+    /// one of its windows, which Core takes for the keyboard hook alone.
+    /// Set by Verbatim's process, as `own_integrity` is.
+    #[serde(default)]
+    pub own: bool,
     /// The thread that raised the window's event, which for a console host
     /// window is the console host's own thread; 0 when no event has named
     /// it yet.
@@ -219,14 +262,19 @@ pub enum NormalizedEvent {
     FocusChanged {
         /// Snapshot of the newly focused node.
         node: NodeSnapshot,
-        /// Whether this focus is a foreground change: the window became the
-        /// system's foreground window, and `node` is that window. Following
-        /// NVDA, a foreground change is a focus on the window; the reducer
-        /// always accepts it and ignores it when focus is already inside
-        /// that window (`docs/parity/focus-context.md`, "Window announcement on switching
-        /// applications").
+        /// Whether this is a whole-window focus: `node` is a top-level
+        /// window standing for the application's focus in it, no control in
+        /// it read, as an outpost reports a foreground change into a window
+        /// it reads through MSAA, following NVDA, whose foreground event
+        /// is a focus on the window, and the held UIA application's title.
+        /// Core cannot tell one from its node, since an MSAA focus on a
+        /// window's client object reads as the same node; it judges it by
+        /// its foreground record, never moves attention for it, and
+        /// refuses it when its focus is in that window and not left
+        /// (`docs/design/focus-pipeline-rework-remaining.md`, "The
+        /// whole-window focus").
         #[serde(default)]
-        foreground: bool,
+        whole_window: bool,
         /// The focused node's ancestors, outermost first, complete to the
         /// desktop, which is not one of them: walked by the outpost before
         /// emitting, and where a walk was cut by its bound, failed or met a
@@ -929,9 +977,11 @@ pub enum Input {
         at_ms: u64,
     },
     /// A window came to the foreground, as the focus listener tells it
-    /// (architecture section 5): Core decides from it what the keyboard
-    /// hook reads of the foreground ([`HookForeground`]).
-    ForegroundWindow(ForegroundWindow),
+    /// (architecture section 5), the only report of one: Core decides from
+    /// it what the keyboard hook reads of the foreground
+    /// ([`HookForeground`]), moves attention, and keeps its foreground
+    /// record.
+    Foreground(ForegroundWindow),
 }
 
 /// What a [`Input::Script`] runs.

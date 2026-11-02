@@ -52,7 +52,7 @@ fn scripted_inputs() -> Vec<Input> {
             backend: Backend::Uia,
             window: None,
             event: NormalizedEvent::FocusChanged {
-                foreground: false,
+                whole_window: false,
                 node: slider,
                 ancestors: Vec::new(),
                 selected_child: None,

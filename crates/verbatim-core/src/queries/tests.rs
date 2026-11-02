@@ -79,7 +79,7 @@ fn focus(
         outpost,
         NormalizedEvent::FocusChanged {
             node: snapshot,
-            foreground: false,
+            whole_window: false,
             ancestors: vec![node(outpost, 1, Role::Window, "Window")],
             selected_child: None,
             text: text.map(Box::new),

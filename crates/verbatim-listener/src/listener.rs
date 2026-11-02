@@ -39,9 +39,12 @@
 //! keyboard focus window; and, for the window in front, its class and its
 //! process's integrity level (`OpenProcess`, `OpenProcessToken`,
 //! `GetTokenInformation`, kernel calls that wait on no process). A foreground
-//! event is forwarded unchecked; the outpost's worker checks that its
-//! window is the foreground when it handles it, as NVDA's
-//! `processForegroundWinEvent` does.
+//! event's fact is forwarded unchecked; the outpost's reducer thread tests
+//! that its window is the foreground as it takes it in, as NVDA's
+//! `processForegroundWinEvent` does. Core is told every foreground event
+//! whose window `GetForegroundWindow` names, with `GetAncestor` for its root
+//! owner, both local calls, as the only report that a window came to the
+//! foreground ([`ListenerToCore::Foreground`]; `verbatim_listener_logic::foreground`).
 //!
 //! The one place the listener calls into applications is the reading
 //! threads, one per application, which judge and read each UIA focus from
@@ -589,23 +592,32 @@ impl Outgoing {
         self.queue(pid, fact, (meta.trace, meta.timing), None);
     }
 
-    /// Sends Core the window in front, `front`, with the integrity level of
-    /// the process that owns it, read here, a local call; only the newest
-    /// such report waits. Sent for every process, ignored ones included,
-    /// since the keyboard hook needs to know of every window in front.
-    fn foreground_window(&self, front: Front) {
+    /// Sends Core the window that came to the foreground, `front`, with its
+    /// root owner, the process its facts go to, and that process's
+    /// integrity level, read here with local calls (`GetAncestor`,
+    /// `GetWindowThreadProcessId`, `GetProcessIdOfThread` for a console
+    /// window whose thread its event named, and the token's integrity).
+    /// Sent for every process, ignored ones included, since Core takes from
+    /// it the keyboard hook's view, attention and its foreground record;
+    /// none replaces another (`docs/design/focus-pipeline-rework-remaining.md`,
+    /// "One foreground change, from the listener").
+    fn foreground(&self, front: Front) {
         let owner = window_pid(front.window);
-        let message = ListenerToCore::ForegroundWindow {
+        let process = if front.console && front.thread != 0 {
+            process_of_thread(front.thread).unwrap_or(owner)
+        } else {
+            owner
+        };
+        let message = ListenerToCore::Foreground {
             window: front.window,
+            root_owner: verbatim_win32::window::root_owner_of(front.window),
+            process,
+            observed_at_us: front.observed_at_us,
             thread: front.thread,
             console: front.console,
             integrity: verbatim_win32::integrity::process_integrity(owner),
         };
-        sent(&self.sender.send(Sent::Fact(
-            Some((Pid(0), FactKey::ForegroundWindow)),
-            message,
-            None,
-        )));
+        sent(&self.sender.send(Sent::Fact(None, message, None)));
     }
 
     /// Marks the desktop-wide UIA subscriptions as installed, or as failed:
@@ -1028,40 +1040,56 @@ impl Listener {
                         event.kind,
                         WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
                     ) {
-                        let step = watch.borrow_mut().console_event(event.hwnd, event.thread);
+                        let step = watch.borrow_mut().console_event(
+                            event.hwnd,
+                            event.thread,
+                            outgoing.now(),
+                        );
                         foreground_step(&outgoing, step);
                         return;
                     }
                     // Program Manager or the taskbar in front: no foreground
-                    // change to forward, as NVDA takes none, but the window
-                    // in front for the keyboard hook's view.
+                    // change to forward, as NVDA takes none, but a window
+                    // that came to the foreground for Core.
                     if event.kind == WinEventKind::ShellForeground {
-                        let step = watch.borrow_mut().foreground(Front {
+                        let front = Front {
                             window: event.hwnd,
                             thread: event.thread,
                             console: false,
-                        });
+                            observed_at_us: outgoing.now(),
+                        };
+                        let step = watch.borrow_mut().foreground(front, in_front(front.window));
                         foreground_step(&outgoing, step);
                         return;
                     }
-                    let foreground = (event.kind == WinEventKind::Foreground).then_some(Front {
-                        window: event.hwnd,
-                        thread: event.thread,
-                        console: false,
-                    });
                     // Forwarded first, so the event's observation time is
                     // taken before anything else the callback does; its
                     // window's class, read to route it, tells a console.
-                    let (console, focus_of) = forward_msaa_event(&outgoing, event);
-                    if let Some(front) = foreground {
-                        let step = watch.borrow_mut().foreground(Front { console, ..front });
+                    let (kind, window, thread) = (event.kind, event.hwnd, event.thread);
+                    let forwarded = forward_msaa_event(&outgoing, event);
+                    if kind == WinEventKind::Foreground {
+                        let front = Front {
+                            window,
+                            thread,
+                            console: forwarded.console,
+                            observed_at_us: forwarded.observed_at_us,
+                        };
+                        let step = watch.borrow_mut().foreground(front, in_front(window));
                         foreground_step(&outgoing, step);
                         // A foreground change is the evidence that the
                         // user may have moved on from a slow read's window
                         // (`focus_read`'s watchdog), and moves away from a
                         // reading thread's last read of another window.
-                        foreground_readers.foreground_changed(front.window);
+                        foreground_readers.foreground_changed(window);
+                    } else if kind == WinEventKind::Focus && watch.borrow().has_pending() {
+                        // A window not in front at its foreground event is
+                        // sent once an event finds it there.
+                        let step = watch
+                            .borrow_mut()
+                            .event_seen(front_window(), forwarded.observed_at_us);
+                        foreground_step(&outgoing, step);
                     }
+                    let focus_of = forwarded.focus_of;
                     // Another process's MSAA focus moves away from every
                     // other application's last read, for menu currentness.
                     if let Some(pid) = focus_of {
@@ -1074,7 +1102,9 @@ impl Listener {
                 // of the foreground's watch, once the hooks are in.
                 nudge: Some(Box::new(move |round, kind| {
                     if kind == NUDGE_FOREGROUND_START {
-                        let step = start_watch.borrow_mut().start(front_now());
+                        let step = start_watch
+                            .borrow_mut()
+                            .start(front_now(idle_outgoing.now()));
                         foreground_step(&idle_outgoing, step);
                     } else {
                         answer_when_reads_are_done(&readers, &idle_outgoing, round as u64);
@@ -1529,12 +1559,18 @@ fn install_desktop_subscriptions(
 /// object address is forwarded untouched, and the app outpost does the
 /// acquisition. Returns whether the event's window is a console host
 /// window, by the class read to route it, `false` for an event dropped
-/// before that read, whose window is null or has no owner; and, for an MSAA
-/// focus routed to a process, that process.
-fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid>) {
+/// before that read, whose window is null or has no owner; for an MSAA
+/// focus routed to a process, that process; and when the event was
+/// observed.
+fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> Forwarded {
     // The observation, before the callback's local reads, which the
     // listener's handling stage then holds.
     let observed_at_us = outgoing.now();
+    let forwarded = |console, focus_of| Forwarded {
+        console,
+        focus_of,
+        observed_at_us,
+    };
     let WinEvent {
         kind,
         hwnd,
@@ -1549,7 +1585,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
         // the focus of whichever application is then in front. NVDA accepts
         // these from any window, even an invalid one.
         outgoing.menu_or_switch_ended(observed_at_us);
-        return (false, None);
+        return forwarded(false, None);
     }
     // NVDA takes a null window as the desktop window
     // (`internalWinEventHandler.py` 113 to 129), whose process is the
@@ -1557,23 +1593,23 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
     // (`shouldAllowIAccessibleFocusEvent` on the desktop window's object)
     // and Verbatim cannot open: dropping it here is the same outcome.
     if hwnd == 0 {
-        return (false, None);
+        return forwarded(false, None);
     }
     let owner = window_pid(hwnd);
     if owner == 0 {
-        return (false, None);
+        return forwarded(false, None);
     }
     let class = window_class_name(hwnd);
     let console = class == CONSOLE_WINDOW_CLASS;
     let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)) else {
         log_unread_console_once(hwnd, thread);
-        return (console, None);
+        return forwarded(console, None);
     };
     if pid != owner {
         if outgoing.ignored.contains(Pid(owner)) {
             // The console of a process Verbatim ignores, whose events were
             // dropped by its owner before they went to its console host.
-            return (console, None);
+            return forwarded(console, None);
         }
         tracing::debug!(
             hwnd,
@@ -1587,7 +1623,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
     // reaches here is a fact: the console's and the shell's foreground
     // events are handled before this.
     let Some(fact) = verbatim_ia2::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
-        return (console, None);
+        return forwarded(console, None);
     };
     outgoing.fact(
         Pid(pid),
@@ -1598,7 +1634,19 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
     );
     let focus_of =
         (kind == WinEventKind::Focus && !outgoing.ignored.contains(Pid(pid))).then_some(Pid(pid));
-    (console, focus_of)
+    forwarded(console, focus_of)
+}
+
+/// What [`forward_msaa_event`] found of an event it forwarded or dropped.
+#[derive(Clone, Copy)]
+struct Forwarded {
+    /// Whether the event's window is a console host window.
+    console: bool,
+    /// For an MSAA focus routed to a process, that process.
+    focus_of: Option<Pid>,
+    /// When the listener's callback observed the event, in microseconds on
+    /// the run's shared clock.
+    observed_at_us: u64,
 }
 
 /// The listener's nudge that starts the watch of the window in front
@@ -1606,12 +1654,24 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> (bool, Option<Pid
 /// barrier's carry 0.
 const NUDGE_FOREGROUND_START: isize = 1;
 
-/// The window in the foreground now, with the thread Windows names as its
-/// owner, read locally; `None` when no window is in front.
-fn front_now() -> Option<Front> {
+/// The system's foreground window now, read locally; 0 for none.
+fn front_window() -> isize {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     // SAFETY: a local read with no preconditions.
-    let window = unsafe { GetForegroundWindow() }.0 as isize;
+    unsafe { GetForegroundWindow() }.0 as isize
+}
+
+/// Whether `window` is the system's foreground window now, the test a
+/// foreground event's window passes before it is sent, a local call.
+fn in_front(window: isize) -> bool {
+    front_window() == window
+}
+
+/// The window in the foreground now, with the thread Windows names as its
+/// owner, read locally and observed at `observed_at_us`; `None` when no
+/// window is in front.
+fn front_now(observed_at_us: u64) -> Option<Front> {
+    let window = front_window();
     if window == 0 {
         return None;
     }
@@ -1619,16 +1679,18 @@ fn front_now() -> Option<Front> {
         window,
         thread: verbatim_win32::window::window_owner(window).0,
         console: window_class_name(window) == CONSOLE_WINDOW_CLASS,
+        observed_at_us,
     })
 }
 
 /// Carries out a step of the foreground's watch, on the `WinEvent` thread:
-/// sends Core the window in front, with its process's integrity level read
-/// locally ([`ListenerToCore::ForegroundWindow`]), and hooks or
-/// unhooks every console's events.
+/// sends Core the window that came to the foreground, with its root owner,
+/// its process and that process's integrity level read locally
+/// ([`ListenerToCore::Foreground`]), and hooks or unhooks every console's
+/// events.
 fn foreground_step(outgoing: &Outgoing, step: Step) {
     if let Some(front) = step.report {
-        outgoing.foreground_window(front);
+        outgoing.foreground(front);
     }
     if let Some(hooked) = step.console_events {
         let suspended: &[WinEventKind] = if hooked {

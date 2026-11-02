@@ -221,7 +221,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
                     states: StateSet::new(),
                     details: NodeDetails::default(),
                 },
-                foreground: false,
+                whole_window: false,
                 ancestors: Vec::new(),
                 selected_child: None,
                 text: None,
@@ -259,6 +259,7 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
         class: String::new(),
         application: String::new(),
         alt_held: false,
+        foreground_window: verbatim_model::WindowHandle(0),
     };
     Input::Event {
         trace_id: TraceId::from_raw(8),
@@ -280,7 +281,7 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
                 states: StateSet::new(),
                 details: NodeDetails::default(),
             },
-            foreground,
+            whole_window: foreground,
             ancestors: Vec::new(),
             selected_child: None,
             text: None,
@@ -312,8 +313,12 @@ fn a_menus_end_is_compared_with_the_focus_taken_only() {
 /// A foreground report for window 7, raised by thread 40, of a process at
 /// `integrity`, Verbatim being at `own`.
 fn foreground(console: bool, thread: u32, integrity: Option<u32>, own: Option<u32>) -> Input {
-    Input::ForegroundWindow(ForegroundWindow {
+    Input::Foreground(ForegroundWindow {
         window: WindowHandle(7),
+        root_owner: WindowHandle(7),
+        process: Pid(70),
+        observed_at_us: 1,
+        own: false,
         thread,
         console,
         integrity,
@@ -393,8 +398,12 @@ fn the_latest_foreground_report_decides() {
         reduce(&mut state, &foreground(true, 40, Some(HIGH), Some(MEDIUM))),
         []
     );
-    let next = Input::ForegroundWindow(ForegroundWindow {
+    let next = Input::Foreground(ForegroundWindow {
         window: WindowHandle(9),
+        root_owner: WindowHandle(9),
+        process: Pid(90),
+        observed_at_us: 2,
+        own: false,
         thread: 50,
         console: false,
         integrity: Some(MEDIUM),

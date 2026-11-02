@@ -2082,7 +2082,7 @@ impl Worker<'_> {
         };
         let event = NormalizedEvent::FocusChanged {
             node,
-            foreground,
+            whole_window: foreground,
             ancestors,
             selected_child,
             text: text.map(Box::new),
@@ -4611,7 +4611,7 @@ pub(super) fn publication(context: &RequestContext<'_>, walk: &FocusProgress) ->
         (focus.backend, focus.window),
         NormalizedEvent::FocusChanged {
             node: focus.node.clone(),
-            foreground: false,
+            whole_window: false,
             ancestors,
             selected_child: None,
             text: None,

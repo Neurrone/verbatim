@@ -280,7 +280,7 @@ mod tests {
                     backend: Backend::Uia,
                     window: None,
                     event: NormalizedEvent::FocusChanged {
-                        foreground: false,
+                        whole_window: false,
                         ancestors: Vec::new(),
                         selected_child: None,
                         node: NodeSnapshot {

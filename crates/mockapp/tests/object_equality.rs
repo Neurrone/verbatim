@@ -38,7 +38,7 @@ const OPTIONS_CHILD: i32 = 3;
 fn focus_event(reported: &Reported) -> NormalizedEvent {
     NormalizedEvent::FocusChanged {
         node: reported.node.clone(),
-        foreground: false,
+        whole_window: false,
         ancestors: reported.ancestors.clone(),
         selected_child: reported.selected_child.clone(),
         text: None,

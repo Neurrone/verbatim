@@ -37,7 +37,7 @@ message layer, the launch arguments and the held processes are
 - `SPARES` is two; Verbatim's readiness waits for them.
 
 The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
-`Regenerated`, `IdleQueried`, `NotWatched`, `ForegroundWindow`, and per
+`Regenerated`, `IdleQueried`, `NotWatched`, `Foreground`, and per
 generation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
 reason (exited, killed, retired, target exited) and whether a next
 generation follows (`follows`), the supervisor's decision as it ended it.

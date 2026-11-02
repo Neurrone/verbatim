@@ -255,6 +255,16 @@ pub fn top_level_of(handle: isize) -> isize {
     unsafe { GetAncestor(hwnd(handle), GA_ROOT) }.0 as isize
 }
 
+/// The top of window `handle`'s owner chain (`GetAncestor` with
+/// `GA_ROOTOWNER`), a local call; the window itself when it has no owner,
+/// and 0 for an invalid handle.
+#[must_use]
+pub fn root_owner_of(handle: isize) -> isize {
+    // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
+    // one.
+    unsafe { GetAncestor(hwnd(handle), GA_ROOTOWNER) }.0 as isize
+}
+
 /// Whether window `handle` itself is reported hung by the system
 /// (`IsHungAppWindow`): the window an event names, not its top-level
 /// window, as NVDA tests it, for a UIA event its sender's cached window
