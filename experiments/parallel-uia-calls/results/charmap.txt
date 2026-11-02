@@ -1,0 +1,563 @@
+TARGET label=charmap hwnd=4458368 pid=13476 ui_tid=10992 class=#32770 title=Character Map client=per-thread
+CTX n=1 descendants_found=20 elems_held=16 text=true msaa=true
+CTX n=2 descendants_found=20 elems_held=16 text=true msaa=true
+CTX n=4 descendants_found=20 elems_held=16 text=true msaa=true
+CTX n=8 descendants_found=20 elems_held=16 text=true msaa=true
+RAW label=charmap op=name n=1 rep=0 wall_ms=8.896 errors=0
+RAW label=charmap op=name n=1 rep=1 wall_ms=9.194 errors=0
+RAW label=charmap op=name n=1 rep=2 wall_ms=8.349 errors=0
+RAW label=charmap op=name n=1 rep=3 wall_ms=8.179 errors=0
+RAW label=charmap op=name n=1 rep=4 wall_ms=9.325 errors=0
+RAW label=charmap op=name n=1 rep=5 wall_ms=9.166 errors=0
+RAW label=charmap op=name n=1 rep=6 wall_ms=9.026 errors=0
+RAW label=charmap op=name n=1 rep=7 wall_ms=9.135 errors=0
+RAW label=charmap op=name n=1 rep=8 wall_ms=9.434 errors=0
+RAW label=charmap op=name n=1 rep=9 wall_ms=8.928 errors=0
+RAW label=charmap op=name n=1 rep=10 wall_ms=9.535 errors=0
+RAW label=charmap op=name n=1 rep=11 wall_ms=9.360 errors=0
+RAW label=charmap op=name n=1 rep=12 wall_ms=9.183 errors=0
+RAW label=charmap op=name n=1 rep=13 wall_ms=9.169 errors=0
+RAW label=charmap op=name n=1 rep=14 wall_ms=8.675 errors=0
+RAW label=charmap op=name n=1 rep=15 wall_ms=10.996 errors=0
+RAW label=charmap op=name n=1 rep=16 wall_ms=9.998 errors=0
+RAW label=charmap op=name n=1 rep=17 wall_ms=9.562 errors=0
+RAW label=charmap op=name n=1 rep=18 wall_ms=10.407 errors=0
+RAW label=charmap op=name n=1 rep=19 wall_ms=10.082 errors=0
+RESULT label=charmap op=name n=1 k=64 median_ms=9.19 p90_ms=10.08 per_call_us=143.7 speedup=1.00 errors=0
+RAW label=charmap op=name n=2 rep=0 wall_ms=7.342 errors=0
+RAW label=charmap op=name n=2 rep=1 wall_ms=6.863 errors=0
+RAW label=charmap op=name n=2 rep=2 wall_ms=6.150 errors=0
+RAW label=charmap op=name n=2 rep=3 wall_ms=6.644 errors=0
+RAW label=charmap op=name n=2 rep=4 wall_ms=6.496 errors=0
+RAW label=charmap op=name n=2 rep=5 wall_ms=6.239 errors=0
+RAW label=charmap op=name n=2 rep=6 wall_ms=7.430 errors=0
+RAW label=charmap op=name n=2 rep=7 wall_ms=6.032 errors=0
+RAW label=charmap op=name n=2 rep=8 wall_ms=5.977 errors=0
+RAW label=charmap op=name n=2 rep=9 wall_ms=5.642 errors=0
+RAW label=charmap op=name n=2 rep=10 wall_ms=6.238 errors=0
+RAW label=charmap op=name n=2 rep=11 wall_ms=6.830 errors=0
+RAW label=charmap op=name n=2 rep=12 wall_ms=6.946 errors=0
+RAW label=charmap op=name n=2 rep=13 wall_ms=6.042 errors=0
+RAW label=charmap op=name n=2 rep=14 wall_ms=5.500 errors=0
+RAW label=charmap op=name n=2 rep=15 wall_ms=6.442 errors=0
+RAW label=charmap op=name n=2 rep=16 wall_ms=6.062 errors=0
+RAW label=charmap op=name n=2 rep=17 wall_ms=6.906 errors=0
+RAW label=charmap op=name n=2 rep=18 wall_ms=6.265 errors=0
+RAW label=charmap op=name n=2 rep=19 wall_ms=6.345 errors=0
+RESULT label=charmap op=name n=2 k=64 median_ms=6.34 p90_ms=6.95 per_call_us=99.1 speedup=1.45 errors=0
+RAW label=charmap op=name n=4 rep=0 wall_ms=7.189 errors=0
+RAW label=charmap op=name n=4 rep=1 wall_ms=6.676 errors=0
+RAW label=charmap op=name n=4 rep=2 wall_ms=8.116 errors=0
+RAW label=charmap op=name n=4 rep=3 wall_ms=6.659 errors=0
+RAW label=charmap op=name n=4 rep=4 wall_ms=6.515 errors=0
+RAW label=charmap op=name n=4 rep=5 wall_ms=5.655 errors=0
+RAW label=charmap op=name n=4 rep=6 wall_ms=6.200 errors=0
+RAW label=charmap op=name n=4 rep=7 wall_ms=7.366 errors=0
+RAW label=charmap op=name n=4 rep=8 wall_ms=8.053 errors=0
+RAW label=charmap op=name n=4 rep=9 wall_ms=6.370 errors=0
+RAW label=charmap op=name n=4 rep=10 wall_ms=6.431 errors=0
+RAW label=charmap op=name n=4 rep=11 wall_ms=6.708 errors=0
+RAW label=charmap op=name n=4 rep=12 wall_ms=6.917 errors=0
+RAW label=charmap op=name n=4 rep=13 wall_ms=7.232 errors=0
+RAW label=charmap op=name n=4 rep=14 wall_ms=6.832 errors=0
+RAW label=charmap op=name n=4 rep=15 wall_ms=6.441 errors=0
+RAW label=charmap op=name n=4 rep=16 wall_ms=7.222 errors=0
+RAW label=charmap op=name n=4 rep=17 wall_ms=6.034 errors=0
+RAW label=charmap op=name n=4 rep=18 wall_ms=6.782 errors=0
+RAW label=charmap op=name n=4 rep=19 wall_ms=7.335 errors=0
+RESULT label=charmap op=name n=4 k=64 median_ms=6.78 p90_ms=7.37 per_call_us=106.0 speedup=1.36 errors=0
+RAW label=charmap op=name n=8 rep=0 wall_ms=6.429 errors=0
+RAW label=charmap op=name n=8 rep=1 wall_ms=6.458 errors=0
+RAW label=charmap op=name n=8 rep=2 wall_ms=6.674 errors=0
+RAW label=charmap op=name n=8 rep=3 wall_ms=6.561 errors=0
+RAW label=charmap op=name n=8 rep=4 wall_ms=8.027 errors=0
+RAW label=charmap op=name n=8 rep=5 wall_ms=7.088 errors=0
+RAW label=charmap op=name n=8 rep=6 wall_ms=6.515 errors=0
+RAW label=charmap op=name n=8 rep=7 wall_ms=6.355 errors=0
+RAW label=charmap op=name n=8 rep=8 wall_ms=6.261 errors=0
+RAW label=charmap op=name n=8 rep=9 wall_ms=7.487 errors=0
+RAW label=charmap op=name n=8 rep=10 wall_ms=6.631 errors=0
+RAW label=charmap op=name n=8 rep=11 wall_ms=6.837 errors=0
+RAW label=charmap op=name n=8 rep=12 wall_ms=6.920 errors=0
+RAW label=charmap op=name n=8 rep=13 wall_ms=6.490 errors=0
+RAW label=charmap op=name n=8 rep=14 wall_ms=6.019 errors=0
+RAW label=charmap op=name n=8 rep=15 wall_ms=7.326 errors=0
+RAW label=charmap op=name n=8 rep=16 wall_ms=6.830 errors=0
+RAW label=charmap op=name n=8 rep=17 wall_ms=6.739 errors=0
+RAW label=charmap op=name n=8 rep=18 wall_ms=6.565 errors=0
+RAW label=charmap op=name n=8 rep=19 wall_ms=6.103 errors=0
+RESULT label=charmap op=name n=8 k=64 median_ms=6.63 p90_ms=7.33 per_call_us=103.6 speedup=1.39 errors=0
+RAW label=charmap op=findall n=1 rep=0 wall_ms=192.817 errors=0
+RAW label=charmap op=findall n=1 rep=1 wall_ms=188.547 errors=0
+RAW label=charmap op=findall n=1 rep=2 wall_ms=189.818 errors=0
+RAW label=charmap op=findall n=1 rep=3 wall_ms=187.776 errors=0
+RAW label=charmap op=findall n=1 rep=4 wall_ms=190.752 errors=0
+RAW label=charmap op=findall n=1 rep=5 wall_ms=182.096 errors=0
+RAW label=charmap op=findall n=1 rep=6 wall_ms=182.509 errors=0
+RAW label=charmap op=findall n=1 rep=7 wall_ms=183.263 errors=0
+RAW label=charmap op=findall n=1 rep=8 wall_ms=176.048 errors=0
+RAW label=charmap op=findall n=1 rep=9 wall_ms=190.010 errors=0
+RAW label=charmap op=findall n=1 rep=10 wall_ms=184.846 errors=0
+RAW label=charmap op=findall n=1 rep=11 wall_ms=183.926 errors=0
+RAW label=charmap op=findall n=1 rep=12 wall_ms=178.810 errors=0
+RAW label=charmap op=findall n=1 rep=13 wall_ms=183.204 errors=0
+RAW label=charmap op=findall n=1 rep=14 wall_ms=179.449 errors=0
+RAW label=charmap op=findall n=1 rep=15 wall_ms=180.542 errors=0
+RAW label=charmap op=findall n=1 rep=16 wall_ms=180.554 errors=0
+RAW label=charmap op=findall n=1 rep=17 wall_ms=185.222 errors=0
+RAW label=charmap op=findall n=1 rep=18 wall_ms=177.775 errors=0
+RAW label=charmap op=findall n=1 rep=19 wall_ms=177.313 errors=0
+RESULT label=charmap op=findall n=1 k=8 median_ms=183.26 p90_ms=190.01 per_call_us=22907.9 speedup=1.00 errors=0
+RAW label=charmap op=findall n=2 rep=0 wall_ms=151.026 errors=0
+RAW label=charmap op=findall n=2 rep=1 wall_ms=148.386 errors=0
+RAW label=charmap op=findall n=2 rep=2 wall_ms=150.091 errors=0
+RAW label=charmap op=findall n=2 rep=3 wall_ms=153.571 errors=0
+RAW label=charmap op=findall n=2 rep=4 wall_ms=152.834 errors=0
+RAW label=charmap op=findall n=2 rep=5 wall_ms=153.713 errors=0
+RAW label=charmap op=findall n=2 rep=6 wall_ms=152.569 errors=0
+RAW label=charmap op=findall n=2 rep=7 wall_ms=152.132 errors=0
+RAW label=charmap op=findall n=2 rep=8 wall_ms=158.687 errors=0
+RAW label=charmap op=findall n=2 rep=9 wall_ms=151.508 errors=0
+RAW label=charmap op=findall n=2 rep=10 wall_ms=148.729 errors=0
+RAW label=charmap op=findall n=2 rep=11 wall_ms=153.955 errors=0
+RAW label=charmap op=findall n=2 rep=12 wall_ms=157.532 errors=0
+RAW label=charmap op=findall n=2 rep=13 wall_ms=156.605 errors=0
+RAW label=charmap op=findall n=2 rep=14 wall_ms=156.123 errors=0
+RAW label=charmap op=findall n=2 rep=15 wall_ms=155.504 errors=0
+RAW label=charmap op=findall n=2 rep=16 wall_ms=156.289 errors=0
+RAW label=charmap op=findall n=2 rep=17 wall_ms=154.196 errors=0
+RAW label=charmap op=findall n=2 rep=18 wall_ms=153.148 errors=0
+RAW label=charmap op=findall n=2 rep=19 wall_ms=155.360 errors=0
+RESULT label=charmap op=findall n=2 k=8 median_ms=153.71 p90_ms=156.61 per_call_us=19214.1 speedup=1.19 errors=0
+RAW label=charmap op=findall n=4 rep=0 wall_ms=150.491 errors=0
+RAW label=charmap op=findall n=4 rep=1 wall_ms=149.112 errors=0
+RAW label=charmap op=findall n=4 rep=2 wall_ms=151.611 errors=0
+RAW label=charmap op=findall n=4 rep=3 wall_ms=147.589 errors=0
+RAW label=charmap op=findall n=4 rep=4 wall_ms=151.227 errors=0
+RAW label=charmap op=findall n=4 rep=5 wall_ms=150.257 errors=0
+RAW label=charmap op=findall n=4 rep=6 wall_ms=155.666 errors=0
+RAW label=charmap op=findall n=4 rep=7 wall_ms=150.985 errors=0
+RAW label=charmap op=findall n=4 rep=8 wall_ms=155.816 errors=0
+RAW label=charmap op=findall n=4 rep=9 wall_ms=149.463 errors=0
+RAW label=charmap op=findall n=4 rep=10 wall_ms=147.922 errors=0
+RAW label=charmap op=findall n=4 rep=11 wall_ms=147.086 errors=0
+RAW label=charmap op=findall n=4 rep=12 wall_ms=154.683 errors=0
+RAW label=charmap op=findall n=4 rep=13 wall_ms=152.171 errors=0
+RAW label=charmap op=findall n=4 rep=14 wall_ms=157.259 errors=0
+RAW label=charmap op=findall n=4 rep=15 wall_ms=150.257 errors=0
+RAW label=charmap op=findall n=4 rep=16 wall_ms=158.220 errors=0
+RAW label=charmap op=findall n=4 rep=17 wall_ms=155.480 errors=0
+RAW label=charmap op=findall n=4 rep=18 wall_ms=152.986 errors=0
+RAW label=charmap op=findall n=4 rep=19 wall_ms=149.525 errors=0
+RESULT label=charmap op=findall n=4 k=8 median_ms=151.23 p90_ms=155.82 per_call_us=18903.4 speedup=1.21 errors=0
+RAW label=charmap op=findall n=8 rep=0 wall_ms=154.424 errors=0
+RAW label=charmap op=findall n=8 rep=1 wall_ms=156.886 errors=0
+RAW label=charmap op=findall n=8 rep=2 wall_ms=155.302 errors=0
+RAW label=charmap op=findall n=8 rep=3 wall_ms=147.897 errors=0
+RAW label=charmap op=findall n=8 rep=4 wall_ms=148.326 errors=0
+RAW label=charmap op=findall n=8 rep=5 wall_ms=145.425 errors=0
+RAW label=charmap op=findall n=8 rep=6 wall_ms=149.042 errors=0
+RAW label=charmap op=findall n=8 rep=7 wall_ms=147.633 errors=0
+RAW label=charmap op=findall n=8 rep=8 wall_ms=152.091 errors=0
+RAW label=charmap op=findall n=8 rep=9 wall_ms=149.239 errors=0
+RAW label=charmap op=findall n=8 rep=10 wall_ms=151.535 errors=0
+RAW label=charmap op=findall n=8 rep=11 wall_ms=152.531 errors=0
+RAW label=charmap op=findall n=8 rep=12 wall_ms=144.538 errors=0
+RAW label=charmap op=findall n=8 rep=13 wall_ms=144.757 errors=0
+RAW label=charmap op=findall n=8 rep=14 wall_ms=154.148 errors=0
+RAW label=charmap op=findall n=8 rep=15 wall_ms=144.849 errors=0
+RAW label=charmap op=findall n=8 rep=16 wall_ms=155.666 errors=0
+RAW label=charmap op=findall n=8 rep=17 wall_ms=149.835 errors=0
+RAW label=charmap op=findall n=8 rep=18 wall_ms=155.981 errors=0
+RAW label=charmap op=findall n=8 rep=19 wall_ms=160.908 errors=0
+RESULT label=charmap op=findall n=8 k=8 median_ms=151.54 p90_ms=155.98 per_call_us=18941.9 speedup=1.21 errors=0
+RAW label=charmap op=fromhandle n=1 rep=0 wall_ms=14.034 errors=0
+RAW label=charmap op=fromhandle n=1 rep=1 wall_ms=15.297 errors=0
+RAW label=charmap op=fromhandle n=1 rep=2 wall_ms=14.065 errors=0
+RAW label=charmap op=fromhandle n=1 rep=3 wall_ms=15.463 errors=0
+RAW label=charmap op=fromhandle n=1 rep=4 wall_ms=13.040 errors=0
+RAW label=charmap op=fromhandle n=1 rep=5 wall_ms=13.982 errors=0
+RAW label=charmap op=fromhandle n=1 rep=6 wall_ms=14.349 errors=0
+RAW label=charmap op=fromhandle n=1 rep=7 wall_ms=13.915 errors=0
+RAW label=charmap op=fromhandle n=1 rep=8 wall_ms=14.556 errors=0
+RAW label=charmap op=fromhandle n=1 rep=9 wall_ms=13.758 errors=0
+RAW label=charmap op=fromhandle n=1 rep=10 wall_ms=14.029 errors=0
+RAW label=charmap op=fromhandle n=1 rep=11 wall_ms=13.277 errors=0
+RAW label=charmap op=fromhandle n=1 rep=12 wall_ms=13.566 errors=0
+RAW label=charmap op=fromhandle n=1 rep=13 wall_ms=13.059 errors=0
+RAW label=charmap op=fromhandle n=1 rep=14 wall_ms=13.553 errors=0
+RAW label=charmap op=fromhandle n=1 rep=15 wall_ms=14.814 errors=0
+RAW label=charmap op=fromhandle n=1 rep=16 wall_ms=15.195 errors=0
+RAW label=charmap op=fromhandle n=1 rep=17 wall_ms=14.366 errors=0
+RAW label=charmap op=fromhandle n=1 rep=18 wall_ms=13.774 errors=0
+RAW label=charmap op=fromhandle n=1 rep=19 wall_ms=14.122 errors=0
+RESULT label=charmap op=fromhandle n=1 k=32 median_ms=14.03 p90_ms=15.20 per_call_us=438.6 speedup=1.00 errors=0
+RAW label=charmap op=fromhandle n=2 rep=0 wall_ms=12.604 errors=0
+RAW label=charmap op=fromhandle n=2 rep=1 wall_ms=11.828 errors=0
+RAW label=charmap op=fromhandle n=2 rep=2 wall_ms=12.170 errors=0
+RAW label=charmap op=fromhandle n=2 rep=3 wall_ms=12.615 errors=0
+RAW label=charmap op=fromhandle n=2 rep=4 wall_ms=13.154 errors=0
+RAW label=charmap op=fromhandle n=2 rep=5 wall_ms=13.076 errors=0
+RAW label=charmap op=fromhandle n=2 rep=6 wall_ms=12.723 errors=0
+RAW label=charmap op=fromhandle n=2 rep=7 wall_ms=12.688 errors=0
+RAW label=charmap op=fromhandle n=2 rep=8 wall_ms=11.728 errors=0
+RAW label=charmap op=fromhandle n=2 rep=9 wall_ms=11.651 errors=0
+RAW label=charmap op=fromhandle n=2 rep=10 wall_ms=12.758 errors=0
+RAW label=charmap op=fromhandle n=2 rep=11 wall_ms=13.862 errors=0
+RAW label=charmap op=fromhandle n=2 rep=12 wall_ms=13.782 errors=0
+RAW label=charmap op=fromhandle n=2 rep=13 wall_ms=12.840 errors=0
+RAW label=charmap op=fromhandle n=2 rep=14 wall_ms=12.752 errors=0
+RAW label=charmap op=fromhandle n=2 rep=15 wall_ms=11.529 errors=0
+RAW label=charmap op=fromhandle n=2 rep=16 wall_ms=13.169 errors=0
+RAW label=charmap op=fromhandle n=2 rep=17 wall_ms=12.401 errors=0
+RAW label=charmap op=fromhandle n=2 rep=18 wall_ms=13.399 errors=0
+RAW label=charmap op=fromhandle n=2 rep=19 wall_ms=14.800 errors=0
+RESULT label=charmap op=fromhandle n=2 k=32 median_ms=12.75 p90_ms=13.78 per_call_us=398.5 speedup=1.10 errors=0
+RAW label=charmap op=fromhandle n=4 rep=0 wall_ms=13.162 errors=0
+RAW label=charmap op=fromhandle n=4 rep=1 wall_ms=13.629 errors=0
+RAW label=charmap op=fromhandle n=4 rep=2 wall_ms=14.021 errors=0
+RAW label=charmap op=fromhandle n=4 rep=3 wall_ms=14.323 errors=0
+RAW label=charmap op=fromhandle n=4 rep=4 wall_ms=14.587 errors=0
+RAW label=charmap op=fromhandle n=4 rep=5 wall_ms=13.374 errors=0
+RAW label=charmap op=fromhandle n=4 rep=6 wall_ms=14.014 errors=0
+RAW label=charmap op=fromhandle n=4 rep=7 wall_ms=13.622 errors=0
+RAW label=charmap op=fromhandle n=4 rep=8 wall_ms=14.326 errors=0
+RAW label=charmap op=fromhandle n=4 rep=9 wall_ms=14.381 errors=0
+RAW label=charmap op=fromhandle n=4 rep=10 wall_ms=13.996 errors=0
+RAW label=charmap op=fromhandle n=4 rep=11 wall_ms=14.173 errors=0
+RAW label=charmap op=fromhandle n=4 rep=12 wall_ms=14.454 errors=0
+RAW label=charmap op=fromhandle n=4 rep=13 wall_ms=14.335 errors=0
+RAW label=charmap op=fromhandle n=4 rep=14 wall_ms=14.182 errors=0
+RAW label=charmap op=fromhandle n=4 rep=15 wall_ms=14.110 errors=0
+RAW label=charmap op=fromhandle n=4 rep=16 wall_ms=13.774 errors=0
+RAW label=charmap op=fromhandle n=4 rep=17 wall_ms=14.103 errors=0
+RAW label=charmap op=fromhandle n=4 rep=18 wall_ms=13.826 errors=0
+RAW label=charmap op=fromhandle n=4 rep=19 wall_ms=13.876 errors=0
+RESULT label=charmap op=fromhandle n=4 k=32 median_ms=14.10 p90_ms=14.38 per_call_us=440.7 speedup=1.00 errors=0
+RAW label=charmap op=fromhandle n=8 rep=0 wall_ms=14.643 errors=0
+RAW label=charmap op=fromhandle n=8 rep=1 wall_ms=13.968 errors=0
+RAW label=charmap op=fromhandle n=8 rep=2 wall_ms=14.134 errors=0
+RAW label=charmap op=fromhandle n=8 rep=3 wall_ms=14.010 errors=0
+RAW label=charmap op=fromhandle n=8 rep=4 wall_ms=13.572 errors=0
+RAW label=charmap op=fromhandle n=8 rep=5 wall_ms=13.966 errors=0
+RAW label=charmap op=fromhandle n=8 rep=6 wall_ms=14.401 errors=0
+RAW label=charmap op=fromhandle n=8 rep=7 wall_ms=14.301 errors=0
+RAW label=charmap op=fromhandle n=8 rep=8 wall_ms=15.957 errors=0
+RAW label=charmap op=fromhandle n=8 rep=9 wall_ms=13.700 errors=0
+RAW label=charmap op=fromhandle n=8 rep=10 wall_ms=14.001 errors=0
+RAW label=charmap op=fromhandle n=8 rep=11 wall_ms=13.677 errors=0
+RAW label=charmap op=fromhandle n=8 rep=12 wall_ms=14.835 errors=0
+RAW label=charmap op=fromhandle n=8 rep=13 wall_ms=13.341 errors=0
+RAW label=charmap op=fromhandle n=8 rep=14 wall_ms=12.524 errors=0
+RAW label=charmap op=fromhandle n=8 rep=15 wall_ms=12.674 errors=0
+RAW label=charmap op=fromhandle n=8 rep=16 wall_ms=13.306 errors=0
+RAW label=charmap op=fromhandle n=8 rep=17 wall_ms=12.571 errors=0
+RAW label=charmap op=fromhandle n=8 rep=18 wall_ms=13.048 errors=0
+RAW label=charmap op=fromhandle n=8 rep=19 wall_ms=13.280 errors=0
+RESULT label=charmap op=fromhandle n=8 k=32 median_ms=13.97 p90_ms=14.64 per_call_us=436.4 speedup=1.00 errors=0
+RAW label=charmap op=text n=1 rep=0 wall_ms=7.180 errors=0
+RAW label=charmap op=text n=1 rep=1 wall_ms=7.111 errors=0
+RAW label=charmap op=text n=1 rep=2 wall_ms=6.514 errors=0
+RAW label=charmap op=text n=1 rep=3 wall_ms=6.576 errors=0
+RAW label=charmap op=text n=1 rep=4 wall_ms=6.353 errors=0
+RAW label=charmap op=text n=1 rep=5 wall_ms=6.928 errors=0
+RAW label=charmap op=text n=1 rep=6 wall_ms=6.575 errors=0
+RAW label=charmap op=text n=1 rep=7 wall_ms=6.600 errors=0
+RAW label=charmap op=text n=1 rep=8 wall_ms=7.081 errors=0
+RAW label=charmap op=text n=1 rep=9 wall_ms=7.181 errors=0
+RAW label=charmap op=text n=1 rep=10 wall_ms=6.279 errors=0
+RAW label=charmap op=text n=1 rep=11 wall_ms=6.700 errors=0
+RAW label=charmap op=text n=1 rep=12 wall_ms=7.220 errors=0
+RAW label=charmap op=text n=1 rep=13 wall_ms=7.349 errors=0
+RAW label=charmap op=text n=1 rep=14 wall_ms=6.447 errors=0
+RAW label=charmap op=text n=1 rep=15 wall_ms=7.043 errors=0
+RAW label=charmap op=text n=1 rep=16 wall_ms=7.141 errors=0
+RAW label=charmap op=text n=1 rep=17 wall_ms=7.616 errors=0
+RAW label=charmap op=text n=1 rep=18 wall_ms=7.024 errors=0
+RAW label=charmap op=text n=1 rep=19 wall_ms=6.947 errors=0
+RESULT label=charmap op=text n=1 k=32 median_ms=7.02 p90_ms=7.22 per_call_us=219.5 speedup=1.00 errors=0
+RAW label=charmap op=text n=2 rep=0 wall_ms=3.526 errors=0
+RAW label=charmap op=text n=2 rep=1 wall_ms=4.077 errors=0
+RAW label=charmap op=text n=2 rep=2 wall_ms=3.843 errors=0
+RAW label=charmap op=text n=2 rep=3 wall_ms=3.759 errors=0
+RAW label=charmap op=text n=2 rep=4 wall_ms=3.872 errors=0
+RAW label=charmap op=text n=2 rep=5 wall_ms=4.046 errors=0
+RAW label=charmap op=text n=2 rep=6 wall_ms=4.035 errors=0
+RAW label=charmap op=text n=2 rep=7 wall_ms=4.016 errors=0
+RAW label=charmap op=text n=2 rep=8 wall_ms=3.688 errors=0
+RAW label=charmap op=text n=2 rep=9 wall_ms=3.645 errors=0
+RAW label=charmap op=text n=2 rep=10 wall_ms=3.952 errors=0
+RAW label=charmap op=text n=2 rep=11 wall_ms=3.779 errors=0
+RAW label=charmap op=text n=2 rep=12 wall_ms=3.654 errors=0
+RAW label=charmap op=text n=2 rep=13 wall_ms=4.037 errors=0
+RAW label=charmap op=text n=2 rep=14 wall_ms=4.283 errors=0
+RAW label=charmap op=text n=2 rep=15 wall_ms=3.868 errors=0
+RAW label=charmap op=text n=2 rep=16 wall_ms=3.854 errors=0
+RAW label=charmap op=text n=2 rep=17 wall_ms=4.053 errors=0
+RAW label=charmap op=text n=2 rep=18 wall_ms=3.773 errors=0
+RAW label=charmap op=text n=2 rep=19 wall_ms=4.271 errors=0
+RESULT label=charmap op=text n=2 k=32 median_ms=3.87 p90_ms=4.08 per_call_us=121.0 speedup=1.81 errors=0
+RAW label=charmap op=text n=4 rep=0 wall_ms=4.376 errors=0
+RAW label=charmap op=text n=4 rep=1 wall_ms=3.836 errors=0
+RAW label=charmap op=text n=4 rep=2 wall_ms=4.122 errors=0
+RAW label=charmap op=text n=4 rep=3 wall_ms=4.066 errors=0
+RAW label=charmap op=text n=4 rep=4 wall_ms=4.187 errors=0
+RAW label=charmap op=text n=4 rep=5 wall_ms=4.158 errors=0
+RAW label=charmap op=text n=4 rep=6 wall_ms=3.912 errors=0
+RAW label=charmap op=text n=4 rep=7 wall_ms=4.263 errors=0
+RAW label=charmap op=text n=4 rep=8 wall_ms=3.946 errors=0
+RAW label=charmap op=text n=4 rep=9 wall_ms=4.533 errors=0
+RAW label=charmap op=text n=4 rep=10 wall_ms=4.085 errors=0
+RAW label=charmap op=text n=4 rep=11 wall_ms=4.268 errors=0
+RAW label=charmap op=text n=4 rep=12 wall_ms=4.479 errors=0
+RAW label=charmap op=text n=4 rep=13 wall_ms=3.802 errors=0
+RAW label=charmap op=text n=4 rep=14 wall_ms=4.088 errors=0
+RAW label=charmap op=text n=4 rep=15 wall_ms=4.011 errors=0
+RAW label=charmap op=text n=4 rep=16 wall_ms=4.207 errors=0
+RAW label=charmap op=text n=4 rep=17 wall_ms=3.796 errors=0
+RAW label=charmap op=text n=4 rep=18 wall_ms=4.585 errors=0
+RAW label=charmap op=text n=4 rep=19 wall_ms=3.674 errors=0
+RESULT label=charmap op=text n=4 k=32 median_ms=4.12 p90_ms=4.48 per_call_us=128.8 speedup=1.70 errors=0
+RAW label=charmap op=text n=8 rep=0 wall_ms=3.727 errors=0
+RAW label=charmap op=text n=8 rep=1 wall_ms=4.197 errors=0
+RAW label=charmap op=text n=8 rep=2 wall_ms=4.576 errors=0
+RAW label=charmap op=text n=8 rep=3 wall_ms=3.844 errors=0
+RAW label=charmap op=text n=8 rep=4 wall_ms=3.874 errors=0
+RAW label=charmap op=text n=8 rep=5 wall_ms=3.944 errors=0
+RAW label=charmap op=text n=8 rep=6 wall_ms=4.226 errors=0
+RAW label=charmap op=text n=8 rep=7 wall_ms=4.179 errors=0
+RAW label=charmap op=text n=8 rep=8 wall_ms=4.413 errors=0
+RAW label=charmap op=text n=8 rep=9 wall_ms=4.384 errors=0
+RAW label=charmap op=text n=8 rep=10 wall_ms=3.698 errors=0
+RAW label=charmap op=text n=8 rep=11 wall_ms=3.667 errors=0
+RAW label=charmap op=text n=8 rep=12 wall_ms=3.609 errors=0
+RAW label=charmap op=text n=8 rep=13 wall_ms=4.130 errors=0
+RAW label=charmap op=text n=8 rep=14 wall_ms=3.786 errors=0
+RAW label=charmap op=text n=8 rep=15 wall_ms=3.982 errors=0
+RAW label=charmap op=text n=8 rep=16 wall_ms=3.920 errors=0
+RAW label=charmap op=text n=8 rep=17 wall_ms=3.865 errors=0
+RAW label=charmap op=text n=8 rep=18 wall_ms=3.812 errors=0
+RAW label=charmap op=text n=8 rep=19 wall_ms=4.246 errors=0
+RESULT label=charmap op=text n=8 k=32 median_ms=3.94 p90_ms=4.38 per_call_us=123.2 speedup=1.78 errors=0
+RAW label=charmap op=msaa n=1 rep=0 wall_ms=2.916 errors=0
+RAW label=charmap op=msaa n=1 rep=1 wall_ms=2.805 errors=0
+RAW label=charmap op=msaa n=1 rep=2 wall_ms=2.746 errors=0
+RAW label=charmap op=msaa n=1 rep=3 wall_ms=2.776 errors=0
+RAW label=charmap op=msaa n=1 rep=4 wall_ms=2.836 errors=0
+RAW label=charmap op=msaa n=1 rep=5 wall_ms=3.379 errors=0
+RAW label=charmap op=msaa n=1 rep=6 wall_ms=2.863 errors=0
+RAW label=charmap op=msaa n=1 rep=7 wall_ms=3.170 errors=0
+RAW label=charmap op=msaa n=1 rep=8 wall_ms=2.885 errors=0
+RAW label=charmap op=msaa n=1 rep=9 wall_ms=2.799 errors=0
+RAW label=charmap op=msaa n=1 rep=10 wall_ms=2.771 errors=0
+RAW label=charmap op=msaa n=1 rep=11 wall_ms=2.989 errors=0
+RAW label=charmap op=msaa n=1 rep=12 wall_ms=2.922 errors=0
+RAW label=charmap op=msaa n=1 rep=13 wall_ms=2.964 errors=0
+RAW label=charmap op=msaa n=1 rep=14 wall_ms=3.096 errors=0
+RAW label=charmap op=msaa n=1 rep=15 wall_ms=3.035 errors=0
+RAW label=charmap op=msaa n=1 rep=16 wall_ms=2.713 errors=0
+RAW label=charmap op=msaa n=1 rep=17 wall_ms=2.849 errors=0
+RAW label=charmap op=msaa n=1 rep=18 wall_ms=2.816 errors=0
+RAW label=charmap op=msaa n=1 rep=19 wall_ms=2.900 errors=0
+RESULT label=charmap op=msaa n=1 k=64 median_ms=2.89 p90_ms=3.10 per_call_us=45.1 speedup=1.00 errors=0
+RAW label=charmap op=msaa n=2 rep=0 wall_ms=5.409 errors=0
+RAW label=charmap op=msaa n=2 rep=1 wall_ms=5.644 errors=0
+RAW label=charmap op=msaa n=2 rep=2 wall_ms=5.544 errors=0
+RAW label=charmap op=msaa n=2 rep=3 wall_ms=5.723 errors=0
+RAW label=charmap op=msaa n=2 rep=4 wall_ms=5.672 errors=0
+RAW label=charmap op=msaa n=2 rep=5 wall_ms=5.701 errors=0
+RAW label=charmap op=msaa n=2 rep=6 wall_ms=5.655 errors=0
+RAW label=charmap op=msaa n=2 rep=7 wall_ms=5.455 errors=0
+RAW label=charmap op=msaa n=2 rep=8 wall_ms=5.498 errors=0
+RAW label=charmap op=msaa n=2 rep=9 wall_ms=5.113 errors=0
+RAW label=charmap op=msaa n=2 rep=10 wall_ms=5.386 errors=0
+RAW label=charmap op=msaa n=2 rep=11 wall_ms=5.386 errors=0
+RAW label=charmap op=msaa n=2 rep=12 wall_ms=5.616 errors=0
+RAW label=charmap op=msaa n=2 rep=13 wall_ms=5.576 errors=0
+RAW label=charmap op=msaa n=2 rep=14 wall_ms=5.085 errors=0
+RAW label=charmap op=msaa n=2 rep=15 wall_ms=5.242 errors=0
+RAW label=charmap op=msaa n=2 rep=16 wall_ms=5.978 errors=0
+RAW label=charmap op=msaa n=2 rep=17 wall_ms=5.645 errors=0
+RAW label=charmap op=msaa n=2 rep=18 wall_ms=5.406 errors=0
+RAW label=charmap op=msaa n=2 rep=19 wall_ms=5.838 errors=0
+RESULT label=charmap op=msaa n=2 k=64 median_ms=5.58 p90_ms=5.72 per_call_us=87.1 speedup=0.52 errors=0
+RAW label=charmap op=msaa n=4 rep=0 wall_ms=5.391 errors=0
+RAW label=charmap op=msaa n=4 rep=1 wall_ms=6.399 errors=0
+RAW label=charmap op=msaa n=4 rep=2 wall_ms=6.047 errors=0
+RAW label=charmap op=msaa n=4 rep=3 wall_ms=6.994 errors=0
+RAW label=charmap op=msaa n=4 rep=4 wall_ms=6.314 errors=0
+RAW label=charmap op=msaa n=4 rep=5 wall_ms=6.454 errors=0
+RAW label=charmap op=msaa n=4 rep=6 wall_ms=6.475 errors=0
+RAW label=charmap op=msaa n=4 rep=7 wall_ms=6.972 errors=0
+RAW label=charmap op=msaa n=4 rep=8 wall_ms=5.927 errors=0
+RAW label=charmap op=msaa n=4 rep=9 wall_ms=5.447 errors=0
+RAW label=charmap op=msaa n=4 rep=10 wall_ms=5.182 errors=0
+RAW label=charmap op=msaa n=4 rep=11 wall_ms=6.840 errors=0
+RAW label=charmap op=msaa n=4 rep=12 wall_ms=6.934 errors=0
+RAW label=charmap op=msaa n=4 rep=13 wall_ms=6.324 errors=0
+RAW label=charmap op=msaa n=4 rep=14 wall_ms=7.100 errors=0
+RAW label=charmap op=msaa n=4 rep=15 wall_ms=6.812 errors=0
+RAW label=charmap op=msaa n=4 rep=16 wall_ms=6.266 errors=0
+RAW label=charmap op=msaa n=4 rep=17 wall_ms=6.433 errors=0
+RAW label=charmap op=msaa n=4 rep=18 wall_ms=6.360 errors=0
+RAW label=charmap op=msaa n=4 rep=19 wall_ms=6.383 errors=0
+RESULT label=charmap op=msaa n=4 k=64 median_ms=6.40 p90_ms=6.97 per_call_us=100.0 speedup=0.45 errors=0
+RAW label=charmap op=msaa n=8 rep=0 wall_ms=6.256 errors=0
+RAW label=charmap op=msaa n=8 rep=1 wall_ms=6.117 errors=0
+RAW label=charmap op=msaa n=8 rep=2 wall_ms=6.385 errors=0
+RAW label=charmap op=msaa n=8 rep=3 wall_ms=6.041 errors=0
+RAW label=charmap op=msaa n=8 rep=4 wall_ms=6.420 errors=0
+RAW label=charmap op=msaa n=8 rep=5 wall_ms=6.084 errors=0
+RAW label=charmap op=msaa n=8 rep=6 wall_ms=5.791 errors=0
+RAW label=charmap op=msaa n=8 rep=7 wall_ms=5.775 errors=0
+RAW label=charmap op=msaa n=8 rep=8 wall_ms=5.725 errors=0
+RAW label=charmap op=msaa n=8 rep=9 wall_ms=5.889 errors=0
+RAW label=charmap op=msaa n=8 rep=10 wall_ms=6.006 errors=0
+RAW label=charmap op=msaa n=8 rep=11 wall_ms=5.911 errors=0
+RAW label=charmap op=msaa n=8 rep=12 wall_ms=5.931 errors=0
+RAW label=charmap op=msaa n=8 rep=13 wall_ms=6.157 errors=0
+RAW label=charmap op=msaa n=8 rep=14 wall_ms=5.684 errors=0
+RAW label=charmap op=msaa n=8 rep=15 wall_ms=6.230 errors=0
+RAW label=charmap op=msaa n=8 rep=16 wall_ms=6.284 errors=0
+RAW label=charmap op=msaa n=8 rep=17 wall_ms=6.235 errors=0
+RAW label=charmap op=msaa n=8 rep=18 wall_ms=5.857 errors=0
+RAW label=charmap op=msaa n=8 rep=19 wall_ms=5.734 errors=0
+RESULT label=charmap op=msaa n=8 k=64 median_ms=6.04 p90_ms=6.28 per_call_us=94.4 speedup=0.48 errors=0
+RAW label=charmap op=rop n=1 rep=0 wall_ms=11.677 errors=0
+RAW label=charmap op=rop n=1 rep=1 wall_ms=10.903 errors=0
+RAW label=charmap op=rop n=1 rep=2 wall_ms=11.107 errors=0
+RAW label=charmap op=rop n=1 rep=3 wall_ms=10.993 errors=0
+RAW label=charmap op=rop n=1 rep=4 wall_ms=11.383 errors=0
+RAW label=charmap op=rop n=1 rep=5 wall_ms=10.675 errors=0
+RAW label=charmap op=rop n=1 rep=6 wall_ms=10.816 errors=0
+RAW label=charmap op=rop n=1 rep=7 wall_ms=11.326 errors=0
+RAW label=charmap op=rop n=1 rep=8 wall_ms=11.483 errors=0
+RAW label=charmap op=rop n=1 rep=9 wall_ms=11.164 errors=0
+RAW label=charmap op=rop n=1 rep=10 wall_ms=11.126 errors=0
+RAW label=charmap op=rop n=1 rep=11 wall_ms=10.953 errors=0
+RAW label=charmap op=rop n=1 rep=12 wall_ms=11.983 errors=0
+RAW label=charmap op=rop n=1 rep=13 wall_ms=11.636 errors=0
+RAW label=charmap op=rop n=1 rep=14 wall_ms=11.514 errors=0
+RAW label=charmap op=rop n=1 rep=15 wall_ms=12.109 errors=0
+RAW label=charmap op=rop n=1 rep=16 wall_ms=11.115 errors=0
+RAW label=charmap op=rop n=1 rep=17 wall_ms=11.631 errors=0
+RAW label=charmap op=rop n=1 rep=18 wall_ms=11.379 errors=0
+RAW label=charmap op=rop n=1 rep=19 wall_ms=11.615 errors=0
+RESULT label=charmap op=rop n=1 k=32 median_ms=11.38 p90_ms=11.68 per_call_us=355.6 speedup=1.00 errors=0
+RAW label=charmap op=rop n=2 rep=0 wall_ms=9.508 errors=0
+RAW label=charmap op=rop n=2 rep=1 wall_ms=10.245 errors=0
+RAW label=charmap op=rop n=2 rep=2 wall_ms=9.216 errors=0
+RAW label=charmap op=rop n=2 rep=3 wall_ms=9.558 errors=0
+RAW label=charmap op=rop n=2 rep=4 wall_ms=10.596 errors=0
+RAW label=charmap op=rop n=2 rep=5 wall_ms=9.956 errors=0
+RAW label=charmap op=rop n=2 rep=6 wall_ms=10.150 errors=0
+RAW label=charmap op=rop n=2 rep=7 wall_ms=9.684 errors=0
+RAW label=charmap op=rop n=2 rep=8 wall_ms=9.689 errors=0
+RAW label=charmap op=rop n=2 rep=9 wall_ms=9.263 errors=0
+RAW label=charmap op=rop n=2 rep=10 wall_ms=9.676 errors=0
+RAW label=charmap op=rop n=2 rep=11 wall_ms=9.471 errors=0
+RAW label=charmap op=rop n=2 rep=12 wall_ms=10.927 errors=0
+RAW label=charmap op=rop n=2 rep=13 wall_ms=9.034 errors=0
+RAW label=charmap op=rop n=2 rep=14 wall_ms=9.702 errors=0
+RAW label=charmap op=rop n=2 rep=15 wall_ms=10.144 errors=0
+RAW label=charmap op=rop n=2 rep=16 wall_ms=9.037 errors=0
+RAW label=charmap op=rop n=2 rep=17 wall_ms=9.099 errors=0
+RAW label=charmap op=rop n=2 rep=18 wall_ms=9.832 errors=0
+RAW label=charmap op=rop n=2 rep=19 wall_ms=8.995 errors=0
+RESULT label=charmap op=rop n=2 k=32 median_ms=9.68 p90_ms=10.24 per_call_us=302.6 speedup=1.18 errors=0
+RAW label=charmap op=rop n=4 rep=0 wall_ms=9.286 errors=0
+RAW label=charmap op=rop n=4 rep=1 wall_ms=9.606 errors=0
+RAW label=charmap op=rop n=4 rep=2 wall_ms=9.423 errors=0
+RAW label=charmap op=rop n=4 rep=3 wall_ms=10.189 errors=0
+RAW label=charmap op=rop n=4 rep=4 wall_ms=9.352 errors=0
+RAW label=charmap op=rop n=4 rep=5 wall_ms=9.161 errors=0
+RAW label=charmap op=rop n=4 rep=6 wall_ms=9.305 errors=0
+RAW label=charmap op=rop n=4 rep=7 wall_ms=9.563 errors=0
+RAW label=charmap op=rop n=4 rep=8 wall_ms=9.010 errors=0
+RAW label=charmap op=rop n=4 rep=9 wall_ms=9.811 errors=0
+RAW label=charmap op=rop n=4 rep=10 wall_ms=9.822 errors=0
+RAW label=charmap op=rop n=4 rep=11 wall_ms=9.950 errors=0
+RAW label=charmap op=rop n=4 rep=12 wall_ms=9.239 errors=0
+RAW label=charmap op=rop n=4 rep=13 wall_ms=10.134 errors=0
+RAW label=charmap op=rop n=4 rep=14 wall_ms=9.200 errors=0
+RAW label=charmap op=rop n=4 rep=15 wall_ms=8.935 errors=0
+RAW label=charmap op=rop n=4 rep=16 wall_ms=9.937 errors=0
+RAW label=charmap op=rop n=4 rep=17 wall_ms=9.224 errors=0
+RAW label=charmap op=rop n=4 rep=18 wall_ms=9.529 errors=0
+RAW label=charmap op=rop n=4 rep=19 wall_ms=10.535 errors=0
+RESULT label=charmap op=rop n=4 k=32 median_ms=9.53 p90_ms=10.13 per_call_us=297.8 speedup=1.19 errors=0
+RAW label=charmap op=rop n=8 rep=0 wall_ms=9.157 errors=0
+RAW label=charmap op=rop n=8 rep=1 wall_ms=9.406 errors=0
+RAW label=charmap op=rop n=8 rep=2 wall_ms=9.563 errors=0
+RAW label=charmap op=rop n=8 rep=3 wall_ms=9.361 errors=0
+RAW label=charmap op=rop n=8 rep=4 wall_ms=10.294 errors=0
+RAW label=charmap op=rop n=8 rep=5 wall_ms=9.576 errors=0
+RAW label=charmap op=rop n=8 rep=6 wall_ms=9.345 errors=0
+RAW label=charmap op=rop n=8 rep=7 wall_ms=9.937 errors=0
+RAW label=charmap op=rop n=8 rep=8 wall_ms=9.147 errors=0
+RAW label=charmap op=rop n=8 rep=9 wall_ms=8.820 errors=0
+RAW label=charmap op=rop n=8 rep=10 wall_ms=10.011 errors=0
+RAW label=charmap op=rop n=8 rep=11 wall_ms=10.174 errors=0
+RAW label=charmap op=rop n=8 rep=12 wall_ms=9.731 errors=0
+RAW label=charmap op=rop n=8 rep=13 wall_ms=9.435 errors=0
+RAW label=charmap op=rop n=8 rep=14 wall_ms=10.468 errors=0
+RAW label=charmap op=rop n=8 rep=15 wall_ms=10.971 errors=0
+RAW label=charmap op=rop n=8 rep=16 wall_ms=10.415 errors=0
+RAW label=charmap op=rop n=8 rep=17 wall_ms=9.303 errors=0
+RAW label=charmap op=rop n=8 rep=18 wall_ms=10.281 errors=0
+RAW label=charmap op=rop n=8 rep=19 wall_ms=9.283 errors=0
+RESULT label=charmap op=rop n=8 k=32 median_ms=9.58 p90_ms=10.41 per_call_us=299.3 speedup=1.19 errors=0
+PAIR label=charmap-findall-beside-name a=FindAll@4458368 elem 0 (of 16 held, 20 found) b=Name@4458368 elem 3 (of 16 held)
+RESULT label=charmap-findall-beside-name a_alone count=10 median_ms=25.99 p90_ms=27.26 max_ms=28.00
+RESULT label=charmap-findall-beside-name a_with_b count=10 median_ms=26.61 p90_ms=26.69 max_ms=34.04
+RESULT label=charmap-findall-beside-name b_alone count=105 median_ms=0.20 p90_ms=0.27 max_ms=0.35
+RESULT label=charmap-findall-beside-name b_during_a count=105 median_ms=0.27 p90_ms=0.53 max_ms=0.88
+PAIR label=charmap-findall-beside-rop a=FindAll@4458368 elem 0 (of 16 held, 20 found) b=Rop@4458368 elem 3 (of 16 held)
+RESULT label=charmap-findall-beside-rop a_alone count=10 median_ms=23.42 p90_ms=23.70 max_ms=27.00
+RESULT label=charmap-findall-beside-rop a_with_b count=10 median_ms=25.19 p90_ms=26.55 max_ms=26.90
+RESULT label=charmap-findall-beside-rop b_alone count=101 median_ms=0.40 p90_ms=0.50 max_ms=0.80
+RESULT label=charmap-findall-beside-rop b_during_a count=101 median_ms=0.42 p90_ms=0.59 max_ms=0.77
+CALL other-element hwnd=4458368 pid=13476 ui_tid=10992 op=Name elem=3 class=#32770 title=Character Map
+CALL other-element-rop hwnd=4458368 pid=13476 ui_tid=10992 op=Rop elem=3 class=#32770 title=Character Map
+CALL same-window-new-connection hwnd=4458368 pid=13476 ui_tid=10992 op=FromHandle elem=0 class=#32770 title=Character Map
+CALL stuck hwnd=4458368 pid=13476 ui_tid=10992 op=Name elem=1 class=#32770 title=Character Map
+suspended tid=10992
+resumed tid=10992
+TRIAL label=charmap-suspended-name trial=0 block=suspend:4458368 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4001.1
+RESULT label=charmap-suspended-name trial=0 call=same-window-new-connection returned_ms=2197.3 before_unblock result=error 0x80131505 idle_baseline_ms=0.40
+RESULT label=charmap-suspended-name trial=0 call=xproc-other-element returned_ms=4002.3 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4002.3 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-name trial=0 call=stuck returned_ms=4003.2 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=charmap-suspended-name trial=0 call=other-element-rop returned_ms=4003.7 after_unblock result=ok idle_baseline_ms=0.78
+RESULT label=charmap-suspended-name trial=0 call=other-element returned_ms=4003.8 after_unblock result=ok idle_baseline_ms=0.20
+suspended tid=10992
+resumed tid=10992
+TRIAL label=charmap-suspended-name trial=1 block=suspend:4458368 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4005.1
+RESULT label=charmap-suspended-name trial=1 call=same-window-new-connection returned_ms=2203.6 before_unblock result=error 0x80131505 idle_baseline_ms=0.54
+RESULT label=charmap-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4005.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-name trial=1 call=xproc-other-element returned_ms=4006.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-name trial=1 call=stuck returned_ms=4006.7 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=charmap-suspended-name trial=1 call=other-element returned_ms=4007.0 after_unblock result=ok idle_baseline_ms=0.20
+RESULT label=charmap-suspended-name trial=1 call=other-element-rop returned_ms=4007.4 after_unblock result=ok idle_baseline_ms=0.50
+CALL other-element hwnd=4458368 pid=13476 ui_tid=10992 op=Name elem=3 class=#32770 title=Character Map
+CALL other-element-rop hwnd=4458368 pid=13476 ui_tid=10992 op=Rop elem=3 class=#32770 title=Character Map
+CALL same-window-new-connection hwnd=4458368 pid=13476 ui_tid=10992 op=FromHandle elem=0 class=#32770 title=Character Map
+CALL stuck hwnd=4458368 pid=13476 ui_tid=10992 op=Rop elem=1 class=#32770 title=Character Map
+suspended tid=10992
+resumed tid=10992
+TRIAL label=charmap-suspended-rop trial=0 block=suspend:4458368 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4010.6
+RESULT label=charmap-suspended-rop trial=0 call=same-window-new-connection returned_ms=2195.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.67
+RESULT label=charmap-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4011.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-rop trial=0 call=xproc-other-element returned_ms=4011.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-rop trial=0 call=stuck returned_ms=4012.1 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=charmap-suspended-rop trial=0 call=other-element returned_ms=4012.2 after_unblock result=ok idle_baseline_ms=0.26
+RESULT label=charmap-suspended-rop trial=0 call=other-element-rop returned_ms=4012.6 after_unblock result=ok idle_baseline_ms=0.66
+suspended tid=10992
+resumed tid=10992
+TRIAL label=charmap-suspended-rop trial=1 block=suspend:4458368 evidence="200 ms wait" probes_started_ms_after_block=200.3 unblocked_at_ms=4003.5
+RESULT label=charmap-suspended-rop trial=1 call=same-window-new-connection returned_ms=2202.2 before_unblock result=error 0x80131505 idle_baseline_ms=0.46
+RESULT label=charmap-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4004.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-rop trial=1 call=xproc-other-element returned_ms=4004.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=charmap-suspended-rop trial=1 call=other-element-rop returned_ms=4006.1 after_unblock result=ok idle_baseline_ms=0.54
+RESULT label=charmap-suspended-rop trial=1 call=other-element returned_ms=4006.5 after_unblock result=ok idle_baseline_ms=0.19
+RESULT label=charmap-suspended-rop trial=1 call=stuck returned_ms=4007.7 after_unblock result=ok idle_baseline_ms=0.00

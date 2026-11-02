@@ -1,0 +1,11 @@
+CALL other-element hwnd=721140 pid=12892 ui_tid=10088 op=Name elem=3 class=Notepad title=Untitled - Notepad
+CALL other-thread-window hwnd=656722 pid=12892 ui_tid=13920 op=Name elem=3 class=Notepad title=big.txt - Notepad
+CALL stuck hwnd=721140 pid=12892 ui_tid=10088 op=Name elem=1 class=Notepad title=Untitled - Notepad
+suspended tid=10088
+PROBES_STARTED trial=0
+resumed tid=10088
+TRIAL label=notepad-stacks trial=0 block=suspend:721140 evidence="200 ms wait" probes_started_ms_after_block=201.2 unblocked_at_ms=22125.3
+RESULT label=notepad-stacks trial=0 call=stuck returned_ms=21935.1 before_unblock result=error 0x80131505 idle_baseline_ms=0.00
+RESULT label=notepad-stacks trial=0 call=other-thread-window returned_ms=22124.2 before_unblock result=error 0x80131505 idle_baseline_ms=0.52
+RESULT label=notepad-stacks trial=0 call=other-element returned_ms=22124.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.61
+RESULT label=notepad-stacks trial=0 call=xproc-other-thread-window returned_ms=22125.2 before_unblock result=error done error 0x80131505 22124.321 idle_baseline_ms=NaN

@@ -1,0 +1,623 @@
+# Windows Terminal, the end-to-end harness's portable 1.24.12741.0 copied to the scratch folder, pid 3828: its windows, threads by start address, then run-real.ps1 (PUIA_TEXT_CLASS=TermControl, so text is the terminal control's). Its second window (1180224, 'other-thread-window' below) is on the same UI thread: Windows Terminal 1.24 runs all its windows on one.
+top 1180224 tid=12704 visible=true class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+  child 24905528 tid=12704 class=DRAG_BAR_WINDOW_CLASS title=
+  child 1114738 tid=12704 class=Windows.UI.Composition.DesktopWindowContentBridge title=DesktopWindowXamlSource
+  child 6489664 tid=12704 class=Windows.UI.Input.InputSite.WindowClass title=
+top 2425680 tid=12704 visible=true class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+  child 656590 tid=12704 class=DRAG_BAR_WINDOW_CLASS title=
+  child 2097288 tid=12704 class=Windows.UI.Composition.DesktopWindowContentBridge title=DesktopWindowXamlSource
+  child 2097290 tid=12704 class=Windows.UI.Input.InputSite.WindowClass title=
+top 656276 tid=12704 visible=false class=OleDdeWndClass title=DDE Server Window
+top 2426132 tid=12704 visible=false class=Windows Terminal d113c22d74363609 16923ea871795c15 title=Windows Terminal
+  child 394056 tid=12704 class=Windows.UI.Core.CoreWindow title=DesktopWindowXamlSource
+top 1770848 tid=12704 visible=false class=MSCTFIME UI title=MSCTFIME UI
+top 5112556 tid=12704 visible=false class=IME title=Default IME
+thread tid=12704 start=WindowsTerminal.exe+0x12210 cycles=47174731416
+thread tid=3020 start=ntdll.dll+0x24990 cycles=216683091
+thread tid=13124 start=Windows.UI.Xaml.dll+0x70eac0 cycles=569148766
+thread tid=12484 start=directmanipulation.dll+0x59b10 cycles=653913
+thread tid=4700 start=TerminalConnection.dll+0x1800 cycles=123702578
+thread tid=7076 start=Microsoft.Terminal.Control.dll+0x50520 cycles=644631725
+thread tid=13388 start=ntdll.dll+0x24990 cycles=52447850580
+thread tid=11172 start=uiautomationcore.dll+0x162f60 cycles=18640227001
+thread tid=3832 start=ntdll.dll+0x24990 cycles=27936195
+thread tid=12392 start=ntdll.dll+0x24990 cycles=11312237
+thread tid=4316 start=combase.dll+0x1121e0 cycles=903113
+thread tid=6552 start=TerminalConnection.dll+0x1800 cycles=1208072
+thread tid=4864 start=Microsoft.Terminal.Control.dll+0x50520 cycles=232232111
+thread tid=1168 start=ntdll.dll+0x24990 cycles=8588706452
+thread tid=9292 start=ntdll.dll+0x24990 cycles=8740966
+thread tid=6840 start=ntdll.dll+0x24990 cycles=2334972
+thread tid=13236 start=ntdll.dll+0x24990 cycles=3023399
+thread tid=10216 start=uiautomationcore.dll+0x17c590 cycles=5213857
+﻿TARGET label=windows-terminal hwnd=2425680 pid=3828 ui_tid=12704 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt client=per-thread
+CTX n=1 descendants_found=16 elems_held=16 text=true msaa=true
+CTX n=2 descendants_found=16 elems_held=16 text=true msaa=true
+CTX n=4 descendants_found=16 elems_held=16 text=true msaa=true
+CTX n=8 descendants_found=16 elems_held=16 text=true msaa=true
+RAW label=windows-terminal op=name n=1 rep=0 wall_ms=8.426 errors=0
+RAW label=windows-terminal op=name n=1 rep=1 wall_ms=8.680 errors=0
+RAW label=windows-terminal op=name n=1 rep=2 wall_ms=7.926 errors=0
+RAW label=windows-terminal op=name n=1 rep=3 wall_ms=7.867 errors=0
+RAW label=windows-terminal op=name n=1 rep=4 wall_ms=8.310 errors=0
+RAW label=windows-terminal op=name n=1 rep=5 wall_ms=7.168 errors=0
+RAW label=windows-terminal op=name n=1 rep=6 wall_ms=6.698 errors=0
+RAW label=windows-terminal op=name n=1 rep=7 wall_ms=6.610 errors=0
+RAW label=windows-terminal op=name n=1 rep=8 wall_ms=6.409 errors=0
+RAW label=windows-terminal op=name n=1 rep=9 wall_ms=6.828 errors=0
+RAW label=windows-terminal op=name n=1 rep=10 wall_ms=6.007 errors=0
+RAW label=windows-terminal op=name n=1 rep=11 wall_ms=5.985 errors=0
+RAW label=windows-terminal op=name n=1 rep=12 wall_ms=8.407 errors=0
+RAW label=windows-terminal op=name n=1 rep=13 wall_ms=7.437 errors=0
+RAW label=windows-terminal op=name n=1 rep=14 wall_ms=6.825 errors=0
+RAW label=windows-terminal op=name n=1 rep=15 wall_ms=6.786 errors=0
+RAW label=windows-terminal op=name n=1 rep=16 wall_ms=7.541 errors=0
+RAW label=windows-terminal op=name n=1 rep=17 wall_ms=8.595 errors=0
+RAW label=windows-terminal op=name n=1 rep=18 wall_ms=8.679 errors=0
+RAW label=windows-terminal op=name n=1 rep=19 wall_ms=7.524 errors=0
+RESULT label=windows-terminal op=name n=1 k=64 median_ms=7.52 p90_ms=8.59 per_call_us=117.6 speedup=1.00 errors=0
+RAW label=windows-terminal op=name n=2 rep=0 wall_ms=3.857 errors=0
+RAW label=windows-terminal op=name n=2 rep=1 wall_ms=4.212 errors=0
+RAW label=windows-terminal op=name n=2 rep=2 wall_ms=4.351 errors=0
+RAW label=windows-terminal op=name n=2 rep=3 wall_ms=4.063 errors=0
+RAW label=windows-terminal op=name n=2 rep=4 wall_ms=3.909 errors=0
+RAW label=windows-terminal op=name n=2 rep=5 wall_ms=4.082 errors=0
+RAW label=windows-terminal op=name n=2 rep=6 wall_ms=4.181 errors=0
+RAW label=windows-terminal op=name n=2 rep=7 wall_ms=4.189 errors=0
+RAW label=windows-terminal op=name n=2 rep=8 wall_ms=4.454 errors=0
+RAW label=windows-terminal op=name n=2 rep=9 wall_ms=4.038 errors=0
+RAW label=windows-terminal op=name n=2 rep=10 wall_ms=4.805 errors=0
+RAW label=windows-terminal op=name n=2 rep=11 wall_ms=5.045 errors=0
+RAW label=windows-terminal op=name n=2 rep=12 wall_ms=4.279 errors=0
+RAW label=windows-terminal op=name n=2 rep=13 wall_ms=4.536 errors=0
+RAW label=windows-terminal op=name n=2 rep=14 wall_ms=4.512 errors=0
+RAW label=windows-terminal op=name n=2 rep=15 wall_ms=4.427 errors=0
+RAW label=windows-terminal op=name n=2 rep=16 wall_ms=4.696 errors=0
+RAW label=windows-terminal op=name n=2 rep=17 wall_ms=4.789 errors=0
+RAW label=windows-terminal op=name n=2 rep=18 wall_ms=5.053 errors=0
+RAW label=windows-terminal op=name n=2 rep=19 wall_ms=5.089 errors=0
+RESULT label=windows-terminal op=name n=2 k=64 median_ms=4.43 p90_ms=5.05 per_call_us=69.2 speedup=1.70 errors=0
+RAW label=windows-terminal op=name n=4 rep=0 wall_ms=4.751 errors=0
+RAW label=windows-terminal op=name n=4 rep=1 wall_ms=4.922 errors=0
+RAW label=windows-terminal op=name n=4 rep=2 wall_ms=4.800 errors=0
+RAW label=windows-terminal op=name n=4 rep=3 wall_ms=4.867 errors=0
+RAW label=windows-terminal op=name n=4 rep=4 wall_ms=4.363 errors=0
+RAW label=windows-terminal op=name n=4 rep=5 wall_ms=5.404 errors=0
+RAW label=windows-terminal op=name n=4 rep=6 wall_ms=5.009 errors=0
+RAW label=windows-terminal op=name n=4 rep=7 wall_ms=5.182 errors=0
+RAW label=windows-terminal op=name n=4 rep=8 wall_ms=5.357 errors=0
+RAW label=windows-terminal op=name n=4 rep=9 wall_ms=5.408 errors=0
+RAW label=windows-terminal op=name n=4 rep=10 wall_ms=5.162 errors=0
+RAW label=windows-terminal op=name n=4 rep=11 wall_ms=4.627 errors=0
+RAW label=windows-terminal op=name n=4 rep=12 wall_ms=4.489 errors=0
+RAW label=windows-terminal op=name n=4 rep=13 wall_ms=3.820 errors=0
+RAW label=windows-terminal op=name n=4 rep=14 wall_ms=3.549 errors=0
+RAW label=windows-terminal op=name n=4 rep=15 wall_ms=3.678 errors=0
+RAW label=windows-terminal op=name n=4 rep=16 wall_ms=3.585 errors=0
+RAW label=windows-terminal op=name n=4 rep=17 wall_ms=4.440 errors=0
+RAW label=windows-terminal op=name n=4 rep=18 wall_ms=4.118 errors=0
+RAW label=windows-terminal op=name n=4 rep=19 wall_ms=4.204 errors=0
+RESULT label=windows-terminal op=name n=4 k=64 median_ms=4.75 p90_ms=5.36 per_call_us=74.2 speedup=1.58 errors=0
+RAW label=windows-terminal op=name n=8 rep=0 wall_ms=4.509 errors=0
+RAW label=windows-terminal op=name n=8 rep=1 wall_ms=4.394 errors=0
+RAW label=windows-terminal op=name n=8 rep=2 wall_ms=4.647 errors=0
+RAW label=windows-terminal op=name n=8 rep=3 wall_ms=5.747 errors=0
+RAW label=windows-terminal op=name n=8 rep=4 wall_ms=5.626 errors=0
+RAW label=windows-terminal op=name n=8 rep=5 wall_ms=5.395 errors=0
+RAW label=windows-terminal op=name n=8 rep=6 wall_ms=5.179 errors=0
+RAW label=windows-terminal op=name n=8 rep=7 wall_ms=4.657 errors=0
+RAW label=windows-terminal op=name n=8 rep=8 wall_ms=4.238 errors=0
+RAW label=windows-terminal op=name n=8 rep=9 wall_ms=3.844 errors=0
+RAW label=windows-terminal op=name n=8 rep=10 wall_ms=4.262 errors=0
+RAW label=windows-terminal op=name n=8 rep=11 wall_ms=4.203 errors=0
+RAW label=windows-terminal op=name n=8 rep=12 wall_ms=4.066 errors=0
+RAW label=windows-terminal op=name n=8 rep=13 wall_ms=4.148 errors=0
+RAW label=windows-terminal op=name n=8 rep=14 wall_ms=4.152 errors=0
+RAW label=windows-terminal op=name n=8 rep=15 wall_ms=3.948 errors=0
+RAW label=windows-terminal op=name n=8 rep=16 wall_ms=4.112 errors=0
+RAW label=windows-terminal op=name n=8 rep=17 wall_ms=4.462 errors=0
+RAW label=windows-terminal op=name n=8 rep=18 wall_ms=4.483 errors=0
+RAW label=windows-terminal op=name n=8 rep=19 wall_ms=5.343 errors=0
+RESULT label=windows-terminal op=name n=8 k=64 median_ms=4.46 p90_ms=5.39 per_call_us=69.7 speedup=1.69 errors=0
+RAW label=windows-terminal op=findall n=1 rep=0 wall_ms=106.906 errors=0
+RAW label=windows-terminal op=findall n=1 rep=1 wall_ms=97.913 errors=0
+RAW label=windows-terminal op=findall n=1 rep=2 wall_ms=98.706 errors=0
+RAW label=windows-terminal op=findall n=1 rep=3 wall_ms=102.366 errors=0
+RAW label=windows-terminal op=findall n=1 rep=4 wall_ms=103.980 errors=0
+RAW label=windows-terminal op=findall n=1 rep=5 wall_ms=101.063 errors=0
+RAW label=windows-terminal op=findall n=1 rep=6 wall_ms=103.363 errors=0
+RAW label=windows-terminal op=findall n=1 rep=7 wall_ms=104.840 errors=0
+RAW label=windows-terminal op=findall n=1 rep=8 wall_ms=98.547 errors=0
+RAW label=windows-terminal op=findall n=1 rep=9 wall_ms=100.984 errors=0
+RAW label=windows-terminal op=findall n=1 rep=10 wall_ms=111.726 errors=0
+RAW label=windows-terminal op=findall n=1 rep=11 wall_ms=105.613 errors=0
+RAW label=windows-terminal op=findall n=1 rep=12 wall_ms=100.329 errors=0
+RAW label=windows-terminal op=findall n=1 rep=13 wall_ms=99.527 errors=0
+RAW label=windows-terminal op=findall n=1 rep=14 wall_ms=102.439 errors=0
+RAW label=windows-terminal op=findall n=1 rep=15 wall_ms=95.243 errors=0
+RAW label=windows-terminal op=findall n=1 rep=16 wall_ms=102.672 errors=0
+RAW label=windows-terminal op=findall n=1 rep=17 wall_ms=98.727 errors=0
+RAW label=windows-terminal op=findall n=1 rep=18 wall_ms=95.861 errors=0
+RAW label=windows-terminal op=findall n=1 rep=19 wall_ms=91.940 errors=0
+RESULT label=windows-terminal op=findall n=1 k=8 median_ms=101.06 p90_ms=105.61 per_call_us=12632.8 speedup=1.00 errors=0
+RAW label=windows-terminal op=findall n=2 rep=0 wall_ms=85.015 errors=0
+RAW label=windows-terminal op=findall n=2 rep=1 wall_ms=82.947 errors=0
+RAW label=windows-terminal op=findall n=2 rep=2 wall_ms=83.368 errors=0
+RAW label=windows-terminal op=findall n=2 rep=3 wall_ms=88.087 errors=0
+RAW label=windows-terminal op=findall n=2 rep=4 wall_ms=100.115 errors=0
+RAW label=windows-terminal op=findall n=2 rep=5 wall_ms=82.301 errors=0
+RAW label=windows-terminal op=findall n=2 rep=6 wall_ms=87.799 errors=0
+RAW label=windows-terminal op=findall n=2 rep=7 wall_ms=85.428 errors=0
+RAW label=windows-terminal op=findall n=2 rep=8 wall_ms=84.605 errors=0
+RAW label=windows-terminal op=findall n=2 rep=9 wall_ms=83.815 errors=0
+RAW label=windows-terminal op=findall n=2 rep=10 wall_ms=87.450 errors=0
+RAW label=windows-terminal op=findall n=2 rep=11 wall_ms=88.838 errors=0
+RAW label=windows-terminal op=findall n=2 rep=12 wall_ms=89.333 errors=0
+RAW label=windows-terminal op=findall n=2 rep=13 wall_ms=86.611 errors=0
+RAW label=windows-terminal op=findall n=2 rep=14 wall_ms=94.763 errors=0
+RAW label=windows-terminal op=findall n=2 rep=15 wall_ms=87.334 errors=0
+RAW label=windows-terminal op=findall n=2 rep=16 wall_ms=96.622 errors=0
+RAW label=windows-terminal op=findall n=2 rep=17 wall_ms=85.876 errors=0
+RAW label=windows-terminal op=findall n=2 rep=18 wall_ms=92.772 errors=0
+RAW label=windows-terminal op=findall n=2 rep=19 wall_ms=86.149 errors=0
+RESULT label=windows-terminal op=findall n=2 k=8 median_ms=87.33 p90_ms=94.76 per_call_us=10916.8 speedup=1.16 errors=0
+RAW label=windows-terminal op=findall n=4 rep=0 wall_ms=92.935 errors=0
+RAW label=windows-terminal op=findall n=4 rep=1 wall_ms=89.597 errors=0
+RAW label=windows-terminal op=findall n=4 rep=2 wall_ms=87.225 errors=0
+RAW label=windows-terminal op=findall n=4 rep=3 wall_ms=86.222 errors=0
+RAW label=windows-terminal op=findall n=4 rep=4 wall_ms=95.828 errors=0
+RAW label=windows-terminal op=findall n=4 rep=5 wall_ms=102.879 errors=0
+RAW label=windows-terminal op=findall n=4 rep=6 wall_ms=96.108 errors=0
+RAW label=windows-terminal op=findall n=4 rep=7 wall_ms=93.236 errors=0
+RAW label=windows-terminal op=findall n=4 rep=8 wall_ms=90.984 errors=0
+RAW label=windows-terminal op=findall n=4 rep=9 wall_ms=94.452 errors=0
+RAW label=windows-terminal op=findall n=4 rep=10 wall_ms=92.144 errors=0
+RAW label=windows-terminal op=findall n=4 rep=11 wall_ms=88.088 errors=0
+RAW label=windows-terminal op=findall n=4 rep=12 wall_ms=90.258 errors=0
+RAW label=windows-terminal op=findall n=4 rep=13 wall_ms=89.200 errors=0
+RAW label=windows-terminal op=findall n=4 rep=14 wall_ms=88.594 errors=0
+RAW label=windows-terminal op=findall n=4 rep=15 wall_ms=87.263 errors=0
+RAW label=windows-terminal op=findall n=4 rep=16 wall_ms=97.851 errors=0
+RAW label=windows-terminal op=findall n=4 rep=17 wall_ms=94.647 errors=0
+RAW label=windows-terminal op=findall n=4 rep=18 wall_ms=96.412 errors=0
+RAW label=windows-terminal op=findall n=4 rep=19 wall_ms=91.983 errors=0
+RESULT label=windows-terminal op=findall n=4 k=8 median_ms=92.14 p90_ms=96.41 per_call_us=11518.1 speedup=1.10 errors=0
+RAW label=windows-terminal op=findall n=8 rep=0 wall_ms=88.044 errors=0
+RAW label=windows-terminal op=findall n=8 rep=1 wall_ms=90.270 errors=0
+RAW label=windows-terminal op=findall n=8 rep=2 wall_ms=87.755 errors=0
+RAW label=windows-terminal op=findall n=8 rep=3 wall_ms=83.433 errors=0
+RAW label=windows-terminal op=findall n=8 rep=4 wall_ms=86.356 errors=0
+RAW label=windows-terminal op=findall n=8 rep=5 wall_ms=94.032 errors=0
+RAW label=windows-terminal op=findall n=8 rep=6 wall_ms=90.727 errors=0
+RAW label=windows-terminal op=findall n=8 rep=7 wall_ms=92.412 errors=0
+RAW label=windows-terminal op=findall n=8 rep=8 wall_ms=89.545 errors=0
+RAW label=windows-terminal op=findall n=8 rep=9 wall_ms=89.901 errors=0
+RAW label=windows-terminal op=findall n=8 rep=10 wall_ms=89.157 errors=0
+RAW label=windows-terminal op=findall n=8 rep=11 wall_ms=88.169 errors=0
+RAW label=windows-terminal op=findall n=8 rep=12 wall_ms=83.300 errors=0
+RAW label=windows-terminal op=findall n=8 rep=13 wall_ms=96.306 errors=0
+RAW label=windows-terminal op=findall n=8 rep=14 wall_ms=87.602 errors=0
+RAW label=windows-terminal op=findall n=8 rep=15 wall_ms=103.458 errors=0
+RAW label=windows-terminal op=findall n=8 rep=16 wall_ms=93.765 errors=0
+RAW label=windows-terminal op=findall n=8 rep=17 wall_ms=95.497 errors=0
+RAW label=windows-terminal op=findall n=8 rep=18 wall_ms=88.302 errors=0
+RAW label=windows-terminal op=findall n=8 rep=19 wall_ms=86.921 errors=0
+RESULT label=windows-terminal op=findall n=8 k=8 median_ms=89.55 p90_ms=95.50 per_call_us=11193.2 speedup=1.13 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=0 wall_ms=20.042 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=1 wall_ms=19.339 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=2 wall_ms=20.573 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=3 wall_ms=21.144 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=4 wall_ms=18.366 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=5 wall_ms=19.693 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=6 wall_ms=19.917 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=7 wall_ms=20.775 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=8 wall_ms=19.889 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=9 wall_ms=19.016 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=10 wall_ms=20.501 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=11 wall_ms=20.724 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=12 wall_ms=20.285 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=13 wall_ms=21.628 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=14 wall_ms=20.289 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=15 wall_ms=20.926 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=16 wall_ms=20.406 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=17 wall_ms=19.841 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=18 wall_ms=22.063 errors=0
+RAW label=windows-terminal op=fromhandle n=1 rep=19 wall_ms=20.374 errors=0
+RESULT label=windows-terminal op=fromhandle n=1 k=32 median_ms=20.37 p90_ms=21.14 per_call_us=636.7 speedup=1.00 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=0 wall_ms=19.062 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=1 wall_ms=18.174 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=2 wall_ms=18.910 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=3 wall_ms=19.630 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=4 wall_ms=18.143 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=5 wall_ms=19.026 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=6 wall_ms=18.614 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=7 wall_ms=16.977 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=8 wall_ms=16.195 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=9 wall_ms=16.647 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=10 wall_ms=15.712 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=11 wall_ms=15.681 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=12 wall_ms=18.511 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=13 wall_ms=17.029 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=14 wall_ms=17.157 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=15 wall_ms=19.419 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=16 wall_ms=17.547 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=17 wall_ms=18.482 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=18 wall_ms=18.177 errors=0
+RAW label=windows-terminal op=fromhandle n=2 rep=19 wall_ms=19.009 errors=0
+RESULT label=windows-terminal op=fromhandle n=2 k=32 median_ms=18.18 p90_ms=19.06 per_call_us=568.0 speedup=1.12 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=0 wall_ms=17.973 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=1 wall_ms=14.028 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=2 wall_ms=14.467 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=3 wall_ms=13.971 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=4 wall_ms=16.839 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=5 wall_ms=16.121 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=6 wall_ms=15.858 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=7 wall_ms=15.942 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=8 wall_ms=16.773 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=9 wall_ms=17.258 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=10 wall_ms=16.187 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=11 wall_ms=16.240 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=12 wall_ms=19.136 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=13 wall_ms=16.380 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=14 wall_ms=15.797 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=15 wall_ms=16.016 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=16 wall_ms=15.993 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=17 wall_ms=15.553 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=18 wall_ms=15.534 errors=0
+RAW label=windows-terminal op=fromhandle n=4 rep=19 wall_ms=15.827 errors=0
+RESULT label=windows-terminal op=fromhandle n=4 k=32 median_ms=16.02 p90_ms=17.26 per_call_us=500.5 speedup=1.27 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=0 wall_ms=16.355 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=1 wall_ms=15.895 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=2 wall_ms=15.395 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=3 wall_ms=17.267 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=4 wall_ms=15.910 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=5 wall_ms=16.204 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=6 wall_ms=16.416 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=7 wall_ms=17.066 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=8 wall_ms=17.309 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=9 wall_ms=15.577 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=10 wall_ms=16.194 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=11 wall_ms=16.149 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=12 wall_ms=15.479 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=13 wall_ms=14.289 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=14 wall_ms=16.289 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=15 wall_ms=16.868 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=16 wall_ms=16.042 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=17 wall_ms=15.707 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=18 wall_ms=16.619 errors=0
+RAW label=windows-terminal op=fromhandle n=8 rep=19 wall_ms=15.248 errors=0
+RESULT label=windows-terminal op=fromhandle n=8 k=32 median_ms=16.19 p90_ms=17.07 per_call_us=506.1 speedup=1.26 errors=0
+RAW label=windows-terminal op=text n=1 rep=0 wall_ms=11.638 errors=0
+RAW label=windows-terminal op=text n=1 rep=1 wall_ms=11.434 errors=0
+RAW label=windows-terminal op=text n=1 rep=2 wall_ms=11.378 errors=0
+RAW label=windows-terminal op=text n=1 rep=3 wall_ms=11.908 errors=0
+RAW label=windows-terminal op=text n=1 rep=4 wall_ms=13.212 errors=0
+RAW label=windows-terminal op=text n=1 rep=5 wall_ms=13.662 errors=0
+RAW label=windows-terminal op=text n=1 rep=6 wall_ms=11.711 errors=0
+RAW label=windows-terminal op=text n=1 rep=7 wall_ms=13.402 errors=0
+RAW label=windows-terminal op=text n=1 rep=8 wall_ms=12.237 errors=0
+RAW label=windows-terminal op=text n=1 rep=9 wall_ms=12.388 errors=0
+RAW label=windows-terminal op=text n=1 rep=10 wall_ms=12.467 errors=0
+RAW label=windows-terminal op=text n=1 rep=11 wall_ms=12.637 errors=0
+RAW label=windows-terminal op=text n=1 rep=12 wall_ms=12.384 errors=0
+RAW label=windows-terminal op=text n=1 rep=13 wall_ms=12.297 errors=0
+RAW label=windows-terminal op=text n=1 rep=14 wall_ms=12.358 errors=0
+RAW label=windows-terminal op=text n=1 rep=15 wall_ms=11.993 errors=0
+RAW label=windows-terminal op=text n=1 rep=16 wall_ms=10.963 errors=0
+RAW label=windows-terminal op=text n=1 rep=17 wall_ms=10.646 errors=0
+RAW label=windows-terminal op=text n=1 rep=18 wall_ms=12.027 errors=0
+RAW label=windows-terminal op=text n=1 rep=19 wall_ms=11.532 errors=0
+RESULT label=windows-terminal op=text n=1 k=32 median_ms=12.24 p90_ms=13.21 per_call_us=382.4 speedup=1.00 errors=0
+RAW label=windows-terminal op=text n=2 rep=0 wall_ms=9.087 errors=0
+RAW label=windows-terminal op=text n=2 rep=1 wall_ms=8.902 errors=0
+RAW label=windows-terminal op=text n=2 rep=2 wall_ms=9.108 errors=0
+RAW label=windows-terminal op=text n=2 rep=3 wall_ms=9.530 errors=0
+RAW label=windows-terminal op=text n=2 rep=4 wall_ms=8.938 errors=0
+RAW label=windows-terminal op=text n=2 rep=5 wall_ms=8.334 errors=0
+RAW label=windows-terminal op=text n=2 rep=6 wall_ms=7.603 errors=0
+RAW label=windows-terminal op=text n=2 rep=7 wall_ms=8.099 errors=0
+RAW label=windows-terminal op=text n=2 rep=8 wall_ms=8.903 errors=0
+RAW label=windows-terminal op=text n=2 rep=9 wall_ms=9.031 errors=0
+RAW label=windows-terminal op=text n=2 rep=10 wall_ms=7.568 errors=0
+RAW label=windows-terminal op=text n=2 rep=11 wall_ms=7.709 errors=0
+RAW label=windows-terminal op=text n=2 rep=12 wall_ms=7.821 errors=0
+RAW label=windows-terminal op=text n=2 rep=13 wall_ms=7.828 errors=0
+RAW label=windows-terminal op=text n=2 rep=14 wall_ms=7.663 errors=0
+RAW label=windows-terminal op=text n=2 rep=15 wall_ms=7.739 errors=0
+RAW label=windows-terminal op=text n=2 rep=16 wall_ms=7.638 errors=0
+RAW label=windows-terminal op=text n=2 rep=17 wall_ms=8.015 errors=0
+RAW label=windows-terminal op=text n=2 rep=18 wall_ms=7.775 errors=0
+RAW label=windows-terminal op=text n=2 rep=19 wall_ms=8.446 errors=0
+RESULT label=windows-terminal op=text n=2 k=32 median_ms=8.10 p90_ms=9.09 per_call_us=253.1 speedup=1.51 errors=0
+RAW label=windows-terminal op=text n=4 rep=0 wall_ms=8.347 errors=0
+RAW label=windows-terminal op=text n=4 rep=1 wall_ms=8.840 errors=0
+RAW label=windows-terminal op=text n=4 rep=2 wall_ms=8.684 errors=0
+RAW label=windows-terminal op=text n=4 rep=3 wall_ms=8.943 errors=0
+RAW label=windows-terminal op=text n=4 rep=4 wall_ms=8.993 errors=0
+RAW label=windows-terminal op=text n=4 rep=5 wall_ms=8.077 errors=0
+RAW label=windows-terminal op=text n=4 rep=6 wall_ms=8.961 errors=0
+RAW label=windows-terminal op=text n=4 rep=7 wall_ms=8.486 errors=0
+RAW label=windows-terminal op=text n=4 rep=8 wall_ms=8.508 errors=0
+RAW label=windows-terminal op=text n=4 rep=9 wall_ms=8.318 errors=0
+RAW label=windows-terminal op=text n=4 rep=10 wall_ms=9.133 errors=0
+RAW label=windows-terminal op=text n=4 rep=11 wall_ms=9.048 errors=0
+RAW label=windows-terminal op=text n=4 rep=12 wall_ms=8.804 errors=0
+RAW label=windows-terminal op=text n=4 rep=13 wall_ms=8.412 errors=0
+RAW label=windows-terminal op=text n=4 rep=14 wall_ms=8.096 errors=0
+RAW label=windows-terminal op=text n=4 rep=15 wall_ms=8.906 errors=0
+RAW label=windows-terminal op=text n=4 rep=16 wall_ms=9.000 errors=0
+RAW label=windows-terminal op=text n=4 rep=17 wall_ms=7.949 errors=0
+RAW label=windows-terminal op=text n=4 rep=18 wall_ms=9.197 errors=0
+RAW label=windows-terminal op=text n=4 rep=19 wall_ms=9.521 errors=0
+RESULT label=windows-terminal op=text n=4 k=32 median_ms=8.84 p90_ms=9.13 per_call_us=276.2 speedup=1.38 errors=0
+RAW label=windows-terminal op=text n=8 rep=0 wall_ms=7.869 errors=0
+RAW label=windows-terminal op=text n=8 rep=1 wall_ms=8.577 errors=0
+RAW label=windows-terminal op=text n=8 rep=2 wall_ms=9.316 errors=0
+RAW label=windows-terminal op=text n=8 rep=3 wall_ms=8.016 errors=0
+RAW label=windows-terminal op=text n=8 rep=4 wall_ms=9.750 errors=0
+RAW label=windows-terminal op=text n=8 rep=5 wall_ms=9.700 errors=0
+RAW label=windows-terminal op=text n=8 rep=6 wall_ms=10.939 errors=0
+RAW label=windows-terminal op=text n=8 rep=7 wall_ms=9.078 errors=0
+RAW label=windows-terminal op=text n=8 rep=8 wall_ms=10.342 errors=0
+RAW label=windows-terminal op=text n=8 rep=9 wall_ms=8.756 errors=0
+RAW label=windows-terminal op=text n=8 rep=10 wall_ms=8.247 errors=0
+RAW label=windows-terminal op=text n=8 rep=11 wall_ms=8.342 errors=0
+RAW label=windows-terminal op=text n=8 rep=12 wall_ms=7.890 errors=0
+RAW label=windows-terminal op=text n=8 rep=13 wall_ms=8.583 errors=0
+RAW label=windows-terminal op=text n=8 rep=14 wall_ms=8.699 errors=0
+RAW label=windows-terminal op=text n=8 rep=15 wall_ms=7.980 errors=0
+RAW label=windows-terminal op=text n=8 rep=16 wall_ms=7.757 errors=0
+RAW label=windows-terminal op=text n=8 rep=17 wall_ms=7.994 errors=0
+RAW label=windows-terminal op=text n=8 rep=18 wall_ms=8.215 errors=0
+RAW label=windows-terminal op=text n=8 rep=19 wall_ms=7.790 errors=0
+RESULT label=windows-terminal op=text n=8 k=32 median_ms=8.58 p90_ms=9.75 per_call_us=268.0 speedup=1.43 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=0 wall_ms=2.877 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=1 wall_ms=3.040 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=2 wall_ms=2.889 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=3 wall_ms=2.952 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=4 wall_ms=2.898 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=5 wall_ms=2.956 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=6 wall_ms=2.875 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=7 wall_ms=3.527 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=8 wall_ms=3.626 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=9 wall_ms=3.069 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=10 wall_ms=2.925 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=11 wall_ms=2.902 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=12 wall_ms=3.187 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=13 wall_ms=3.739 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=14 wall_ms=4.063 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=15 wall_ms=3.900 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=16 wall_ms=4.314 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=17 wall_ms=4.207 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=18 wall_ms=3.954 errors=0
+RAW label=windows-terminal op=msaa n=1 rep=19 wall_ms=4.159 errors=0
+RESULT label=windows-terminal op=msaa n=1 k=64 median_ms=3.19 p90_ms=4.16 per_call_us=49.8 speedup=1.00 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=0 wall_ms=5.061 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=1 wall_ms=5.022 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=2 wall_ms=5.189 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=3 wall_ms=5.153 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=4 wall_ms=5.055 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=5 wall_ms=6.207 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=6 wall_ms=5.288 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=7 wall_ms=5.718 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=8 wall_ms=4.740 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=9 wall_ms=5.064 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=10 wall_ms=4.603 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=11 wall_ms=5.561 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=12 wall_ms=6.230 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=13 wall_ms=7.044 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=14 wall_ms=7.538 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=15 wall_ms=4.755 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=16 wall_ms=5.691 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=17 wall_ms=6.092 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=18 wall_ms=5.147 errors=0
+RAW label=windows-terminal op=msaa n=2 rep=19 wall_ms=5.928 errors=0
+RESULT label=windows-terminal op=msaa n=2 k=64 median_ms=5.29 p90_ms=6.23 per_call_us=82.6 speedup=0.60 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=0 wall_ms=7.414 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=1 wall_ms=6.976 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=2 wall_ms=7.153 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=3 wall_ms=7.904 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=4 wall_ms=6.411 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=5 wall_ms=6.356 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=6 wall_ms=6.545 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=7 wall_ms=7.065 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=8 wall_ms=6.462 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=9 wall_ms=6.438 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=10 wall_ms=6.219 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=11 wall_ms=6.269 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=12 wall_ms=6.423 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=13 wall_ms=6.585 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=14 wall_ms=6.615 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=15 wall_ms=6.505 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=16 wall_ms=6.272 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=17 wall_ms=6.558 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=18 wall_ms=5.691 errors=0
+RAW label=windows-terminal op=msaa n=4 rep=19 wall_ms=5.736 errors=0
+RESULT label=windows-terminal op=msaa n=4 k=64 median_ms=6.51 p90_ms=7.15 per_call_us=101.6 speedup=0.49 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=0 wall_ms=5.975 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=1 wall_ms=5.034 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=2 wall_ms=5.565 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=3 wall_ms=5.673 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=4 wall_ms=5.586 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=5 wall_ms=4.084 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=6 wall_ms=3.994 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=7 wall_ms=4.162 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=8 wall_ms=5.348 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=9 wall_ms=6.236 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=10 wall_ms=6.166 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=11 wall_ms=6.041 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=12 wall_ms=6.146 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=13 wall_ms=5.919 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=14 wall_ms=5.998 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=15 wall_ms=6.442 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=16 wall_ms=6.074 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=17 wall_ms=6.402 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=18 wall_ms=6.017 errors=0
+RAW label=windows-terminal op=msaa n=8 rep=19 wall_ms=6.278 errors=0
+RESULT label=windows-terminal op=msaa n=8 k=64 median_ms=6.00 p90_ms=6.28 per_call_us=93.7 speedup=0.53 errors=0
+RAW label=windows-terminal op=rop n=1 rep=0 wall_ms=7.556 errors=0
+RAW label=windows-terminal op=rop n=1 rep=1 wall_ms=7.749 errors=0
+RAW label=windows-terminal op=rop n=1 rep=2 wall_ms=8.369 errors=0
+RAW label=windows-terminal op=rop n=1 rep=3 wall_ms=6.918 errors=0
+RAW label=windows-terminal op=rop n=1 rep=4 wall_ms=6.656 errors=0
+RAW label=windows-terminal op=rop n=1 rep=5 wall_ms=6.827 errors=0
+RAW label=windows-terminal op=rop n=1 rep=6 wall_ms=7.052 errors=0
+RAW label=windows-terminal op=rop n=1 rep=7 wall_ms=6.993 errors=0
+RAW label=windows-terminal op=rop n=1 rep=8 wall_ms=6.742 errors=0
+RAW label=windows-terminal op=rop n=1 rep=9 wall_ms=7.181 errors=0
+RAW label=windows-terminal op=rop n=1 rep=10 wall_ms=8.021 errors=0
+RAW label=windows-terminal op=rop n=1 rep=11 wall_ms=8.306 errors=0
+RAW label=windows-terminal op=rop n=1 rep=12 wall_ms=7.829 errors=0
+RAW label=windows-terminal op=rop n=1 rep=13 wall_ms=7.061 errors=0
+RAW label=windows-terminal op=rop n=1 rep=14 wall_ms=6.753 errors=0
+RAW label=windows-terminal op=rop n=1 rep=15 wall_ms=7.071 errors=0
+RAW label=windows-terminal op=rop n=1 rep=16 wall_ms=7.243 errors=0
+RAW label=windows-terminal op=rop n=1 rep=17 wall_ms=6.889 errors=0
+RAW label=windows-terminal op=rop n=1 rep=18 wall_ms=6.507 errors=0
+RAW label=windows-terminal op=rop n=1 rep=19 wall_ms=7.024 errors=0
+RESULT label=windows-terminal op=rop n=1 k=32 median_ms=7.06 p90_ms=8.02 per_call_us=220.6 speedup=1.00 errors=0
+RAW label=windows-terminal op=rop n=2 rep=0 wall_ms=5.589 errors=0
+RAW label=windows-terminal op=rop n=2 rep=1 wall_ms=5.466 errors=0
+RAW label=windows-terminal op=rop n=2 rep=2 wall_ms=5.388 errors=0
+RAW label=windows-terminal op=rop n=2 rep=3 wall_ms=5.561 errors=0
+RAW label=windows-terminal op=rop n=2 rep=4 wall_ms=6.720 errors=0
+RAW label=windows-terminal op=rop n=2 rep=5 wall_ms=5.957 errors=0
+RAW label=windows-terminal op=rop n=2 rep=6 wall_ms=5.672 errors=0
+RAW label=windows-terminal op=rop n=2 rep=7 wall_ms=6.053 errors=0
+RAW label=windows-terminal op=rop n=2 rep=8 wall_ms=6.181 errors=0
+RAW label=windows-terminal op=rop n=2 rep=9 wall_ms=6.055 errors=0
+RAW label=windows-terminal op=rop n=2 rep=10 wall_ms=6.030 errors=0
+RAW label=windows-terminal op=rop n=2 rep=11 wall_ms=6.133 errors=0
+RAW label=windows-terminal op=rop n=2 rep=12 wall_ms=6.085 errors=0
+RAW label=windows-terminal op=rop n=2 rep=13 wall_ms=6.177 errors=0
+RAW label=windows-terminal op=rop n=2 rep=14 wall_ms=6.241 errors=0
+RAW label=windows-terminal op=rop n=2 rep=15 wall_ms=6.108 errors=0
+RAW label=windows-terminal op=rop n=2 rep=16 wall_ms=5.607 errors=0
+RAW label=windows-terminal op=rop n=2 rep=17 wall_ms=6.296 errors=0
+RAW label=windows-terminal op=rop n=2 rep=18 wall_ms=5.649 errors=0
+RAW label=windows-terminal op=rop n=2 rep=19 wall_ms=5.284 errors=0
+RESULT label=windows-terminal op=rop n=2 k=32 median_ms=6.05 p90_ms=6.24 per_call_us=189.2 speedup=1.17 errors=0
+RAW label=windows-terminal op=rop n=4 rep=0 wall_ms=5.541 errors=0
+RAW label=windows-terminal op=rop n=4 rep=1 wall_ms=5.527 errors=0
+RAW label=windows-terminal op=rop n=4 rep=2 wall_ms=5.412 errors=0
+RAW label=windows-terminal op=rop n=4 rep=3 wall_ms=5.623 errors=0
+RAW label=windows-terminal op=rop n=4 rep=4 wall_ms=5.640 errors=0
+RAW label=windows-terminal op=rop n=4 rep=5 wall_ms=5.919 errors=0
+RAW label=windows-terminal op=rop n=4 rep=6 wall_ms=6.633 errors=0
+RAW label=windows-terminal op=rop n=4 rep=7 wall_ms=6.562 errors=0
+RAW label=windows-terminal op=rop n=4 rep=8 wall_ms=7.058 errors=0
+RAW label=windows-terminal op=rop n=4 rep=9 wall_ms=6.252 errors=0
+RAW label=windows-terminal op=rop n=4 rep=10 wall_ms=6.130 errors=0
+RAW label=windows-terminal op=rop n=4 rep=11 wall_ms=6.007 errors=0
+RAW label=windows-terminal op=rop n=4 rep=12 wall_ms=5.390 errors=0
+RAW label=windows-terminal op=rop n=4 rep=13 wall_ms=5.337 errors=0
+RAW label=windows-terminal op=rop n=4 rep=14 wall_ms=5.274 errors=0
+RAW label=windows-terminal op=rop n=4 rep=15 wall_ms=5.308 errors=0
+RAW label=windows-terminal op=rop n=4 rep=16 wall_ms=5.995 errors=0
+RAW label=windows-terminal op=rop n=4 rep=17 wall_ms=5.843 errors=0
+RAW label=windows-terminal op=rop n=4 rep=18 wall_ms=5.966 errors=0
+RAW label=windows-terminal op=rop n=4 rep=19 wall_ms=6.131 errors=0
+RESULT label=windows-terminal op=rop n=4 k=32 median_ms=5.92 p90_ms=6.56 per_call_us=185.0 speedup=1.19 errors=0
+RAW label=windows-terminal op=rop n=8 rep=0 wall_ms=5.297 errors=0
+RAW label=windows-terminal op=rop n=8 rep=1 wall_ms=5.131 errors=0
+RAW label=windows-terminal op=rop n=8 rep=2 wall_ms=5.235 errors=0
+RAW label=windows-terminal op=rop n=8 rep=3 wall_ms=5.295 errors=0
+RAW label=windows-terminal op=rop n=8 rep=4 wall_ms=5.468 errors=0
+RAW label=windows-terminal op=rop n=8 rep=5 wall_ms=5.943 errors=0
+RAW label=windows-terminal op=rop n=8 rep=6 wall_ms=5.705 errors=0
+RAW label=windows-terminal op=rop n=8 rep=7 wall_ms=6.757 errors=0
+RAW label=windows-terminal op=rop n=8 rep=8 wall_ms=6.202 errors=0
+RAW label=windows-terminal op=rop n=8 rep=9 wall_ms=5.847 errors=0
+RAW label=windows-terminal op=rop n=8 rep=10 wall_ms=5.437 errors=0
+RAW label=windows-terminal op=rop n=8 rep=11 wall_ms=6.180 errors=0
+RAW label=windows-terminal op=rop n=8 rep=12 wall_ms=6.185 errors=0
+RAW label=windows-terminal op=rop n=8 rep=13 wall_ms=5.458 errors=0
+RAW label=windows-terminal op=rop n=8 rep=14 wall_ms=6.162 errors=0
+RAW label=windows-terminal op=rop n=8 rep=15 wall_ms=5.704 errors=0
+RAW label=windows-terminal op=rop n=8 rep=16 wall_ms=5.417 errors=0
+RAW label=windows-terminal op=rop n=8 rep=17 wall_ms=5.904 errors=0
+RAW label=windows-terminal op=rop n=8 rep=18 wall_ms=5.774 errors=0
+RAW label=windows-terminal op=rop n=8 rep=19 wall_ms=5.330 errors=0
+RESULT label=windows-terminal op=rop n=8 k=32 median_ms=5.71 p90_ms=6.19 per_call_us=178.3 speedup=1.24 errors=0
+PAIR label=windows-terminal-findall-beside-name a=FindAll@2425680 elem 0 (of 16 held, 16 found) b=Name@2425680 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-findall-beside-name a_alone count=10 median_ms=12.67 p90_ms=14.41 max_ms=16.62
+RESULT label=windows-terminal-findall-beside-name a_with_b count=10 median_ms=12.01 p90_ms=12.47 max_ms=13.12
+RESULT label=windows-terminal-findall-beside-name b_alone count=44 median_ms=0.13 p90_ms=0.16 max_ms=0.24
+RESULT label=windows-terminal-findall-beside-name b_during_a count=44 median_ms=0.16 p90_ms=0.83 max_ms=1.98
+PAIR label=windows-terminal-findall-beside-rop a=FindAll@2425680 elem 0 (of 16 held, 16 found) b=Rop@2425680 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-findall-beside-rop a_alone count=10 median_ms=12.70 p90_ms=13.32 max_ms=14.08
+RESULT label=windows-terminal-findall-beside-rop a_with_b count=10 median_ms=13.92 p90_ms=14.91 max_ms=15.08
+RESULT label=windows-terminal-findall-beside-rop b_alone count=53 median_ms=0.28 p90_ms=0.32 max_ms=0.52
+RESULT label=windows-terminal-findall-beside-rop b_during_a count=53 median_ms=0.34 p90_ms=1.02 max_ms=2.15
+CALL other-element hwnd=2425680 pid=3828 ui_tid=12704 op=Name elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL other-element-rop hwnd=2425680 pid=3828 ui_tid=12704 op=Rop elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL same-window-new-connection hwnd=2425680 pid=3828 ui_tid=12704 op=FromHandle elem=0 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL other-thread-window hwnd=1180224 pid=3828 ui_tid=12704 op=Name elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL other-thread-window-rop hwnd=1180224 pid=3828 ui_tid=12704 op=Rop elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL other-thread-window-new-connection hwnd=1180224 pid=3828 ui_tid=12704 op=FromHandle elem=0 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL stuck hwnd=2425680 pid=3828 ui_tid=12704 op=Name elem=1 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+suspended tid=12704
+PROBES_STARTED trial=0
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-name trial=0 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4010.8
+RESULT label=windows-terminal-suspended-name trial=0 call=same-window-new-connection returned_ms=2191.8 before_unblock result=error 0x80131505 idle_baseline_ms=0.62
+RESULT label=windows-terminal-suspended-name trial=0 call=other-thread-window-new-connection returned_ms=2191.8 before_unblock result=error 0x80131505 idle_baseline_ms=0.58
+RESULT label=windows-terminal-suspended-name trial=0 call=other-thread-window-rop returned_ms=4013.8 after_unblock result=ok idle_baseline_ms=0.38
+RESULT label=windows-terminal-suspended-name trial=0 call=other-thread-window returned_ms=4014.2 after_unblock result=ok idle_baseline_ms=0.21
+RESULT label=windows-terminal-suspended-name trial=0 call=other-element-rop returned_ms=4014.9 after_unblock result=ok idle_baseline_ms=0.43
+RESULT label=windows-terminal-suspended-name trial=0 call=other-element returned_ms=4015.4 after_unblock result=ok idle_baseline_ms=0.14
+RESULT label=windows-terminal-suspended-name trial=0 call=xproc-other-thread-window returned_ms=4016.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4016.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-name trial=0 call=xproc-other-element returned_ms=4017.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-name trial=0 call=stuck returned_ms=4030.6 after_unblock result=ok idle_baseline_ms=0.00
+suspended tid=12704
+PROBES_STARTED trial=1
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-name trial=1 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=4008.0
+RESULT label=windows-terminal-suspended-name trial=1 call=same-window-new-connection returned_ms=2192.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.55
+RESULT label=windows-terminal-suspended-name trial=1 call=other-thread-window-new-connection returned_ms=2193.0 before_unblock result=error 0x80131505 idle_baseline_ms=0.67
+RESULT label=windows-terminal-suspended-name trial=1 call=stuck returned_ms=4009.0 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=windows-terminal-suspended-name trial=1 call=other-thread-window-rop returned_ms=4009.9 after_unblock result=ok idle_baseline_ms=0.28
+RESULT label=windows-terminal-suspended-name trial=1 call=other-thread-window returned_ms=4010.2 after_unblock result=ok idle_baseline_ms=0.14
+RESULT label=windows-terminal-suspended-name trial=1 call=other-element-rop returned_ms=4010.9 after_unblock result=ok idle_baseline_ms=0.29
+RESULT label=windows-terminal-suspended-name trial=1 call=other-element returned_ms=4011.3 after_unblock result=ok idle_baseline_ms=0.12
+RESULT label=windows-terminal-suspended-name trial=1 call=xproc-other-thread-window returned_ms=4012.6 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4013.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-name trial=1 call=xproc-other-element returned_ms=4013.8 after_unblock result=ok idle_baseline_ms=NaN
+CALL other-element hwnd=2425680 pid=3828 ui_tid=12704 op=Name elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL other-element-rop hwnd=2425680 pid=3828 ui_tid=12704 op=Rop elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL same-window-new-connection hwnd=2425680 pid=3828 ui_tid=12704 op=FromHandle elem=0 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL other-thread-window hwnd=1180224 pid=3828 ui_tid=12704 op=Name elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL other-thread-window-rop hwnd=1180224 pid=3828 ui_tid=12704 op=Rop elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL other-thread-window-new-connection hwnd=1180224 pid=3828 ui_tid=12704 op=FromHandle elem=0 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL stuck hwnd=2425680 pid=3828 ui_tid=12704 op=Rop elem=1 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+suspended tid=12704
+PROBES_STARTED trial=0
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-rop trial=0 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=4008.5
+RESULT label=windows-terminal-suspended-rop trial=0 call=same-window-new-connection returned_ms=2191.4 before_unblock result=error 0x80131505 idle_baseline_ms=0.65
+RESULT label=windows-terminal-suspended-rop trial=0 call=other-thread-window-new-connection returned_ms=2191.4 before_unblock result=error 0x80131505 idle_baseline_ms=0.61
+RESULT label=windows-terminal-suspended-rop trial=0 call=stuck returned_ms=4009.3 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=windows-terminal-suspended-rop trial=0 call=other-thread-window-rop returned_ms=4010.1 after_unblock result=ok idle_baseline_ms=0.28
+RESULT label=windows-terminal-suspended-rop trial=0 call=other-thread-window returned_ms=4010.4 after_unblock result=ok idle_baseline_ms=0.14
+RESULT label=windows-terminal-suspended-rop trial=0 call=other-element-rop returned_ms=4010.4 after_unblock result=ok idle_baseline_ms=0.42
+RESULT label=windows-terminal-suspended-rop trial=0 call=other-element returned_ms=4011.0 after_unblock result=ok idle_baseline_ms=0.13
+RESULT label=windows-terminal-suspended-rop trial=0 call=xproc-other-thread-window returned_ms=4012.1 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4012.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-rop trial=0 call=xproc-other-element returned_ms=4012.7 after_unblock result=ok idle_baseline_ms=NaN
+suspended tid=12704
+PROBES_STARTED trial=1
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-rop trial=1 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4013.7
+RESULT label=windows-terminal-suspended-rop trial=1 call=same-window-new-connection returned_ms=2200.0 before_unblock result=error 0x80131505 idle_baseline_ms=0.67
+RESULT label=windows-terminal-suspended-rop trial=1 call=other-thread-window-new-connection returned_ms=2200.6 before_unblock result=error 0x80131505 idle_baseline_ms=0.63
+RESULT label=windows-terminal-suspended-rop trial=1 call=stuck returned_ms=4015.0 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=windows-terminal-suspended-rop trial=1 call=other-thread-window-rop returned_ms=4015.7 after_unblock result=ok idle_baseline_ms=0.28
+RESULT label=windows-terminal-suspended-rop trial=1 call=other-thread-window returned_ms=4016.1 after_unblock result=ok idle_baseline_ms=0.13
+RESULT label=windows-terminal-suspended-rop trial=1 call=other-element-rop returned_ms=4016.7 after_unblock result=ok idle_baseline_ms=0.26
+RESULT label=windows-terminal-suspended-rop trial=1 call=other-element returned_ms=4017.2 after_unblock result=ok idle_baseline_ms=0.14
+RESULT label=windows-terminal-suspended-rop trial=1 call=xproc-other-thread-window returned_ms=4018.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4019.1 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-rop trial=1 call=xproc-other-element returned_ms=4019.7 after_unblock result=ok idle_baseline_ms=NaN

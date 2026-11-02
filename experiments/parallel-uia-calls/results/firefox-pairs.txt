@@ -1,0 +1,48 @@
+PAIR label=firefox-ropslow-beside-name-xb0 a=RopSlow@394422 elem 3 (of 16 held, 50 found) b=Name@394422 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=firefox-ropslow-beside-name-xb0 a_alone count=10 median_ms=2.81 p90_ms=2.84 max_ms=2.97
+RESULT label=firefox-ropslow-beside-name-xb0 a_with_b count=10 median_ms=2.61 p90_ms=2.65 max_ms=2.65
+RESULT label=firefox-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.16 p90_ms=0.18 max_ms=0.21
+RESULT label=firefox-ropslow-beside-name-xb0 b_during_a count=10 median_ms=0.56 p90_ms=0.58 max_ms=2.76
+PAIR label=firefox-ropslow-beside-name-xb1 a=RopSlow@394422 elem 3 (of 16 held, 50 found) b=Name@394422 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=firefox-ropslow-beside-name-xb1 a_alone count=10 median_ms=2.73 p90_ms=2.81 max_ms=2.83
+RESULT label=firefox-ropslow-beside-name-xb1 a_with_b count=10 median_ms=2.62 p90_ms=2.87 max_ms=2.92
+RESULT label=firefox-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.20 p90_ms=0.22 max_ms=0.22
+RESULT label=firefox-ropslow-beside-name-xb1 b_during_a count=9 median_ms=0.63 p90_ms=2.66 max_ms=2.92
+PAIR label=firefox-ropslow-beside-rop-xb0 a=RopSlow@394422 elem 3 (of 16 held, 50 found) b=Rop@394422 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=firefox-ropslow-beside-rop-xb0 a_alone count=10 median_ms=2.62 p90_ms=2.80 max_ms=3.04
+RESULT label=firefox-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=2.64 p90_ms=2.83 max_ms=3.07
+RESULT label=firefox-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.26 p90_ms=0.29 max_ms=0.40
+RESULT label=firefox-ropslow-beside-rop-xb0 b_during_a count=11 median_ms=0.57 p90_ms=0.65 max_ms=0.87
+PAIR label=firefox-ropslow-beside-rop-xb1 a=RopSlow@394422 elem 3 (of 16 held, 50 found) b=Rop@394422 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=firefox-ropslow-beside-rop-xb1 a_alone count=10 median_ms=2.65 p90_ms=2.75 max_ms=2.83
+RESULT label=firefox-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=2.65 p90_ms=2.70 max_ms=2.91
+RESULT label=firefox-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.24 p90_ms=0.27 max_ms=0.28
+RESULT label=firefox-ropslow-beside-rop-xb1 b_during_a count=9 median_ms=0.58 p90_ms=0.74 max_ms=2.75
+PAIR label=firefox-textall-beside-name-xb0 a=TextAll@394422 elem 3 (of 16 held, 50 found) b=Name@394422 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=firefox-textall-beside-name-xb0 a_alone count=10 median_ms=0.20 p90_ms=0.27 max_ms=0.41
+RESULT label=firefox-textall-beside-name-xb0 a_with_b count=10 median_ms=0.18 p90_ms=0.23 max_ms=0.29
+RESULT label=firefox-textall-beside-name-xb0 b_alone count=20 median_ms=0.16 p90_ms=0.19 max_ms=0.28
+RESULT label=firefox-textall-beside-name-xb0 b_during_a count=1 median_ms=0.21 p90_ms=0.21 max_ms=0.21
+PAIR label=firefox-textall-beside-name-xb1 a=TextAll@394422 elem 3 (of 16 held, 50 found) b=Name@394422 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=firefox-textall-beside-name-xb1 a_alone count=10 median_ms=0.24 p90_ms=0.26 max_ms=0.35
+RESULT label=firefox-textall-beside-name-xb1 a_with_b count=10 median_ms=0.21 p90_ms=0.22 max_ms=0.30
+RESULT label=firefox-textall-beside-name-xb1 b_alone count=20 median_ms=0.17 p90_ms=0.21 max_ms=0.23
+RESULT label=firefox-textall-beside-name-xb1 b_during_a count=1 median_ms=0.21 p90_ms=0.21 max_ms=0.21
+PAIR label=firefox-textall-beside-rop-xb0 a=TextAll@394422 elem 3 (of 16 held, 50 found) b=Rop@394422 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=firefox-textall-beside-rop-xb0 a_alone count=10 median_ms=0.24 p90_ms=0.32 max_ms=0.33
+RESULT label=firefox-textall-beside-rop-xb0 a_with_b count=10 median_ms=0.21 p90_ms=0.25 max_ms=0.42
+RESULT label=firefox-textall-beside-rop-xb0 b_alone count=20 median_ms=0.26 p90_ms=0.27 max_ms=0.32
+RESULT label=firefox-textall-beside-rop-xb0 b_during_a count=1 median_ms=0.47 p90_ms=0.47 max_ms=0.47
+PAIR label=firefox-textall-beside-rop-xb1 a=TextAll@394422 elem 3 (of 16 held, 50 found) b=Rop@394422 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=firefox-textall-beside-rop-xb1 a_alone count=10 median_ms=0.18 p90_ms=0.25 max_ms=0.34
+RESULT label=firefox-textall-beside-rop-xb1 a_with_b count=10 median_ms=0.18 p90_ms=0.20 max_ms=0.35
+RESULT label=firefox-textall-beside-rop-xb1 b_alone count=20 median_ms=0.24 p90_ms=0.30 max_ms=0.34
+RESULT label=firefox-textall-beside-rop-xb1 b_during_a count=1 median_ms=0.26 p90_ms=0.26 max_ms=0.26

@@ -1,0 +1,54 @@
+﻿CALL text hwnd=2425680 pid=3828 ui_tid=12704 op=Text elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL textall hwnd=2425680 pid=3828 ui_tid=12704 op=TextAll elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL other-element-name hwnd=2425680 pid=3828 ui_tid=12704 op=Name elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL second-window-text hwnd=1180224 pid=3828 ui_tid=12704 op=Text elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL stuck hwnd=2425680 pid=3828 ui_tid=12704 op=Text elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+suspended tid=12704
+PROBES_STARTED trial=0
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-text trial=0 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4009.8
+RESULT label=windows-terminal-suspended-text trial=0 call=other-element-name returned_ms=4010.9 after_unblock result=ok idle_baseline_ms=0.16
+RESULT label=windows-terminal-suspended-text trial=0 call=second-window-text returned_ms=4011.7 after_unblock result=ok idle_baseline_ms=0.22
+RESULT label=windows-terminal-suspended-text trial=0 call=textall returned_ms=4015.0 after_unblock result=ok idle_baseline_ms=2.76
+RESULT label=windows-terminal-suspended-text trial=0 call=text returned_ms=4015.5 after_unblock result=ok idle_baseline_ms=1.02
+RESULT label=windows-terminal-suspended-text trial=0 call=xproc-xproc-textall returned_ms=4019.0 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-text trial=0 call=xproc-xproc-text returned_ms=4019.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-text trial=0 call=stuck returned_ms=4021.9 after_unblock result=ok idle_baseline_ms=0.00
+suspended tid=12704
+PROBES_STARTED trial=1
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-text trial=1 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4009.9
+RESULT label=windows-terminal-suspended-text trial=1 call=other-element-name returned_ms=4010.6 after_unblock result=ok idle_baseline_ms=0.12
+RESULT label=windows-terminal-suspended-text trial=1 call=stuck returned_ms=4011.9 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=windows-terminal-suspended-text trial=1 call=second-window-text returned_ms=4012.2 after_unblock result=ok idle_baseline_ms=0.23
+RESULT label=windows-terminal-suspended-text trial=1 call=textall returned_ms=4014.6 after_unblock result=ok idle_baseline_ms=2.38
+RESULT label=windows-terminal-suspended-text trial=1 call=text returned_ms=4014.8 after_unblock result=ok idle_baseline_ms=0.52
+RESULT label=windows-terminal-suspended-text trial=1 call=xproc-xproc-textall returned_ms=4018.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-text trial=1 call=xproc-xproc-text returned_ms=4018.3 after_unblock result=ok idle_baseline_ms=NaN
+CALL text hwnd=2425680 pid=3828 ui_tid=12704 op=Text elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL textall hwnd=2425680 pid=3828 ui_tid=12704 op=TextAll elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL other-element-name hwnd=2425680 pid=3828 ui_tid=12704 op=Name elem=3 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+CALL second-window-text hwnd=1180224 pid=3828 ui_tid=12704 op=Text elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt-two
+CALL stuck hwnd=2425680 pid=3828 ui_tid=12704 op=TextAll elem=10 class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+suspended tid=12704
+PROBES_STARTED trial=0
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-textall trial=0 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4006.2
+RESULT label=windows-terminal-suspended-textall trial=0 call=other-element-name returned_ms=4007.1 after_unblock result=ok idle_baseline_ms=0.17
+RESULT label=windows-terminal-suspended-textall trial=0 call=second-window-text returned_ms=4007.5 after_unblock result=ok idle_baseline_ms=0.22
+RESULT label=windows-terminal-suspended-textall trial=0 call=textall returned_ms=4010.4 after_unblock result=ok idle_baseline_ms=2.85
+RESULT label=windows-terminal-suspended-textall trial=0 call=text returned_ms=4010.6 after_unblock result=ok idle_baseline_ms=0.63
+RESULT label=windows-terminal-suspended-textall trial=0 call=stuck returned_ms=4013.3 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=windows-terminal-suspended-textall trial=0 call=xproc-xproc-textall returned_ms=4016.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-textall trial=0 call=xproc-xproc-text returned_ms=4017.2 after_unblock result=ok idle_baseline_ms=NaN
+suspended tid=12704
+PROBES_STARTED trial=1
+resumed tid=12704
+TRIAL label=windows-terminal-suspended-textall trial=1 block=suspend:2425680 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4012.2
+RESULT label=windows-terminal-suspended-textall trial=1 call=other-element-name returned_ms=4013.1 after_unblock result=ok idle_baseline_ms=0.17
+RESULT label=windows-terminal-suspended-textall trial=1 call=stuck returned_ms=4016.6 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=windows-terminal-suspended-textall trial=1 call=second-window-text returned_ms=4016.9 after_unblock result=ok idle_baseline_ms=0.21
+RESULT label=windows-terminal-suspended-textall trial=1 call=textall returned_ms=4019.1 after_unblock result=ok idle_baseline_ms=2.83
+RESULT label=windows-terminal-suspended-textall trial=1 call=text returned_ms=4019.3 after_unblock result=ok idle_baseline_ms=0.62
+RESULT label=windows-terminal-suspended-textall trial=1 call=xproc-xproc-textall returned_ms=4023.0 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=windows-terminal-suspended-textall trial=1 call=xproc-xproc-text returned_ms=4023.5 after_unblock result=ok idle_baseline_ms=NaN

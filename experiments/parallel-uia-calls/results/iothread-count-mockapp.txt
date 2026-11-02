@@ -1,0 +1,149 @@
+# iothread-count.ps1 -Target mockapp: script output
+﻿TARGET mockapp pid=14140 windows=4653804
+THREADS before any client total=5 uiautomationcore=0
+THREADS after attach, before any client total=5 uiautomationcore=0
+THREADS after one client process connected total=10 uiautomationcore=1
+  thread tid=3588 start=uiautomationcore.dll+0x162f60 cycles=11366861
+
+RESULT label=q2io op=name n=8 k=64 median_ms=4.59 p90_ms=4.74 per_call_us=71.7 speedup=1.00 errors=0
+THREADS after 8 client threads, one window each total=11 uiautomationcore=1
+  thread tid=3588 start=uiautomationcore.dll+0x162f60 cycles=53496852
+probe: done ok 0.318
+probe: done ok 0.211
+probe: done ok 0.181
+THREADS after 3 more client processes total=11 uiautomationcore=1
+  thread tid=3588 start=uiautomationcore.dll+0x162f60 cycles=59047149
+DEBUGGER IOM_INIT=30 IO_THREAD_START=1 CREATE_THREAD=2
+
+
+
+# The debugger log's thread creations and I/O thread starts (cdb, invasive)
+CREATE_THREAD
+Debugger (not debuggee) time: Mon Nov  2 13:49:57.221 2026 (UTC + 8:00)
+.  0  Id: 373c.3424 Suspend: 1 Teb: 00000066`a14a9000 Unfrozen "main"
+      Start: *** WARNING: Unable to verify checksum for <scratch>\mtarget\debug\mockapp.exe
+mockapp!mainCRTStartup (00007ff7`881d5e60)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+00000066`a135a9f8 00007ffb`cbe9260d     KERNELBASE!CreateRemoteThreadEx
+00000066`a135aa00 00007ffb`cc997b31     KERNEL32!CreateThreadStub+0x3d
+00000066`a135aa50 00007ffb`cc997a09     combase!CacheCreateThread+0x111
+00000066`a135aab0 00007ffb`cc944bae     combase!CROIDTable::EnsureWorkerThread+0x41
+00000066`a135aae0 00007ffb`cc9446e3     combase!CROIDTable::NotifyWorkWaiting+0x22
+00000066`a135ab10 00007ffb`cc944f85     combase!CComApartment::InitRemoting+0x22b
+00000066`a135ab80 00007ffb`cc944eae     combase!CComApartment::EnsureNAInited+0x55
+00000066`a135abb0 00007ffb`cc944d25     combase!CComApartment::EnsureLinkToPrimaryOxid+0x12
+00000066`a135abe0 00007ffb`cc94475a     combase!CComApartment::CallTheResolver+0x7d
+00000066`a135adb0 00007ffb`cc8cf40e     combase!CComApartment::InitRemoting+0x2a2
+(Inline Function) --------`--------     combase!CComApartment::StartServer+0x9d
+00000066`a135ae20 00007ffb`cc8da486     combase!InitChannelIfNecessary+0x11e
+00000066`a135ae50 00007ffb`cc9cbb9e     combase!CDllHost::GetApartmentActivators+0x2a
+(Inline Function) --------`--------     combase!CDllHost::GetCOMApartmentActivator+0x14
+(Inline Function) --------`--------     combase!DoMTApartmentCreate+0x14
+00000066`a135aec0 00007ffb`cca0a701     combase!GetApartmentActivator+0xbe
+00000066`a135aef0 00007ffb`cc9c785e     combase!CProcessActivator::GetApartmentActivator+0x201
+00000066`a135af60 00007ffb`cc9c6bbd     combase!CProcessActivator::CCICallback+0x2e
+00000066`a135afb0 00007ffb`cca095f1     combase!CProcessActivator::AttemptActivation+0x8d
+00000066`a135b000 00007ffb`cc9c92ce     combase!CProcessActivator::ActivateByContext+0x91
+00000066`a135b090 00007ffb`cc9b4bcd     combase!CProcessActivator::CreateInstance+0x7e
+00000066`a135b0e0 00007ffb`cc8e157e     combase!ActivationPropertiesIn::DelegateCreateInstance+0x9d
+00000066`a135b170 00007ffb`cc9b4bcd     combase!CClientContextActivator::CreateInstance+0x16e
+00000066`a135b220 00007ffb`cca7453f     combase!ActivationPropertiesIn::DelegateCreateInstance+0x9d
+00000066`a135b2b0 00007ffb`cca6ede8     combase!ICoCreateInstanceExWorker+0xd93
+00000066`a135c010 00007ffb`cca6e65f     combase!CComActivator::DoCreateInstance+0x1dc
+00000066`a135c160 00007ffb`cc983686     combase!CoCreateInstanceExCopy+0x167
+00000066`a135c220 00007ffb`a9881a76     combase!CoCreateInstance+0xd6
+00000066`a135c2b0 00007ffb`a98819e0     uiautomationcore!BlockingCoreDispatcher::CreateAndRegisterBlockingCore+0x82
+00000066`a135c300 00007ffb`a9824c8a     uiautomationcore!BlockingCoreDispatcher::FinalConstruct+0x54
+00000066`a135c340 00007ffb`a9824a20     uiautomationcore!CUIAutomation7::FinalConstruct+0x4e
+00000066`a135c370 00007ffb`a9824907     uiautomationcore!ATL::CComObject<CUIAutomation7>::CreateInstance+0xa4
+00000066`a135c3a0 00007ffb`a9743d6a     uiautomationcore!DoInit+0x3b
+00000066`a135c3d0 00007ffb`a97428da     uiautomationcore!CheckInit+0x3a
+00000066`a135c410 00007ff7`8805979c     uiautomationcore!UiaReturnRawElementProvider+0xda
+00000066`a135d550 00007ff7`8800df43     mockapp!windows::Win32::UI::Accessibility::UiaReturnRawElementProvider<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x5c
+00000066`a135d5d0 00007ff7`88010840     mockapp!mockapp::window::handle_get_object+0x103
+00000066`a135d6e0 00007ffb`cb3352e6     mockapp!mockapp::window::wnd_proc+0x250
+00000066`a135da00 00007ffb`cb334b6c     user32!UserCallWinProcCheckWow+0x356
+00000066`a135db60 00007ffb`cb35f593     user32!DispatchClientMessage+0x9c
+00000066`a135dbc0 00007ffb`cd4a5d94     user32!_fnDWORD+0x33
+00000066`a135dc20 00007ffb`cb021364     ntdll!KiUserCallbackDispatcherContinue
+00000066`a135dca8 00007ffb`cb34aea2     win32u!NtUserGetMessage+0x14
+00000066`a135dcb0 00007ff7`8806cf15     user32!GetMessageW+0x22
+00000066`a135dd10 00007ff7`8800ed54     mockapp!windows::Win32::UI::WindowsAndMessaging::GetMessageW+0x85
+00000066`a135dd70 00007ff7`8807ee4d     mockapp!mockapp::window::run+0xae4
+00000066`a135e9d0 00007ff7`8807f0ce     mockapp!mockapp::run+0x34d
+00000066`a135f6f0 00007ff7`880584a6     mockapp!mockapp::main+0x2e
+00000066`a135f7e0 00007ff7`8801f849     mockapp!core::ops::function::FnOnce::call_once<std::process::ExitCode (*)(),tuple$<> >+0x6
+00000066`a135f810 00007ff7`88036f6c     mockapp!std::sys::backtrace::__rust_begin_short_backtrace<std::process::ExitCode (*)(),std::process::ExitCode>+0x9
+00000066`a135f840 00007ff7`881b7810     mockapp!std::rt::lang_start::closure$0<std::process::ExitCode>+0xc
+(Inline Function) --------`--------     mockapp!std::rt::lang_start_internal::closure$0+0x96
+(Inline Function) --------`--------     mockapp!std::panicking::catch_unwind::do_call+0x96
+(Inline Function) --------`--------     mockapp!std::panicking::catch_unwind+0x96
+(Inline Function) --------`--------     mockapp!std::panic::catch_unwind+0x96
+00000066`a135f870 00007ff7`8802d267     mockapp!std::rt::lang_start_internal+0xb0
+00000066`a135f900 00007ff7`88088a09     mockapp!std::rt::lang_start<std::process::ExitCode>+0x27
+00000066`a135f940 00007ff7`881d5def     mockapp!main+0x19
+(Inline Function) --------`--------     mockapp!invoke_main+0x22
+00000066`a135f970 00007ffb`cbe8dda7     mockapp!__scrt_common_main_seh+0x10f
+00000066`a135f9b0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000066`a135f9e0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+(373c.3424): Unknown exception - code 8001010d (first chance)
+CREATE_THREAD
+Debugger (not debuggee) time: Mon Nov  2 13:49:57.956 2026 (UTC + 8:00)
+.  0  Id: 373c.3424 Suspend: 1 Teb: 00000066`a14a9000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+00000066`a135bc58 00007ffb`cbe9260d     KERNELBASE!CreateRemoteThreadEx
+00000066`a135bc60 00007ffb`a980d594     KERNEL32!CreateThreadStub+0x3d
+00000066`a135bcb0 00007ffb`a980fd6c     uiautomationcore!OverlappedIOManager::AddChannel_AnyThread+0xf4
+00000066`a135bd00 00007ffb`a97b91dd     uiautomationcore!OverlappedIOManager::AddWorkQueueChannel+0x128
+00000066`a135bd40 00007ffb`a9742d53     uiautomationcore!ChannelBasedServerConnectionManager::SetupConnectionEvents+0x3c5
+00000066`a135c410 00007ff7`8805979c     uiautomationcore!UiaReturnRawElementProvider+0x553
+00000066`a135d550 00007ff7`8800df43     mockapp!windows::Win32::UI::Accessibility::UiaReturnRawElementProvider<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x5c
+00000066`a135d5d0 00007ff7`88010840     mockapp!mockapp::window::handle_get_object+0x103
+00000066`a135d6e0 00007ffb`cb3352e6     mockapp!mockapp::window::wnd_proc+0x250
+00000066`a135da00 00007ffb`cb334b6c     user32!UserCallWinProcCheckWow+0x356
+00000066`a135db60 00007ffb`cb35f593     user32!DispatchClientMessage+0x9c
+00000066`a135dbc0 00007ffb`cd4a5d94     user32!_fnDWORD+0x33
+00000066`a135dc20 00007ffb`cb021364     ntdll!KiUserCallbackDispatcherContinue
+00000066`a135dca8 00007ffb`cb34aea2     win32u!NtUserGetMessage+0x14
+00000066`a135dcb0 00007ff7`8806cf15     user32!GetMessageW+0x22
+00000066`a135dd10 00007ff7`8800ed54     mockapp!windows::Win32::UI::WindowsAndMessaging::GetMessageW+0x85
+00000066`a135dd70 00007ff7`8807ee4d     mockapp!mockapp::window::run+0xae4
+00000066`a135e9d0 00007ff7`8807f0ce     mockapp!mockapp::run+0x34d
+00000066`a135f6f0 00007ff7`880584a6     mockapp!mockapp::main+0x2e
+00000066`a135f7e0 00007ff7`8801f849     mockapp!core::ops::function::FnOnce::call_once<std::process::ExitCode (*)(),tuple$<> >+0x6
+00000066`a135f810 00007ff7`88036f6c     mockapp!std::sys::backtrace::__rust_begin_short_backtrace<std::process::ExitCode (*)(),std::process::ExitCode>+0x9
+00000066`a135f840 00007ff7`881b7810     mockapp!std::rt::lang_start::closure$0<std::process::ExitCode>+0xc
+(Inline Function) --------`--------     mockapp!std::rt::lang_start_internal::closure$0+0x96
+(Inline Function) --------`--------     mockapp!std::panicking::catch_unwind::do_call+0x96
+(Inline Function) --------`--------     mockapp!std::panicking::catch_unwind+0x96
+(Inline Function) --------`--------     mockapp!std::panic::catch_unwind+0x96
+00000066`a135f870 00007ff7`8802d267     mockapp!std::rt::lang_start_internal+0xb0
+00000066`a135f900 00007ff7`88088a09     mockapp!std::rt::lang_start<std::process::ExitCode>+0x27
+00000066`a135f940 00007ff7`881d5def     mockapp!main+0x19
+(Inline Function) --------`--------     mockapp!invoke_main+0x22
+00000066`a135f970 00007ffb`cbe8dda7     mockapp!__scrt_common_main_seh+0x10f
+00000066`a135f9b0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000066`a135f9e0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+IO_THREAD_START
+Debugger (not debuggee) time: Mon Nov  2 13:49:57.960 2026 (UTC + 8:00)
+.  9  Id: 373c.e04 Suspend: 1 Teb: 00000066`a14bd000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+      Priority: 0  Priority class: 32  Affinity: fff
+ModLoad: 00007ffb`b4e10000 00007ffb`b4eda000   C:\Windows\System32\OneCoreCommonProxyStub.dll
+
+# The first OverlappedIOManager::Init hit
+IOM_INIT
+Debugger (not debuggee) time: Mon Nov  2 13:49:57.952 2026 (UTC + 8:00)
+.  0  Id: 373c.3424 Suspend: 1 Teb: 00000066`a14a9000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+00000066`a135c408 00007ffb`a9742d2f     uiautomationcore!OverlappedIOManager::Init
+00000066`a135c410 00007ff7`8805979c     uiautomationcore!UiaReturnRawElementProvider+0x52f
+00000066`a135d550 00007ff7`8800df43     mockapp!windows::Win32::UI::Accessibility::UiaReturnRawElementProvider<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x5c
+00000066`a135d5d0 00007ff7`88010840     mockapp!mockapp::window::handle_get_object+0x103
+00000066`a135d6e0 00007ffb`cb3352e6     mockapp!mockapp::window::wnd_proc+0x250
+00000066`a135da00 00007ffb`cb334b6c     user32!UserCallWinProcCheckWow+0x356

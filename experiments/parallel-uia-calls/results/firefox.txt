@@ -1,0 +1,485 @@
+TARGET label=firefox hwnd=394422 pid=1160 ui_tid=11708 class=MozillaWindowClass title=puia big page — Mozilla Firefox client=per-thread
+CTX n=1 descendants_found=50 elems_held=16 text=true msaa=true
+CTX n=2 descendants_found=50 elems_held=16 text=true msaa=true
+CTX n=4 descendants_found=50 elems_held=16 text=true msaa=true
+CTX n=8 descendants_found=50 elems_held=16 text=true msaa=true
+RAW label=firefox op=name n=1 rep=0 wall_ms=6.194 errors=0
+RAW label=firefox op=name n=1 rep=1 wall_ms=5.963 errors=0
+RAW label=firefox op=name n=1 rep=2 wall_ms=6.672 errors=0
+RAW label=firefox op=name n=1 rep=3 wall_ms=5.987 errors=0
+RAW label=firefox op=name n=1 rep=4 wall_ms=6.380 errors=0
+RAW label=firefox op=name n=1 rep=5 wall_ms=6.753 errors=0
+RAW label=firefox op=name n=1 rep=6 wall_ms=6.250 errors=0
+RAW label=firefox op=name n=1 rep=7 wall_ms=6.122 errors=0
+RAW label=firefox op=name n=1 rep=8 wall_ms=6.663 errors=0
+RAW label=firefox op=name n=1 rep=9 wall_ms=6.043 errors=0
+RAW label=firefox op=name n=1 rep=10 wall_ms=6.478 errors=0
+RAW label=firefox op=name n=1 rep=11 wall_ms=6.634 errors=0
+RAW label=firefox op=name n=1 rep=12 wall_ms=5.967 errors=0
+RAW label=firefox op=name n=1 rep=13 wall_ms=6.485 errors=0
+RAW label=firefox op=name n=1 rep=14 wall_ms=6.396 errors=0
+RAW label=firefox op=name n=1 rep=15 wall_ms=6.190 errors=0
+RAW label=firefox op=name n=1 rep=16 wall_ms=6.670 errors=0
+RAW label=firefox op=name n=1 rep=17 wall_ms=7.198 errors=0
+RAW label=firefox op=name n=1 rep=18 wall_ms=7.196 errors=0
+RAW label=firefox op=name n=1 rep=19 wall_ms=7.276 errors=0
+RESULT label=firefox op=name n=1 k=64 median_ms=6.48 p90_ms=7.20 per_call_us=101.2 speedup=1.00 errors=0
+RAW label=firefox op=name n=2 rep=0 wall_ms=3.877 errors=0
+RAW label=firefox op=name n=2 rep=1 wall_ms=3.888 errors=0
+RAW label=firefox op=name n=2 rep=2 wall_ms=3.986 errors=0
+RAW label=firefox op=name n=2 rep=3 wall_ms=3.790 errors=0
+RAW label=firefox op=name n=2 rep=4 wall_ms=3.958 errors=0
+RAW label=firefox op=name n=2 rep=5 wall_ms=3.829 errors=0
+RAW label=firefox op=name n=2 rep=6 wall_ms=4.153 errors=0
+RAW label=firefox op=name n=2 rep=7 wall_ms=3.989 errors=0
+RAW label=firefox op=name n=2 rep=8 wall_ms=4.067 errors=0
+RAW label=firefox op=name n=2 rep=9 wall_ms=4.206 errors=0
+RAW label=firefox op=name n=2 rep=10 wall_ms=4.283 errors=0
+RAW label=firefox op=name n=2 rep=11 wall_ms=4.090 errors=0
+RAW label=firefox op=name n=2 rep=12 wall_ms=3.959 errors=0
+RAW label=firefox op=name n=2 rep=13 wall_ms=3.847 errors=0
+RAW label=firefox op=name n=2 rep=14 wall_ms=3.990 errors=0
+RAW label=firefox op=name n=2 rep=15 wall_ms=3.908 errors=0
+RAW label=firefox op=name n=2 rep=16 wall_ms=3.835 errors=0
+RAW label=firefox op=name n=2 rep=17 wall_ms=3.800 errors=0
+RAW label=firefox op=name n=2 rep=18 wall_ms=3.954 errors=0
+RAW label=firefox op=name n=2 rep=19 wall_ms=3.879 errors=0
+RESULT label=firefox op=name n=2 k=64 median_ms=3.96 p90_ms=4.15 per_call_us=61.8 speedup=1.64 errors=0
+RAW label=firefox op=name n=4 rep=0 wall_ms=3.941 errors=0
+RAW label=firefox op=name n=4 rep=1 wall_ms=3.846 errors=0
+RAW label=firefox op=name n=4 rep=2 wall_ms=3.899 errors=0
+RAW label=firefox op=name n=4 rep=3 wall_ms=3.775 errors=0
+RAW label=firefox op=name n=4 rep=4 wall_ms=3.758 errors=0
+RAW label=firefox op=name n=4 rep=5 wall_ms=3.851 errors=0
+RAW label=firefox op=name n=4 rep=6 wall_ms=3.832 errors=0
+RAW label=firefox op=name n=4 rep=7 wall_ms=3.823 errors=0
+RAW label=firefox op=name n=4 rep=8 wall_ms=4.117 errors=0
+RAW label=firefox op=name n=4 rep=9 wall_ms=3.998 errors=0
+RAW label=firefox op=name n=4 rep=10 wall_ms=3.976 errors=0
+RAW label=firefox op=name n=4 rep=11 wall_ms=3.874 errors=0
+RAW label=firefox op=name n=4 rep=12 wall_ms=4.318 errors=0
+RAW label=firefox op=name n=4 rep=13 wall_ms=4.107 errors=0
+RAW label=firefox op=name n=4 rep=14 wall_ms=4.718 errors=0
+RAW label=firefox op=name n=4 rep=15 wall_ms=5.071 errors=0
+RAW label=firefox op=name n=4 rep=16 wall_ms=5.289 errors=0
+RAW label=firefox op=name n=4 rep=17 wall_ms=5.112 errors=0
+RAW label=firefox op=name n=4 rep=18 wall_ms=5.163 errors=0
+RAW label=firefox op=name n=4 rep=19 wall_ms=5.223 errors=0
+RESULT label=firefox op=name n=4 k=64 median_ms=4.00 p90_ms=5.16 per_call_us=62.5 speedup=1.62 errors=0
+RAW label=firefox op=name n=8 rep=0 wall_ms=5.292 errors=0
+RAW label=firefox op=name n=8 rep=1 wall_ms=5.339 errors=0
+RAW label=firefox op=name n=8 rep=2 wall_ms=5.128 errors=0
+RAW label=firefox op=name n=8 rep=3 wall_ms=5.622 errors=0
+RAW label=firefox op=name n=8 rep=4 wall_ms=4.216 errors=0
+RAW label=firefox op=name n=8 rep=5 wall_ms=4.113 errors=0
+RAW label=firefox op=name n=8 rep=6 wall_ms=3.847 errors=0
+RAW label=firefox op=name n=8 rep=7 wall_ms=3.850 errors=0
+RAW label=firefox op=name n=8 rep=8 wall_ms=4.220 errors=0
+RAW label=firefox op=name n=8 rep=9 wall_ms=4.506 errors=0
+RAW label=firefox op=name n=8 rep=10 wall_ms=4.413 errors=0
+RAW label=firefox op=name n=8 rep=11 wall_ms=4.153 errors=0
+RAW label=firefox op=name n=8 rep=12 wall_ms=4.432 errors=0
+RAW label=firefox op=name n=8 rep=13 wall_ms=3.860 errors=0
+RAW label=firefox op=name n=8 rep=14 wall_ms=3.786 errors=0
+RAW label=firefox op=name n=8 rep=15 wall_ms=5.006 errors=0
+RAW label=firefox op=name n=8 rep=16 wall_ms=4.977 errors=0
+RAW label=firefox op=name n=8 rep=17 wall_ms=4.107 errors=0
+RAW label=firefox op=name n=8 rep=18 wall_ms=3.987 errors=0
+RAW label=firefox op=name n=8 rep=19 wall_ms=4.173 errors=0
+RESULT label=firefox op=name n=8 k=64 median_ms=4.22 p90_ms=5.29 per_call_us=65.9 speedup=1.54 errors=0
+RAW label=firefox op=fromhandle n=1 rep=0 wall_ms=26.060 errors=0
+RAW label=firefox op=fromhandle n=1 rep=1 wall_ms=25.047 errors=0
+RAW label=firefox op=fromhandle n=1 rep=2 wall_ms=23.228 errors=0
+RAW label=firefox op=fromhandle n=1 rep=3 wall_ms=24.157 errors=0
+RAW label=firefox op=fromhandle n=1 rep=4 wall_ms=22.733 errors=0
+RAW label=firefox op=fromhandle n=1 rep=5 wall_ms=26.008 errors=0
+RAW label=firefox op=fromhandle n=1 rep=6 wall_ms=23.675 errors=0
+RAW label=firefox op=fromhandle n=1 rep=7 wall_ms=24.920 errors=0
+RAW label=firefox op=fromhandle n=1 rep=8 wall_ms=24.402 errors=0
+RAW label=firefox op=fromhandle n=1 rep=9 wall_ms=23.916 errors=0
+RAW label=firefox op=fromhandle n=1 rep=10 wall_ms=24.024 errors=0
+RAW label=firefox op=fromhandle n=1 rep=11 wall_ms=25.904 errors=0
+RAW label=firefox op=fromhandle n=1 rep=12 wall_ms=23.806 errors=0
+RAW label=firefox op=fromhandle n=1 rep=13 wall_ms=23.235 errors=0
+RAW label=firefox op=fromhandle n=1 rep=14 wall_ms=22.213 errors=0
+RAW label=firefox op=fromhandle n=1 rep=15 wall_ms=22.400 errors=0
+RAW label=firefox op=fromhandle n=1 rep=16 wall_ms=22.011 errors=0
+RAW label=firefox op=fromhandle n=1 rep=17 wall_ms=22.232 errors=0
+RAW label=firefox op=fromhandle n=1 rep=18 wall_ms=22.102 errors=0
+RAW label=firefox op=fromhandle n=1 rep=19 wall_ms=22.615 errors=0
+RESULT label=firefox op=fromhandle n=1 k=32 median_ms=23.81 p90_ms=25.90 per_call_us=743.9 speedup=1.00 errors=0
+RAW label=firefox op=fromhandle n=2 rep=0 wall_ms=21.108 errors=0
+RAW label=firefox op=fromhandle n=2 rep=1 wall_ms=21.781 errors=0
+RAW label=firefox op=fromhandle n=2 rep=2 wall_ms=21.868 errors=0
+RAW label=firefox op=fromhandle n=2 rep=3 wall_ms=19.772 errors=0
+RAW label=firefox op=fromhandle n=2 rep=4 wall_ms=20.154 errors=0
+RAW label=firefox op=fromhandle n=2 rep=5 wall_ms=21.520 errors=0
+RAW label=firefox op=fromhandle n=2 rep=6 wall_ms=19.777 errors=0
+RAW label=firefox op=fromhandle n=2 rep=7 wall_ms=21.778 errors=0
+RAW label=firefox op=fromhandle n=2 rep=8 wall_ms=24.171 errors=0
+RAW label=firefox op=fromhandle n=2 rep=9 wall_ms=19.908 errors=0
+RAW label=firefox op=fromhandle n=2 rep=10 wall_ms=20.425 errors=0
+RAW label=firefox op=fromhandle n=2 rep=11 wall_ms=19.021 errors=0
+RAW label=firefox op=fromhandle n=2 rep=12 wall_ms=19.259 errors=0
+RAW label=firefox op=fromhandle n=2 rep=13 wall_ms=21.360 errors=0
+RAW label=firefox op=fromhandle n=2 rep=14 wall_ms=20.415 errors=0
+RAW label=firefox op=fromhandle n=2 rep=15 wall_ms=20.972 errors=0
+RAW label=firefox op=fromhandle n=2 rep=16 wall_ms=20.050 errors=0
+RAW label=firefox op=fromhandle n=2 rep=17 wall_ms=19.707 errors=0
+RAW label=firefox op=fromhandle n=2 rep=18 wall_ms=20.195 errors=0
+RAW label=firefox op=fromhandle n=2 rep=19 wall_ms=20.404 errors=0
+RESULT label=firefox op=fromhandle n=2 k=32 median_ms=20.41 p90_ms=21.78 per_call_us=638.0 speedup=1.17 errors=0
+RAW label=firefox op=fromhandle n=4 rep=0 wall_ms=20.345 errors=0
+RAW label=firefox op=fromhandle n=4 rep=1 wall_ms=20.559 errors=0
+RAW label=firefox op=fromhandle n=4 rep=2 wall_ms=19.175 errors=0
+RAW label=firefox op=fromhandle n=4 rep=3 wall_ms=19.244 errors=0
+RAW label=firefox op=fromhandle n=4 rep=4 wall_ms=19.113 errors=0
+RAW label=firefox op=fromhandle n=4 rep=5 wall_ms=20.767 errors=0
+RAW label=firefox op=fromhandle n=4 rep=6 wall_ms=19.333 errors=0
+RAW label=firefox op=fromhandle n=4 rep=7 wall_ms=19.650 errors=0
+RAW label=firefox op=fromhandle n=4 rep=8 wall_ms=21.634 errors=0
+RAW label=firefox op=fromhandle n=4 rep=9 wall_ms=22.918 errors=0
+RAW label=firefox op=fromhandle n=4 rep=10 wall_ms=23.217 errors=0
+RAW label=firefox op=fromhandle n=4 rep=11 wall_ms=20.417 errors=0
+RAW label=firefox op=fromhandle n=4 rep=12 wall_ms=22.977 errors=0
+RAW label=firefox op=fromhandle n=4 rep=13 wall_ms=21.256 errors=0
+RAW label=firefox op=fromhandle n=4 rep=14 wall_ms=23.154 errors=0
+RAW label=firefox op=fromhandle n=4 rep=15 wall_ms=22.704 errors=0
+RAW label=firefox op=fromhandle n=4 rep=16 wall_ms=20.508 errors=0
+RAW label=firefox op=fromhandle n=4 rep=17 wall_ms=21.050 errors=0
+RAW label=firefox op=fromhandle n=4 rep=18 wall_ms=22.190 errors=0
+RAW label=firefox op=fromhandle n=4 rep=19 wall_ms=20.297 errors=0
+RESULT label=firefox op=fromhandle n=4 k=32 median_ms=20.77 p90_ms=22.98 per_call_us=649.0 speedup=1.15 errors=0
+RAW label=firefox op=fromhandle n=8 rep=0 wall_ms=22.814 errors=0
+RAW label=firefox op=fromhandle n=8 rep=1 wall_ms=20.125 errors=0
+RAW label=firefox op=fromhandle n=8 rep=2 wall_ms=20.418 errors=0
+RAW label=firefox op=fromhandle n=8 rep=3 wall_ms=19.495 errors=0
+RAW label=firefox op=fromhandle n=8 rep=4 wall_ms=20.341 errors=0
+RAW label=firefox op=fromhandle n=8 rep=5 wall_ms=19.745 errors=0
+RAW label=firefox op=fromhandle n=8 rep=6 wall_ms=19.796 errors=0
+RAW label=firefox op=fromhandle n=8 rep=7 wall_ms=19.741 errors=0
+RAW label=firefox op=fromhandle n=8 rep=8 wall_ms=18.470 errors=0
+RAW label=firefox op=fromhandle n=8 rep=9 wall_ms=18.894 errors=0
+RAW label=firefox op=fromhandle n=8 rep=10 wall_ms=18.930 errors=0
+RAW label=firefox op=fromhandle n=8 rep=11 wall_ms=20.578 errors=0
+RAW label=firefox op=fromhandle n=8 rep=12 wall_ms=20.541 errors=0
+RAW label=firefox op=fromhandle n=8 rep=13 wall_ms=20.144 errors=0
+RAW label=firefox op=fromhandle n=8 rep=14 wall_ms=19.676 errors=0
+RAW label=firefox op=fromhandle n=8 rep=15 wall_ms=21.019 errors=0
+RAW label=firefox op=fromhandle n=8 rep=16 wall_ms=22.469 errors=0
+RAW label=firefox op=fromhandle n=8 rep=17 wall_ms=19.522 errors=0
+RAW label=firefox op=fromhandle n=8 rep=18 wall_ms=20.122 errors=0
+RAW label=firefox op=fromhandle n=8 rep=19 wall_ms=20.601 errors=0
+RESULT label=firefox op=fromhandle n=8 k=32 median_ms=20.12 p90_ms=21.02 per_call_us=628.9 speedup=1.18 errors=0
+RAW label=firefox op=text n=1 rep=0 wall_ms=5.559 errors=0
+RAW label=firefox op=text n=1 rep=1 wall_ms=5.722 errors=0
+RAW label=firefox op=text n=1 rep=2 wall_ms=6.070 errors=0
+RAW label=firefox op=text n=1 rep=3 wall_ms=5.708 errors=0
+RAW label=firefox op=text n=1 rep=4 wall_ms=5.940 errors=0
+RAW label=firefox op=text n=1 rep=5 wall_ms=5.861 errors=0
+RAW label=firefox op=text n=1 rep=6 wall_ms=5.757 errors=0
+RAW label=firefox op=text n=1 rep=7 wall_ms=6.349 errors=0
+RAW label=firefox op=text n=1 rep=8 wall_ms=6.111 errors=0
+RAW label=firefox op=text n=1 rep=9 wall_ms=5.544 errors=0
+RAW label=firefox op=text n=1 rep=10 wall_ms=5.575 errors=0
+RAW label=firefox op=text n=1 rep=11 wall_ms=5.901 errors=0
+RAW label=firefox op=text n=1 rep=12 wall_ms=5.971 errors=0
+RAW label=firefox op=text n=1 rep=13 wall_ms=5.980 errors=0
+RAW label=firefox op=text n=1 rep=14 wall_ms=6.348 errors=0
+RAW label=firefox op=text n=1 rep=15 wall_ms=5.989 errors=0
+RAW label=firefox op=text n=1 rep=16 wall_ms=5.776 errors=0
+RAW label=firefox op=text n=1 rep=17 wall_ms=6.112 errors=0
+RAW label=firefox op=text n=1 rep=18 wall_ms=6.225 errors=0
+RAW label=firefox op=text n=1 rep=19 wall_ms=6.091 errors=0
+RESULT label=firefox op=text n=1 k=32 median_ms=5.97 p90_ms=6.23 per_call_us=186.6 speedup=1.00 errors=0
+RAW label=firefox op=text n=2 rep=0 wall_ms=3.898 errors=0
+RAW label=firefox op=text n=2 rep=1 wall_ms=4.744 errors=0
+RAW label=firefox op=text n=2 rep=2 wall_ms=4.024 errors=0
+RAW label=firefox op=text n=2 rep=3 wall_ms=3.933 errors=0
+RAW label=firefox op=text n=2 rep=4 wall_ms=4.047 errors=0
+RAW label=firefox op=text n=2 rep=5 wall_ms=3.970 errors=0
+RAW label=firefox op=text n=2 rep=6 wall_ms=4.144 errors=0
+RAW label=firefox op=text n=2 rep=7 wall_ms=4.158 errors=0
+RAW label=firefox op=text n=2 rep=8 wall_ms=4.219 errors=0
+RAW label=firefox op=text n=2 rep=9 wall_ms=3.433 errors=0
+RAW label=firefox op=text n=2 rep=10 wall_ms=3.582 errors=0
+RAW label=firefox op=text n=2 rep=11 wall_ms=3.662 errors=0
+RAW label=firefox op=text n=2 rep=12 wall_ms=4.051 errors=0
+RAW label=firefox op=text n=2 rep=13 wall_ms=3.925 errors=0
+RAW label=firefox op=text n=2 rep=14 wall_ms=4.304 errors=0
+RAW label=firefox op=text n=2 rep=15 wall_ms=4.746 errors=0
+RAW label=firefox op=text n=2 rep=16 wall_ms=4.348 errors=0
+RAW label=firefox op=text n=2 rep=17 wall_ms=4.010 errors=0
+RAW label=firefox op=text n=2 rep=18 wall_ms=3.982 errors=0
+RAW label=firefox op=text n=2 rep=19 wall_ms=3.470 errors=0
+RESULT label=firefox op=text n=2 k=32 median_ms=4.02 p90_ms=4.35 per_call_us=125.8 speedup=1.48 errors=0
+RAW label=firefox op=text n=4 rep=0 wall_ms=4.136 errors=0
+RAW label=firefox op=text n=4 rep=1 wall_ms=4.033 errors=0
+RAW label=firefox op=text n=4 rep=2 wall_ms=4.299 errors=0
+RAW label=firefox op=text n=4 rep=3 wall_ms=4.038 errors=0
+RAW label=firefox op=text n=4 rep=4 wall_ms=3.918 errors=0
+RAW label=firefox op=text n=4 rep=5 wall_ms=4.273 errors=0
+RAW label=firefox op=text n=4 rep=6 wall_ms=4.393 errors=0
+RAW label=firefox op=text n=4 rep=7 wall_ms=4.334 errors=0
+RAW label=firefox op=text n=4 rep=8 wall_ms=4.080 errors=0
+RAW label=firefox op=text n=4 rep=9 wall_ms=4.055 errors=0
+RAW label=firefox op=text n=4 rep=10 wall_ms=3.932 errors=0
+RAW label=firefox op=text n=4 rep=11 wall_ms=3.873 errors=0
+RAW label=firefox op=text n=4 rep=12 wall_ms=3.925 errors=0
+RAW label=firefox op=text n=4 rep=13 wall_ms=4.080 errors=0
+RAW label=firefox op=text n=4 rep=14 wall_ms=4.115 errors=0
+RAW label=firefox op=text n=4 rep=15 wall_ms=4.402 errors=0
+RAW label=firefox op=text n=4 rep=16 wall_ms=4.415 errors=0
+RAW label=firefox op=text n=4 rep=17 wall_ms=4.456 errors=0
+RAW label=firefox op=text n=4 rep=18 wall_ms=4.420 errors=0
+RAW label=firefox op=text n=4 rep=19 wall_ms=3.969 errors=0
+RESULT label=firefox op=text n=4 k=32 median_ms=4.12 p90_ms=4.41 per_call_us=128.6 speedup=1.45 errors=0
+RAW label=firefox op=text n=8 rep=0 wall_ms=3.957 errors=0
+RAW label=firefox op=text n=8 rep=1 wall_ms=3.842 errors=0
+RAW label=firefox op=text n=8 rep=2 wall_ms=3.981 errors=0
+RAW label=firefox op=text n=8 rep=3 wall_ms=4.038 errors=0
+RAW label=firefox op=text n=8 rep=4 wall_ms=3.877 errors=0
+RAW label=firefox op=text n=8 rep=5 wall_ms=3.882 errors=0
+RAW label=firefox op=text n=8 rep=6 wall_ms=3.775 errors=0
+RAW label=firefox op=text n=8 rep=7 wall_ms=3.667 errors=0
+RAW label=firefox op=text n=8 rep=8 wall_ms=3.796 errors=0
+RAW label=firefox op=text n=8 rep=9 wall_ms=3.718 errors=0
+RAW label=firefox op=text n=8 rep=10 wall_ms=3.734 errors=0
+RAW label=firefox op=text n=8 rep=11 wall_ms=4.134 errors=0
+RAW label=firefox op=text n=8 rep=12 wall_ms=4.996 errors=0
+RAW label=firefox op=text n=8 rep=13 wall_ms=4.862 errors=0
+RAW label=firefox op=text n=8 rep=14 wall_ms=4.286 errors=0
+RAW label=firefox op=text n=8 rep=15 wall_ms=3.900 errors=0
+RAW label=firefox op=text n=8 rep=16 wall_ms=3.595 errors=0
+RAW label=firefox op=text n=8 rep=17 wall_ms=3.988 errors=0
+RAW label=firefox op=text n=8 rep=18 wall_ms=3.653 errors=0
+RAW label=firefox op=text n=8 rep=19 wall_ms=3.796 errors=0
+RESULT label=firefox op=text n=8 k=32 median_ms=3.88 p90_ms=4.29 per_call_us=121.3 speedup=1.54 errors=0
+RAW label=firefox op=msaa n=1 rep=0 wall_ms=7.221 errors=0
+RAW label=firefox op=msaa n=1 rep=1 wall_ms=7.285 errors=0
+RAW label=firefox op=msaa n=1 rep=2 wall_ms=6.950 errors=0
+RAW label=firefox op=msaa n=1 rep=3 wall_ms=7.082 errors=0
+RAW label=firefox op=msaa n=1 rep=4 wall_ms=7.090 errors=0
+RAW label=firefox op=msaa n=1 rep=5 wall_ms=7.207 errors=0
+RAW label=firefox op=msaa n=1 rep=6 wall_ms=7.138 errors=0
+RAW label=firefox op=msaa n=1 rep=7 wall_ms=8.197 errors=0
+RAW label=firefox op=msaa n=1 rep=8 wall_ms=8.762 errors=0
+RAW label=firefox op=msaa n=1 rep=9 wall_ms=8.903 errors=0
+RAW label=firefox op=msaa n=1 rep=10 wall_ms=7.742 errors=0
+RAW label=firefox op=msaa n=1 rep=11 wall_ms=7.286 errors=0
+RAW label=firefox op=msaa n=1 rep=12 wall_ms=6.990 errors=0
+RAW label=firefox op=msaa n=1 rep=13 wall_ms=7.136 errors=0
+RAW label=firefox op=msaa n=1 rep=14 wall_ms=8.062 errors=0
+RAW label=firefox op=msaa n=1 rep=15 wall_ms=8.872 errors=0
+RAW label=firefox op=msaa n=1 rep=16 wall_ms=8.683 errors=0
+RAW label=firefox op=msaa n=1 rep=17 wall_ms=8.900 errors=0
+RAW label=firefox op=msaa n=1 rep=18 wall_ms=7.541 errors=0
+RAW label=firefox op=msaa n=1 rep=19 wall_ms=6.952 errors=0
+RESULT label=firefox op=msaa n=1 k=64 median_ms=7.29 p90_ms=8.87 per_call_us=113.8 speedup=1.00 errors=0
+RAW label=firefox op=msaa n=2 rep=0 wall_ms=4.358 errors=0
+RAW label=firefox op=msaa n=2 rep=1 wall_ms=4.118 errors=0
+RAW label=firefox op=msaa n=2 rep=2 wall_ms=3.792 errors=0
+RAW label=firefox op=msaa n=2 rep=3 wall_ms=4.198 errors=0
+RAW label=firefox op=msaa n=2 rep=4 wall_ms=3.475 errors=0
+RAW label=firefox op=msaa n=2 rep=5 wall_ms=4.199 errors=0
+RAW label=firefox op=msaa n=2 rep=6 wall_ms=3.751 errors=0
+RAW label=firefox op=msaa n=2 rep=7 wall_ms=4.335 errors=0
+RAW label=firefox op=msaa n=2 rep=8 wall_ms=4.351 errors=0
+RAW label=firefox op=msaa n=2 rep=9 wall_ms=4.419 errors=0
+RAW label=firefox op=msaa n=2 rep=10 wall_ms=4.428 errors=0
+RAW label=firefox op=msaa n=2 rep=11 wall_ms=4.065 errors=0
+RAW label=firefox op=msaa n=2 rep=12 wall_ms=3.787 errors=0
+RAW label=firefox op=msaa n=2 rep=13 wall_ms=4.281 errors=0
+RAW label=firefox op=msaa n=2 rep=14 wall_ms=4.090 errors=0
+RAW label=firefox op=msaa n=2 rep=15 wall_ms=4.023 errors=0
+RAW label=firefox op=msaa n=2 rep=16 wall_ms=3.883 errors=0
+RAW label=firefox op=msaa n=2 rep=17 wall_ms=4.551 errors=0
+RAW label=firefox op=msaa n=2 rep=18 wall_ms=4.052 errors=0
+RAW label=firefox op=msaa n=2 rep=19 wall_ms=3.903 errors=0
+RESULT label=firefox op=msaa n=2 k=64 median_ms=4.12 p90_ms=4.42 per_call_us=64.3 speedup=1.77 errors=0
+RAW label=firefox op=msaa n=4 rep=0 wall_ms=3.901 errors=0
+RAW label=firefox op=msaa n=4 rep=1 wall_ms=4.181 errors=0
+RAW label=firefox op=msaa n=4 rep=2 wall_ms=4.283 errors=0
+RAW label=firefox op=msaa n=4 rep=3 wall_ms=3.903 errors=0
+RAW label=firefox op=msaa n=4 rep=4 wall_ms=3.991 errors=0
+RAW label=firefox op=msaa n=4 rep=5 wall_ms=4.329 errors=0
+RAW label=firefox op=msaa n=4 rep=6 wall_ms=4.358 errors=0
+RAW label=firefox op=msaa n=4 rep=7 wall_ms=4.387 errors=0
+RAW label=firefox op=msaa n=4 rep=8 wall_ms=3.876 errors=0
+RAW label=firefox op=msaa n=4 rep=9 wall_ms=4.030 errors=0
+RAW label=firefox op=msaa n=4 rep=10 wall_ms=3.957 errors=0
+RAW label=firefox op=msaa n=4 rep=11 wall_ms=3.990 errors=0
+RAW label=firefox op=msaa n=4 rep=12 wall_ms=3.980 errors=0
+RAW label=firefox op=msaa n=4 rep=13 wall_ms=4.220 errors=0
+RAW label=firefox op=msaa n=4 rep=14 wall_ms=4.803 errors=0
+RAW label=firefox op=msaa n=4 rep=15 wall_ms=4.782 errors=0
+RAW label=firefox op=msaa n=4 rep=16 wall_ms=3.626 errors=0
+RAW label=firefox op=msaa n=4 rep=17 wall_ms=4.026 errors=0
+RAW label=firefox op=msaa n=4 rep=18 wall_ms=3.692 errors=0
+RAW label=firefox op=msaa n=4 rep=19 wall_ms=4.071 errors=0
+RESULT label=firefox op=msaa n=4 k=64 median_ms=4.03 p90_ms=4.39 per_call_us=63.0 speedup=1.81 errors=0
+RAW label=firefox op=msaa n=8 rep=0 wall_ms=4.061 errors=0
+RAW label=firefox op=msaa n=8 rep=1 wall_ms=4.267 errors=0
+RAW label=firefox op=msaa n=8 rep=2 wall_ms=3.944 errors=0
+RAW label=firefox op=msaa n=8 rep=3 wall_ms=3.988 errors=0
+RAW label=firefox op=msaa n=8 rep=4 wall_ms=4.269 errors=0
+RAW label=firefox op=msaa n=8 rep=5 wall_ms=3.977 errors=0
+RAW label=firefox op=msaa n=8 rep=6 wall_ms=3.810 errors=0
+RAW label=firefox op=msaa n=8 rep=7 wall_ms=3.752 errors=0
+RAW label=firefox op=msaa n=8 rep=8 wall_ms=4.025 errors=0
+RAW label=firefox op=msaa n=8 rep=9 wall_ms=3.946 errors=0
+RAW label=firefox op=msaa n=8 rep=10 wall_ms=3.725 errors=0
+RAW label=firefox op=msaa n=8 rep=11 wall_ms=3.707 errors=0
+RAW label=firefox op=msaa n=8 rep=12 wall_ms=3.809 errors=0
+RAW label=firefox op=msaa n=8 rep=13 wall_ms=3.877 errors=0
+RAW label=firefox op=msaa n=8 rep=14 wall_ms=3.821 errors=0
+RAW label=firefox op=msaa n=8 rep=15 wall_ms=3.744 errors=0
+RAW label=firefox op=msaa n=8 rep=16 wall_ms=3.849 errors=0
+RAW label=firefox op=msaa n=8 rep=17 wall_ms=3.804 errors=0
+RAW label=firefox op=msaa n=8 rep=18 wall_ms=3.776 errors=0
+RAW label=firefox op=msaa n=8 rep=19 wall_ms=3.887 errors=0
+RESULT label=firefox op=msaa n=8 k=64 median_ms=3.88 p90_ms=4.06 per_call_us=60.6 speedup=1.88 errors=0
+RAW label=firefox op=rop n=1 rep=0 wall_ms=5.863 errors=0
+RAW label=firefox op=rop n=1 rep=1 wall_ms=6.167 errors=0
+RAW label=firefox op=rop n=1 rep=2 wall_ms=6.372 errors=0
+RAW label=firefox op=rop n=1 rep=3 wall_ms=6.087 errors=0
+RAW label=firefox op=rop n=1 rep=4 wall_ms=6.436 errors=0
+RAW label=firefox op=rop n=1 rep=5 wall_ms=6.832 errors=0
+RAW label=firefox op=rop n=1 rep=6 wall_ms=6.212 errors=0
+RAW label=firefox op=rop n=1 rep=7 wall_ms=6.277 errors=0
+RAW label=firefox op=rop n=1 rep=8 wall_ms=6.375 errors=0
+RAW label=firefox op=rop n=1 rep=9 wall_ms=6.328 errors=0
+RAW label=firefox op=rop n=1 rep=10 wall_ms=6.305 errors=0
+RAW label=firefox op=rop n=1 rep=11 wall_ms=6.319 errors=0
+RAW label=firefox op=rop n=1 rep=12 wall_ms=6.411 errors=0
+RAW label=firefox op=rop n=1 rep=13 wall_ms=6.203 errors=0
+RAW label=firefox op=rop n=1 rep=14 wall_ms=6.416 errors=0
+RAW label=firefox op=rop n=1 rep=15 wall_ms=6.190 errors=0
+RAW label=firefox op=rop n=1 rep=16 wall_ms=6.203 errors=0
+RAW label=firefox op=rop n=1 rep=17 wall_ms=6.468 errors=0
+RAW label=firefox op=rop n=1 rep=18 wall_ms=6.274 errors=0
+RAW label=firefox op=rop n=1 rep=19 wall_ms=6.251 errors=0
+RESULT label=firefox op=rop n=1 k=32 median_ms=6.30 p90_ms=6.44 per_call_us=197.0 speedup=1.00 errors=0
+RAW label=firefox op=rop n=2 rep=0 wall_ms=4.400 errors=0
+RAW label=firefox op=rop n=2 rep=1 wall_ms=4.405 errors=0
+RAW label=firefox op=rop n=2 rep=2 wall_ms=4.502 errors=0
+RAW label=firefox op=rop n=2 rep=3 wall_ms=4.738 errors=0
+RAW label=firefox op=rop n=2 rep=4 wall_ms=4.873 errors=0
+RAW label=firefox op=rop n=2 rep=5 wall_ms=4.856 errors=0
+RAW label=firefox op=rop n=2 rep=6 wall_ms=4.700 errors=0
+RAW label=firefox op=rop n=2 rep=7 wall_ms=4.588 errors=0
+RAW label=firefox op=rop n=2 rep=8 wall_ms=4.668 errors=0
+RAW label=firefox op=rop n=2 rep=9 wall_ms=4.700 errors=0
+RAW label=firefox op=rop n=2 rep=10 wall_ms=4.657 errors=0
+RAW label=firefox op=rop n=2 rep=11 wall_ms=4.700 errors=0
+RAW label=firefox op=rop n=2 rep=12 wall_ms=4.671 errors=0
+RAW label=firefox op=rop n=2 rep=13 wall_ms=4.579 errors=0
+RAW label=firefox op=rop n=2 rep=14 wall_ms=4.311 errors=0
+RAW label=firefox op=rop n=2 rep=15 wall_ms=4.447 errors=0
+RAW label=firefox op=rop n=2 rep=16 wall_ms=4.384 errors=0
+RAW label=firefox op=rop n=2 rep=17 wall_ms=4.305 errors=0
+RAW label=firefox op=rop n=2 rep=18 wall_ms=4.329 errors=0
+RAW label=firefox op=rop n=2 rep=19 wall_ms=4.441 errors=0
+RESULT label=firefox op=rop n=2 k=32 median_ms=4.59 p90_ms=4.74 per_call_us=143.4 speedup=1.37 errors=0
+RAW label=firefox op=rop n=4 rep=0 wall_ms=5.334 errors=0
+RAW label=firefox op=rop n=4 rep=1 wall_ms=5.632 errors=0
+RAW label=firefox op=rop n=4 rep=2 wall_ms=5.272 errors=0
+RAW label=firefox op=rop n=4 rep=3 wall_ms=5.319 errors=0
+RAW label=firefox op=rop n=4 rep=4 wall_ms=5.299 errors=0
+RAW label=firefox op=rop n=4 rep=5 wall_ms=5.317 errors=0
+RAW label=firefox op=rop n=4 rep=6 wall_ms=4.662 errors=0
+RAW label=firefox op=rop n=4 rep=7 wall_ms=4.662 errors=0
+RAW label=firefox op=rop n=4 rep=8 wall_ms=4.256 errors=0
+RAW label=firefox op=rop n=4 rep=9 wall_ms=4.140 errors=0
+RAW label=firefox op=rop n=4 rep=10 wall_ms=4.244 errors=0
+RAW label=firefox op=rop n=4 rep=11 wall_ms=4.187 errors=0
+RAW label=firefox op=rop n=4 rep=12 wall_ms=4.143 errors=0
+RAW label=firefox op=rop n=4 rep=13 wall_ms=4.305 errors=0
+RAW label=firefox op=rop n=4 rep=14 wall_ms=4.403 errors=0
+RAW label=firefox op=rop n=4 rep=15 wall_ms=4.386 errors=0
+RAW label=firefox op=rop n=4 rep=16 wall_ms=4.321 errors=0
+RAW label=firefox op=rop n=4 rep=17 wall_ms=4.493 errors=0
+RAW label=firefox op=rop n=4 rep=18 wall_ms=4.307 errors=0
+RAW label=firefox op=rop n=4 rep=19 wall_ms=4.382 errors=0
+RESULT label=firefox op=rop n=4 k=32 median_ms=4.40 p90_ms=5.32 per_call_us=137.6 speedup=1.43 errors=0
+RAW label=firefox op=rop n=8 rep=0 wall_ms=5.122 errors=0
+RAW label=firefox op=rop n=8 rep=1 wall_ms=4.591 errors=0
+RAW label=firefox op=rop n=8 rep=2 wall_ms=4.697 errors=0
+RAW label=firefox op=rop n=8 rep=3 wall_ms=4.591 errors=0
+RAW label=firefox op=rop n=8 rep=4 wall_ms=4.467 errors=0
+RAW label=firefox op=rop n=8 rep=5 wall_ms=4.532 errors=0
+RAW label=firefox op=rop n=8 rep=6 wall_ms=4.363 errors=0
+RAW label=firefox op=rop n=8 rep=7 wall_ms=4.494 errors=0
+RAW label=firefox op=rop n=8 rep=8 wall_ms=4.362 errors=0
+RAW label=firefox op=rop n=8 rep=9 wall_ms=4.388 errors=0
+RAW label=firefox op=rop n=8 rep=10 wall_ms=4.717 errors=0
+RAW label=firefox op=rop n=8 rep=11 wall_ms=4.862 errors=0
+RAW label=firefox op=rop n=8 rep=12 wall_ms=5.036 errors=0
+RAW label=firefox op=rop n=8 rep=13 wall_ms=4.962 errors=0
+RAW label=firefox op=rop n=8 rep=14 wall_ms=4.752 errors=0
+RAW label=firefox op=rop n=8 rep=15 wall_ms=4.735 errors=0
+RAW label=firefox op=rop n=8 rep=16 wall_ms=4.808 errors=0
+RAW label=firefox op=rop n=8 rep=17 wall_ms=5.357 errors=0
+RAW label=firefox op=rop n=8 rep=18 wall_ms=5.496 errors=0
+RAW label=firefox op=rop n=8 rep=19 wall_ms=5.213 errors=0
+RESULT label=firefox op=rop n=8 k=32 median_ms=4.73 p90_ms=5.21 per_call_us=148.0 speedup=1.33 errors=0
+PAIR label=firefox-findall-beside-name a=FindAll@394422 elem 0 (of 16 held, 50 found) b=Name@394422 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=firefox-findall-beside-name a_alone count=10 median_ms=11.21 p90_ms=12.18 max_ms=12.59
+RESULT label=firefox-findall-beside-name a_with_b count=10 median_ms=12.02 p90_ms=13.04 max_ms=13.12
+RESULT label=firefox-findall-beside-name b_alone count=46 median_ms=0.17 p90_ms=0.23 max_ms=0.44
+RESULT label=firefox-findall-beside-name b_during_a count=46 median_ms=0.17 p90_ms=0.45 max_ms=0.98
+PAIR label=firefox-findall-beside-rop a=FindAll@394422 elem 0 (of 16 held, 50 found) b=Rop@394422 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=firefox-findall-beside-rop a_alone count=10 median_ms=12.11 p90_ms=12.87 max_ms=12.96
+RESULT label=firefox-findall-beside-rop a_with_b count=10 median_ms=12.19 p90_ms=12.73 max_ms=13.45
+RESULT label=firefox-findall-beside-rop b_alone count=47 median_ms=0.25 p90_ms=0.27 max_ms=0.32
+RESULT label=firefox-findall-beside-rop b_during_a count=47 median_ms=0.25 p90_ms=0.43 max_ms=1.31
+CALL other-element hwnd=394422 pid=1160 ui_tid=11708 op=Name elem=3 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+CALL other-element-rop hwnd=394422 pid=1160 ui_tid=11708 op=Rop elem=3 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+CALL same-window-new-connection hwnd=394422 pid=1160 ui_tid=11708 op=FromHandle elem=0 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+CALL stuck hwnd=394422 pid=1160 ui_tid=11708 op=Name elem=1 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+suspended tid=11708
+PROBES_STARTED trial=0
+resumed tid=11708
+TRIAL label=firefox-suspended-name trial=0 block=suspend:394422 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4010.8
+RESULT label=firefox-suspended-name trial=0 call=same-window-new-connection returned_ms=2191.6 before_unblock result=error 0x80131505 idle_baseline_ms=1.07
+RESULT label=firefox-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4012.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-name trial=0 call=xproc-other-element returned_ms=4013.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-name trial=0 call=stuck returned_ms=4015.2 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=firefox-suspended-name trial=0 call=other-element-rop returned_ms=4016.4 after_unblock result=ok idle_baseline_ms=0.38
+RESULT label=firefox-suspended-name trial=0 call=other-element returned_ms=4017.5 after_unblock result=ok idle_baseline_ms=0.21
+suspended tid=11708
+PROBES_STARTED trial=1
+resumed tid=11708
+TRIAL label=firefox-suspended-name trial=1 block=suspend:394422 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4012.2
+RESULT label=firefox-suspended-name trial=1 call=same-window-new-connection returned_ms=2206.8 before_unblock result=error 0x80131505 idle_baseline_ms=0.85
+RESULT label=firefox-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4012.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-name trial=1 call=xproc-other-element returned_ms=4013.0 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-name trial=1 call=stuck returned_ms=4013.7 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=firefox-suspended-name trial=1 call=other-element-rop returned_ms=4014.1 after_unblock result=ok idle_baseline_ms=0.29
+RESULT label=firefox-suspended-name trial=1 call=other-element returned_ms=4014.3 after_unblock result=ok idle_baseline_ms=0.08
+CALL other-element hwnd=394422 pid=1160 ui_tid=11708 op=Name elem=3 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+CALL other-element-rop hwnd=394422 pid=1160 ui_tid=11708 op=Rop elem=3 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+CALL same-window-new-connection hwnd=394422 pid=1160 ui_tid=11708 op=FromHandle elem=0 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+CALL stuck hwnd=394422 pid=1160 ui_tid=11708 op=Rop elem=1 class=MozillaWindowClass title=puia big page — Mozilla Firefox
+suspended tid=11708
+PROBES_STARTED trial=0
+resumed tid=11708
+TRIAL label=firefox-suspended-rop trial=0 block=suspend:394422 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=4011.2
+RESULT label=firefox-suspended-rop trial=0 call=same-window-new-connection returned_ms=2204.6 before_unblock result=error 0x80131505 idle_baseline_ms=0.85
+RESULT label=firefox-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4012.6 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-rop trial=0 call=xproc-other-element returned_ms=4014.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-rop trial=0 call=stuck returned_ms=4015.6 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=firefox-suspended-rop trial=0 call=other-element-rop returned_ms=4016.8 after_unblock result=ok idle_baseline_ms=0.40
+RESULT label=firefox-suspended-rop trial=0 call=other-element returned_ms=4018.0 after_unblock result=ok idle_baseline_ms=0.27
+suspended tid=11708
+PROBES_STARTED trial=1
+resumed tid=11708
+TRIAL label=firefox-suspended-rop trial=1 block=suspend:394422 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4008.9
+RESULT label=firefox-suspended-rop trial=1 call=same-window-new-connection returned_ms=2203.8 before_unblock result=error 0x80131505 idle_baseline_ms=0.79
+RESULT label=firefox-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4009.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-rop trial=1 call=xproc-other-element returned_ms=4009.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=firefox-suspended-rop trial=1 call=stuck returned_ms=4010.4 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=firefox-suspended-rop trial=1 call=other-element-rop returned_ms=4011.1 after_unblock result=ok idle_baseline_ms=0.25
+RESULT label=firefox-suspended-rop trial=1 call=other-element returned_ms=4011.2 after_unblock result=ok idle_baseline_ms=0.19

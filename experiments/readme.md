@@ -20,7 +20,7 @@ The other faults in `docs/uia-bugs.md` rest on commits and tests named in their 
 
 - [Focus events cannot be limited to one application](focus-events-cannot-be-limited-to-one-application/readme.md): E-scope, E-cost, P1, P2's cost figures and P5, and the option (c) prototype that P1 to P5 used.
 - [Elements cannot be passed to another process](elements-cannot-be-passed-to-another-process/readme.md): E-marshal and P3.
-- A timeout bounds each provider call, not an operation: shares the folder of [a registration that times out reports success](a-registration-that-times-out-reports-success/readme.md).
+- A timeout bounds each request and window message, not an operation: shares the folder of [a registration that times out reports success](a-registration-that-times-out-reports-success/readme.md).
 
 ## Applications
 
@@ -33,6 +33,7 @@ The other faults in `docs/uia-bugs.md` rest on commits and tests named in their 
 - [A terminal's read ends at the document end it started with](a-terminal-read-ends-at-the-document-end-it-started-with/readme.md): why a read during a flood under a scroll region leaves out the footer below the caret (`conhost_footer_flood`, GitHub run 40317394858); output that moves the document's end between the document range and the snapshot's text cuts the text at the old end, in both terminals, in 93 and 65 percent of reads during a fast flood and none after it (2026-10-26).
 - [CoCancelCall ends an MSAA COM call, but not a window message](cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md): whether `CoCancelCall`, as NVDA's watchdog uses it, can end the outpost's MSAA calls into a hung application; it ends an `IAccessible` call through a proxy, but not the `WM_GETOBJECT` of an acquisition (`docs/design/phase6-design.md`, "Time limits that hold (2026-10-11)").
 - [CoCancelCall does not end a UIA client call](cocancelcall-does-not-end-a-uia-client-call/readme.md): whether `CoCancelCall` ends a UIA client call blocked in an application (`docs/roadmap.md`, M6.1); it ends none, since UIA's client waits on its own channel rather than in a COM call.
+- [Concurrent UIA calls into one application are served one at a time](parallel-uia-calls/readme.md): whether parallel UIA, remote operation and MSAA calls into one application gain anything, and whether one slow or stuck call holds the others, measured on a synthetic provider, mockapp and nine real applications across frameworks, with the debugger's view of UIA's single request thread in the application (2026-11-02).
 - [The ownership study](ownership-study/readme.md): the read-only study and four audits of which facts are decided in more than one process or thread, the foreground batch stress test, the two reviews of the design, and Dickson's decisions, behind `docs/design/ownership.md` (2026-10-30).
 - [The logic tests study](logic-tests-study/readme.md): the 586 commits of October 2026 whose messages name a fix, each classified by whether generated tests and a simulation of the reducers could have found its defect, behind `docs/design/logic-tests.md` (2026-10-31).
 

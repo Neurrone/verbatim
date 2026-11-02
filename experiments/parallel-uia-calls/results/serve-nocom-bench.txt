@@ -1,0 +1,207 @@
+TARGET label=serve-nocom-none hwnd=327820 pid=8352 ui_tid=2240 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-nocom-none op=name n=1 rep=0 wall_ms=1.520 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=1 wall_ms=1.492 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=2 wall_ms=1.443 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=3 wall_ms=1.358 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=4 wall_ms=1.707 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=5 wall_ms=1.392 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=6 wall_ms=1.512 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=7 wall_ms=1.477 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=8 wall_ms=1.517 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=9 wall_ms=1.409 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=10 wall_ms=1.341 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=11 wall_ms=1.350 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=12 wall_ms=1.545 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=13 wall_ms=1.395 errors=0
+RAW label=serve-nocom-none op=name n=1 rep=14 wall_ms=1.397 errors=0
+RESULT label=serve-nocom-none op=name n=1 k=32 median_ms=1.44 p90_ms=1.55 per_call_us=45.1 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-none op=name n=2 rep=0 wall_ms=0.825 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=1 wall_ms=0.815 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=2 wall_ms=0.824 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=3 wall_ms=0.765 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=4 wall_ms=0.804 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=5 wall_ms=0.868 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=6 wall_ms=0.876 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=7 wall_ms=0.910 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=8 wall_ms=0.880 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=9 wall_ms=0.823 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=10 wall_ms=0.843 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=11 wall_ms=0.971 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=12 wall_ms=1.024 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=13 wall_ms=0.836 errors=0
+RAW label=serve-nocom-none op=name n=2 rep=14 wall_ms=0.770 errors=0
+RESULT label=serve-nocom-none op=name n=2 k=32 median_ms=0.84 p90_ms=0.97 per_call_us=26.1 speedup=1.73 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-none op=name n=4 rep=0 wall_ms=0.371 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=1 wall_ms=0.410 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=2 wall_ms=0.317 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=3 wall_ms=0.404 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=4 wall_ms=0.363 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=5 wall_ms=0.375 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=6 wall_ms=0.435 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=7 wall_ms=0.356 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=8 wall_ms=0.430 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=9 wall_ms=0.525 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=10 wall_ms=0.474 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=11 wall_ms=0.437 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=12 wall_ms=0.384 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=13 wall_ms=0.385 errors=0
+RAW label=serve-nocom-none op=name n=4 rep=14 wall_ms=0.387 errors=0
+RESULT label=serve-nocom-none op=name n=4 k=32 median_ms=0.39 p90_ms=0.47 per_call_us=12.1 speedup=3.73 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-none op=name n=8 rep=0 wall_ms=0.330 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=1 wall_ms=0.359 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=2 wall_ms=0.321 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=3 wall_ms=0.431 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=4 wall_ms=0.331 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=5 wall_ms=0.280 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=6 wall_ms=0.230 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=7 wall_ms=0.254 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=8 wall_ms=0.244 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=9 wall_ms=0.326 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=10 wall_ms=0.239 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=11 wall_ms=0.240 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=12 wall_ms=0.261 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=13 wall_ms=0.302 errors=0
+RAW label=serve-nocom-none op=name n=8 rep=14 wall_ms=0.293 errors=0
+RESULT label=serve-nocom-none op=name n=8 k=32 median_ms=0.29 p90_ms=0.36 per_call_us=9.2 speedup=4.92 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+TARGET label=serve-nocom-sleep5 hwnd=327820 pid=8352 ui_tid=2240 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-nocom-sleep5 op=name n=1 rep=0 wall_ms=168.422 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=1 wall_ms=169.325 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=2 wall_ms=167.902 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=3 wall_ms=168.405 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=4 wall_ms=169.335 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=5 wall_ms=167.875 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=6 wall_ms=170.268 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=7 wall_ms=166.566 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=8 wall_ms=168.520 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=9 wall_ms=168.936 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=10 wall_ms=168.877 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=11 wall_ms=167.524 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=12 wall_ms=168.841 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=13 wall_ms=169.000 errors=0
+RAW label=serve-nocom-sleep5 op=name n=1 rep=14 wall_ms=169.853 errors=0
+RESULT label=serve-nocom-sleep5 op=name n=1 k=32 median_ms=168.84 p90_ms=169.85 per_call_us=5276.3 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-sleep5 op=name n=2 rep=0 wall_ms=163.893 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=1 wall_ms=164.852 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=2 wall_ms=164.890 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=3 wall_ms=164.581 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=4 wall_ms=167.340 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=5 wall_ms=164.676 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=6 wall_ms=166.093 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=7 wall_ms=162.979 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=8 wall_ms=166.009 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=9 wall_ms=163.760 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=10 wall_ms=167.312 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=11 wall_ms=164.264 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=12 wall_ms=165.151 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=13 wall_ms=164.836 errors=0
+RAW label=serve-nocom-sleep5 op=name n=2 rep=14 wall_ms=165.522 errors=0
+RESULT label=serve-nocom-sleep5 op=name n=2 k=32 median_ms=164.85 p90_ms=167.31 per_call_us=5151.6 speedup=1.02 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-sleep5 op=name n=4 rep=0 wall_ms=165.429 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=1 wall_ms=163.460 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=2 wall_ms=166.708 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=3 wall_ms=164.508 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=4 wall_ms=165.421 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=5 wall_ms=163.812 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=6 wall_ms=165.420 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=7 wall_ms=164.157 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=8 wall_ms=164.625 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=9 wall_ms=164.799 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=10 wall_ms=168.252 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=11 wall_ms=165.687 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=12 wall_ms=167.089 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=13 wall_ms=163.568 errors=0
+RAW label=serve-nocom-sleep5 op=name n=4 rep=14 wall_ms=164.305 errors=0
+RESULT label=serve-nocom-sleep5 op=name n=4 k=32 median_ms=164.80 p90_ms=167.09 per_call_us=5150.0 speedup=1.02 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-sleep5 op=name n=8 rep=0 wall_ms=167.357 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=1 wall_ms=166.161 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=2 wall_ms=164.492 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=3 wall_ms=164.833 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=4 wall_ms=165.792 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=5 wall_ms=164.771 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=6 wall_ms=168.669 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=7 wall_ms=165.230 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=8 wall_ms=168.522 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=9 wall_ms=163.696 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=10 wall_ms=165.312 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=11 wall_ms=164.129 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=12 wall_ms=167.523 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=13 wall_ms=165.183 errors=0
+RAW label=serve-nocom-sleep5 op=name n=8 rep=14 wall_ms=167.316 errors=0
+RESULT label=serve-nocom-sleep5 op=name n=8 k=32 median_ms=165.31 p90_ms=168.52 per_call_us=5166.0 speedup=1.02 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+TARGET label=serve-nocom-pump5 hwnd=327820 pid=8352 ui_tid=2240 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-nocom-pump5 op=name n=1 rep=0 wall_ms=505.837 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=1 wall_ms=506.294 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=2 wall_ms=504.866 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=3 wall_ms=507.717 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=4 wall_ms=504.063 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=5 wall_ms=507.615 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=6 wall_ms=507.459 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=7 wall_ms=505.470 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=8 wall_ms=506.511 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=9 wall_ms=506.842 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=10 wall_ms=506.018 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=11 wall_ms=506.760 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=12 wall_ms=506.964 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=13 wall_ms=506.672 errors=0
+RAW label=serve-nocom-pump5 op=name n=1 rep=14 wall_ms=505.518 errors=0
+RESULT label=serve-nocom-pump5 op=name n=1 k=32 median_ms=506.51 p90_ms=507.62 per_call_us=15828.5 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-pump5 op=name n=2 rep=0 wall_ms=507.246 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=1 wall_ms=505.284 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=2 wall_ms=505.369 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=3 wall_ms=507.051 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=4 wall_ms=506.180 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=5 wall_ms=508.175 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=6 wall_ms=506.405 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=7 wall_ms=507.591 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=8 wall_ms=506.171 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=9 wall_ms=510.594 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=10 wall_ms=504.262 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=11 wall_ms=505.597 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=12 wall_ms=505.444 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=13 wall_ms=506.261 errors=0
+RAW label=serve-nocom-pump5 op=name n=2 rep=14 wall_ms=506.069 errors=0
+RESULT label=serve-nocom-pump5 op=name n=2 k=32 median_ms=506.18 p90_ms=508.17 per_call_us=15818.1 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-pump5 op=name n=4 rep=0 wall_ms=508.158 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=1 wall_ms=505.615 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=2 wall_ms=505.652 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=3 wall_ms=506.190 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=4 wall_ms=505.319 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=5 wall_ms=507.131 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=6 wall_ms=506.096 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=7 wall_ms=507.173 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=8 wall_ms=506.023 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=9 wall_ms=505.449 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=10 wall_ms=506.281 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=11 wall_ms=505.723 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=12 wall_ms=505.390 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=13 wall_ms=506.864 errors=0
+RAW label=serve-nocom-pump5 op=name n=4 rep=14 wall_ms=505.900 errors=0
+RESULT label=serve-nocom-pump5 op=name n=4 k=32 median_ms=506.02 p90_ms=507.17 per_call_us=15813.2 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480
+RAW label=serve-nocom-pump5 op=name n=8 rep=0 wall_ms=507.812 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=1 wall_ms=506.039 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=2 wall_ms=506.518 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=3 wall_ms=506.101 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=4 wall_ms=507.362 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=5 wall_ms=505.771 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=6 wall_ms=506.278 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=7 wall_ms=506.774 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=8 wall_ms=506.505 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=9 wall_ms=506.668 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=10 wall_ms=504.410 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=11 wall_ms=507.756 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=12 wall_ms=505.479 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=13 wall_ms=506.525 errors=0
+RAW label=serve-nocom-pump5 op=name n=8 rep=14 wall_ms=505.686 errors=0
+RESULT label=serve-nocom-pump5 op=name n=8 k=32 median_ms=506.51 p90_ms=507.76 per_call_us=15828.3 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=480

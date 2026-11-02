@@ -1,0 +1,62 @@
+CALL other-window-same-thread hwnd=458892 pid=1948 ui_tid=2684 op=Name elem=0 class=PuiaServe title=puia-serve-1
+CALL other-ui-thread hwnd=458886 pid=1948 ui_tid=1216 op=Name elem=0 class=PuiaServe title=puia-serve-2
+CALL other-ui-thread-new-connection hwnd=458886 pid=1948 ui_tid=1216 op=FromHandle elem=0 class=PuiaServe title=puia-serve-2
+CALL stuck hwnd=589962 pid=1948 ui_tid=2684 op=Name elem=0 class=PuiaServe title=puia-serve-0
+TRIAL label=serve-nocom-busy-x trial=0 block=busy:589962:3000 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=9.4
+RESULT label=serve-nocom-busy-x trial=0 call=stuck returned_ms=0.0 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=serve-nocom-busy-x trial=0 call=other-ui-thread returned_ms=3.4 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=serve-nocom-busy-x trial=0 call=other-window-same-thread returned_ms=3.7 before_unblock result=ok idle_baseline_ms=0.15
+RESULT label=serve-nocom-busy-x trial=0 call=other-ui-thread-new-connection returned_ms=3.9 before_unblock result=ok idle_baseline_ms=0.48
+RESULT label=serve-nocom-busy-x trial=0 call=xproc-same-window returned_ms=9.2 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=0 call=xproc-other-window-same-thread returned_ms=9.3 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=0 call=xproc-other-ui-thread returned_ms=9.3 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=0 call=xproc-other-ui-thread-new-connection returned_ms=9.4 before_unblock result=ok idle_baseline_ms=NaN
+TRIAL label=serve-nocom-busy-x trial=1 block=busy:589962:3000 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=8.9
+RESULT label=serve-nocom-busy-x trial=1 call=stuck returned_ms=0.0 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=serve-nocom-busy-x trial=1 call=other-ui-thread returned_ms=3.5 before_unblock result=ok idle_baseline_ms=0.04
+RESULT label=serve-nocom-busy-x trial=1 call=other-window-same-thread returned_ms=3.8 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=serve-nocom-busy-x trial=1 call=other-ui-thread-new-connection returned_ms=4.1 before_unblock result=ok idle_baseline_ms=0.33
+RESULT label=serve-nocom-busy-x trial=1 call=xproc-same-window returned_ms=8.7 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=1 call=xproc-other-window-same-thread returned_ms=8.8 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=1 call=xproc-other-ui-thread returned_ms=8.8 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=1 call=xproc-other-ui-thread-new-connection returned_ms=8.8 before_unblock result=ok idle_baseline_ms=NaN
+TRIAL label=serve-nocom-busy-x trial=2 block=busy:589962:3000 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=7.9
+RESULT label=serve-nocom-busy-x trial=2 call=stuck returned_ms=0.0 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=serve-nocom-busy-x trial=2 call=other-ui-thread returned_ms=1.5 before_unblock result=ok idle_baseline_ms=0.04
+RESULT label=serve-nocom-busy-x trial=2 call=other-window-same-thread returned_ms=1.5 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=serve-nocom-busy-x trial=2 call=other-ui-thread-new-connection returned_ms=2.4 before_unblock result=ok idle_baseline_ms=0.33
+RESULT label=serve-nocom-busy-x trial=2 call=xproc-same-window returned_ms=6.4 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=2 call=xproc-other-window-same-thread returned_ms=6.6 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=2 call=xproc-other-ui-thread returned_ms=7.7 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-busy-x trial=2 call=xproc-other-ui-thread-new-connection returned_ms=7.9 before_unblock result=ok idle_baseline_ms=NaN
+CALL other-window-same-thread hwnd=458892 pid=1948 ui_tid=2684 op=Name elem=0 class=PuiaServe title=puia-serve-1
+CALL other-ui-thread hwnd=458886 pid=1948 ui_tid=1216 op=Name elem=0 class=PuiaServe title=puia-serve-2
+CALL other-ui-thread-new-connection hwnd=458886 pid=1948 ui_tid=1216 op=FromHandle elem=0 class=PuiaServe title=puia-serve-2
+CALL stuck hwnd=589962 pid=1948 ui_tid=2684 op=Name elem=0 class=PuiaServe title=puia-serve-0
+TRIAL label=serve-nocom-slow-sleep-x trial=0 block=slow:589962:3000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=5802.2
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=other-ui-thread-new-connection returned_ms=2196.4 before_unblock result=error 0x80131505 idle_baseline_ms=0.51
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=xproc-other-ui-thread-new-connection returned_ms=2197.3 before_unblock result=error done error 0x80131505 idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=stuck returned_ms=2800.0 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=other-ui-thread returned_ms=2800.4 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=other-window-same-thread returned_ms=2800.5 before_unblock result=ok idle_baseline_ms=0.16
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=xproc-other-ui-thread returned_ms=2801.0 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=xproc-other-window-same-thread returned_ms=2801.1 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=0 call=xproc-same-window returned_ms=5801.6 before_unblock result=ok idle_baseline_ms=NaN
+TRIAL label=serve-nocom-slow-sleep-x trial=1 block=slow:589962:3000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=5802.4
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=xproc-other-ui-thread-new-connection returned_ms=2200.9 before_unblock result=error done error 0x80131505 idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=other-ui-thread-new-connection returned_ms=2201.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.41
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=stuck returned_ms=2800.2 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=other-ui-thread returned_ms=2800.6 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=other-window-same-thread returned_ms=2800.7 before_unblock result=ok idle_baseline_ms=0.08
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=xproc-other-ui-thread returned_ms=2801.1 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=xproc-other-window-same-thread returned_ms=2801.1 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=1 call=xproc-same-window returned_ms=5801.8 before_unblock result=ok idle_baseline_ms=NaN
+TRIAL label=serve-nocom-slow-sleep-x trial=2 block=slow:589962:3000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=5803.5
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=other-ui-thread-new-connection returned_ms=2199.7 before_unblock result=error 0x80131505 idle_baseline_ms=0.31
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=xproc-other-ui-thread-new-connection returned_ms=2200.2 before_unblock result=error done error 0x80131505 idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=other-ui-thread returned_ms=2801.0 before_unblock result=ok idle_baseline_ms=0.04
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=other-window-same-thread returned_ms=2801.3 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=xproc-other-ui-thread returned_ms=2801.9 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=xproc-other-window-same-thread returned_ms=2802.3 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=stuck returned_ms=2802.7 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=serve-nocom-slow-sleep-x trial=2 call=xproc-same-window returned_ms=5802.9 before_unblock result=ok idle_baseline_ms=NaN

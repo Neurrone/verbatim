@@ -1,0 +1,132 @@
+﻿
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\experiments\parallel-uia-calls\..\..\target\symbols*https://msdl.microsoft.com/download/symbols
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.031 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 46
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\experiments\parallel-uia-calls\..\..\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\experiments\parallel-uia-calls\..\..\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+WARNING: Process 13860 is not attached as a debuggee
+         The process can be examined but debug events will not be received
+.............................
+(3624.1500): Wake debugger - code 80000007 (first chance)
+ntdll!NtWaitForSingleObject+0x14:
+00007ffb`cd4a1dd4 c3              ret
+0:000> cdb: Reading initial command '~*k 40; qd'
+
+.  0  Id: 3624.1500 Suspend: 1 Teb: 000000ac`eccd5000 Unfrozen "main"
+Child-SP          RetAddr               Call Site
+000000ac`eceff608 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+*** WARNING: Unable to verify checksum for <scratch>\akapp\target\release\akapp.exe
+000000ac`eceff610 00007ff7`151471b1     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000ac`eceff6b0 00007ff7`15104581     akapp+0x471b1
+000000ac`eceff710 00007ff7`15101b2b     akapp+0x4581
+000000ac`eceff770 00007ff7`15105076     akapp+0x1b2b
+000000ac`eceff860 00007ff7`1510562c     akapp+0x5076
+000000ac`eceff890 00007ff7`15148cb0     akapp+0x562c
+000000ac`eceff8c0 00007ff7`1510328c     akapp+0x48cb0
+000000ac`eceff950 00007ff7`1515cfcf     akapp+0x328c
+000000ac`eceff990 00007ffb`cbe8dda7     akapp+0x5cfcf
+000000ac`eceff9d0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`eceffa00 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   1  Id: 3624.2dec Suspend: 1 Teb: 000000ac`eccdd000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000ac`ed3fed48 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000ac`ed3fed50 00007ff7`1514cbba     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000ac`ed3fedf0 00007ff7`15101f64     akapp+0x4cbba
+000000ac`ed3fee70 00007ffb`cb3352e6     akapp+0x1f64
+000000ac`ed3ff380 00007ffb`cb335dbd     user32!UserCallWinProcCheckWow+0x356
+000000ac`ed3ff4e0 00007ff7`151053b5     user32!DispatchMessageWorker+0x1dd
+000000ac`ed3ff560 00007ff7`15104344     akapp+0x53b5
+000000ac`ed3ff6e0 00007ff7`1514d8e3     akapp+0x4344
+000000ac`ed3ff7a0 00007ffb`cbe8dda7     akapp+0x4d8e3
+000000ac`ed3ff850 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed3ff880 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 3624.22b8 Suspend: 1 Teb: 000000ac`eccdf000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000ac`ed5ff918 00007ffb`cb34aea2     win32u!NtUserGetMessage+0x14
+000000ac`ed5ff920 00007ff7`151053c2     user32!GetMessageW+0x22
+000000ac`ed5ff980 00007ff7`15104344     akapp+0x53c2
+000000ac`ed5ffb00 00007ff7`1514d8e3     akapp+0x4344
+000000ac`ed5ffbc0 00007ffb`cbe8dda7     akapp+0x4d8e3
+000000ac`ed5ffc70 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed5ffca0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000ac`ed6ff678 00007ffb`cb362d9a     win32u!NtUserMessageCall+0x14
+000000ac`ed6ff680 00007ffb`a97db9c3     user32!SendMessageTimeoutW+0xca
+000000ac`ed6ff710 00007ffb`a97b8712     uiautomationcore!HwndUtils::SendWmGetObject+0x167
+000000ac`ed6ff860 00007ffb`a97b7fde     uiautomationcore!`anonymous namespace'::GetNodeFromProviderEntryPoint+0x3de
+000000ac`ed6ffa90 00007ffb`a97b72e6     uiautomationcore!ProcessStaticMethod+0x36
+000000ac`ed6ffae0 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x146
+000000ac`ed6ffc10 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+000000ac`ed6ffc50 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+000000ac`ed6ffcd0 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+000000ac`ed6ffe00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+000000ac`ed6ffe60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000ac`ed6ffec0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000ac`ed6ffef0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed6fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   4  Id: 3624.2a70 Suspend: 1 Teb: 000000ac`ecce3000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000ac`ed7ffae8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000ac`ed7ffaf0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000ac`ed7ffe50 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed7ffe80 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   5  Id: 3624.2fe8 Suspend: 1 Teb: 000000ac`ecced000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000ac`ed8ffb18 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000ac`ed8ffb20 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000ac`ed8ffe80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed8ffeb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   6  Id: 3624.1c88 Suspend: 1 Teb: 000000ac`eccef000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000ac`ed9ffaf8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000ac`ed9ffb00 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000ac`ed9ffe60 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed9ffe90 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+quit:
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\winrt.natvis'

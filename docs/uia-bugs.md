@@ -17,6 +17,8 @@ Terms used throughout:
 
 ### A new connection fails while another process's remote operation is queued
 
+Cause: the delay to every other call follows from the application's one UIA request reader ([UI Automation, inside the provider process](explainers/uia.md#inside-the-provider-process-the-one-request-reader)); why a new connection then answers wrongly instead of failing is not known ([Not known](explainers/uia.md#not-known)).
+
 #### Trigger
 
 Process A sends a remote operation into an application; while that operation waits to be evaluated there, from its arrival in the application until UIA begins evaluating it, process B makes a new connection by window handle to any window of that application, or walks up from an element it already holds into a window of that application. The wait is short while the application's UI thread pumps messages, longer for the first operation in the process because UIA sets itself up there first (about 7.5 ms on this machine), and as long as the UI thread is busy, which is how an application that is still starting makes it long.
@@ -124,6 +126,8 @@ No test reproduces it reliably yet. The collide tool reproduced it in at most a 
 
 ### A hung window named in a system focus event holds a process's UIA events
 
+Cause: UIA's focus tracking runs on the client process's event worker, which every other event waits behind; two client objects in a process were seen sharing that worker, and one per process is inferred ([UI Automation, events into the client](explainers/uia.md#events-into-the-client)).
+
 #### Trigger
 
 A process holds any UIA focus registration: a desktop-wide focus handler, or a focus event in an event handler group scoped to one window, even another application's. A focus WinEvent then names a window that does not answer UIA in time: one not answering messages, tested with mockapp's comctl32 tree view stalled on its window thread, or one that answers messages but whose provider answers slowly, tested with mockapp's MSAA and UIA backends answering every provider call 1 or 3 seconds late (`q3`).
@@ -186,6 +190,8 @@ No test reproduces the hold, its absence in a process with no focus registration
 
 ### A flood of UIA events from one application stops all of a process's UIA events
 
+Cause: every handler of a client process is called from its event worker, so one application's backlog holds them all; that the worker is one per process is inferred ([UI Automation, events into the client](explainers/uia.md#events-into-the-client)).
+
 #### Trigger
 
 One application raises UIA events at about 10,000 a second, name changes with event coalescing on or off, or text changed events with coalescing off, while a client process holds registrations for them. Tested with mockapp's `flood` command and a client that registers for the flooding application's name and text changes and another application's name changes, on one client object, with handlers that only copy and queue (`q2`, `q2long`).
@@ -224,6 +230,8 @@ No test reproduces it yet. mockapp's `flood` command (cb90020e) raises the flood
 [`experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/`](../experiments/a-flood-of-uia-events-from-one-application-stops-all-of-a-processs-uia-events/readme.md): experiments `q2`, `q2_thr` and `q2long`, with the event probe's source, the scripts, outputs and logs, and the two thread dumps.
 
 ### The connection timeout applies to the whole process
+
+Cause: both timeouts are settings of the client process's UIA, not of a client object ([UI Automation, timeouts and cancelling](explainers/uia.md#timeouts-and-cancelling)).
 
 #### Trigger
 
@@ -535,9 +543,11 @@ On a desktop where no window has the keyboard focus, as in mockapp's tests, desk
 
 An event registration scoped to an element's ancestors (`TreeScope_Ancestors` or `TreeScope_Parent`, with or without the element itself) receives no ancestor's events: on Windows 11's taskbar, a registration on the clock button's child did not hear the clock button's name change each minute, while one on the clock button itself did; mockapp gave the same result, made as an event handler group and directly (`docs/parity/backends.md`, the local group). Microsoft's documentation of [`IUIAutomationCacheRequest::TreeScope`](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationcacherequest-get_treescope) also excludes the parent and ancestors from a cache request, so an element's ancestors are read by a walk or a remote operation; Verbatim has not tested that restriction itself.
 
-### A timeout bounds each provider call, not an operation
+### A timeout bounds each request and window message, not an operation
 
-Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`). No test shows it: Dickson decided (2026-10-19) not to keep tests for this limitation in this milestone, so it is recorded here with its figures: `FindFirst` failed with `UIA_E_TIMEOUT` after three timeouts with both timeouts set to 100, 200 or 500 ms, and after four at 1,000 ms.
+Cause: each request and window message an operation makes waits on its own bound in turn, one of its window messages on the connection timeout in force when its start element was fetched ([UI Automation, timeouts and cancelling](explainers/uia.md#timeouts-and-cancelling)).
+
+A search waits for each of its requests and window messages in turn, each on its own bound, and re-sends nothing ([UI Automation, timeouts and cancelling](explainers/uia.md#timeouts-and-cancelling); [`experiments/parallel-uia-calls/`](../experiments/parallel-uia-calls/readme.md), "A search's timeouts"). In E-TT, with both timeouts at 1 second set for the call and mockapp holding the search's first provider call, a `FindFirstBuildCache` over a window's descendants failed with `UIA_E_TIMEOUT` after 13,208 ms (13,195 to 13,211 ms in later runs), in four waits: the condition's test on the root (`GetPropertyValues`), held, 1,085 ms, its failure passed over; the client's window proxy's `CB_GETCOMBOBOXINFO` to the window, 1,010 ms, at the transaction timeout; oleacc's `WM_GETOBJECT` from the client's non-client proxy, 10,013 ms, at the connection timeout in force when the root was fetched (10 seconds at that commit), not the 1 second set for the call; and the `Find` request queued behind the held call, 1,075 ms. After the release mockapp ran the whole walk for the client that had already failed. Single reads under the same hold failed after 1,082 to 1,095 ms (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). Queued behind another client's held name read, a `FindFirst` failed after one wait, 1,083 to 1,106 ms: its first request, the root's runtime id read again, timed out, and that failure ends a search. With mockapp's window thread stalled so that it took no message, both timeouts set to the same value before the root's fetch, and connection recovery on (the test removed in 31d462fc), the search made the first three waits and failed without sending the `Find` at 100, 200 and 500 ms (332, 618 and 1,545 ms), and sent and waited for it at 1,000 ms (4,207 to 4,209 ms); with recovery on, the `Find` was sent only when the waits before it ended 3.1 seconds or more after the search began, and why is not known. A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`). No test shows it: Dickson decided (2026-10-19) not to keep tests for this limitation in this milestone, so it is recorded here with its figures.
 
 ## Applications
 

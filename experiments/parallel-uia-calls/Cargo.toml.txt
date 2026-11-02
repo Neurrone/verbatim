@@ -1,0 +1,40 @@
+[package]
+name = "puia"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Built outside the workspace: copy this file to Cargo.toml in a scratch
+# folder, with the [[bin]] path pointing at this folder's src/main.rs.
+[workspace]
+
+[[bin]]
+name = "puia"
+path = "src/main.rs"
+
+[dependencies]
+windows-core = "0.62"
+# The product's remote operations, by path from the repository.
+verbatim-uia-rops = { path = "../../crates/verbatim-uia-rops" }
+
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Wdk_System_Threading",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Ole",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+]

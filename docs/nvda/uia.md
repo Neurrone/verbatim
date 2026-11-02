@@ -71,24 +71,37 @@ Events NVDA consumes are split into two groups
 (`globalEventHandlerGroupUIAEventIds` /
 `localEventHandlerGroupUIAEventIds` and the property equivalents):
 
-- The *global* group — focus changed (registered separately and always,
-  `AddFocusChangedEventHandler`), window opened, system alert,
-  notification, layout invalidated, selection changes, name/value/state
-  property changes, active-text-position changed — registered
-  tree-wide on the root element as one `EventHandlerGroup` (one
-  cross-process registration; a Python-side `FakeEventHandlerGroup`
-  emulates the grouping API pre-Windows 11).
-- The *local* group — high-frequency text events (text changed,
-  caret/text-selection changed, controller-for changes) — registered
-  *only on the focused element*, re-registered on every focus change.
-  This is NVDA's answer to the cost of tree-wide registrations for
-  chatty events. The user-facing knob is the advanced setting
-  "registration for UI Automation events and property changes"
-  (`UIA.eventRegistration`: auto, selective, global — auto currently
-  means selective): *global* moves even the high-frequency events
-  into the tree-wide group, the compatibility escape hatch for
-  providers that mis-handle focused-element registration at the cost
-  of event-storm exposure.
+- The *global* group, registered tree-wide on the root element as one
+  `EventHandlerGroup` (a Python-side `FakeEventHandlerGroup` emulates
+  the grouping API where `IUIAutomation6` is missing). In selective
+  mode it holds only three property changes, range value and the two
+  drag-and-drop effects (`globalEventHandlerGroupUIAPropertyIds`), and
+  the automation events live region changed, element selected, added
+  to and removed from selection, menu opened, tooltip opened, window
+  opened, system alert, layout invalidated, and drag start, cancel and
+  complete (`globalEventHandlerGroupUIAEventIds`), plus notifications
+  and active text position changed. Focus changed is registered
+  separately and always, with `AddFocusChangedEventHandler`
+  (`_registerGlobalEventHandlers`, `source/UIAHandler/__init__.py`,
+  lines 241 to 289 and 592 to 640).
+- The *local* group: every other property change NVDA maps, and the
+  caret's text selection changed event, registered on the focused
+  element and its ancestors (`TreeScope_Ancestors | TreeScope_Element`)
+  and moved on every focus change; a second local group adds text
+  changed for window classes and automation ids that need it
+  (`_createLocalEventHandlerGroup`, lines 642 to 679). The move is
+  queued to the MTA thread, which first checks with
+  `GetFocusedElement` that the element still has the focus
+  (`addLocalEventHandlerGroupToElement`, lines 697 to 739). This is
+  NVDA's answer to the cost of tree-wide registrations for chatty
+  events. The user-facing knob is the advanced setting "registration
+  for UI Automation events and property changes"
+  (`UIA.eventRegistration`: auto, selective, global; auto means
+  selective on Windows 11 22H2 and later, `_shouldSelectivelyRegister`
+  in `source/UIAHandler/utils.py`): *global* registers every mapped
+  property and event, and text changed, tree-wide, the escape hatch
+  for providers that mishandle focused-element registration at the
+  cost of event-storm exposure.
 
 ## The C++ rate limiter
 

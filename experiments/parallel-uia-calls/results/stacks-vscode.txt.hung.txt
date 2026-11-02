@@ -1,0 +1,8 @@
+CALL other-element hwnd=459990 pid=8408 ui_tid=13612 op=Name elem=5 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL stuck hwnd=459990 pid=8408 ui_tid=13612 op=Name elem=3 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+suspended tid=13612
+PROBES_STARTED trial=0
+resumed tid=13612
+TRIAL label=vscode-stacks trial=0 block=suspend:459990 evidence="200 ms wait" probes_started_ms_after_block=200.8 unblocked_at_ms=4010.0
+RESULT label=vscode-stacks trial=0 call=stuck returned_ms=7239.6 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=vscode-stacks trial=0 call=other-element returned_ms=7239.6 after_unblock result=ok idle_baseline_ms=0.35

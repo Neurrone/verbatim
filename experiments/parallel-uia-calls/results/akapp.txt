@@ -1,0 +1,573 @@
+window 1 hwnd=1049022 tid=8888
+window 0 hwnd=7800242 tid=11756
+ready
+descendants found 8
+0: name=button 1 framework=AccessKit class= type=50000
+1: name=button 2 framework=AccessKit class= type=50000
+2: name=button 3 framework=AccessKit class= type=50000
+3: name=button 4 framework=AccessKit class= type=50000
+4: name=button 5 framework=AccessKit class= type=50000
+5: name=button 6 framework=AccessKit class= type=50000
+6: name=button 7 framework=AccessKit class= type=50000
+7: name=button 8 framework=AccessKit class= type=50000
+SERVING op=name result=done ok 9.946
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+AK_GETPROPERTYVALUE
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+000000ac`ed6ff4b8 00007ff7`1511a026     akapp!accesskit_windows::node::impl$2::GetPropertyValue
+000000ac`ed6ff4c0 00007ffb`a97501c8     akapp!windows::Win32::UI::Accessibility::impl$116::new::GetPropertyValue<accesskit_windows::node::PlatformNode_Impl,-1>+0x26
+000000ac`ed6ff520 00007ffb`a974ff3a     uiautomationcore!UiaNode::ProviderGetPropertyValue+0x128
+000000ac`ed6ff720 00007ffb`a978a4fc     uiautomationcore!InProcClientAPIStub::UiaNode_GetPropertyValues+0x13a
+000000ac`ed6ff7d0 00007ffb`a9789ce4     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+000000ac`ed6ff820 00007ffb`a97c30c1     uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+000000ac`ed6ff900 00007ffb`a974d832     uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues+0x301
+000000ac`ed6ffa50 00007ffb`a97b778b     uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+000000ac`ed6ffae0 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x5eb
+000000ac`ed6ffc10 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+000000ac`ed6ffc50 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+000000ac`ed6ffcd0 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+000000ac`ed6ffe00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+000000ac`ed6ffe60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000ac`ed6ffec0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000ac`ed6ffef0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed6fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SERVING op=invoke result=done ok 24.980
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+AK_GETPROPERTYVALUE
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+000000ac`ed6ff4b8 00007ff7`1511a026     akapp!accesskit_windows::node::impl$2::GetPropertyValue
+000000ac`ed6ff4c0 00007ffb`a97501c8     akapp!windows::Win32::UI::Accessibility::impl$116::new::GetPropertyValue<accesskit_windows::node::PlatformNode_Impl,-1>+0x26
+000000ac`ed6ff520 00007ffb`a974ff3a     uiautomationcore!UiaNode::ProviderGetPropertyValue+0x128
+000000ac`ed6ff720 00007ffb`a978a4fc     uiautomationcore!InProcClientAPIStub::UiaNode_GetPropertyValues+0x13a
+000000ac`ed6ff7d0 00007ffb`a9789ce4     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+000000ac`ed6ff820 00007ffb`a97c30c1     uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+000000ac`ed6ff900 00007ffb`a974d832     uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues+0x301
+000000ac`ed6ffa50 00007ffb`a97b778b     uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+000000ac`ed6ffae0 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x5eb
+000000ac`ed6ffc10 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+000000ac`ed6ffc50 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+000000ac`ed6ffcd0 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+000000ac`ed6ffe00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+000000ac`ed6ffe60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000ac`ed6ffec0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000ac`ed6ffef0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed6fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+AK_GETPROPERTYVALUE
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+000000ac`ed6ff398 00007ff7`1511a026     akapp!accesskit_windows::node::impl$2::GetPropertyValue
+000000ac`ed6ff3a0 00007ffb`a97501c8     akapp!windows::Win32::UI::Accessibility::impl$116::new::GetPropertyValue<accesskit_windows::node::PlatformNode_Impl,-1>+0x26
+000000ac`ed6ff400 00007ffb`a974ff3a     uiautomationcore!UiaNode::ProviderGetPropertyValue+0x128
+000000ac`ed6ff600 00007ffb`a978a4fc     uiautomationcore!InProcClientAPIStub::UiaNode_GetPropertyValues+0x13a
+000000ac`ed6ff6b0 00007ffb`a9789ce4     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+000000ac`ed6ff700 00007ffb`a97c30c1     uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+000000ac`ed6ff7e0 00007ffb`a974d832     uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues+0x301
+000000ac`ed6ff930 00007ffb`a97b778b     uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+000000ac`ed6ff9c0 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x5eb
+000000ac`ed6ffaf0 00007ffb`a989b4c7     uiautomationcore!ProcessIncomingRequest+0x37
+000000ac`ed6ffb30 00007ffb`a977a0ed     uiautomationcore!ProcessIncomingBatchedMessages+0xcf
+000000ac`ed6ffc00 00007ffb`a9779b61     uiautomationcore!ChannelBasedServerConnection::ProcessQueuedMessages+0x5d
+000000ac`ed6ffcd0 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x271
+000000ac`ed6ffe00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+000000ac`ed6ffe60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000ac`ed6ffec0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000ac`ed6ffef0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed6fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+APP_DO_ACTION
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+000000ac`ed6ff748 00007ff7`1510d7d3     akapp!accesskit_windows::context::impl$1::do_action<akapp::Handler>
+000000ac`ed6ff750 00007ff7`15119e6b     akapp!accesskit_windows::node::impl$3::SetFocus+0x173
+000000ac`ed6ff840 00007ffb`a99217c5     akapp!windows::Win32::UI::Accessibility::impl$104::new::SetFocus<accesskit_windows::node::PlatformNode_Impl,-2>+0x1b
+000000ac`ed6ff880 00007ffb`a9926367     uiautomationcore!UiaNode::ProviderSetFocus+0x35d
+000000ac`ed6ff920 00007ffb`a978a4fc     uiautomationcore!InProcClientAPIStub::UiaNode_SetFocus+0x27
+000000ac`ed6ff960 00007ffb`a991e3a3     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+000000ac`ed6ff9b0 00007ffb`a993b775     uiautomationcore!UiaNode::CrossProcess_SetFocus+0x43
+000000ac`ed6ffa00 00007ffb`a974d832     uiautomationcore!RemoteUiaNodeStub::Incoming_SetFocus+0x75
+000000ac`ed6ffa50 00007ffb`a97b778b     uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+000000ac`ed6ffae0 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x5eb
+000000ac`ed6ffc10 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+000000ac`ed6ffc50 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+000000ac`ed6ffcd0 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+000000ac`ed6ffe00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+000000ac`ed6ffe60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000ac`ed6ffec0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000ac`ed6ffef0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed6fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+APP_DO_ACTION
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+000000ac`ed6ff8a8 00007ff7`15109eef     akapp!accesskit_windows::context::impl$1::do_action<akapp::Handler>
+000000ac`ed6ff8b0 00007ff7`1511a1db     akapp!accesskit_windows::node::PlatformNode::click+0x16f
+000000ac`ed6ff9a0 00007ffb`a98cc3a6     akapp!windows::Win32::UI::Accessibility::impl$77::new::Invoke<accesskit_windows::node::PlatformNode_Impl,-5>+0x1b
+000000ac`ed6ff9e0 00007ffb`a993c3d3     uiautomationcore!ProviderCallouts::Invoke+0x2a
+000000ac`ed6ffa20 00007ffb`a982873f     uiautomationcore!RemotePatternStub::Invoke_Invoke+0x33
+000000ac`ed6ffa50 00007ffb`a97b7580     uiautomationcore!InvokePatternMethodOnCorrectContext_Callback+0x26f
+000000ac`ed6ffae0 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x3e0
+000000ac`ed6ffc10 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+000000ac`ed6ffc50 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+000000ac`ed6ffcd0 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+000000ac`ed6ffe00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+000000ac`ed6ffe60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000ac`ed6ffec0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000ac`ed6ffef0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000ac`ed6fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SRV_ONDATA
+.  6  Id: 3624.1c20 Suspend: 1 Teb: 000000ac`ecce1000 Unfrozen
+thread tid=5376 start=akapp.exe+0x5d040 cycles=26405716
+thread tid=5916 start=ntdll.dll+0x24990 cycles=5451680
+thread tid=13040 start=ntdll.dll+0x24990 cycles=2865995
+thread tid=7752 start=ntdll.dll+0x24990 cycles=2333836
+thread tid=11756 start=akapp.exe+0x4d700 cycles=53922043
+thread tid=8888 start=akapp.exe+0x4d700 cycles=6270965
+thread tid=7200 start=uiautomationcore.dll+0x162f60 cycles=34306170
+thread tid=10864 start=ntdll.dll+0x24990 cycles=1003249
+TARGET label=akapp hwnd=7800242 pid=13860 ui_tid=11756 class=PuiaAk title=puia-ak-0 client=per-thread
+CTX n=1 descendants_found=8 elems_held=8 text=false msaa=false
+CTX n=2 descendants_found=8 elems_held=8 text=false msaa=false
+CTX n=4 descendants_found=8 elems_held=8 text=false msaa=false
+CTX n=8 descendants_found=8 elems_held=8 text=false msaa=false
+RAW label=akapp op=name n=1 rep=0 wall_ms=2.533 errors=0
+RAW label=akapp op=name n=1 rep=1 wall_ms=2.641 errors=0
+RAW label=akapp op=name n=1 rep=2 wall_ms=2.657 errors=0
+RAW label=akapp op=name n=1 rep=3 wall_ms=2.628 errors=0
+RAW label=akapp op=name n=1 rep=4 wall_ms=2.589 errors=0
+RAW label=akapp op=name n=1 rep=5 wall_ms=2.719 errors=0
+RAW label=akapp op=name n=1 rep=6 wall_ms=3.221 errors=0
+RAW label=akapp op=name n=1 rep=7 wall_ms=3.265 errors=0
+RAW label=akapp op=name n=1 rep=8 wall_ms=2.970 errors=0
+RAW label=akapp op=name n=1 rep=9 wall_ms=3.175 errors=0
+RAW label=akapp op=name n=1 rep=10 wall_ms=2.961 errors=0
+RAW label=akapp op=name n=1 rep=11 wall_ms=2.954 errors=0
+RAW label=akapp op=name n=1 rep=12 wall_ms=3.217 errors=0
+RAW label=akapp op=name n=1 rep=13 wall_ms=2.804 errors=0
+RAW label=akapp op=name n=1 rep=14 wall_ms=3.145 errors=0
+RAW label=akapp op=name n=1 rep=15 wall_ms=3.123 errors=0
+RAW label=akapp op=name n=1 rep=16 wall_ms=4.087 errors=0
+RAW label=akapp op=name n=1 rep=17 wall_ms=3.163 errors=0
+RAW label=akapp op=name n=1 rep=18 wall_ms=2.927 errors=0
+RAW label=akapp op=name n=1 rep=19 wall_ms=2.940 errors=0
+RESULT label=akapp op=name n=1 k=64 median_ms=2.96 p90_ms=3.22 per_call_us=46.3 speedup=1.00 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=name n=2 rep=0 wall_ms=2.000 errors=0
+RAW label=akapp op=name n=2 rep=1 wall_ms=1.552 errors=0
+RAW label=akapp op=name n=2 rep=2 wall_ms=1.730 errors=0
+RAW label=akapp op=name n=2 rep=3 wall_ms=1.920 errors=0
+RAW label=akapp op=name n=2 rep=4 wall_ms=1.635 errors=0
+RAW label=akapp op=name n=2 rep=5 wall_ms=1.621 errors=0
+RAW label=akapp op=name n=2 rep=6 wall_ms=1.546 errors=0
+RAW label=akapp op=name n=2 rep=7 wall_ms=1.475 errors=0
+RAW label=akapp op=name n=2 rep=8 wall_ms=1.532 errors=0
+RAW label=akapp op=name n=2 rep=9 wall_ms=1.403 errors=0
+RAW label=akapp op=name n=2 rep=10 wall_ms=1.400 errors=0
+RAW label=akapp op=name n=2 rep=11 wall_ms=1.396 errors=0
+RAW label=akapp op=name n=2 rep=12 wall_ms=1.467 errors=0
+RAW label=akapp op=name n=2 rep=13 wall_ms=1.359 errors=0
+RAW label=akapp op=name n=2 rep=14 wall_ms=1.610 errors=0
+RAW label=akapp op=name n=2 rep=15 wall_ms=1.537 errors=0
+RAW label=akapp op=name n=2 rep=16 wall_ms=1.553 errors=0
+RAW label=akapp op=name n=2 rep=17 wall_ms=1.536 errors=0
+RAW label=akapp op=name n=2 rep=18 wall_ms=1.517 errors=0
+RAW label=akapp op=name n=2 rep=19 wall_ms=1.551 errors=0
+RESULT label=akapp op=name n=2 k=64 median_ms=1.55 p90_ms=1.73 per_call_us=24.2 speedup=1.92 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=name n=4 rep=0 wall_ms=0.655 errors=0
+RAW label=akapp op=name n=4 rep=1 wall_ms=0.673 errors=0
+RAW label=akapp op=name n=4 rep=2 wall_ms=0.712 errors=0
+RAW label=akapp op=name n=4 rep=3 wall_ms=0.730 errors=0
+RAW label=akapp op=name n=4 rep=4 wall_ms=0.648 errors=0
+RAW label=akapp op=name n=4 rep=5 wall_ms=0.716 errors=0
+RAW label=akapp op=name n=4 rep=6 wall_ms=0.822 errors=0
+RAW label=akapp op=name n=4 rep=7 wall_ms=0.701 errors=0
+RAW label=akapp op=name n=4 rep=8 wall_ms=0.781 errors=0
+RAW label=akapp op=name n=4 rep=9 wall_ms=1.077 errors=0
+RAW label=akapp op=name n=4 rep=10 wall_ms=1.105 errors=0
+RAW label=akapp op=name n=4 rep=11 wall_ms=0.710 errors=0
+RAW label=akapp op=name n=4 rep=12 wall_ms=0.737 errors=0
+RAW label=akapp op=name n=4 rep=13 wall_ms=0.667 errors=0
+RAW label=akapp op=name n=4 rep=14 wall_ms=0.662 errors=0
+RAW label=akapp op=name n=4 rep=15 wall_ms=0.767 errors=0
+RAW label=akapp op=name n=4 rep=16 wall_ms=0.655 errors=0
+RAW label=akapp op=name n=4 rep=17 wall_ms=0.807 errors=0
+RAW label=akapp op=name n=4 rep=18 wall_ms=0.706 errors=0
+RAW label=akapp op=name n=4 rep=19 wall_ms=0.663 errors=0
+RESULT label=akapp op=name n=4 k=64 median_ms=0.71 p90_ms=0.82 per_call_us=11.1 speedup=4.16 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=name n=8 rep=0 wall_ms=0.502 errors=0
+RAW label=akapp op=name n=8 rep=1 wall_ms=0.408 errors=0
+RAW label=akapp op=name n=8 rep=2 wall_ms=0.458 errors=0
+RAW label=akapp op=name n=8 rep=3 wall_ms=0.516 errors=0
+RAW label=akapp op=name n=8 rep=4 wall_ms=0.476 errors=0
+RAW label=akapp op=name n=8 rep=5 wall_ms=0.411 errors=0
+RAW label=akapp op=name n=8 rep=6 wall_ms=0.434 errors=0
+RAW label=akapp op=name n=8 rep=7 wall_ms=0.416 errors=0
+RAW label=akapp op=name n=8 rep=8 wall_ms=0.413 errors=0
+RAW label=akapp op=name n=8 rep=9 wall_ms=0.522 errors=0
+RAW label=akapp op=name n=8 rep=10 wall_ms=0.496 errors=0
+RAW label=akapp op=name n=8 rep=11 wall_ms=0.418 errors=0
+RAW label=akapp op=name n=8 rep=12 wall_ms=0.446 errors=0
+RAW label=akapp op=name n=8 rep=13 wall_ms=0.503 errors=0
+RAW label=akapp op=name n=8 rep=14 wall_ms=0.496 errors=0
+RAW label=akapp op=name n=8 rep=15 wall_ms=0.523 errors=0
+RAW label=akapp op=name n=8 rep=16 wall_ms=0.497 errors=0
+RAW label=akapp op=name n=8 rep=17 wall_ms=0.471 errors=0
+RAW label=akapp op=name n=8 rep=18 wall_ms=0.400 errors=0
+RAW label=akapp op=name n=8 rep=19 wall_ms=0.423 errors=0
+RESULT label=akapp op=name n=8 k=64 median_ms=0.47 p90_ms=0.52 per_call_us=7.4 speedup=6.28 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=invoke n=1 rep=0 wall_ms=37.898 errors=0
+RAW label=akapp op=invoke n=1 rep=1 wall_ms=42.893 errors=0
+RAW label=akapp op=invoke n=1 rep=2 wall_ms=45.274 errors=0
+RAW label=akapp op=invoke n=1 rep=3 wall_ms=42.078 errors=0
+RAW label=akapp op=invoke n=1 rep=4 wall_ms=44.250 errors=0
+RAW label=akapp op=invoke n=1 rep=5 wall_ms=42.951 errors=0
+RAW label=akapp op=invoke n=1 rep=6 wall_ms=37.429 errors=0
+RAW label=akapp op=invoke n=1 rep=7 wall_ms=38.426 errors=0
+RAW label=akapp op=invoke n=1 rep=8 wall_ms=39.570 errors=0
+RAW label=akapp op=invoke n=1 rep=9 wall_ms=39.642 errors=0
+RAW label=akapp op=invoke n=1 rep=10 wall_ms=42.365 errors=0
+RAW label=akapp op=invoke n=1 rep=11 wall_ms=39.783 errors=0
+RAW label=akapp op=invoke n=1 rep=12 wall_ms=40.130 errors=0
+RAW label=akapp op=invoke n=1 rep=13 wall_ms=42.090 errors=0
+RAW label=akapp op=invoke n=1 rep=14 wall_ms=41.398 errors=0
+RAW label=akapp op=invoke n=1 rep=15 wall_ms=37.461 errors=0
+RAW label=akapp op=invoke n=1 rep=16 wall_ms=41.285 errors=0
+RAW label=akapp op=invoke n=1 rep=17 wall_ms=41.414 errors=0
+RAW label=akapp op=invoke n=1 rep=18 wall_ms=40.184 errors=0
+RAW label=akapp op=invoke n=1 rep=19 wall_ms=39.456 errors=0
+RESULT label=akapp op=invoke n=1 k=64 median_ms=41.28 p90_ms=42.95 per_call_us=645.1 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=2560 provider_off_ui_thread=2560
+RAW label=akapp op=invoke n=2 rep=0 wall_ms=28.183 errors=0
+RAW label=akapp op=invoke n=2 rep=1 wall_ms=28.549 errors=0
+RAW label=akapp op=invoke n=2 rep=2 wall_ms=28.820 errors=0
+RAW label=akapp op=invoke n=2 rep=3 wall_ms=30.544 errors=0
+RAW label=akapp op=invoke n=2 rep=4 wall_ms=29.210 errors=0
+RAW label=akapp op=invoke n=2 rep=5 wall_ms=31.248 errors=0
+RAW label=akapp op=invoke n=2 rep=6 wall_ms=27.643 errors=0
+RAW label=akapp op=invoke n=2 rep=7 wall_ms=27.741 errors=0
+RAW label=akapp op=invoke n=2 rep=8 wall_ms=28.250 errors=0
+RAW label=akapp op=invoke n=2 rep=9 wall_ms=30.625 errors=0
+RAW label=akapp op=invoke n=2 rep=10 wall_ms=28.454 errors=0
+RAW label=akapp op=invoke n=2 rep=11 wall_ms=28.777 errors=0
+RAW label=akapp op=invoke n=2 rep=12 wall_ms=28.879 errors=0
+RAW label=akapp op=invoke n=2 rep=13 wall_ms=27.341 errors=0
+RAW label=akapp op=invoke n=2 rep=14 wall_ms=29.475 errors=0
+RAW label=akapp op=invoke n=2 rep=15 wall_ms=27.236 errors=0
+RAW label=akapp op=invoke n=2 rep=16 wall_ms=28.303 errors=0
+RAW label=akapp op=invoke n=2 rep=17 wall_ms=27.018 errors=0
+RAW label=akapp op=invoke n=2 rep=18 wall_ms=29.933 errors=0
+RAW label=akapp op=invoke n=2 rep=19 wall_ms=33.150 errors=0
+RESULT label=akapp op=invoke n=2 k=64 median_ms=28.78 p90_ms=30.63 per_call_us=449.6 speedup=1.43 errors=0 provider_max_concurrent=1 provider_calls=2560 provider_off_ui_thread=2560
+RAW label=akapp op=invoke n=4 rep=0 wall_ms=26.075 errors=0
+RAW label=akapp op=invoke n=4 rep=1 wall_ms=23.501 errors=0
+RAW label=akapp op=invoke n=4 rep=2 wall_ms=25.069 errors=0
+RAW label=akapp op=invoke n=4 rep=3 wall_ms=24.154 errors=0
+RAW label=akapp op=invoke n=4 rep=4 wall_ms=22.287 errors=0
+RAW label=akapp op=invoke n=4 rep=5 wall_ms=23.657 errors=0
+RAW label=akapp op=invoke n=4 rep=6 wall_ms=24.489 errors=0
+RAW label=akapp op=invoke n=4 rep=7 wall_ms=22.852 errors=0
+RAW label=akapp op=invoke n=4 rep=8 wall_ms=23.238 errors=0
+RAW label=akapp op=invoke n=4 rep=9 wall_ms=23.965 errors=0
+RAW label=akapp op=invoke n=4 rep=10 wall_ms=25.915 errors=0
+RAW label=akapp op=invoke n=4 rep=11 wall_ms=25.263 errors=0
+RAW label=akapp op=invoke n=4 rep=12 wall_ms=25.359 errors=0
+RAW label=akapp op=invoke n=4 rep=13 wall_ms=23.794 errors=0
+RAW label=akapp op=invoke n=4 rep=14 wall_ms=24.067 errors=0
+RAW label=akapp op=invoke n=4 rep=15 wall_ms=21.763 errors=0
+RAW label=akapp op=invoke n=4 rep=16 wall_ms=23.009 errors=0
+RAW label=akapp op=invoke n=4 rep=17 wall_ms=22.193 errors=0
+RAW label=akapp op=invoke n=4 rep=18 wall_ms=22.116 errors=0
+RAW label=akapp op=invoke n=4 rep=19 wall_ms=23.566 errors=0
+RESULT label=akapp op=invoke n=4 k=64 median_ms=23.79 p90_ms=25.36 per_call_us=371.8 speedup=1.74 errors=0 provider_max_concurrent=1 provider_calls=2560 provider_off_ui_thread=2560
+RAW label=akapp op=invoke n=8 rep=0 wall_ms=22.745 errors=0
+RAW label=akapp op=invoke n=8 rep=1 wall_ms=23.013 errors=0
+RAW label=akapp op=invoke n=8 rep=2 wall_ms=23.921 errors=0
+RAW label=akapp op=invoke n=8 rep=3 wall_ms=22.388 errors=0
+RAW label=akapp op=invoke n=8 rep=4 wall_ms=22.143 errors=0
+RAW label=akapp op=invoke n=8 rep=5 wall_ms=23.314 errors=0
+RAW label=akapp op=invoke n=8 rep=6 wall_ms=22.851 errors=0
+RAW label=akapp op=invoke n=8 rep=7 wall_ms=23.109 errors=0
+RAW label=akapp op=invoke n=8 rep=8 wall_ms=24.988 errors=0
+RAW label=akapp op=invoke n=8 rep=9 wall_ms=24.264 errors=0
+RAW label=akapp op=invoke n=8 rep=10 wall_ms=24.303 errors=0
+RAW label=akapp op=invoke n=8 rep=11 wall_ms=25.443 errors=0
+RAW label=akapp op=invoke n=8 rep=12 wall_ms=20.910 errors=0
+RAW label=akapp op=invoke n=8 rep=13 wall_ms=23.211 errors=0
+RAW label=akapp op=invoke n=8 rep=14 wall_ms=22.140 errors=0
+RAW label=akapp op=invoke n=8 rep=15 wall_ms=20.674 errors=0
+RAW label=akapp op=invoke n=8 rep=16 wall_ms=24.049 errors=0
+RAW label=akapp op=invoke n=8 rep=17 wall_ms=23.422 errors=0
+RAW label=akapp op=invoke n=8 rep=18 wall_ms=20.947 errors=0
+RAW label=akapp op=invoke n=8 rep=19 wall_ms=22.164 errors=0
+RESULT label=akapp op=invoke n=8 k=64 median_ms=23.11 p90_ms=24.30 per_call_us=361.1 speedup=1.79 errors=0 provider_max_concurrent=1 provider_calls=2560 provider_off_ui_thread=2560
+RAW label=akapp op=fromhandle n=1 rep=0 wall_ms=14.323 errors=0
+RAW label=akapp op=fromhandle n=1 rep=1 wall_ms=14.347 errors=0
+RAW label=akapp op=fromhandle n=1 rep=2 wall_ms=14.005 errors=0
+RAW label=akapp op=fromhandle n=1 rep=3 wall_ms=14.266 errors=0
+RAW label=akapp op=fromhandle n=1 rep=4 wall_ms=13.477 errors=0
+RAW label=akapp op=fromhandle n=1 rep=5 wall_ms=13.643 errors=0
+RAW label=akapp op=fromhandle n=1 rep=6 wall_ms=14.207 errors=0
+RAW label=akapp op=fromhandle n=1 rep=7 wall_ms=14.090 errors=0
+RAW label=akapp op=fromhandle n=1 rep=8 wall_ms=15.095 errors=0
+RAW label=akapp op=fromhandle n=1 rep=9 wall_ms=13.299 errors=0
+RAW label=akapp op=fromhandle n=1 rep=10 wall_ms=13.983 errors=0
+RAW label=akapp op=fromhandle n=1 rep=11 wall_ms=13.857 errors=0
+RAW label=akapp op=fromhandle n=1 rep=12 wall_ms=12.827 errors=0
+RAW label=akapp op=fromhandle n=1 rep=13 wall_ms=14.113 errors=0
+RAW label=akapp op=fromhandle n=1 rep=14 wall_ms=14.085 errors=0
+RAW label=akapp op=fromhandle n=1 rep=15 wall_ms=13.422 errors=0
+RAW label=akapp op=fromhandle n=1 rep=16 wall_ms=13.306 errors=0
+RAW label=akapp op=fromhandle n=1 rep=17 wall_ms=14.975 errors=0
+RAW label=akapp op=fromhandle n=1 rep=18 wall_ms=14.420 errors=0
+RAW label=akapp op=fromhandle n=1 rep=19 wall_ms=15.017 errors=0
+RESULT label=akapp op=fromhandle n=1 k=32 median_ms=14.09 p90_ms=14.97 per_call_us=440.3 speedup=1.00 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=fromhandle n=2 rep=0 wall_ms=10.633 errors=0
+RAW label=akapp op=fromhandle n=2 rep=1 wall_ms=11.305 errors=0
+RAW label=akapp op=fromhandle n=2 rep=2 wall_ms=12.381 errors=0
+RAW label=akapp op=fromhandle n=2 rep=3 wall_ms=12.004 errors=0
+RAW label=akapp op=fromhandle n=2 rep=4 wall_ms=11.117 errors=0
+RAW label=akapp op=fromhandle n=2 rep=5 wall_ms=10.626 errors=0
+RAW label=akapp op=fromhandle n=2 rep=6 wall_ms=10.991 errors=0
+RAW label=akapp op=fromhandle n=2 rep=7 wall_ms=10.877 errors=0
+RAW label=akapp op=fromhandle n=2 rep=8 wall_ms=11.618 errors=0
+RAW label=akapp op=fromhandle n=2 rep=9 wall_ms=10.315 errors=0
+RAW label=akapp op=fromhandle n=2 rep=10 wall_ms=10.762 errors=0
+RAW label=akapp op=fromhandle n=2 rep=11 wall_ms=10.178 errors=0
+RAW label=akapp op=fromhandle n=2 rep=12 wall_ms=11.019 errors=0
+RAW label=akapp op=fromhandle n=2 rep=13 wall_ms=10.885 errors=0
+RAW label=akapp op=fromhandle n=2 rep=14 wall_ms=12.659 errors=0
+RAW label=akapp op=fromhandle n=2 rep=15 wall_ms=10.594 errors=0
+RAW label=akapp op=fromhandle n=2 rep=16 wall_ms=11.760 errors=0
+RAW label=akapp op=fromhandle n=2 rep=17 wall_ms=11.329 errors=0
+RAW label=akapp op=fromhandle n=2 rep=18 wall_ms=11.585 errors=0
+RAW label=akapp op=fromhandle n=2 rep=19 wall_ms=11.966 errors=0
+RESULT label=akapp op=fromhandle n=2 k=32 median_ms=11.12 p90_ms=12.00 per_call_us=347.4 speedup=1.27 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=fromhandle n=4 rep=0 wall_ms=10.591 errors=0
+RAW label=akapp op=fromhandle n=4 rep=1 wall_ms=10.535 errors=0
+RAW label=akapp op=fromhandle n=4 rep=2 wall_ms=10.417 errors=0
+RAW label=akapp op=fromhandle n=4 rep=3 wall_ms=10.899 errors=0
+RAW label=akapp op=fromhandle n=4 rep=4 wall_ms=10.929 errors=0
+RAW label=akapp op=fromhandle n=4 rep=5 wall_ms=10.418 errors=0
+RAW label=akapp op=fromhandle n=4 rep=6 wall_ms=9.450 errors=0
+RAW label=akapp op=fromhandle n=4 rep=7 wall_ms=10.239 errors=0
+RAW label=akapp op=fromhandle n=4 rep=8 wall_ms=10.761 errors=0
+RAW label=akapp op=fromhandle n=4 rep=9 wall_ms=9.588 errors=0
+RAW label=akapp op=fromhandle n=4 rep=10 wall_ms=10.654 errors=0
+RAW label=akapp op=fromhandle n=4 rep=11 wall_ms=10.073 errors=0
+RAW label=akapp op=fromhandle n=4 rep=12 wall_ms=9.571 errors=0
+RAW label=akapp op=fromhandle n=4 rep=13 wall_ms=9.574 errors=0
+RAW label=akapp op=fromhandle n=4 rep=14 wall_ms=11.251 errors=0
+RAW label=akapp op=fromhandle n=4 rep=15 wall_ms=9.882 errors=0
+RAW label=akapp op=fromhandle n=4 rep=16 wall_ms=9.531 errors=0
+RAW label=akapp op=fromhandle n=4 rep=17 wall_ms=9.777 errors=0
+RAW label=akapp op=fromhandle n=4 rep=18 wall_ms=11.448 errors=0
+RAW label=akapp op=fromhandle n=4 rep=19 wall_ms=11.083 errors=0
+RESULT label=akapp op=fromhandle n=4 k=32 median_ms=10.42 p90_ms=11.08 per_call_us=325.6 speedup=1.35 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=fromhandle n=8 rep=0 wall_ms=10.228 errors=0
+RAW label=akapp op=fromhandle n=8 rep=1 wall_ms=10.089 errors=0
+RAW label=akapp op=fromhandle n=8 rep=2 wall_ms=11.529 errors=0
+RAW label=akapp op=fromhandle n=8 rep=3 wall_ms=11.199 errors=0
+RAW label=akapp op=fromhandle n=8 rep=4 wall_ms=10.082 errors=0
+RAW label=akapp op=fromhandle n=8 rep=5 wall_ms=9.337 errors=0
+RAW label=akapp op=fromhandle n=8 rep=6 wall_ms=9.583 errors=0
+RAW label=akapp op=fromhandle n=8 rep=7 wall_ms=9.324 errors=0
+RAW label=akapp op=fromhandle n=8 rep=8 wall_ms=9.838 errors=0
+RAW label=akapp op=fromhandle n=8 rep=9 wall_ms=12.039 errors=0
+RAW label=akapp op=fromhandle n=8 rep=10 wall_ms=10.661 errors=0
+RAW label=akapp op=fromhandle n=8 rep=11 wall_ms=10.685 errors=0
+RAW label=akapp op=fromhandle n=8 rep=12 wall_ms=10.306 errors=0
+RAW label=akapp op=fromhandle n=8 rep=13 wall_ms=9.611 errors=0
+RAW label=akapp op=fromhandle n=8 rep=14 wall_ms=10.302 errors=0
+RAW label=akapp op=fromhandle n=8 rep=15 wall_ms=10.074 errors=0
+RAW label=akapp op=fromhandle n=8 rep=16 wall_ms=10.419 errors=0
+RAW label=akapp op=fromhandle n=8 rep=17 wall_ms=9.888 errors=0
+RAW label=akapp op=fromhandle n=8 rep=18 wall_ms=10.900 errors=0
+RAW label=akapp op=fromhandle n=8 rep=19 wall_ms=12.698 errors=0
+RESULT label=akapp op=fromhandle n=8 k=32 median_ms=10.30 p90_ms=11.53 per_call_us=321.9 speedup=1.37 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=rop n=1 rep=0 wall_ms=3.672 errors=0
+RAW label=akapp op=rop n=1 rep=1 wall_ms=3.693 errors=0
+RAW label=akapp op=rop n=1 rep=2 wall_ms=3.756 errors=0
+RAW label=akapp op=rop n=1 rep=3 wall_ms=3.817 errors=0
+RAW label=akapp op=rop n=1 rep=4 wall_ms=3.779 errors=0
+RAW label=akapp op=rop n=1 rep=5 wall_ms=3.810 errors=0
+RAW label=akapp op=rop n=1 rep=6 wall_ms=3.768 errors=0
+RAW label=akapp op=rop n=1 rep=7 wall_ms=3.677 errors=0
+RAW label=akapp op=rop n=1 rep=8 wall_ms=3.510 errors=0
+RAW label=akapp op=rop n=1 rep=9 wall_ms=3.541 errors=0
+RAW label=akapp op=rop n=1 rep=10 wall_ms=3.615 errors=0
+RAW label=akapp op=rop n=1 rep=11 wall_ms=3.752 errors=0
+RAW label=akapp op=rop n=1 rep=12 wall_ms=3.649 errors=0
+RAW label=akapp op=rop n=1 rep=13 wall_ms=3.667 errors=0
+RAW label=akapp op=rop n=1 rep=14 wall_ms=3.573 errors=0
+RAW label=akapp op=rop n=1 rep=15 wall_ms=3.919 errors=0
+RAW label=akapp op=rop n=1 rep=16 wall_ms=3.799 errors=0
+RAW label=akapp op=rop n=1 rep=17 wall_ms=4.461 errors=0
+RAW label=akapp op=rop n=1 rep=18 wall_ms=4.283 errors=0
+RAW label=akapp op=rop n=1 rep=19 wall_ms=3.786 errors=0
+RESULT label=akapp op=rop n=1 k=32 median_ms=3.76 p90_ms=3.92 per_call_us=117.4 speedup=1.00 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=rop n=2 rep=0 wall_ms=2.590 errors=0
+RAW label=akapp op=rop n=2 rep=1 wall_ms=2.245 errors=0
+RAW label=akapp op=rop n=2 rep=2 wall_ms=2.154 errors=0
+RAW label=akapp op=rop n=2 rep=3 wall_ms=2.261 errors=0
+RAW label=akapp op=rop n=2 rep=4 wall_ms=2.197 errors=0
+RAW label=akapp op=rop n=2 rep=5 wall_ms=3.123 errors=0
+RAW label=akapp op=rop n=2 rep=6 wall_ms=2.870 errors=0
+RAW label=akapp op=rop n=2 rep=7 wall_ms=2.804 errors=0
+RAW label=akapp op=rop n=2 rep=8 wall_ms=2.821 errors=0
+RAW label=akapp op=rop n=2 rep=9 wall_ms=2.894 errors=0
+RAW label=akapp op=rop n=2 rep=10 wall_ms=2.800 errors=0
+RAW label=akapp op=rop n=2 rep=11 wall_ms=2.828 errors=0
+RAW label=akapp op=rop n=2 rep=12 wall_ms=2.813 errors=0
+RAW label=akapp op=rop n=2 rep=13 wall_ms=2.822 errors=0
+RAW label=akapp op=rop n=2 rep=14 wall_ms=2.820 errors=0
+RAW label=akapp op=rop n=2 rep=15 wall_ms=2.546 errors=0
+RAW label=akapp op=rop n=2 rep=16 wall_ms=2.861 errors=0
+RAW label=akapp op=rop n=2 rep=17 wall_ms=2.875 errors=0
+RAW label=akapp op=rop n=2 rep=18 wall_ms=2.813 errors=0
+RAW label=akapp op=rop n=2 rep=19 wall_ms=2.759 errors=0
+RESULT label=akapp op=rop n=2 k=32 median_ms=2.81 p90_ms=2.88 per_call_us=87.9 speedup=1.34 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=rop n=4 rep=0 wall_ms=2.247 errors=0
+RAW label=akapp op=rop n=4 rep=1 wall_ms=2.299 errors=0
+RAW label=akapp op=rop n=4 rep=2 wall_ms=2.305 errors=0
+RAW label=akapp op=rop n=4 rep=3 wall_ms=2.205 errors=0
+RAW label=akapp op=rop n=4 rep=4 wall_ms=2.169 errors=0
+RAW label=akapp op=rop n=4 rep=5 wall_ms=2.186 errors=0
+RAW label=akapp op=rop n=4 rep=6 wall_ms=2.438 errors=0
+RAW label=akapp op=rop n=4 rep=7 wall_ms=2.258 errors=0
+RAW label=akapp op=rop n=4 rep=8 wall_ms=2.212 errors=0
+RAW label=akapp op=rop n=4 rep=9 wall_ms=2.176 errors=0
+RAW label=akapp op=rop n=4 rep=10 wall_ms=2.148 errors=0
+RAW label=akapp op=rop n=4 rep=11 wall_ms=2.169 errors=0
+RAW label=akapp op=rop n=4 rep=12 wall_ms=2.148 errors=0
+RAW label=akapp op=rop n=4 rep=13 wall_ms=2.177 errors=0
+RAW label=akapp op=rop n=4 rep=14 wall_ms=2.142 errors=0
+RAW label=akapp op=rop n=4 rep=15 wall_ms=2.152 errors=0
+RAW label=akapp op=rop n=4 rep=16 wall_ms=2.140 errors=0
+RAW label=akapp op=rop n=4 rep=17 wall_ms=2.172 errors=0
+RAW label=akapp op=rop n=4 rep=18 wall_ms=2.183 errors=0
+RAW label=akapp op=rop n=4 rep=19 wall_ms=2.170 errors=0
+RESULT label=akapp op=rop n=4 k=32 median_ms=2.18 p90_ms=2.30 per_call_us=68.0 speedup=1.73 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+RAW label=akapp op=rop n=8 rep=0 wall_ms=2.117 errors=0
+RAW label=akapp op=rop n=8 rep=1 wall_ms=2.103 errors=0
+RAW label=akapp op=rop n=8 rep=2 wall_ms=2.095 errors=0
+RAW label=akapp op=rop n=8 rep=3 wall_ms=2.186 errors=0
+RAW label=akapp op=rop n=8 rep=4 wall_ms=2.173 errors=0
+RAW label=akapp op=rop n=8 rep=5 wall_ms=2.207 errors=0
+RAW label=akapp op=rop n=8 rep=6 wall_ms=2.225 errors=0
+RAW label=akapp op=rop n=8 rep=7 wall_ms=2.211 errors=0
+RAW label=akapp op=rop n=8 rep=8 wall_ms=2.129 errors=0
+RAW label=akapp op=rop n=8 rep=9 wall_ms=2.124 errors=0
+RAW label=akapp op=rop n=8 rep=10 wall_ms=2.102 errors=0
+RAW label=akapp op=rop n=8 rep=11 wall_ms=2.100 errors=0
+RAW label=akapp op=rop n=8 rep=12 wall_ms=2.105 errors=0
+RAW label=akapp op=rop n=8 rep=13 wall_ms=2.108 errors=0
+RAW label=akapp op=rop n=8 rep=14 wall_ms=2.101 errors=0
+RAW label=akapp op=rop n=8 rep=15 wall_ms=2.078 errors=0
+RAW label=akapp op=rop n=8 rep=16 wall_ms=2.079 errors=0
+RAW label=akapp op=rop n=8 rep=17 wall_ms=2.094 errors=0
+RAW label=akapp op=rop n=8 rep=18 wall_ms=2.090 errors=0
+RAW label=akapp op=rop n=8 rep=19 wall_ms=2.114 errors=0
+RESULT label=akapp op=rop n=8 k=32 median_ms=2.11 p90_ms=2.21 per_call_us=65.9 speedup=1.78 errors=0 provider_max_concurrent=0 provider_calls=0 provider_off_ui_thread=0
+PAIR label=akapp-slowinvoke-beside-name-same-window-xb0 a=Invoke@7800242 elem 0 (of 8 held, 8 found) b=Name@7800242 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb0 a_alone count=10 median_ms=201.83 p90_ms=201.93 max_ms=202.03
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb0 a_with_b count=10 median_ms=201.82 p90_ms=201.96 max_ms=202.35
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb0 b_alone count=20 median_ms=0.07 p90_ms=0.09 max_ms=0.12
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb0 b_during_a count=10 median_ms=199.39 p90_ms=200.22 max_ms=201.04
+PAIR label=akapp-slowinvoke-beside-name-same-window-xb1 a=Invoke@7800242 elem 0 (of 8 held, 8 found) b=Name@7800242 elem 3 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb1 a_alone count=10 median_ms=201.75 p90_ms=202.12 max_ms=225.63
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb1 a_with_b count=10 median_ms=201.97 p90_ms=202.31 max_ms=202.90
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb1 b_alone count=20 median_ms=0.05 p90_ms=0.06 max_ms=0.08
+RESULT label=akapp-slowinvoke-beside-name-same-window-xb1 b_during_a count=11 median_ms=199.59 p90_ms=200.15 max_ms=200.60
+PAIR label=akapp-slowinvoke-beside-invoke-same-window-xb0 a=Invoke@7800242 elem 0 (of 8 held, 8 found) b=Invoke@7800242 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb0 a_alone count=10 median_ms=201.85 p90_ms=202.01 max_ms=202.17
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb0 a_with_b count=10 median_ms=201.87 p90_ms=202.21 max_ms=204.03
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb0 b_alone count=20 median_ms=0.77 p90_ms=0.84 max_ms=0.88
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb0 b_during_a count=6 median_ms=401.59 p90_ms=403.71 max_ms=403.71
+PAIR label=akapp-slowinvoke-beside-invoke-same-window-xb1 a=Invoke@7800242 elem 0 (of 8 held, 8 found) b=Invoke@7800242 elem 3 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb1 a_alone count=10 median_ms=201.86 p90_ms=202.24 max_ms=202.79
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb1 a_with_b count=10 median_ms=202.07 p90_ms=202.22 max_ms=202.35
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb1 b_alone count=20 median_ms=0.59 p90_ms=0.81 max_ms=0.97
+RESULT label=akapp-slowinvoke-beside-invoke-same-window-xb1 b_during_a count=8 median_ms=200.52 p90_ms=401.16 max_ms=401.41
+PAIR label=akapp-slowinvoke-beside-name-other-ui-thread-xb0 a=Invoke@7800242 elem 0 (of 8 held, 8 found) b=Name@1049022 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb0 a_alone count=10 median_ms=201.80 p90_ms=202.06 max_ms=202.15
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb0 a_with_b count=10 median_ms=201.85 p90_ms=201.98 max_ms=202.01
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb0 b_alone count=20 median_ms=0.07 p90_ms=0.09 max_ms=0.11
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb0 b_during_a count=10 median_ms=199.54 p90_ms=199.81 max_ms=200.85
+PAIR label=akapp-slowinvoke-beside-name-other-ui-thread-xb1 a=Invoke@7800242 elem 0 (of 8 held, 8 found) b=Name@1049022 elem 3 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb1 a_alone count=10 median_ms=201.95 p90_ms=202.25 max_ms=204.63
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb1 a_with_b count=10 median_ms=201.73 p90_ms=202.20 max_ms=202.33
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb1 b_alone count=20 median_ms=0.06 p90_ms=0.09 max_ms=0.10
+RESULT label=akapp-slowinvoke-beside-name-other-ui-thread-xb1 b_during_a count=10 median_ms=199.65 p90_ms=200.38 max_ms=201.19
+CALL same-window-name hwnd=7800242 pid=13860 ui_tid=11756 op=Name elem=3 class=PuiaAk title=puia-ak-0
+CALL same-window-invoke hwnd=7800242 pid=13860 ui_tid=11756 op=Invoke elem=3 class=PuiaAk title=puia-ak-0
+CALL same-window-rop hwnd=7800242 pid=13860 ui_tid=11756 op=Rop elem=3 class=PuiaAk title=puia-ak-0
+CALL same-window-new-connection hwnd=7800242 pid=13860 ui_tid=11756 op=FromHandle elem=0 class=PuiaAk title=puia-ak-0
+CALL other-ui-thread-name hwnd=1049022 pid=13860 ui_tid=8888 op=Name elem=3 class=PuiaAk title=puia-ak-1
+CALL other-ui-thread-new-connection hwnd=1049022 pid=13860 ui_tid=8888 op=FromHandle elem=0 class=PuiaAk title=puia-ak-1
+PROBES_STARTED trial=0
+TRIAL label=akapp-busy-ui-thread trial=0 block=busy:7800242:4000 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=3801.4
+RESULT label=akapp-busy-ui-thread trial=0 call=other-ui-thread-name returned_ms=1.4 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=akapp-busy-ui-thread trial=0 call=xproc-xproc-same-window-name returned_ms=3.0 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=akapp-busy-ui-thread trial=0 call=same-window-rop returned_ms=2004.3 before_unblock result=ok idle_baseline_ms=0.28
+RESULT label=akapp-busy-ui-thread trial=0 call=same-window-new-connection returned_ms=2004.8 before_unblock result=error 0x80131505 idle_baseline_ms=0.43
+RESULT label=akapp-busy-ui-thread trial=0 call=same-window-name returned_ms=2004.8 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=akapp-busy-ui-thread trial=0 call=other-ui-thread-new-connection returned_ms=2004.9 before_unblock result=ok idle_baseline_ms=0.52
+RESULT label=akapp-busy-ui-thread trial=0 call=same-window-invoke returned_ms=3800.8 before_unblock result=ok idle_baseline_ms=0.74
+PROBES_STARTED trial=1
+TRIAL label=akapp-busy-ui-thread trial=1 block=busy:7800242:4000 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=3801.4
+RESULT label=akapp-busy-ui-thread trial=1 call=other-ui-thread-name returned_ms=1.5 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=akapp-busy-ui-thread trial=1 call=xproc-xproc-same-window-name returned_ms=3.1 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=akapp-busy-ui-thread trial=1 call=same-window-new-connection returned_ms=2005.3 before_unblock result=error 0x80131505 idle_baseline_ms=0.46
+RESULT label=akapp-busy-ui-thread trial=1 call=same-window-rop returned_ms=2005.7 before_unblock result=ok idle_baseline_ms=0.19
+RESULT label=akapp-busy-ui-thread trial=1 call=same-window-name returned_ms=2006.1 before_unblock result=ok idle_baseline_ms=0.05
+RESULT label=akapp-busy-ui-thread trial=1 call=other-ui-thread-new-connection returned_ms=2006.3 before_unblock result=ok idle_baseline_ms=0.45
+RESULT label=akapp-busy-ui-thread trial=1 call=same-window-invoke returned_ms=3800.8 before_unblock result=ok idle_baseline_ms=0.77
+CALL same-window-name hwnd=7800242 pid=13860 ui_tid=11756 op=Name elem=3 class=PuiaAk title=puia-ak-0
+CALL same-window-invoke hwnd=7800242 pid=13860 ui_tid=11756 op=Invoke elem=3 class=PuiaAk title=puia-ak-0
+CALL same-window-rop hwnd=7800242 pid=13860 ui_tid=11756 op=Rop elem=3 class=PuiaAk title=puia-ak-0
+CALL same-window-new-connection hwnd=7800242 pid=13860 ui_tid=11756 op=FromHandle elem=0 class=PuiaAk title=puia-ak-0
+CALL other-ui-thread-name hwnd=1049022 pid=13860 ui_tid=8888 op=Name elem=3 class=PuiaAk title=puia-ak-1
+CALL other-ui-thread-new-connection hwnd=1049022 pid=13860 ui_tid=8888 op=FromHandle elem=0 class=PuiaAk title=puia-ak-1
+CALL stuck hwnd=7800242 pid=13860 ui_tid=11756 op=Invoke elem=0 class=PuiaAk title=puia-ak-0
+PROBES_STARTED trial=0
+TRIAL label=akapp-slow-action trial=0 block=slow:7800242:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.3 unblocked_at_ms=3803.2
+RESULT label=akapp-slow-action trial=0 call=same-window-new-connection returned_ms=2204.0 before_unblock result=error 0x80131505 idle_baseline_ms=0.57
+RESULT label=akapp-slow-action trial=0 call=other-ui-thread-new-connection returned_ms=2204.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.43
+RESULT label=akapp-slow-action trial=0 call=stuck returned_ms=3801.4 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=akapp-slow-action trial=0 call=other-ui-thread-name returned_ms=3801.7 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=akapp-slow-action trial=0 call=same-window-rop returned_ms=3802.3 before_unblock result=ok idle_baseline_ms=0.36
+RESULT label=akapp-slow-action trial=0 call=same-window-name returned_ms=3802.5 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=akapp-slow-action trial=0 call=xproc-xproc-same-window-name returned_ms=3802.6 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=akapp-slow-action trial=0 call=same-window-invoke returned_ms=3803.2 before_unblock result=ok idle_baseline_ms=0.62
+PROBES_STARTED trial=1
+TRIAL label=akapp-slow-action trial=1 block=slow:7800242:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.1 unblocked_at_ms=3805.1
+RESULT label=akapp-slow-action trial=1 call=same-window-new-connection returned_ms=2196.3 before_unblock result=error 0x80131505 idle_baseline_ms=0.44
+RESULT label=akapp-slow-action trial=1 call=other-ui-thread-new-connection returned_ms=2196.3 before_unblock result=error 0x80131505 idle_baseline_ms=0.45
+RESULT label=akapp-slow-action trial=1 call=stuck returned_ms=3802.5 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=akapp-slow-action trial=1 call=same-window-name returned_ms=3802.8 before_unblock result=ok idle_baseline_ms=0.05
+RESULT label=akapp-slow-action trial=1 call=same-window-rop returned_ms=3803.3 before_unblock result=ok idle_baseline_ms=0.19
+RESULT label=akapp-slow-action trial=1 call=other-ui-thread-name returned_ms=3803.6 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=akapp-slow-action trial=1 call=xproc-xproc-same-window-name returned_ms=3803.9 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=akapp-slow-action trial=1 call=same-window-invoke returned_ms=3804.6 before_unblock result=ok idle_baseline_ms=0.43
+CALL same-window-invoke hwnd=7800242 pid=13860 ui_tid=11756 op=Invoke elem=3 class=PuiaAk title=puia-ak-0
+PROBES_STARTED trial=0
+TRIAL label=akapp-busy-invoke trial=0 block=busy:7800242:4000 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=3019.3
+RESULT label=akapp-busy-invoke trial=0 call=same-window-invoke returned_ms=3018.7 before_unblock result=ok idle_baseline_ms=0.75

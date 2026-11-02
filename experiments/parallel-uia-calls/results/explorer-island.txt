@@ -1,0 +1,25 @@
+CALL other-element hwnd=328924 pid=3332 ui_tid=10944 op=Name elem=3 class=CabinetWClass title=folderA - File Explorer
+CALL island-other-thread hwnd=1966104 pid=3332 ui_tid=9704 op=Name elem=0 class=Windows.UI.Core.CoreWindow title=DesktopWindowXamlSource
+CALL island-other-thread-rop hwnd=1966104 pid=3332 ui_tid=9704 op=Rop elem=0 class=Windows.UI.Core.CoreWindow title=DesktopWindowXamlSource
+CALL island-new-connection hwnd=1966104 pid=3332 ui_tid=9704 op=FromHandle elem=0 class=Windows.UI.Core.CoreWindow title=DesktopWindowXamlSource
+CALL stuck hwnd=328924 pid=3332 ui_tid=10944 op=Name elem=1 class=CabinetWClass title=folderA - File Explorer
+suspended tid=10944
+PROBES_STARTED trial=0
+resumed tid=10944
+TRIAL label=explorer-xaml-island-thread trial=0 block=suspend:328924 evidence="200 ms wait" probes_started_ms_after_block=200.3 unblocked_at_ms=4007.0
+RESULT label=explorer-xaml-island-thread trial=0 call=island-new-connection returned_ms=2202.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.56
+RESULT label=explorer-xaml-island-thread trial=0 call=xproc-island-other-thread returned_ms=4008.3 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-xaml-island-thread trial=0 call=island-other-thread-rop returned_ms=4009.6 after_unblock result=ok idle_baseline_ms=4.93
+RESULT label=explorer-xaml-island-thread trial=0 call=island-other-thread returned_ms=4010.0 after_unblock result=ok idle_baseline_ms=0.19
+RESULT label=explorer-xaml-island-thread trial=0 call=other-element returned_ms=4010.2 after_unblock result=ok idle_baseline_ms=1.11
+RESULT label=explorer-xaml-island-thread trial=0 call=stuck returned_ms=4010.9 after_unblock result=ok idle_baseline_ms=0.00
+suspended tid=10944
+PROBES_STARTED trial=1
+resumed tid=10944
+TRIAL label=explorer-xaml-island-thread trial=1 block=suspend:328924 evidence="200 ms wait" probes_started_ms_after_block=200.1 unblocked_at_ms=4005.2
+RESULT label=explorer-xaml-island-thread trial=1 call=island-new-connection returned_ms=2201.4 before_unblock result=error 0x80131505 idle_baseline_ms=0.59
+RESULT label=explorer-xaml-island-thread trial=1 call=xproc-island-other-thread returned_ms=4006.1 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-xaml-island-thread trial=1 call=island-other-thread-rop returned_ms=4007.6 after_unblock result=ok idle_baseline_ms=0.46
+RESULT label=explorer-xaml-island-thread trial=1 call=island-other-thread returned_ms=4008.0 after_unblock result=ok idle_baseline_ms=0.17
+RESULT label=explorer-xaml-island-thread trial=1 call=other-element returned_ms=4008.3 after_unblock result=ok idle_baseline_ms=1.08
+RESULT label=explorer-xaml-island-thread trial=1 call=stuck returned_ms=4009.0 after_unblock result=ok idle_baseline_ms=0.00

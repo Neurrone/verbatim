@@ -1,0 +1,336 @@
+# Event delivery, from ops.ps1's mockapp run 2 (ops-requests.txt). Client: puia ops; the handler breakpoints are puia's
+# IUIAutomation*EventHandler entry points. Server: mockapp. Lines kept: markers, thread headers and stacks; DoCallWithReturn stacks of
+# the event's own cache requests are cut to their first frames.
+
+## Client, selection event (add_auto, mockapp select item1)
+PUIA_OP add_auto
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetRuntimeId+0xe0)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+PUIA_END add_auto
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_BulkFetch+0x1c2)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_HANDLER
+PUIA_EVENT auto tid=1064
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+
+## Client, focus event (add_focus in a fresh client, mockapp focus btn_ok)
+PUIA_OP add_focus
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_EntireProcessAddEvent+0x15b)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_ONDATA
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_ONDATA
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_EntireProcessAddEvent+0x15b)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_ONDATA
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_EntireProcessAddEvent+0x15b)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+ModLoad: 00007ffb`ca290000 00007ffb`ca332000   C:\WINDOWS\SYSTEM32\sxs.dll
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+ModLoad: 00007ffb`ac930000 00007ffb`aca16000   C:\WINDOWS\SYSTEM32\twinapi.dll
+CLI_HANDLER
+.  0  Id: 3790.19ac Suspend: 1 Teb: 000000b7`8e424000 Unfrozen "main"
+      Start: puia!mainCRTStartup (00007ff6`d927fe80)
+Child-SP          RetAddr               Call Site
+000000b7`8e37e458 00007ffb`a98682bd     puia!RINvNvMs4T_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_42IUIAutomationFocusChangedEventHandler_Vtbl3new23HandleFocusChangedEventNtNtCsfc8R8NVfkqM_4puia3ops10Focus_ImplKin1_EB2j_
+000000b7`8e37e460 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent+0xad
+000000b7`8e37e4a0 00007ffb`a9873c9b     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8e37e510 00007ffb`a97a7bc4     uiautomationcore!EventManager::ProcessLocalMatchingEventRecords+0x117
+000000b7`8e37e630 00007ffb`a97a844d     uiautomationcore!EventManager::RaiseLocalEvent+0x174
+000000b7`8e37e750 00007ffb`a97d6824     uiautomationcore!EventManager::AssociateWithRecord+0x1a5
+000000b7`8e37e7f0 00007ffb`a97d599e     uiautomationcore!EventManager::AddEventRecord+0x184
+000000b7`8e37e890 00007ffb`a97d454e     uiautomationcore!ClientEventManager::RegisterHandler+0x5a
+000000b7`8e37e8f0 00007ffb`a990954b     uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler+0x15e
+000000b7`8e37e9d0 00007ffb`a98d789c     uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler+0xe3
+000000b7`8e37ea20 00007ff6`d91f8c35     uiautomationcore!CUIAutomation::AddFocusChangedEventHandler+0xcc
+000000b7`8e37ec40 00007ff6`d91ad583     puia!RINvMs3c_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB7_13IUIAutomation27AddFocusChangedEventHandlerRNtB7_25IUIAutomationCacheRequestRNtB7_37IUIAutomationFocusChangedEventHandlerECsfc8R8NVfkqM_4puia+0x35
+000000b7`8e37eca0 00007ff6`d91b0bb4     puia!RNvMs3_NtCsfc8R8NVfkqM_4puia3opsNtB5_2St2op+0x8a3
+PUIA_EVENT focus tid=6572
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+PUIA_END add_focus
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealRemoteNodeFromProviderEntryPoint+0x336)
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_ONDATA
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Release+0xf6)
+CLI_CALL (uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetEventSourceMap+0x72)
+CLI_HANDLER
+. 12  Id: 3790.b68 Suspend: 1 Teb: 000000b7`8e43e000 Unfrozen
+      Start: uiautomationcore!WorkItemQueue::StaticThreadProc (00007ffb`a9961810)
+Child-SP          RetAddr               Call Site
+000000b7`8f1ff868 00007ffb`a98682bd     puia!RINvNvMs4T_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_42IUIAutomationFocusChangedEventHandler_Vtbl3new23HandleFocusChangedEventNtNtCsfc8R8NVfkqM_4puia3ops10Focus_ImplKin1_EB2j_
+000000b7`8f1ff870 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent+0xad
+000000b7`8f1ff8b0 00007ffb`a97d62f7     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8f1ff920 00007ffb`a9832d00     uiautomationcore!SavedEvent::OnMessage+0x22b
+000000b7`8f1ff9d0 00007ffb`a9961819     uiautomationcore!WorkItemQueue::ThreadProc+0x110
+000000b7`8f1ffa50 00007ffb`cbe8dda7     uiautomationcore!WorkItemQueue::StaticThreadProc+0x9
+000000b7`8f1ffa80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000b7`8f1ffab0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+PUIA_EVENT focus tid=2920
+CLI_CALL
+Child-SP          RetAddr               Call Site
+000000b7`8f1ff4a8 00007ffb`a98490fc     uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn
+000000b7`8f1ff4b0 00007ffb`a977bac1     uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+CLI_ONDATA
+.  8  Id: 3790.37b8 Suspend: 1 Teb: 000000b7`8e434000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+CLI_CALL
+
+## Server (mockapp), the selection event's send
+.  0  Id: 2ac0.cb4 Suspend: 1 Teb: 000000d4`0dd17000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+SRV_SENDEVENT
+.  0  Id: 2ac0.cb4 Suspend: 1 Teb: 000000d4`0dd17000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+Child-SP          RetAddr               Call Site
+000000d4`0db4acc8 00007ffb`a97b9581     uiautomationcore!ChannelBasedServerConnection::SendEventData
+000000d4`0db4acd0 00007ffb`a976d132     uiautomationcore!RemoteEventCallbackProxy::CrossProcess_OnTentativeEvent+0x141
+000000d4`0db4ad60 00007ffb`a97472d4     uiautomationcore!EventManager::ProcessMatchingEventRecords+0x162
+000000d4`0db4aeb0 00007ffb`a9834431     uiautomationcore!EventManager::RaiseEvent+0x388
+000000d4`0db4b040 00007ff7`88059572     uiautomationcore!UiaRaiseAutomationEvent+0x1c1
+000000d4`0db4b160 00007ff7`88028011     mockapp!windows::Win32::UI::Accessibility::UiaRaiseAutomationEvent<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x42
+000000d4`0db4b1d0 00007ff7`880245ab     mockapp!mockapp::uia::raise_selection+0xd1
+000000d4`0db4b2c0 00007ff7`880100ac     mockapp!mockapp::uia::apply_command+0x192b
+000000d4`0db4d480 00007ff7`8800dcf4     mockapp!mockapp::window::apply+0xa7c
+000000d4`0db4d960 00007ff7`88010d87     mockapp!mockapp::window::drain_commands+0x84
+000000d4`0db4da40 00007ffb`cb3352e6     mockapp!mockapp::window::wnd_proc+0x797
+
+## Client, every handler call in run 2 (thread and stack)
+CLI_HANDLER
+.  0  Id: 3790.19ac Suspend: 1 Teb: 000000b7`8e424000 Unfrozen "main"
+      Start: puia!mainCRTStartup (00007ff6`d927fe80)
+Child-SP          RetAddr               Call Site
+000000b7`8e37e458 00007ffb`a98682bd     puia!RINvNvMs4T_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_42IUIAutomationFocusChangedEventHandler_Vtbl3new23HandleFocusChangedEventNtNtCsfc8R8NVf
+000000b7`8e37e460 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent+0xad
+000000b7`8e37e4a0 00007ffb`a9873c9b     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8e37e510 00007ffb`a97a7bc4     uiautomationcore!EventManager::ProcessLocalMatchingEventRecords+0x117
+000000b7`8e37e630 00007ffb`a97a844d     uiautomationcore!EventManager::RaiseLocalEvent+0x174
+000000b7`8e37e750 00007ffb`a97d6824     uiautomationcore!EventManager::AssociateWithRecord+0x1a5
+000000b7`8e37e7f0 00007ffb`a97d599e     uiautomationcore!EventManager::AddEventRecord+0x184
+000000b7`8e37e890 00007ffb`a97d454e     uiautomationcore!ClientEventManager::RegisterHandler+0x5a
+000000b7`8e37e8f0 00007ffb`a990954b     uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler+0x15e
+000000b7`8e37e9d0 00007ffb`a98d789c     uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler+0xe3
+CLI_HANDLER
+. 12  Id: 3790.b68 Suspend: 1 Teb: 000000b7`8e43e000 Unfrozen
+      Start: uiautomationcore!WorkItemQueue::StaticThreadProc (00007ffb`a9961810)
+Child-SP          RetAddr               Call Site
+000000b7`8f1ff868 00007ffb`a98682bd     puia!RINvNvMs4T_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_42IUIAutomationFocusChangedEventHandler_Vtbl3new23HandleFocusChangedEventNtNtCsfc8R8NVf
+000000b7`8f1ff870 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent+0xad
+000000b7`8f1ff8b0 00007ffb`a97d62f7     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8f1ff920 00007ffb`a9832d00     uiautomationcore!SavedEvent::OnMessage+0x22b
+000000b7`8f1ff9d0 00007ffb`a9961819     uiautomationcore!WorkItemQueue::ThreadProc+0x110
+000000b7`8f1ffa50 00007ffb`cbe8dda7     uiautomationcore!WorkItemQueue::StaticThreadProc+0x9
+000000b7`8f1ffa80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000b7`8f1ffab0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+PUIA_EVENT focus tid=2920
+CLI_CALL
+CLI_HANDLER
+. 12  Id: 3790.428 Suspend: 1 Teb: 000000b7`8e440000 Unfrozen
+      Start: uiautomationcore!WorkItemQueue::StaticThreadProc (00007ffb`a9961810)
+Child-SP          RetAddr               Call Site
+000000b7`8f1ff478 00007ffb`a98683e7     puia!RINvNvMs4K_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_30IUIAutomationEventHandler_Vtbl3new21HandleAutomationEventNtNtCsfc8R8NVfkqM_4puia3ops9
+000000b7`8f1ff480 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationEventHandler>::OnEvent+0x97
+000000b7`8f1ff4d0 00007ffb`a976eb3e     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8f1ff540 00007ffb`a976e95e     uiautomationcore!EventRecord::CrossProcess_OnTentativeEvent+0x1aa
+000000b7`8f1ff660 00007ffb`a97d61e3     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnTentativeEvent+0x4e
+000000b7`8f1ff6a0 00007ffb`a9832d00     uiautomationcore!SavedEvent::OnMessage+0x117
+000000b7`8f1ff750 00007ffb`a9961819     uiautomationcore!WorkItemQueue::ThreadProc+0x110
+000000b7`8f1ff7d0 00007ffb`cbe8dda7     uiautomationcore!WorkItemQueue::StaticThreadProc+0x9
+000000b7`8f1ff800 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000b7`8f1ff830 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+CLI_HANDLER
+. 12  Id: 3790.239c Suspend: 1 Teb: 000000b7`8e442000 Unfrozen
+      Start: uiautomationcore!WorkItemQueue::StaticThreadProc (00007ffb`a9961810)
+Child-SP          RetAddr               Call Site
+000000b7`8f1ff728 00007ffb`a98680cb     puia!RINvNvMs5y_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_45IUIAutomationPropertyChangedEventHandler_Vtbl3new26HandlePropertyChangedEventNtNtCsfc
+000000b7`8f1ff730 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationPropertyChangedEventHandler>::OnEvent+0xeb
+000000b7`8f1ff7d0 00007ffb`a976eb3e     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8f1ff840 00007ffb`a976e95e     uiautomationcore!EventRecord::CrossProcess_OnTentativeEvent+0x1aa
+000000b7`8f1ff960 00007ffb`a97d61e3     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnTentativeEvent+0x4e
+000000b7`8f1ff9a0 00007ffb`a9832d00     uiautomationcore!SavedEvent::OnMessage+0x117
+000000b7`8f1ffa50 00007ffb`a9961819     uiautomationcore!WorkItemQueue::ThreadProc+0x110
+000000b7`8f1ffad0 00007ffb`cbe8dda7     uiautomationcore!WorkItemQueue::StaticThreadProc+0x9
+000000b7`8f1ffb00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000b7`8f1ffb30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+CLI_HANDLER
+.  0  Id: 3790.19ac Suspend: 1 Teb: 000000b7`8e424000 Unfrozen "main"
+      Start: puia!mainCRTStartup (00007ff6`d927fe80)
+Child-SP          RetAddr               Call Site
+000000b7`8e37e458 00007ffb`a98682bd     puia!RINvNvMs4T_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_42IUIAutomationFocusChangedEventHandler_Vtbl3new23HandleFocusChangedEventNtNtCsfc8R8NVf
+000000b7`8e37e460 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent+0xad
+000000b7`8e37e4a0 00007ffb`a9873c9b     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8e37e510 00007ffb`a97a7bc4     uiautomationcore!EventManager::ProcessLocalMatchingEventRecords+0x117
+000000b7`8e37e630 00007ffb`a97a844d     uiautomationcore!EventManager::RaiseLocalEvent+0x174
+000000b7`8e37e750 00007ffb`a97d6824     uiautomationcore!EventManager::AssociateWithRecord+0x1a5
+000000b7`8e37e7f0 00007ffb`a97d599e     uiautomationcore!EventManager::AddEventRecord+0x184
+000000b7`8e37e890 00007ffb`a97d454e     uiautomationcore!ClientEventManager::RegisterHandler+0x5a
+000000b7`8e37e8f0 00007ffb`a990954b     uiautomationcore!CUIAutomationBlockingCore::AddFocusChangedEventHandler+0x15e
+000000b7`8e37e9d0 00007ffb`a98d789c     uiautomationcore!BlockingCoreDispatcher::AddFocusChangedEventHandler+0xe3
+CLI_HANDLER
+. 12  Id: 3790.355c Suspend: 1 Teb: 000000b7`8e444000 Unfrozen
+      Start: uiautomationcore!WorkItemQueue::StaticThreadProc (00007ffb`a9961810)
+Child-SP          RetAddr               Call Site
+000000b7`8f1ffd38 00007ffb`a98682bd     puia!RINvNvMs4T_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_42IUIAutomationFocusChangedEventHandler_Vtbl3new23HandleFocusChangedEventNtNtCsfc8R8NVf
+000000b7`8f1ffd40 00007ffb`a97d65cf     uiautomationcore!ClientIEventHandler<IUIAutomationFocusChangedEventHandler>::OnEvent+0xad
+000000b7`8f1ffd80 00007ffb`a97d62f7     uiautomationcore!EventRecord::CallbackAdapter::CrossProcess_OnEvent+0xcf
+000000b7`8f1ffdf0 00007ffb`a9832d00     uiautomationcore!SavedEvent::OnMessage+0x22b
+000000b7`8f1ffea0 00007ffb`a9961819     uiautomationcore!WorkItemQueue::ThreadProc+0x110
+000000b7`8f1fff20 00007ffb`cbe8dda7     uiautomationcore!WorkItemQueue::StaticThreadProc+0x9
+000000b7`8f1fff50 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000b7`8f1fff80 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+PUIA_EVENT focus tid=13660
+CLI_CALL
+
+## Server (mockapp), every SendEventData in run 2
+SRV_SENDEVENT
+.  0  Id: 2ac0.cb4 Suspend: 1 Teb: 000000d4`0dd17000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+Child-SP          RetAddr               Call Site
+000000d4`0db4acb8 00007ffb`a980c960     uiautomationcore!ChannelBasedServerConnection::SendEventData
+000000d4`0db4acc0 00007ffb`a976d268     uiautomationcore!RemoteEventCallbackProxy::CrossProcess_OnEvent+0x110
+000000d4`0db4ad60 00007ffb`a97472b9     uiautomationcore!EventManager::ProcessMatchingEventRecords+0x298
+000000d4`0db4aeb0 00007ffb`a9834431     uiautomationcore!EventManager::RaiseEvent+0x36d
+000000d4`0db4b040 00007ff7`88059572     uiautomationcore!UiaRaiseAutomationEvent+0x1c1
+000000d4`0db4b160 00007ff7`88022981     mockapp!windows::Win32::UI::Accessibility::UiaRaiseAutomationEvent<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x42
+000000d4`0db4b1d0 00007ff7`88023703     mockapp!mockapp::uia::raise_focus+0xd1
+000000d4`0db4b2c0 00007ff7`880100ac     mockapp!mockapp::uia::apply_command+0xa83
+000000d4`0db4d480 00007ff7`8800dcf4     mockapp!mockapp::window::apply+0xa7c
+000000d4`0db4d960 00007ff7`88010d87     mockapp!mockapp::window::drain_commands+0x84
+SRV_SENDEVENT
+.  0  Id: 2ac0.cb4 Suspend: 1 Teb: 000000d4`0dd17000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+Child-SP          RetAddr               Call Site
+000000d4`0db4acc8 00007ffb`a97b9581     uiautomationcore!ChannelBasedServerConnection::SendEventData
+000000d4`0db4acd0 00007ffb`a976d132     uiautomationcore!RemoteEventCallbackProxy::CrossProcess_OnTentativeEvent+0x141
+000000d4`0db4ad60 00007ffb`a97472d4     uiautomationcore!EventManager::ProcessMatchingEventRecords+0x162
+000000d4`0db4aeb0 00007ffb`a9834431     uiautomationcore!EventManager::RaiseEvent+0x388
+000000d4`0db4b040 00007ff7`88059572     uiautomationcore!UiaRaiseAutomationEvent+0x1c1
+000000d4`0db4b160 00007ff7`88028011     mockapp!windows::Win32::UI::Accessibility::UiaRaiseAutomationEvent<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x42
+000000d4`0db4b1d0 00007ff7`880245ab     mockapp!mockapp::uia::raise_selection+0xd1
+000000d4`0db4b2c0 00007ff7`880100ac     mockapp!mockapp::uia::apply_command+0x192b
+000000d4`0db4d480 00007ff7`8800dcf4     mockapp!mockapp::window::apply+0xa7c
+000000d4`0db4d960 00007ff7`88010d87     mockapp!mockapp::window::drain_commands+0x84
+SRV_SENDEVENT
+.  0  Id: 2ac0.cb4 Suspend: 1 Teb: 000000d4`0dd17000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+Child-SP          RetAddr               Call Site
+000000d4`0db4a858 00007ffb`a97b9581     uiautomationcore!ChannelBasedServerConnection::SendEventData
+000000d4`0db4a860 00007ffb`a976d132     uiautomationcore!RemoteEventCallbackProxy::CrossProcess_OnTentativeEvent+0x141
+000000d4`0db4a8f0 00007ffb`a97472d4     uiautomationcore!EventManager::ProcessMatchingEventRecords+0x162
+000000d4`0db4aa40 00007ffb`a97457ca     uiautomationcore!EventManager::RaiseEvent+0x388
+000000d4`0db4abd0 00007ff7`88059992     uiautomationcore!UiaRaiseAutomationPropertyChangedEvent+0x27a
+000000d4`0db4b0f0 00007ff7`88028a21     mockapp!windows::Win32::UI::Accessibility::UiaRaiseAutomationPropertyChangedEvent<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x92
+000000d4`0db4b1a0 00007ff7`88023a58     mockapp!mockapp::uia::raise_property_changed+0x101
+000000d4`0db4b2c0 00007ff7`880100ac     mockapp!mockapp::uia::apply_command+0xdd8
+000000d4`0db4d480 00007ff7`8800dcf4     mockapp!mockapp::window::apply+0xa7c
+000000d4`0db4d960 00007ff7`88010d87     mockapp!mockapp::window::drain_commands+0x84
+SRV_SENDEVENT
+.  0  Id: 2ac0.cb4 Suspend: 1 Teb: 000000d4`0dd17000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+Child-SP          RetAddr               Call Site
+000000d4`0db4acb8 00007ffb`a980c960     uiautomationcore!ChannelBasedServerConnection::SendEventData
+000000d4`0db4acc0 00007ffb`a976d268     uiautomationcore!RemoteEventCallbackProxy::CrossProcess_OnEvent+0x110
+000000d4`0db4ad60 00007ffb`a97472b9     uiautomationcore!EventManager::ProcessMatchingEventRecords+0x298
+000000d4`0db4aeb0 00007ffb`a9834431     uiautomationcore!EventManager::RaiseEvent+0x36d
+000000d4`0db4b040 00007ff7`88059572     uiautomationcore!UiaRaiseAutomationEvent+0x1c1
+000000d4`0db4b160 00007ff7`88022981     mockapp!windows::Win32::UI::Accessibility::UiaRaiseAutomationEvent<ref$<windows::Win32::UI::Accessibility::IRawElementProviderSimple> >+0x42
+000000d4`0db4b1d0 00007ff7`88023703     mockapp!mockapp::uia::raise_focus+0xd1
+000000d4`0db4b2c0 00007ff7`880100ac     mockapp!mockapp::uia::apply_command+0xa83
+000000d4`0db4d480 00007ff7`8800dcf4     mockapp!mockapp::window::apply+0xa7c
+000000d4`0db4d960 00007ff7`88010d87     mockapp!mockapp::window::drain_commands+0x84
+
+## Synthetic provider (sta), SendEventData of the Invoke_Invoked event
+SRV_SENDEVENT
+.  4  Id: 2818.3014 Suspend: 1 Teb: 000000f7`67604000 Unfrozen
+      Start: puia!std::sys::thread::windows::impl$0::new::thread_start (00007ff7`eca0e0f0)
+Child-SP          RetAddr               Call Site
+000000f7`67cfde08 00007ffb`a980c960     uiautomationcore!ChannelBasedServerConnection::SendEventData
+000000f7`67cfde10 00007ffb`a976d268     uiautomationcore!RemoteEventCallbackProxy::CrossProcess_OnEvent+0x110
+000000f7`67cfdeb0 00007ffb`a97472b9     uiautomationcore!EventManager::ProcessMatchingEventRecords+0x298
+000000f7`67cfe000 00007ffb`a9834431     uiautomationcore!EventManager::RaiseEvent+0x36d
+000000f7`67cfe190 00007ff7`ec9d408f     uiautomationcore!UiaRaiseAutomationEvent+0x1c1
+000000f7`67cfe2b0 00007ff7`ec9e9b9c     puia!RNvNtCsfc8R8NVfkqM_4puia5serve7invoked.llvm.466610458196019096+0x2f
+000000f7`67cfe310 00007ffb`a98cc3a6     puia!RINvNvMs1d_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB9_20IInvokeProvider_Vtbl3new6InvokeNtNtCsfc8R8NVfkqM_4puia5serve16StaProvider_ImplKin2_EB
+000000f7`67cfe350 00007ffb`a993c3d3     uiautomationcore!ProviderCallouts::Invoke+0x2a

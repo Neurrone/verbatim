@@ -1,0 +1,478 @@
+﻿PARTS label=serve-sta hwnd=852804 pid=9856 ui_tid=12608 op=Name k=64 cycles_per_us=3755.2 qpf=10000000
+THREAD tid=5012 start=puia-serve.exe+0xfef30
+THREAD tid=13336 start=ntdll.dll+0x24990
+THREAD tid=1348 start=ntdll.dll+0x24990
+THREAD tid=14044 start=ntdll.dll+0x24990
+THREAD tid=12608 start=puia-serve.exe+0x9d350 ui
+THREAD tid=12368 start=puia-serve.exe+0x9d350
+RAW label=serve-sta n=1 rep=0 after_provider_us=103.5 before_provider_us=107.6 call_us=211.9 client_cpu_us=46.9 entry_interval_mean_us=216.5 entry_interval_us=212.3 exit_to_next_entry_us=212.2 provider_calls=64.0 provider_on_ui_thread=64.0 provider_us=0.1 wall_us=13964.9 cpu[12608:puia-serve.exe+0x9d350:ui]=58.9 cpu[1364:uiautomationcore.dll+0x162f60]=99.1
+RESULT label=serve-sta n=1 k=64 after_provider_us=103.5 before_provider_us=107.6 call_us=211.9 client_cpu_us=46.9 entry_interval_mean_us=216.5 entry_interval_us=212.3 exit_to_next_entry_us=212.2 provider_calls=64.0 provider_on_ui_thread=64.0 provider_us=0.1 wall_us=13964.9 cpu[12608:puia-serve.exe+0x9d350:ui]=58.9 cpu[1364:uiautomationcore.dll+0x162f60]=99.1
+ISOLATED client_tid=5712
+ISOLATED i=0 utc_start=05:43:46.887573 utc_end=05:43:46.888006 call_us=425.7 before_provider_us=269.4 provider_us=0.3 after_provider_us=156.0 provider_tid=12608
+ISOLATED i=1 utc_start=05:43:46.908177 utc_end=05:43:46.908496 call_us=315.1 before_provider_us=176.8 provider_us=0.2 after_provider_us=138.1 provider_tid=12608
+ISOLATED i=2 utc_start=05:43:46.929016 utc_end=05:43:46.929323 call_us=303.9 before_provider_us=163.5 provider_us=0.2 after_provider_us=140.2 provider_tid=12608
+ISOLATED i=3 utc_start=05:43:46.949598 utc_end=05:43:46.949920 call_us=319.7 before_provider_us=165.5 provider_us=0.1 after_provider_us=154.1 provider_tid=12608
+ISOLATED i=4 utc_start=05:43:46.970439 utc_end=05:43:46.970685 call_us=243.9 before_provider_us=128.2 provider_us=0.1 after_provider_us=115.6 provider_tid=12608
+ISOLATED i=5 utc_start=05:43:46.991010 utc_end=05:43:46.991304 call_us=291.9 before_provider_us=157.2 provider_us=0.2 after_provider_us=134.5 provider_tid=12608
+ISOLATED i=6 utc_start=05:43:47.011533 utc_end=05:43:47.011935 call_us=395.9 before_provider_us=236.1 provider_us=0.6 after_provider_us=159.2 provider_tid=12608
+ISOLATED i=7 utc_start=05:43:47.032360 utc_end=05:43:47.032681 call_us=318.7 before_provider_us=174.7 provider_us=0.2 after_provider_us=143.8 provider_tid=12608
+ISOLATED i=8 utc_start=05:43:47.053213 utc_end=05:43:47.053545 call_us=329.0 before_provider_us=171.0 provider_us=0.2 after_provider_us=157.8 provider_tid=12608
+ISOLATED i=9 utc_start=05:43:47.074106 utc_end=05:43:47.074613 call_us=497.9 before_provider_us=326.5 provider_us=0.5 after_provider_us=170.9 provider_tid=12608
+PARTS label=serve-nocom hwnd=1245224 pid=9684 ui_tid=8804 op=Name k=64 cycles_per_us=3763.8 qpf=10000000
+THREAD tid=4316 start=puia-serve.exe+0xfef30
+THREAD tid=11420 start=ntdll.dll+0x24990
+THREAD tid=13224 start=ntdll.dll+0x24990
+THREAD tid=8804 start=puia-serve.exe+0x9d350 ui
+THREAD tid=1812 start=puia-serve.exe+0x9d350
+RAW label=serve-nocom n=1 rep=0 after_provider_us=55.6 before_provider_us=36.6 call_us=93.2 client_cpu_us=38.8 entry_interval_mean_us=97.9 entry_interval_us=93.0 exit_to_next_entry_us=92.9 provider_calls=64.0 provider_on_ui_thread=0.0 provider_us=0.1 wall_us=6416.2 cpu[12648:uiautomationcore.dll+0x162f60]=38.2
+RESULT label=serve-nocom n=1 k=64 after_provider_us=55.6 before_provider_us=36.6 call_us=93.2 client_cpu_us=38.8 entry_interval_mean_us=97.9 entry_interval_us=93.0 exit_to_next_entry_us=92.9 provider_calls=64.0 provider_on_ui_thread=0.0 provider_us=0.1 wall_us=6416.2 cpu[12648:uiautomationcore.dll+0x162f60]=38.2
+ISOLATED client_tid=12572
+ISOLATED i=0 utc_start=05:43:47.598458 utc_end=05:43:47.598666 call_us=202.9 before_provider_us=87.5 provider_us=0.1 after_provider_us=115.3 provider_tid=12648
+ISOLATED i=1 utc_start=05:43:47.618829 utc_end=05:43:47.619137 call_us=300.6 before_provider_us=147.2 provider_us=0.4 after_provider_us=153.0 provider_tid=12648
+ISOLATED i=2 utc_start=05:43:47.639498 utc_end=05:43:47.639745 call_us=241.7 before_provider_us=125.6 provider_us=0.4 after_provider_us=115.7 provider_tid=12648
+ISOLATED i=3 utc_start=05:43:47.660112 utc_end=05:43:47.660335 call_us=217.4 before_provider_us=111.5 provider_us=0.3 after_provider_us=105.6 provider_tid=12648
+ISOLATED i=4 utc_start=05:43:47.680704 utc_end=05:43:47.680997 call_us=281.0 before_provider_us=132.5 provider_us=0.4 after_provider_us=148.1 provider_tid=12648
+ISOLATED i=5 utc_start=05:43:47.701309 utc_end=05:43:47.701591 call_us=274.4 before_provider_us=156.4 provider_us=0.4 after_provider_us=117.6 provider_tid=12648
+ISOLATED i=6 utc_start=05:43:47.721874 utc_end=05:43:47.722088 call_us=210.4 before_provider_us=103.0 provider_us=0.4 after_provider_us=107.0 provider_tid=12648
+ISOLATED i=7 utc_start=05:43:47.742470 utc_end=05:43:47.742646 call_us=173.6 before_provider_us=75.6 provider_us=0.1 after_provider_us=97.9 provider_tid=12648
+ISOLATED i=8 utc_start=05:43:47.762790 utc_end=05:43:47.762939 call_us=147.2 before_provider_us=63.2 provider_us=0.1 after_provider_us=83.9 provider_tid=12648
+ISOLATED i=9 utc_start=05:43:47.783408 utc_end=05:43:47.783583 call_us=172.7 before_provider_us=81.9 provider_us=0.1 after_provider_us=90.7 provider_tid=12648
+
+# Context-switch timelines (cargo xtask trace waits --symbol-server --timeline) of call i=4 (sta) and i=8 (nocom) above
+=== sta i=4 puia.exe:#5712 05:43:46.97040 05:43:46.97070
+puia.exe 10688 thread 5712 "main" blocked 20.473 ms, from 05:43:46.949928 to 05:43:46.970401, woken by ntoskrnl.exe 0 thread 0 "Idle Thread"
+  where it waited:
+    ntdll.dll!NtWaitForSingleObject
+    kernelbase.dll!WaitForSingleObjectEx
+    puia.exe!std::sys::thread::windows::sleep
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+puia.exe 10688 thread 5712 "main" blocked 0.169 ms, from 05:43:46.970482 to 05:43:46.970651, woken by puia.exe 10688 thread 2144 ""
+  where it waited:
+    ntdll.dll!NtWaitForAlertByThreadId
+    ntdll.dll!RtlWaitOnAddress
+    kernelbase.dll!WaitOnAddress
+    uiautomationcore.dll!ChannelBasedClientConnection::WaitForResponse
+    uiautomationcore.dll!ChannelBasedClientConnection::DoCallWithReturn
+    uiautomationcore.dll!CUIAutomationBlockingCore::DoCallWithReturn
+    uiautomationcore.dll!BlockingCoreDispatcher::Dispatch_DoCallWithReturn
+    uiautomationcore.dll!DoCallWithReturn
+    uiautomationcore.dll!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues
+    uiautomationcore.dll!LocalUiaNodeProxy::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::UiaNode_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::InvokeInProcAPI
+    uiautomationcore.dll!UiaNode::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!CAutomationElement::InternalGetPropertyValueEx
+    uiautomationcore.dll!CAutomationElement::GetCurrentPropertyValue
+    uiautomationcore.dll!CAutomationElement::GetPropertyBSTR
+    uiautomationcore.dll!CAutomationElement::get_CurrentName
+    puia.exe!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName
+    puia.exe!RNvMs_Csfc8R8NVfkqM_4puiaNtB4_3Ctx4call
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtAlertThreadByThreadIdEx
+    ntdll.dll!RtlpWakeByAddress
+    uiautomationcore.dll!ChannelBasedClientConnection::SetResponseInfo
+    uiautomationcore.dll!ChannelBasedClientConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia.exe 10688 thread 5712 "main" blocked 20.284 ms, from 05:43:46.970693 to 05:43:46.990977, woken by ntoskrnl.exe 0 thread 0 "Idle Thread"
+  where it waited:
+    ntdll.dll!NtWaitForSingleObject
+    kernelbase.dll!WaitForSingleObjectEx
+    puia.exe!std::sys::thread::windows::sleep
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+=== sta i=4 puia.exe:#2144 05:43:46.97040 05:43:46.97070
+puia.exe 10688 thread 2144 "" blocked 20.716 ms, from 05:43:46.949899 to 05:43:46.970616, woken by puia-serve.exe 9856 thread 1364 ""
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtWriteFile
+    kernelbase.dll!WriteFile
+    uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite
+    uiautomationcore.dll!ChannelBasedServerConnection::WriteResponseToChannel
+    uiautomationcore.dll!ChannelBasedServerConnection::ProcessOneMessage
+    uiautomationcore.dll!ChannelBasedServerConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia.exe 10688 thread 2144 "" blocked 20.550 ms, from 05:43:46.970672 to 05:43:46.991223, woken by puia-serve.exe 9856 thread 1364 ""
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtWriteFile
+    kernelbase.dll!WriteFile
+    uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite
+    uiautomationcore.dll!ChannelBasedServerConnection::WriteResponseToChannel
+    uiautomationcore.dll!ChannelBasedServerConnection::ProcessOneMessage
+    uiautomationcore.dll!ChannelBasedServerConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+=== sta i=4 puia-serve.exe:#1364 05:43:46.97040 05:43:46.97070
+puia-serve.exe 9856 thread 1364 "" blocked 20.609 ms, from 05:43:46.949854 to 05:43:46.970463, woken by puia.exe 10688 thread 5712 "main"
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtWriteFile
+    kernelbase.dll!WriteFile
+    uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite
+    uiautomationcore.dll!ChannelBasedClientConnection::DoCallWithReturn
+    uiautomationcore.dll!CUIAutomationBlockingCore::DoCallWithReturn
+    uiautomationcore.dll!BlockingCoreDispatcher::Dispatch_DoCallWithReturn
+    uiautomationcore.dll!DoCallWithReturn
+    uiautomationcore.dll!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues
+    uiautomationcore.dll!LocalUiaNodeProxy::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::UiaNode_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::InvokeInProcAPI
+    uiautomationcore.dll!UiaNode::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!CAutomationElement::InternalGetPropertyValueEx
+    uiautomationcore.dll!CAutomationElement::GetCurrentPropertyValue
+    uiautomationcore.dll!CAutomationElement::GetPropertyBSTR
+    uiautomationcore.dll!CAutomationElement::get_CurrentName
+    puia.exe!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName
+    puia.exe!RNvMs_Csfc8R8NVfkqM_4puiaNtB4_3Ctx4call
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia-serve.exe 9856 thread 1364 "" blocked 0.042 ms, from 05:43:46.970536 to 05:43:46.970579, woken by puia-serve.exe 9856 thread 12608 ""
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    combase.dll!MTAThreadWaitForCall
+    combase.dll!CSyncClientCall::SendReceive2
+    combase.dll!CSyncClientCall::SendReceiveInRetryContext
+    combase.dll!CSyncClientCall::SendReceive
+    combase.dll!NdrExtpProxySendReceive
+    rpcrt4.dll!NdrpClientCall3
+    rpcrt4.dll!NdrClientCall3
+    onecorecommonproxystub.dll!IServiceProvider_QueryService_Proxy
+    uiautomationcore.dll!ComInvoker::CallTarget
+    uiautomationcore.dll!`anonymous namespace'::ProcessIncomingRequestNoThrow
+    uiautomationcore.dll!ProcessIncomingRequest
+    uiautomationcore.dll!ChannelBasedServerConnection::ProcessOneMessage
+    uiautomationcore.dll!ChannelBasedServerConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtSetEvent
+    kernelbase.dll!SetEvent
+    combase.dll!CMessageCall::NotifyClientTransportCallCompletionReceived
+    combase.dll!CMessageCall::ServerReply
+    combase.dll!ThreadDispatch
+    combase.dll!ThreadWndProc
+    user32.dll!UserCallWinProcCheckWow
+    user32.dll!DispatchMessageWorker
+    puia-serve.exe+0x75c05
+    puia-serve.exe+0x60dcc
+    puia-serve.exe+0x9d533
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia-serve.exe 9856 thread 1364 "" blocked 20.404 ms, from 05:43:46.970632 to 05:43:46.991037, woken by puia.exe 10688 thread 5712 "main"
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtWriteFile
+    kernelbase.dll!WriteFile
+    uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite
+    uiautomationcore.dll!ChannelBasedClientConnection::DoCallWithReturn
+    uiautomationcore.dll!CUIAutomationBlockingCore::DoCallWithReturn
+    uiautomationcore.dll!BlockingCoreDispatcher::Dispatch_DoCallWithReturn
+    uiautomationcore.dll!DoCallWithReturn
+    uiautomationcore.dll!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues
+    uiautomationcore.dll!LocalUiaNodeProxy::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::UiaNode_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::InvokeInProcAPI
+    uiautomationcore.dll!UiaNode::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!CAutomationElement::InternalGetPropertyValueEx
+    uiautomationcore.dll!CAutomationElement::GetCurrentPropertyValue
+    uiautomationcore.dll!CAutomationElement::GetPropertyBSTR
+    uiautomationcore.dll!CAutomationElement::get_CurrentName
+    puia.exe!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName
+    puia.exe!RNvMs_Csfc8R8NVfkqM_4puiaNtB4_3Ctx4call
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+=== sta i=4 puia-serve.exe:#12608 05:43:46.97040 05:43:46.97070
+puia-serve.exe 9856 thread 12608 "" blocked 20.725 ms, from 05:43:46.949798 to 05:43:46.970523, woken by puia-serve.exe 9856 thread 1364 ""
+  where it waited:
+    win32u.dll!NtUserGetMessage
+    user32.dll!GetMessageW
+    puia-serve.exe+0x75c12
+    puia-serve.exe+0x60dcc
+    puia-serve.exe+0x9d533
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    win32u.dll!NtUserPostMessage
+    user32.dll!PostMessageW
+    combase.dll!CComApartment::ClassicSTAPostMessage
+    combase.dll!OXIDEntry::PostCall
+    combase.dll!ClientCall::PostServerCallToProcessLocalOxid
+    combase.dll!CSyncClientCall::SendReceive2
+    combase.dll!CSyncClientCall::SendReceiveInRetryContext
+    combase.dll!CSyncClientCall::SendReceive
+    combase.dll!NdrExtpProxySendReceive
+    rpcrt4.dll!NdrpClientCall3
+    rpcrt4.dll!NdrClientCall3
+    onecorecommonproxystub.dll!IServiceProvider_QueryService_Proxy
+    uiautomationcore.dll!ComInvoker::CallTarget
+    uiautomationcore.dll!`anonymous namespace'::ProcessIncomingRequestNoThrow
+    uiautomationcore.dll!ProcessIncomingRequest
+    uiautomationcore.dll!ChannelBasedServerConnection::ProcessOneMessage
+    uiautomationcore.dll!ChannelBasedServerConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia-serve.exe 9856 thread 12608 "" blocked 20.516 ms, from 05:43:46.970596 to 05:43:46.991113, woken by puia-serve.exe 9856 thread 1364 ""
+  where it waited:
+    win32u.dll!NtUserGetMessage
+    user32.dll!GetMessageW
+    puia-serve.exe+0x75c12
+    puia-serve.exe+0x60dcc
+    puia-serve.exe+0x9d533
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    win32u.dll!NtUserPostMessage
+    user32.dll!PostMessageW
+    combase.dll!CComApartment::ClassicSTAPostMessage
+    combase.dll!OXIDEntry::PostCall
+    combase.dll!ClientCall::PostServerCallToProcessLocalOxid
+    combase.dll!CSyncClientCall::SendReceive2
+    combase.dll!CSyncClientCall::SendReceiveInRetryContext
+    combase.dll!CSyncClientCall::SendReceive
+    combase.dll!NdrExtpProxySendReceive
+    rpcrt4.dll!NdrpClientCall3
+    rpcrt4.dll!NdrClientCall3
+    onecorecommonproxystub.dll!IServiceProvider_QueryService_Proxy
+    uiautomationcore.dll!ComInvoker::CallTarget
+    uiautomationcore.dll!`anonymous namespace'::ProcessIncomingRequestNoThrow
+    uiautomationcore.dll!ProcessIncomingRequest
+    uiautomationcore.dll!ChannelBasedServerConnection::ProcessOneMessage
+    uiautomationcore.dll!ChannelBasedServerConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+=== nocom i=8 puia.exe:#12572 05:43:47.76275 05:43:47.76295
+puia.exe 1588 thread 12572 "main" blocked 20.113 ms, from 05:43:47.742653 to 05:43:47.762767, woken by msmpeng.exe 3400 thread 14164 ""
+  where it waited:
+    ntdll.dll!NtWaitForSingleObject
+    kernelbase.dll!WaitForSingleObjectEx
+    puia.exe!std::sys::thread::windows::sleep
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+puia.exe 1588 thread 12572 "main" blocked 0.067 ms, from 05:43:47.762833 to 05:43:47.762900, woken by puia.exe 1588 thread 9580 ""
+  where it waited:
+  where it was readied:
+    ntdll.dll!NtAlertThreadByThreadIdEx
+    ntdll.dll!RtlpWakeByAddress
+    uiautomationcore.dll!ChannelBasedClientConnection::SetResponseInfo
+    uiautomationcore.dll!ChannelBasedClientConnection::OnData
+    uiautomationcore.dll!ReadWriteChannelInfo::Service
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia.exe 1588 thread 12572 "main" sampled at 05:43:47.762917
+    ntdll.dll!NtWaitForAlertByThreadId
+    ntdll.dll!RtlWaitOnAddress
+    kernelbase.dll!WaitOnAddress
+    uiautomationcore.dll!ChannelBasedClientConnection::WaitForResponse
+    uiautomationcore.dll!ChannelBasedClientConnection::DoCallWithReturn
+    uiautomationcore.dll!CUIAutomationBlockingCore::DoCallWithReturn
+    uiautomationcore.dll!BlockingCoreDispatcher::Dispatch_DoCallWithReturn
+    uiautomationcore.dll!DoCallWithReturn
+    uiautomationcore.dll!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues
+    uiautomationcore.dll!LocalUiaNodeProxy::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::UiaNode_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::InvokeInProcAPI
+    uiautomationcore.dll!UiaNode::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!CAutomationElement::InternalGetPropertyValueEx
+    uiautomationcore.dll!CAutomationElement::GetCurrentPropertyValue
+    uiautomationcore.dll!CAutomationElement::GetPropertyBSTR
+    uiautomationcore.dll!CAutomationElement::get_CurrentName
+    puia.exe!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName
+    puia.exe!RNvMs_Csfc8R8NVfkqM_4puiaNtB4_3Ctx4call
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia.exe 1588 thread 12572 "main" blocked 20.438 ms, from 05:43:47.762946 to 05:43:47.783385, woken by ntoskrnl.exe 0 thread 0 "Idle Thread"
+  where it waited:
+    ntdll.dll!NtWaitForSingleObject
+    kernelbase.dll!WaitForSingleObjectEx
+    puia.exe!std::sys::thread::windows::sleep
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+=== nocom i=8 puia-serve.exe:#12648 05:43:47.76275 05:43:47.76295
+puia-serve.exe 9684 thread 12648 "" blocked 20.223 ms, from 05:43:47.742587 to 05:43:47.762810, woken by puia.exe 1588 thread 12572 "main"
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtWriteFile
+    kernelbase.dll!WriteFile
+    uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite
+    uiautomationcore.dll!ChannelBasedClientConnection::DoCallWithReturn
+    uiautomationcore.dll!CUIAutomationBlockingCore::DoCallWithReturn
+    uiautomationcore.dll!BlockingCoreDispatcher::Dispatch_DoCallWithReturn
+    uiautomationcore.dll!DoCallWithReturn
+    uiautomationcore.dll!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues
+    uiautomationcore.dll!LocalUiaNodeProxy::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::UiaNode_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::InvokeInProcAPI
+    uiautomationcore.dll!UiaNode::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!CAutomationElement::InternalGetPropertyValueEx
+    uiautomationcore.dll!CAutomationElement::GetCurrentPropertyValue
+    uiautomationcore.dll!CAutomationElement::GetPropertyBSTR
+    uiautomationcore.dll!CAutomationElement::get_CurrentName
+    puia.exe!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName
+    puia.exe!RNvMs_Csfc8R8NVfkqM_4puiaNtB4_3Ctx4call
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+puia-serve.exe 9684 thread 12648 "" blocked 20.557 ms, from 05:43:47.762879 to 05:43:47.783437, woken by puia.exe 1588 thread 12572 "main"
+  where it waited:
+    ntdll.dll!NtWaitForMultipleObjects
+    kernelbase.dll!WaitForMultipleObjectsEx
+    kernelbase.dll!WaitForMultipleObjects
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart
+  where it was readied:
+    ntdll.dll!NtWriteFile
+    kernelbase.dll!WriteFile
+    uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite
+    uiautomationcore.dll!ChannelBasedClientConnection::DoCallWithReturn
+    uiautomationcore.dll!CUIAutomationBlockingCore::DoCallWithReturn
+    uiautomationcore.dll!BlockingCoreDispatcher::Dispatch_DoCallWithReturn
+    uiautomationcore.dll!DoCallWithReturn
+    uiautomationcore.dll!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues
+    uiautomationcore.dll!LocalUiaNodeProxy::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::UiaNode_GetPropertyValues
+    uiautomationcore.dll!InProcClientAPIStub::InvokeInProcAPI
+    uiautomationcore.dll!UiaNode::CrossProcess_GetPropertyValues
+    uiautomationcore.dll!CAutomationElement::InternalGetPropertyValueEx
+    uiautomationcore.dll!CAutomationElement::GetCurrentPropertyValue
+    uiautomationcore.dll!CAutomationElement::GetPropertyBSTR
+    uiautomationcore.dll!CAutomationElement::get_CurrentName
+    puia.exe!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName
+    puia.exe!RNvMs_Csfc8R8NVfkqM_4puiaNtB4_3Ctx4call
+    puia.exe!RNvCsfc8R8NVfkqM_4puia5op_of
+    puia.exe!RNvCsfc8R8NVfkqM_4puia4main
+    puia.exe!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia
+    puia.exe!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.10344830021593455906
+    puia.exe!std::rt::lang_start_internal
+    puia.exe!main
+    puia.exe!__scrt_common_main_seh
+    kernel32.dll!BaseThreadInitThunk
+    ntdll.dll!RtlUserThreadStart

@@ -1,0 +1,112 @@
+PAIR label=winforms-findall-beside-name-xb0 a=FindAll@656536 elem 3 (of 16 held, 232 found) b=Name@656536 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=winforms-findall-beside-name-xb0 a_alone count=10 median_ms=157.90 p90_ms=159.94 max_ms=160.54
+RESULT label=winforms-findall-beside-name-xb0 a_with_b count=10 median_ms=166.58 p90_ms=168.63 max_ms=173.50
+RESULT label=winforms-findall-beside-name-xb0 b_alone count=541 median_ms=0.29 p90_ms=0.35 max_ms=0.77
+RESULT label=winforms-findall-beside-name-xb0 b_during_a count=541 median_ms=0.44 p90_ms=0.71 max_ms=26.75
+PAIR label=winforms-findall-beside-name-xb1 a=FindAll@656536 elem 3 (of 16 held, 232 found) b=Name@656536 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=winforms-findall-beside-name-xb1 a_alone count=10 median_ms=161.22 p90_ms=166.14 max_ms=166.39
+RESULT label=winforms-findall-beside-name-xb1 a_with_b count=10 median_ms=170.26 p90_ms=172.12 max_ms=175.75
+RESULT label=winforms-findall-beside-name-xb1 b_alone count=546 median_ms=0.30 p90_ms=0.35 max_ms=1.32
+RESULT label=winforms-findall-beside-name-xb1 b_during_a count=546 median_ms=0.44 p90_ms=0.71 max_ms=25.86
+PAIR label=winforms-findall-beside-rop-xb0 a=FindAll@656536 elem 3 (of 16 held, 232 found) b=Rop@656536 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=winforms-findall-beside-rop-xb0 a_alone count=10 median_ms=158.41 p90_ms=163.07 max_ms=165.72
+RESULT label=winforms-findall-beside-rop-xb0 a_with_b count=10 median_ms=165.35 p90_ms=168.04 max_ms=168.68
+RESULT label=winforms-findall-beside-rop-xb0 b_alone count=531 median_ms=0.27 p90_ms=0.33 max_ms=0.77
+RESULT label=winforms-findall-beside-rop-xb0 b_during_a count=531 median_ms=0.41 p90_ms=0.67 max_ms=27.48
+PAIR label=winforms-findall-beside-rop-xb1 a=FindAll@656536 elem 3 (of 16 held, 232 found) b=Rop@656536 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=winforms-findall-beside-rop-xb1 a_alone count=10 median_ms=159.22 p90_ms=159.89 max_ms=160.04
+RESULT label=winforms-findall-beside-rop-xb1 a_with_b count=10 median_ms=170.38 p90_ms=171.86 max_ms=174.48
+RESULT label=winforms-findall-beside-rop-xb1 b_alone count=549 median_ms=0.27 p90_ms=0.32 max_ms=1.05
+RESULT label=winforms-findall-beside-rop-xb1 b_during_a count=549 median_ms=0.43 p90_ms=0.68 max_ms=26.94
+PAIR label=winforms-ropslow-beside-name-xb0 a=RopSlow@656536 elem 3 (of 16 held, 232 found) b=Name@656536 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=winforms-ropslow-beside-name-xb0 a_alone count=10 median_ms=165.91 p90_ms=170.09 max_ms=172.07
+RESULT label=winforms-ropslow-beside-name-xb0 a_with_b count=10 median_ms=164.33 p90_ms=166.61 max_ms=170.23
+RESULT label=winforms-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.28 p90_ms=0.36 max_ms=0.40
+RESULT label=winforms-ropslow-beside-name-xb0 b_during_a count=10 median_ms=162.40 p90_ms=164.60 max_ms=167.89
+PAIR label=winforms-ropslow-beside-name-xb1 a=RopSlow@656536 elem 3 (of 16 held, 232 found) b=Name@656536 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=winforms-ropslow-beside-name-xb1 a_alone count=10 median_ms=167.85 p90_ms=171.48 max_ms=171.51
+RESULT label=winforms-ropslow-beside-name-xb1 a_with_b count=10 median_ms=164.76 p90_ms=167.18 max_ms=172.71
+RESULT label=winforms-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.30 p90_ms=0.33 max_ms=0.39
+RESULT label=winforms-ropslow-beside-name-xb1 b_during_a count=10 median_ms=162.53 p90_ms=165.10 max_ms=172.92
+PAIR label=winforms-ropslow-beside-rop-xb0 a=RopSlow@656536 elem 3 (of 16 held, 232 found) b=Rop@656536 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=winforms-ropslow-beside-rop-xb0 a_alone count=10 median_ms=167.42 p90_ms=170.38 max_ms=199.27
+RESULT label=winforms-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=165.52 p90_ms=167.96 max_ms=176.69
+RESULT label=winforms-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.28 p90_ms=0.31 max_ms=0.34
+RESULT label=winforms-ropslow-beside-rop-xb0 b_during_a count=11 median_ms=162.69 p90_ms=165.87 max_ms=174.58
+PAIR label=winforms-ropslow-beside-rop-xb1 a=RopSlow@656536 elem 3 (of 16 held, 232 found) b=Rop@656536 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=winforms-ropslow-beside-rop-xb1 a_alone count=10 median_ms=166.11 p90_ms=170.15 max_ms=170.78
+RESULT label=winforms-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=167.12 p90_ms=168.94 max_ms=172.24
+RESULT label=winforms-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.27 p90_ms=0.31 max_ms=0.32
+RESULT label=winforms-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=164.96 p90_ms=166.84 max_ms=170.16
+PAIR label=winforms-textall-beside-name-xb0 a=TextAll@656536 elem 3 (of 16 held, 232 found) b=Name@656536 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+RESULT label=winforms-textall-beside-name-xb0 a_alone count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-name-xb0 a_with_b count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-name-xb0 b_alone count=20 median_ms=0.31 p90_ms=0.33 max_ms=0.36
+RESULT label=winforms-textall-beside-name-xb0 b_during_a count=1 median_ms=0.41 p90_ms=0.41 max_ms=0.41
+PAIR label=winforms-textall-beside-name-xb1 a=TextAll@656536 elem 3 (of 16 held, 232 found) b=Name@656536 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+RESULT label=winforms-textall-beside-name-xb1 a_alone count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-name-xb1 a_with_b count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-name-xb1 b_alone count=20 median_ms=0.31 p90_ms=0.34 max_ms=0.37
+RESULT label=winforms-textall-beside-name-xb1 b_during_a count=0 median_ms=NaN p90_ms=NaN max_ms=NaN
+PAIR label=winforms-textall-beside-rop-xb0 a=TextAll@656536 elem 3 (of 16 held, 232 found) b=Rop@656536 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+RESULT label=winforms-textall-beside-rop-xb0 a_alone count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-rop-xb0 a_with_b count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-rop-xb0 b_alone count=20 median_ms=0.28 p90_ms=0.33 max_ms=0.61
+RESULT label=winforms-textall-beside-rop-xb0 b_during_a count=0 median_ms=NaN p90_ms=NaN max_ms=NaN
+PAIR label=winforms-textall-beside-rop-xb1 a=TextAll@656536 elem 3 (of 16 held, 232 found) b=Rop@656536 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+A error The operation completed successfully. (0x00000000)
+RESULT label=winforms-textall-beside-rop-xb1 a_alone count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-rop-xb1 a_with_b count=10 median_ms=0.00 p90_ms=0.00 max_ms=0.00
+RESULT label=winforms-textall-beside-rop-xb1 b_alone count=20 median_ms=0.28 p90_ms=0.32 max_ms=0.35
+RESULT label=winforms-textall-beside-rop-xb1 b_during_a count=1 median_ms=0.26 p90_ms=0.26 max_ms=0.26

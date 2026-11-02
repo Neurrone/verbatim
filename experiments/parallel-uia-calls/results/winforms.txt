@@ -1,0 +1,569 @@
+TARGET label=winforms hwnd=656536 pid=2016 ui_tid=13608 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms client=per-thread
+CTX n=1 descendants_found=232 elems_held=16 text=false msaa=true
+CTX n=2 descendants_found=232 elems_held=16 text=false msaa=true
+CTX n=4 descendants_found=232 elems_held=16 text=false msaa=true
+CTX n=8 descendants_found=232 elems_held=16 text=false msaa=true
+RAW label=winforms op=name n=1 rep=0 wall_ms=14.870 errors=0
+RAW label=winforms op=name n=1 rep=1 wall_ms=15.059 errors=0
+RAW label=winforms op=name n=1 rep=2 wall_ms=14.378 errors=0
+RAW label=winforms op=name n=1 rep=3 wall_ms=13.538 errors=0
+RAW label=winforms op=name n=1 rep=4 wall_ms=13.651 errors=0
+RAW label=winforms op=name n=1 rep=5 wall_ms=13.533 errors=0
+RAW label=winforms op=name n=1 rep=6 wall_ms=14.218 errors=0
+RAW label=winforms op=name n=1 rep=7 wall_ms=14.911 errors=0
+RAW label=winforms op=name n=1 rep=8 wall_ms=14.844 errors=0
+RAW label=winforms op=name n=1 rep=9 wall_ms=14.391 errors=0
+RAW label=winforms op=name n=1 rep=10 wall_ms=13.946 errors=0
+RAW label=winforms op=name n=1 rep=11 wall_ms=13.307 errors=0
+RAW label=winforms op=name n=1 rep=12 wall_ms=14.417 errors=0
+RAW label=winforms op=name n=1 rep=13 wall_ms=13.544 errors=0
+RAW label=winforms op=name n=1 rep=14 wall_ms=14.052 errors=0
+RAW label=winforms op=name n=1 rep=15 wall_ms=13.404 errors=0
+RAW label=winforms op=name n=1 rep=16 wall_ms=13.375 errors=0
+RAW label=winforms op=name n=1 rep=17 wall_ms=13.633 errors=0
+RAW label=winforms op=name n=1 rep=18 wall_ms=14.076 errors=0
+RAW label=winforms op=name n=1 rep=19 wall_ms=13.637 errors=0
+RESULT label=winforms op=name n=1 k=64 median_ms=14.05 p90_ms=14.87 per_call_us=219.6 speedup=1.00 errors=0
+RAW label=winforms op=name n=2 rep=0 wall_ms=11.604 errors=0
+RAW label=winforms op=name n=2 rep=1 wall_ms=11.261 errors=0
+RAW label=winforms op=name n=2 rep=2 wall_ms=12.031 errors=0
+RAW label=winforms op=name n=2 rep=3 wall_ms=12.052 errors=0
+RAW label=winforms op=name n=2 rep=4 wall_ms=10.986 errors=0
+RAW label=winforms op=name n=2 rep=5 wall_ms=11.726 errors=0
+RAW label=winforms op=name n=2 rep=6 wall_ms=12.262 errors=0
+RAW label=winforms op=name n=2 rep=7 wall_ms=12.141 errors=0
+RAW label=winforms op=name n=2 rep=8 wall_ms=11.976 errors=0
+RAW label=winforms op=name n=2 rep=9 wall_ms=11.760 errors=0
+RAW label=winforms op=name n=2 rep=10 wall_ms=11.893 errors=0
+RAW label=winforms op=name n=2 rep=11 wall_ms=12.011 errors=0
+RAW label=winforms op=name n=2 rep=12 wall_ms=12.131 errors=0
+RAW label=winforms op=name n=2 rep=13 wall_ms=11.427 errors=0
+RAW label=winforms op=name n=2 rep=14 wall_ms=11.192 errors=0
+RAW label=winforms op=name n=2 rep=15 wall_ms=11.075 errors=0
+RAW label=winforms op=name n=2 rep=16 wall_ms=11.615 errors=0
+RAW label=winforms op=name n=2 rep=17 wall_ms=11.345 errors=0
+RAW label=winforms op=name n=2 rep=18 wall_ms=11.310 errors=0
+RAW label=winforms op=name n=2 rep=19 wall_ms=11.756 errors=0
+RESULT label=winforms op=name n=2 k=64 median_ms=11.76 p90_ms=12.13 per_call_us=183.7 speedup=1.20 errors=0
+RAW label=winforms op=name n=4 rep=0 wall_ms=11.869 errors=0
+RAW label=winforms op=name n=4 rep=1 wall_ms=11.989 errors=0
+RAW label=winforms op=name n=4 rep=2 wall_ms=11.396 errors=0
+RAW label=winforms op=name n=4 rep=3 wall_ms=10.537 errors=0
+RAW label=winforms op=name n=4 rep=4 wall_ms=11.383 errors=0
+RAW label=winforms op=name n=4 rep=5 wall_ms=10.922 errors=0
+RAW label=winforms op=name n=4 rep=6 wall_ms=11.088 errors=0
+RAW label=winforms op=name n=4 rep=7 wall_ms=10.834 errors=0
+RAW label=winforms op=name n=4 rep=8 wall_ms=11.000 errors=0
+RAW label=winforms op=name n=4 rep=9 wall_ms=11.307 errors=0
+RAW label=winforms op=name n=4 rep=10 wall_ms=11.285 errors=0
+RAW label=winforms op=name n=4 rep=11 wall_ms=11.728 errors=0
+RAW label=winforms op=name n=4 rep=12 wall_ms=11.955 errors=0
+RAW label=winforms op=name n=4 rep=13 wall_ms=11.539 errors=0
+RAW label=winforms op=name n=4 rep=14 wall_ms=11.564 errors=0
+RAW label=winforms op=name n=4 rep=15 wall_ms=11.588 errors=0
+RAW label=winforms op=name n=4 rep=16 wall_ms=11.195 errors=0
+RAW label=winforms op=name n=4 rep=17 wall_ms=11.163 errors=0
+RAW label=winforms op=name n=4 rep=18 wall_ms=11.195 errors=0
+RAW label=winforms op=name n=4 rep=19 wall_ms=10.764 errors=0
+RESULT label=winforms op=name n=4 k=64 median_ms=11.31 p90_ms=11.87 per_call_us=176.7 speedup=1.24 errors=0
+RAW label=winforms op=name n=8 rep=0 wall_ms=11.329 errors=0
+RAW label=winforms op=name n=8 rep=1 wall_ms=11.155 errors=0
+RAW label=winforms op=name n=8 rep=2 wall_ms=11.255 errors=0
+RAW label=winforms op=name n=8 rep=3 wall_ms=11.322 errors=0
+RAW label=winforms op=name n=8 rep=4 wall_ms=11.420 errors=0
+RAW label=winforms op=name n=8 rep=5 wall_ms=12.844 errors=0
+RAW label=winforms op=name n=8 rep=6 wall_ms=12.932 errors=0
+RAW label=winforms op=name n=8 rep=7 wall_ms=11.681 errors=0
+RAW label=winforms op=name n=8 rep=8 wall_ms=11.016 errors=0
+RAW label=winforms op=name n=8 rep=9 wall_ms=11.020 errors=0
+RAW label=winforms op=name n=8 rep=10 wall_ms=12.097 errors=0
+RAW label=winforms op=name n=8 rep=11 wall_ms=11.500 errors=0
+RAW label=winforms op=name n=8 rep=12 wall_ms=11.102 errors=0
+RAW label=winforms op=name n=8 rep=13 wall_ms=11.628 errors=0
+RAW label=winforms op=name n=8 rep=14 wall_ms=11.672 errors=0
+RAW label=winforms op=name n=8 rep=15 wall_ms=11.119 errors=0
+RAW label=winforms op=name n=8 rep=16 wall_ms=11.484 errors=0
+RAW label=winforms op=name n=8 rep=17 wall_ms=12.183 errors=0
+RAW label=winforms op=name n=8 rep=18 wall_ms=11.468 errors=0
+RAW label=winforms op=name n=8 rep=19 wall_ms=12.065 errors=0
+RESULT label=winforms op=name n=8 k=64 median_ms=11.48 p90_ms=12.18 per_call_us=179.4 speedup=1.22 errors=0
+RAW label=winforms op=findall n=1 rep=0 wall_ms=1276.873 errors=0
+RAW label=winforms op=findall n=1 rep=1 wall_ms=1259.175 errors=0
+RAW label=winforms op=findall n=1 rep=2 wall_ms=1286.265 errors=0
+RAW label=winforms op=findall n=1 rep=3 wall_ms=1273.428 errors=0
+RAW label=winforms op=findall n=1 rep=4 wall_ms=1265.289 errors=0
+RAW label=winforms op=findall n=1 rep=5 wall_ms=1266.669 errors=0
+RAW label=winforms op=findall n=1 rep=6 wall_ms=1296.314 errors=0
+RAW label=winforms op=findall n=1 rep=7 wall_ms=1265.536 errors=0
+RAW label=winforms op=findall n=1 rep=8 wall_ms=1281.270 errors=0
+RAW label=winforms op=findall n=1 rep=9 wall_ms=1264.551 errors=0
+RAW label=winforms op=findall n=1 rep=10 wall_ms=1257.519 errors=0
+RAW label=winforms op=findall n=1 rep=11 wall_ms=1259.546 errors=0
+RAW label=winforms op=findall n=1 rep=12 wall_ms=1270.145 errors=0
+RAW label=winforms op=findall n=1 rep=13 wall_ms=1264.652 errors=0
+RAW label=winforms op=findall n=1 rep=14 wall_ms=1271.331 errors=0
+RAW label=winforms op=findall n=1 rep=15 wall_ms=1273.530 errors=0
+RAW label=winforms op=findall n=1 rep=16 wall_ms=1278.373 errors=0
+RAW label=winforms op=findall n=1 rep=17 wall_ms=1262.324 errors=0
+RAW label=winforms op=findall n=1 rep=18 wall_ms=1263.550 errors=0
+RAW label=winforms op=findall n=1 rep=19 wall_ms=1280.516 errors=0
+RESULT label=winforms op=findall n=1 k=8 median_ms=1270.15 p90_ms=1281.27 per_call_us=158768.1 speedup=1.00 errors=0
+RAW label=winforms op=findall n=2 rep=0 wall_ms=1127.257 errors=0
+RAW label=winforms op=findall n=2 rep=1 wall_ms=1115.200 errors=0
+RAW label=winforms op=findall n=2 rep=2 wall_ms=1102.760 errors=0
+RAW label=winforms op=findall n=2 rep=3 wall_ms=1147.993 errors=0
+RAW label=winforms op=findall n=2 rep=4 wall_ms=1118.066 errors=0
+RAW label=winforms op=findall n=2 rep=5 wall_ms=1119.954 errors=0
+RAW label=winforms op=findall n=2 rep=6 wall_ms=1123.464 errors=0
+RAW label=winforms op=findall n=2 rep=7 wall_ms=1132.262 errors=0
+RAW label=winforms op=findall n=2 rep=8 wall_ms=1136.841 errors=0
+RAW label=winforms op=findall n=2 rep=9 wall_ms=1132.540 errors=0
+RAW label=winforms op=findall n=2 rep=10 wall_ms=1116.968 errors=0
+RAW label=winforms op=findall n=2 rep=11 wall_ms=1109.628 errors=0
+RAW label=winforms op=findall n=2 rep=12 wall_ms=1115.391 errors=0
+RAW label=winforms op=findall n=2 rep=13 wall_ms=1102.294 errors=0
+RAW label=winforms op=findall n=2 rep=14 wall_ms=1118.673 errors=0
+RAW label=winforms op=findall n=2 rep=15 wall_ms=1117.314 errors=0
+RAW label=winforms op=findall n=2 rep=16 wall_ms=1110.767 errors=0
+RAW label=winforms op=findall n=2 rep=17 wall_ms=1118.586 errors=0
+RAW label=winforms op=findall n=2 rep=18 wall_ms=1113.758 errors=0
+RAW label=winforms op=findall n=2 rep=19 wall_ms=1121.985 errors=0
+RESULT label=winforms op=findall n=2 k=8 median_ms=1118.59 p90_ms=1132.54 per_call_us=139823.2 speedup=1.14 errors=0
+RAW label=winforms op=findall n=4 rep=0 wall_ms=1113.585 errors=0
+RAW label=winforms op=findall n=4 rep=1 wall_ms=1112.147 errors=0
+RAW label=winforms op=findall n=4 rep=2 wall_ms=1125.145 errors=0
+RAW label=winforms op=findall n=4 rep=3 wall_ms=1107.165 errors=0
+RAW label=winforms op=findall n=4 rep=4 wall_ms=1110.830 errors=0
+RAW label=winforms op=findall n=4 rep=5 wall_ms=1123.937 errors=0
+RAW label=winforms op=findall n=4 rep=6 wall_ms=1118.002 errors=0
+RAW label=winforms op=findall n=4 rep=7 wall_ms=1116.432 errors=0
+RAW label=winforms op=findall n=4 rep=8 wall_ms=1108.817 errors=0
+RAW label=winforms op=findall n=4 rep=9 wall_ms=1120.879 errors=0
+RAW label=winforms op=findall n=4 rep=10 wall_ms=1119.974 errors=0
+RAW label=winforms op=findall n=4 rep=11 wall_ms=1104.406 errors=0
+RAW label=winforms op=findall n=4 rep=12 wall_ms=1113.001 errors=0
+RAW label=winforms op=findall n=4 rep=13 wall_ms=1118.574 errors=0
+RAW label=winforms op=findall n=4 rep=14 wall_ms=1103.446 errors=0
+RAW label=winforms op=findall n=4 rep=15 wall_ms=1125.828 errors=0
+RAW label=winforms op=findall n=4 rep=16 wall_ms=1119.687 errors=0
+RAW label=winforms op=findall n=4 rep=17 wall_ms=1108.536 errors=0
+RAW label=winforms op=findall n=4 rep=18 wall_ms=1102.966 errors=0
+RAW label=winforms op=findall n=4 rep=19 wall_ms=1092.968 errors=0
+RESULT label=winforms op=findall n=4 k=8 median_ms=1113.59 p90_ms=1123.94 per_call_us=139198.1 speedup=1.14 errors=0
+RAW label=winforms op=findall n=8 rep=0 wall_ms=1116.906 errors=0
+RAW label=winforms op=findall n=8 rep=1 wall_ms=1120.339 errors=0
+RAW label=winforms op=findall n=8 rep=2 wall_ms=1113.252 errors=0
+RAW label=winforms op=findall n=8 rep=3 wall_ms=1113.848 errors=0
+RAW label=winforms op=findall n=8 rep=4 wall_ms=1111.855 errors=0
+RAW label=winforms op=findall n=8 rep=5 wall_ms=1112.039 errors=0
+RAW label=winforms op=findall n=8 rep=6 wall_ms=1119.647 errors=0
+RAW label=winforms op=findall n=8 rep=7 wall_ms=1128.953 errors=0
+RAW label=winforms op=findall n=8 rep=8 wall_ms=1103.012 errors=0
+RAW label=winforms op=findall n=8 rep=9 wall_ms=1117.752 errors=0
+RAW label=winforms op=findall n=8 rep=10 wall_ms=1125.698 errors=0
+RAW label=winforms op=findall n=8 rep=11 wall_ms=1163.454 errors=0
+RAW label=winforms op=findall n=8 rep=12 wall_ms=1122.632 errors=0
+RAW label=winforms op=findall n=8 rep=13 wall_ms=1143.194 errors=0
+RAW label=winforms op=findall n=8 rep=14 wall_ms=1118.942 errors=0
+RAW label=winforms op=findall n=8 rep=15 wall_ms=1127.556 errors=0
+RAW label=winforms op=findall n=8 rep=16 wall_ms=1114.644 errors=0
+RAW label=winforms op=findall n=8 rep=17 wall_ms=1106.570 errors=0
+RAW label=winforms op=findall n=8 rep=18 wall_ms=1102.802 errors=0
+RAW label=winforms op=findall n=8 rep=19 wall_ms=1121.124 errors=0
+RESULT label=winforms op=findall n=8 k=8 median_ms=1118.94 p90_ms=1128.95 per_call_us=139867.8 speedup=1.14 errors=0
+RAW label=winforms op=fromhandle n=1 rep=0 wall_ms=26.960 errors=0
+RAW label=winforms op=fromhandle n=1 rep=1 wall_ms=26.496 errors=0
+RAW label=winforms op=fromhandle n=1 rep=2 wall_ms=27.626 errors=0
+RAW label=winforms op=fromhandle n=1 rep=3 wall_ms=26.598 errors=0
+RAW label=winforms op=fromhandle n=1 rep=4 wall_ms=25.685 errors=0
+RAW label=winforms op=fromhandle n=1 rep=5 wall_ms=26.207 errors=0
+RAW label=winforms op=fromhandle n=1 rep=6 wall_ms=26.096 errors=0
+RAW label=winforms op=fromhandle n=1 rep=7 wall_ms=27.114 errors=0
+RAW label=winforms op=fromhandle n=1 rep=8 wall_ms=27.511 errors=0
+RAW label=winforms op=fromhandle n=1 rep=9 wall_ms=24.780 errors=0
+RAW label=winforms op=fromhandle n=1 rep=10 wall_ms=26.929 errors=0
+RAW label=winforms op=fromhandle n=1 rep=11 wall_ms=25.989 errors=0
+RAW label=winforms op=fromhandle n=1 rep=12 wall_ms=25.680 errors=0
+RAW label=winforms op=fromhandle n=1 rep=13 wall_ms=26.176 errors=0
+RAW label=winforms op=fromhandle n=1 rep=14 wall_ms=25.188 errors=0
+RAW label=winforms op=fromhandle n=1 rep=15 wall_ms=25.722 errors=0
+RAW label=winforms op=fromhandle n=1 rep=16 wall_ms=27.743 errors=0
+RAW label=winforms op=fromhandle n=1 rep=17 wall_ms=25.118 errors=0
+RAW label=winforms op=fromhandle n=1 rep=18 wall_ms=25.666 errors=0
+RAW label=winforms op=fromhandle n=1 rep=19 wall_ms=25.874 errors=0
+RESULT label=winforms op=fromhandle n=1 k=32 median_ms=26.18 p90_ms=27.51 per_call_us=818.0 speedup=1.00 errors=0
+RAW label=winforms op=fromhandle n=2 rep=0 wall_ms=25.558 errors=0
+RAW label=winforms op=fromhandle n=2 rep=1 wall_ms=23.990 errors=0
+RAW label=winforms op=fromhandle n=2 rep=2 wall_ms=22.197 errors=0
+RAW label=winforms op=fromhandle n=2 rep=3 wall_ms=23.706 errors=0
+RAW label=winforms op=fromhandle n=2 rep=4 wall_ms=23.567 errors=0
+RAW label=winforms op=fromhandle n=2 rep=5 wall_ms=24.503 errors=0
+RAW label=winforms op=fromhandle n=2 rep=6 wall_ms=24.534 errors=0
+RAW label=winforms op=fromhandle n=2 rep=7 wall_ms=22.758 errors=0
+RAW label=winforms op=fromhandle n=2 rep=8 wall_ms=23.655 errors=0
+RAW label=winforms op=fromhandle n=2 rep=9 wall_ms=24.759 errors=0
+RAW label=winforms op=fromhandle n=2 rep=10 wall_ms=23.875 errors=0
+RAW label=winforms op=fromhandle n=2 rep=11 wall_ms=24.197 errors=0
+RAW label=winforms op=fromhandle n=2 rep=12 wall_ms=24.539 errors=0
+RAW label=winforms op=fromhandle n=2 rep=13 wall_ms=27.637 errors=0
+RAW label=winforms op=fromhandle n=2 rep=14 wall_ms=24.105 errors=0
+RAW label=winforms op=fromhandle n=2 rep=15 wall_ms=25.100 errors=0
+RAW label=winforms op=fromhandle n=2 rep=16 wall_ms=25.420 errors=0
+RAW label=winforms op=fromhandle n=2 rep=17 wall_ms=24.984 errors=0
+RAW label=winforms op=fromhandle n=2 rep=18 wall_ms=26.316 errors=0
+RAW label=winforms op=fromhandle n=2 rep=19 wall_ms=23.978 errors=0
+RESULT label=winforms op=fromhandle n=2 k=32 median_ms=24.50 p90_ms=25.56 per_call_us=765.7 speedup=1.07 errors=0
+RAW label=winforms op=fromhandle n=4 rep=0 wall_ms=21.816 errors=0
+RAW label=winforms op=fromhandle n=4 rep=1 wall_ms=22.747 errors=0
+RAW label=winforms op=fromhandle n=4 rep=2 wall_ms=22.253 errors=0
+RAW label=winforms op=fromhandle n=4 rep=3 wall_ms=21.749 errors=0
+RAW label=winforms op=fromhandle n=4 rep=4 wall_ms=21.923 errors=0
+RAW label=winforms op=fromhandle n=4 rep=5 wall_ms=22.678 errors=0
+RAW label=winforms op=fromhandle n=4 rep=6 wall_ms=21.834 errors=0
+RAW label=winforms op=fromhandle n=4 rep=7 wall_ms=21.573 errors=0
+RAW label=winforms op=fromhandle n=4 rep=8 wall_ms=21.688 errors=0
+RAW label=winforms op=fromhandle n=4 rep=9 wall_ms=21.952 errors=0
+RAW label=winforms op=fromhandle n=4 rep=10 wall_ms=21.419 errors=0
+RAW label=winforms op=fromhandle n=4 rep=11 wall_ms=21.454 errors=0
+RAW label=winforms op=fromhandle n=4 rep=12 wall_ms=21.282 errors=0
+RAW label=winforms op=fromhandle n=4 rep=13 wall_ms=22.034 errors=0
+RAW label=winforms op=fromhandle n=4 rep=14 wall_ms=21.652 errors=0
+RAW label=winforms op=fromhandle n=4 rep=15 wall_ms=23.528 errors=0
+RAW label=winforms op=fromhandle n=4 rep=16 wall_ms=22.518 errors=0
+RAW label=winforms op=fromhandle n=4 rep=17 wall_ms=23.431 errors=0
+RAW label=winforms op=fromhandle n=4 rep=18 wall_ms=22.112 errors=0
+RAW label=winforms op=fromhandle n=4 rep=19 wall_ms=22.134 errors=0
+RESULT label=winforms op=fromhandle n=4 k=32 median_ms=21.95 p90_ms=22.75 per_call_us=686.0 speedup=1.19 errors=0
+RAW label=winforms op=fromhandle n=8 rep=0 wall_ms=22.569 errors=0
+RAW label=winforms op=fromhandle n=8 rep=1 wall_ms=21.182 errors=0
+RAW label=winforms op=fromhandle n=8 rep=2 wall_ms=21.280 errors=0
+RAW label=winforms op=fromhandle n=8 rep=3 wall_ms=21.771 errors=0
+RAW label=winforms op=fromhandle n=8 rep=4 wall_ms=23.192 errors=0
+RAW label=winforms op=fromhandle n=8 rep=5 wall_ms=22.801 errors=0
+RAW label=winforms op=fromhandle n=8 rep=6 wall_ms=22.479 errors=0
+RAW label=winforms op=fromhandle n=8 rep=7 wall_ms=22.535 errors=0
+RAW label=winforms op=fromhandle n=8 rep=8 wall_ms=23.572 errors=0
+RAW label=winforms op=fromhandle n=8 rep=9 wall_ms=22.995 errors=0
+RAW label=winforms op=fromhandle n=8 rep=10 wall_ms=23.067 errors=0
+RAW label=winforms op=fromhandle n=8 rep=11 wall_ms=22.758 errors=0
+RAW label=winforms op=fromhandle n=8 rep=12 wall_ms=22.082 errors=0
+RAW label=winforms op=fromhandle n=8 rep=13 wall_ms=22.128 errors=0
+RAW label=winforms op=fromhandle n=8 rep=14 wall_ms=21.539 errors=0
+RAW label=winforms op=fromhandle n=8 rep=15 wall_ms=22.464 errors=0
+RAW label=winforms op=fromhandle n=8 rep=16 wall_ms=23.053 errors=0
+RAW label=winforms op=fromhandle n=8 rep=17 wall_ms=23.774 errors=0
+RAW label=winforms op=fromhandle n=8 rep=18 wall_ms=23.520 errors=0
+RAW label=winforms op=fromhandle n=8 rep=19 wall_ms=22.007 errors=0
+RESULT label=winforms op=fromhandle n=8 k=32 median_ms=22.57 p90_ms=23.52 per_call_us=705.3 speedup=1.16 errors=0
+RAW label=winforms op=text n=1 rep=0 wall_ms=0.014 errors=32
+RAW label=winforms op=text n=1 rep=1 wall_ms=0.011 errors=32
+RAW label=winforms op=text n=1 rep=2 wall_ms=0.011 errors=32
+RAW label=winforms op=text n=1 rep=3 wall_ms=0.017 errors=32
+RAW label=winforms op=text n=1 rep=4 wall_ms=0.020 errors=32
+RAW label=winforms op=text n=1 rep=5 wall_ms=0.016 errors=32
+RAW label=winforms op=text n=1 rep=6 wall_ms=0.014 errors=32
+RAW label=winforms op=text n=1 rep=7 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=8 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=9 wall_ms=0.014 errors=32
+RAW label=winforms op=text n=1 rep=10 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=11 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=12 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=13 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=14 wall_ms=0.015 errors=32
+RAW label=winforms op=text n=1 rep=15 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=16 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=17 wall_ms=0.014 errors=32
+RAW label=winforms op=text n=1 rep=18 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=1 rep=19 wall_ms=0.013 errors=32
+RESULT label=winforms op=text n=1 k=32 median_ms=0.01 p90_ms=0.02 per_call_us=0.4 speedup=1.00 errors=640
+RAW label=winforms op=text n=2 rep=0 wall_ms=0.015 errors=32
+RAW label=winforms op=text n=2 rep=1 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=2 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=2 rep=3 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=4 wall_ms=0.011 errors=32
+RAW label=winforms op=text n=2 rep=5 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=2 rep=6 wall_ms=0.011 errors=32
+RAW label=winforms op=text n=2 rep=7 wall_ms=0.011 errors=32
+RAW label=winforms op=text n=2 rep=8 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=9 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=10 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=11 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=12 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=13 wall_ms=0.011 errors=32
+RAW label=winforms op=text n=2 rep=14 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=15 wall_ms=0.012 errors=32
+RAW label=winforms op=text n=2 rep=16 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=17 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=18 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=2 rep=19 wall_ms=0.011 errors=32
+RESULT label=winforms op=text n=2 k=32 median_ms=0.01 p90_ms=0.01 per_call_us=0.3 speedup=1.29 errors=640
+RAW label=winforms op=text n=4 rep=0 wall_ms=0.010 errors=32
+RAW label=winforms op=text n=4 rep=1 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=4 rep=2 wall_ms=0.017 errors=32
+RAW label=winforms op=text n=4 rep=3 wall_ms=0.015 errors=32
+RAW label=winforms op=text n=4 rep=4 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=4 rep=5 wall_ms=0.017 errors=32
+RAW label=winforms op=text n=4 rep=6 wall_ms=0.015 errors=32
+RAW label=winforms op=text n=4 rep=7 wall_ms=0.012 errors=32
+RAW label=winforms op=text n=4 rep=8 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=4 rep=9 wall_ms=0.022 errors=32
+RAW label=winforms op=text n=4 rep=10 wall_ms=0.014 errors=32
+RAW label=winforms op=text n=4 rep=11 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=4 rep=12 wall_ms=0.014 errors=32
+RAW label=winforms op=text n=4 rep=13 wall_ms=0.017 errors=32
+RAW label=winforms op=text n=4 rep=14 wall_ms=0.012 errors=32
+RAW label=winforms op=text n=4 rep=15 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=4 rep=16 wall_ms=0.018 errors=32
+RAW label=winforms op=text n=4 rep=17 wall_ms=0.012 errors=32
+RAW label=winforms op=text n=4 rep=18 wall_ms=0.013 errors=32
+RAW label=winforms op=text n=4 rep=19 wall_ms=0.013 errors=32
+RESULT label=winforms op=text n=4 k=32 median_ms=0.01 p90_ms=0.02 per_call_us=0.4 speedup=1.02 errors=640
+RAW label=winforms op=text n=8 rep=0 wall_ms=0.036 errors=32
+RAW label=winforms op=text n=8 rep=1 wall_ms=0.026 errors=32
+RAW label=winforms op=text n=8 rep=2 wall_ms=0.028 errors=32
+RAW label=winforms op=text n=8 rep=3 wall_ms=0.042 errors=32
+RAW label=winforms op=text n=8 rep=4 wall_ms=0.039 errors=32
+RAW label=winforms op=text n=8 rep=5 wall_ms=0.038 errors=32
+RAW label=winforms op=text n=8 rep=6 wall_ms=0.028 errors=32
+RAW label=winforms op=text n=8 rep=7 wall_ms=0.024 errors=32
+RAW label=winforms op=text n=8 rep=8 wall_ms=0.034 errors=32
+RAW label=winforms op=text n=8 rep=9 wall_ms=0.029 errors=32
+RAW label=winforms op=text n=8 rep=10 wall_ms=0.029 errors=32
+RAW label=winforms op=text n=8 rep=11 wall_ms=0.026 errors=32
+RAW label=winforms op=text n=8 rep=12 wall_ms=0.030 errors=32
+RAW label=winforms op=text n=8 rep=13 wall_ms=0.046 errors=32
+RAW label=winforms op=text n=8 rep=14 wall_ms=0.040 errors=32
+RAW label=winforms op=text n=8 rep=15 wall_ms=0.020 errors=32
+RAW label=winforms op=text n=8 rep=16 wall_ms=0.028 errors=32
+RAW label=winforms op=text n=8 rep=17 wall_ms=0.026 errors=32
+RAW label=winforms op=text n=8 rep=18 wall_ms=0.024 errors=32
+RAW label=winforms op=text n=8 rep=19 wall_ms=0.023 errors=32
+RESULT label=winforms op=text n=8 k=32 median_ms=0.03 p90_ms=0.04 per_call_us=0.9 speedup=0.47 errors=640
+RAW label=winforms op=msaa n=1 rep=0 wall_ms=7.093 errors=0
+RAW label=winforms op=msaa n=1 rep=1 wall_ms=7.074 errors=0
+RAW label=winforms op=msaa n=1 rep=2 wall_ms=7.146 errors=0
+RAW label=winforms op=msaa n=1 rep=3 wall_ms=7.131 errors=0
+RAW label=winforms op=msaa n=1 rep=4 wall_ms=7.225 errors=0
+RAW label=winforms op=msaa n=1 rep=5 wall_ms=7.052 errors=0
+RAW label=winforms op=msaa n=1 rep=6 wall_ms=7.347 errors=0
+RAW label=winforms op=msaa n=1 rep=7 wall_ms=7.398 errors=0
+RAW label=winforms op=msaa n=1 rep=8 wall_ms=7.456 errors=0
+RAW label=winforms op=msaa n=1 rep=9 wall_ms=7.461 errors=0
+RAW label=winforms op=msaa n=1 rep=10 wall_ms=7.446 errors=0
+RAW label=winforms op=msaa n=1 rep=11 wall_ms=7.322 errors=0
+RAW label=winforms op=msaa n=1 rep=12 wall_ms=7.079 errors=0
+RAW label=winforms op=msaa n=1 rep=13 wall_ms=6.872 errors=0
+RAW label=winforms op=msaa n=1 rep=14 wall_ms=6.879 errors=0
+RAW label=winforms op=msaa n=1 rep=15 wall_ms=6.816 errors=0
+RAW label=winforms op=msaa n=1 rep=16 wall_ms=6.985 errors=0
+RAW label=winforms op=msaa n=1 rep=17 wall_ms=6.980 errors=0
+RAW label=winforms op=msaa n=1 rep=18 wall_ms=7.801 errors=0
+RAW label=winforms op=msaa n=1 rep=19 wall_ms=6.930 errors=0
+RESULT label=winforms op=msaa n=1 k=64 median_ms=7.13 p90_ms=7.46 per_call_us=111.4 speedup=1.00 errors=0
+RAW label=winforms op=msaa n=2 rep=0 wall_ms=4.257 errors=0
+RAW label=winforms op=msaa n=2 rep=1 wall_ms=4.167 errors=0
+RAW label=winforms op=msaa n=2 rep=2 wall_ms=4.204 errors=0
+RAW label=winforms op=msaa n=2 rep=3 wall_ms=4.276 errors=0
+RAW label=winforms op=msaa n=2 rep=4 wall_ms=4.238 errors=0
+RAW label=winforms op=msaa n=2 rep=5 wall_ms=4.339 errors=0
+RAW label=winforms op=msaa n=2 rep=6 wall_ms=4.489 errors=0
+RAW label=winforms op=msaa n=2 rep=7 wall_ms=4.319 errors=0
+RAW label=winforms op=msaa n=2 rep=8 wall_ms=4.278 errors=0
+RAW label=winforms op=msaa n=2 rep=9 wall_ms=4.341 errors=0
+RAW label=winforms op=msaa n=2 rep=10 wall_ms=8.148 errors=0
+RAW label=winforms op=msaa n=2 rep=11 wall_ms=4.350 errors=0
+RAW label=winforms op=msaa n=2 rep=12 wall_ms=4.676 errors=0
+RAW label=winforms op=msaa n=2 rep=13 wall_ms=4.408 errors=0
+RAW label=winforms op=msaa n=2 rep=14 wall_ms=4.614 errors=0
+RAW label=winforms op=msaa n=2 rep=15 wall_ms=4.458 errors=0
+RAW label=winforms op=msaa n=2 rep=16 wall_ms=4.527 errors=0
+RAW label=winforms op=msaa n=2 rep=17 wall_ms=4.715 errors=0
+RAW label=winforms op=msaa n=2 rep=18 wall_ms=4.325 errors=0
+RAW label=winforms op=msaa n=2 rep=19 wall_ms=4.474 errors=0
+RESULT label=winforms op=msaa n=2 k=64 median_ms=4.35 p90_ms=4.68 per_call_us=68.0 speedup=1.64 errors=0
+RAW label=winforms op=msaa n=4 rep=0 wall_ms=4.237 errors=0
+RAW label=winforms op=msaa n=4 rep=1 wall_ms=4.295 errors=0
+RAW label=winforms op=msaa n=4 rep=2 wall_ms=4.646 errors=0
+RAW label=winforms op=msaa n=4 rep=3 wall_ms=4.448 errors=0
+RAW label=winforms op=msaa n=4 rep=4 wall_ms=4.466 errors=0
+RAW label=winforms op=msaa n=4 rep=5 wall_ms=4.488 errors=0
+RAW label=winforms op=msaa n=4 rep=6 wall_ms=4.360 errors=0
+RAW label=winforms op=msaa n=4 rep=7 wall_ms=4.501 errors=0
+RAW label=winforms op=msaa n=4 rep=8 wall_ms=4.253 errors=0
+RAW label=winforms op=msaa n=4 rep=9 wall_ms=4.443 errors=0
+RAW label=winforms op=msaa n=4 rep=10 wall_ms=4.330 errors=0
+RAW label=winforms op=msaa n=4 rep=11 wall_ms=4.247 errors=0
+RAW label=winforms op=msaa n=4 rep=12 wall_ms=4.370 errors=0
+RAW label=winforms op=msaa n=4 rep=13 wall_ms=4.518 errors=0
+RAW label=winforms op=msaa n=4 rep=14 wall_ms=4.294 errors=0
+RAW label=winforms op=msaa n=4 rep=15 wall_ms=4.362 errors=0
+RAW label=winforms op=msaa n=4 rep=16 wall_ms=4.546 errors=0
+RAW label=winforms op=msaa n=4 rep=17 wall_ms=4.439 errors=0
+RAW label=winforms op=msaa n=4 rep=18 wall_ms=4.307 errors=0
+RAW label=winforms op=msaa n=4 rep=19 wall_ms=4.240 errors=0
+RESULT label=winforms op=msaa n=4 k=64 median_ms=4.37 p90_ms=4.52 per_call_us=68.3 speedup=1.63 errors=0
+RAW label=winforms op=msaa n=8 rep=0 wall_ms=4.274 errors=0
+RAW label=winforms op=msaa n=8 rep=1 wall_ms=4.369 errors=0
+RAW label=winforms op=msaa n=8 rep=2 wall_ms=4.401 errors=0
+RAW label=winforms op=msaa n=8 rep=3 wall_ms=4.220 errors=0
+RAW label=winforms op=msaa n=8 rep=4 wall_ms=4.256 errors=0
+RAW label=winforms op=msaa n=8 rep=5 wall_ms=4.529 errors=0
+RAW label=winforms op=msaa n=8 rep=6 wall_ms=4.396 errors=0
+RAW label=winforms op=msaa n=8 rep=7 wall_ms=4.288 errors=0
+RAW label=winforms op=msaa n=8 rep=8 wall_ms=4.518 errors=0
+RAW label=winforms op=msaa n=8 rep=9 wall_ms=4.513 errors=0
+RAW label=winforms op=msaa n=8 rep=10 wall_ms=4.350 errors=0
+RAW label=winforms op=msaa n=8 rep=11 wall_ms=4.518 errors=0
+RAW label=winforms op=msaa n=8 rep=12 wall_ms=4.556 errors=0
+RAW label=winforms op=msaa n=8 rep=13 wall_ms=4.210 errors=0
+RAW label=winforms op=msaa n=8 rep=14 wall_ms=4.159 errors=0
+RAW label=winforms op=msaa n=8 rep=15 wall_ms=4.408 errors=0
+RAW label=winforms op=msaa n=8 rep=16 wall_ms=4.351 errors=0
+RAW label=winforms op=msaa n=8 rep=17 wall_ms=4.295 errors=0
+RAW label=winforms op=msaa n=8 rep=18 wall_ms=4.248 errors=0
+RAW label=winforms op=msaa n=8 rep=19 wall_ms=4.331 errors=0
+RESULT label=winforms op=msaa n=8 k=64 median_ms=4.35 p90_ms=4.52 per_call_us=68.0 speedup=1.64 errors=0
+RAW label=winforms op=rop n=1 rep=0 wall_ms=7.016 errors=2
+RAW label=winforms op=rop n=1 rep=1 wall_ms=6.773 errors=2
+RAW label=winforms op=rop n=1 rep=2 wall_ms=6.680 errors=2
+RAW label=winforms op=rop n=1 rep=3 wall_ms=6.478 errors=2
+RAW label=winforms op=rop n=1 rep=4 wall_ms=6.562 errors=2
+RAW label=winforms op=rop n=1 rep=5 wall_ms=6.528 errors=2
+RAW label=winforms op=rop n=1 rep=6 wall_ms=6.540 errors=2
+RAW label=winforms op=rop n=1 rep=7 wall_ms=7.069 errors=2
+RAW label=winforms op=rop n=1 rep=8 wall_ms=7.937 errors=2
+RAW label=winforms op=rop n=1 rep=9 wall_ms=7.828 errors=2
+RAW label=winforms op=rop n=1 rep=10 wall_ms=8.175 errors=2
+RAW label=winforms op=rop n=1 rep=11 wall_ms=8.062 errors=2
+RAW label=winforms op=rop n=1 rep=12 wall_ms=6.657 errors=2
+RAW label=winforms op=rop n=1 rep=13 wall_ms=6.854 errors=2
+RAW label=winforms op=rop n=1 rep=14 wall_ms=8.166 errors=2
+RAW label=winforms op=rop n=1 rep=15 wall_ms=7.936 errors=2
+RAW label=winforms op=rop n=1 rep=16 wall_ms=8.567 errors=2
+RAW label=winforms op=rop n=1 rep=17 wall_ms=8.446 errors=2
+RAW label=winforms op=rop n=1 rep=18 wall_ms=8.849 errors=2
+RAW label=winforms op=rop n=1 rep=19 wall_ms=10.913 errors=2
+RESULT label=winforms op=rop n=1 k=32 median_ms=7.83 p90_ms=8.57 per_call_us=244.6 speedup=1.00 errors=40
+RAW label=winforms op=rop n=2 rep=0 wall_ms=6.272 errors=2
+RAW label=winforms op=rop n=2 rep=1 wall_ms=7.385 errors=2
+RAW label=winforms op=rop n=2 rep=2 wall_ms=7.673 errors=2
+RAW label=winforms op=rop n=2 rep=3 wall_ms=5.734 errors=2
+RAW label=winforms op=rop n=2 rep=4 wall_ms=6.120 errors=2
+RAW label=winforms op=rop n=2 rep=5 wall_ms=5.647 errors=2
+RAW label=winforms op=rop n=2 rep=6 wall_ms=5.688 errors=2
+RAW label=winforms op=rop n=2 rep=7 wall_ms=5.775 errors=2
+RAW label=winforms op=rop n=2 rep=8 wall_ms=5.505 errors=2
+RAW label=winforms op=rop n=2 rep=9 wall_ms=5.451 errors=2
+RAW label=winforms op=rop n=2 rep=10 wall_ms=5.354 errors=2
+RAW label=winforms op=rop n=2 rep=11 wall_ms=5.588 errors=2
+RAW label=winforms op=rop n=2 rep=12 wall_ms=5.521 errors=2
+RAW label=winforms op=rop n=2 rep=13 wall_ms=5.429 errors=2
+RAW label=winforms op=rop n=2 rep=14 wall_ms=5.582 errors=2
+RAW label=winforms op=rop n=2 rep=15 wall_ms=5.600 errors=2
+RAW label=winforms op=rop n=2 rep=16 wall_ms=5.191 errors=2
+RAW label=winforms op=rop n=2 rep=17 wall_ms=5.297 errors=2
+RAW label=winforms op=rop n=2 rep=18 wall_ms=5.423 errors=2
+RAW label=winforms op=rop n=2 rep=19 wall_ms=5.627 errors=2
+RESULT label=winforms op=rop n=2 k=32 median_ms=5.60 p90_ms=6.27 per_call_us=175.0 speedup=1.40 errors=40
+RAW label=winforms op=rop n=4 rep=0 wall_ms=5.525 errors=2
+RAW label=winforms op=rop n=4 rep=1 wall_ms=5.478 errors=2
+RAW label=winforms op=rop n=4 rep=2 wall_ms=5.720 errors=2
+RAW label=winforms op=rop n=4 rep=3 wall_ms=5.529 errors=2
+RAW label=winforms op=rop n=4 rep=4 wall_ms=6.318 errors=2
+RAW label=winforms op=rop n=4 rep=5 wall_ms=6.529 errors=2
+RAW label=winforms op=rop n=4 rep=6 wall_ms=5.727 errors=2
+RAW label=winforms op=rop n=4 rep=7 wall_ms=5.317 errors=2
+RAW label=winforms op=rop n=4 rep=8 wall_ms=5.273 errors=2
+RAW label=winforms op=rop n=4 rep=9 wall_ms=6.162 errors=2
+RAW label=winforms op=rop n=4 rep=10 wall_ms=5.142 errors=2
+RAW label=winforms op=rop n=4 rep=11 wall_ms=5.176 errors=2
+RAW label=winforms op=rop n=4 rep=12 wall_ms=5.567 errors=2
+RAW label=winforms op=rop n=4 rep=13 wall_ms=5.895 errors=2
+RAW label=winforms op=rop n=4 rep=14 wall_ms=5.196 errors=2
+RAW label=winforms op=rop n=4 rep=15 wall_ms=5.396 errors=2
+RAW label=winforms op=rop n=4 rep=16 wall_ms=6.005 errors=2
+RAW label=winforms op=rop n=4 rep=17 wall_ms=5.843 errors=2
+RAW label=winforms op=rop n=4 rep=18 wall_ms=5.487 errors=2
+RAW label=winforms op=rop n=4 rep=19 wall_ms=5.651 errors=2
+RESULT label=winforms op=rop n=4 k=32 median_ms=5.57 p90_ms=6.16 per_call_us=174.0 speedup=1.41 errors=40
+RAW label=winforms op=rop n=8 rep=0 wall_ms=5.848 errors=2
+RAW label=winforms op=rop n=8 rep=1 wall_ms=5.481 errors=2
+RAW label=winforms op=rop n=8 rep=2 wall_ms=5.382 errors=2
+RAW label=winforms op=rop n=8 rep=3 wall_ms=5.339 errors=2
+RAW label=winforms op=rop n=8 rep=4 wall_ms=5.347 errors=2
+RAW label=winforms op=rop n=8 rep=5 wall_ms=5.550 errors=2
+RAW label=winforms op=rop n=8 rep=6 wall_ms=5.267 errors=2
+RAW label=winforms op=rop n=8 rep=7 wall_ms=5.272 errors=2
+RAW label=winforms op=rop n=8 rep=8 wall_ms=5.733 errors=2
+RAW label=winforms op=rop n=8 rep=9 wall_ms=5.047 errors=2
+RAW label=winforms op=rop n=8 rep=10 wall_ms=5.116 errors=2
+RAW label=winforms op=rop n=8 rep=11 wall_ms=5.005 errors=2
+RAW label=winforms op=rop n=8 rep=12 wall_ms=5.538 errors=2
+RAW label=winforms op=rop n=8 rep=13 wall_ms=5.766 errors=2
+RAW label=winforms op=rop n=8 rep=14 wall_ms=6.097 errors=2
+RAW label=winforms op=rop n=8 rep=15 wall_ms=5.680 errors=2
+RAW label=winforms op=rop n=8 rep=16 wall_ms=5.581 errors=2
+RAW label=winforms op=rop n=8 rep=17 wall_ms=6.029 errors=2
+RAW label=winforms op=rop n=8 rep=18 wall_ms=5.515 errors=2
+RAW label=winforms op=rop n=8 rep=19 wall_ms=6.118 errors=2
+RESULT label=winforms op=rop n=8 k=32 median_ms=5.54 p90_ms=6.03 per_call_us=173.1 speedup=1.41 errors=40
+PAIR label=winforms-findall-beside-name a=FindAll@656536 elem 0 (of 16 held, 232 found) b=Name@656536 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=winforms-findall-beside-name a_alone count=10 median_ms=158.38 p90_ms=160.46 max_ms=160.94
+RESULT label=winforms-findall-beside-name a_with_b count=10 median_ms=172.44 p90_ms=173.38 max_ms=173.86
+RESULT label=winforms-findall-beside-name b_alone count=553 median_ms=0.31 p90_ms=0.38 max_ms=0.56
+RESULT label=winforms-findall-beside-name b_during_a count=553 median_ms=0.45 p90_ms=0.71 max_ms=26.82
+PAIR label=winforms-findall-beside-rop a=FindAll@656536 elem 0 (of 16 held, 232 found) b=Rop@656536 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=winforms-findall-beside-rop a_alone count=10 median_ms=163.98 p90_ms=171.60 max_ms=179.83
+RESULT label=winforms-findall-beside-rop a_with_b count=10 median_ms=168.33 p90_ms=170.28 max_ms=173.18
+RESULT label=winforms-findall-beside-rop b_alone count=545 median_ms=0.27 p90_ms=0.33 max_ms=0.56
+RESULT label=winforms-findall-beside-rop b_during_a count=545 median_ms=0.44 p90_ms=0.68 max_ms=25.78
+CALL other-element hwnd=656536 pid=2016 ui_tid=13608 op=Name elem=3 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+CALL other-element-rop hwnd=656536 pid=2016 ui_tid=13608 op=Rop elem=3 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+CALL same-window-new-connection hwnd=656536 pid=2016 ui_tid=13608 op=FromHandle elem=0 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+CALL stuck hwnd=656536 pid=2016 ui_tid=13608 op=Name elem=1 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+suspended tid=13608
+PROBES_STARTED trial=0
+resumed tid=13608
+TRIAL label=winforms-suspended-name trial=0 block=suspend:656536 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4007.2
+RESULT label=winforms-suspended-name trial=0 call=same-window-new-connection returned_ms=2201.4 before_unblock result=error 0x80131505 idle_baseline_ms=1.13
+RESULT label=winforms-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4007.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-name trial=0 call=xproc-other-element returned_ms=4008.7 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-name trial=0 call=other-element-rop returned_ms=4009.1 after_unblock result=ok idle_baseline_ms=0.58
+RESULT label=winforms-suspended-name trial=0 call=other-element returned_ms=4009.5 after_unblock result=ok idle_baseline_ms=0.55
+RESULT label=winforms-suspended-name trial=0 call=stuck returned_ms=4009.8 after_unblock result=ok idle_baseline_ms=0.00
+suspended tid=13608
+PROBES_STARTED trial=1
+resumed tid=13608
+TRIAL label=winforms-suspended-name trial=1 block=suspend:656536 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=4008.3
+RESULT label=winforms-suspended-name trial=1 call=same-window-new-connection returned_ms=2204.9 before_unblock result=error 0x80131505 idle_baseline_ms=1.16
+RESULT label=winforms-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4008.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-name trial=1 call=xproc-other-element returned_ms=4009.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-name trial=1 call=stuck returned_ms=4010.0 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=winforms-suspended-name trial=1 call=other-element returned_ms=4010.2 after_unblock result=ok idle_baseline_ms=0.49
+RESULT label=winforms-suspended-name trial=1 call=other-element-rop returned_ms=4010.5 after_unblock result=ok idle_baseline_ms=0.57
+CALL other-element hwnd=656536 pid=2016 ui_tid=13608 op=Name elem=3 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+CALL other-element-rop hwnd=656536 pid=2016 ui_tid=13608 op=Rop elem=3 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+CALL same-window-new-connection hwnd=656536 pid=2016 ui_tid=13608 op=FromHandle elem=0 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+CALL stuck hwnd=656536 pid=2016 ui_tid=13608 op=Rop elem=1 class=WindowsForms10.Window.8.app.0.17795e4_r13_ad1 title=puia winforms
+suspended tid=13608
+PROBES_STARTED trial=0
+resumed tid=13608
+TRIAL label=winforms-suspended-rop trial=0 block=suspend:656536 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4004.6
+RESULT label=winforms-suspended-rop trial=0 call=same-window-new-connection returned_ms=2199.9 before_unblock result=error 0x80131505 idle_baseline_ms=1.14
+RESULT label=winforms-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4005.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-rop trial=0 call=xproc-other-element returned_ms=4005.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-rop trial=0 call=stuck returned_ms=4006.5 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=winforms-suspended-rop trial=0 call=other-element-rop returned_ms=4006.8 after_unblock result=ok idle_baseline_ms=0.62
+RESULT label=winforms-suspended-rop trial=0 call=other-element returned_ms=4007.1 after_unblock result=ok idle_baseline_ms=0.50
+suspended tid=13608
+PROBES_STARTED trial=1
+resumed tid=13608
+TRIAL label=winforms-suspended-rop trial=1 block=suspend:656536 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4012.9
+RESULT label=winforms-suspended-rop trial=1 call=same-window-new-connection returned_ms=2195.0 before_unblock result=error 0x80131505 idle_baseline_ms=1.27
+RESULT label=winforms-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4013.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-rop trial=1 call=xproc-other-element returned_ms=4014.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=winforms-suspended-rop trial=1 call=stuck returned_ms=4016.1 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=winforms-suspended-rop trial=1 call=other-element-rop returned_ms=4016.3 after_unblock result=ok idle_baseline_ms=0.47
+RESULT label=winforms-suspended-rop trial=1 call=other-element returned_ms=4016.6 after_unblock result=ok idle_baseline_ms=0.47

@@ -1,0 +1,191 @@
+# UIA's channel between a client (puia ops, pid in the log lines' Id prefix 3648) and mockapp (pid 6268, 187c in the server's Ids), from transport.ps1.
+# cdb invasive on both before the client's first connection; breakpoints on CreateNamedPipeW, CreateFileW, ConnectNamedPipe, ReadFile, WriteFile,
+# WaitForMultipleObjectsEx and NtAlpcSendWaitReceivePort print the handle and !handle <h> f. Operations: connect (ElementFromHandle), a name read,
+# adding an automation event handler, mockapp raising the event, removing the handler.
+﻿waiting pid=13896
+mockapp pid=6268 client pid=13896
+ready tid=2588
+[14:59:26.026] cur_name
+op cur_name ok Items 7.293 ms; provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+[14:59:26.438] add_auto
+op add_auto ok added 29.919 ms; provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+mock -> applied
+[14:59:28.386] remove_auto
+event auto 20012 tid=4940 at=37706.0
+op remove_auto ok removed 7.158 ms; provider
+
+## Client: the pipe's creation and connection (stack trimmed), and its handle
+533:X_CREATENAMEDPIPE
+534-000000ce`4dafafd0  "\\.\PIPE\UIA_PIPE_6268_dcaa6add"
+535-.  0  Id: 3648.a1c Suspend: 1 Teb: 000000ce`4d974000 Unfrozen "main"
+536-      Start: puia!mainCRTStartup (00007ff7`eca700c0)
+538-Child-SP          RetAddr               Call Site
+539-000000ce`4dafaeb8 00007ffb`a980e893     KERNELBASE!CreateNamedPipeW
+540-000000ce`4dafaec0 00007ffb`a980df79     uiautomationcore!ChannelBasedClientConnectionManager::CreatePipeToProvider+0x177
+541-000000ce`4dafb650 00007ffb`a980ddbf     uiautomationcore!ChannelBasedClientConnectionManager::CreateLowBoxChannelBasedClientConnection+0xe1
+559:X_CONNECTNAMEDPIPE h=00000000000002b4
+560-.  0  Id: 3648.a1c Suspend: 1 Teb: 000000ce`4d974000 Unfrozen "main"
+561-      Start: puia!mainCRTStartup (00007ff7`eca700c0)
+563-Child-SP          RetAddr               Call Site
+589:X_WRITEFILE h=00000000000002b4 len=8
+590-.  0  Id: 3648.a1c Suspend: 1 Teb: 000000ce`4d974000 Unfrozen "main"
+591-      Start: puia!mainCRTStartup (00007ff7`eca700c0)
+593-Child-SP          RetAddr               Call Site
+609-000000ce`4daffac0 00007ff7`ec9e385c     puia!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsfc8R8NVfkqM_4puia+0x6
+610-000000ce`4daffaf0 00007ff7`eca08090     puia!RNCINvNtCsljvfXcM3w8L_3std2rt10lang_startuE0Csfc8R8NVfkqM_4puia.llvm.16973679616833706013+0xc
+611-(Inline Function) --------`--------     puia!std::rt::lang_start_internal::closure$0+0x96
+612-Handle 2b4
+613-  Type         	File
+614-  Attributes   	0
+615-  GrantedAccess	0x1a019f:
+616-         ReadControl,WriteOwner,Synch
+617-         Read/List,Write/Add,Append/SubDir/CreatePipe,ReadEA,WriteEA,ReadAttr,WriteAttr
+618-  HandleCount  	2
+619-  PointerCount 	65536
+620-  No Object Specific Information available
+621-X_WAITMULTIPLE count=1 timeout=-1
+
+## Client: the named events waited on while connecting
+  Name         	\Sessions\2\BaseNamedObjects\UIA_CONNECT_EVENT_6268_dcaa6add
+    Event Type Manual Reset
+  Name         	\Sessions\2\BaseNamedObjects\UIA_NOBODY_THERE_EVENT_6268_dcaa6add
+    Event Type Manual Reset
+
+## Server: the I/O thread opens the pipe, and the pipe-ready event
+393-0000009c`5edfdcc0  "\\.\PIPE\UIA_PIPE_6268_dcaa6add"
+394-.  9  Id: 187c.3680 Suspend: 1 Teb: 0000009c`5e37c000 Unfrozen
+395-      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+397-Child-SP          RetAddr               Call Site
+398-0000009c`5edfcc78 00007ffb`a981016d     KERNELBASE!CreateFileW
+399-0000009c`5edfcc80 00007ffb`a98737f1     uiautomationcore!ChannelBasedServerConnectionManager::OnEventSignal+0xed
+400-0000009c`5edffc30 00007ffb`a976f299     uiautomationcore!ListenEventInfo::Service+0x51
+401-0000009c`5edffc60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+402-0000009c`5edffcc0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+403-0000009c`5edffcf0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+404-0000009c`5edffd20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+405-X_WRITEFILE h=0000000000000260 len=29
+406-.  9  Id: 187c.3680 Suspend: 1 Teb: 0000009c`5e37c000 Unfrozen
+407-      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+--
+Handle 290
+  Type         	Event
+  HandleCount  	3
+  Name         	\Sessions\2\BaseNamedObjects\UIA_PIPEREADY_EVENT_6268_dcaa6add
+428:X_READFILE h=0000000000000260 len=4096
+429-.  9  Id: 187c.3680 Suspend: 1 Teb: 0000009c`5e37c000 Unfrozen
+430-      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+432-Child-SP          RetAddr               Call Site
+433-0000009c`5edffbf8 00007ffb`a9804a6f     KERNELBASE!ReadFile
+434-0000009c`5edffc00 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x13f
+435-0000009c`5edffc60 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+436-0000009c`5edffcc0 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+442-  GrantedAccess	0x12019f:
+443-         ReadControl,Synch
+444-         Read/List,Write/Add,Append/SubDir/CreatePipe,ReadEA,WriteEA,ReadAttr,WriteAttr
+445-  HandleCount  	2
+446-  PointerCount 	65534
+447-  No Object Specific Information available
+
+## Every ReadFile and WriteFile, by handle, length and thread (count, call, handle, length, thread number, id)
+### transport-client.log
+     27 X_READFILE h=00000000000002b4 len=4096 8 Id: 3648.bf8
+      2 X_WRITEFILE h=00000000000002b4 len=101 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=105 0 Id: 3648.a1c
+      4 X_WRITEFILE h=00000000000002b4 len=106 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=17 0 Id: 3648.a1c
+     14 X_WRITEFILE h=00000000000002b4 len=18 0 Id: 3648.a1c
+      2 X_WRITEFILE h=00000000000002b4 len=19 0 Id: 3648.a1c
+      6 X_WRITEFILE h=00000000000002b4 len=19 12 Id: 3648.134c
+      1 X_WRITEFILE h=00000000000002b4 len=20 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=248 0 Id: 3648.a1c
+      2 X_WRITEFILE h=00000000000002b4 len=252 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=272 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=384 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=387 12 Id: 3648.134c
+      1 X_WRITEFILE h=00000000000002b4 len=491 0 Id: 3648.a1c
+      4 X_WRITEFILE h=00000000000002b4 len=71 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=72 12 Id: 3648.134c
+      1 X_WRITEFILE h=00000000000002b4 len=73 0 Id: 3648.a1c
+      1 X_WRITEFILE h=00000000000002b4 len=8 0 Id: 3648.a1c
+### transport-server.log
+     46 X_READFILE h=0000000000000260 len=4096 9 Id: 187c.3680
+      4 X_WRITEFILE h=0000000000000260 len=14 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=149 0 Id: 187c.678
+      3 X_WRITEFILE h=0000000000000260 len=15 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=16 9 Id: 187c.3680
+      2 X_WRITEFILE h=0000000000000260 len=20 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=27 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=29 9 Id: 187c.3680
+      4 X_WRITEFILE h=0000000000000260 len=44 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=9 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=93 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=94 9 Id: 187c.3680
+      5 X_WRITEFILE h=0000000000000260 len=98 9 Id: 187c.3680
+      1 X_WRITEFILE h=0000000000000260 len=99 9 Id: 187c.3680
+
+## The thread names: client thread 0 is main (the calling thread), 8 the I/O thread (StaticIoThreadProc), 12 a WorkItemQueue thread (the event's handler);
+## server thread 9 the I/O thread, 0 mockapp's UI thread (main), which wrote the 149-byte event.
+
+## The first three ALPC calls in each process (the rest only counted): theme services and COM's RPC binding, not UIA's channel
+### transport-client.log: 70 calls
+Start: puia!mainCRTStartup (00007ff7`eca700c0)
+uxtheme!CThemeServices::CallThemeServer+0x98
+uxtheme!CThemeServices::GetCurrentChangeNumber+0x5c
+uxtheme!NewThemeCheck+0x3e
+uxtheme!ThemeInitApiHook+0x242
+USER32!InitUserApiHook+0x65
+USER32!_ClientLoadLibrary+0x18c
+ntdll!KiUserCallbackDispatcherContinue
+win32u!NtUserLoadUserApiHook+0x14
+USER32!GetSystemMetrics+0xc1
+uiautomationcore!BasicUiaUtils::IsDesktop+0x29
+uiautomationcore!BlockingCoreDispatcher::FinalConstruct+0xe
+Start: puia!mainCRTStartup (00007ff7`eca700c0)
+uxtheme!CThemeServices::CallThemeServer+0x98
+uxtheme!CThemeServices::ReestablishServerConnection+0x5b
+uxtheme!NewThemeCheck+0xdd
+uxtheme!ThemeInitApiHook+0x242
+USER32!InitUserApiHook+0x65
+USER32!_ClientLoadLibrary+0x18c
+ntdll!KiUserCallbackDispatcherContinue
+win32u!NtUserLoadUserApiHook+0x14
+USER32!GetSystemMetrics+0xc1
+uiautomationcore!BasicUiaUtils::IsDesktop+0x29
+uiautomationcore!BlockingCoreDispatcher::FinalConstruct+0xe
+Start: puia!mainCRTStartup (00007ff7`eca700c0)
+RPCRT4!LRPC_CASSOCIATION::Bind+0x62d
+RPCRT4!LRPC_BIND_CCALL::BaseBind+0x1e9
+RPCRT4!LRPC_FAST_BINDING_HANDLE::Bind+0x19f
+RPCRT4!RpcBindingBind+0x50
+combase!CFastBH::BindWithTimeout+0x13
+### transport-server.log: 14 calls
+Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+RPCRT4!LRPC_CASSOCIATION::Bind+0x62d
+RPCRT4!LRPC_BIND_CCALL::BaseBind+0x1e9
+RPCRT4!LRPC_FAST_BINDING_HANDLE::Bind+0x19f
+RPCRT4!RpcBindingBind+0x50
+combase!CFastBH::BindWithTimeout+0x13
+combase!CFastBH::CreateFromBindingString+0xea
+combase!CFastBH::GetOrCreateWithTimeout+0x39
+combase!CFastBH::GetOrCreate+0x39
+combase!<lambda_b3b6f79f9058be4b272cb93d2c146944>::operator()+0x341
+combase!CRpcResolver::GetConnection+0xc3
+combase!CoInitializeSecurity+0x482
+Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+RPCRT4!LRPC_CASSOCIATION::Bind+0x62d
+RPCRT4!LRPC_BIND_CCALL::BaseBind+0x1e9
+RPCRT4!LRPC_FAST_BINDING_HANDLE::Bind+0x19f
+RPCRT4!RpcBindingBind+0x50
+combase!CFastBH::BindWithTimeout+0x13
+combase!CFastBH::CreateFromBindingHandle+0x59
+combase!CFastBH::GetOrCreateWithTimeout+0x6b
+combase!CFastBH::GetOrCreate+0x6b
+combase!<lambda_b3b6f79f9058be4b272cb93d2c146944>::operator()+0x3cf
+combase!CRpcResolver::GetConnection+0xc3
+combase!CoInitializeSecurity+0x482
+Start: mockapp!mainCRTStartup (00007ff7`881d5e60)
+RPCRT4!LRPC_CASSOCIATION::Bind+0x62d
+RPCRT4!LRPC_BIND_CCALL::BaseBind+0x1e9
+RPCRT4!LRPC_FAST_BINDING_HANDLE::Bind+0x19f
+RPCRT4!RpcBindingBind+0x50
+combase!CFastBH::BindWithTimeout+0x13

@@ -1,0 +1,72 @@
+PAIR label=wpf-findall-beside-name-xb0 a=FindAll@6030882 elem 3 (of 16 held, 62 found) b=Name@6030882 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=wpf-findall-beside-name-xb0 a_alone count=10 median_ms=65.08 p90_ms=69.77 max_ms=72.62
+RESULT label=wpf-findall-beside-name-xb0 a_with_b count=10 median_ms=65.71 p90_ms=77.92 max_ms=82.22
+RESULT label=wpf-findall-beside-name-xb0 b_alone count=132 median_ms=0.23 p90_ms=0.26 max_ms=1.74
+RESULT label=wpf-findall-beside-name-xb0 b_during_a count=132 median_ms=0.39 p90_ms=0.58 max_ms=46.30
+PAIR label=wpf-findall-beside-name-xb1 a=FindAll@6030882 elem 3 (of 16 held, 62 found) b=Name@6030882 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=wpf-findall-beside-name-xb1 a_alone count=10 median_ms=63.75 p90_ms=64.72 max_ms=72.07
+RESULT label=wpf-findall-beside-name-xb1 a_with_b count=10 median_ms=67.70 p90_ms=74.68 max_ms=76.52
+RESULT label=wpf-findall-beside-name-xb1 b_alone count=131 median_ms=0.22 p90_ms=0.30 max_ms=3.17
+RESULT label=wpf-findall-beside-name-xb1 b_during_a count=131 median_ms=0.38 p90_ms=0.67 max_ms=44.89
+PAIR label=wpf-findall-beside-rop-xb0 a=FindAll@6030882 elem 3 (of 16 held, 62 found) b=Rop@6030882 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=wpf-findall-beside-rop-xb0 a_alone count=10 median_ms=66.98 p90_ms=70.45 max_ms=81.40
+RESULT label=wpf-findall-beside-rop-xb0 a_with_b count=10 median_ms=68.96 p90_ms=70.10 max_ms=74.67
+RESULT label=wpf-findall-beside-rop-xb0 b_alone count=132 median_ms=0.43 p90_ms=0.55 max_ms=7.38
+RESULT label=wpf-findall-beside-rop-xb0 b_during_a count=132 median_ms=0.60 p90_ms=0.89 max_ms=35.46
+PAIR label=wpf-findall-beside-rop-xb1 a=FindAll@6030882 elem 3 (of 16 held, 62 found) b=Rop@6030882 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=wpf-findall-beside-rop-xb1 a_alone count=10 median_ms=69.07 p90_ms=71.12 max_ms=82.87
+RESULT label=wpf-findall-beside-rop-xb1 a_with_b count=10 median_ms=72.10 p90_ms=77.87 max_ms=80.32
+RESULT label=wpf-findall-beside-rop-xb1 b_alone count=133 median_ms=0.43 p90_ms=0.51 max_ms=8.91
+RESULT label=wpf-findall-beside-rop-xb1 b_during_a count=133 median_ms=0.58 p90_ms=1.09 max_ms=37.23
+PAIR label=wpf-ropslow-beside-name-xb0 a=RopSlow@6030882 elem 3 (of 16 held, 62 found) b=Name@6030882 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=wpf-ropslow-beside-name-xb0 a_alone count=10 median_ms=228.32 p90_ms=246.09 max_ms=253.55
+RESULT label=wpf-ropslow-beside-name-xb0 a_with_b count=10 median_ms=242.75 p90_ms=253.56 max_ms=254.76
+RESULT label=wpf-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.22 p90_ms=0.24 max_ms=3.10
+RESULT label=wpf-ropslow-beside-name-xb0 b_during_a count=10 median_ms=240.27 p90_ms=251.61 max_ms=252.20
+PAIR label=wpf-ropslow-beside-name-xb1 a=RopSlow@6030882 elem 3 (of 16 held, 62 found) b=Name@6030882 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=wpf-ropslow-beside-name-xb1 a_alone count=10 median_ms=231.58 p90_ms=236.71 max_ms=248.56
+RESULT label=wpf-ropslow-beside-name-xb1 a_with_b count=10 median_ms=229.23 p90_ms=243.53 max_ms=245.70
+RESULT label=wpf-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.20 p90_ms=0.26 max_ms=3.07
+RESULT label=wpf-ropslow-beside-name-xb1 b_during_a count=10 median_ms=229.37 p90_ms=241.47 max_ms=243.67
+PAIR label=wpf-ropslow-beside-rop-xb0 a=RopSlow@6030882 elem 3 (of 16 held, 62 found) b=Rop@6030882 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=wpf-ropslow-beside-rop-xb0 a_alone count=10 median_ms=231.37 p90_ms=249.03 max_ms=249.58
+RESULT label=wpf-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=231.26 p90_ms=240.93 max_ms=243.12
+RESULT label=wpf-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.42 p90_ms=0.43 max_ms=0.45
+RESULT label=wpf-ropslow-beside-rop-xb0 b_during_a count=11 median_ms=227.14 p90_ms=238.95 max_ms=240.96
+PAIR label=wpf-ropslow-beside-rop-xb1 a=RopSlow@6030882 elem 3 (of 16 held, 62 found) b=Rop@6030882 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=wpf-ropslow-beside-rop-xb1 a_alone count=10 median_ms=229.58 p90_ms=239.95 max_ms=276.70
+RESULT label=wpf-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=232.90 p90_ms=245.00 max_ms=271.30
+RESULT label=wpf-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.42 p90_ms=0.45 max_ms=0.53
+RESULT label=wpf-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=230.28 p90_ms=243.23 max_ms=268.71
+PAIR label=wpf-textall-beside-name-xb0 a=TextAll@6030882 elem 3 (of 16 held, 62 found) b=Name@6030882 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=wpf-textall-beside-name-xb0 a_alone count=10 median_ms=0.80 p90_ms=2.12 max_ms=8.74
+RESULT label=wpf-textall-beside-name-xb0 a_with_b count=10 median_ms=0.79 p90_ms=0.88 max_ms=8.11
+RESULT label=wpf-textall-beside-name-xb0 b_alone count=20 median_ms=0.24 p90_ms=0.26 max_ms=0.32
+RESULT label=wpf-textall-beside-name-xb0 b_during_a count=4 median_ms=0.33 p90_ms=6.69 max_ms=6.69
+PAIR label=wpf-textall-beside-name-xb1 a=TextAll@6030882 elem 3 (of 16 held, 62 found) b=Name@6030882 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=wpf-textall-beside-name-xb1 a_alone count=10 median_ms=0.76 p90_ms=2.23 max_ms=8.14
+RESULT label=wpf-textall-beside-name-xb1 a_with_b count=10 median_ms=0.73 p90_ms=0.89 max_ms=4.70
+RESULT label=wpf-textall-beside-name-xb1 b_alone count=20 median_ms=0.24 p90_ms=0.27 max_ms=0.65
+RESULT label=wpf-textall-beside-name-xb1 b_during_a count=3 median_ms=0.26 p90_ms=4.58 max_ms=4.58
+PAIR label=wpf-textall-beside-rop-xb0 a=TextAll@6030882 elem 3 (of 16 held, 62 found) b=Rop@6030882 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=wpf-textall-beside-rop-xb0 a_alone count=10 median_ms=0.85 p90_ms=0.90 max_ms=8.21
+RESULT label=wpf-textall-beside-rop-xb0 a_with_b count=10 median_ms=0.76 p90_ms=1.15 max_ms=5.17
+RESULT label=wpf-textall-beside-rop-xb0 b_alone count=20 median_ms=0.44 p90_ms=0.50 max_ms=0.57
+RESULT label=wpf-textall-beside-rop-xb0 b_during_a count=4 median_ms=1.01 p90_ms=4.19 max_ms=4.19
+PAIR label=wpf-textall-beside-rop-xb1 a=TextAll@6030882 elem 3 (of 16 held, 62 found) b=Rop@6030882 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=wpf-textall-beside-rop-xb1 a_alone count=10 median_ms=0.75 p90_ms=0.87 max_ms=7.85
+RESULT label=wpf-textall-beside-rop-xb1 a_with_b count=10 median_ms=0.75 p90_ms=1.05 max_ms=4.92
+RESULT label=wpf-textall-beside-rop-xb1 b_alone count=20 median_ms=0.43 p90_ms=0.45 max_ms=0.49
+RESULT label=wpf-textall-beside-rop-xb1 b_during_a count=4 median_ms=0.81 p90_ms=2.66 max_ms=2.66

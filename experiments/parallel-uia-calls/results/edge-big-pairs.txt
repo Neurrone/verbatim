@@ -1,0 +1,72 @@
+PAIR label=edge-big-findall-beside-name-xb0 a=FindAll@524336 elem 3 (of 16 held, 20000 found) b=Name@524336 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=edge-big-findall-beside-name-xb0 a_alone count=10 median_ms=4011.92 p90_ms=4058.97 max_ms=4068.69
+RESULT label=edge-big-findall-beside-name-xb0 a_with_b count=10 median_ms=4047.76 p90_ms=4071.88 max_ms=4073.71
+RESULT label=edge-big-findall-beside-name-xb0 b_alone count=12674 median_ms=0.16 p90_ms=0.23 max_ms=4.03
+RESULT label=edge-big-findall-beside-name-xb0 b_during_a count=12674 median_ms=0.16 p90_ms=0.25 max_ms=664.00
+PAIR label=edge-big-findall-beside-name-xb1 a=FindAll@524336 elem 3 (of 16 held, 20000 found) b=Name@524336 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=edge-big-findall-beside-name-xb1 a_alone count=10 median_ms=4015.51 p90_ms=4052.10 max_ms=4065.88
+RESULT label=edge-big-findall-beside-name-xb1 a_with_b count=10 median_ms=4082.83 p90_ms=4101.54 max_ms=4354.78
+RESULT label=edge-big-findall-beside-name-xb1 b_alone count=12676 median_ms=0.16 p90_ms=0.22 max_ms=4.00
+RESULT label=edge-big-findall-beside-name-xb1 b_during_a count=12676 median_ms=0.16 p90_ms=0.23 max_ms=683.66
+PAIR label=edge-big-findall-beside-rop-xb0 a=FindAll@524336 elem 3 (of 16 held, 20000 found) b=Rop@524336 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=edge-big-findall-beside-rop-xb0 a_alone count=10 median_ms=4029.30 p90_ms=4058.88 max_ms=4069.36
+RESULT label=edge-big-findall-beside-rop-xb0 a_with_b count=10 median_ms=4244.61 p90_ms=4267.39 max_ms=4286.41
+RESULT label=edge-big-findall-beside-rop-xb0 b_alone count=13835 median_ms=0.27 p90_ms=0.35 max_ms=3.02
+RESULT label=edge-big-findall-beside-rop-xb0 b_during_a count=13835 median_ms=0.28 p90_ms=0.39 max_ms=696.00
+PAIR label=edge-big-findall-beside-rop-xb1 a=FindAll@524336 elem 3 (of 16 held, 20000 found) b=Rop@524336 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=edge-big-findall-beside-rop-xb1 a_alone count=10 median_ms=4012.50 p90_ms=4038.62 max_ms=4045.01
+RESULT label=edge-big-findall-beside-rop-xb1 a_with_b count=10 median_ms=4275.23 p90_ms=4377.42 max_ms=4380.95
+RESULT label=edge-big-findall-beside-rop-xb1 b_alone count=14385 median_ms=0.27 p90_ms=0.36 max_ms=2.47
+RESULT label=edge-big-findall-beside-rop-xb1 b_during_a count=14385 median_ms=0.28 p90_ms=0.38 max_ms=678.34
+PAIR label=edge-big-ropslow-beside-name-xb0 a=RopSlow@524336 elem 3 (of 16 held, 20000 found) b=Name@524336 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=edge-big-ropslow-beside-name-xb0 a_alone count=10 median_ms=6.31 p90_ms=7.08 max_ms=7.10
+RESULT label=edge-big-ropslow-beside-name-xb0 a_with_b count=10 median_ms=6.56 p90_ms=6.87 max_ms=6.96
+RESULT label=edge-big-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.17 p90_ms=0.20 max_ms=0.35
+RESULT label=edge-big-ropslow-beside-name-xb0 b_during_a count=10 median_ms=4.74 p90_ms=4.86 max_ms=6.70
+PAIR label=edge-big-ropslow-beside-name-xb1 a=RopSlow@524336 elem 3 (of 16 held, 20000 found) b=Name@524336 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=edge-big-ropslow-beside-name-xb1 a_alone count=10 median_ms=6.38 p90_ms=6.56 max_ms=6.93
+RESULT label=edge-big-ropslow-beside-name-xb1 a_with_b count=10 median_ms=6.48 p90_ms=6.60 max_ms=6.83
+RESULT label=edge-big-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.18 p90_ms=0.19 max_ms=0.19
+RESULT label=edge-big-ropslow-beside-name-xb1 b_during_a count=10 median_ms=4.20 p90_ms=4.75 max_ms=6.46
+PAIR label=edge-big-ropslow-beside-rop-xb0 a=RopSlow@524336 elem 3 (of 16 held, 20000 found) b=Rop@524336 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=edge-big-ropslow-beside-rop-xb0 a_alone count=10 median_ms=6.78 p90_ms=7.55 max_ms=8.02
+RESULT label=edge-big-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=7.29 p90_ms=8.27 max_ms=9.63
+RESULT label=edge-big-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.30 p90_ms=0.39 max_ms=0.42
+RESULT label=edge-big-ropslow-beside-rop-xb0 b_during_a count=10 median_ms=4.96 p90_ms=7.24 max_ms=8.60
+PAIR label=edge-big-ropslow-beside-rop-xb1 a=RopSlow@524336 elem 3 (of 16 held, 20000 found) b=Rop@524336 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=edge-big-ropslow-beside-rop-xb1 a_alone count=10 median_ms=6.45 p90_ms=6.80 max_ms=6.82
+RESULT label=edge-big-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=6.62 p90_ms=6.84 max_ms=7.09
+RESULT label=edge-big-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.28 p90_ms=0.30 max_ms=0.34
+RESULT label=edge-big-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=4.49 p90_ms=4.90 max_ms=6.58
+PAIR label=edge-big-textall-beside-name-xb0 a=TextAll@524336 elem 3 (of 16 held, 20000 found) b=Name@524336 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=edge-big-textall-beside-name-xb0 a_alone count=10 median_ms=224.39 p90_ms=226.77 max_ms=228.47
+RESULT label=edge-big-textall-beside-name-xb0 a_with_b count=10 median_ms=222.98 p90_ms=227.57 max_ms=231.93
+RESULT label=edge-big-textall-beside-name-xb0 b_alone count=20 median_ms=0.15 p90_ms=0.19 max_ms=0.20
+RESULT label=edge-big-textall-beside-name-xb0 b_during_a count=11 median_ms=220.48 p90_ms=225.54 max_ms=229.87
+PAIR label=edge-big-textall-beside-name-xb1 a=TextAll@524336 elem 3 (of 16 held, 20000 found) b=Name@524336 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=edge-big-textall-beside-name-xb1 a_alone count=10 median_ms=223.27 p90_ms=225.45 max_ms=229.54
+RESULT label=edge-big-textall-beside-name-xb1 a_with_b count=10 median_ms=226.15 p90_ms=234.21 max_ms=237.21
+RESULT label=edge-big-textall-beside-name-xb1 b_alone count=20 median_ms=0.20 p90_ms=0.30 max_ms=0.32
+RESULT label=edge-big-textall-beside-name-xb1 b_during_a count=11 median_ms=222.22 p90_ms=231.47 max_ms=234.60
+PAIR label=edge-big-textall-beside-rop-xb0 a=TextAll@524336 elem 3 (of 16 held, 20000 found) b=Rop@524336 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=edge-big-textall-beside-rop-xb0 a_alone count=10 median_ms=225.37 p90_ms=227.14 max_ms=227.88
+RESULT label=edge-big-textall-beside-rop-xb0 a_with_b count=10 median_ms=224.22 p90_ms=226.90 max_ms=234.71
+RESULT label=edge-big-textall-beside-rop-xb0 b_alone count=20 median_ms=0.30 p90_ms=0.35 max_ms=0.39
+RESULT label=edge-big-textall-beside-rop-xb0 b_during_a count=11 median_ms=220.89 p90_ms=224.99 max_ms=232.75
+PAIR label=edge-big-textall-beside-rop-xb1 a=TextAll@524336 elem 3 (of 16 held, 20000 found) b=Rop@524336 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=edge-big-textall-beside-rop-xb1 a_alone count=10 median_ms=222.01 p90_ms=225.15 max_ms=231.13
+RESULT label=edge-big-textall-beside-rop-xb1 a_with_b count=10 median_ms=222.39 p90_ms=225.61 max_ms=230.17
+RESULT label=edge-big-textall-beside-rop-xb1 b_alone count=20 median_ms=0.34 p90_ms=0.51 max_ms=0.74
+RESULT label=edge-big-textall-beside-rop-xb1 b_during_a count=11 median_ms=219.89 p90_ms=223.48 max_ms=228.08

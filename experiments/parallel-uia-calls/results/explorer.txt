@@ -1,0 +1,585 @@
+TARGET label=explorer hwnd=525792 pid=10180 ui_tid=6636 class=CabinetWClass title=folderA - File Explorer client=per-thread
+CTX n=1 descendants_found=92 elems_held=16 text=true msaa=true
+CTX n=2 descendants_found=92 elems_held=16 text=true msaa=true
+CTX n=4 descendants_found=92 elems_held=16 text=true msaa=true
+CTX n=8 descendants_found=92 elems_held=16 text=true msaa=true
+RAW label=explorer op=name n=1 rep=0 wall_ms=9.616 errors=0
+RAW label=explorer op=name n=1 rep=1 wall_ms=10.508 errors=0
+RAW label=explorer op=name n=1 rep=2 wall_ms=10.903 errors=0
+RAW label=explorer op=name n=1 rep=3 wall_ms=10.311 errors=0
+RAW label=explorer op=name n=1 rep=4 wall_ms=10.617 errors=0
+RAW label=explorer op=name n=1 rep=5 wall_ms=10.236 errors=0
+RAW label=explorer op=name n=1 rep=6 wall_ms=10.651 errors=0
+RAW label=explorer op=name n=1 rep=7 wall_ms=10.309 errors=0
+RAW label=explorer op=name n=1 rep=8 wall_ms=9.791 errors=0
+RAW label=explorer op=name n=1 rep=9 wall_ms=10.569 errors=0
+RAW label=explorer op=name n=1 rep=10 wall_ms=10.903 errors=0
+RAW label=explorer op=name n=1 rep=11 wall_ms=11.729 errors=0
+RAW label=explorer op=name n=1 rep=12 wall_ms=11.225 errors=0
+RAW label=explorer op=name n=1 rep=13 wall_ms=12.428 errors=0
+RAW label=explorer op=name n=1 rep=14 wall_ms=10.522 errors=0
+RAW label=explorer op=name n=1 rep=15 wall_ms=10.493 errors=0
+RAW label=explorer op=name n=1 rep=16 wall_ms=11.073 errors=0
+RAW label=explorer op=name n=1 rep=17 wall_ms=10.454 errors=0
+RAW label=explorer op=name n=1 rep=18 wall_ms=10.847 errors=0
+RAW label=explorer op=name n=1 rep=19 wall_ms=11.157 errors=0
+RESULT label=explorer op=name n=1 k=64 median_ms=10.62 p90_ms=11.23 per_call_us=165.9 speedup=1.00 errors=0
+RAW label=explorer op=name n=2 rep=0 wall_ms=6.044 errors=0
+RAW label=explorer op=name n=2 rep=1 wall_ms=6.542 errors=0
+RAW label=explorer op=name n=2 rep=2 wall_ms=7.048 errors=0
+RAW label=explorer op=name n=2 rep=3 wall_ms=6.971 errors=0
+RAW label=explorer op=name n=2 rep=4 wall_ms=6.500 errors=0
+RAW label=explorer op=name n=2 rep=5 wall_ms=6.043 errors=0
+RAW label=explorer op=name n=2 rep=6 wall_ms=6.212 errors=0
+RAW label=explorer op=name n=2 rep=7 wall_ms=6.917 errors=0
+RAW label=explorer op=name n=2 rep=8 wall_ms=6.763 errors=0
+RAW label=explorer op=name n=2 rep=9 wall_ms=7.039 errors=0
+RAW label=explorer op=name n=2 rep=10 wall_ms=7.134 errors=0
+RAW label=explorer op=name n=2 rep=11 wall_ms=7.100 errors=0
+RAW label=explorer op=name n=2 rep=12 wall_ms=6.765 errors=0
+RAW label=explorer op=name n=2 rep=13 wall_ms=6.192 errors=0
+RAW label=explorer op=name n=2 rep=14 wall_ms=6.374 errors=0
+RAW label=explorer op=name n=2 rep=15 wall_ms=7.239 errors=0
+RAW label=explorer op=name n=2 rep=16 wall_ms=6.747 errors=0
+RAW label=explorer op=name n=2 rep=17 wall_ms=5.762 errors=0
+RAW label=explorer op=name n=2 rep=18 wall_ms=6.112 errors=0
+RAW label=explorer op=name n=2 rep=19 wall_ms=5.643 errors=0
+RESULT label=explorer op=name n=2 k=64 median_ms=6.75 p90_ms=7.10 per_call_us=105.4 speedup=1.57 errors=0
+RAW label=explorer op=name n=4 rep=0 wall_ms=4.867 errors=0
+RAW label=explorer op=name n=4 rep=1 wall_ms=5.095 errors=0
+RAW label=explorer op=name n=4 rep=2 wall_ms=5.167 errors=0
+RAW label=explorer op=name n=4 rep=3 wall_ms=5.084 errors=0
+RAW label=explorer op=name n=4 rep=4 wall_ms=6.302 errors=0
+RAW label=explorer op=name n=4 rep=5 wall_ms=5.162 errors=0
+RAW label=explorer op=name n=4 rep=6 wall_ms=5.638 errors=0
+RAW label=explorer op=name n=4 rep=7 wall_ms=5.535 errors=0
+RAW label=explorer op=name n=4 rep=8 wall_ms=4.913 errors=0
+RAW label=explorer op=name n=4 rep=9 wall_ms=5.935 errors=0
+RAW label=explorer op=name n=4 rep=10 wall_ms=5.539 errors=0
+RAW label=explorer op=name n=4 rep=11 wall_ms=5.371 errors=0
+RAW label=explorer op=name n=4 rep=12 wall_ms=5.131 errors=0
+RAW label=explorer op=name n=4 rep=13 wall_ms=5.836 errors=0
+RAW label=explorer op=name n=4 rep=14 wall_ms=5.845 errors=0
+RAW label=explorer op=name n=4 rep=15 wall_ms=5.495 errors=0
+RAW label=explorer op=name n=4 rep=16 wall_ms=5.829 errors=0
+RAW label=explorer op=name n=4 rep=17 wall_ms=5.824 errors=0
+RAW label=explorer op=name n=4 rep=18 wall_ms=4.800 errors=0
+RAW label=explorer op=name n=4 rep=19 wall_ms=5.336 errors=0
+RESULT label=explorer op=name n=4 k=64 median_ms=5.50 p90_ms=5.84 per_call_us=85.9 speedup=1.93 errors=0
+RAW label=explorer op=name n=8 rep=0 wall_ms=5.513 errors=0
+RAW label=explorer op=name n=8 rep=1 wall_ms=5.444 errors=0
+RAW label=explorer op=name n=8 rep=2 wall_ms=5.631 errors=0
+RAW label=explorer op=name n=8 rep=3 wall_ms=5.526 errors=0
+RAW label=explorer op=name n=8 rep=4 wall_ms=5.660 errors=0
+RAW label=explorer op=name n=8 rep=5 wall_ms=5.659 errors=0
+RAW label=explorer op=name n=8 rep=6 wall_ms=6.020 errors=0
+RAW label=explorer op=name n=8 rep=7 wall_ms=5.827 errors=0
+RAW label=explorer op=name n=8 rep=8 wall_ms=6.611 errors=0
+RAW label=explorer op=name n=8 rep=9 wall_ms=6.706 errors=0
+RAW label=explorer op=name n=8 rep=10 wall_ms=6.386 errors=0
+RAW label=explorer op=name n=8 rep=11 wall_ms=6.262 errors=0
+RAW label=explorer op=name n=8 rep=12 wall_ms=6.421 errors=0
+RAW label=explorer op=name n=8 rep=13 wall_ms=6.263 errors=0
+RAW label=explorer op=name n=8 rep=14 wall_ms=6.638 errors=0
+RAW label=explorer op=name n=8 rep=15 wall_ms=7.077 errors=0
+RAW label=explorer op=name n=8 rep=16 wall_ms=6.516 errors=0
+RAW label=explorer op=name n=8 rep=17 wall_ms=5.516 errors=0
+RAW label=explorer op=name n=8 rep=18 wall_ms=5.404 errors=0
+RAW label=explorer op=name n=8 rep=19 wall_ms=5.448 errors=0
+RESULT label=explorer op=name n=8 k=64 median_ms=6.02 p90_ms=6.64 per_call_us=94.1 speedup=1.76 errors=0
+RAW label=explorer op=findall n=1 rep=0 wall_ms=571.974 errors=0
+RAW label=explorer op=findall n=1 rep=1 wall_ms=565.281 errors=0
+RAW label=explorer op=findall n=1 rep=2 wall_ms=573.722 errors=0
+RAW label=explorer op=findall n=1 rep=3 wall_ms=587.952 errors=0
+RAW label=explorer op=findall n=1 rep=4 wall_ms=591.524 errors=0
+RAW label=explorer op=findall n=1 rep=5 wall_ms=594.703 errors=0
+RAW label=explorer op=findall n=1 rep=6 wall_ms=568.651 errors=0
+RAW label=explorer op=findall n=1 rep=7 wall_ms=606.849 errors=0
+RAW label=explorer op=findall n=1 rep=8 wall_ms=579.286 errors=0
+RAW label=explorer op=findall n=1 rep=9 wall_ms=582.238 errors=0
+RAW label=explorer op=findall n=1 rep=10 wall_ms=579.426 errors=0
+RAW label=explorer op=findall n=1 rep=11 wall_ms=585.197 errors=0
+RAW label=explorer op=findall n=1 rep=12 wall_ms=585.470 errors=0
+RAW label=explorer op=findall n=1 rep=13 wall_ms=580.550 errors=0
+RAW label=explorer op=findall n=1 rep=14 wall_ms=587.118 errors=0
+RAW label=explorer op=findall n=1 rep=15 wall_ms=574.786 errors=0
+RAW label=explorer op=findall n=1 rep=16 wall_ms=530.254 errors=0
+RAW label=explorer op=findall n=1 rep=17 wall_ms=530.301 errors=0
+RAW label=explorer op=findall n=1 rep=18 wall_ms=535.274 errors=0
+RAW label=explorer op=findall n=1 rep=19 wall_ms=528.541 errors=0
+RESULT label=explorer op=findall n=1 k=8 median_ms=579.43 p90_ms=591.52 per_call_us=72428.2 speedup=1.00 errors=0
+RAW label=explorer op=findall n=2 rep=0 wall_ms=454.724 errors=0
+RAW label=explorer op=findall n=2 rep=1 wall_ms=458.366 errors=0
+RAW label=explorer op=findall n=2 rep=2 wall_ms=451.811 errors=0
+RAW label=explorer op=findall n=2 rep=3 wall_ms=452.869 errors=0
+RAW label=explorer op=findall n=2 rep=4 wall_ms=463.624 errors=0
+RAW label=explorer op=findall n=2 rep=5 wall_ms=467.068 errors=0
+RAW label=explorer op=findall n=2 rep=6 wall_ms=462.727 errors=0
+RAW label=explorer op=findall n=2 rep=7 wall_ms=448.689 errors=0
+RAW label=explorer op=findall n=2 rep=8 wall_ms=451.912 errors=0
+RAW label=explorer op=findall n=2 rep=9 wall_ms=459.022 errors=0
+RAW label=explorer op=findall n=2 rep=10 wall_ms=458.673 errors=0
+RAW label=explorer op=findall n=2 rep=11 wall_ms=454.965 errors=0
+RAW label=explorer op=findall n=2 rep=12 wall_ms=444.783 errors=0
+RAW label=explorer op=findall n=2 rep=13 wall_ms=449.442 errors=0
+RAW label=explorer op=findall n=2 rep=14 wall_ms=470.152 errors=0
+RAW label=explorer op=findall n=2 rep=15 wall_ms=457.051 errors=0
+RAW label=explorer op=findall n=2 rep=16 wall_ms=459.456 errors=0
+RAW label=explorer op=findall n=2 rep=17 wall_ms=457.939 errors=0
+RAW label=explorer op=findall n=2 rep=18 wall_ms=461.169 errors=0
+RAW label=explorer op=findall n=2 rep=19 wall_ms=453.515 errors=0
+RESULT label=explorer op=findall n=2 k=8 median_ms=457.94 p90_ms=463.62 per_call_us=57242.4 speedup=1.27 errors=0
+RAW label=explorer op=findall n=4 rep=0 wall_ms=444.405 errors=0
+RAW label=explorer op=findall n=4 rep=1 wall_ms=449.636 errors=0
+RAW label=explorer op=findall n=4 rep=2 wall_ms=458.228 errors=0
+RAW label=explorer op=findall n=4 rep=3 wall_ms=453.496 errors=0
+RAW label=explorer op=findall n=4 rep=4 wall_ms=445.277 errors=0
+RAW label=explorer op=findall n=4 rep=5 wall_ms=444.229 errors=0
+RAW label=explorer op=findall n=4 rep=6 wall_ms=470.280 errors=0
+RAW label=explorer op=findall n=4 rep=7 wall_ms=461.393 errors=0
+RAW label=explorer op=findall n=4 rep=8 wall_ms=460.609 errors=0
+RAW label=explorer op=findall n=4 rep=9 wall_ms=449.199 errors=0
+RAW label=explorer op=findall n=4 rep=10 wall_ms=451.054 errors=0
+RAW label=explorer op=findall n=4 rep=11 wall_ms=453.518 errors=0
+RAW label=explorer op=findall n=4 rep=12 wall_ms=452.904 errors=0
+RAW label=explorer op=findall n=4 rep=13 wall_ms=447.986 errors=0
+RAW label=explorer op=findall n=4 rep=14 wall_ms=453.103 errors=0
+RAW label=explorer op=findall n=4 rep=15 wall_ms=457.182 errors=0
+RAW label=explorer op=findall n=4 rep=16 wall_ms=456.012 errors=0
+RAW label=explorer op=findall n=4 rep=17 wall_ms=445.914 errors=0
+RAW label=explorer op=findall n=4 rep=18 wall_ms=448.355 errors=0
+RAW label=explorer op=findall n=4 rep=19 wall_ms=460.637 errors=0
+RESULT label=explorer op=findall n=4 k=8 median_ms=453.10 p90_ms=460.64 per_call_us=56637.9 speedup=1.28 errors=0
+RAW label=explorer op=findall n=8 rep=0 wall_ms=438.637 errors=0
+RAW label=explorer op=findall n=8 rep=1 wall_ms=453.512 errors=0
+RAW label=explorer op=findall n=8 rep=2 wall_ms=449.652 errors=0
+RAW label=explorer op=findall n=8 rep=3 wall_ms=458.858 errors=0
+RAW label=explorer op=findall n=8 rep=4 wall_ms=449.106 errors=0
+RAW label=explorer op=findall n=8 rep=5 wall_ms=463.665 errors=0
+RAW label=explorer op=findall n=8 rep=6 wall_ms=452.738 errors=0
+RAW label=explorer op=findall n=8 rep=7 wall_ms=464.475 errors=0
+RAW label=explorer op=findall n=8 rep=8 wall_ms=449.784 errors=0
+RAW label=explorer op=findall n=8 rep=9 wall_ms=450.915 errors=0
+RAW label=explorer op=findall n=8 rep=10 wall_ms=448.183 errors=0
+RAW label=explorer op=findall n=8 rep=11 wall_ms=452.913 errors=0
+RAW label=explorer op=findall n=8 rep=12 wall_ms=453.837 errors=0
+RAW label=explorer op=findall n=8 rep=13 wall_ms=449.503 errors=0
+RAW label=explorer op=findall n=8 rep=14 wall_ms=441.576 errors=0
+RAW label=explorer op=findall n=8 rep=15 wall_ms=444.126 errors=0
+RAW label=explorer op=findall n=8 rep=16 wall_ms=460.296 errors=0
+RAW label=explorer op=findall n=8 rep=17 wall_ms=454.887 errors=0
+RAW label=explorer op=findall n=8 rep=18 wall_ms=448.134 errors=0
+RAW label=explorer op=findall n=8 rep=19 wall_ms=441.415 errors=0
+RESULT label=explorer op=findall n=8 k=8 median_ms=450.92 p90_ms=460.30 per_call_us=56364.4 speedup=1.28 errors=0
+RAW label=explorer op=fromhandle n=1 rep=0 wall_ms=21.960 errors=0
+RAW label=explorer op=fromhandle n=1 rep=1 wall_ms=19.393 errors=0
+RAW label=explorer op=fromhandle n=1 rep=2 wall_ms=20.409 errors=0
+RAW label=explorer op=fromhandle n=1 rep=3 wall_ms=22.215 errors=0
+RAW label=explorer op=fromhandle n=1 rep=4 wall_ms=18.913 errors=0
+RAW label=explorer op=fromhandle n=1 rep=5 wall_ms=21.464 errors=0
+RAW label=explorer op=fromhandle n=1 rep=6 wall_ms=20.478 errors=0
+RAW label=explorer op=fromhandle n=1 rep=7 wall_ms=19.859 errors=0
+RAW label=explorer op=fromhandle n=1 rep=8 wall_ms=20.935 errors=0
+RAW label=explorer op=fromhandle n=1 rep=9 wall_ms=20.455 errors=0
+RAW label=explorer op=fromhandle n=1 rep=10 wall_ms=19.914 errors=0
+RAW label=explorer op=fromhandle n=1 rep=11 wall_ms=23.737 errors=0
+RAW label=explorer op=fromhandle n=1 rep=12 wall_ms=21.178 errors=0
+RAW label=explorer op=fromhandle n=1 rep=13 wall_ms=21.740 errors=0
+RAW label=explorer op=fromhandle n=1 rep=14 wall_ms=20.238 errors=0
+RAW label=explorer op=fromhandle n=1 rep=15 wall_ms=19.511 errors=0
+RAW label=explorer op=fromhandle n=1 rep=16 wall_ms=22.150 errors=0
+RAW label=explorer op=fromhandle n=1 rep=17 wall_ms=20.153 errors=0
+RAW label=explorer op=fromhandle n=1 rep=18 wall_ms=22.761 errors=0
+RAW label=explorer op=fromhandle n=1 rep=19 wall_ms=22.894 errors=0
+RESULT label=explorer op=fromhandle n=1 k=32 median_ms=20.93 p90_ms=22.76 per_call_us=654.2 speedup=1.00 errors=0
+RAW label=explorer op=fromhandle n=2 rep=0 wall_ms=19.833 errors=0
+RAW label=explorer op=fromhandle n=2 rep=1 wall_ms=19.378 errors=0
+RAW label=explorer op=fromhandle n=2 rep=2 wall_ms=18.055 errors=0
+RAW label=explorer op=fromhandle n=2 rep=3 wall_ms=18.594 errors=0
+RAW label=explorer op=fromhandle n=2 rep=4 wall_ms=19.718 errors=0
+RAW label=explorer op=fromhandle n=2 rep=5 wall_ms=18.134 errors=0
+RAW label=explorer op=fromhandle n=2 rep=6 wall_ms=18.264 errors=0
+RAW label=explorer op=fromhandle n=2 rep=7 wall_ms=18.342 errors=0
+RAW label=explorer op=fromhandle n=2 rep=8 wall_ms=16.489 errors=0
+RAW label=explorer op=fromhandle n=2 rep=9 wall_ms=17.846 errors=0
+RAW label=explorer op=fromhandle n=2 rep=10 wall_ms=17.918 errors=0
+RAW label=explorer op=fromhandle n=2 rep=11 wall_ms=17.373 errors=0
+RAW label=explorer op=fromhandle n=2 rep=12 wall_ms=21.786 errors=0
+RAW label=explorer op=fromhandle n=2 rep=13 wall_ms=19.118 errors=0
+RAW label=explorer op=fromhandle n=2 rep=14 wall_ms=17.179 errors=0
+RAW label=explorer op=fromhandle n=2 rep=15 wall_ms=20.494 errors=0
+RAW label=explorer op=fromhandle n=2 rep=16 wall_ms=17.655 errors=0
+RAW label=explorer op=fromhandle n=2 rep=17 wall_ms=17.011 errors=0
+RAW label=explorer op=fromhandle n=2 rep=18 wall_ms=18.006 errors=0
+RAW label=explorer op=fromhandle n=2 rep=19 wall_ms=18.710 errors=0
+RESULT label=explorer op=fromhandle n=2 k=32 median_ms=18.26 p90_ms=19.83 per_call_us=570.8 speedup=1.15 errors=0
+RAW label=explorer op=fromhandle n=4 rep=0 wall_ms=16.748 errors=0
+RAW label=explorer op=fromhandle n=4 rep=1 wall_ms=17.540 errors=0
+RAW label=explorer op=fromhandle n=4 rep=2 wall_ms=17.374 errors=0
+RAW label=explorer op=fromhandle n=4 rep=3 wall_ms=16.223 errors=0
+RAW label=explorer op=fromhandle n=4 rep=4 wall_ms=17.525 errors=0
+RAW label=explorer op=fromhandle n=4 rep=5 wall_ms=17.466 errors=0
+RAW label=explorer op=fromhandle n=4 rep=6 wall_ms=18.957 errors=0
+RAW label=explorer op=fromhandle n=4 rep=7 wall_ms=17.044 errors=0
+RAW label=explorer op=fromhandle n=4 rep=8 wall_ms=17.250 errors=0
+RAW label=explorer op=fromhandle n=4 rep=9 wall_ms=18.056 errors=0
+RAW label=explorer op=fromhandle n=4 rep=10 wall_ms=17.104 errors=0
+RAW label=explorer op=fromhandle n=4 rep=11 wall_ms=18.233 errors=0
+RAW label=explorer op=fromhandle n=4 rep=12 wall_ms=16.533 errors=0
+RAW label=explorer op=fromhandle n=4 rep=13 wall_ms=17.292 errors=0
+RAW label=explorer op=fromhandle n=4 rep=14 wall_ms=17.435 errors=0
+RAW label=explorer op=fromhandle n=4 rep=15 wall_ms=16.185 errors=0
+RAW label=explorer op=fromhandle n=4 rep=16 wall_ms=17.473 errors=0
+RAW label=explorer op=fromhandle n=4 rep=17 wall_ms=18.381 errors=0
+RAW label=explorer op=fromhandle n=4 rep=18 wall_ms=16.498 errors=0
+RAW label=explorer op=fromhandle n=4 rep=19 wall_ms=18.152 errors=0
+RESULT label=explorer op=fromhandle n=4 k=32 median_ms=17.44 p90_ms=18.23 per_call_us=544.9 speedup=1.20 errors=0
+RAW label=explorer op=fromhandle n=8 rep=0 wall_ms=17.822 errors=0
+RAW label=explorer op=fromhandle n=8 rep=1 wall_ms=17.685 errors=0
+RAW label=explorer op=fromhandle n=8 rep=2 wall_ms=18.386 errors=0
+RAW label=explorer op=fromhandle n=8 rep=3 wall_ms=18.486 errors=0
+RAW label=explorer op=fromhandle n=8 rep=4 wall_ms=17.482 errors=0
+RAW label=explorer op=fromhandle n=8 rep=5 wall_ms=17.439 errors=0
+RAW label=explorer op=fromhandle n=8 rep=6 wall_ms=18.135 errors=0
+RAW label=explorer op=fromhandle n=8 rep=7 wall_ms=18.898 errors=0
+RAW label=explorer op=fromhandle n=8 rep=8 wall_ms=17.430 errors=0
+RAW label=explorer op=fromhandle n=8 rep=9 wall_ms=16.452 errors=0
+RAW label=explorer op=fromhandle n=8 rep=10 wall_ms=17.053 errors=0
+RAW label=explorer op=fromhandle n=8 rep=11 wall_ms=17.911 errors=0
+RAW label=explorer op=fromhandle n=8 rep=12 wall_ms=17.786 errors=0
+RAW label=explorer op=fromhandle n=8 rep=13 wall_ms=16.947 errors=0
+RAW label=explorer op=fromhandle n=8 rep=14 wall_ms=17.259 errors=0
+RAW label=explorer op=fromhandle n=8 rep=15 wall_ms=18.303 errors=0
+RAW label=explorer op=fromhandle n=8 rep=16 wall_ms=17.575 errors=0
+RAW label=explorer op=fromhandle n=8 rep=17 wall_ms=17.065 errors=0
+RAW label=explorer op=fromhandle n=8 rep=18 wall_ms=17.546 errors=0
+RAW label=explorer op=fromhandle n=8 rep=19 wall_ms=20.136 errors=0
+RESULT label=explorer op=fromhandle n=8 k=32 median_ms=17.69 p90_ms=18.49 per_call_us=552.7 speedup=1.18 errors=0
+RAW label=explorer op=text n=1 rep=0 wall_ms=6.049 errors=0
+RAW label=explorer op=text n=1 rep=1 wall_ms=6.256 errors=0
+RAW label=explorer op=text n=1 rep=2 wall_ms=7.201 errors=0
+RAW label=explorer op=text n=1 rep=3 wall_ms=8.256 errors=0
+RAW label=explorer op=text n=1 rep=4 wall_ms=7.397 errors=0
+RAW label=explorer op=text n=1 rep=5 wall_ms=7.323 errors=0
+RAW label=explorer op=text n=1 rep=6 wall_ms=7.222 errors=0
+RAW label=explorer op=text n=1 rep=7 wall_ms=7.961 errors=0
+RAW label=explorer op=text n=1 rep=8 wall_ms=8.232 errors=0
+RAW label=explorer op=text n=1 rep=9 wall_ms=8.450 errors=0
+RAW label=explorer op=text n=1 rep=10 wall_ms=7.241 errors=0
+RAW label=explorer op=text n=1 rep=11 wall_ms=7.613 errors=0
+RAW label=explorer op=text n=1 rep=12 wall_ms=7.384 errors=0
+RAW label=explorer op=text n=1 rep=13 wall_ms=8.229 errors=0
+RAW label=explorer op=text n=1 rep=14 wall_ms=7.276 errors=0
+RAW label=explorer op=text n=1 rep=15 wall_ms=7.086 errors=0
+RAW label=explorer op=text n=1 rep=16 wall_ms=9.008 errors=0
+RAW label=explorer op=text n=1 rep=17 wall_ms=7.294 errors=0
+RAW label=explorer op=text n=1 rep=18 wall_ms=7.921 errors=0
+RAW label=explorer op=text n=1 rep=19 wall_ms=8.293 errors=0
+RESULT label=explorer op=text n=1 k=32 median_ms=7.40 p90_ms=8.29 per_call_us=231.1 speedup=1.00 errors=0
+RAW label=explorer op=text n=2 rep=0 wall_ms=5.377 errors=0
+RAW label=explorer op=text n=2 rep=1 wall_ms=4.650 errors=0
+RAW label=explorer op=text n=2 rep=2 wall_ms=4.745 errors=0
+RAW label=explorer op=text n=2 rep=3 wall_ms=4.339 errors=0
+RAW label=explorer op=text n=2 rep=4 wall_ms=4.143 errors=0
+RAW label=explorer op=text n=2 rep=5 wall_ms=4.377 errors=0
+RAW label=explorer op=text n=2 rep=6 wall_ms=5.335 errors=0
+RAW label=explorer op=text n=2 rep=7 wall_ms=4.324 errors=0
+RAW label=explorer op=text n=2 rep=8 wall_ms=4.340 errors=0
+RAW label=explorer op=text n=2 rep=9 wall_ms=4.762 errors=0
+RAW label=explorer op=text n=2 rep=10 wall_ms=4.306 errors=0
+RAW label=explorer op=text n=2 rep=11 wall_ms=5.057 errors=0
+RAW label=explorer op=text n=2 rep=12 wall_ms=4.867 errors=0
+RAW label=explorer op=text n=2 rep=13 wall_ms=4.374 errors=0
+RAW label=explorer op=text n=2 rep=14 wall_ms=4.258 errors=0
+RAW label=explorer op=text n=2 rep=15 wall_ms=4.731 errors=0
+RAW label=explorer op=text n=2 rep=16 wall_ms=5.161 errors=0
+RAW label=explorer op=text n=2 rep=17 wall_ms=4.243 errors=0
+RAW label=explorer op=text n=2 rep=18 wall_ms=4.125 errors=0
+RAW label=explorer op=text n=2 rep=19 wall_ms=4.089 errors=0
+RESULT label=explorer op=text n=2 k=32 median_ms=4.38 p90_ms=5.16 per_call_us=136.8 speedup=1.69 errors=0
+RAW label=explorer op=text n=4 rep=0 wall_ms=4.688 errors=0
+RAW label=explorer op=text n=4 rep=1 wall_ms=5.293 errors=0
+RAW label=explorer op=text n=4 rep=2 wall_ms=5.357 errors=0
+RAW label=explorer op=text n=4 rep=3 wall_ms=5.434 errors=0
+RAW label=explorer op=text n=4 rep=4 wall_ms=5.514 errors=0
+RAW label=explorer op=text n=4 rep=5 wall_ms=5.371 errors=0
+RAW label=explorer op=text n=4 rep=6 wall_ms=4.276 errors=0
+RAW label=explorer op=text n=4 rep=7 wall_ms=4.276 errors=0
+RAW label=explorer op=text n=4 rep=8 wall_ms=4.562 errors=0
+RAW label=explorer op=text n=4 rep=9 wall_ms=4.546 errors=0
+RAW label=explorer op=text n=4 rep=10 wall_ms=4.703 errors=0
+RAW label=explorer op=text n=4 rep=11 wall_ms=4.899 errors=0
+RAW label=explorer op=text n=4 rep=12 wall_ms=4.890 errors=0
+RAW label=explorer op=text n=4 rep=13 wall_ms=5.237 errors=0
+RAW label=explorer op=text n=4 rep=14 wall_ms=4.699 errors=0
+RAW label=explorer op=text n=4 rep=15 wall_ms=4.943 errors=0
+RAW label=explorer op=text n=4 rep=16 wall_ms=5.083 errors=0
+RAW label=explorer op=text n=4 rep=17 wall_ms=4.418 errors=0
+RAW label=explorer op=text n=4 rep=18 wall_ms=4.514 errors=0
+RAW label=explorer op=text n=4 rep=19 wall_ms=4.424 errors=0
+RESULT label=explorer op=text n=4 k=32 median_ms=4.89 p90_ms=5.37 per_call_us=152.8 speedup=1.51 errors=0
+RAW label=explorer op=text n=8 rep=0 wall_ms=4.319 errors=0
+RAW label=explorer op=text n=8 rep=1 wall_ms=4.294 errors=0
+RAW label=explorer op=text n=8 rep=2 wall_ms=4.674 errors=0
+RAW label=explorer op=text n=8 rep=3 wall_ms=4.416 errors=0
+RAW label=explorer op=text n=8 rep=4 wall_ms=4.319 errors=0
+RAW label=explorer op=text n=8 rep=5 wall_ms=4.315 errors=0
+RAW label=explorer op=text n=8 rep=6 wall_ms=4.522 errors=0
+RAW label=explorer op=text n=8 rep=7 wall_ms=5.125 errors=0
+RAW label=explorer op=text n=8 rep=8 wall_ms=4.977 errors=0
+RAW label=explorer op=text n=8 rep=9 wall_ms=4.698 errors=0
+RAW label=explorer op=text n=8 rep=10 wall_ms=5.053 errors=0
+RAW label=explorer op=text n=8 rep=11 wall_ms=5.173 errors=0
+RAW label=explorer op=text n=8 rep=12 wall_ms=4.909 errors=0
+RAW label=explorer op=text n=8 rep=13 wall_ms=4.562 errors=0
+RAW label=explorer op=text n=8 rep=14 wall_ms=4.944 errors=0
+RAW label=explorer op=text n=8 rep=15 wall_ms=4.795 errors=0
+RAW label=explorer op=text n=8 rep=16 wall_ms=5.040 errors=0
+RAW label=explorer op=text n=8 rep=17 wall_ms=5.025 errors=0
+RAW label=explorer op=text n=8 rep=18 wall_ms=4.878 errors=0
+RAW label=explorer op=text n=8 rep=19 wall_ms=4.943 errors=0
+RESULT label=explorer op=text n=8 k=32 median_ms=4.88 p90_ms=5.05 per_call_us=152.4 speedup=1.52 errors=0
+RAW label=explorer op=msaa n=1 rep=0 wall_ms=3.669 errors=0
+RAW label=explorer op=msaa n=1 rep=1 wall_ms=3.664 errors=0
+RAW label=explorer op=msaa n=1 rep=2 wall_ms=3.905 errors=0
+RAW label=explorer op=msaa n=1 rep=3 wall_ms=3.827 errors=0
+RAW label=explorer op=msaa n=1 rep=4 wall_ms=4.029 errors=0
+RAW label=explorer op=msaa n=1 rep=5 wall_ms=4.416 errors=0
+RAW label=explorer op=msaa n=1 rep=6 wall_ms=3.685 errors=0
+RAW label=explorer op=msaa n=1 rep=7 wall_ms=3.567 errors=0
+RAW label=explorer op=msaa n=1 rep=8 wall_ms=3.984 errors=0
+RAW label=explorer op=msaa n=1 rep=9 wall_ms=4.247 errors=0
+RAW label=explorer op=msaa n=1 rep=10 wall_ms=4.040 errors=0
+RAW label=explorer op=msaa n=1 rep=11 wall_ms=3.900 errors=0
+RAW label=explorer op=msaa n=1 rep=12 wall_ms=4.359 errors=0
+RAW label=explorer op=msaa n=1 rep=13 wall_ms=3.847 errors=0
+RAW label=explorer op=msaa n=1 rep=14 wall_ms=4.349 errors=0
+RAW label=explorer op=msaa n=1 rep=15 wall_ms=3.650 errors=0
+RAW label=explorer op=msaa n=1 rep=16 wall_ms=5.089 errors=0
+RAW label=explorer op=msaa n=1 rep=17 wall_ms=3.697 errors=0
+RAW label=explorer op=msaa n=1 rep=18 wall_ms=3.635 errors=0
+RAW label=explorer op=msaa n=1 rep=19 wall_ms=3.817 errors=0
+RESULT label=explorer op=msaa n=1 k=64 median_ms=3.90 p90_ms=4.36 per_call_us=60.9 speedup=1.00 errors=0
+RAW label=explorer op=msaa n=2 rep=0 wall_ms=5.483 errors=0
+RAW label=explorer op=msaa n=2 rep=1 wall_ms=5.629 errors=0
+RAW label=explorer op=msaa n=2 rep=2 wall_ms=5.838 errors=0
+RAW label=explorer op=msaa n=2 rep=3 wall_ms=6.752 errors=0
+RAW label=explorer op=msaa n=2 rep=4 wall_ms=5.714 errors=0
+RAW label=explorer op=msaa n=2 rep=5 wall_ms=5.817 errors=0
+RAW label=explorer op=msaa n=2 rep=6 wall_ms=5.361 errors=0
+RAW label=explorer op=msaa n=2 rep=7 wall_ms=5.587 errors=0
+RAW label=explorer op=msaa n=2 rep=8 wall_ms=5.453 errors=0
+RAW label=explorer op=msaa n=2 rep=9 wall_ms=5.360 errors=0
+RAW label=explorer op=msaa n=2 rep=10 wall_ms=5.539 errors=0
+RAW label=explorer op=msaa n=2 rep=11 wall_ms=5.560 errors=0
+RAW label=explorer op=msaa n=2 rep=12 wall_ms=5.673 errors=0
+RAW label=explorer op=msaa n=2 rep=13 wall_ms=5.636 errors=0
+RAW label=explorer op=msaa n=2 rep=14 wall_ms=5.953 errors=0
+RAW label=explorer op=msaa n=2 rep=15 wall_ms=5.919 errors=0
+RAW label=explorer op=msaa n=2 rep=16 wall_ms=5.692 errors=0
+RAW label=explorer op=msaa n=2 rep=17 wall_ms=5.541 errors=0
+RAW label=explorer op=msaa n=2 rep=18 wall_ms=5.523 errors=0
+RAW label=explorer op=msaa n=2 rep=19 wall_ms=5.422 errors=0
+RESULT label=explorer op=msaa n=2 k=64 median_ms=5.63 p90_ms=5.92 per_call_us=88.0 speedup=0.69 errors=0
+RAW label=explorer op=msaa n=4 rep=0 wall_ms=4.536 errors=0
+RAW label=explorer op=msaa n=4 rep=1 wall_ms=4.414 errors=0
+RAW label=explorer op=msaa n=4 rep=2 wall_ms=5.492 errors=0
+RAW label=explorer op=msaa n=4 rep=3 wall_ms=5.615 errors=0
+RAW label=explorer op=msaa n=4 rep=4 wall_ms=5.595 errors=0
+RAW label=explorer op=msaa n=4 rep=5 wall_ms=5.749 errors=0
+RAW label=explorer op=msaa n=4 rep=6 wall_ms=5.545 errors=0
+RAW label=explorer op=msaa n=4 rep=7 wall_ms=5.681 errors=0
+RAW label=explorer op=msaa n=4 rep=8 wall_ms=5.398 errors=0
+RAW label=explorer op=msaa n=4 rep=9 wall_ms=5.587 errors=0
+RAW label=explorer op=msaa n=4 rep=10 wall_ms=5.171 errors=0
+RAW label=explorer op=msaa n=4 rep=11 wall_ms=5.265 errors=0
+RAW label=explorer op=msaa n=4 rep=12 wall_ms=5.488 errors=0
+RAW label=explorer op=msaa n=4 rep=13 wall_ms=5.564 errors=0
+RAW label=explorer op=msaa n=4 rep=14 wall_ms=5.493 errors=0
+RAW label=explorer op=msaa n=4 rep=15 wall_ms=5.584 errors=0
+RAW label=explorer op=msaa n=4 rep=16 wall_ms=5.368 errors=0
+RAW label=explorer op=msaa n=4 rep=17 wall_ms=5.503 errors=0
+RAW label=explorer op=msaa n=4 rep=18 wall_ms=5.549 errors=0
+RAW label=explorer op=msaa n=4 rep=19 wall_ms=5.463 errors=0
+RESULT label=explorer op=msaa n=4 k=64 median_ms=5.50 p90_ms=5.62 per_call_us=86.0 speedup=0.71 errors=0
+RAW label=explorer op=msaa n=8 rep=0 wall_ms=5.494 errors=0
+RAW label=explorer op=msaa n=8 rep=1 wall_ms=5.488 errors=0
+RAW label=explorer op=msaa n=8 rep=2 wall_ms=5.454 errors=0
+RAW label=explorer op=msaa n=8 rep=3 wall_ms=5.582 errors=0
+RAW label=explorer op=msaa n=8 rep=4 wall_ms=5.570 errors=0
+RAW label=explorer op=msaa n=8 rep=5 wall_ms=6.085 errors=0
+RAW label=explorer op=msaa n=8 rep=6 wall_ms=5.742 errors=0
+RAW label=explorer op=msaa n=8 rep=7 wall_ms=5.916 errors=0
+RAW label=explorer op=msaa n=8 rep=8 wall_ms=5.877 errors=0
+RAW label=explorer op=msaa n=8 rep=9 wall_ms=5.603 errors=0
+RAW label=explorer op=msaa n=8 rep=10 wall_ms=5.496 errors=0
+RAW label=explorer op=msaa n=8 rep=11 wall_ms=5.824 errors=0
+RAW label=explorer op=msaa n=8 rep=12 wall_ms=5.988 errors=0
+RAW label=explorer op=msaa n=8 rep=13 wall_ms=5.596 errors=0
+RAW label=explorer op=msaa n=8 rep=14 wall_ms=5.505 errors=0
+RAW label=explorer op=msaa n=8 rep=15 wall_ms=5.015 errors=0
+RAW label=explorer op=msaa n=8 rep=16 wall_ms=5.845 errors=0
+RAW label=explorer op=msaa n=8 rep=17 wall_ms=5.212 errors=0
+RAW label=explorer op=msaa n=8 rep=18 wall_ms=6.374 errors=0
+RAW label=explorer op=msaa n=8 rep=19 wall_ms=6.425 errors=0
+RESULT label=explorer op=msaa n=8 k=64 median_ms=5.60 p90_ms=6.08 per_call_us=87.5 speedup=0.70 errors=0
+RAW label=explorer op=rop n=1 rep=0 wall_ms=6.800 errors=2
+RAW label=explorer op=rop n=1 rep=1 wall_ms=5.773 errors=2
+RAW label=explorer op=rop n=1 rep=2 wall_ms=6.049 errors=2
+RAW label=explorer op=rop n=1 rep=3 wall_ms=5.901 errors=2
+RAW label=explorer op=rop n=1 rep=4 wall_ms=6.364 errors=2
+RAW label=explorer op=rop n=1 rep=5 wall_ms=6.049 errors=2
+RAW label=explorer op=rop n=1 rep=6 wall_ms=6.095 errors=2
+RAW label=explorer op=rop n=1 rep=7 wall_ms=6.581 errors=2
+RAW label=explorer op=rop n=1 rep=8 wall_ms=6.971 errors=2
+RAW label=explorer op=rop n=1 rep=9 wall_ms=6.122 errors=2
+RAW label=explorer op=rop n=1 rep=10 wall_ms=6.017 errors=2
+RAW label=explorer op=rop n=1 rep=11 wall_ms=5.876 errors=2
+RAW label=explorer op=rop n=1 rep=12 wall_ms=5.968 errors=2
+RAW label=explorer op=rop n=1 rep=13 wall_ms=6.171 errors=2
+RAW label=explorer op=rop n=1 rep=14 wall_ms=6.058 errors=2
+RAW label=explorer op=rop n=1 rep=15 wall_ms=6.654 errors=2
+RAW label=explorer op=rop n=1 rep=16 wall_ms=6.515 errors=2
+RAW label=explorer op=rop n=1 rep=17 wall_ms=6.365 errors=2
+RAW label=explorer op=rop n=1 rep=18 wall_ms=6.385 errors=2
+RAW label=explorer op=rop n=1 rep=19 wall_ms=6.039 errors=2
+RESULT label=explorer op=rop n=1 k=32 median_ms=6.12 p90_ms=6.65 per_call_us=191.3 speedup=1.00 errors=40
+RAW label=explorer op=rop n=2 rep=0 wall_ms=4.381 errors=2
+RAW label=explorer op=rop n=2 rep=1 wall_ms=4.559 errors=2
+RAW label=explorer op=rop n=2 rep=2 wall_ms=4.466 errors=2
+RAW label=explorer op=rop n=2 rep=3 wall_ms=4.847 errors=2
+RAW label=explorer op=rop n=2 rep=4 wall_ms=5.433 errors=2
+RAW label=explorer op=rop n=2 rep=5 wall_ms=5.010 errors=2
+RAW label=explorer op=rop n=2 rep=6 wall_ms=5.005 errors=2
+RAW label=explorer op=rop n=2 rep=7 wall_ms=4.252 errors=2
+RAW label=explorer op=rop n=2 rep=8 wall_ms=4.299 errors=2
+RAW label=explorer op=rop n=2 rep=9 wall_ms=4.279 errors=2
+RAW label=explorer op=rop n=2 rep=10 wall_ms=5.001 errors=2
+RAW label=explorer op=rop n=2 rep=11 wall_ms=4.558 errors=2
+RAW label=explorer op=rop n=2 rep=12 wall_ms=4.403 errors=2
+RAW label=explorer op=rop n=2 rep=13 wall_ms=5.065 errors=2
+RAW label=explorer op=rop n=2 rep=14 wall_ms=4.728 errors=2
+RAW label=explorer op=rop n=2 rep=15 wall_ms=5.212 errors=2
+RAW label=explorer op=rop n=2 rep=16 wall_ms=4.675 errors=2
+RAW label=explorer op=rop n=2 rep=17 wall_ms=4.341 errors=2
+RAW label=explorer op=rop n=2 rep=18 wall_ms=4.635 errors=2
+RAW label=explorer op=rop n=2 rep=19 wall_ms=4.475 errors=2
+RESULT label=explorer op=rop n=2 k=32 median_ms=4.63 p90_ms=5.06 per_call_us=144.8 speedup=1.32 errors=40
+RAW label=explorer op=rop n=4 rep=0 wall_ms=4.516 errors=2
+RAW label=explorer op=rop n=4 rep=1 wall_ms=4.784 errors=2
+RAW label=explorer op=rop n=4 rep=2 wall_ms=4.593 errors=2
+RAW label=explorer op=rop n=4 rep=3 wall_ms=4.589 errors=2
+RAW label=explorer op=rop n=4 rep=4 wall_ms=4.337 errors=2
+RAW label=explorer op=rop n=4 rep=5 wall_ms=4.295 errors=2
+RAW label=explorer op=rop n=4 rep=6 wall_ms=4.304 errors=2
+RAW label=explorer op=rop n=4 rep=7 wall_ms=4.897 errors=2
+RAW label=explorer op=rop n=4 rep=8 wall_ms=5.096 errors=2
+RAW label=explorer op=rop n=4 rep=9 wall_ms=5.325 errors=2
+RAW label=explorer op=rop n=4 rep=10 wall_ms=5.857 errors=2
+RAW label=explorer op=rop n=4 rep=11 wall_ms=5.875 errors=2
+RAW label=explorer op=rop n=4 rep=12 wall_ms=5.380 errors=2
+RAW label=explorer op=rop n=4 rep=13 wall_ms=5.286 errors=2
+RAW label=explorer op=rop n=4 rep=14 wall_ms=5.081 errors=2
+RAW label=explorer op=rop n=4 rep=15 wall_ms=5.267 errors=2
+RAW label=explorer op=rop n=4 rep=16 wall_ms=4.751 errors=2
+RAW label=explorer op=rop n=4 rep=17 wall_ms=5.119 errors=2
+RAW label=explorer op=rop n=4 rep=18 wall_ms=5.394 errors=2
+RAW label=explorer op=rop n=4 rep=19 wall_ms=5.244 errors=2
+RESULT label=explorer op=rop n=4 k=32 median_ms=5.10 p90_ms=5.39 per_call_us=159.2 speedup=1.20 errors=40
+RAW label=explorer op=rop n=8 rep=0 wall_ms=5.238 errors=2
+RAW label=explorer op=rop n=8 rep=1 wall_ms=4.902 errors=2
+RAW label=explorer op=rop n=8 rep=2 wall_ms=4.883 errors=2
+RAW label=explorer op=rop n=8 rep=3 wall_ms=4.916 errors=2
+RAW label=explorer op=rop n=8 rep=4 wall_ms=4.614 errors=2
+RAW label=explorer op=rop n=8 rep=5 wall_ms=4.559 errors=2
+RAW label=explorer op=rop n=8 rep=6 wall_ms=4.810 errors=2
+RAW label=explorer op=rop n=8 rep=7 wall_ms=4.756 errors=2
+RAW label=explorer op=rop n=8 rep=8 wall_ms=4.561 errors=2
+RAW label=explorer op=rop n=8 rep=9 wall_ms=5.596 errors=2
+RAW label=explorer op=rop n=8 rep=10 wall_ms=5.364 errors=2
+RAW label=explorer op=rop n=8 rep=11 wall_ms=4.935 errors=2
+RAW label=explorer op=rop n=8 rep=12 wall_ms=4.908 errors=2
+RAW label=explorer op=rop n=8 rep=13 wall_ms=4.833 errors=2
+RAW label=explorer op=rop n=8 rep=14 wall_ms=4.997 errors=2
+RAW label=explorer op=rop n=8 rep=15 wall_ms=5.035 errors=2
+RAW label=explorer op=rop n=8 rep=16 wall_ms=4.639 errors=2
+RAW label=explorer op=rop n=8 rep=17 wall_ms=4.544 errors=2
+RAW label=explorer op=rop n=8 rep=18 wall_ms=4.562 errors=2
+RAW label=explorer op=rop n=8 rep=19 wall_ms=4.568 errors=2
+RESULT label=explorer op=rop n=8 k=32 median_ms=4.88 p90_ms=5.24 per_call_us=152.6 speedup=1.25 errors=40
+PAIR label=explorer-findall-beside-name a=FindAll@525792 elem 0 (of 16 held, 92 found) b=Name@525792 elem 3 (of 16 held)
+RESULT label=explorer-findall-beside-name a_alone count=10 median_ms=66.39 p90_ms=68.37 max_ms=69.68
+RESULT label=explorer-findall-beside-name a_with_b count=10 median_ms=71.98 p90_ms=74.96 max_ms=75.66
+RESULT label=explorer-findall-beside-name b_alone count=255 median_ms=0.25 p90_ms=0.35 max_ms=0.70
+RESULT label=explorer-findall-beside-name b_during_a count=255 median_ms=0.41 p90_ms=1.11 max_ms=7.73
+PAIR label=explorer-findall-beside-rop a=FindAll@525792 elem 0 (of 16 held, 92 found) b=Rop@525792 elem 3 (of 16 held)
+RESULT label=explorer-findall-beside-rop a_alone count=10 median_ms=66.13 p90_ms=67.76 max_ms=68.12
+RESULT label=explorer-findall-beside-rop a_with_b count=10 median_ms=69.54 p90_ms=71.69 max_ms=72.64
+RESULT label=explorer-findall-beside-rop b_alone count=249 median_ms=0.26 p90_ms=0.33 max_ms=0.96
+RESULT label=explorer-findall-beside-rop b_during_a count=249 median_ms=0.38 p90_ms=1.05 max_ms=5.48
+CALL other-element hwnd=525792 pid=10180 ui_tid=6636 op=Name elem=3 class=CabinetWClass title=folderA - File Explorer
+CALL other-element-rop hwnd=525792 pid=10180 ui_tid=6636 op=Rop elem=3 class=CabinetWClass title=folderA - File Explorer
+CALL same-window-new-connection hwnd=525792 pid=10180 ui_tid=6636 op=FromHandle elem=0 class=CabinetWClass title=folderA - File Explorer
+CALL other-thread-window hwnd=1508302 pid=11312 ui_tid=8376 op=Name elem=3 class=CabinetWClass title=folderB - File Explorer
+CALL other-thread-window-rop hwnd=1508302 pid=11312 ui_tid=8376 op=Rop elem=3 class=CabinetWClass title=folderB - File Explorer
+CALL other-thread-window-new-connection hwnd=1508302 pid=11312 ui_tid=8376 op=FromHandle elem=0 class=CabinetWClass title=folderB - File Explorer
+CALL stuck hwnd=525792 pid=10180 ui_tid=6636 op=Name elem=1 class=CabinetWClass title=folderA - File Explorer
+suspended tid=6636
+resumed tid=6636
+TRIAL label=explorer-suspended-name trial=0 block=suspend:525792 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=4013.0
+RESULT label=explorer-suspended-name trial=0 call=other-thread-window-rop returned_ms=2.4 before_unblock result=ok idle_baseline_ms=1.15
+RESULT label=explorer-suspended-name trial=0 call=other-thread-window returned_ms=4.2 before_unblock result=ok idle_baseline_ms=1.35
+RESULT label=explorer-suspended-name trial=0 call=other-thread-window-new-connection returned_ms=5.9 before_unblock result=ok idle_baseline_ms=1.53
+RESULT label=explorer-suspended-name trial=0 call=xproc-other-thread-window returned_ms=10.2 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-name trial=0 call=same-window-new-connection returned_ms=2179.6 before_unblock result=error 0x80131505 idle_baseline_ms=1.07
+RESULT label=explorer-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4014.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-name trial=0 call=xproc-other-element returned_ms=4015.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-name trial=0 call=stuck returned_ms=4015.7 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=explorer-suspended-name trial=0 call=other-element-rop returned_ms=4016.6 after_unblock result=ok idle_baseline_ms=1.21
+RESULT label=explorer-suspended-name trial=0 call=other-element returned_ms=4019.1 after_unblock result=ok idle_baseline_ms=1.14
+suspended tid=6636
+resumed tid=6636
+TRIAL label=explorer-suspended-name trial=1 block=suspend:525792 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4009.7
+RESULT label=explorer-suspended-name trial=1 call=other-thread-window-rop returned_ms=1.0 before_unblock result=ok idle_baseline_ms=1.17
+RESULT label=explorer-suspended-name trial=1 call=other-thread-window returned_ms=1.2 before_unblock result=ok idle_baseline_ms=1.19
+RESULT label=explorer-suspended-name trial=1 call=other-thread-window-new-connection returned_ms=1.3 before_unblock result=ok idle_baseline_ms=1.75
+RESULT label=explorer-suspended-name trial=1 call=xproc-other-thread-window returned_ms=2.4 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-name trial=1 call=same-window-new-connection returned_ms=2191.4 before_unblock result=error 0x80131505 idle_baseline_ms=1.70
+RESULT label=explorer-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4010.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-name trial=1 call=xproc-other-element returned_ms=4010.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-name trial=1 call=stuck returned_ms=4012.0 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=explorer-suspended-name trial=1 call=other-element-rop returned_ms=4012.5 after_unblock result=ok idle_baseline_ms=1.26
+RESULT label=explorer-suspended-name trial=1 call=other-element returned_ms=4012.8 after_unblock result=ok idle_baseline_ms=1.13
+CALL other-element hwnd=525792 pid=10180 ui_tid=6636 op=Name elem=3 class=CabinetWClass title=folderA - File Explorer
+CALL other-element-rop hwnd=525792 pid=10180 ui_tid=6636 op=Rop elem=3 class=CabinetWClass title=folderA - File Explorer
+CALL same-window-new-connection hwnd=525792 pid=10180 ui_tid=6636 op=FromHandle elem=0 class=CabinetWClass title=folderA - File Explorer
+CALL other-thread-window hwnd=1508302 pid=11312 ui_tid=8376 op=Name elem=3 class=CabinetWClass title=folderB - File Explorer
+CALL other-thread-window-rop hwnd=1508302 pid=11312 ui_tid=8376 op=Rop elem=3 class=CabinetWClass title=folderB - File Explorer
+CALL other-thread-window-new-connection hwnd=1508302 pid=11312 ui_tid=8376 op=FromHandle elem=0 class=CabinetWClass title=folderB - File Explorer
+CALL stuck hwnd=525792 pid=10180 ui_tid=6636 op=Rop elem=1 class=CabinetWClass title=folderA - File Explorer
+suspended tid=6636
+resumed tid=6636
+TRIAL label=explorer-suspended-rop trial=0 block=suspend:525792 evidence="200 ms wait" probes_started_ms_after_block=200.3 unblocked_at_ms=4004.8
+RESULT label=explorer-suspended-rop trial=0 call=other-thread-window-rop returned_ms=1.0 before_unblock result=ok idle_baseline_ms=1.21
+RESULT label=explorer-suspended-rop trial=0 call=other-thread-window-new-connection returned_ms=1.2 before_unblock result=ok idle_baseline_ms=1.65
+RESULT label=explorer-suspended-rop trial=0 call=other-thread-window returned_ms=1.4 before_unblock result=ok idle_baseline_ms=0.80
+RESULT label=explorer-suspended-rop trial=0 call=xproc-other-thread-window returned_ms=3.3 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-rop trial=0 call=same-window-new-connection returned_ms=2186.5 before_unblock result=error 0x80131505 idle_baseline_ms=1.56
+RESULT label=explorer-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4006.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-rop trial=0 call=xproc-other-element returned_ms=4007.7 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-rop trial=0 call=other-element-rop returned_ms=4008.8 after_unblock result=ok idle_baseline_ms=1.38
+RESULT label=explorer-suspended-rop trial=0 call=other-element returned_ms=4009.2 after_unblock result=ok idle_baseline_ms=0.97
+RESULT label=explorer-suspended-rop trial=0 call=stuck returned_ms=4011.0 after_unblock result=ok idle_baseline_ms=0.00
+suspended tid=6636
+resumed tid=6636
+TRIAL label=explorer-suspended-rop trial=1 block=suspend:525792 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4014.2
+RESULT label=explorer-suspended-rop trial=1 call=other-thread-window-new-connection returned_ms=1.0 before_unblock result=ok idle_baseline_ms=1.36
+RESULT label=explorer-suspended-rop trial=1 call=other-thread-window returned_ms=2.7 before_unblock result=ok idle_baseline_ms=1.34
+RESULT label=explorer-suspended-rop trial=1 call=other-thread-window-rop returned_ms=4.1 before_unblock result=ok idle_baseline_ms=1.34
+RESULT label=explorer-suspended-rop trial=1 call=xproc-other-thread-window returned_ms=6.0 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-rop trial=1 call=same-window-new-connection returned_ms=2195.9 before_unblock result=error 0x80131505 idle_baseline_ms=1.44
+RESULT label=explorer-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4015.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-rop trial=1 call=xproc-other-element returned_ms=4016.7 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=explorer-suspended-rop trial=1 call=stuck returned_ms=4017.3 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=explorer-suspended-rop trial=1 call=other-element returned_ms=4017.7 after_unblock result=ok idle_baseline_ms=1.10
+RESULT label=explorer-suspended-rop trial=1 call=other-element-rop returned_ms=4018.0 after_unblock result=ok idle_baseline_ms=1.23

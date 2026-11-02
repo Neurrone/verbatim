@@ -1,0 +1,72 @@
+PAIR label=notepad-big-findall-beside-name-xb0 a=FindAll@656722 elem 3 (of 16 held, 52 found) b=Name@656722 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=notepad-big-findall-beside-name-xb0 a_alone count=10 median_ms=35.71 p90_ms=37.78 max_ms=38.06
+RESULT label=notepad-big-findall-beside-name-xb0 a_with_b count=10 median_ms=35.21 p90_ms=36.13 max_ms=36.55
+RESULT label=notepad-big-findall-beside-name-xb0 b_alone count=122 median_ms=0.20 p90_ms=0.24 max_ms=0.63
+RESULT label=notepad-big-findall-beside-name-xb0 b_during_a count=122 median_ms=0.25 p90_ms=0.91 max_ms=4.62
+PAIR label=notepad-big-findall-beside-name-xb1 a=FindAll@656722 elem 3 (of 16 held, 52 found) b=Name@656722 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=notepad-big-findall-beside-name-xb1 a_alone count=10 median_ms=34.66 p90_ms=36.26 max_ms=36.37
+RESULT label=notepad-big-findall-beside-name-xb1 a_with_b count=10 median_ms=35.80 p90_ms=37.32 max_ms=38.13
+RESULT label=notepad-big-findall-beside-name-xb1 b_alone count=125 median_ms=0.20 p90_ms=0.23 max_ms=0.37
+RESULT label=notepad-big-findall-beside-name-xb1 b_during_a count=125 median_ms=0.26 p90_ms=0.85 max_ms=5.12
+PAIR label=notepad-big-findall-beside-rop-xb0 a=FindAll@656722 elem 3 (of 16 held, 52 found) b=Rop@656722 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=notepad-big-findall-beside-rop-xb0 a_alone count=10 median_ms=34.66 p90_ms=35.75 max_ms=36.46
+RESULT label=notepad-big-findall-beside-rop-xb0 a_with_b count=10 median_ms=36.29 p90_ms=37.45 max_ms=43.65
+RESULT label=notepad-big-findall-beside-rop-xb0 b_alone count=127 median_ms=0.45 p90_ms=0.53 max_ms=0.64
+RESULT label=notepad-big-findall-beside-rop-xb0 b_during_a count=127 median_ms=0.48 p90_ms=1.32 max_ms=7.89
+PAIR label=notepad-big-findall-beside-rop-xb1 a=FindAll@656722 elem 3 (of 16 held, 52 found) b=Rop@656722 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=notepad-big-findall-beside-rop-xb1 a_alone count=10 median_ms=34.27 p90_ms=38.16 max_ms=39.29
+RESULT label=notepad-big-findall-beside-rop-xb1 a_with_b count=10 median_ms=38.93 p90_ms=41.12 max_ms=41.40
+RESULT label=notepad-big-findall-beside-rop-xb1 b_alone count=135 median_ms=0.44 p90_ms=0.50 max_ms=0.62
+RESULT label=notepad-big-findall-beside-rop-xb1 b_during_a count=135 median_ms=0.50 p90_ms=0.85 max_ms=5.09
+PAIR label=notepad-big-ropslow-beside-name-xb0 a=RopSlow@656722 elem 3 (of 16 held, 52 found) b=Name@656722 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=notepad-big-ropslow-beside-name-xb0 a_alone count=10 median_ms=4.77 p90_ms=5.04 max_ms=6.04
+RESULT label=notepad-big-ropslow-beside-name-xb0 a_with_b count=10 median_ms=4.82 p90_ms=5.08 max_ms=5.26
+RESULT label=notepad-big-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.21 p90_ms=0.24 max_ms=0.26
+RESULT label=notepad-big-ropslow-beside-name-xb0 b_during_a count=10 median_ms=2.95 p90_ms=3.87 max_ms=4.97
+PAIR label=notepad-big-ropslow-beside-name-xb1 a=RopSlow@656722 elem 3 (of 16 held, 52 found) b=Name@656722 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=notepad-big-ropslow-beside-name-xb1 a_alone count=10 median_ms=4.91 p90_ms=5.03 max_ms=5.14
+RESULT label=notepad-big-ropslow-beside-name-xb1 a_with_b count=10 median_ms=4.98 p90_ms=5.09 max_ms=5.14
+RESULT label=notepad-big-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.23 p90_ms=0.27 max_ms=0.30
+RESULT label=notepad-big-ropslow-beside-name-xb1 b_during_a count=10 median_ms=3.02 p90_ms=3.05 max_ms=3.85
+PAIR label=notepad-big-ropslow-beside-rop-xb0 a=RopSlow@656722 elem 3 (of 16 held, 52 found) b=Rop@656722 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=notepad-big-ropslow-beside-rop-xb0 a_alone count=10 median_ms=4.72 p90_ms=4.89 max_ms=5.68
+RESULT label=notepad-big-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=5.16 p90_ms=5.47 max_ms=5.47
+RESULT label=notepad-big-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.45 p90_ms=0.54 max_ms=0.63
+RESULT label=notepad-big-ropslow-beside-rop-xb0 b_during_a count=10 median_ms=3.27 p90_ms=3.54 max_ms=5.24
+PAIR label=notepad-big-ropslow-beside-rop-xb1 a=RopSlow@656722 elem 3 (of 16 held, 52 found) b=Rop@656722 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=notepad-big-ropslow-beside-rop-xb1 a_alone count=10 median_ms=4.82 p90_ms=5.27 max_ms=5.45
+RESULT label=notepad-big-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=5.25 p90_ms=5.58 max_ms=5.60
+RESULT label=notepad-big-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.44 p90_ms=0.49 max_ms=0.58
+RESULT label=notepad-big-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=3.45 p90_ms=3.74 max_ms=5.24
+PAIR label=notepad-big-textall-beside-name-xb0 a=TextAll@656722 elem 3 (of 16 held, 52 found) b=Name@656722 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=notepad-big-textall-beside-name-xb0 a_alone count=10 median_ms=51.00 p90_ms=52.71 max_ms=52.94
+RESULT label=notepad-big-textall-beside-name-xb0 a_with_b count=10 median_ms=50.71 p90_ms=52.23 max_ms=53.09
+RESULT label=notepad-big-textall-beside-name-xb0 b_alone count=20 median_ms=0.20 p90_ms=0.22 max_ms=0.24
+RESULT label=notepad-big-textall-beside-name-xb0 b_during_a count=11 median_ms=47.80 p90_ms=49.47 max_ms=49.90
+PAIR label=notepad-big-textall-beside-name-xb1 a=TextAll@656722 elem 3 (of 16 held, 52 found) b=Name@656722 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=notepad-big-textall-beside-name-xb1 a_alone count=10 median_ms=50.01 p90_ms=50.66 max_ms=52.00
+RESULT label=notepad-big-textall-beside-name-xb1 a_with_b count=10 median_ms=50.94 p90_ms=52.59 max_ms=52.92
+RESULT label=notepad-big-textall-beside-name-xb1 b_alone count=20 median_ms=0.19 p90_ms=0.24 max_ms=0.28
+RESULT label=notepad-big-textall-beside-name-xb1 b_during_a count=11 median_ms=48.45 p90_ms=50.55 max_ms=50.73
+PAIR label=notepad-big-textall-beside-rop-xb0 a=TextAll@656722 elem 3 (of 16 held, 52 found) b=Rop@656722 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=notepad-big-textall-beside-rop-xb0 a_alone count=10 median_ms=51.24 p90_ms=53.05 max_ms=56.61
+RESULT label=notepad-big-textall-beside-rop-xb0 a_with_b count=10 median_ms=51.79 p90_ms=55.59 max_ms=60.44
+RESULT label=notepad-big-textall-beside-rop-xb0 b_alone count=20 median_ms=0.56 p90_ms=0.65 max_ms=0.69
+RESULT label=notepad-big-textall-beside-rop-xb0 b_during_a count=10 median_ms=50.36 p90_ms=53.56 max_ms=59.85
+PAIR label=notepad-big-textall-beside-rop-xb1 a=TextAll@656722 elem 3 (of 16 held, 52 found) b=Rop@656722 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=notepad-big-textall-beside-rop-xb1 a_alone count=10 median_ms=51.85 p90_ms=52.49 max_ms=54.59
+RESULT label=notepad-big-textall-beside-rop-xb1 a_with_b count=10 median_ms=51.32 p90_ms=57.75 max_ms=60.99
+RESULT label=notepad-big-textall-beside-rop-xb1 b_alone count=20 median_ms=0.45 p90_ms=0.51 max_ms=0.59
+RESULT label=notepad-big-textall-beside-rop-xb1 b_during_a count=10 median_ms=48.98 p90_ms=54.67 max_ms=59.70

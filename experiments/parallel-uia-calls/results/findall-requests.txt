@@ -1,0 +1,122 @@
+# One call's requests on each side: mockapp (debug build, UIA backend), cdb invasive attach to both processes,
+# breakpoints that echo a marker and go on. Client: puia probe, one call after attach. See requests.ps1 in the readme's Method.
+# client_DoCallWithReturn: requests the client sent (ChannelBasedClientConnection::DoCallWithReturn).
+# server_OnData: requests the server's I/O thread read (ChannelBasedServerConnection::OnData).
+# server_messages: ProcessOneMessage; server_batches: ProcessIncomingBatchedMessages, which here only dispatched releases.
+# provider_*: mockapp's IRawElementProviderFragment::Navigate and IRawElementProviderSimple::GetPropertyValue.
+tree.json (24 nodes) op=findall calls=1 result=done ok 1854.267 client_DoCallWithReturn=81 client_StartNewRequest=81 client_EndRequest=81 server_OnData=81 server_OnDataIdle=47 server_batches=19 server_messages=28 server_responses=28 server_release_dispatches=38 provider_navigate=83 provider_getproperty=100
+tree.json (24 nodes) op=name calls=1 result=done ok 105.082 client_DoCallWithReturn=1 server_OnData=1 server_messages=1 server_responses=1 provider_navigate=0 provider_getproperty=1
+tree.json (24 nodes) op=rop calls=1 result=done ok 109.247 client_DoCallWithReturn=1 server_OnData=1 server_messages=1 server_responses=1 provider_navigate=1 provider_getproperty=2
+wide.json (102 nodes) op=findall calls=1 result=done ok 3181.232 client_DoCallWithReturn=315 client_StartNewRequest=315 server_OnData=315 server_OnDataIdle=171 server_batches=66 server_messages=105 server_responses=105 server_release_dispatches=132 provider_navigate=311 provider_getproperty=409
+# Times are under breakpoints and are not call costs.
+
+# Client requests of one findall by the client function that sent them (frame 3), beyond the first two
+# (GetRuntimeId and GetPropertyValues of the root, from ElementFinder::Find and FindingVisitor::Enter):
+tree: BulkFetch=23 Find=1 GetPropertiesAndPatterns=1 GetPropertyValues=1 LocalUiaNodeProxy::RealRemoteNodeFromProviderEntryPoint=1 Release=52 
+wide: BulkFetch=101 Find=1 GetPropertiesAndPatterns=1 GetPropertyValues=1 LocalUiaNodeProxy::RealRemoteNodeFromProviderEntryPoint=1 Release=208 
+
+# Provider calls inside each server message (ProcessOneMessage) of the tree findall, in order:
+message 1 navigate=0 getproperty=0
+message 2 navigate=0 getproperty=1
+message 3 navigate=2 getproperty=0
+message 4 navigate=81 getproperty=51
+message 5 navigate=0 getproperty=2
+message 6 navigate=0 getproperty=2
+message 7 navigate=0 getproperty=2
+message 8 navigate=0 getproperty=2
+message 9 navigate=0 getproperty=2
+message 10 navigate=0 getproperty=2
+message 11 navigate=0 getproperty=2
+message 12 navigate=0 getproperty=2
+message 13 navigate=0 getproperty=2
+message 14 navigate=0 getproperty=2
+message 15 navigate=0 getproperty=2
+message 16 navigate=0 getproperty=2
+message 17 navigate=0 getproperty=2
+message 18 navigate=0 getproperty=2
+message 19 navigate=0 getproperty=2
+message 20 navigate=0 getproperty=2
+message 21 navigate=0 getproperty=2
+message 22 navigate=0 getproperty=2
+message 23 navigate=0 getproperty=2
+message 24 navigate=0 getproperty=2
+message 25 navigate=0 getproperty=2
+message 26 navigate=0 getproperty=2
+message 27 navigate=0 getproperty=2
+message 28 navigate=0 getproperty=2
+# wide: message 3 of 105 had 311 of the 311 navigates
+
+# Client stack of the Find request (tree):
+Child-SP          RetAddr               Call Site
+uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn
+uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+uiautomationcore!DoCallWithReturn+0x27d
+uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Find+0x132
+uiautomationcore!LocalUiaNodeProxy::CrossProcess_Find+0x6a
+uiautomationcore!FindingVisitor::CallRemoteAndMergeState+0x9a
+uiautomationcore!UiaNodeTraverser::Traverse+0xf05
+# Client stack of a BulkFetch request (tree):
+Child-SP          RetAddr               Call Site
+uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn
+uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+uiautomationcore!DoCallWithReturn+0x27d
+uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_BulkFetch+0x1c2
+uiautomationcore!LocalUiaNodeProxy::CrossProcess_BulkFetch+0x75
+uiautomationcore!FetchingVisitor::CallRemoteAndMergeState+0xb9
+uiautomationcore!UiaNodeTraverser::Traverse+0xf05
+# Server: the Find request on the I/O thread, and a navigate inside it on the UI thread:
+Child-SP          RetAddr               Call Site
+uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage
+uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+KERNEL32!BaseThreadInitThunk+0x17
+ntdll!RtlUserThreadStart+0x2c
+Child-SP          RetAddr               Call Site
+mockapp!mockapp::uia::handler::impl$9::Navigate
+mockapp!windows::Win32::UI::Accessibility::impl$104::new::Navigate<mockapp::uia::handler::ChildProvider_Impl,-2>+0x8c
+uiautomationcore!InProcClientAPIStub::UiaNodeTraverser_NavigateProvider+0x53
+uiautomationcore!ComInvoker::CallTarget+0x1d8
+uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+uiautomationcore!UiaNodeTraverser::Traverse+0x121e
+
+# A second run (tree, findall: 81 client requests, 81 server reads, 83 navigates, 100 property reads), the 10th navigate with its thread:
+.  0  Id: 3754.37dc Suspend: 1 Teb: 0000009d`b5732000 Unfrozen "main"
+      Start: mockapp!mainCRTStartup (00007ff6`c4735e60)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+mockapp!mockapp::uia::handler::impl$9::Navigate
+mockapp!windows::Win32::UI::Accessibility::impl$104::new::Navigate<mockapp::uia::handler::ChildProvider_Impl,-2>+0x8c
+uiautomationcore!InProcClientAPIStub::UiaNodeTraverser_NavigateProvider+0x53
+uiautomationcore!ComInvoker::CallTarget+0x1d8
+uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+uiautomationcore!UiaNodeTraverser::Traverse+0x121e
+uiautomationcore!InProcClientAPIStub::UiaNode_Find+0xac
+uiautomationcore!ComInvoker::CallTarget+0x1d8
+uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+uiautomationcore!RemoteUiaNodeStub::Incoming_Find+0x1bd
+uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+RPCRT4!Ndr64StubWorker+0x862
+RPCRT4!NdrStubCall3+0xc0
+combase!CStdStubBuffer_Invoke+0x7d
+RPCRT4!CStdStubBuffer_Invoke+0x46
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d
+combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x182
+combase!DefaultStubInvoke+0x376
+(Inline Function) --------`--------     combase!SyncStubCall::Invoke+0x7
+(Inline Function) --------`--------     combase!SyncServerCall::StubInvoke+0x33
+combase!StubInvoke+0x138
+combase!ServerCall::ContextInvoke+0x28f
+(Inline Function) --------`--------     combase!DefaultInvokeInApartment+0x7c
+combase!ReentrantSTAInvokeInApartment+0x194
+combase!ComInvokeWithLockAndIPID+0xca5
+combase!ThreadDispatch+0x392
+combase!ThreadWndProc+0x177
+user32!UserCallWinProcCheckWow+0x356
+user32!DispatchMessageWorker+0x1dd
+mockapp!windows::Win32::UI::WindowsAndMessaging::DispatchMessageW+0xa

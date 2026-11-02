@@ -1,0 +1,130 @@
+# While a UIA name read is stuck in the synthetic provider (serve, layout=0,0,1: windows 0 and 1 on one UI thread, window 2 on another),
+# do MSAA calls into the same process answer? Probes are msaanew: AccessibleObjectFromWindow(OBJID_CLIENT), then accName.
+# msaa=window: serve answers only UiaRootObjectId, so OBJID_CLIENT gets oleacc's window proxy in the client (window messages).
+# msaa=bridge: serve answers OBJID_CLIENT with UiaReturnRawElementProvider too, so the client gets UIA's MSAA bridge over COM.
+# block=slow: window 0's name read sleeps 4 s; in nocom mode on UIA's I/O thread, in sta mode on the UI thread. block=busy: the UI thread sleeps 4 s with no call queued.
+# See msaa-while-stuck.ps1 in the readme's Method.
+ARM mode=nocom msaa=window block=slow
+ready
+window 0 hwnd=722092 tid=14008
+window 2 hwnd=722164 tid=9104
+window 1 hwnd=1441926 tid=14008
+CALL same-thread-window-msaa hwnd=1441926 pid=1568 ui_tid=14008 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-msaa hwnd=722164 pid=1568 ui_tid=9104 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-2
+CALL same-thread-window-uia-name hwnd=1441926 pid=1568 ui_tid=14008 op=Name elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-uia-name hwnd=722164 pid=1568 ui_tid=9104 op=Name elem=0 class=PuiaServe title=puia-serve-2
+CALL stuck hwnd=722092 pid=1568 ui_tid=14008 op=Name elem=0 class=PuiaServe title=puia-serve-0
+PROBES_STARTED trial=0
+TRIAL label=nocom-window-slow trial=0 block=slow:722092:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=3800.5
+RESULT label=nocom-window-slow trial=0 call=other-thread-window-msaa returned_ms=1.4 before_unblock result=ok idle_baseline_ms=0.09
+RESULT label=nocom-window-slow trial=0 call=same-thread-window-msaa returned_ms=1.6 before_unblock result=ok idle_baseline_ms=0.34
+RESULT label=nocom-window-slow trial=0 call=xproc-xproc-same-thread-window-msaa returned_ms=2.6 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=nocom-window-slow trial=0 call=stuck returned_ms=3800.0 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=nocom-window-slow trial=0 call=other-thread-window-uia-name returned_ms=3800.3 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=nocom-window-slow trial=0 call=same-thread-window-uia-name returned_ms=3800.4 before_unblock result=ok idle_baseline_ms=0.14
+PROBES_STARTED trial=1
+TRIAL label=nocom-window-slow trial=1 block=slow:722092:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=3800.6
+RESULT label=nocom-window-slow trial=1 call=other-thread-window-msaa returned_ms=1.2 before_unblock result=ok idle_baseline_ms=0.10
+RESULT label=nocom-window-slow trial=1 call=same-thread-window-msaa returned_ms=1.5 before_unblock result=ok idle_baseline_ms=0.13
+RESULT label=nocom-window-slow trial=1 call=xproc-xproc-same-thread-window-msaa returned_ms=2.5 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=nocom-window-slow trial=1 call=stuck returned_ms=3800.1 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=nocom-window-slow trial=1 call=other-thread-window-uia-name returned_ms=3800.3 before_unblock result=ok idle_baseline_ms=0.06
+RESULT label=nocom-window-slow trial=1 call=same-thread-window-uia-name returned_ms=3800.4 before_unblock result=ok idle_baseline_ms=0.07
+ARM mode=nocom msaa=bridge block=slow
+ready
+window 2 hwnd=3015604 tid=3292
+window 0 hwnd=853202 tid=2856
+window 1 hwnd=2228354 tid=2856
+CALL same-thread-window-msaa hwnd=2228354 pid=6148 ui_tid=2856 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-msaa hwnd=3015604 pid=6148 ui_tid=3292 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-2
+CALL same-thread-window-uia-name hwnd=2228354 pid=6148 ui_tid=2856 op=Name elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-uia-name hwnd=3015604 pid=6148 ui_tid=3292 op=Name elem=0 class=PuiaServe title=puia-serve-2
+CALL stuck hwnd=853202 pid=6148 ui_tid=2856 op=Name elem=0 class=PuiaServe title=puia-serve-0
+PROBES_STARTED trial=0
+TRIAL label=nocom-bridge-slow trial=0 block=slow:853202:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.3 unblocked_at_ms=3801.8
+RESULT label=nocom-bridge-slow trial=0 call=other-thread-window-msaa returned_ms=1.6 before_unblock result=ok idle_baseline_ms=1.11
+RESULT label=nocom-bridge-slow trial=0 call=same-thread-window-msaa returned_ms=2.2 before_unblock result=ok idle_baseline_ms=5.10
+RESULT label=nocom-bridge-slow trial=0 call=xproc-xproc-same-thread-window-msaa returned_ms=2.3 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=nocom-bridge-slow trial=0 call=stuck returned_ms=3801.0 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=nocom-bridge-slow trial=0 call=other-thread-window-uia-name returned_ms=3801.3 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=nocom-bridge-slow trial=0 call=same-thread-window-uia-name returned_ms=3801.5 before_unblock result=ok idle_baseline_ms=0.14
+PROBES_STARTED trial=1
+TRIAL label=nocom-bridge-slow trial=1 block=slow:853202:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=3801.2
+RESULT label=nocom-bridge-slow trial=1 call=other-thread-window-msaa returned_ms=2.0 before_unblock result=ok idle_baseline_ms=0.65
+RESULT label=nocom-bridge-slow trial=1 call=xproc-xproc-same-thread-window-msaa returned_ms=2.0 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=nocom-bridge-slow trial=1 call=same-thread-window-msaa returned_ms=2.1 before_unblock result=ok idle_baseline_ms=0.81
+RESULT label=nocom-bridge-slow trial=1 call=stuck returned_ms=3800.2 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=nocom-bridge-slow trial=1 call=same-thread-window-uia-name returned_ms=3800.6 before_unblock result=ok idle_baseline_ms=0.04
+RESULT label=nocom-bridge-slow trial=1 call=other-thread-window-uia-name returned_ms=3800.8 before_unblock result=ok idle_baseline_ms=0.04
+ARM mode=sta msaa=bridge block=slow
+ready
+window 0 hwnd=853236 tid=9380
+window 2 hwnd=1246360 tid=7664
+window 1 hwnd=3081140 tid=9380
+CALL same-thread-window-msaa hwnd=3081140 pid=4340 ui_tid=9380 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-msaa hwnd=1246360 pid=4340 ui_tid=7664 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-2
+CALL same-thread-window-uia-name hwnd=3081140 pid=4340 ui_tid=9380 op=Name elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-uia-name hwnd=1246360 pid=4340 ui_tid=7664 op=Name elem=0 class=PuiaServe title=puia-serve-2
+CALL stuck hwnd=853236 pid=4340 ui_tid=9380 op=Name elem=0 class=PuiaServe title=puia-serve-0
+PROBES_STARTED trial=0
+TRIAL label=sta-bridge-slow trial=0 block=slow:853236:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=3803.1
+RESULT label=sta-bridge-slow trial=0 call=other-thread-window-msaa returned_ms=1.6 before_unblock result=ok idle_baseline_ms=1.09
+RESULT label=sta-bridge-slow trial=0 call=stuck returned_ms=3800.4 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=sta-bridge-slow trial=0 call=other-thread-window-uia-name returned_ms=3800.6 before_unblock result=ok idle_baseline_ms=0.16
+RESULT label=sta-bridge-slow trial=0 call=same-thread-window-uia-name returned_ms=3801.3 before_unblock result=ok idle_baseline_ms=0.20
+RESULT label=sta-bridge-slow trial=0 call=same-thread-window-msaa returned_ms=3802.6 before_unblock result=ok idle_baseline_ms=4.89
+RESULT label=sta-bridge-slow trial=0 call=xproc-xproc-same-thread-window-msaa returned_ms=3803.1 before_unblock result=ok idle_baseline_ms=NaN
+PROBES_STARTED trial=1
+TRIAL label=sta-bridge-slow trial=1 block=slow:853236:4000:sleep evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=3802.8
+RESULT label=sta-bridge-slow trial=1 call=other-thread-window-msaa returned_ms=2.0 before_unblock result=ok idle_baseline_ms=0.93
+RESULT label=sta-bridge-slow trial=1 call=stuck returned_ms=3800.5 before_unblock result=ok idle_baseline_ms=0.00
+RESULT label=sta-bridge-slow trial=1 call=other-thread-window-uia-name returned_ms=3800.8 before_unblock result=ok idle_baseline_ms=0.14
+RESULT label=sta-bridge-slow trial=1 call=same-thread-window-uia-name returned_ms=3801.2 before_unblock result=ok idle_baseline_ms=0.13
+RESULT label=sta-bridge-slow trial=1 call=xproc-xproc-same-thread-window-msaa returned_ms=3802.4 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=sta-bridge-slow trial=1 call=same-thread-window-msaa returned_ms=3802.5 before_unblock result=ok idle_baseline_ms=1.08
+ARM mode=sta msaa=bridge block=busy
+ready
+window 0 hwnd=918700 tid=6972
+window 2 hwnd=1638534 tid=3932
+window 1 hwnd=1311896 tid=6972
+CALL same-thread-window-msaa hwnd=1311896 pid=5036 ui_tid=6972 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-msaa hwnd=1638534 pid=5036 ui_tid=3932 op=MsaaNew elem=0 class=PuiaServe title=puia-serve-2
+CALL same-thread-window-uia-name hwnd=1311896 pid=5036 ui_tid=6972 op=Name elem=0 class=PuiaServe title=puia-serve-1
+CALL other-thread-window-uia-name hwnd=1638534 pid=5036 ui_tid=3932 op=Name elem=0 class=PuiaServe title=puia-serve-2
+PROBES_STARTED trial=0
+TRIAL label=sta-bridge-busy trial=0 block=busy:918700:4000 evidence="200 ms wait" probes_started_ms_after_block=200.3 unblocked_at_ms=3803.9
+RESULT label=sta-bridge-busy trial=0 call=other-thread-window-uia-name returned_ms=1.2 before_unblock result=ok idle_baseline_ms=0.10
+RESULT label=sta-bridge-busy trial=0 call=other-thread-window-msaa returned_ms=1.9 before_unblock result=ok idle_baseline_ms=1.01
+RESULT label=sta-bridge-busy trial=0 call=same-thread-window-uia-name returned_ms=3801.1 before_unblock result=ok idle_baseline_ms=0.18
+RESULT label=sta-bridge-busy trial=0 call=same-thread-window-msaa returned_ms=3802.9 before_unblock result=ok idle_baseline_ms=4.48
+RESULT label=sta-bridge-busy trial=0 call=xproc-xproc-same-thread-window-msaa returned_ms=3803.4 before_unblock result=ok idle_baseline_ms=NaN
+PROBES_STARTED trial=1
+TRIAL label=sta-bridge-busy trial=1 block=busy:918700:4000 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=3803.5
+RESULT label=sta-bridge-busy trial=1 call=other-thread-window-uia-name returned_ms=0.4 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=sta-bridge-busy trial=1 call=other-thread-window-msaa returned_ms=2.9 before_unblock result=ok idle_baseline_ms=0.72
+RESULT label=sta-bridge-busy trial=1 call=same-thread-window-uia-name returned_ms=3801.1 before_unblock result=ok idle_baseline_ms=0.07
+RESULT label=sta-bridge-busy trial=1 call=xproc-xproc-same-thread-window-msaa returned_ms=3802.7 before_unblock result=ok idle_baseline_ms=NaN
+RESULT label=sta-bridge-busy trial=1 call=same-thread-window-msaa returned_ms=3802.8 before_unblock result=ok idle_baseline_ms=0.98
+
+# serve mode=nocom msaa=bridge, one msaa call with cdb on both sides (msaa-path.ps1): the client calls a marshalled object, and the bridge answers on the window's UI thread, dispatched by COM:
+COUNTS client CLI_COM_RPC=2 CLI_OLEACC_COUNT=1 CLI_OLEACC_NAME=1 
+COUNTS server SRV_UIABRIDGE_COUNT=1 SRV_UIABRIDGE_NAME=1 
+SRV_UIABRIDGE_NAME
+.  4  Id: 147c.a7c Suspend: 1 Teb: 00000083`b4179000 Unfrozen
+puia!std::sys::thread::windows::impl$0::new::thread_start (00007ff6`09299bc0)
+uiautomationcore!AccessibleProxy::get_accName
+RPCRT4!Invoke+0x73
+RPCRT4!Ndr64StubWorker+0x6ee
+RPCRT4!NdrStubCall3+0xc0
+combase!CStdStubBuffer_Invoke+0x141
+combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x47
+combase!DefaultStubInvoke+0x376
+combase!StubInvoke+0x138
+combase!ServerCall::ContextInvoke+0x28f
+combase!ReentrantSTAInvokeInApartment+0x194
+combase!ComInvokeWithLockAndIPID+0xca5
+combase!ThreadDispatch+0x392
+combase!ThreadWndProc+0x177
+USER32!UserCallWinProcCheckWow+0x356
+USER32!DispatchMessageWorker+0x1dd
+puia!RINvNtNtCsljvfXcM3w8L_3std3sys9backtrace28___rust_begin_short_backtraceNCNvNtCs2uGJrY4lChp_4puia5serve3runs0_0uEB1d_+0x315

@@ -7,10 +7,12 @@ technology on its own terms; how NVDA drives that technology lives in
 `docs/nvda`, and how Verbatim uses it lives in [Architecture](../architecture.md) and
 [the crate guides](../crates/readme.md).
 
-These files describe stable, documented Windows behavior, so they cite
-Microsoft Learn pages rather than source code. When a claim is about
-undocumented or folkloric behavior (there is some of that in accessibility
-work), the file says so explicitly.
+These files describe Windows behavior that is documented, citing Microsoft
+Learn, or measured, citing the experiment under `experiments/` that observed
+it, with a debugger, a trace or timings. Accessibility work depends on much
+undocumented behavior, and a claim about it is stated only once it has been
+measured; an inference is marked as one, and what has not been observed is
+listed as not known rather than stated.
 
 ## Reading order
 
@@ -26,7 +28,10 @@ Read in this order the first time; later, use each file as a reference.
 4. [MSAA](msaa.md) — Microsoft Active Accessibility, the oldest API.
 5. [IA2](ia2.md) — IAccessible2, the extension that made MSAA good enough for
    browsers.
-6. [UIA](uia.md) — UI Automation, the modern API, both client and provider sides.
+6. [UIA](uia.md) — UI Automation, the modern API: a measured model of its
+   client side, its provider side and the channel between them, from which
+   the effect of busy applications, stuck calls, threads and event floods
+   can be worked out, with NVDA's issues explained from it.
 7. [ARIA](aria.md) — the web-authored semantics layer that browsers map
    into IA2 and UIA: roles, states, live regions, and the mapping
    documents. For readers who have not done web work.

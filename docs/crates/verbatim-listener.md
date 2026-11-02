@@ -161,7 +161,7 @@ receives the event's own element, judges and reads a UIA focus
   the watchdog meet the bound.
 - Watchdog. A read past `READ_DEADLINE`, 8 seconds (the budget, the
   5-second transaction timeout, and a second), is abandoned;
-  the timeout bounds each provider call, not an operation
+  a timeout bounds each request and window message, not an operation
   (`docs/uia-bugs.md`). A focus's or menu opening's read is also abandoned
   once the window in front belongs to its application on another UI
   thread (`verbatim_win32::window::front_is_another_thread_of_its_application`,

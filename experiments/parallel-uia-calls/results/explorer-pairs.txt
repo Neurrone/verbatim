@@ -1,0 +1,48 @@
+PAIR label=explorer-ropslow-beside-name-xb0 a=RopSlow@328924 elem 3 (of 16 held, 92 found) b=Name@328924 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=explorer-ropslow-beside-name-xb0 a_alone count=10 median_ms=121.83 p90_ms=123.37 max_ms=127.52
+RESULT label=explorer-ropslow-beside-name-xb0 a_with_b count=10 median_ms=120.73 p90_ms=122.16 max_ms=125.28
+RESULT label=explorer-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.18 p90_ms=0.20 max_ms=0.22
+RESULT label=explorer-ropslow-beside-name-xb0 b_during_a count=10 median_ms=118.79 p90_ms=120.87 max_ms=122.73
+PAIR label=explorer-ropslow-beside-name-xb1 a=RopSlow@328924 elem 3 (of 16 held, 92 found) b=Name@328924 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=explorer-ropslow-beside-name-xb1 a_alone count=10 median_ms=121.87 p90_ms=124.86 max_ms=125.15
+RESULT label=explorer-ropslow-beside-name-xb1 a_with_b count=10 median_ms=121.68 p90_ms=122.93 max_ms=123.10
+RESULT label=explorer-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.18 p90_ms=0.19 max_ms=0.29
+RESULT label=explorer-ropslow-beside-name-xb1 b_during_a count=10 median_ms=119.64 p90_ms=120.96 max_ms=122.57
+PAIR label=explorer-ropslow-beside-rop-xb0 a=RopSlow@328924 elem 3 (of 16 held, 92 found) b=Rop@328924 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=explorer-ropslow-beside-rop-xb0 a_alone count=10 median_ms=122.87 p90_ms=124.82 max_ms=125.91
+RESULT label=explorer-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=119.86 p90_ms=124.90 max_ms=125.11
+RESULT label=explorer-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.30 p90_ms=0.37 max_ms=0.56
+RESULT label=explorer-ropslow-beside-rop-xb0 b_during_a count=11 median_ms=117.31 p90_ms=122.81 max_ms=123.02
+PAIR label=explorer-ropslow-beside-rop-xb1 a=RopSlow@328924 elem 3 (of 16 held, 92 found) b=Rop@328924 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=explorer-ropslow-beside-rop-xb1 a_alone count=10 median_ms=121.54 p90_ms=125.58 max_ms=128.09
+RESULT label=explorer-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=126.09 p90_ms=126.84 max_ms=129.05
+RESULT label=explorer-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.30 p90_ms=0.32 max_ms=0.33
+RESULT label=explorer-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=123.96 p90_ms=126.42 max_ms=126.99
+PAIR label=explorer-textall-beside-name-xb0 a=TextAll@328924 elem 3 (of 16 held, 92 found) b=Name@328924 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=explorer-textall-beside-name-xb0 a_alone count=10 median_ms=0.27 p90_ms=0.28 max_ms=0.98
+RESULT label=explorer-textall-beside-name-xb0 a_with_b count=10 median_ms=0.21 p90_ms=0.25 max_ms=0.30
+RESULT label=explorer-textall-beside-name-xb0 b_alone count=20 median_ms=0.17 p90_ms=0.18 max_ms=0.20
+RESULT label=explorer-textall-beside-name-xb0 b_during_a count=1 median_ms=2.10 p90_ms=2.10 max_ms=2.10
+PAIR label=explorer-textall-beside-name-xb1 a=TextAll@328924 elem 3 (of 16 held, 92 found) b=Name@328924 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=explorer-textall-beside-name-xb1 a_alone count=10 median_ms=0.29 p90_ms=0.33 max_ms=0.35
+RESULT label=explorer-textall-beside-name-xb1 a_with_b count=10 median_ms=0.28 p90_ms=0.31 max_ms=0.36
+RESULT label=explorer-textall-beside-name-xb1 b_alone count=20 median_ms=0.14 p90_ms=0.18 max_ms=0.19
+RESULT label=explorer-textall-beside-name-xb1 b_during_a count=2 median_ms=0.24 p90_ms=0.24 max_ms=0.24
+PAIR label=explorer-textall-beside-rop-xb0 a=TextAll@328924 elem 3 (of 16 held, 92 found) b=Rop@328924 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=explorer-textall-beside-rop-xb0 a_alone count=10 median_ms=0.27 p90_ms=0.28 max_ms=1.03
+RESULT label=explorer-textall-beside-rop-xb0 a_with_b count=10 median_ms=0.31 p90_ms=0.45 max_ms=0.53
+RESULT label=explorer-textall-beside-rop-xb0 b_alone count=20 median_ms=0.28 p90_ms=0.29 max_ms=0.31
+RESULT label=explorer-textall-beside-rop-xb0 b_during_a count=2 median_ms=0.48 p90_ms=0.48 max_ms=0.48
+PAIR label=explorer-textall-beside-rop-xb1 a=TextAll@328924 elem 3 (of 16 held, 92 found) b=Rop@328924 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=explorer-textall-beside-rop-xb1 a_alone count=10 median_ms=0.22 p90_ms=0.31 max_ms=0.33
+RESULT label=explorer-textall-beside-rop-xb1 a_with_b count=10 median_ms=0.18 p90_ms=0.25 max_ms=0.42
+RESULT label=explorer-textall-beside-rop-xb1 b_alone count=20 median_ms=0.30 p90_ms=0.34 max_ms=0.39
+RESULT label=explorer-textall-beside-rop-xb1 b_during_a count=1 median_ms=0.32 p90_ms=0.32 max_ms=0.32

@@ -1,0 +1,218 @@
+# The path of one msaa call (accName and accChildCount on AccessibleObjectFromWindow(OBJID_CLIENT) of the top-level window).
+# cdb invasive attach to the client (puia probe) and the target, breakpoints that echo a marker, print a stack and go on. See msaa-path.ps1 in the readme's Method.
+# Client markers: CLI_OLEACC_* oleacc's IAccessible methods; CLI_UIABRIDGE_* UIAutomationCore!AccessibleProxy (UIA's MSAA bridge); CLI_UIA_REQUEST a UIA channel request;
+# CLI_COM_RPC combase!NdrExtpProxySendReceive (a call on a marshalled COM object); CLI_WINDOW_MESSAGE win32u!NtUserMessageCall (rdx is the message).
+# Server markers: SRV_WM_GETTEXT_DEFWINDOWPROC DefWindowProcW with WM_GETTEXT or WM_GETTEXTLENGTH; SRV_UIABRIDGE_*, SRV_OLEACC_*, SRV_UIA_REQUEST, SRV_MOCKAPP_NAME mockapp's own get_accName.
+COUNTS target=charmap side=client CLI_OLEACC_COUNT=2 CLI_OLEACC_NAME=2 CLI_WINDOW_MESSAGE=2 
+COUNTS target=charmap side=server SRV_WM_GETTEXT_DEFWINDOWPROC=2 
+COUNTS target=notepad side=client CLI_OLEACC_COUNT=2 CLI_OLEACC_NAME=2 CLI_WINDOW_MESSAGE=2 
+COUNTS target=notepad side=server SRV_WM_GETTEXT_DEFWINDOWPROC=2 
+COUNTS target=mockapp-uia side=client CLI_OLEACC_COUNT=2 CLI_OLEACC_NAME=2 CLI_WINDOW_MESSAGE=2 
+COUNTS target=mockapp-uia side=server 
+COUNTS target=mockapp-msaa side=client CLI_COM_RPC=2 CLI_OLEACC_COUNT=1 CLI_OLEACC_NAME=1 
+COUNTS target=mockapp-msaa side=server SRV_MOCKAPP_NAME=1 
+# mockapp-uia's server side was not counted with the window-message breakpoint.
+
+# Charmap client: the two window messages of accName (0xe WM_GETTEXTLENGTH, 0xd WM_GETTEXT) from oleacc's client-side proxy:
+CLI_WINDOW_MESSAGE
+rdx=000000000000000e
+win32u!NtUserMessageCall
+USER32!SendMessageWorker+0xa26
+USER32!SendMessageInternal+0x174
+USER32!SendMessageW+0xef
+oleacc!SendMessageTimeoutHelper+0x5a
+oleacc!GetTextString+0x71
+oleacc!HrGetWindowName+0x68
+oleacc!CClient::get_accName+0x50
+oleacc!AccWrap_Annotate::get_accName+0x172
+--
+CLI_WINDOW_MESSAGE
+rdx=000000000000000d
+win32u!NtUserMessageCall
+USER32!SendMessageWorker+0xa26
+USER32!SendMessageInternal+0x174
+USER32!SendMessageW+0xef
+oleacc!SendMessageTimeoutHelper+0x5a
+oleacc!GetTextString+0xd2
+oleacc!HrGetWindowName+0x68
+oleacc!CClient::get_accName+0x50
+oleacc!AccWrap_Annotate::get_accName+0x172
+# Charmap server: the UI thread answers in its dialog procedure:
+SRV_WM_GETTEXT_DEFWINDOWPROC
+.  0  Id: 227c.211c Suspend: 1 Teb: 00000046`6fd26000 Unfrozen
+Start: charmap!wWinMainCRTStartup (00007ff7`66092200)
+USER32!DefWindowProcW
+USER32!DefDlgProcWorker+0x18a
+USER32!DefDlgProcW+0x36
+USER32!UserCallWinProcCheckWow+0x356
+USER32!DispatchClientMessage+0x9c
+USER32!_fnGETTEXTLENGTHS+0x32
+ntdll!KiUserCallbackDispatcherContinue
+win32u!NtUserGetMessage+0x14
+USER32!GetMessageW+0x22
+charmap!wWinMain+0x298
+# Notepad client: the same path as Charmap (oleacc CClient, WM_GETTEXTLENGTH and WM_GETTEXT):
+CLI_WINDOW_MESSAGE
+rdx=000000000000000e
+win32u!NtUserMessageCall
+USER32!SendMessageWorker+0xa26
+USER32!SendMessageInternal+0x174
+USER32!SendMessageW+0xef
+oleacc!SendMessageTimeoutHelper+0x5a
+oleacc!GetTextString+0x71
+oleacc!HrGetWindowName+0x68
+oleacc!CClient::get_accName+0x50
+# Notepad server: its WinUI window procedure on a UI thread:
+SRV_WM_GETTEXT_DEFWINDOWPROC
+.  1  Id: 3404.1948 Suspend: 1 Teb: 000000b3`2e84f000 Unfrozen
+Start: ucrtbase!thread_start<unsigned int (__cdecl*)(void *),1> (00007ffb`ca71cd00)
+USER32!DefWindowProcW
+Notepad+0xa76ef
+Notepad+0xa85e2
+USER32!UserCallWinProcCheckWow+0x356
+USER32!CallWindowProcW+0x16c
+Microsoft_UI_Windowing_Core!CFlat::SehSafe::Execute<<lambda_92d9ce4ac80aab35f86ff4e447165aef> >+0x4d
+Microsoft_UI_Windowing_Core!Windowing::Window::DefaultProcessing+0xa5
+Microsoft_UI_Windowing_Core!Windowing::FeatureCallContext::CallFeatureChain+0x1cf
+Microsoft_UI_Windowing_Core!Windowing::FeatureCallManager::CallFeatureChain+0x4a
+Microsoft_UI_Windowing_Core!Windowing::Window::ProcessMessage+0x14c
+Microsoft_UI_Windowing_Core!EnterContextAndProcessWindowMessage+0xdc
+USER32!UserCallWinProcCheckWow+0x356
+USER32!DispatchClientMessage+0x9c
+USER32!_fnGETTEXTLENGTHS+0x32
+ntdll!KiUserCallbackDispatcherContinue
+win32u!NtUserGetMessage+0x14
+# mockapp MSAA backend client: a COM call on the IAccessible that mockapp's WM_GETOBJECT returned:
+CLI_COM_RPC
+combase!NdrExtpProxySendReceive
+RPCRT4!NdrpClientCall3+0x431
+combase!ObjectStublessClient+0x146
+combase!ObjectStubless+0x42
+oleacc!AccWrap_Annotate::get_accName+0x172
+# mockapp MSAA backend server: COM dispatches the call on the UI thread through its OLE window:
+SRV_MOCKAPP_NAME
+.  0  Id: 1d38.b18 Suspend: 1 Teb: 00000043`b2b02000 Unfrozen "main"
+Start: mockapp!mainCRTStartup (00007ff6`c4735e60)
+mockapp!mockapp::msaa::handler::impl$0::get_accName
+mockapp!windows::Win32::UI::Accessibility::impl$38::new::get_accName<mockapp::msaa::handler::NodeAccessible_Impl,-1>+0x60
+RPCRT4!Invoke+0x73
+RPCRT4!Ndr64StubWorker+0x6ee
+RPCRT4!NdrStubCall3+0xc0
+combase!CStdStubBuffer_Invoke+0x141
+combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x47
+combase!DefaultStubInvoke+0x376
+combase!StubInvoke+0x138
+combase!ServerCall::ContextInvoke+0x28f
+combase!ReentrantSTAInvokeInApartment+0x194
+combase!ComInvokeWithLockAndIPID+0xca5
+combase!ThreadDispatch+0x392
+combase!ThreadWndProc+0x177
+user32!UserCallWinProcCheckWow+0x356
+user32!DispatchMessageWorker+0x1dd
+mockapp!windows::Win32::UI::WindowsAndMessaging::DispatchMessageW+0xa
+mockapp!mockapp::window::run+0xb72
+mockapp!mockapp::run+0x34d
+mockapp!mockapp::main+0x2e
+mockapp!core::ops::function::FnOnce::call_once<std::process::ExitCode (*)(),tuple$<> >+0x6
+
+# Throughput (bench, k=64, 20 runs), split by part of the call. msaaname and msaacount are the two halves of msaa;
+# wmtext and wmnull are SendMessageW of WM_GETTEXT and WM_NULL from the client threads, with no oleacc.
+RESULT label=charmap op=msaa n=1 k=64 median_ms=3.39 p90_ms=3.72 per_call_us=52.9 speedup=1.00 errors=0
+RESULT label=charmap op=msaa n=2 k=64 median_ms=4.83 p90_ms=5.61 per_call_us=75.4 speedup=0.70 errors=0
+RESULT label=charmap op=msaa n=4 k=64 median_ms=5.34 p90_ms=5.69 per_call_us=83.5 speedup=0.63 errors=0
+RESULT label=charmap op=msaa n=8 k=64 median_ms=5.28 p90_ms=5.73 per_call_us=82.5 speedup=0.64 errors=0
+RESULT label=charmap op=msaaname n=1 k=64 median_ms=3.51 p90_ms=3.92 per_call_us=54.8 speedup=1.00 errors=0
+RESULT label=charmap op=msaaname n=2 k=64 median_ms=4.48 p90_ms=5.19 per_call_us=70.1 speedup=0.78 errors=0
+RESULT label=charmap op=msaaname n=4 k=64 median_ms=5.88 p90_ms=6.54 per_call_us=91.8 speedup=0.60 errors=0
+RESULT label=charmap op=msaaname n=8 k=64 median_ms=5.91 p90_ms=6.30 per_call_us=92.3 speedup=0.59 errors=0
+RESULT label=charmap op=msaacount n=1 k=64 median_ms=0.03 p90_ms=0.03 per_call_us=0.4 speedup=1.00 errors=0
+RESULT label=charmap op=msaacount n=2 k=64 median_ms=0.02 p90_ms=0.04 per_call_us=0.4 speedup=1.09 errors=0
+RESULT label=charmap op=msaacount n=4 k=64 median_ms=0.03 p90_ms=0.03 per_call_us=0.4 speedup=1.03 errors=0
+RESULT label=charmap op=msaacount n=8 k=64 median_ms=0.05 p90_ms=0.07 per_call_us=0.8 speedup=0.53 errors=0
+RESULT label=charmap op=wmtext n=1 k=64 median_ms=1.32 p90_ms=1.79 per_call_us=20.6 speedup=1.00 errors=0
+RESULT label=charmap op=wmtext n=2 k=64 median_ms=3.01 p90_ms=3.08 per_call_us=47.0 speedup=0.44 errors=0
+RESULT label=charmap op=wmtext n=4 k=64 median_ms=2.11 p90_ms=2.24 per_call_us=33.0 speedup=0.62 errors=0
+RESULT label=charmap op=wmtext n=8 k=64 median_ms=1.80 p90_ms=1.90 per_call_us=28.2 speedup=0.73 errors=0
+RESULT label=charmap op=wmnull n=1 k=64 median_ms=1.10 p90_ms=1.14 per_call_us=17.2 speedup=1.00 errors=0
+RESULT label=charmap op=wmnull n=2 k=64 median_ms=1.74 p90_ms=2.48 per_call_us=27.2 speedup=0.63 errors=0
+RESULT label=charmap op=wmnull n=4 k=64 median_ms=2.30 p90_ms=2.39 per_call_us=36.0 speedup=0.48 errors=0
+RESULT label=charmap op=wmnull n=8 k=64 median_ms=2.04 p90_ms=2.28 per_call_us=31.9 speedup=0.54 errors=0
+RESULT label=notepad op=msaa n=1 k=64 median_ms=3.13 p90_ms=3.50 per_call_us=48.9 speedup=1.00 errors=0
+RESULT label=notepad op=msaa n=2 k=64 median_ms=4.89 p90_ms=5.48 per_call_us=76.4 speedup=0.64 errors=0
+RESULT label=notepad op=msaa n=4 k=64 median_ms=5.32 p90_ms=5.58 per_call_us=83.1 speedup=0.59 errors=0
+RESULT label=notepad op=msaa n=8 k=64 median_ms=4.94 p90_ms=5.47 per_call_us=77.2 speedup=0.63 errors=0
+RESULT label=notepad op=msaaname n=1 k=64 median_ms=3.18 p90_ms=3.51 per_call_us=49.7 speedup=1.00 errors=0
+RESULT label=notepad op=msaaname n=2 k=64 median_ms=5.10 p90_ms=5.49 per_call_us=79.7 speedup=0.62 errors=0
+RESULT label=notepad op=msaaname n=4 k=64 median_ms=6.36 p90_ms=6.61 per_call_us=99.4 speedup=0.50 errors=0
+RESULT label=notepad op=msaaname n=8 k=64 median_ms=5.75 p90_ms=6.09 per_call_us=89.8 speedup=0.55 errors=0
+RESULT label=notepad op=msaacount n=1 k=64 median_ms=0.02 p90_ms=0.03 per_call_us=0.3 speedup=1.00 errors=0
+RESULT label=notepad op=msaacount n=2 k=64 median_ms=0.03 p90_ms=0.04 per_call_us=0.4 speedup=0.77 errors=0
+RESULT label=notepad op=msaacount n=4 k=64 median_ms=0.03 p90_ms=0.04 per_call_us=0.4 speedup=0.79 errors=0
+RESULT label=notepad op=msaacount n=8 k=64 median_ms=0.03 p90_ms=0.04 per_call_us=0.5 speedup=0.64 errors=0
+RESULT label=notepad op=wmtext n=1 k=64 median_ms=1.46 p90_ms=1.59 per_call_us=22.9 speedup=1.00 errors=0
+RESULT label=notepad op=wmtext n=2 k=64 median_ms=2.43 p90_ms=2.64 per_call_us=37.9 speedup=0.60 errors=0
+RESULT label=notepad op=wmtext n=4 k=64 median_ms=3.04 p90_ms=3.41 per_call_us=47.4 speedup=0.48 errors=0
+RESULT label=notepad op=wmtext n=8 k=64 median_ms=2.49 p90_ms=2.68 per_call_us=38.8 speedup=0.59 errors=0
+RESULT label=notepad op=wmnull n=1 k=64 median_ms=1.48 p90_ms=1.84 per_call_us=23.2 speedup=1.00 errors=0
+RESULT label=notepad op=wmnull n=2 k=64 median_ms=2.14 p90_ms=2.56 per_call_us=33.5 speedup=0.69 errors=0
+RESULT label=notepad op=wmnull n=4 k=64 median_ms=2.57 p90_ms=2.71 per_call_us=40.2 speedup=0.58 errors=0
+RESULT label=notepad op=wmnull n=8 k=64 median_ms=2.63 p90_ms=2.73 per_call_us=41.1 speedup=0.56 errors=0
+
+# The synthetic provider (serve, sta) with 8 windows. own-thread: each window on its own UI thread; one-thread: all 8 on one.
+# windows-per-worker: client thread w sends to window w; one-window: every client thread sends to window 0.
+window 0 hwnd=525558 tid=11884
+window 6 hwnd=1901426 tid=2980
+window 7 hwnd=21563192 tid=9208
+window 3 hwnd=983174 tid=13728
+window 4 hwnd=394450 tid=13996
+window 1 hwnd=591108 tid=13868
+window 5 hwnd=2884140 tid=14276
+window 2 hwnd=1246688 tid=5012
+RESULT label=serve-own-thread-windows-per-worker op=wmnull n=1 k=64 median_ms=1.21 p90_ms=1.29 per_call_us=18.8 speedup=1.00 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmnull n=2 k=64 median_ms=1.66 p90_ms=1.85 per_call_us=26.0 speedup=0.73 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmnull n=4 k=64 median_ms=2.75 p90_ms=3.09 per_call_us=42.9 speedup=0.44 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmnull n=8 k=64 median_ms=2.77 p90_ms=2.91 per_call_us=43.3 speedup=0.43 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmtext n=1 k=64 median_ms=1.29 p90_ms=1.40 per_call_us=20.2 speedup=1.00 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmtext n=2 k=64 median_ms=2.95 p90_ms=3.27 per_call_us=46.1 speedup=0.44 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmtext n=4 k=64 median_ms=1.93 p90_ms=2.84 per_call_us=30.2 speedup=0.67 errors=0
+RESULT label=serve-own-thread-windows-per-worker op=wmtext n=8 k=64 median_ms=3.19 p90_ms=3.25 per_call_us=49.8 speedup=0.41 errors=0
+RESULT label=serve-own-thread-one-window op=wmnull n=1 k=64 median_ms=1.35 p90_ms=1.73 per_call_us=21.1 speedup=1.00 errors=0
+RESULT label=serve-own-thread-one-window op=wmnull n=2 k=64 median_ms=2.55 p90_ms=2.81 per_call_us=39.8 speedup=0.53 errors=0
+RESULT label=serve-own-thread-one-window op=wmnull n=4 k=64 median_ms=2.35 p90_ms=2.45 per_call_us=36.7 speedup=0.57 errors=0
+RESULT label=serve-own-thread-one-window op=wmnull n=8 k=64 median_ms=1.72 p90_ms=1.97 per_call_us=27.0 speedup=0.78 errors=0
+RESULT label=serve-own-thread-one-window op=wmtext n=1 k=64 median_ms=1.29 p90_ms=1.40 per_call_us=20.1 speedup=1.00 errors=0
+RESULT label=serve-own-thread-one-window op=wmtext n=2 k=64 median_ms=2.25 p90_ms=2.56 per_call_us=35.2 speedup=0.57 errors=0
+RESULT label=serve-own-thread-one-window op=wmtext n=4 k=64 median_ms=2.38 p90_ms=2.56 per_call_us=37.1 speedup=0.54 errors=0
+RESULT label=serve-own-thread-one-window op=wmtext n=8 k=64 median_ms=2.42 p90_ms=2.54 per_call_us=37.8 speedup=0.53 errors=0
+window 0 hwnd=656644 tid=14056
+window 1 hwnd=394484 tid=14056
+window 2 hwnd=1312224 tid=14056
+window 3 hwnd=2556852 tid=14056
+window 4 hwnd=1769602 tid=14056
+window 5 hwnd=459986 tid=14056
+window 6 hwnd=853144 tid=14056
+window 7 hwnd=1048710 tid=14056
+RESULT label=serve-one-thread-windows-per-worker op=wmnull n=1 k=64 median_ms=1.19 p90_ms=1.29 per_call_us=18.6 speedup=1.00 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmnull n=2 k=64 median_ms=2.04 p90_ms=2.22 per_call_us=31.9 speedup=0.58 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmnull n=4 k=64 median_ms=2.13 p90_ms=2.28 per_call_us=33.3 speedup=0.56 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmnull n=8 k=64 median_ms=2.02 p90_ms=2.13 per_call_us=31.5 speedup=0.59 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmtext n=1 k=64 median_ms=1.30 p90_ms=1.33 per_call_us=20.4 speedup=1.00 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmtext n=2 k=64 median_ms=2.09 p90_ms=2.67 per_call_us=32.6 speedup=0.62 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmtext n=4 k=64 median_ms=2.19 p90_ms=2.35 per_call_us=34.2 speedup=0.60 errors=0
+RESULT label=serve-one-thread-windows-per-worker op=wmtext n=8 k=64 median_ms=2.20 p90_ms=2.47 per_call_us=34.4 speedup=0.59 errors=0
+RESULT label=serve-one-thread-one-window op=wmnull n=1 k=64 median_ms=1.19 p90_ms=1.22 per_call_us=18.6 speedup=1.00 errors=0
+RESULT label=serve-one-thread-one-window op=wmnull n=2 k=64 median_ms=2.49 p90_ms=2.79 per_call_us=38.9 speedup=0.48 errors=0
+RESULT label=serve-one-thread-one-window op=wmnull n=4 k=64 median_ms=1.77 p90_ms=1.95 per_call_us=27.7 speedup=0.67 errors=0
+RESULT label=serve-one-thread-one-window op=wmnull n=8 k=64 median_ms=2.22 p90_ms=2.61 per_call_us=34.7 speedup=0.54 errors=0
+RESULT label=serve-one-thread-one-window op=wmtext n=1 k=64 median_ms=1.30 p90_ms=1.39 per_call_us=20.3 speedup=1.00 errors=0
+RESULT label=serve-one-thread-one-window op=wmtext n=2 k=64 median_ms=2.46 p90_ms=2.73 per_call_us=38.4 speedup=0.53 errors=0
+RESULT label=serve-one-thread-one-window op=wmtext n=4 k=64 median_ms=2.11 p90_ms=2.26 per_call_us=33.0 speedup=0.62 errors=0
+RESULT label=serve-one-thread-one-window op=wmtext n=8 k=64 median_ms=1.22 p90_ms=1.35 per_call_us=19.1 speedup=1.06 errors=0
+
+# VS Code (Chromium), client side only: COUNTS target=vscode side=client CLI_COM_RPC=2 CLI_OLEACC_COUNT=1 CLI_OLEACC_NAME=1 
+CLI_COM_RPC
+combase!NdrExtpProxySendReceive
+RPCRT4!NdrpClientCall3+0x431
+combase!ObjectStublessClient+0x146
+combase!ObjectStubless+0x42
+oleacc!AccWrap_Annotate::get_accName+0x172

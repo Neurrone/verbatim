@@ -58,5 +58,9 @@ before debugging anything downstream.
   "Conformance": `cargo xtask regenerate-terminal-conformance-expectations`,
   run on demand on a desktop to record what the real console host and
   Windows Terminal answer, which the simulated terminal is tested against.
+- [Debugging other processes with cdb](debugging.md): where cdb is, the
+  symbol cache and filling it safely, non-invasive and invasive attach and
+  what each freezes, the processes never to attach to, counting
+  breakpoints, every stack, and detaching from a script.
 - [Troubleshooting](troubleshooting.md): the traps, each with its rule and
   its reason.

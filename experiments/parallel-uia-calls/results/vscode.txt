@@ -1,0 +1,917 @@
+TARGET label=vscode hwnd=459990 pid=8408 ui_tid=13612 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code client=per-thread
+CTX n=1 descendants_found=214 elems_held=16 text=true msaa=true
+CTX n=2 descendants_found=214 elems_held=16 text=true msaa=true
+CTX n=4 descendants_found=214 elems_held=16 text=true msaa=true
+CTX n=8 descendants_found=214 elems_held=16 text=true msaa=true
+RAW label=vscode op=name n=1 rep=0 wall_ms=6.613 errors=8
+RAW label=vscode op=name n=1 rep=1 wall_ms=6.965 errors=8
+RAW label=vscode op=name n=1 rep=2 wall_ms=9.208 errors=8
+RAW label=vscode op=name n=1 rep=3 wall_ms=8.536 errors=8
+RAW label=vscode op=name n=1 rep=4 wall_ms=8.565 errors=8
+RAW label=vscode op=name n=1 rep=5 wall_ms=7.443 errors=8
+RAW label=vscode op=name n=1 rep=6 wall_ms=7.453 errors=8
+RAW label=vscode op=name n=1 rep=7 wall_ms=6.713 errors=8
+RAW label=vscode op=name n=1 rep=8 wall_ms=7.955 errors=8
+RAW label=vscode op=name n=1 rep=9 wall_ms=7.063 errors=8
+RAW label=vscode op=name n=1 rep=10 wall_ms=8.281 errors=8
+RAW label=vscode op=name n=1 rep=11 wall_ms=7.968 errors=8
+RAW label=vscode op=name n=1 rep=12 wall_ms=7.853 errors=8
+RAW label=vscode op=name n=1 rep=13 wall_ms=7.744 errors=8
+RAW label=vscode op=name n=1 rep=14 wall_ms=7.737 errors=8
+RAW label=vscode op=name n=1 rep=15 wall_ms=7.793 errors=8
+RAW label=vscode op=name n=1 rep=16 wall_ms=7.841 errors=8
+RAW label=vscode op=name n=1 rep=17 wall_ms=7.901 errors=8
+RAW label=vscode op=name n=1 rep=18 wall_ms=7.796 errors=8
+RAW label=vscode op=name n=1 rep=19 wall_ms=7.697 errors=8
+RESULT label=vscode op=name n=1 k=64 median_ms=7.80 p90_ms=8.54 per_call_us=121.8 speedup=1.00 errors=160
+RAW label=vscode op=name n=2 rep=0 wall_ms=4.531 errors=0
+RAW label=vscode op=name n=2 rep=1 wall_ms=4.600 errors=0
+RAW label=vscode op=name n=2 rep=2 wall_ms=5.255 errors=0
+RAW label=vscode op=name n=2 rep=3 wall_ms=4.688 errors=0
+RAW label=vscode op=name n=2 rep=4 wall_ms=4.347 errors=0
+RAW label=vscode op=name n=2 rep=5 wall_ms=4.367 errors=0
+RAW label=vscode op=name n=2 rep=6 wall_ms=4.588 errors=0
+RAW label=vscode op=name n=2 rep=7 wall_ms=4.264 errors=0
+RAW label=vscode op=name n=2 rep=8 wall_ms=4.418 errors=0
+RAW label=vscode op=name n=2 rep=9 wall_ms=4.486 errors=0
+RAW label=vscode op=name n=2 rep=10 wall_ms=4.458 errors=0
+RAW label=vscode op=name n=2 rep=11 wall_ms=4.462 errors=0
+RAW label=vscode op=name n=2 rep=12 wall_ms=4.386 errors=0
+RAW label=vscode op=name n=2 rep=13 wall_ms=4.689 errors=0
+RAW label=vscode op=name n=2 rep=14 wall_ms=4.543 errors=0
+RAW label=vscode op=name n=2 rep=15 wall_ms=4.532 errors=0
+RAW label=vscode op=name n=2 rep=16 wall_ms=4.922 errors=0
+RAW label=vscode op=name n=2 rep=17 wall_ms=4.558 errors=0
+RAW label=vscode op=name n=2 rep=18 wall_ms=4.452 errors=0
+RAW label=vscode op=name n=2 rep=19 wall_ms=4.323 errors=0
+RESULT label=vscode op=name n=2 k=64 median_ms=4.53 p90_ms=4.69 per_call_us=70.8 speedup=1.72 errors=0
+RAW label=vscode op=name n=4 rep=0 wall_ms=4.208 errors=0
+RAW label=vscode op=name n=4 rep=1 wall_ms=4.359 errors=0
+RAW label=vscode op=name n=4 rep=2 wall_ms=4.112 errors=0
+RAW label=vscode op=name n=4 rep=3 wall_ms=4.262 errors=0
+RAW label=vscode op=name n=4 rep=4 wall_ms=4.295 errors=0
+RAW label=vscode op=name n=4 rep=5 wall_ms=4.172 errors=0
+RAW label=vscode op=name n=4 rep=6 wall_ms=4.738 errors=0
+RAW label=vscode op=name n=4 rep=7 wall_ms=4.288 errors=0
+RAW label=vscode op=name n=4 rep=8 wall_ms=4.473 errors=0
+RAW label=vscode op=name n=4 rep=9 wall_ms=4.562 errors=0
+RAW label=vscode op=name n=4 rep=10 wall_ms=4.951 errors=0
+RAW label=vscode op=name n=4 rep=11 wall_ms=4.305 errors=0
+RAW label=vscode op=name n=4 rep=12 wall_ms=4.242 errors=0
+RAW label=vscode op=name n=4 rep=13 wall_ms=4.452 errors=0
+RAW label=vscode op=name n=4 rep=14 wall_ms=4.247 errors=0
+RAW label=vscode op=name n=4 rep=15 wall_ms=4.228 errors=0
+RAW label=vscode op=name n=4 rep=16 wall_ms=4.326 errors=0
+RAW label=vscode op=name n=4 rep=17 wall_ms=4.360 errors=0
+RAW label=vscode op=name n=4 rep=18 wall_ms=4.128 errors=0
+RAW label=vscode op=name n=4 rep=19 wall_ms=4.262 errors=0
+RESULT label=vscode op=name n=4 k=64 median_ms=4.29 p90_ms=4.56 per_call_us=67.1 speedup=1.82 errors=0
+RAW label=vscode op=name n=8 rep=0 wall_ms=4.275 errors=0
+RAW label=vscode op=name n=8 rep=1 wall_ms=4.330 errors=0
+RAW label=vscode op=name n=8 rep=2 wall_ms=4.240 errors=0
+RAW label=vscode op=name n=8 rep=3 wall_ms=4.228 errors=0
+RAW label=vscode op=name n=8 rep=4 wall_ms=4.252 errors=0
+RAW label=vscode op=name n=8 rep=5 wall_ms=4.156 errors=0
+RAW label=vscode op=name n=8 rep=6 wall_ms=4.192 errors=0
+RAW label=vscode op=name n=8 rep=7 wall_ms=4.200 errors=0
+RAW label=vscode op=name n=8 rep=8 wall_ms=4.249 errors=0
+RAW label=vscode op=name n=8 rep=9 wall_ms=4.240 errors=0
+RAW label=vscode op=name n=8 rep=10 wall_ms=4.354 errors=0
+RAW label=vscode op=name n=8 rep=11 wall_ms=4.133 errors=0
+RAW label=vscode op=name n=8 rep=12 wall_ms=4.125 errors=0
+RAW label=vscode op=name n=8 rep=13 wall_ms=4.503 errors=0
+RAW label=vscode op=name n=8 rep=14 wall_ms=4.474 errors=0
+RAW label=vscode op=name n=8 rep=15 wall_ms=4.679 errors=0
+RAW label=vscode op=name n=8 rep=16 wall_ms=4.347 errors=0
+RAW label=vscode op=name n=8 rep=17 wall_ms=4.452 errors=0
+RAW label=vscode op=name n=8 rep=18 wall_ms=4.242 errors=0
+RAW label=vscode op=name n=8 rep=19 wall_ms=4.032 errors=0
+RESULT label=vscode op=name n=8 k=64 median_ms=4.25 p90_ms=4.47 per_call_us=66.4 speedup=1.83 errors=0
+RAW label=vscode op=findall n=1 rep=0 wall_ms=383.568 errors=0
+RAW label=vscode op=findall n=1 rep=1 wall_ms=396.970 errors=0
+RAW label=vscode op=findall n=1 rep=2 wall_ms=439.362 errors=0
+RAW label=vscode op=findall n=1 rep=3 wall_ms=369.157 errors=0
+RAW label=vscode op=findall n=1 rep=4 wall_ms=424.913 errors=0
+RAW label=vscode op=findall n=1 rep=5 wall_ms=416.596 errors=0
+RAW label=vscode op=findall n=1 rep=6 wall_ms=380.348 errors=0
+RAW label=vscode op=findall n=1 rep=7 wall_ms=413.128 errors=0
+RAW label=vscode op=findall n=1 rep=8 wall_ms=528.359 errors=0
+RAW label=vscode op=findall n=1 rep=9 wall_ms=539.972 errors=0
+RAW label=vscode op=findall n=1 rep=10 wall_ms=513.595 errors=0
+RAW label=vscode op=findall n=1 rep=11 wall_ms=511.004 errors=0
+RAW label=vscode op=findall n=1 rep=12 wall_ms=468.911 errors=0
+RAW label=vscode op=findall n=1 rep=13 wall_ms=674.471 errors=0
+RAW label=vscode op=findall n=1 rep=14 wall_ms=869.781 errors=0
+RAW label=vscode op=findall n=1 rep=15 wall_ms=703.495 errors=0
+RAW label=vscode op=findall n=1 rep=16 wall_ms=501.734 errors=0
+RAW label=vscode op=findall n=1 rep=17 wall_ms=435.061 errors=0
+RAW label=vscode op=findall n=1 rep=18 wall_ms=449.406 errors=0
+RAW label=vscode op=findall n=1 rep=19 wall_ms=442.155 errors=0
+RESULT label=vscode op=findall n=1 k=8 median_ms=449.41 p90_ms=674.47 per_call_us=56175.7 speedup=1.00 errors=0
+RAW label=vscode op=findall n=2 rep=0 wall_ms=303.109 errors=0
+RAW label=vscode op=findall n=2 rep=1 wall_ms=282.518 errors=0
+RAW label=vscode op=findall n=2 rep=2 wall_ms=284.667 errors=0
+RAW label=vscode op=findall n=2 rep=3 wall_ms=287.277 errors=0
+RAW label=vscode op=findall n=2 rep=4 wall_ms=303.824 errors=0
+RAW label=vscode op=findall n=2 rep=5 wall_ms=294.942 errors=0
+RAW label=vscode op=findall n=2 rep=6 wall_ms=310.840 errors=0
+RAW label=vscode op=findall n=2 rep=7 wall_ms=300.453 errors=0
+RAW label=vscode op=findall n=2 rep=8 wall_ms=312.234 errors=0
+RAW label=vscode op=findall n=2 rep=9 wall_ms=329.915 errors=0
+RAW label=vscode op=findall n=2 rep=10 wall_ms=323.260 errors=0
+RAW label=vscode op=findall n=2 rep=11 wall_ms=305.412 errors=0
+RAW label=vscode op=findall n=2 rep=12 wall_ms=286.668 errors=0
+RAW label=vscode op=findall n=2 rep=13 wall_ms=275.105 errors=0
+RAW label=vscode op=findall n=2 rep=14 wall_ms=299.901 errors=0
+RAW label=vscode op=findall n=2 rep=15 wall_ms=282.593 errors=0
+RAW label=vscode op=findall n=2 rep=16 wall_ms=459.606 errors=0
+RAW label=vscode op=findall n=2 rep=17 wall_ms=312.105 errors=0
+RAW label=vscode op=findall n=2 rep=18 wall_ms=308.066 errors=0
+RAW label=vscode op=findall n=2 rep=19 wall_ms=318.749 errors=0
+RESULT label=vscode op=findall n=2 k=8 median_ms=303.82 p90_ms=323.26 per_call_us=37978.0 speedup=1.48 errors=0
+RAW label=vscode op=findall n=4 rep=0 wall_ms=290.334 errors=0
+RAW label=vscode op=findall n=4 rep=1 wall_ms=318.035 errors=0
+RAW label=vscode op=findall n=4 rep=2 wall_ms=294.201 errors=0
+RAW label=vscode op=findall n=4 rep=3 wall_ms=316.263 errors=0
+RAW label=vscode op=findall n=4 rep=4 wall_ms=294.754 errors=0
+RAW label=vscode op=findall n=4 rep=5 wall_ms=307.499 errors=0
+RAW label=vscode op=findall n=4 rep=6 wall_ms=360.684 errors=0
+RAW label=vscode op=findall n=4 rep=7 wall_ms=311.874 errors=0
+RAW label=vscode op=findall n=4 rep=8 wall_ms=330.019 errors=0
+RAW label=vscode op=findall n=4 rep=9 wall_ms=325.606 errors=0
+RAW label=vscode op=findall n=4 rep=10 wall_ms=323.989 errors=0
+RAW label=vscode op=findall n=4 rep=11 wall_ms=311.406 errors=0
+RAW label=vscode op=findall n=4 rep=12 wall_ms=323.877 errors=0
+RAW label=vscode op=findall n=4 rep=13 wall_ms=313.516 errors=0
+RAW label=vscode op=findall n=4 rep=14 wall_ms=301.352 errors=0
+RAW label=vscode op=findall n=4 rep=15 wall_ms=312.545 errors=0
+RAW label=vscode op=findall n=4 rep=16 wall_ms=330.054 errors=0
+RAW label=vscode op=findall n=4 rep=17 wall_ms=334.214 errors=0
+RAW label=vscode op=findall n=4 rep=18 wall_ms=337.303 errors=0
+RAW label=vscode op=findall n=4 rep=19 wall_ms=330.096 errors=0
+RESULT label=vscode op=findall n=4 k=8 median_ms=318.04 p90_ms=334.21 per_call_us=39754.4 speedup=1.41 errors=0
+RAW label=vscode op=findall n=8 rep=0 wall_ms=308.638 errors=0
+RAW label=vscode op=findall n=8 rep=1 wall_ms=314.986 errors=0
+RAW label=vscode op=findall n=8 rep=2 wall_ms=301.207 errors=0
+RAW label=vscode op=findall n=8 rep=3 wall_ms=282.740 errors=0
+RAW label=vscode op=findall n=8 rep=4 wall_ms=301.350 errors=0
+RAW label=vscode op=findall n=8 rep=5 wall_ms=298.472 errors=0
+RAW label=vscode op=findall n=8 rep=6 wall_ms=298.355 errors=0
+RAW label=vscode op=findall n=8 rep=7 wall_ms=287.671 errors=0
+RAW label=vscode op=findall n=8 rep=8 wall_ms=303.237 errors=0
+RAW label=vscode op=findall n=8 rep=9 wall_ms=305.837 errors=0
+RAW label=vscode op=findall n=8 rep=10 wall_ms=290.083 errors=0
+RAW label=vscode op=findall n=8 rep=11 wall_ms=316.519 errors=0
+RAW label=vscode op=findall n=8 rep=12 wall_ms=305.830 errors=0
+RAW label=vscode op=findall n=8 rep=13 wall_ms=303.811 errors=0
+RAW label=vscode op=findall n=8 rep=14 wall_ms=318.863 errors=0
+RAW label=vscode op=findall n=8 rep=15 wall_ms=317.285 errors=0
+RAW label=vscode op=findall n=8 rep=16 wall_ms=327.167 errors=0
+RAW label=vscode op=findall n=8 rep=17 wall_ms=400.183 errors=0
+RAW label=vscode op=findall n=8 rep=18 wall_ms=300.530 errors=0
+RAW label=vscode op=findall n=8 rep=19 wall_ms=303.890 errors=0
+RESULT label=vscode op=findall n=8 k=8 median_ms=303.89 p90_ms=318.86 per_call_us=37986.2 speedup=1.48 errors=0
+RAW label=vscode op=fromhandle n=1 rep=0 wall_ms=27.870 errors=0
+RAW label=vscode op=fromhandle n=1 rep=1 wall_ms=27.959 errors=0
+RAW label=vscode op=fromhandle n=1 rep=2 wall_ms=28.490 errors=0
+RAW label=vscode op=fromhandle n=1 rep=3 wall_ms=26.014 errors=0
+RAW label=vscode op=fromhandle n=1 rep=4 wall_ms=26.200 errors=0
+RAW label=vscode op=fromhandle n=1 rep=5 wall_ms=24.000 errors=0
+RAW label=vscode op=fromhandle n=1 rep=6 wall_ms=26.848 errors=0
+RAW label=vscode op=fromhandle n=1 rep=7 wall_ms=28.366 errors=0
+RAW label=vscode op=fromhandle n=1 rep=8 wall_ms=25.950 errors=0
+RAW label=vscode op=fromhandle n=1 rep=9 wall_ms=25.828 errors=0
+RAW label=vscode op=fromhandle n=1 rep=10 wall_ms=26.021 errors=0
+RAW label=vscode op=fromhandle n=1 rep=11 wall_ms=24.569 errors=0
+RAW label=vscode op=fromhandle n=1 rep=12 wall_ms=22.973 errors=0
+RAW label=vscode op=fromhandle n=1 rep=13 wall_ms=53.019 errors=0
+RAW label=vscode op=fromhandle n=1 rep=14 wall_ms=33.985 errors=0
+RAW label=vscode op=fromhandle n=1 rep=15 wall_ms=23.995 errors=0
+RAW label=vscode op=fromhandle n=1 rep=16 wall_ms=25.297 errors=0
+RAW label=vscode op=fromhandle n=1 rep=17 wall_ms=24.667 errors=0
+RAW label=vscode op=fromhandle n=1 rep=18 wall_ms=24.517 errors=0
+RAW label=vscode op=fromhandle n=1 rep=19 wall_ms=26.082 errors=0
+RESULT label=vscode op=fromhandle n=1 k=32 median_ms=26.02 p90_ms=28.49 per_call_us=813.1 speedup=1.00 errors=0
+RAW label=vscode op=fromhandle n=2 rep=0 wall_ms=20.871 errors=0
+RAW label=vscode op=fromhandle n=2 rep=1 wall_ms=19.879 errors=0
+RAW label=vscode op=fromhandle n=2 rep=2 wall_ms=20.196 errors=0
+RAW label=vscode op=fromhandle n=2 rep=3 wall_ms=21.728 errors=0
+RAW label=vscode op=fromhandle n=2 rep=4 wall_ms=20.800 errors=0
+RAW label=vscode op=fromhandle n=2 rep=5 wall_ms=20.980 errors=0
+RAW label=vscode op=fromhandle n=2 rep=6 wall_ms=20.924 errors=0
+RAW label=vscode op=fromhandle n=2 rep=7 wall_ms=22.428 errors=0
+RAW label=vscode op=fromhandle n=2 rep=8 wall_ms=22.446 errors=0
+RAW label=vscode op=fromhandle n=2 rep=9 wall_ms=21.066 errors=0
+RAW label=vscode op=fromhandle n=2 rep=10 wall_ms=21.919 errors=0
+RAW label=vscode op=fromhandle n=2 rep=11 wall_ms=22.396 errors=0
+RAW label=vscode op=fromhandle n=2 rep=12 wall_ms=22.258 errors=0
+RAW label=vscode op=fromhandle n=2 rep=13 wall_ms=19.957 errors=0
+RAW label=vscode op=fromhandle n=2 rep=14 wall_ms=21.862 errors=0
+RAW label=vscode op=fromhandle n=2 rep=15 wall_ms=21.029 errors=0
+RAW label=vscode op=fromhandle n=2 rep=16 wall_ms=20.653 errors=0
+RAW label=vscode op=fromhandle n=2 rep=17 wall_ms=21.662 errors=0
+RAW label=vscode op=fromhandle n=2 rep=18 wall_ms=21.805 errors=0
+RAW label=vscode op=fromhandle n=2 rep=19 wall_ms=21.804 errors=0
+RESULT label=vscode op=fromhandle n=2 k=32 median_ms=21.66 p90_ms=22.40 per_call_us=676.9 speedup=1.20 errors=0
+RAW label=vscode op=fromhandle n=4 rep=0 wall_ms=20.238 errors=0
+RAW label=vscode op=fromhandle n=4 rep=1 wall_ms=20.286 errors=0
+RAW label=vscode op=fromhandle n=4 rep=2 wall_ms=20.358 errors=0
+RAW label=vscode op=fromhandle n=4 rep=3 wall_ms=23.061 errors=0
+RAW label=vscode op=fromhandle n=4 rep=4 wall_ms=24.074 errors=0
+RAW label=vscode op=fromhandle n=4 rep=5 wall_ms=20.954 errors=0
+RAW label=vscode op=fromhandle n=4 rep=6 wall_ms=22.925 errors=0
+RAW label=vscode op=fromhandle n=4 rep=7 wall_ms=23.985 errors=0
+RAW label=vscode op=fromhandle n=4 rep=8 wall_ms=22.845 errors=0
+RAW label=vscode op=fromhandle n=4 rep=9 wall_ms=22.624 errors=0
+RAW label=vscode op=fromhandle n=4 rep=10 wall_ms=24.037 errors=0
+RAW label=vscode op=fromhandle n=4 rep=11 wall_ms=21.476 errors=0
+RAW label=vscode op=fromhandle n=4 rep=12 wall_ms=23.084 errors=0
+RAW label=vscode op=fromhandle n=4 rep=13 wall_ms=21.415 errors=0
+RAW label=vscode op=fromhandle n=4 rep=14 wall_ms=22.708 errors=0
+RAW label=vscode op=fromhandle n=4 rep=15 wall_ms=22.111 errors=0
+RAW label=vscode op=fromhandle n=4 rep=16 wall_ms=23.412 errors=0
+RAW label=vscode op=fromhandle n=4 rep=17 wall_ms=21.648 errors=0
+RAW label=vscode op=fromhandle n=4 rep=18 wall_ms=20.039 errors=0
+RAW label=vscode op=fromhandle n=4 rep=19 wall_ms=21.130 errors=0
+RESULT label=vscode op=fromhandle n=4 k=32 median_ms=22.62 p90_ms=23.99 per_call_us=707.0 speedup=1.15 errors=0
+RAW label=vscode op=fromhandle n=8 rep=0 wall_ms=18.915 errors=0
+RAW label=vscode op=fromhandle n=8 rep=1 wall_ms=19.867 errors=0
+RAW label=vscode op=fromhandle n=8 rep=2 wall_ms=19.181 errors=0
+RAW label=vscode op=fromhandle n=8 rep=3 wall_ms=21.092 errors=0
+RAW label=vscode op=fromhandle n=8 rep=4 wall_ms=23.476 errors=0
+RAW label=vscode op=fromhandle n=8 rep=5 wall_ms=20.771 errors=0
+RAW label=vscode op=fromhandle n=8 rep=6 wall_ms=20.434 errors=0
+RAW label=vscode op=fromhandle n=8 rep=7 wall_ms=20.697 errors=0
+RAW label=vscode op=fromhandle n=8 rep=8 wall_ms=22.766 errors=0
+RAW label=vscode op=fromhandle n=8 rep=9 wall_ms=21.505 errors=0
+RAW label=vscode op=fromhandle n=8 rep=10 wall_ms=21.681 errors=0
+RAW label=vscode op=fromhandle n=8 rep=11 wall_ms=21.360 errors=0
+RAW label=vscode op=fromhandle n=8 rep=12 wall_ms=19.193 errors=0
+RAW label=vscode op=fromhandle n=8 rep=13 wall_ms=19.076 errors=0
+RAW label=vscode op=fromhandle n=8 rep=14 wall_ms=21.392 errors=0
+RAW label=vscode op=fromhandle n=8 rep=15 wall_ms=19.436 errors=0
+RAW label=vscode op=fromhandle n=8 rep=16 wall_ms=20.031 errors=0
+RAW label=vscode op=fromhandle n=8 rep=17 wall_ms=19.719 errors=0
+RAW label=vscode op=fromhandle n=8 rep=18 wall_ms=20.585 errors=0
+RAW label=vscode op=fromhandle n=8 rep=19 wall_ms=20.069 errors=0
+RESULT label=vscode op=fromhandle n=8 k=32 median_ms=20.59 p90_ms=21.68 per_call_us=643.3 speedup=1.26 errors=0
+RAW label=vscode op=text n=1 rep=0 wall_ms=38.219 errors=0
+RAW label=vscode op=text n=1 rep=1 wall_ms=30.012 errors=0
+RAW label=vscode op=text n=1 rep=2 wall_ms=28.587 errors=0
+RAW label=vscode op=text n=1 rep=3 wall_ms=30.475 errors=0
+RAW label=vscode op=text n=1 rep=4 wall_ms=27.437 errors=0
+RAW label=vscode op=text n=1 rep=5 wall_ms=31.426 errors=0
+RAW label=vscode op=text n=1 rep=6 wall_ms=30.084 errors=0
+RAW label=vscode op=text n=1 rep=7 wall_ms=28.049 errors=0
+RAW label=vscode op=text n=1 rep=8 wall_ms=30.626 errors=0
+RAW label=vscode op=text n=1 rep=9 wall_ms=40.837 errors=0
+RAW label=vscode op=text n=1 rep=10 wall_ms=28.691 errors=0
+RAW label=vscode op=text n=1 rep=11 wall_ms=33.079 errors=0
+RAW label=vscode op=text n=1 rep=12 wall_ms=33.127 errors=0
+RAW label=vscode op=text n=1 rep=13 wall_ms=35.794 errors=0
+RAW label=vscode op=text n=1 rep=14 wall_ms=30.054 errors=0
+RAW label=vscode op=text n=1 rep=15 wall_ms=32.200 errors=0
+RAW label=vscode op=text n=1 rep=16 wall_ms=27.430 errors=0
+RAW label=vscode op=text n=1 rep=17 wall_ms=27.398 errors=0
+RAW label=vscode op=text n=1 rep=18 wall_ms=29.001 errors=0
+RAW label=vscode op=text n=1 rep=19 wall_ms=33.306 errors=0
+RESULT label=vscode op=text n=1 k=32 median_ms=30.47 p90_ms=35.79 per_call_us=952.3 speedup=1.00 errors=0
+RAW label=vscode op=text n=2 rep=0 wall_ms=26.342 errors=0
+RAW label=vscode op=text n=2 rep=1 wall_ms=37.329 errors=0
+RAW label=vscode op=text n=2 rep=2 wall_ms=31.934 errors=0
+RAW label=vscode op=text n=2 rep=3 wall_ms=24.694 errors=0
+RAW label=vscode op=text n=2 rep=4 wall_ms=27.984 errors=0
+RAW label=vscode op=text n=2 rep=5 wall_ms=25.779 errors=0
+RAW label=vscode op=text n=2 rep=6 wall_ms=26.700 errors=0
+RAW label=vscode op=text n=2 rep=7 wall_ms=27.237 errors=0
+RAW label=vscode op=text n=2 rep=8 wall_ms=24.026 errors=0
+RAW label=vscode op=text n=2 rep=9 wall_ms=30.196 errors=0
+RAW label=vscode op=text n=2 rep=10 wall_ms=33.705 errors=0
+RAW label=vscode op=text n=2 rep=11 wall_ms=35.734 errors=0
+RAW label=vscode op=text n=2 rep=12 wall_ms=30.989 errors=0
+RAW label=vscode op=text n=2 rep=13 wall_ms=33.873 errors=0
+RAW label=vscode op=text n=2 rep=14 wall_ms=31.226 errors=0
+RAW label=vscode op=text n=2 rep=15 wall_ms=36.252 errors=0
+RAW label=vscode op=text n=2 rep=16 wall_ms=32.560 errors=0
+RAW label=vscode op=text n=2 rep=17 wall_ms=33.923 errors=0
+RAW label=vscode op=text n=2 rep=18 wall_ms=25.990 errors=0
+RAW label=vscode op=text n=2 rep=19 wall_ms=25.654 errors=0
+RESULT label=vscode op=text n=2 k=32 median_ms=30.99 p90_ms=35.73 per_call_us=968.4 speedup=0.98 errors=0
+RAW label=vscode op=text n=4 rep=0 wall_ms=24.655 errors=0
+RAW label=vscode op=text n=4 rep=1 wall_ms=27.062 errors=0
+RAW label=vscode op=text n=4 rep=2 wall_ms=26.308 errors=0
+RAW label=vscode op=text n=4 rep=3 wall_ms=28.592 errors=0
+RAW label=vscode op=text n=4 rep=4 wall_ms=26.458 errors=0
+RAW label=vscode op=text n=4 rep=5 wall_ms=24.934 errors=0
+RAW label=vscode op=text n=4 rep=6 wall_ms=25.300 errors=0
+RAW label=vscode op=text n=4 rep=7 wall_ms=25.799 errors=0
+RAW label=vscode op=text n=4 rep=8 wall_ms=24.250 errors=0
+RAW label=vscode op=text n=4 rep=9 wall_ms=26.842 errors=0
+RAW label=vscode op=text n=4 rep=10 wall_ms=26.311 errors=0
+RAW label=vscode op=text n=4 rep=11 wall_ms=30.057 errors=0
+RAW label=vscode op=text n=4 rep=12 wall_ms=26.912 errors=0
+RAW label=vscode op=text n=4 rep=13 wall_ms=27.243 errors=0
+RAW label=vscode op=text n=4 rep=14 wall_ms=25.936 errors=0
+RAW label=vscode op=text n=4 rep=15 wall_ms=31.402 errors=0
+RAW label=vscode op=text n=4 rep=16 wall_ms=26.256 errors=0
+RAW label=vscode op=text n=4 rep=17 wall_ms=26.293 errors=0
+RAW label=vscode op=text n=4 rep=18 wall_ms=29.882 errors=0
+RAW label=vscode op=text n=4 rep=19 wall_ms=27.686 errors=0
+RESULT label=vscode op=text n=4 k=32 median_ms=26.46 p90_ms=29.88 per_call_us=826.8 speedup=1.15 errors=0
+RAW label=vscode op=text n=8 rep=0 wall_ms=26.118 errors=0
+RAW label=vscode op=text n=8 rep=1 wall_ms=24.982 errors=0
+RAW label=vscode op=text n=8 rep=2 wall_ms=24.058 errors=0
+RAW label=vscode op=text n=8 rep=3 wall_ms=25.528 errors=0
+RAW label=vscode op=text n=8 rep=4 wall_ms=24.880 errors=0
+RAW label=vscode op=text n=8 rep=5 wall_ms=23.275 errors=0
+RAW label=vscode op=text n=8 rep=6 wall_ms=23.735 errors=0
+RAW label=vscode op=text n=8 rep=7 wall_ms=24.039 errors=0
+RAW label=vscode op=text n=8 rep=8 wall_ms=43.636 errors=0
+RAW label=vscode op=text n=8 rep=9 wall_ms=27.642 errors=0
+RAW label=vscode op=text n=8 rep=10 wall_ms=25.849 errors=0
+RAW label=vscode op=text n=8 rep=11 wall_ms=31.084 errors=0
+RAW label=vscode op=text n=8 rep=12 wall_ms=27.704 errors=0
+RAW label=vscode op=text n=8 rep=13 wall_ms=27.804 errors=0
+RAW label=vscode op=text n=8 rep=14 wall_ms=26.189 errors=0
+RAW label=vscode op=text n=8 rep=15 wall_ms=26.789 errors=0
+RAW label=vscode op=text n=8 rep=16 wall_ms=28.970 errors=0
+RAW label=vscode op=text n=8 rep=17 wall_ms=28.863 errors=0
+RAW label=vscode op=text n=8 rep=18 wall_ms=28.508 errors=0
+RAW label=vscode op=text n=8 rep=19 wall_ms=27.108 errors=0
+RESULT label=vscode op=text n=8 k=32 median_ms=26.79 p90_ms=28.97 per_call_us=837.2 speedup=1.14 errors=0
+RAW label=vscode op=msaa n=1 rep=0 wall_ms=14.811 errors=0
+RAW label=vscode op=msaa n=1 rep=1 wall_ms=15.207 errors=0
+RAW label=vscode op=msaa n=1 rep=2 wall_ms=14.306 errors=0
+RAW label=vscode op=msaa n=1 rep=3 wall_ms=10.535 errors=0
+RAW label=vscode op=msaa n=1 rep=4 wall_ms=10.203 errors=0
+RAW label=vscode op=msaa n=1 rep=5 wall_ms=8.703 errors=0
+RAW label=vscode op=msaa n=1 rep=6 wall_ms=10.148 errors=0
+RAW label=vscode op=msaa n=1 rep=7 wall_ms=9.441 errors=0
+RAW label=vscode op=msaa n=1 rep=8 wall_ms=9.626 errors=0
+RAW label=vscode op=msaa n=1 rep=9 wall_ms=9.195 errors=0
+RAW label=vscode op=msaa n=1 rep=10 wall_ms=8.435 errors=0
+RAW label=vscode op=msaa n=1 rep=11 wall_ms=8.114 errors=0
+RAW label=vscode op=msaa n=1 rep=12 wall_ms=8.504 errors=0
+RAW label=vscode op=msaa n=1 rep=13 wall_ms=9.306 errors=0
+RAW label=vscode op=msaa n=1 rep=14 wall_ms=9.129 errors=0
+RAW label=vscode op=msaa n=1 rep=15 wall_ms=7.908 errors=0
+RAW label=vscode op=msaa n=1 rep=16 wall_ms=7.610 errors=0
+RAW label=vscode op=msaa n=1 rep=17 wall_ms=7.895 errors=0
+RAW label=vscode op=msaa n=1 rep=18 wall_ms=8.688 errors=0
+RAW label=vscode op=msaa n=1 rep=19 wall_ms=8.313 errors=0
+RESULT label=vscode op=msaa n=1 k=64 median_ms=9.19 p90_ms=14.31 per_call_us=143.7 speedup=1.00 errors=0
+RAW label=vscode op=msaa n=2 rep=0 wall_ms=5.240 errors=0
+RAW label=vscode op=msaa n=2 rep=1 wall_ms=4.989 errors=0
+RAW label=vscode op=msaa n=2 rep=2 wall_ms=4.949 errors=0
+RAW label=vscode op=msaa n=2 rep=3 wall_ms=4.878 errors=0
+RAW label=vscode op=msaa n=2 rep=4 wall_ms=4.960 errors=0
+RAW label=vscode op=msaa n=2 rep=5 wall_ms=4.754 errors=0
+RAW label=vscode op=msaa n=2 rep=6 wall_ms=5.395 errors=0
+RAW label=vscode op=msaa n=2 rep=7 wall_ms=5.096 errors=0
+RAW label=vscode op=msaa n=2 rep=8 wall_ms=4.752 errors=0
+RAW label=vscode op=msaa n=2 rep=9 wall_ms=4.817 errors=0
+RAW label=vscode op=msaa n=2 rep=10 wall_ms=4.750 errors=0
+RAW label=vscode op=msaa n=2 rep=11 wall_ms=4.687 errors=0
+RAW label=vscode op=msaa n=2 rep=12 wall_ms=5.123 errors=0
+RAW label=vscode op=msaa n=2 rep=13 wall_ms=4.801 errors=0
+RAW label=vscode op=msaa n=2 rep=14 wall_ms=4.967 errors=0
+RAW label=vscode op=msaa n=2 rep=15 wall_ms=5.020 errors=0
+RAW label=vscode op=msaa n=2 rep=16 wall_ms=5.045 errors=0
+RAW label=vscode op=msaa n=2 rep=17 wall_ms=5.411 errors=0
+RAW label=vscode op=msaa n=2 rep=18 wall_ms=6.105 errors=0
+RAW label=vscode op=msaa n=2 rep=19 wall_ms=6.292 errors=0
+RESULT label=vscode op=msaa n=2 k=64 median_ms=4.99 p90_ms=5.41 per_call_us=77.9 speedup=1.84 errors=0
+RAW label=vscode op=msaa n=4 rep=0 wall_ms=5.363 errors=0
+RAW label=vscode op=msaa n=4 rep=1 wall_ms=5.062 errors=0
+RAW label=vscode op=msaa n=4 rep=2 wall_ms=5.039 errors=0
+RAW label=vscode op=msaa n=4 rep=3 wall_ms=5.070 errors=0
+RAW label=vscode op=msaa n=4 rep=4 wall_ms=5.246 errors=0
+RAW label=vscode op=msaa n=4 rep=5 wall_ms=5.169 errors=0
+RAW label=vscode op=msaa n=4 rep=6 wall_ms=5.092 errors=0
+RAW label=vscode op=msaa n=4 rep=7 wall_ms=4.965 errors=0
+RAW label=vscode op=msaa n=4 rep=8 wall_ms=4.818 errors=0
+RAW label=vscode op=msaa n=4 rep=9 wall_ms=5.144 errors=0
+RAW label=vscode op=msaa n=4 rep=10 wall_ms=4.990 errors=0
+RAW label=vscode op=msaa n=4 rep=11 wall_ms=4.970 errors=0
+RAW label=vscode op=msaa n=4 rep=12 wall_ms=4.801 errors=0
+RAW label=vscode op=msaa n=4 rep=13 wall_ms=4.822 errors=0
+RAW label=vscode op=msaa n=4 rep=14 wall_ms=4.722 errors=0
+RAW label=vscode op=msaa n=4 rep=15 wall_ms=4.968 errors=0
+RAW label=vscode op=msaa n=4 rep=16 wall_ms=4.978 errors=0
+RAW label=vscode op=msaa n=4 rep=17 wall_ms=4.964 errors=0
+RAW label=vscode op=msaa n=4 rep=18 wall_ms=5.102 errors=0
+RAW label=vscode op=msaa n=4 rep=19 wall_ms=5.356 errors=0
+RESULT label=vscode op=msaa n=4 k=64 median_ms=5.04 p90_ms=5.25 per_call_us=78.7 speedup=1.82 errors=0
+RAW label=vscode op=msaa n=8 rep=0 wall_ms=5.756 errors=0
+RAW label=vscode op=msaa n=8 rep=1 wall_ms=6.480 errors=0
+RAW label=vscode op=msaa n=8 rep=2 wall_ms=5.411 errors=0
+RAW label=vscode op=msaa n=8 rep=3 wall_ms=5.754 errors=0
+RAW label=vscode op=msaa n=8 rep=4 wall_ms=5.480 errors=0
+RAW label=vscode op=msaa n=8 rep=5 wall_ms=5.412 errors=0
+RAW label=vscode op=msaa n=8 rep=6 wall_ms=4.932 errors=0
+RAW label=vscode op=msaa n=8 rep=7 wall_ms=5.051 errors=0
+RAW label=vscode op=msaa n=8 rep=8 wall_ms=5.780 errors=0
+RAW label=vscode op=msaa n=8 rep=9 wall_ms=4.974 errors=0
+RAW label=vscode op=msaa n=8 rep=10 wall_ms=4.746 errors=0
+RAW label=vscode op=msaa n=8 rep=11 wall_ms=4.917 errors=0
+RAW label=vscode op=msaa n=8 rep=12 wall_ms=4.970 errors=0
+RAW label=vscode op=msaa n=8 rep=13 wall_ms=4.956 errors=0
+RAW label=vscode op=msaa n=8 rep=14 wall_ms=5.062 errors=0
+RAW label=vscode op=msaa n=8 rep=15 wall_ms=5.001 errors=0
+RAW label=vscode op=msaa n=8 rep=16 wall_ms=4.837 errors=0
+RAW label=vscode op=msaa n=8 rep=17 wall_ms=4.859 errors=0
+RAW label=vscode op=msaa n=8 rep=18 wall_ms=5.122 errors=0
+RAW label=vscode op=msaa n=8 rep=19 wall_ms=5.241 errors=0
+RESULT label=vscode op=msaa n=8 k=64 median_ms=5.06 p90_ms=5.76 per_call_us=79.1 speedup=1.82 errors=0
+puia.exe : rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, 
+opcode: None, location: None, partial: Outcome })
+At C:\Users\Dickson\Desktop\projects\verbatim\experiments\parallel-uia-calls\run-real.ps1:9 char:1
++ & $Exe bench label=$Label hwnd=$Hwnd ops=$Ops k=name:64,findall:8,fro ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (rop: Failed(Fai...ial: Outcome }):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=0 wall_ms=8.547 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=1 wall_ms=9.187 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=2 wall_ms=8.859 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=3 wall_ms=9.192 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=4 wall_ms=10.081 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=5 wall_ms=9.053 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=6 wall_ms=11.183 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=7 wall_ms=12.337 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=8 wall_ms=12.350 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=9 wall_ms=13.932 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=10 wall_ms=11.005 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=11 wall_ms=11.439 errors=4
+RAW label=vscode op=rop n=1 rep=12 wall_ms=10.847 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=13 wall_ms=10.485 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=14 wall_ms=10.677 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=15 wall_ms=9.741 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=16 wall_ms=10.365 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=17 wall_ms=9.703 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=18 wall_ms=9.459 errors=4
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80040201), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+RAW label=vscode op=rop n=1 rep=19 wall_ms=9.032 errors=4
+RESULT label=vscode op=rop n=1 k=32 median_ms=10.37 p90_ms=12.34 per_call_us=323.9 speedup=1.00 errors=80
+RAW label=vscode op=rop n=2 rep=0 wall_ms=6.077 errors=0
+RAW label=vscode op=rop n=2 rep=1 wall_ms=7.163 errors=0
+RAW label=vscode op=rop n=2 rep=2 wall_ms=6.989 errors=0
+RAW label=vscode op=rop n=2 rep=3 wall_ms=6.434 errors=0
+RAW label=vscode op=rop n=2 rep=4 wall_ms=6.877 errors=0
+RAW label=vscode op=rop n=2 rep=5 wall_ms=7.038 errors=0
+RAW label=vscode op=rop n=2 rep=6 wall_ms=6.012 errors=0
+RAW label=vscode op=rop n=2 rep=7 wall_ms=5.863 errors=0
+RAW label=vscode op=rop n=2 rep=8 wall_ms=5.602 errors=0
+RAW label=vscode op=rop n=2 rep=9 wall_ms=5.748 errors=0
+RAW label=vscode op=rop n=2 rep=10 wall_ms=5.816 errors=0
+RAW label=vscode op=rop n=2 rep=11 wall_ms=6.490 errors=0
+RAW label=vscode op=rop n=2 rep=12 wall_ms=6.588 errors=0
+RAW label=vscode op=rop n=2 rep=13 wall_ms=6.268 errors=0
+RAW label=vscode op=rop n=2 rep=14 wall_ms=6.176 errors=0
+RAW label=vscode op=rop n=2 rep=15 wall_ms=6.773 errors=0
+RAW label=vscode op=rop n=2 rep=16 wall_ms=6.152 errors=0
+RAW label=vscode op=rop n=2 rep=17 wall_ms=5.858 errors=0
+RAW label=vscode op=rop n=2 rep=18 wall_ms=6.699 errors=0
+RAW label=vscode op=rop n=2 rep=19 wall_ms=6.152 errors=0
+RESULT label=vscode op=rop n=2 k=32 median_ms=6.27 p90_ms=6.99 per_call_us=195.9 speedup=1.65 errors=0
+RAW label=vscode op=rop n=4 rep=0 wall_ms=5.847 errors=0
+RAW label=vscode op=rop n=4 rep=1 wall_ms=5.666 errors=0
+RAW label=vscode op=rop n=4 rep=2 wall_ms=5.575 errors=0
+RAW label=vscode op=rop n=4 rep=3 wall_ms=5.322 errors=0
+RAW label=vscode op=rop n=4 rep=4 wall_ms=5.912 errors=0
+RAW label=vscode op=rop n=4 rep=5 wall_ms=6.055 errors=0
+RAW label=vscode op=rop n=4 rep=6 wall_ms=5.649 errors=0
+RAW label=vscode op=rop n=4 rep=7 wall_ms=5.736 errors=0
+RAW label=vscode op=rop n=4 rep=8 wall_ms=5.122 errors=0
+RAW label=vscode op=rop n=4 rep=9 wall_ms=5.712 errors=0
+RAW label=vscode op=rop n=4 rep=10 wall_ms=6.522 errors=0
+RAW label=vscode op=rop n=4 rep=11 wall_ms=5.580 errors=0
+RAW label=vscode op=rop n=4 rep=12 wall_ms=5.057 errors=0
+RAW label=vscode op=rop n=4 rep=13 wall_ms=4.747 errors=0
+RAW label=vscode op=rop n=4 rep=14 wall_ms=4.959 errors=0
+RAW label=vscode op=rop n=4 rep=15 wall_ms=7.022 errors=0
+RAW label=vscode op=rop n=4 rep=16 wall_ms=8.349 errors=0
+RAW label=vscode op=rop n=4 rep=17 wall_ms=8.452 errors=0
+RAW label=vscode op=rop n=4 rep=18 wall_ms=9.475 errors=0
+RAW label=vscode op=rop n=4 rep=19 wall_ms=9.171 errors=0
+RESULT label=vscode op=rop n=4 k=32 median_ms=5.74 p90_ms=8.45 per_call_us=179.2 speedup=1.81 errors=0
+RAW label=vscode op=rop n=8 rep=0 wall_ms=6.426 errors=0
+RAW label=vscode op=rop n=8 rep=1 wall_ms=5.817 errors=0
+RAW label=vscode op=rop n=8 rep=2 wall_ms=6.136 errors=0
+RAW label=vscode op=rop n=8 rep=3 wall_ms=5.633 errors=0
+RAW label=vscode op=rop n=8 rep=4 wall_ms=5.513 errors=0
+RAW label=vscode op=rop n=8 rep=5 wall_ms=5.163 errors=0
+RAW label=vscode op=rop n=8 rep=6 wall_ms=5.911 errors=0
+RAW label=vscode op=rop n=8 rep=7 wall_ms=5.673 errors=0
+RAW label=vscode op=rop n=8 rep=8 wall_ms=5.152 errors=0
+RAW label=vscode op=rop n=8 rep=9 wall_ms=4.899 errors=0
+RAW label=vscode op=rop n=8 rep=10 wall_ms=6.621 errors=0
+RAW label=vscode op=rop n=8 rep=11 wall_ms=5.969 errors=0
+RAW label=vscode op=rop n=8 rep=12 wall_ms=5.607 errors=0
+RAW label=vscode op=rop n=8 rep=13 wall_ms=5.883 errors=0
+RAW label=vscode op=rop n=8 rep=14 wall_ms=6.122 errors=0
+RAW label=vscode op=rop n=8 rep=15 wall_ms=6.041 errors=0
+RAW label=vscode op=rop n=8 rep=16 wall_ms=5.521 errors=0
+RAW label=vscode op=rop n=8 rep=17 wall_ms=5.476 errors=0
+RAW label=vscode op=rop n=8 rep=18 wall_ms=5.818 errors=0
+RAW label=vscode op=rop n=8 rep=19 wall_ms=5.088 errors=0
+RESULT label=vscode op=rop n=8 k=32 median_ms=5.82 p90_ms=6.14 per_call_us=181.8 speedup=1.78 errors=0
+PAIR label=vscode-findall-beside-name a=FindAll@459990 elem 0 (of 16 held, 215 found) b=Name@459990 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=vscode-findall-beside-name a_alone count=10 median_ms=55.33 p90_ms=59.39 max_ms=59.43
+RESULT label=vscode-findall-beside-name a_with_b count=10 median_ms=52.63 p90_ms=71.59 max_ms=74.95
+RESULT label=vscode-findall-beside-name b_alone count=200 median_ms=0.18 p90_ms=0.25 max_ms=3.16
+RESULT label=vscode-findall-beside-name b_during_a count=200 median_ms=0.21 p90_ms=0.51 max_ms=7.41
+PAIR label=vscode-findall-beside-rop a=FindAll@459990 elem 0 (of 16 held, 215 found) b=Rop@459990 elem 3 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=vscode-findall-beside-rop a_alone count=10 median_ms=55.41 p90_ms=64.03 max_ms=72.61
+RESULT label=vscode-findall-beside-rop a_with_b count=10 median_ms=55.48 p90_ms=59.87 max_ms=60.14
+RESULT label=vscode-findall-beside-rop b_alone count=200 median_ms=0.29 p90_ms=0.35 max_ms=1.04
+RESULT label=vscode-findall-beside-rop b_during_a count=200 median_ms=0.32 p90_ms=0.56 max_ms=6.27
+CALL other-element hwnd=459990 pid=8408 ui_tid=13612 op=Name elem=3 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL other-element-rop hwnd=459990 pid=8408 ui_tid=13612 op=Rop elem=3 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL same-window-new-connection hwnd=459990 pid=8408 ui_tid=13612 op=FromHandle elem=0 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL stuck hwnd=459990 pid=8408 ui_tid=13612 op=Name elem=1 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+suspended tid=13612
+PROBES_STARTED trial=0
+resumed tid=13612
+TRIAL label=vscode-suspended-name trial=0 block=suspend:459990 evidence="200 ms wait" probes_started_ms_after_block=201.7 unblocked_at_ms=4001.5
+RESULT label=vscode-suspended-name trial=0 call=same-window-new-connection returned_ms=2169.4 before_unblock result=error 0x80131505 idle_baseline_ms=1.16
+RESULT label=vscode-suspended-name trial=0 call=stuck returned_ms=4048.1 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=vscode-suspended-name trial=0 call=other-element returned_ms=4049.4 after_unblock result=ok idle_baseline_ms=0.48
+RESULT label=vscode-suspended-name trial=0 call=other-element-rop returned_ms=4049.9 after_unblock result=ok idle_baseline_ms=0.66
+RESULT label=vscode-suspended-name trial=0 call=xproc-other-element returned_ms=4050.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4051.3 after_unblock result=ok idle_baseline_ms=NaN
+suspended tid=13612
+PROBES_STARTED trial=1
+resumed tid=13612
+TRIAL label=vscode-suspended-name trial=1 block=suspend:459990 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4012.3
+RESULT label=vscode-suspended-name trial=1 call=same-window-new-connection returned_ms=2168.3 before_unblock result=error 0x80131505 idle_baseline_ms=0.89
+RESULT label=vscode-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4013.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-name trial=1 call=xproc-other-element returned_ms=4013.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-name trial=1 call=stuck returned_ms=4014.2 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=vscode-suspended-name trial=1 call=other-element-rop returned_ms=4014.8 after_unblock result=ok idle_baseline_ms=0.72
+RESULT label=vscode-suspended-name trial=1 call=other-element returned_ms=4015.4 after_unblock result=ok idle_baseline_ms=0.29
+CALL other-element hwnd=459990 pid=8408 ui_tid=13612 op=Name elem=3 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL other-element-rop hwnd=459990 pid=8408 ui_tid=13612 op=Rop elem=3 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL same-window-new-connection hwnd=459990 pid=8408 ui_tid=13612 op=FromHandle elem=0 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+CALL stuck hwnd=459990 pid=8408 ui_tid=13612 op=Rop elem=1 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code
+suspended tid=13612
+PROBES_STARTED trial=0
+resumed tid=13612
+TRIAL label=vscode-suspended-rop trial=0 block=suspend:459990 evidence="200 ms wait" probes_started_ms_after_block=200.4 unblocked_at_ms=4015.9
+RESULT label=vscode-suspended-rop trial=0 call=same-window-new-connection returned_ms=2169.8 before_unblock result=error 0x80131505 idle_baseline_ms=0.84
+RESULT label=vscode-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4017.7 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-rop trial=0 call=xproc-other-element returned_ms=4018.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-rop trial=0 call=stuck returned_ms=4019.7 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=vscode-suspended-rop trial=0 call=other-element returned_ms=4020.4 after_unblock result=ok idle_baseline_ms=0.28
+RESULT label=vscode-suspended-rop trial=0 call=other-element-rop returned_ms=4021.0 after_unblock result=ok idle_baseline_ms=0.48
+suspended tid=13612
+PROBES_STARTED trial=1
+resumed tid=13612
+TRIAL label=vscode-suspended-rop trial=1 block=suspend:459990 evidence="200 ms wait" probes_started_ms_after_block=200.5 unblocked_at_ms=4010.3
+RESULT label=vscode-suspended-rop trial=1 call=same-window-new-connection returned_ms=2165.6 before_unblock result=error 0x80131505 idle_baseline_ms=0.90
+RESULT label=vscode-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4011.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-rop trial=1 call=xproc-other-element returned_ms=4012.0 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=vscode-suspended-rop trial=1 call=stuck returned_ms=4012.3 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=vscode-suspended-rop trial=1 call=other-element-rop returned_ms=4013.0 after_unblock result=ok idle_baseline_ms=0.49
+RESULT label=vscode-suspended-rop trial=1 call=other-element returned_ms=4013.4 after_unblock result=ok idle_baseline_ms=0.47
+# The name and rop rows above had errors at n=1 (elements that went stale while the window was new); this rerun, a minute later, had none:
+TARGET label=vscode-rerun hwnd=459990 pid=8408 ui_tid=13612 class=Chrome_WidgetWin_1 title=q1-vscode.rs - Visual Studio Code client=per-thread
+CTX n=1 descendants_found=217 elems_held=16 text=false msaa=false
+CTX n=2 descendants_found=217 elems_held=16 text=false msaa=false
+CTX n=4 descendants_found=217 elems_held=16 text=false msaa=false
+CTX n=8 descendants_found=217 elems_held=16 text=false msaa=false
+RAW label=vscode-rerun op=name n=1 rep=0 wall_ms=7.639 errors=0
+RAW label=vscode-rerun op=name n=1 rep=1 wall_ms=7.164 errors=0
+RAW label=vscode-rerun op=name n=1 rep=2 wall_ms=8.414 errors=0
+RAW label=vscode-rerun op=name n=1 rep=3 wall_ms=8.090 errors=0
+RAW label=vscode-rerun op=name n=1 rep=4 wall_ms=7.041 errors=0
+RAW label=vscode-rerun op=name n=1 rep=5 wall_ms=6.963 errors=0
+RAW label=vscode-rerun op=name n=1 rep=6 wall_ms=7.716 errors=0
+RAW label=vscode-rerun op=name n=1 rep=7 wall_ms=6.579 errors=0
+RAW label=vscode-rerun op=name n=1 rep=8 wall_ms=7.094 errors=0
+RAW label=vscode-rerun op=name n=1 rep=9 wall_ms=6.534 errors=0
+RAW label=vscode-rerun op=name n=1 rep=10 wall_ms=7.519 errors=0
+RAW label=vscode-rerun op=name n=1 rep=11 wall_ms=7.989 errors=0
+RAW label=vscode-rerun op=name n=1 rep=12 wall_ms=6.590 errors=0
+RAW label=vscode-rerun op=name n=1 rep=13 wall_ms=8.249 errors=0
+RAW label=vscode-rerun op=name n=1 rep=14 wall_ms=8.112 errors=0
+RAW label=vscode-rerun op=name n=1 rep=15 wall_ms=7.198 errors=0
+RAW label=vscode-rerun op=name n=1 rep=16 wall_ms=7.389 errors=0
+RAW label=vscode-rerun op=name n=1 rep=17 wall_ms=7.602 errors=0
+RAW label=vscode-rerun op=name n=1 rep=18 wall_ms=6.882 errors=0
+RAW label=vscode-rerun op=name n=1 rep=19 wall_ms=7.188 errors=0
+RESULT label=vscode-rerun op=name n=1 k=64 median_ms=7.39 p90_ms=8.11 per_call_us=115.5 speedup=1.00 errors=0
+RAW label=vscode-rerun op=name n=2 rep=0 wall_ms=4.827 errors=0
+RAW label=vscode-rerun op=name n=2 rep=1 wall_ms=4.757 errors=0
+RAW label=vscode-rerun op=name n=2 rep=2 wall_ms=5.092 errors=0
+RAW label=vscode-rerun op=name n=2 rep=3 wall_ms=5.168 errors=0
+RAW label=vscode-rerun op=name n=2 rep=4 wall_ms=5.088 errors=0
+RAW label=vscode-rerun op=name n=2 rep=5 wall_ms=4.959 errors=0
+RAW label=vscode-rerun op=name n=2 rep=6 wall_ms=4.644 errors=0
+RAW label=vscode-rerun op=name n=2 rep=7 wall_ms=4.972 errors=0
+RAW label=vscode-rerun op=name n=2 rep=8 wall_ms=4.735 errors=0
+RAW label=vscode-rerun op=name n=2 rep=9 wall_ms=4.595 errors=0
+RAW label=vscode-rerun op=name n=2 rep=10 wall_ms=4.181 errors=0
+RAW label=vscode-rerun op=name n=2 rep=11 wall_ms=4.459 errors=0
+RAW label=vscode-rerun op=name n=2 rep=12 wall_ms=4.156 errors=0
+RAW label=vscode-rerun op=name n=2 rep=13 wall_ms=4.465 errors=0
+RAW label=vscode-rerun op=name n=2 rep=14 wall_ms=4.243 errors=0
+RAW label=vscode-rerun op=name n=2 rep=15 wall_ms=4.412 errors=0
+RAW label=vscode-rerun op=name n=2 rep=16 wall_ms=4.413 errors=0
+RAW label=vscode-rerun op=name n=2 rep=17 wall_ms=4.326 errors=0
+RAW label=vscode-rerun op=name n=2 rep=18 wall_ms=4.552 errors=0
+RAW label=vscode-rerun op=name n=2 rep=19 wall_ms=4.430 errors=0
+RESULT label=vscode-rerun op=name n=2 k=64 median_ms=4.59 p90_ms=5.09 per_call_us=71.8 speedup=1.61 errors=0
+RAW label=vscode-rerun op=name n=4 rep=0 wall_ms=4.270 errors=0
+RAW label=vscode-rerun op=name n=4 rep=1 wall_ms=4.126 errors=0
+RAW label=vscode-rerun op=name n=4 rep=2 wall_ms=4.231 errors=0
+RAW label=vscode-rerun op=name n=4 rep=3 wall_ms=4.142 errors=0
+RAW label=vscode-rerun op=name n=4 rep=4 wall_ms=4.169 errors=0
+RAW label=vscode-rerun op=name n=4 rep=5 wall_ms=4.266 errors=0
+RAW label=vscode-rerun op=name n=4 rep=6 wall_ms=4.455 errors=0
+RAW label=vscode-rerun op=name n=4 rep=7 wall_ms=4.467 errors=0
+RAW label=vscode-rerun op=name n=4 rep=8 wall_ms=5.020 errors=0
+RAW label=vscode-rerun op=name n=4 rep=9 wall_ms=5.228 errors=0
+RAW label=vscode-rerun op=name n=4 rep=10 wall_ms=4.809 errors=0
+RAW label=vscode-rerun op=name n=4 rep=11 wall_ms=4.356 errors=0
+RAW label=vscode-rerun op=name n=4 rep=12 wall_ms=4.471 errors=0
+RAW label=vscode-rerun op=name n=4 rep=13 wall_ms=4.513 errors=0
+RAW label=vscode-rerun op=name n=4 rep=14 wall_ms=4.442 errors=0
+RAW label=vscode-rerun op=name n=4 rep=15 wall_ms=4.402 errors=0
+RAW label=vscode-rerun op=name n=4 rep=16 wall_ms=4.454 errors=0
+RAW label=vscode-rerun op=name n=4 rep=17 wall_ms=4.416 errors=0
+RAW label=vscode-rerun op=name n=4 rep=18 wall_ms=4.486 errors=0
+RAW label=vscode-rerun op=name n=4 rep=19 wall_ms=4.372 errors=0
+RESULT label=vscode-rerun op=name n=4 k=64 median_ms=4.44 p90_ms=4.81 per_call_us=69.4 speedup=1.66 errors=0
+RAW label=vscode-rerun op=name n=8 rep=0 wall_ms=4.189 errors=0
+RAW label=vscode-rerun op=name n=8 rep=1 wall_ms=4.241 errors=0
+RAW label=vscode-rerun op=name n=8 rep=2 wall_ms=4.442 errors=0
+RAW label=vscode-rerun op=name n=8 rep=3 wall_ms=4.608 errors=0
+RAW label=vscode-rerun op=name n=8 rep=4 wall_ms=4.330 errors=0
+RAW label=vscode-rerun op=name n=8 rep=5 wall_ms=4.298 errors=0
+RAW label=vscode-rerun op=name n=8 rep=6 wall_ms=4.851 errors=0
+RAW label=vscode-rerun op=name n=8 rep=7 wall_ms=4.488 errors=0
+RAW label=vscode-rerun op=name n=8 rep=8 wall_ms=4.398 errors=0
+RAW label=vscode-rerun op=name n=8 rep=9 wall_ms=4.453 errors=0
+RAW label=vscode-rerun op=name n=8 rep=10 wall_ms=5.153 errors=0
+RAW label=vscode-rerun op=name n=8 rep=11 wall_ms=4.915 errors=0
+RAW label=vscode-rerun op=name n=8 rep=12 wall_ms=5.043 errors=0
+RAW label=vscode-rerun op=name n=8 rep=13 wall_ms=5.136 errors=0
+RAW label=vscode-rerun op=name n=8 rep=14 wall_ms=5.189 errors=0
+RAW label=vscode-rerun op=name n=8 rep=15 wall_ms=4.708 errors=0
+RAW label=vscode-rerun op=name n=8 rep=16 wall_ms=4.688 errors=0
+RAW label=vscode-rerun op=name n=8 rep=17 wall_ms=5.088 errors=0
+RAW label=vscode-rerun op=name n=8 rep=18 wall_ms=4.372 errors=0
+RAW label=vscode-rerun op=name n=8 rep=19 wall_ms=4.473 errors=0
+RESULT label=vscode-rerun op=name n=8 k=64 median_ms=4.61 p90_ms=5.14 per_call_us=72.0 speedup=1.60 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=0 wall_ms=7.854 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=1 wall_ms=7.639 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=2 wall_ms=8.088 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=3 wall_ms=6.884 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=4 wall_ms=7.553 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=5 wall_ms=7.636 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=6 wall_ms=7.572 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=7 wall_ms=7.668 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=8 wall_ms=6.987 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=9 wall_ms=7.365 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=10 wall_ms=7.450 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=11 wall_ms=7.417 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=12 wall_ms=7.490 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=13 wall_ms=8.127 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=14 wall_ms=7.418 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=15 wall_ms=8.321 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=16 wall_ms=9.078 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=17 wall_ms=9.339 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=18 wall_ms=8.776 errors=0
+RAW label=vscode-rerun op=rop n=1 rep=19 wall_ms=8.113 errors=0
+RESULT label=vscode-rerun op=rop n=1 k=32 median_ms=7.64 p90_ms=8.78 per_call_us=238.7 speedup=1.00 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=0 wall_ms=6.075 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=1 wall_ms=5.544 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=2 wall_ms=5.722 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=3 wall_ms=5.353 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=4 wall_ms=5.657 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=5 wall_ms=5.483 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=6 wall_ms=6.050 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=7 wall_ms=6.013 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=8 wall_ms=5.771 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=9 wall_ms=5.908 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=10 wall_ms=5.564 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=11 wall_ms=5.740 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=12 wall_ms=6.234 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=13 wall_ms=6.020 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=14 wall_ms=6.174 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=15 wall_ms=5.244 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=16 wall_ms=5.047 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=17 wall_ms=5.037 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=18 wall_ms=4.698 errors=0
+RAW label=vscode-rerun op=rop n=2 rep=19 wall_ms=5.123 errors=0
+RESULT label=vscode-rerun op=rop n=2 k=32 median_ms=5.72 p90_ms=6.08 per_call_us=178.8 speedup=1.33 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=0 wall_ms=4.665 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=1 wall_ms=4.669 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=2 wall_ms=4.500 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=3 wall_ms=5.148 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=4 wall_ms=5.341 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=5 wall_ms=5.588 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=6 wall_ms=5.340 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=7 wall_ms=5.852 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=8 wall_ms=5.489 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=9 wall_ms=5.039 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=10 wall_ms=4.452 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=11 wall_ms=4.417 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=12 wall_ms=4.699 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=13 wall_ms=4.683 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=14 wall_ms=4.426 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=15 wall_ms=4.621 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=16 wall_ms=5.480 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=17 wall_ms=4.580 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=18 wall_ms=5.587 errors=0
+RAW label=vscode-rerun op=rop n=4 rep=19 wall_ms=5.079 errors=0
+RESULT label=vscode-rerun op=rop n=4 k=32 median_ms=5.04 p90_ms=5.59 per_call_us=157.5 speedup=1.52 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=0 wall_ms=5.238 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=1 wall_ms=5.804 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=2 wall_ms=5.600 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=3 wall_ms=5.631 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=4 wall_ms=5.052 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=5 wall_ms=4.691 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=6 wall_ms=4.581 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=7 wall_ms=4.926 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=8 wall_ms=4.934 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=9 wall_ms=5.137 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=10 wall_ms=5.069 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=11 wall_ms=4.890 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=12 wall_ms=5.186 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=13 wall_ms=5.595 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=14 wall_ms=5.167 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=15 wall_ms=4.666 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=16 wall_ms=5.030 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=17 wall_ms=4.702 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=18 wall_ms=5.489 errors=0
+RAW label=vscode-rerun op=rop n=8 rep=19 wall_ms=5.217 errors=0
+RESULT label=vscode-rerun op=rop n=8 k=32 median_ms=5.14 p90_ms=5.60 per_call_us=160.5 speedup=1.49 errors=0

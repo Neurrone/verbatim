@@ -1,0 +1,58 @@
+# VS Code 1.141.1 (Electron), main process: which thread serves a UIA call. cdb invasive attach with breakpoints (serving-thread.ps1),
+# one name read from a puia probe in its own process. Under the invasive attach every call into VS Code failed with
+# UIA_E_ELEMENTNOTAVAILABLE (0x80040201), the root included, though the same probe without the debugger answered (0.14 to 0.38 ms);
+# the stacks still show the request's path. stacks-vscode.txt has the non-invasive capture of a call waiting on the suspended UI thread.
+COUNTS SRV_COMINVOKER=1 SRV_IO_ONDATA=1 SRV_PROVIDER_CONTEXT=12 
+int     3
+SRV_IO_ONDATA
+. 49  Id: 20d8.22d4 Suspend: 1 Teb: 000000f2`7b2b5000 Unfrozen
+uiautomationcore!ChannelBasedServerConnection::OnData
+uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+KERNEL32!BaseThreadInitThunk+0x17
+ntdll!RtlUserThreadStart+0x2c
+SRV_COMINVOKER
+. 49  Id: 20d8.22d4 Suspend: 1 Teb: 000000f2`7b2b5000 Unfrozen
+uiautomationcore!ComInvoker::CallTarget
+uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x5eb
+uiautomationcore!ProcessIncomingRequest+0x37
+uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+KERNEL32!BaseThreadInitThunk+0x17
+ntdll!RtlUserThreadStart+0x2c
+SRV_PROVIDER_CONTEXT
+.  0  Id: 20d8.352c Suspend: 1 Teb: 000000f2`7b249000 Unfrozen "CrBrowserMain"
+uiautomationcore!InvokeElementMethodOnCorrectContext_Callback
+OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+RPCRT4!Ndr64StubWorker+0x862
+RPCRT4!NdrStubCall3+0xc0
+combase!CStdStubBuffer_Invoke+0x7d
+RPCRT4!CStdStubBuffer_Invoke+0x46
+combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e
+combase!DefaultStubInvoke+0x376
+combase!StubInvoke+0x138
+combase!ServerCall::ContextInvoke+0x28f
+combase!ReentrantSTAInvokeInApartment+0x194
+combase!ComInvokeWithLockAndIPID+0xca5
+combase!ThreadDispatch+0x392
+combase!ThreadWndProc+0x177
+USER32!UserCallWinProcCheckWow+0x356
+USER32!DispatchMessageWorker+0x1dd
+Code!llhttp_should_keep_alive+0x181a
+Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x39eb
+Code!llhttp_should_keep_alive+0x413
+Code!v8::JSON::Parse+0x9816
+Code!v8::JSON::Parse+0x8576
+Code!v8::Array::Iterate+0x34075
+Code!v8::Array::Iterate+0x33e00
+Code!v8::Array::Iterate+0x322ed
+Code!v8::Array::Iterate+0x1a4ff
+Code!v8::Array::Iterate+0x19764
+Code!v8::Array::Iterate+0x186b8
+Code!uv_buf_init+0x5832
+KERNEL32!BaseThreadInitThunk+0x17
+ntdll!RtlUserThreadStart+0x2c

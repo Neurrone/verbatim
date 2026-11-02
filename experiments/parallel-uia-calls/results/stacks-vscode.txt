@@ -1,0 +1,672 @@
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 46
+
+Microsoft (R) Windows Debugger Version 10.0.29661.1004 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Symbol search path is: srv*C:\Users\Dickson\Desktop\projects\verbatim\target\symbols*https://msdl.microsoft.com/download/symbols
+Executable search path is: 
+WARNING: Process 8408 is not attached as a debuggee
+         The process can be examined but debug events will not be received
+................................................................
+.......................................
+Loading unloaded module list
+.
+(20d8.352c): Wake debugger - code 80000007 (first chance)
+win32u!NtUserMsgWaitForMultipleObjectsEx+0x14:
+00007ffb`cb02af04 c3              ret
+0:000> cdb: Reading initial command '~*k 40; qd'
+
+.  0  Id: 20d8.352c Suspend: 2 Teb: 000000f2`7b249000 Unfrozen "CrBrowserMain"
+Child-SP          RetAddr               Call Site
+000000f2`7bbfec38 00007ff6`773c1d93     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`7bbfec40 00007ff6`773c13eb     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x3f43
+000000f2`7bbfed20 00007ff6`7539c673     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x359b
+000000f2`7bbfee40 00007ff6`76054cd6     Code!llhttp_should_keep_alive+0x413
+000000f2`7bbfeeb0 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`7bbfef60 00007ff6`75cca2e5     Code!v8::JSON::Parse+0x8576
+000000f2`7bbff060 00007ff6`75cca070     Code!v8::Array::Iterate+0x34075
+000000f2`7bbff0d0 00007ff6`75cc855d     Code!v8::Array::Iterate+0x33e00
+000000f2`7bbff170 00007ff6`75cb076f     Code!v8::Array::Iterate+0x322ed
+000000f2`7bbff360 00007ff6`75caf9d4     Code!v8::Array::Iterate+0x1a4ff
+000000f2`7bbff4d0 00007ff6`75cae928     Code!v8::Array::Iterate+0x19764
+000000f2`7bbff5f0 00007ff6`7856da92     Code!v8::Array::Iterate+0x186b8
+000000f2`7bbff7b0 00007ffb`cbe8dda7     Code!uv_buf_init+0x5832
+000000f2`7bbff7f0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`7bbff820 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   1  Id: 20d8.36c0 Suspend: 1 Teb: 000000f2`7b251000 Unfrozen "LoaderLockSampler"
+Child-SP          RetAddr               Call Site
+000000f2`7dbff688 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`7dbff690 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`7dbff730 00007ff6`75dfb7a0     Code!v8::Value::IsBoolean+0x1c975
+000000f2`7dbff810 00007ff6`76054cd6     Code!v8::Object::WrapGlobal+0x2850
+000000f2`7dbff8f0 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`7dbff9a0 00007ff6`763b6784     Code!v8::JSON::Parse+0x8576
+000000f2`7dbffaa0 00007ff6`763b6572     Code!uv_mutex_destroy+0x13d14
+000000f2`7dbffb00 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`7dbffb90 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`7dbffc20 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`7dbffc50 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 20d8.35f4 Suspend: 1 Teb: 000000f2`7b253000 Unfrozen "BrokerEvent"
+Child-SP          RetAddr               Call Site
+000000f2`7e3ff9f8 00007ffb`ca932d5c     ntdll!NtRemoveIoCompletion+0x14
+000000f2`7e3ffa00 00007ff6`7674ccea     KERNELBASE!GetQueuedCompletionStatus+0x6c
+000000f2`7e3ffa60 00007ffb`cbe8dda7     Code!v8::Value::NumberValue+0xc6a
+000000f2`7e3ffb70 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`7e3ffba0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 20d8.e70 Suspend: 1 Teb: 000000f2`7b255000 Unfrozen "PerfettoTrace"
+Child-SP          RetAddr               Call Site
+000000f2`7ebff5b8 00007ffb`ca932d5c     ntdll!NtRemoveIoCompletion+0x14
+000000f2`7ebff5c0 00007ff6`773c0c1c     KERNELBASE!GetQueuedCompletionStatus+0x6c
+000000f2`7ebff620 00007ff6`773be6e1     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x2dcc
+000000f2`7ebff6e0 00007ff6`7539c673     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x891
+000000f2`7ebff860 00007ff6`76054cd6     Code!llhttp_should_keep_alive+0x413
+000000f2`7ebff8d0 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`7ebff980 00007ff6`763b6784     Code!v8::JSON::Parse+0x8576
+000000f2`7ebffa80 00007ff6`763b6572     Code!uv_mutex_destroy+0x13d14
+000000f2`7ebffae0 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`7ebffb70 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`7ebffc00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`7ebffc30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   4  Id: 20d8.9ac Suspend: 1 Teb: 000000f2`7b257000 Unfrozen "ThreadPoolServiceThread"
+Child-SP          RetAddr               Call Site
+000000f2`7f3ff528 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`7f3ff530 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`7f3ff5d0 00007ff6`75dfb7a0     Code!v8::Value::IsBoolean+0x1c975
+000000f2`7f3ff6b0 00007ff6`76054cd6     Code!v8::Object::WrapGlobal+0x2850
+000000f2`7f3ff790 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`7f3ff840 00007ff6`76a66244     Code!v8::JSON::Parse+0x8576
+000000f2`7f3ff940 00007ff6`763b6572     Code!llhttp_execute+0xcb54
+000000f2`7f3ff9a0 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`7f3ffa30 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`7f3ffac0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`7f3ffaf0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   5  Id: 20d8.1b74 Suspend: 1 Teb: 000000f2`7b259000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`7fbffa28 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`7fbffa30 00007ff6`77ee5507     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`7fbffad0 00007ff6`75830d98     Code!uv_translate_sys_error+0x722c7
+000000f2`7fbffcb0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`7fbffcf0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`7fbffd80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`7fbffdb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   6  Id: 20d8.a70 Suspend: 1 Teb: 000000f2`7b25b000 Unfrozen "ThreadPoolBackgroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`007ff3e8 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`007ff3f0 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`007ff490 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`007ff570 00007ff6`75830de8     Code!uv_translate_sys_error+0x726b1
+000000f2`007ff750 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x100e8
+000000f2`007ff790 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`007ff820 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`007ff850 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   7  Id: 20d8.ea8 Suspend: 1 Teb: 000000f2`7b25d000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`00fffa78 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`00fffa80 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`00fffb20 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`00fffc00 00007ff6`75830d98     Code!uv_translate_sys_error+0x726b1
+000000f2`00fffde0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`00fffe20 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`00fffeb0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`00fffee0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   8  Id: 20d8.564 Suspend: 1 Teb: 000000f2`7b25f000 Unfrozen "Chrome_IOThread"
+Child-SP          RetAddr               Call Site
+000000f2`017ff328 00007ffb`ca932d5c     ntdll!NtRemoveIoCompletion+0x14
+000000f2`017ff330 00007ff6`773c0c1c     KERNELBASE!GetQueuedCompletionStatus+0x6c
+000000f2`017ff390 00007ff6`773be6e1     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x2dcc
+000000f2`017ff450 00007ff6`7539c673     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x891
+000000f2`017ff5d0 00007ff6`76054cd6     Code!llhttp_should_keep_alive+0x413
+000000f2`017ff640 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`017ff6f0 00007ff6`76a34cfb     Code!v8::JSON::Parse+0x8576
+000000f2`017ff7f0 00007ff6`763b6572     Code!v8::internal::compiler::CompilationDependencies::TransitionDependencyOffTheRecord+0xa4eb
+000000f2`017ff860 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`017ff8f0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`017ff980 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`017ff9b0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   9  Id: 20d8.2dbc Suspend: 1 Teb: 000000f2`7b261000 Unfrozen "MemoryInfra"
+Child-SP          RetAddr               Call Site
+000000f2`01fff328 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`01fff330 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`01fff3d0 00007ff6`75dfb7a0     Code!v8::Value::IsBoolean+0x1c975
+000000f2`01fff4b0 00007ff6`76054cd6     Code!v8::Object::WrapGlobal+0x2850
+000000f2`01fff590 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`01fff640 00007ff6`763b6784     Code!v8::JSON::Parse+0x8576
+000000f2`01fff740 00007ff6`763b6572     Code!uv_mutex_destroy+0x13d14
+000000f2`01fff7a0 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`01fff830 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`01fff8c0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`01fff8f0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  10  Id: 20d8.1b68 Suspend: 1 Teb: 000000f2`7b263000 Unfrozen "DelayedTaskSchedulerWorker"
+Child-SP          RetAddr               Call Site
+000000f2`027fe988 00007ffb`ca9d133f     ntdll!NtRemoveIoCompletionEx+0x14
+000000f2`027fe990 00007ff6`7552e9dc     KERNELBASE!GetQueuedCompletionStatusEx+0xcf
+000000f2`027fea40 00007ff6`76735169     Code!uv_run+0x1ac
+000000f2`027ffb50 00007ff6`76b3cffb     Code!node::loader::ModuleWrap::GetLinkedRequest+0x115a9
+000000f2`027ffbc0 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`027ffc10 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`027ffc40 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`027ffc70 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  11  Id: 20d8.2e20 Suspend: 1 Teb: 000000f2`7b265000 Unfrozen "V8Worker"
+Child-SP          RetAddr               Call Site
+000000f2`02fffd58 00007ffb`cd35ba2b     ntdll!NtWaitForAlertByThreadId+0x14
+000000f2`02fffd60 00007ffb`ca933ac8     ntdll!RtlSleepConditionVariableCS+0x14b
+000000f2`02fffdd0 00007ff6`766b3ed0     KERNELBASE!SleepConditionVariableCS+0x38
+000000f2`02fffe00 00007ff6`76b3cffb     Code!uv_async_init+0x1fc90
+000000f2`02fffeb0 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`02ffff00 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`02ffff30 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`02ffff60 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  12  Id: 20d8.2738 Suspend: 1 Teb: 000000f2`7b267000 Unfrozen "V8Worker"
+Child-SP          RetAddr               Call Site
+000000f2`037ff798 00007ffb`cd35ba2b     ntdll!NtWaitForAlertByThreadId+0x14
+000000f2`037ff7a0 00007ffb`ca933ac8     ntdll!RtlSleepConditionVariableCS+0x14b
+000000f2`037ff810 00007ff6`766b3ed0     KERNELBASE!SleepConditionVariableCS+0x38
+000000f2`037ff840 00007ff6`76b3cffb     Code!uv_async_init+0x1fc90
+000000f2`037ff8f0 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`037ff940 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`037ff970 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`037ff9a0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  13  Id: 20d8.1e7c Suspend: 1 Teb: 000000f2`7b269000 Unfrozen "V8Worker"
+Child-SP          RetAddr               Call Site
+000000f2`03fffa08 00007ffb`cd35ba2b     ntdll!NtWaitForAlertByThreadId+0x14
+000000f2`03fffa10 00007ffb`ca933ac8     ntdll!RtlSleepConditionVariableCS+0x14b
+000000f2`03fffa80 00007ff6`766b3ed0     KERNELBASE!SleepConditionVariableCS+0x38
+000000f2`03fffab0 00007ff6`76b3cffb     Code!uv_async_init+0x1fc90
+000000f2`03fffb60 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`03fffbb0 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`03fffbe0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`03fffc10 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  14  Id: 20d8.8d0 Suspend: 1 Teb: 000000f2`7b26b000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`047ff378 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+000000f2`047ff380 00007ffb`cc9c9abe     KERNELBASE!WaitForMultipleObjectsEx+0x123
+(Inline Function) --------`--------     combase!WaitCoalesced+0x79
+000000f2`047ff670 00007ffb`cc9c231f     combase!CROIDTable::WorkerThreadLoop+0xae
+000000f2`047ff8e0 00007ffb`cc9c222f     combase!CRpcThread::WorkerLoop+0x5b
+000000f2`047ff950 00007ffb`cbe8dda7     combase!CRpcThreadCache::RpcWorkerThreadEntry+0x4f
+000000f2`047ff980 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`047ff9b0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  15  Id: 20d8.1980 Suspend: 1 Teb: 000000f2`7b26d000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`04fff7d8 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`04fff7e0 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`04fff850 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`04fff8f0 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`04fff9d0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`04fffd30 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`04fffd60 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  16  Id: 20d8.1d4c Suspend: 1 Teb: 000000f2`7b26f000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`057ff568 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`057ff570 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`057ff5e0 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`057ff680 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`057ff760 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`057ffac0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`057ffaf0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  17  Id: 20d8.4fc Suspend: 1 Teb: 000000f2`7b271000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`05fff688 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`05fff690 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`05fff9f0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`05fffa20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  18  Id: 20d8.3414 Suspend: 1 Teb: 000000f2`7b273000 Unfrozen "ThreadPoolSingleThreadCOMSTASharedBackgroundBlocking"
+Child-SP          RetAddr               Call Site
+000000f2`067ff988 00007ff6`76d878be     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`067ff990 00007ff6`77ee57b8     Code!uv_cond_broadcast+0x206e
+000000f2`067ff9d0 00007ff6`75830e88     Code!uv_translate_sys_error+0x72578
+000000f2`067ffbb0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10188
+000000f2`067ffbf0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`067ffc80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`067ffcb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  19  Id: 20d8.2c6c Suspend: 1 Teb: 000000f2`7b275000 Unfrozen "ThreadPoolSingleThreadCOMSTASharedForeground"
+Child-SP          RetAddr               Call Site
+000000f2`06fff6d8 00007ff6`76d878be     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`06fff6e0 00007ff6`77ee57b8     Code!uv_cond_broadcast+0x206e
+000000f2`06fff720 00007ff6`75830e38     Code!uv_translate_sys_error+0x72578
+000000f2`06fff900 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10138
+000000f2`06fff940 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`06fff9d0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`06fffa00 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  20  Id: 20d8.1938 Suspend: 1 Teb: 000000f2`7b277000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`077ff748 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`077ff750 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`077ff7f0 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`077ff8d0 00007ff6`75830d98     Code!uv_translate_sys_error+0x726b1
+000000f2`077ffab0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`077ffaf0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`077ffb80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`077ffbb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  21  Id: 20d8.d40 Suspend: 1 Teb: 000000f2`7b279000 Unfrozen "ThreadPoolSingleThreadForegroundBlocking"
+Child-SP          RetAddr               Call Site
+000000f2`07fff878 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`07fff880 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`07fff920 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`07fffa00 00007ff6`75830f78     Code!uv_translate_sys_error+0x726b1
+000000f2`07fffbe0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10278
+000000f2`07fffc20 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`07fffcb0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`07fffce0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  22  Id: 20d8.26f4 Suspend: 1 Teb: 000000f2`7b27b000 Unfrozen "CompositorTileWorker1"
+Child-SP          RetAddr               Call Site
+000000f2`087ffb88 00007ffb`cd3997be     ntdll!NtWaitForAlertByThreadId+0x14
+000000f2`087ffb90 00007ffb`ca932a58     ntdll!RtlSleepConditionVariableSRW+0x1de
+000000f2`087ffc30 00007ff6`75825aaa     KERNELBASE!SleepConditionVariableSRW+0x38
+000000f2`087ffc70 00007ff6`766b438e     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x4daa
+000000f2`087ffd10 00007ff6`75bfdb7c     Code!uv_thread_setname+0x38e
+000000f2`087ffda0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`087ffe30 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`087ffe60 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  23  Id: 20d8.b08 Suspend: 1 Teb: 000000f2`7b27d000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`08fff8f8 00007ffb`ca932d5c     ntdll!NtRemoveIoCompletion+0x14
+000000f2`08fff900 00007ff6`7c247060     KERNELBASE!GetQueuedCompletionStatus+0x6c
+000000f2`08fff960 00007ff6`75bfdb7c     Code!GetHandleVerifier+0xfbf0
+000000f2`08fffa60 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`08fffaf0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`08fffb20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  24  Id: 20d8.db0 Suspend: 1 Teb: 000000f2`7b27f000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`097ff5d8 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`097ff5e0 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`097ff680 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`097ff760 00007ff6`75830d98     Code!uv_translate_sys_error+0x726b1
+000000f2`097ff940 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`097ff980 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`097ffa10 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`097ffa40 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  25  Id: 20d8.363c Suspend: 1 Teb: 000000f2`7b281000 Unfrozen "VideoCaptureThread"
+Child-SP          RetAddr               Call Site
+000000f2`09fff2f8 00007ff6`773c1d93     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`09fff300 00007ff6`773c13eb     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x3f43
+000000f2`09fff3e0 00007ff6`7539c673     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x359b
+000000f2`09fff500 00007ff6`76054cd6     Code!llhttp_should_keep_alive+0x413
+000000f2`09fff570 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`09fff620 00007ff6`763b6784     Code!v8::JSON::Parse+0x8576
+000000f2`09fff720 00007ff6`763b6572     Code!uv_mutex_destroy+0x13d14
+000000f2`09fff780 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`09fff810 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`09fff8a0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`09fff8d0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  26  Id: 20d8.2428 Suspend: 1 Teb: 000000f2`7b283000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`0a7ffa38 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`0a7ffa40 00007ff6`769b4f41     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`0a7ffae0 00007ff6`76b3cffb     Code!uv_sem_post+0x85491
+000000f2`0a7ffb80 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`0a7ffbd0 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`0a7ffc00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0a7ffc30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  27  Id: 20d8.16bc Suspend: 1 Teb: 000000f2`7b285000 Unfrozen "libuv-worker"
+Child-SP          RetAddr               Call Site
+000000f2`0afff6e8 00007ffb`cd35ba2b     ntdll!NtWaitForAlertByThreadId+0x14
+000000f2`0afff6f0 00007ffb`ca933ac8     ntdll!RtlSleepConditionVariableCS+0x14b
+000000f2`0afff760 00007ff6`7821334c     KERNELBASE!SleepConditionVariableCS+0x38
+000000f2`0afff790 00007ff6`76b3cffb     Code!uv_cwd+0x2e6c
+000000f2`0afff800 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`0afff850 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`0afff880 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0afff8b0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  28  Id: 20d8.9ec Suspend: 1 Teb: 000000f2`7b287000 Unfrozen "libuv-worker"
+Child-SP          RetAddr               Call Site
+000000f2`0b7ff9e8 00007ffb`cd35ba2b     ntdll!NtWaitForAlertByThreadId+0x14
+000000f2`0b7ff9f0 00007ffb`ca933ac8     ntdll!RtlSleepConditionVariableCS+0x14b
+000000f2`0b7ffa60 00007ff6`7821334c     KERNELBASE!SleepConditionVariableCS+0x38
+000000f2`0b7ffa90 00007ff6`76b3cffb     Code!uv_cwd+0x2e6c
+000000f2`0b7ffb00 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`0b7ffb50 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`0b7ffb80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0b7ffbb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  29  Id: 20d8.2274 Suspend: 1 Teb: 000000f2`7b289000 Unfrozen "libuv-worker"
+Child-SP          RetAddr               Call Site
+000000f2`0bfff5d8 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+000000f2`0bfff5e0 00007ffb`ca932641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000f2`0bfff8d0 00007ffb`be745696     KERNELBASE!WaitForMultipleObjects+0x11
+000000f2`0bfff910 00007ffb`be745cda     vscode_policy_watcher!napi_register_module_v1+0x20e6
+000000f2`0bfff9c0 00007ffb`be744ae6     vscode_policy_watcher!napi_register_module_v1+0x272a
+000000f2`0bfffa00 00007ff6`78d2d7fe     vscode_policy_watcher!napi_register_module_v1+0x1536
+000000f2`0bfffa60 00007ff6`782133c8     Code!napi_ref_threadsafe_function+0x85e
+000000f2`0bfffac0 00007ff6`76b3cffb     Code!uv_cwd+0x2ee8
+000000f2`0bfffb30 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`0bfffb80 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`0bfffbb0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0bfffbe0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  30  Id: 20d8.1b84 Suspend: 1 Teb: 000000f2`7b28b000 Unfrozen "libuv-worker"
+Child-SP          RetAddr               Call Site
+000000f2`0c7ff828 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+000000f2`0c7ff830 00007ffb`ca932641     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000f2`0c7ffb20 00007ffb`be745696     KERNELBASE!WaitForMultipleObjects+0x11
+000000f2`0c7ffb60 00007ffb`be745cda     vscode_policy_watcher!napi_register_module_v1+0x20e6
+000000f2`0c7ffc10 00007ffb`be744ae6     vscode_policy_watcher!napi_register_module_v1+0x272a
+000000f2`0c7ffc50 00007ff6`78d2d7fe     vscode_policy_watcher!napi_register_module_v1+0x1536
+000000f2`0c7ffcb0 00007ff6`782133c8     Code!napi_ref_threadsafe_function+0x85e
+000000f2`0c7ffd10 00007ff6`76b3cffb     Code!uv_cwd+0x2ee8
+000000f2`0c7ffd80 00007ff6`7857e34f     Code!llhttp_execute+0xe390b
+000000f2`0c7ffdd0 00007ffb`cbe8dda7     Code!uv_buf_init+0x160ef
+000000f2`0c7ffe00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0c7ffe30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  31  Id: 20d8.c6c Suspend: 1 Teb: 000000f2`7b28d000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`0cfff5b8 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`0cfff5c0 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`0cfff630 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`0cfff6d0 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`0cfff7b0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`0cfffb10 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0cfffb40 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  32  Id: 20d8.2ae4 Suspend: 1 Teb: 000000f2`7b28f000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`0d7ffae8 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`0d7ffaf0 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`0d7ffb90 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`0d7ffc70 00007ff6`75830d98     Code!uv_translate_sys_error+0x726b1
+000000f2`0d7ffe50 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`0d7ffe90 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`0d7fff20 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0d7fff50 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  33  Id: 20d8.36a8 Suspend: 1 Teb: 000000f2`7b291000 Unfrozen "ThreadPoolBackgroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`0dfff658 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`0dfff660 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`0dfff700 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`0dfff7e0 00007ff6`75830de8     Code!uv_translate_sys_error+0x726b1
+000000f2`0dfff9c0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x100e8
+000000f2`0dfffa00 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`0dfffa90 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0dfffac0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  34  Id: 20d8.214c Suspend: 1 Teb: 000000f2`7b293000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`0e7ff378 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`0e7ff380 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`0e7ff420 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`0e7ff500 00007ff6`75830d98     Code!uv_translate_sys_error+0x726b1
+000000f2`0e7ff6e0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`0e7ff720 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`0e7ff7b0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0e7ff7e0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  35  Id: 20d8.1eb4 Suspend: 1 Teb: 000000f2`7b295000 Unfrozen "ThreadPoolSingleThreadSharedForeground"
+Child-SP          RetAddr               Call Site
+000000f2`0efff3c8 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`0efff3d0 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`0efff470 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`0efff550 00007ff6`75830ed8     Code!uv_translate_sys_error+0x726b1
+000000f2`0efff730 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x101d8
+000000f2`0efff770 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`0efff800 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0efff830 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  36  Id: 20d8.1274 Suspend: 1 Teb: 000000f2`7b297000 Unfrozen "ThreadPoolForegroundWorker"
+Child-SP          RetAddr               Call Site
+000000f2`0f7ff548 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`0f7ff550 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`0f7ff5f0 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`0f7ff6d0 00007ff6`75830d98     Code!uv_translate_sys_error+0x726b1
+000000f2`0f7ff8b0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10098
+000000f2`0f7ff8f0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`0f7ff980 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0f7ff9b0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  37  Id: 20d8.1cb0 Suspend: 1 Teb: 000000f2`7b299000 Unfrozen "ThreadPoolSingleThreadCOMSTASharedForegroundBlocking"
+Child-SP          RetAddr               Call Site
+000000f2`0ffffb78 00007ff6`76d878be     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`0ffffb80 00007ff6`77ee57b8     Code!uv_cond_broadcast+0x206e
+000000f2`0ffffbc0 00007ff6`75830e38     Code!uv_translate_sys_error+0x72578
+000000f2`0ffffda0 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10138
+000000f2`0ffffde0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`0ffffe70 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`0ffffea0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  38  Id: 20d8.190 Suspend: 1 Teb: 000000f2`7b29d000 Unfrozen "ThreadPoolSingleThreadSharedBackgroundBlocking"
+Child-SP          RetAddr               Call Site
+000000f2`10fffaf8 00007ffb`ca92be9f     ntdll!NtWaitForSingleObject+0x14
+000000f2`10fffb00 00007ff6`78129765     KERNELBASE!WaitForSingleObjectEx+0xaf
+000000f2`10fffba0 00007ff6`77ee58f1     Code!v8::Value::IsBoolean+0x1c975
+000000f2`10fffc80 00007ff6`75830f28     Code!uv_translate_sys_error+0x726b1
+000000f2`10fffe60 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10228
+000000f2`10fffea0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`10ffff30 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`10ffff60 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  39  Id: 20d8.1760 Suspend: 1 Teb: 000000f2`7b29f000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`117ff478 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+000000f2`117ff480 00007ffb`6b75af5d     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000f2`117ff770 00007ffb`6b75aeb2     MsSpellCheckingFacility!Windows::Globalization::Spelling::WatcherThread::EventLoop+0x69
+000000f2`117ff7b0 00007ffb`cbe8dda7     MsSpellCheckingFacility!Windows::Globalization::Spelling::WatcherThread::WatcherThreadProc+0x8e
+000000f2`117ff800 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`117ff830 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  40  Id: 20d8.3040 Suspend: 1 Teb: 000000f2`7b2a1000 Unfrozen "ThreadPoolSingleThreadCOMSTASharedForegroundBlocking"
+Child-SP          RetAddr               Call Site
+000000f2`11fff5f8 00007ff6`76d878be     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`11fff600 00007ff6`77ee57b8     Code!uv_cond_broadcast+0x206e
+000000f2`11fff640 00007ff6`75830e38     Code!uv_translate_sys_error+0x72578
+000000f2`11fff820 00007ff6`75bfdb7c     Code!v8::internal::compiler::CompilationDependencies::DependOnOwnConstantDoubleProperty+0x10138
+000000f2`11fff860 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`11fff8f0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`11fff920 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  41  Id: 20d8.e90 Suspend: 1 Teb: 000000f2`7b2a3000 Unfrozen "CacheThread_BlockFile"
+Child-SP          RetAddr               Call Site
+000000f2`127ff218 00007ffb`ca932d5c     ntdll!NtRemoveIoCompletion+0x14
+000000f2`127ff220 00007ff6`773c0c1c     KERNELBASE!GetQueuedCompletionStatus+0x6c
+000000f2`127ff280 00007ff6`773be6e1     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x2dcc
+000000f2`127ff340 00007ff6`7539c673     Code!cppgc::internal::WriteBarrier::DijkstraMarkingBarrierSlow+0x891
+000000f2`127ff4c0 00007ff6`76054cd6     Code!llhttp_should_keep_alive+0x413
+000000f2`127ff530 00007ff6`76053a36     Code!v8::JSON::Parse+0x9816
+000000f2`127ff5e0 00007ff6`763b6784     Code!v8::JSON::Parse+0x8576
+000000f2`127ff6e0 00007ff6`763b6572     Code!uv_mutex_destroy+0x13d14
+000000f2`127ff740 00007ff6`75bfdb7c     Code!uv_mutex_destroy+0x13b02
+000000f2`127ff7d0 00007ffb`cbe8dda7     Code!v8::String::Utf8Value::Utf8Value+0x8e4c
+000000f2`127ff860 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`127ff890 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  42  Id: 20d8.1360 Suspend: 1 Teb: 000000f2`7b2a5000 Unfrozen "DManip Delegate Thread"
+Child-SP          RetAddr               Call Site
+000000f2`12fffc98 00007ffb`b5e111a4     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+000000f2`12fffca0 00007ffb`b5e10f3a     directmanipulation!CManagerImpl::_RunDelegateThread+0x114
+000000f2`12fffd70 00007ffb`cbe8dda7     directmanipulation!CManagerImpl::_DelegateThreadProc+0xba
+000000f2`12fffdb0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`12fffde0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  43  Id: 20d8.2d64 Suspend: 1 Teb: 000000f2`7b2a9000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`137ff778 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`137ff780 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`137ff7f0 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`137ff890 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`137ff970 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`137ffcd0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`137ffd00 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  44  Id: 20d8.2a0c Suspend: 1 Teb: 000000f2`7b2ab000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`13fff218 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`13fff220 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`13fff290 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`13fff330 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`13fff410 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`13fff770 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`13fff7a0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  45  Id: 20d8.1824 Suspend: 1 Teb: 000000f2`7b2ad000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`147ff658 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`147ff660 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`147ff6d0 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`147ff770 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`147ff850 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`147ffbb0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`147ffbe0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  46  Id: 20d8.674 Suspend: 1 Teb: 000000f2`7b2af000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`14fff218 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`14fff220 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`14fff290 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`14fff330 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`14fff410 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`14fff770 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`14fff7a0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  47  Id: 20d8.1f08 Suspend: 1 Teb: 000000f2`7b2b1000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`157ff3a8 00007ffb`ca932b1d     ntdll!NtReadFile+0x14
+000000f2`157ff3b0 00007ff6`803f4760     KERNELBASE!ReadFile+0x8d
+000000f2`157ff420 00007ffb`cd3ce15b     Code!uv_pipe_chmod+0x330
+000000f2`157ff4c0 00007ffb`cd3651b0     ntdll!RtlpTpWorkCallback+0x22b
+000000f2`157ff5a0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x820
+000000f2`157ff900 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`157ff930 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  48  Id: 20d8.3718 Suspend: 1 Teb: 000000f2`7b2b3000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`15fff408 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`15fff410 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`15fff770 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`15fff7a0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  49  Id: 20d8.22d4 Suspend: 1 Teb: 000000f2`7b2b5000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`167fe698 00007ffb`ca932773     ntdll!NtWaitForMultipleObjects+0x14
+000000f2`167fe6a0 00007ffb`cc9353e4     KERNELBASE!WaitForMultipleObjectsEx+0x123
+000000f2`167fe990 00007ffb`cc8d69c0     combase!MTAThreadWaitForCall+0xf4
+(Inline Function) --------`--------     combase!MTAThreadDispatchCrossApartmentCall+0xca
+(Inline Function) --------`--------     combase!CSyncClientCall::SwitchAptAndDispatchCall+0x4dd
+000000f2`167fea40 00007ffb`cc937d87     combase!CSyncClientCall::SendReceive2+0x650
+(Inline Function) --------`--------     combase!SyncClientCallRetryContext::SendReceiveWithRetry+0x2f
+000000f2`167fee50 00007ffb`cc9377ef     combase!CSyncClientCall::SendReceiveInRetryContext+0x5b
+(Inline Function) --------`--------     combase!DefaultSendReceive+0x3c
+000000f2`167fee80 00007ffb`cc8b7863     combase!CSyncClientCall::SendReceive+0x1df
+(Inline Function) --------`--------     combase!CClientChannel::SendReceive+0x49
+000000f2`167feff0 00007ffb`cd2a7a91     combase!NdrExtpProxySendReceive+0xb3
+000000f2`167ff040 00007ffb`cd2a75fd     RPCRT4!NdrpClientCall3+0x431
+000000f2`167ff3b0 00007ffb`b4e11102     RPCRT4!NdrClientCall3+0xed
+000000f2`167ff750 00007ffb`a989c048     OneCoreCommonProxyStub!IServiceProvider_QueryService_Proxy+0x32
+000000f2`167ff7a0 00007ffb`a9747fd5     uiautomationcore!ComInvoker::CallTarget+0x1d8
+000000f2`167ff8a0 00007ffb`a989b53f     uiautomationcore!ReleaseCollection::DispatchReleases+0x45
+000000f2`167ff8f0 00007ffb`a977a36f     uiautomationcore!ProcessIncomingBatchedMessages+0x147
+000000f2`167ff9c0 00007ffb`a9804aac     uiautomationcore!ChannelBasedServerConnection::OnDataIdle+0x5f
+000000f2`167ffa80 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x17c
+000000f2`167ffae0 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+000000f2`167ffb40 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+000000f2`167ffb70 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`167ffba0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  50  Id: 20d8.2358 Suspend: 1 Teb: 000000f2`7b2b7000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`16fff518 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`16fff520 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`16fff880 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`16fff8b0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  51  Id: 20d8.3144 Suspend: 1 Teb: 000000f2`7b2b9000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`107ff748 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`107ff750 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`107ffab0 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`107ffae0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  52  Id: 20d8.2688 Suspend: 1 Teb: 000000f2`7b2bb000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`177ff628 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`177ff630 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`177ff990 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`177ff9c0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  53  Id: 20d8.2170 Suspend: 1 Teb: 000000f2`7b2bd000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`17fffa98 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`17fffaa0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`17fffe00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`17fffe30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  54  Id: 20d8.8e4 Suspend: 1 Teb: 000000f2`7b2bf000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`187ff4a8 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`187ff4b0 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`187ff810 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`187ff840 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  55  Id: 20d8.f24 Suspend: 1 Teb: 000000f2`7b2c1000 Unfrozen
+Child-SP          RetAddr               Call Site
+000000f2`18fffa28 00007ffb`cd364d0e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+000000f2`18fffa30 00007ffb`cbe8dda7     ntdll!TppWorkerThread+0x37e
+000000f2`18fffd90 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000f2`18fffdc0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+quit:
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files\WindowsApps\Microsoft.WinDbg_1.2610.1001.0_x64__8wekyb3d8bbwe\amd64\Visualizers\winrt.natvis'

@@ -1,0 +1,4 @@
+ready
+window 0 hwnd=589962 tid=2684
+window 2 hwnd=458886 tid=1216
+window 1 hwnd=458892 tid=2684

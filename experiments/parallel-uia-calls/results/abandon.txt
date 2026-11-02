@@ -1,0 +1,322 @@
+ready
+window 2 hwnd=525472 tid=10264
+window 0 hwnd=459934 tid=10144
+window 1 hwnd=4982646 tid=10144
+ABANDON label=sta-busy-same mode=same block=busy:459934:40000 stuck=Name@459934 elem 0
+CALL same-window at_ms=1000 hwnd=459934 pid=4344 ui_tid=10144 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=4982646 pid=4344 ui_tid=10144 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=525472 pid=4344 ui_tid=10264 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=525472 pid=4344 ui_tid=10264 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=459934 pid=4344 ui_tid=10144 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=525472 pid=4344 ui_tid=10264 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=525472 pid=4344 ui_tid=10264 op=Name elem=0
+TRIAL label=sta-busy-same trial=0 mode=same block=busy:459934:40000 block_utc=06:06:36.056821 evidence="none" release_ms=40000.0
+RESULT label=sta-busy-same trial=0 call=stuck started_ms=0.2 returned_ms=22103.2 took_ms=22103.1 after_release_ms=-17896.8 result=error 0x80131505
+RESULT label=sta-busy-same trial=0 call=same-window started_ms=22103.2 returned_ms=40000.4 took_ms=17897.2 after_release_ms=0.4 result=ok
+RESULT label=sta-busy-same trial=0 call=other-window-same-ui-thread started_ms=40000.5 returned_ms=40000.6 took_ms=0.1 after_release_ms=0.6 result=ok
+RESULT label=sta-busy-same trial=0 call=other-ui-thread started_ms=40000.7 returned_ms=40000.7 took_ms=0.1 after_release_ms=0.7 result=ok
+RESULT label=sta-busy-same trial=0 call=other-ui-thread-new-connection started_ms=40000.8 returned_ms=40001.4 took_ms=0.6 after_release_ms=1.4 result=ok
+RESULT label=sta-busy-same trial=0 call=after-timeout-same-window started_ms=40001.5 returned_ms=40001.5 took_ms=0.1 after_release_ms=1.5 result=ok
+RESULT label=sta-busy-same trial=0 call=after-timeout-other-ui-thread started_ms=40001.6 returned_ms=40001.6 took_ms=0.1 after_release_ms=1.6 result=ok
+RESULT label=sta-busy-same trial=0 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.7 took_ms=0.2 after_release_ms=1000.7 result=ok
+TRIAL label=sta-busy-same trial=1 mode=same block=busy:459934:40000 block_utc=06:07:20.065876 evidence="none" release_ms=40000.0
+RESULT label=sta-busy-same trial=1 call=stuck started_ms=0.1 returned_ms=22155.6 took_ms=22155.5 after_release_ms=-17844.4 result=error 0x80131505
+RESULT label=sta-busy-same trial=1 call=same-window started_ms=22155.6 returned_ms=40000.8 took_ms=17845.2 after_release_ms=0.8 result=ok
+RESULT label=sta-busy-same trial=1 call=other-window-same-ui-thread started_ms=40000.8 returned_ms=40001.0 took_ms=0.2 after_release_ms=1.0 result=ok
+RESULT label=sta-busy-same trial=1 call=other-ui-thread started_ms=40001.1 returned_ms=40001.2 took_ms=0.2 after_release_ms=1.2 result=ok
+RESULT label=sta-busy-same trial=1 call=other-ui-thread-new-connection started_ms=40001.2 returned_ms=40002.2 took_ms=1.0 after_release_ms=2.2 result=ok
+RESULT label=sta-busy-same trial=1 call=after-timeout-same-window started_ms=40002.2 returned_ms=40002.4 took_ms=0.2 after_release_ms=2.4 result=ok
+RESULT label=sta-busy-same trial=1 call=after-timeout-other-ui-thread started_ms=40002.4 returned_ms=40002.6 took_ms=0.2 after_release_ms=2.6 result=ok
+RESULT label=sta-busy-same trial=1 call=after-release-other-ui-thread started_ms=41000.2 returned_ms=41000.5 took_ms=0.3 after_release_ms=1000.5 result=ok
+ABANDON label=sta-busy-new mode=new block=busy:459934:40000 stuck=Name@459934 elem 0
+CALL same-window at_ms=1000 hwnd=459934 pid=4344 ui_tid=10144 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=4982646 pid=4344 ui_tid=10144 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=525472 pid=4344 ui_tid=10264 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=525472 pid=4344 ui_tid=10264 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=459934 pid=4344 ui_tid=10144 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=525472 pid=4344 ui_tid=10264 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=525472 pid=4344 ui_tid=10264 op=Name elem=0
+TRIAL label=sta-busy-new trial=0 mode=new block=busy:459934:40000 block_utc=06:08:04.105485 evidence="none" release_ms=40000.0
+RESULT label=sta-busy-new trial=0 call=other-ui-thread-new-connection started_ms=8000.8 returned_ms=10202.3 took_ms=2201.5 after_release_ms=-29797.7 result=error 0x80131505
+RESULT label=sta-busy-new trial=0 call=stuck started_ms=0.1 returned_ms=22151.3 took_ms=22151.2 after_release_ms=-17848.7 result=error 0x80131505
+RESULT label=sta-busy-new trial=0 call=same-window started_ms=1000.4 returned_ms=23149.4 took_ms=22149.0 after_release_ms=-16850.6 result=error 0x80131505
+RESULT label=sta-busy-new trial=0 call=other-window-same-ui-thread started_ms=3000.7 returned_ms=25141.5 took_ms=22140.8 after_release_ms=-14858.5 result=error 0x80131505
+RESULT label=sta-busy-new trial=0 call=other-ui-thread started_ms=5000.7 returned_ms=27153.7 took_ms=22152.9 after_release_ms=-12846.3 result=error 0x80131505
+RESULT label=sta-busy-new trial=0 call=after-timeout-same-window started_ms=25000.6 returned_ms=40001.5 took_ms=15000.9 after_release_ms=1.5 result=ok
+RESULT label=sta-busy-new trial=0 call=after-timeout-other-ui-thread started_ms=26000.7 returned_ms=40001.6 took_ms=14000.9 after_release_ms=1.6 result=ok
+RESULT label=sta-busy-new trial=0 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.7 took_ms=0.3 after_release_ms=1000.7 result=ok
+TRIAL label=sta-busy-new trial=1 mode=new block=busy:459934:40000 block_utc=06:08:48.113040 evidence="none" release_ms=40000.0
+RESULT label=sta-busy-new trial=1 call=other-ui-thread-new-connection started_ms=8000.7 returned_ms=10191.9 took_ms=2191.2 after_release_ms=-29808.1 result=error 0x80131505
+RESULT label=sta-busy-new trial=1 call=stuck started_ms=0.1 returned_ms=22153.9 took_ms=22153.8 after_release_ms=-17846.1 result=error 0x80131505
+RESULT label=sta-busy-new trial=1 call=same-window started_ms=1000.9 returned_ms=23147.8 took_ms=22146.9 after_release_ms=-16852.2 result=error 0x80131505
+RESULT label=sta-busy-new trial=1 call=other-window-same-ui-thread started_ms=3000.5 returned_ms=25143.7 took_ms=22143.2 after_release_ms=-14856.3 result=error 0x80131505
+RESULT label=sta-busy-new trial=1 call=other-ui-thread started_ms=5000.4 returned_ms=27135.2 took_ms=22134.7 after_release_ms=-12864.8 result=error 0x80131505
+RESULT label=sta-busy-new trial=1 call=after-timeout-same-window started_ms=25002.6 returned_ms=40001.5 took_ms=14998.8 after_release_ms=1.5 result=ok
+RESULT label=sta-busy-new trial=1 call=after-timeout-other-ui-thread started_ms=26008.1 returned_ms=40001.7 took_ms=13993.5 after_release_ms=1.7 result=ok
+RESULT label=sta-busy-new trial=1 call=after-release-other-ui-thread started_ms=41000.5 returned_ms=41000.8 took_ms=0.4 after_release_ms=1000.8 result=ok
+ready
+window 0 hwnd=525470 tid=13656
+window 2 hwnd=5048182 tid=4008
+window 1 hwnd=591008 tid=13656
+ABANDON label=nocom-busy-same mode=same block=busy:525470:40000 stuck=Name@525470 elem 0
+CALL same-window at_ms=1000 hwnd=525470 pid=13740 ui_tid=13656 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=591008 pid=13740 ui_tid=13656 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=5048182 pid=13740 ui_tid=4008 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=5048182 pid=13740 ui_tid=4008 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=525470 pid=13740 ui_tid=13656 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=5048182 pid=13740 ui_tid=4008 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=5048182 pid=13740 ui_tid=4008 op=Name elem=0
+TRIAL label=nocom-busy-same trial=0 mode=same block=busy:525470:40000 block_utc=06:09:32.244490 evidence="none" release_ms=40000.0
+RESULT label=nocom-busy-same trial=0 call=stuck started_ms=0.2 returned_ms=0.3 took_ms=0.1 after_release_ms=-39999.7 result=ok
+RESULT label=nocom-busy-same trial=0 call=same-window started_ms=1000.4 returned_ms=1000.6 took_ms=0.2 after_release_ms=-38999.4 result=ok
+RESULT label=nocom-busy-same trial=0 call=other-window-same-ui-thread started_ms=3000.3 returned_ms=3000.5 took_ms=0.2 after_release_ms=-36999.5 result=ok
+RESULT label=nocom-busy-same trial=0 call=other-ui-thread started_ms=5000.2 returned_ms=5000.3 took_ms=0.1 after_release_ms=-34999.7 result=ok
+RESULT label=nocom-busy-same trial=0 call=other-ui-thread-new-connection started_ms=8000.1 returned_ms=8001.0 took_ms=0.9 after_release_ms=-31999.0 result=ok
+RESULT label=nocom-busy-same trial=0 call=after-timeout-same-window started_ms=25000.1 returned_ms=25000.3 took_ms=0.2 after_release_ms=-14999.7 result=ok
+RESULT label=nocom-busy-same trial=0 call=after-timeout-other-ui-thread started_ms=26000.1 returned_ms=26000.3 took_ms=0.2 after_release_ms=-13999.7 result=ok
+RESULT label=nocom-busy-same trial=0 call=after-release-other-ui-thread started_ms=41005.3 returned_ms=41005.5 took_ms=0.2 after_release_ms=1005.5 result=ok
+TRIAL label=nocom-busy-same trial=1 mode=same block=busy:525470:40000 block_utc=06:10:16.280899 evidence="none" release_ms=40000.0
+RESULT label=nocom-busy-same trial=1 call=stuck started_ms=36.9 returned_ms=37.2 took_ms=0.3 after_release_ms=-39962.8 result=ok
+RESULT label=nocom-busy-same trial=1 call=same-window started_ms=1020.1 returned_ms=1024.0 took_ms=3.8 after_release_ms=-38976.0 result=ok
+RESULT label=nocom-busy-same trial=1 call=other-window-same-ui-thread started_ms=3005.8 returned_ms=3007.9 took_ms=2.1 after_release_ms=-36992.1 result=ok
+RESULT label=nocom-busy-same trial=1 call=other-ui-thread started_ms=5005.8 returned_ms=5006.1 took_ms=0.2 after_release_ms=-34993.9 result=ok
+RESULT label=nocom-busy-same trial=1 call=other-ui-thread-new-connection started_ms=8000.6 returned_ms=8027.6 took_ms=27.1 after_release_ms=-31972.4 result=ok
+RESULT label=nocom-busy-same trial=1 call=after-timeout-same-window started_ms=25000.5 returned_ms=25000.7 took_ms=0.2 after_release_ms=-14999.3 result=ok
+RESULT label=nocom-busy-same trial=1 call=after-timeout-other-ui-thread started_ms=26000.2 returned_ms=26000.3 took_ms=0.2 after_release_ms=-13999.7 result=ok
+RESULT label=nocom-busy-same trial=1 call=after-release-other-ui-thread started_ms=41000.1 returned_ms=41000.3 took_ms=0.2 after_release_ms=1000.3 result=ok
+ABANDON label=nocom-busy-new mode=new block=busy:525470:40000 stuck=Name@525470 elem 0
+CALL same-window at_ms=1000 hwnd=525470 pid=13740 ui_tid=13656 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=591008 pid=13740 ui_tid=13656 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=5048182 pid=13740 ui_tid=4008 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=5048182 pid=13740 ui_tid=4008 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=525470 pid=13740 ui_tid=13656 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=5048182 pid=13740 ui_tid=4008 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=5048182 pid=13740 ui_tid=4008 op=Name elem=0
+TRIAL label=nocom-busy-new trial=0 mode=new block=busy:525470:40000 block_utc=06:11:00.324885 evidence="none" release_ms=40000.0
+RESULT label=nocom-busy-new trial=0 call=stuck started_ms=0.2 returned_ms=0.3 took_ms=0.1 after_release_ms=-39999.7 result=ok
+RESULT label=nocom-busy-new trial=0 call=same-window started_ms=1000.5 returned_ms=1000.8 took_ms=0.2 after_release_ms=-38999.2 result=ok
+RESULT label=nocom-busy-new trial=0 call=other-window-same-ui-thread started_ms=3000.7 returned_ms=3001.0 took_ms=0.3 after_release_ms=-36999.0 result=ok
+RESULT label=nocom-busy-new trial=0 call=other-ui-thread started_ms=5000.6 returned_ms=5000.9 took_ms=0.2 after_release_ms=-34999.1 result=ok
+RESULT label=nocom-busy-new trial=0 call=other-ui-thread-new-connection started_ms=8012.4 returned_ms=8013.5 took_ms=1.1 after_release_ms=-31986.5 result=ok
+RESULT label=nocom-busy-new trial=0 call=after-timeout-same-window started_ms=25006.3 returned_ms=25006.5 took_ms=0.3 after_release_ms=-14993.5 result=ok
+RESULT label=nocom-busy-new trial=0 call=after-timeout-other-ui-thread started_ms=26008.6 returned_ms=26008.7 took_ms=0.2 after_release_ms=-13991.3 result=ok
+RESULT label=nocom-busy-new trial=0 call=after-release-other-ui-thread started_ms=41000.6 returned_ms=41000.9 took_ms=0.3 after_release_ms=1000.9 result=ok
+TRIAL label=nocom-busy-new trial=1 mode=new block=busy:525470:40000 block_utc=06:11:44.332054 evidence="none" release_ms=40000.0
+RESULT label=nocom-busy-new trial=1 call=stuck started_ms=0.1 returned_ms=0.2 took_ms=0.1 after_release_ms=-39999.8 result=ok
+RESULT label=nocom-busy-new trial=1 call=same-window started_ms=1000.3 returned_ms=1000.4 took_ms=0.2 after_release_ms=-38999.6 result=ok
+RESULT label=nocom-busy-new trial=1 call=other-window-same-ui-thread started_ms=3000.4 returned_ms=3000.6 took_ms=0.2 after_release_ms=-36999.4 result=ok
+RESULT label=nocom-busy-new trial=1 call=other-ui-thread started_ms=5000.4 returned_ms=5000.6 took_ms=0.2 after_release_ms=-34999.4 result=ok
+RESULT label=nocom-busy-new trial=1 call=other-ui-thread-new-connection started_ms=8000.4 returned_ms=8001.4 took_ms=0.9 after_release_ms=-31998.6 result=ok
+RESULT label=nocom-busy-new trial=1 call=after-timeout-same-window started_ms=25000.8 returned_ms=25001.0 took_ms=0.2 after_release_ms=-14999.0 result=ok
+RESULT label=nocom-busy-new trial=1 call=after-timeout-other-ui-thread started_ms=26000.6 returned_ms=26000.8 took_ms=0.2 after_release_ms=-13999.2 result=ok
+RESULT label=nocom-busy-new trial=1 call=after-release-other-ui-thread started_ms=41000.2 returned_ms=41000.5 took_ms=0.2 after_release_ms=1000.5 result=ok
+ready
+window 2 hwnd=591006 tid=12532
+window 0 hwnd=656544 tid=7704
+window 1 hwnd=1245630 tid=7704
+ABANDON label=nocom-slow-same mode=same block=slow:656544:40000 stuck=Name@656544 elem 0
+CALL same-window at_ms=1000 hwnd=656544 pid=1720 ui_tid=7704 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=1245630 pid=1720 ui_tid=7704 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=591006 pid=1720 ui_tid=12532 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=591006 pid=1720 ui_tid=12532 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=656544 pid=1720 ui_tid=7704 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=591006 pid=1720 ui_tid=12532 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=591006 pid=1720 ui_tid=12532 op=Name elem=0
+TRIAL label=nocom-slow-same trial=0 mode=same block=slow:656544:40000 block_utc=06:12:28.467051 evidence="none" release_ms=40000.1
+RESULT label=nocom-slow-same trial=0 call=stuck started_ms=0.2 returned_ms=22146.2 took_ms=22145.9 after_release_ms=-17853.9 result=error 0x80131505
+RESULT label=nocom-slow-same trial=0 call=same-window started_ms=22146.2 returned_ms=40000.6 took_ms=17854.4 after_release_ms=0.5 result=ok
+RESULT label=nocom-slow-same trial=0 call=other-window-same-ui-thread started_ms=40000.7 returned_ms=40000.8 took_ms=0.1 after_release_ms=0.7 result=ok
+RESULT label=nocom-slow-same trial=0 call=other-ui-thread started_ms=40000.8 returned_ms=40000.9 took_ms=0.1 after_release_ms=0.8 result=ok
+RESULT label=nocom-slow-same trial=0 call=other-ui-thread-new-connection started_ms=40000.9 returned_ms=40001.6 took_ms=0.7 after_release_ms=1.5 result=ok
+RESULT label=nocom-slow-same trial=0 call=after-timeout-same-window started_ms=40001.6 returned_ms=40001.7 took_ms=0.1 after_release_ms=1.6 result=ok
+RESULT label=nocom-slow-same trial=0 call=after-timeout-other-ui-thread started_ms=40001.7 returned_ms=40001.7 took_ms=0.0 after_release_ms=1.7 result=ok
+RESULT label=nocom-slow-same trial=0 call=after-release-other-ui-thread started_ms=41000.5 returned_ms=41000.7 took_ms=0.2 after_release_ms=1000.6 result=ok
+TRIAL label=nocom-slow-same trial=1 mode=same block=slow:656544:40000 block_utc=06:13:12.472971 evidence="none" release_ms=40000.0
+RESULT label=nocom-slow-same trial=1 call=stuck started_ms=0.1 returned_ms=22126.9 took_ms=22126.8 after_release_ms=-17873.1 result=error 0x80131505
+RESULT label=nocom-slow-same trial=1 call=same-window started_ms=22126.9 returned_ms=40000.8 took_ms=17873.9 after_release_ms=0.8 result=ok
+RESULT label=nocom-slow-same trial=1 call=other-window-same-ui-thread started_ms=40000.8 returned_ms=40000.9 took_ms=0.1 after_release_ms=0.9 result=ok
+RESULT label=nocom-slow-same trial=1 call=other-ui-thread started_ms=40000.9 returned_ms=40001.0 took_ms=0.0 after_release_ms=1.0 result=ok
+RESULT label=nocom-slow-same trial=1 call=other-ui-thread-new-connection started_ms=40001.0 returned_ms=40001.5 took_ms=0.5 after_release_ms=1.5 result=ok
+RESULT label=nocom-slow-same trial=1 call=after-timeout-same-window started_ms=40001.6 returned_ms=40001.6 took_ms=0.0 after_release_ms=1.6 result=ok
+RESULT label=nocom-slow-same trial=1 call=after-timeout-other-ui-thread started_ms=40001.6 returned_ms=40001.6 took_ms=0.0 after_release_ms=1.6 result=ok
+RESULT label=nocom-slow-same trial=1 call=after-release-other-ui-thread started_ms=41001.6 returned_ms=41001.8 took_ms=0.1 after_release_ms=1001.8 result=ok
+ABANDON label=nocom-slow-new mode=new block=slow:656544:40000 stuck=Name@656544 elem 0
+CALL same-window at_ms=1000 hwnd=656544 pid=1720 ui_tid=7704 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=1245630 pid=1720 ui_tid=7704 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=591006 pid=1720 ui_tid=12532 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=591006 pid=1720 ui_tid=12532 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=656544 pid=1720 ui_tid=7704 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=591006 pid=1720 ui_tid=12532 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=591006 pid=1720 ui_tid=12532 op=Name elem=0
+TRIAL label=nocom-slow-new trial=0 mode=new block=slow:656544:40000 block_utc=06:13:56.518745 evidence="none" release_ms=40000.0
+RESULT label=nocom-slow-new trial=0 call=other-ui-thread-new-connection started_ms=8000.6 returned_ms=10205.9 took_ms=2205.3 after_release_ms=-29794.1 result=error 0x80131505
+RESULT label=nocom-slow-new trial=0 call=stuck started_ms=0.3 returned_ms=22157.3 took_ms=22157.0 after_release_ms=-17842.7 result=error 0x80131505
+RESULT label=nocom-slow-new trial=0 call=same-window started_ms=1000.2 returned_ms=23153.2 took_ms=22153.0 after_release_ms=-16846.8 result=error 0x80131505
+RESULT label=nocom-slow-new trial=0 call=other-window-same-ui-thread started_ms=3000.3 returned_ms=25146.4 took_ms=22146.2 after_release_ms=-14853.6 result=error 0x80131505
+RESULT label=nocom-slow-new trial=0 call=other-ui-thread started_ms=5000.4 returned_ms=27137.8 took_ms=22137.4 after_release_ms=-12862.2 result=error 0x80131505
+RESULT label=nocom-slow-new trial=0 call=after-timeout-same-window started_ms=25000.6 returned_ms=40001.5 took_ms=15001.0 after_release_ms=1.5 result=ok
+RESULT label=nocom-slow-new trial=0 call=after-timeout-other-ui-thread started_ms=26000.6 returned_ms=40001.7 took_ms=14001.1 after_release_ms=1.6 result=ok
+RESULT label=nocom-slow-new trial=0 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.6 took_ms=0.2 after_release_ms=1000.6 result=ok
+TRIAL label=nocom-slow-new trial=1 mode=new block=slow:656544:40000 block_utc=06:14:40.532421 evidence="none" release_ms=40000.1
+RESULT label=nocom-slow-new trial=1 call=other-ui-thread-new-connection started_ms=8000.5 returned_ms=10186.4 took_ms=2185.9 after_release_ms=-29813.7 result=error 0x80131505
+RESULT label=nocom-slow-new trial=1 call=stuck started_ms=0.2 returned_ms=22114.7 took_ms=22114.4 after_release_ms=-17885.4 result=error 0x80131505
+RESULT label=nocom-slow-new trial=1 call=same-window started_ms=1000.4 returned_ms=23126.0 took_ms=22125.6 after_release_ms=-16874.0 result=error 0x80131505
+RESULT label=nocom-slow-new trial=1 call=other-window-same-ui-thread started_ms=3000.4 returned_ms=25115.7 took_ms=22115.3 after_release_ms=-14884.4 result=error 0x80131505
+RESULT label=nocom-slow-new trial=1 call=other-ui-thread started_ms=5000.5 returned_ms=27125.9 took_ms=22125.4 after_release_ms=-12874.1 result=error 0x80131505
+RESULT label=nocom-slow-new trial=1 call=after-timeout-other-ui-thread started_ms=26000.6 returned_ms=40001.2 took_ms=14000.6 after_release_ms=1.1 result=ok
+RESULT label=nocom-slow-new trial=1 call=after-timeout-same-window started_ms=25000.2 returned_ms=40001.2 took_ms=15000.9 after_release_ms=1.1 result=ok
+RESULT label=nocom-slow-new trial=1 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.6 took_ms=0.2 after_release_ms=1000.5 result=ok
+ready
+window 2 hwnd=1311166 tid=8904
+window 0 hwnd=5179254 tid=13276
+window 1 hwnd=656542 tid=13276
+ABANDON label=sta-pending-connection-same mode=same block=busy:5179254:40000 stuck=FromHandle@5179254 elem 0
+CALL same-window at_ms=1000 hwnd=5179254 pid=14208 ui_tid=13276 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=656542 pid=14208 ui_tid=13276 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=1311166 pid=14208 ui_tid=8904 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=1311166 pid=14208 ui_tid=8904 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=5179254 pid=14208 ui_tid=13276 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=1311166 pid=14208 ui_tid=8904 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=1311166 pid=14208 ui_tid=8904 op=Name elem=0
+TRIAL label=sta-pending-connection-same trial=0 mode=same block=busy:5179254:40000 block_utc=06:15:24.671737 evidence="none" release_ms=40000.0
+RESULT label=sta-pending-connection-same trial=0 call=stuck started_ms=0.1 returned_ms=2011.9 took_ms=2011.8 after_release_ms=-37988.1 result=error 0x80131505
+RESULT label=sta-pending-connection-same trial=0 call=same-window started_ms=2011.9 returned_ms=24150.9 took_ms=22138.9 after_release_ms=-15849.1 result=error 0x80131505
+RESULT label=sta-pending-connection-same trial=0 call=other-window-same-ui-thread started_ms=24150.9 returned_ms=40000.4 took_ms=15849.5 after_release_ms=0.4 result=ok
+RESULT label=sta-pending-connection-same trial=0 call=other-ui-thread started_ms=40000.5 returned_ms=40000.6 took_ms=0.1 after_release_ms=0.6 result=ok
+RESULT label=sta-pending-connection-same trial=0 call=other-ui-thread-new-connection started_ms=40000.6 returned_ms=40001.2 took_ms=0.6 after_release_ms=1.2 result=ok
+RESULT label=sta-pending-connection-same trial=0 call=after-timeout-same-window started_ms=40001.2 returned_ms=40001.3 took_ms=0.1 after_release_ms=1.3 result=ok
+RESULT label=sta-pending-connection-same trial=0 call=after-timeout-other-ui-thread started_ms=40001.4 returned_ms=40001.5 took_ms=0.1 after_release_ms=1.5 result=ok
+RESULT label=sta-pending-connection-same trial=0 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.6 took_ms=0.2 after_release_ms=1000.6 result=ok
+TRIAL label=sta-pending-connection-same trial=1 mode=same block=busy:5179254:40000 block_utc=06:16:08.681022 evidence="none" release_ms=40000.0
+RESULT label=sta-pending-connection-same trial=1 call=stuck started_ms=0.1 returned_ms=2003.9 took_ms=2003.8 after_release_ms=-37996.1 result=error 0x80131505
+RESULT label=sta-pending-connection-same trial=1 call=same-window started_ms=2003.9 returned_ms=24135.9 took_ms=22131.9 after_release_ms=-15864.1 result=error 0x80131505
+RESULT label=sta-pending-connection-same trial=1 call=other-window-same-ui-thread started_ms=24135.9 returned_ms=40000.4 took_ms=15864.5 after_release_ms=0.4 result=ok
+RESULT label=sta-pending-connection-same trial=1 call=other-ui-thread started_ms=40000.5 returned_ms=40000.6 took_ms=0.2 after_release_ms=0.6 result=ok
+RESULT label=sta-pending-connection-same trial=1 call=other-ui-thread-new-connection started_ms=40000.7 returned_ms=40001.6 took_ms=1.0 after_release_ms=1.6 result=ok
+RESULT label=sta-pending-connection-same trial=1 call=after-timeout-same-window started_ms=40001.6 returned_ms=40001.8 took_ms=0.2 after_release_ms=1.8 result=ok
+RESULT label=sta-pending-connection-same trial=1 call=after-timeout-other-ui-thread started_ms=40001.8 returned_ms=40002.0 took_ms=0.2 after_release_ms=2.0 result=ok
+RESULT label=sta-pending-connection-same trial=1 call=after-release-other-ui-thread started_ms=41000.1 returned_ms=41000.4 took_ms=0.2 after_release_ms=1000.4 result=ok
+ABANDON label=sta-pending-connection-new mode=new block=busy:5179254:40000 stuck=FromHandle@5179254 elem 0
+CALL same-window at_ms=1000 hwnd=5179254 pid=14208 ui_tid=13276 op=Name elem=0
+CALL other-window-same-ui-thread at_ms=3000 hwnd=656542 pid=14208 ui_tid=13276 op=Name elem=0
+CALL other-ui-thread at_ms=5000 hwnd=1311166 pid=14208 ui_tid=8904 op=Name elem=0
+CALL other-ui-thread-new-connection at_ms=8000 hwnd=1311166 pid=14208 ui_tid=8904 op=FromHandle elem=0
+CALL after-timeout-same-window at_ms=25000 hwnd=5179254 pid=14208 ui_tid=13276 op=Name elem=0
+CALL after-timeout-other-ui-thread at_ms=26000 hwnd=1311166 pid=14208 ui_tid=8904 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=41000 hwnd=1311166 pid=14208 ui_tid=8904 op=Name elem=0
+TRIAL label=sta-pending-connection-new trial=0 mode=new block=busy:5179254:40000 block_utc=06:16:52.730579 evidence="none" release_ms=40000.0
+RESULT label=sta-pending-connection-new trial=0 call=stuck started_ms=0.1 returned_ms=2002.6 took_ms=2002.4 after_release_ms=-37997.4 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=0 call=other-ui-thread-new-connection started_ms=8000.6 returned_ms=10195.1 took_ms=2194.5 after_release_ms=-29804.9 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=0 call=same-window started_ms=1000.5 returned_ms=23139.5 took_ms=22139.0 after_release_ms=-16860.5 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=0 call=other-window-same-ui-thread started_ms=3000.2 returned_ms=25134.5 took_ms=22134.3 after_release_ms=-14865.5 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=0 call=other-ui-thread started_ms=5000.6 returned_ms=27144.2 took_ms=22143.6 after_release_ms=-12855.8 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=0 call=after-timeout-same-window started_ms=25000.5 returned_ms=40001.2 took_ms=15000.7 after_release_ms=1.2 result=ok
+RESULT label=sta-pending-connection-new trial=0 call=after-timeout-other-ui-thread started_ms=26000.5 returned_ms=40001.6 took_ms=14001.1 after_release_ms=1.6 result=ok
+RESULT label=sta-pending-connection-new trial=0 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.7 took_ms=0.3 after_release_ms=1000.7 result=ok
+TRIAL label=sta-pending-connection-new trial=1 mode=new block=busy:5179254:40000 block_utc=06:17:36.749165 evidence="none" release_ms=40000.0
+RESULT label=sta-pending-connection-new trial=1 call=stuck started_ms=0.2 returned_ms=2011.1 took_ms=2010.9 after_release_ms=-37988.9 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=1 call=other-ui-thread-new-connection started_ms=8000.3 returned_ms=10192.5 took_ms=2192.2 after_release_ms=-29807.5 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=1 call=same-window started_ms=1007.5 returned_ms=23131.8 took_ms=22124.3 after_release_ms=-16868.2 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=1 call=other-window-same-ui-thread started_ms=3000.4 returned_ms=25123.4 took_ms=22123.0 after_release_ms=-14876.6 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=1 call=other-ui-thread started_ms=5000.9 returned_ms=27131.0 took_ms=22130.1 after_release_ms=-12869.0 result=error 0x80131505
+RESULT label=sta-pending-connection-new trial=1 call=after-timeout-same-window started_ms=25007.2 returned_ms=40001.2 took_ms=14994.0 after_release_ms=1.2 result=ok
+RESULT label=sta-pending-connection-new trial=1 call=after-timeout-other-ui-thread started_ms=26000.2 returned_ms=40001.6 took_ms=14001.3 after_release_ms=1.6 result=ok
+RESULT label=sta-pending-connection-new trial=1 call=after-release-other-ui-thread started_ms=41000.4 returned_ms=41000.7 took_ms=0.3 after_release_ms=1000.7 result=ok
+ABANDON label=mockapp-hold-same mode=same block=mock-hold:40000 stuck=Name@38602544 elem 1
+CALL same-window-other-element at_ms=1000 hwnd=38602544 pid=13364 ui_tid=3560 op=Name elem=3
+CALL same-window-rop at_ms=3000 hwnd=38602544 pid=13364 ui_tid=3560 op=Rop elem=3
+CALL same-window-new-connection at_ms=5000 hwnd=38602544 pid=13364 ui_tid=3560 op=FromHandle elem=0
+CALL after-timeout-other-element at_ms=25000 hwnd=38602544 pid=13364 ui_tid=3560 op=Name elem=3
+CALL after-release-other-element at_ms=41000 hwnd=38602544 pid=13364 ui_tid=3560 op=Name elem=3
+TRIAL label=mockapp-hold-same trial=0 mode=same block=mock-hold:40000 block_utc=06:18:20.862777 evidence="held FragmentRoot at 0.2 ms" release_ms=40000.5
+RESULT label=mockapp-hold-same trial=0 call=stuck started_ms=0.3 returned_ms=22122.6 took_ms=22122.3 after_release_ms=-17877.9 result=error 0x80131505
+RESULT label=mockapp-hold-same trial=0 call=same-window-other-element started_ms=22122.6 returned_ms=40000.9 took_ms=17878.3 after_release_ms=0.4 result=ok
+RESULT label=mockapp-hold-same trial=0 call=same-window-rop started_ms=40001.8 returned_ms=40002.0 took_ms=0.2 after_release_ms=1.5 result=ok
+RESULT label=mockapp-hold-same trial=0 call=same-window-new-connection started_ms=40002.8 returned_ms=40003.5 took_ms=0.6 after_release_ms=3.0 result=ok
+RESULT label=mockapp-hold-same trial=0 call=after-timeout-other-element started_ms=40004.2 returned_ms=40004.3 took_ms=0.1 after_release_ms=3.8 result=ok
+RESULT label=mockapp-hold-same trial=0 call=after-release-other-element started_ms=41000.1 returned_ms=41000.4 took_ms=0.3 after_release_ms=999.9 result=ok
+mockapp: applied
+TRIAL label=mockapp-hold-same trial=1 mode=same block=mock-hold:40000 block_utc=06:19:05.212566 evidence="held FragmentRoot at 0.3 ms" release_ms=40000.3
+RESULT label=mockapp-hold-same trial=1 call=stuck started_ms=0.2 returned_ms=22127.8 took_ms=22127.6 after_release_ms=-17872.5 result=error 0x80131505
+RESULT label=mockapp-hold-same trial=1 call=same-window-other-element started_ms=22127.8 returned_ms=40000.6 took_ms=17872.8 after_release_ms=0.3 result=ok
+RESULT label=mockapp-hold-same trial=1 call=same-window-rop started_ms=40000.8 returned_ms=40001.2 took_ms=0.3 after_release_ms=0.8 result=ok
+RESULT label=mockapp-hold-same trial=1 call=same-window-new-connection started_ms=40002.0 returned_ms=40002.7 took_ms=0.7 after_release_ms=2.4 result=ok
+RESULT label=mockapp-hold-same trial=1 call=after-timeout-other-element started_ms=40002.9 returned_ms=40003.0 took_ms=0.2 after_release_ms=2.7 result=ok
+RESULT label=mockapp-hold-same trial=1 call=after-release-other-element started_ms=41004.5 returned_ms=41004.9 took_ms=0.4 after_release_ms=1004.6 result=ok
+mockapp: applied
+ABANDON label=mockapp-hold-new mode=new block=mock-hold:40000 stuck=Name@38668080 elem 1
+CALL same-window-other-element at_ms=1000 hwnd=38668080 pid=8096 ui_tid=8636 op=Name elem=3
+CALL same-window-rop at_ms=3000 hwnd=38668080 pid=8096 ui_tid=8636 op=Rop elem=3
+CALL same-window-new-connection at_ms=5000 hwnd=38668080 pid=8096 ui_tid=8636 op=FromHandle elem=0
+CALL after-timeout-other-element at_ms=25000 hwnd=38668080 pid=8096 ui_tid=8636 op=Name elem=3
+CALL after-release-other-element at_ms=41000 hwnd=38668080 pid=8096 ui_tid=8636 op=Name elem=3
+puia.exe : rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80131505), instruction: None, 
+opcode: None, location: None, partial: Outcome })
+At C:\Users\Dickson\Desktop\projects\verbatim\experiments\parallel-uia-calls\run-abandon.ps1:38 char:9
++         & $puia abandon label=$arm-$m mode=$m $block $stuck @calls @e ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (rop: Failed(Fai...ial: Outcome }):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+TRIAL label=mockapp-hold-new trial=0 mode=new block=mock-hold:40000 block_utc=06:19:49.630197 evidence="held FragmentRoot at 0.3 ms" release_ms=40000.5
+RESULT label=mockapp-hold-new trial=0 call=same-window-new-connection started_ms=5000.6 returned_ms=7195.9 took_ms=2195.4 after_release_ms=-32804.6 result=error 0x80131505
+RESULT label=mockapp-hold-new trial=0 call=stuck started_ms=0.3 returned_ms=22135.0 took_ms=22134.7 after_release_ms=-17865.4 result=error 0x80131505
+RESULT label=mockapp-hold-new trial=0 call=same-window-other-element started_ms=1000.3 returned_ms=23130.2 took_ms=22129.9 after_release_ms=-16870.2 result=error 0x80131505
+RESULT label=mockapp-hold-new trial=0 call=same-window-rop started_ms=3000.3 returned_ms=25122.5 took_ms=22122.2 after_release_ms=-14878.0 result=error 0x80004005
+RESULT label=mockapp-hold-new trial=0 call=after-timeout-other-element started_ms=25000.7 returned_ms=40001.9 took_ms=15001.2 after_release_ms=1.4 result=ok
+RESULT label=mockapp-hold-new trial=0 call=after-release-other-element started_ms=41000.5 returned_ms=41000.9 took_ms=0.4 after_release_ms=1000.4 result=ok
+mockapp: applied
+rop: Failed(Failure { status: ExecutionFailure, extended_error: HRESULT(0x80131505), instruction: None, opcode: None, 
+location: None, partial: Outcome })
+TRIAL label=mockapp-hold-new trial=1 mode=new block=mock-hold:40000 block_utc=06:20:33.982266 evidence="held FragmentRoot at 0.3 ms" release_ms=40002.1
+RESULT label=mockapp-hold-new trial=1 call=same-window-new-connection started_ms=5000.5 returned_ms=7204.0 took_ms=2203.5 after_release_ms=-32798.1 result=error 0x80131505
+RESULT label=mockapp-hold-new trial=1 call=stuck started_ms=0.2 returned_ms=22120.3 took_ms=22120.1 after_release_ms=-17881.8 result=error 0x80131505
+RESULT label=mockapp-hold-new trial=1 call=same-window-other-element started_ms=1000.4 returned_ms=23114.2 took_ms=22113.8 after_release_ms=-16887.9 result=error 0x80131505
+RESULT label=mockapp-hold-new trial=1 call=same-window-rop started_ms=3000.6 returned_ms=25122.5 took_ms=22121.9 after_release_ms=-14879.6 result=error 0x80004005
+RESULT label=mockapp-hold-new trial=1 call=after-timeout-other-element started_ms=25000.4 returned_ms=40001.7 took_ms=15001.3 after_release_ms=-0.4 result=ok
+RESULT label=mockapp-hold-new trial=1 call=after-release-other-element started_ms=41000.8 returned_ms=41001.1 took_ms=0.3 after_release_ms=999.0 result=ok
+mockapp: applied
+ready
+window 0 hwnd=8127922 tid=13180
+window 2 hwnd=5244790 tid=3752
+window 1 hwnd=1376702 tid=13180
+ABANDON label=sta-pending-connection-only-same mode=same block=busy:8127922:12000 stuck=FromHandle@8127922 elem 0
+CALL other-ui-thread at_ms=500 hwnd=5244790 pid=1104 ui_tid=3752 op=Name elem=0
+CALL other-ui-thread-rop at_ms=1000 hwnd=5244790 pid=1104 ui_tid=3752 op=Rop elem=0
+CALL other-ui-thread-new-connection at_ms=1500 hwnd=5244790 pid=1104 ui_tid=3752 op=FromHandle elem=0
+CALL after-connection-timeout-other-ui-thread at_ms=3000 hwnd=5244790 pid=1104 ui_tid=3752 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=13000 hwnd=5244790 pid=1104 ui_tid=3752 op=Name elem=0
+TRIAL label=sta-pending-connection-only-same trial=0 mode=same block=busy:8127922:12000 block_utc=06:21:43.751559 evidence="none" release_ms=12000.0
+RESULT label=sta-pending-connection-only-same trial=0 call=stuck started_ms=0.2 returned_ms=2003.5 took_ms=2003.4 after_release_ms=-9996.5 result=error 0x80131505
+RESULT label=sta-pending-connection-only-same trial=0 call=other-ui-thread started_ms=2003.6 returned_ms=2003.7 took_ms=0.2 after_release_ms=-9996.3 result=ok
+RESULT label=sta-pending-connection-only-same trial=0 call=other-ui-thread-rop started_ms=2003.8 returned_ms=2004.3 took_ms=0.5 after_release_ms=-9995.7 result=ok
+RESULT label=sta-pending-connection-only-same trial=0 call=other-ui-thread-new-connection started_ms=2004.4 returned_ms=2005.1 took_ms=0.7 after_release_ms=-9994.9 result=ok
+RESULT label=sta-pending-connection-only-same trial=0 call=after-connection-timeout-other-ui-thread started_ms=3000.2 returned_ms=3000.6 took_ms=0.3 after_release_ms=-8999.4 result=ok
+RESULT label=sta-pending-connection-only-same trial=0 call=after-release-other-ui-thread started_ms=13000.3 returned_ms=13000.6 took_ms=0.3 after_release_ms=1000.6 result=ok
+TRIAL label=sta-pending-connection-only-same trial=1 mode=same block=busy:8127922:12000 block_utc=06:21:59.758512 evidence="none" release_ms=12000.0
+RESULT label=sta-pending-connection-only-same trial=1 call=stuck started_ms=0.1 returned_ms=2013.1 took_ms=2013.0 after_release_ms=-9986.9 result=error 0x80131505
+RESULT label=sta-pending-connection-only-same trial=1 call=other-ui-thread started_ms=2013.1 returned_ms=2013.3 took_ms=0.2 after_release_ms=-9986.7 result=ok
+RESULT label=sta-pending-connection-only-same trial=1 call=other-ui-thread-rop started_ms=2013.4 returned_ms=2013.9 took_ms=0.5 after_release_ms=-9986.1 result=ok
+RESULT label=sta-pending-connection-only-same trial=1 call=other-ui-thread-new-connection started_ms=2014.0 returned_ms=2014.5 took_ms=0.6 after_release_ms=-9985.5 result=ok
+RESULT label=sta-pending-connection-only-same trial=1 call=after-connection-timeout-other-ui-thread started_ms=3000.1 returned_ms=3000.3 took_ms=0.3 after_release_ms=-8999.7 result=ok
+RESULT label=sta-pending-connection-only-same trial=1 call=after-release-other-ui-thread started_ms=13000.3 returned_ms=13000.6 took_ms=0.3 after_release_ms=1000.6 result=ok
+ABANDON label=sta-pending-connection-only-new mode=new block=busy:8127922:12000 stuck=FromHandle@8127922 elem 0
+CALL other-ui-thread at_ms=500 hwnd=5244790 pid=1104 ui_tid=3752 op=Name elem=0
+CALL other-ui-thread-rop at_ms=1000 hwnd=5244790 pid=1104 ui_tid=3752 op=Rop elem=0
+CALL other-ui-thread-new-connection at_ms=1500 hwnd=5244790 pid=1104 ui_tid=3752 op=FromHandle elem=0
+CALL after-connection-timeout-other-ui-thread at_ms=3000 hwnd=5244790 pid=1104 ui_tid=3752 op=Name elem=0
+CALL after-release-other-ui-thread at_ms=13000 hwnd=5244790 pid=1104 ui_tid=3752 op=Name elem=0
+TRIAL label=sta-pending-connection-only-new trial=0 mode=new block=busy:8127922:12000 block_utc=06:22:15.803170 evidence="none" release_ms=12000.0
+RESULT label=sta-pending-connection-only-new trial=0 call=stuck started_ms=0.1 returned_ms=2010.3 took_ms=2010.1 after_release_ms=-9989.7 result=error 0x80131505
+RESULT label=sta-pending-connection-only-new trial=0 call=other-ui-thread started_ms=500.7 returned_ms=2010.9 took_ms=1510.2 after_release_ms=-9989.1 result=ok
+RESULT label=sta-pending-connection-only-new trial=0 call=other-ui-thread-rop started_ms=1000.5 returned_ms=2011.2 took_ms=1010.7 after_release_ms=-9988.8 result=ok
+RESULT label=sta-pending-connection-only-new trial=0 call=other-ui-thread-new-connection started_ms=1500.4 returned_ms=12001.3 took_ms=10500.9 after_release_ms=1.3 result=ok
+RESULT label=sta-pending-connection-only-new trial=0 call=after-connection-timeout-other-ui-thread started_ms=3000.6 returned_ms=12001.4 took_ms=9000.8 after_release_ms=1.4 result=ok
+RESULT label=sta-pending-connection-only-new trial=0 call=after-release-other-ui-thread started_ms=13000.3 returned_ms=13000.6 took_ms=0.3 after_release_ms=1000.6 result=ok
+TRIAL label=sta-pending-connection-only-new trial=1 mode=new block=busy:8127922:12000 block_utc=06:22:31.811380 evidence="none" release_ms=12000.0
+RESULT label=sta-pending-connection-only-new trial=1 call=stuck started_ms=0.1 returned_ms=2010.5 took_ms=2010.4 after_release_ms=-9989.5 result=error 0x80131505
+RESULT label=sta-pending-connection-only-new trial=1 call=other-ui-thread started_ms=500.7 returned_ms=2010.8 took_ms=1510.1 after_release_ms=-9989.2 result=ok
+RESULT label=sta-pending-connection-only-new trial=1 call=other-ui-thread-rop started_ms=1000.6 returned_ms=2011.0 took_ms=1010.4 after_release_ms=-9989.0 result=ok
+RESULT label=sta-pending-connection-only-new trial=1 call=after-connection-timeout-other-ui-thread started_ms=3000.4 returned_ms=12001.0 took_ms=9000.6 after_release_ms=1.0 result=ok
+RESULT label=sta-pending-connection-only-new trial=1 call=other-ui-thread-new-connection started_ms=1500.3 returned_ms=12001.0 took_ms=10500.8 after_release_ms=1.0 result=ok
+RESULT label=sta-pending-connection-only-new trial=1 call=after-release-other-ui-thread started_ms=13001.4 returned_ms=13001.7 took_ms=0.3 after_release_ms=1001.7 result=ok

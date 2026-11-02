@@ -1,0 +1,128 @@
+# iothread-count.ps1 -Target serve: script output
+﻿ready
+window 4 hwnd=1572904 tid=2876
+window 0 hwnd=1508164 tid=13940
+window 5 hwnd=1442998 tid=2876
+window 1 hwnd=1574240 tid=13940
+window 6 hwnd=2032916 tid=2876
+window 2 hwnd=525518 tid=13940
+window 7 hwnd=525160 tid=2876
+window 3 hwnd=525590 tid=13940
+TARGET serve pid=7544 windows=1572904,1508164,1442998,1574240,2032916,525518,525160,525590
+THREADS before any client total=6 uiautomationcore=0
+THREADS after attach, before any client total=6 uiautomationcore=0
+THREADS after one client process connected total=11 uiautomationcore=1
+  thread tid=12300 start=uiautomationcore.dll+0x162f60 cycles=11369897
+
+RESULT label=q2io op=name n=8 k=64 median_ms=3.87 p90_ms=4.06 per_call_us=60.5 speedup=1.00 errors=0
+THREADS after 8 client threads, one window each total=12 uiautomationcore=1
+  thread tid=12300 start=uiautomationcore.dll+0x162f60 cycles=51264663
+probe: done ok 0.235
+probe: done ok 0.182
+probe: done ok 0.153
+THREADS after 3 more client processes total=12 uiautomationcore=1
+  thread tid=12300 start=uiautomationcore.dll+0x162f60 cycles=56962886
+DEBUGGER IOM_INIT=30 IO_THREAD_START=1 CREATE_THREAD=2
+
+
+
+# The debugger log's thread creations and I/O thread starts (cdb, invasive)
+CREATE_THREAD
+Debugger (not debuggee) time: Mon Nov  2 13:50:29.565 2026 (UTC + 8:00)
+.  5  Id: 1d78.b3c Suspend: 1 Teb: 000000e8`c0c83000 Unfrozen
+      Start: *** WARNING: Unable to verify checksum for <scratch>\puia-serve.exe
+puia_serve+0x9d610 (00007ff6`4455d610)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+000000e8`c14fcca8 00007ffb`cbe9260d     KERNELBASE!CreateRemoteThreadEx
+000000e8`c14fccb0 00007ffb`cc997b31     KERNEL32!CreateThreadStub+0x3d
+000000e8`c14fcd00 00007ffb`cc997a09     combase!CacheCreateThread+0x111
+000000e8`c14fcd60 00007ffb`cc944bae     combase!CROIDTable::EnsureWorkerThread+0x41
+000000e8`c14fcd90 00007ffb`cc9446e3     combase!CROIDTable::NotifyWorkWaiting+0x22
+000000e8`c14fcdc0 00007ffb`cc944f85     combase!CComApartment::InitRemoting+0x22b
+000000e8`c14fce30 00007ffb`cc944eae     combase!CComApartment::EnsureNAInited+0x55
+000000e8`c14fce60 00007ffb`cc944d25     combase!CComApartment::EnsureLinkToPrimaryOxid+0x12
+000000e8`c14fce90 00007ffb`cc94475a     combase!CComApartment::CallTheResolver+0x7d
+000000e8`c14fd060 00007ffb`cc8cf40e     combase!CComApartment::InitRemoting+0x2a2
+(Inline Function) --------`--------     combase!CComApartment::StartServer+0x9d
+000000e8`c14fd0d0 00007ffb`cc8da486     combase!InitChannelIfNecessary+0x11e
+000000e8`c14fd100 00007ffb`cc9cbb9e     combase!CDllHost::GetApartmentActivators+0x2a
+(Inline Function) --------`--------     combase!CDllHost::GetCOMApartmentActivator+0x14
+(Inline Function) --------`--------     combase!DoMTApartmentCreate+0x14
+000000e8`c14fd170 00007ffb`cca0a701     combase!GetApartmentActivator+0xbe
+000000e8`c14fd1a0 00007ffb`cc9c785e     combase!CProcessActivator::GetApartmentActivator+0x201
+000000e8`c14fd210 00007ffb`cc9c6bbd     combase!CProcessActivator::CCICallback+0x2e
+000000e8`c14fd260 00007ffb`cca095f1     combase!CProcessActivator::AttemptActivation+0x8d
+000000e8`c14fd2b0 00007ffb`cc9c92ce     combase!CProcessActivator::ActivateByContext+0x91
+000000e8`c14fd340 00007ffb`cc9b4bcd     combase!CProcessActivator::CreateInstance+0x7e
+000000e8`c14fd390 00007ffb`cc8e157e     combase!ActivationPropertiesIn::DelegateCreateInstance+0x9d
+000000e8`c14fd420 00007ffb`cc9b4bcd     combase!CClientContextActivator::CreateInstance+0x16e
+000000e8`c14fd4d0 00007ffb`cca7453f     combase!ActivationPropertiesIn::DelegateCreateInstance+0x9d
+000000e8`c14fd560 00007ffb`cca6ede8     combase!ICoCreateInstanceExWorker+0xd93
+000000e8`c14fe2c0 00007ffb`cca6e65f     combase!CComActivator::DoCreateInstance+0x1dc
+000000e8`c14fe410 00007ffb`cc983686     combase!CoCreateInstanceExCopy+0x167
+000000e8`c14fe4d0 00007ffb`a9881a76     combase!CoCreateInstance+0xd6
+000000e8`c14fe560 00007ffb`a98819e0     uiautomationcore!BlockingCoreDispatcher::CreateAndRegisterBlockingCore+0x82
+000000e8`c14fe5b0 00007ffb`a9824c8a     uiautomationcore!BlockingCoreDispatcher::FinalConstruct+0x54
+000000e8`c14fe5f0 00007ffb`a9824a20     uiautomationcore!CUIAutomation7::FinalConstruct+0x4e
+000000e8`c14fe620 00007ffb`a9824907     uiautomationcore!ATL::CComObject<CUIAutomation7>::CreateInstance+0xa4
+000000e8`c14fe650 00007ffb`a9743d6a     uiautomationcore!DoInit+0x3b
+000000e8`c14fe680 00007ffb`a97428da     uiautomationcore!CheckInit+0x3a
+000000e8`c14fe6c0 00007ff6`445229d7     uiautomationcore!UiaReturnRawElementProvider+0xda
+000000e8`c14ff800 00007ffb`cb3352e6     puia_serve+0x629d7
+000000e8`c14ff8e0 00007ffb`cb334b6c     USER32!UserCallWinProcCheckWow+0x356
+000000e8`c14ffa40 00007ffb`cb35f593     USER32!DispatchClientMessage+0x9c
+000000e8`c14ffaa0 00007ffb`cd4a5d94     USER32!_fnDWORD+0x33
+000000e8`c14ffb00 00007ffb`cb021364     ntdll!KiUserCallbackDispatcherContinue
+000000e8`c14ffb88 00007ffb`cb34aea2     win32u!NtUserGetMessage+0x14
+000000e8`c14ffb90 00007ff6`44535ec2     USER32!GetMessageW+0x22
+000000e8`c14ffbf0 00007ff6`4452107c     puia_serve+0x75ec2
+000000e8`c14ffd90 00007ff6`4455d7f3     puia_serve+0x6107c
+000000e8`c14ffe50 00007ffb`cbe8dda7     puia_serve+0x9d7f3
+000000e8`c14fff00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000e8`c14fff30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+(1d78.b3c): Unknown exception - code 8001010d (first chance)
+CREATE_THREAD
+Debugger (not debuggee) time: Mon Nov  2 13:50:29.739 2026 (UTC + 8:00)
+.  5  Id: 1d78.b3c Suspend: 1 Teb: 000000e8`c0c83000 Unfrozen
+      Start: puia_serve+0x9d610 (00007ff6`4455d610)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+000000e8`c14fdf08 00007ffb`cbe9260d     KERNELBASE!CreateRemoteThreadEx
+000000e8`c14fdf10 00007ffb`a980d594     KERNEL32!CreateThreadStub+0x3d
+000000e8`c14fdf60 00007ffb`a980fd6c     uiautomationcore!OverlappedIOManager::AddChannel_AnyThread+0xf4
+000000e8`c14fdfb0 00007ffb`a97b91dd     uiautomationcore!OverlappedIOManager::AddWorkQueueChannel+0x128
+000000e8`c14fdff0 00007ffb`a9742d53     uiautomationcore!ChannelBasedServerConnectionManager::SetupConnectionEvents+0x3c5
+000000e8`c14fe6c0 00007ff6`445229d7     uiautomationcore!UiaReturnRawElementProvider+0x553
+000000e8`c14ff800 00007ffb`cb3352e6     puia_serve+0x629d7
+000000e8`c14ff8e0 00007ffb`cb334b6c     USER32!UserCallWinProcCheckWow+0x356
+000000e8`c14ffa40 00007ffb`cb35f593     USER32!DispatchClientMessage+0x9c
+000000e8`c14ffaa0 00007ffb`cd4a5d94     USER32!_fnDWORD+0x33
+000000e8`c14ffb00 00007ffb`cb021364     ntdll!KiUserCallbackDispatcherContinue
+000000e8`c14ffb88 00007ffb`cb34aea2     win32u!NtUserGetMessage+0x14
+000000e8`c14ffb90 00007ff6`44535ec2     USER32!GetMessageW+0x22
+000000e8`c14ffbf0 00007ff6`4452107c     puia_serve+0x75ec2
+000000e8`c14ffd90 00007ff6`4455d7f3     puia_serve+0x6107c
+000000e8`c14ffe50 00007ffb`cbe8dda7     puia_serve+0x9d7f3
+000000e8`c14fff00 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+000000e8`c14fff30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+IO_THREAD_START
+Debugger (not debuggee) time: Mon Nov  2 13:50:29.741 2026 (UTC + 8:00)
+. 10  Id: 1d78.300c Suspend: 1 Teb: 000000e8`c0c8f000 Unfrozen
+      Start: uiautomationcore!OverlappedIOManager::StaticIoThreadProc (00007ffb`a9892f60)
+      Priority: 0  Priority class: 32  Affinity: fff
+ModLoad: 00007ffb`b4e10000 00007ffb`b4eda000   C:\Windows\System32\OneCoreCommonProxyStub.dll
+
+# The first OverlappedIOManager::Init hit
+IOM_INIT
+Debugger (not debuggee) time: Mon Nov  2 13:50:29.737 2026 (UTC + 8:00)
+.  5  Id: 1d78.b3c Suspend: 1 Teb: 000000e8`c0c83000 Unfrozen
+      Start: puia_serve+0x9d610 (00007ff6`4455d610)
+      Priority: 0  Priority class: 32  Affinity: fff
+Child-SP          RetAddr               Call Site
+000000e8`c14fe6b8 00007ffb`a9742d2f     uiautomationcore!OverlappedIOManager::Init
+000000e8`c14fe6c0 00007ff6`445229d7     uiautomationcore!UiaReturnRawElementProvider+0x52f
+000000e8`c14ff800 00007ffb`cb3352e6     puia_serve+0x629d7
+000000e8`c14ff8e0 00007ffb`cb334b6c     USER32!UserCallWinProcCheckWow+0x356
+000000e8`c14ffa40 00007ffb`cb35f593     USER32!DispatchClientMessage+0x9c
+000000e8`c14ffaa0 00007ffb`cd4a5d94     USER32!_fnDWORD+0x33

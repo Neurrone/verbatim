@@ -1,0 +1,75 @@
+# N concurrent callers as N threads of one client process (form threadsN) against N client processes of one thread (procsN), run-xbench.ps1.
+# K calls split evenly over the callers, 15 timed runs (10 for the 5 ms arms) after one warm-up; time from the parent's first 'go' to the last 'done'.
+# speedup: the median at form 'one' (1 process, 1 thread) over the form's median. client_io_cycles_per_call: the cycles of every worker's own UIA I/O thread
+# (start uiautomationcore+0x162f60), summed over the runs, per call. Synthetic provider: one window; sleep5 is its name read sleeping 5 ms.
+# mockapp: debug build, tree.json, 16 held elements; slow5 is mockapp's 'slow 5', each of a name read's three provider calls 5 ms late.
+XBENCH label=serve-sta-name op=name form=one processes=1 threads_each=1 k=256 reps=15 median_ms=52.346 p90_ms=54.587 per_call_us=204.5 speedup=1.00 errors=0 client_io_cycles_per_call=37945
+XBENCH label=serve-sta-name op=name form=threads2 processes=1 threads_each=2 k=256 reps=15 median_ms=38.705 p90_ms=40.630 per_call_us=151.2 speedup=1.35 errors=0 client_io_cycles_per_call=31730
+XBENCH label=serve-sta-name op=name form=procs2 processes=2 threads_each=1 k=256 reps=15 median_ms=41.458 p90_ms=44.095 per_call_us=161.9 speedup=1.26 errors=0 client_io_cycles_per_call=35644
+XBENCH label=serve-sta-name op=name form=threads4 processes=1 threads_each=4 k=256 reps=15 median_ms=38.694 p90_ms=45.113 per_call_us=151.1 speedup=1.35 errors=0 client_io_cycles_per_call=32133
+XBENCH label=serve-sta-name op=name form=procs4 processes=4 threads_each=1 k=256 reps=15 median_ms=43.414 p90_ms=46.649 per_call_us=169.6 speedup=1.21 errors=0 client_io_cycles_per_call=36839
+XBENCH label=serve-sta-name op=name form=threads8 processes=1 threads_each=8 k=256 reps=15 median_ms=41.670 p90_ms=43.919 per_call_us=162.8 speedup=1.26 errors=0 client_io_cycles_per_call=32007
+XBENCH label=serve-sta-name op=name form=procs8 processes=8 threads_each=1 k=256 reps=15 median_ms=66.827 p90_ms=69.800 per_call_us=261.0 speedup=0.78 errors=0 client_io_cycles_per_call=48122
+XBENCH label=serve-sta-sleep5 op=name form=one processes=1 threads_each=1 k=32 reps=10 median_ms=196.685 p90_ms=200.062 per_call_us=6146.4 speedup=1.00 errors=0 client_io_cycles_per_call=61585
+XBENCH label=serve-sta-sleep5 op=name form=threads2 processes=1 threads_each=2 k=32 reps=10 median_ms=206.459 p90_ms=210.819 per_call_us=6451.8 speedup=0.95 errors=0 client_io_cycles_per_call=63369
+XBENCH label=serve-sta-sleep5 op=name form=procs2 processes=2 threads_each=1 k=32 reps=10 median_ms=197.024 p90_ms=202.371 per_call_us=6157.0 speedup=1.00 errors=0 client_io_cycles_per_call=65806
+XBENCH label=serve-sta-sleep5 op=name form=threads4 processes=1 threads_each=4 k=32 reps=10 median_ms=195.264 p90_ms=196.940 per_call_us=6102.0 speedup=1.01 errors=0 client_io_cycles_per_call=56696
+XBENCH label=serve-sta-sleep5 op=name form=procs4 processes=4 threads_each=1 k=32 reps=10 median_ms=214.612 p90_ms=234.373 per_call_us=6706.6 speedup=0.92 errors=0 client_io_cycles_per_call=88431
+XBENCH label=serve-sta-sleep5 op=name form=threads8 processes=1 threads_each=8 k=32 reps=10 median_ms=194.296 p90_ms=195.774 per_call_us=6071.7 speedup=1.01 errors=0 client_io_cycles_per_call=58706
+XBENCH label=serve-sta-sleep5 op=name form=procs8 processes=8 threads_each=1 k=32 reps=10 median_ms=215.665 p90_ms=237.968 per_call_us=6739.5 speedup=0.91 errors=0 client_io_cycles_per_call=114859
+XBENCH label=serve-nocom-name op=name form=one processes=1 threads_each=1 k=256 reps=15 median_ms=39.401 p90_ms=42.127 per_call_us=153.9 speedup=1.00 errors=0 client_io_cycles_per_call=31820
+XBENCH label=serve-nocom-name op=name form=threads2 processes=1 threads_each=2 k=256 reps=15 median_ms=34.589 p90_ms=37.758 per_call_us=135.1 speedup=1.14 errors=0 client_io_cycles_per_call=28366
+XBENCH label=serve-nocom-name op=name form=procs2 processes=2 threads_each=1 k=256 reps=15 median_ms=38.562 p90_ms=41.149 per_call_us=150.6 speedup=1.02 errors=0 client_io_cycles_per_call=33998
+XBENCH label=serve-nocom-name op=name form=threads4 processes=1 threads_each=4 k=256 reps=15 median_ms=31.472 p90_ms=33.350 per_call_us=122.9 speedup=1.25 errors=0 client_io_cycles_per_call=20093
+XBENCH label=serve-nocom-name op=name form=procs4 processes=4 threads_each=1 k=256 reps=15 median_ms=39.631 p90_ms=42.260 per_call_us=154.8 speedup=0.99 errors=0 client_io_cycles_per_call=36460
+XBENCH label=serve-nocom-name op=name form=threads8 processes=1 threads_each=8 k=256 reps=15 median_ms=30.848 p90_ms=33.374 per_call_us=120.5 speedup=1.28 errors=0 client_io_cycles_per_call=18972
+XBENCH label=serve-nocom-name op=name form=procs8 processes=8 threads_each=1 k=256 reps=15 median_ms=52.060 p90_ms=56.536 per_call_us=203.4 speedup=0.76 errors=0 client_io_cycles_per_call=47359
+XBENCH label=serve-nocom-sleep5 op=name form=one processes=1 threads_each=1 k=32 reps=10 median_ms=194.670 p90_ms=198.269 per_call_us=6083.4 speedup=1.00 errors=0 client_io_cycles_per_call=61853
+XBENCH label=serve-nocom-sleep5 op=name form=threads2 processes=1 threads_each=2 k=32 reps=10 median_ms=192.122 p90_ms=193.290 per_call_us=6003.8 speedup=1.01 errors=0 client_io_cycles_per_call=62614
+XBENCH label=serve-nocom-sleep5 op=name form=procs2 processes=2 threads_each=1 k=32 reps=10 median_ms=194.686 p90_ms=200.935 per_call_us=6083.9 speedup=1.00 errors=0 client_io_cycles_per_call=72223
+XBENCH label=serve-nocom-sleep5 op=name form=threads4 processes=1 threads_each=4 k=32 reps=10 median_ms=192.433 p90_ms=193.029 per_call_us=6013.5 speedup=1.01 errors=0 client_io_cycles_per_call=57663
+XBENCH label=serve-nocom-sleep5 op=name form=procs4 processes=4 threads_each=1 k=32 reps=10 median_ms=208.123 p90_ms=210.180 per_call_us=6503.8 speedup=0.94 errors=0 client_io_cycles_per_call=94907
+XBENCH label=serve-nocom-sleep5 op=name form=threads8 processes=1 threads_each=8 k=32 reps=10 median_ms=192.385 p90_ms=193.069 per_call_us=6012.0 speedup=1.01 errors=0 client_io_cycles_per_call=65438
+XBENCH label=serve-nocom-sleep5 op=name form=procs8 processes=8 threads_each=1 k=32 reps=10 median_ms=202.009 p90_ms=212.229 per_call_us=6312.8 speedup=0.96 errors=0 client_io_cycles_per_call=110972
+XBENCH label=mockapp-name op=name form=one processes=1 threads_each=1 k=256 reps=15 median_ms=63.288 p90_ms=68.573 per_call_us=247.2 speedup=1.00 errors=0 client_io_cycles_per_call=36758
+XBENCH label=mockapp-name op=name form=threads2 processes=1 threads_each=2 k=256 reps=15 median_ms=43.021 p90_ms=46.695 per_call_us=168.1 speedup=1.47 errors=0 client_io_cycles_per_call=36812
+XBENCH label=mockapp-name op=name form=procs2 processes=2 threads_each=1 k=256 reps=15 median_ms=45.290 p90_ms=49.343 per_call_us=176.9 speedup=1.40 errors=0 client_io_cycles_per_call=39347
+XBENCH label=mockapp-name op=name form=threads4 processes=1 threads_each=4 k=256 reps=15 median_ms=42.167 p90_ms=45.785 per_call_us=164.7 speedup=1.50 errors=0 client_io_cycles_per_call=34272
+XBENCH label=mockapp-name op=name form=procs4 processes=4 threads_each=1 k=256 reps=15 median_ms=48.702 p90_ms=52.720 per_call_us=190.2 speedup=1.30 errors=0 client_io_cycles_per_call=44654
+XBENCH label=mockapp-name op=name form=threads8 processes=1 threads_each=8 k=256 reps=15 median_ms=43.347 p90_ms=46.613 per_call_us=169.3 speedup=1.46 errors=0 client_io_cycles_per_call=35303
+XBENCH label=mockapp-name op=name form=procs8 processes=8 threads_each=1 k=256 reps=15 median_ms=60.762 p90_ms=63.317 per_call_us=237.4 speedup=1.04 errors=0 client_io_cycles_per_call=55069
+XBENCH label=mockapp-slow5 op=name form=one processes=1 threads_each=1 k=32 reps=10 median_ms=524.704 p90_ms=526.501 per_call_us=16397.0 speedup=1.00 errors=0 client_io_cycles_per_call=72077
+XBENCH label=mockapp-slow5 op=name form=threads2 processes=1 threads_each=2 k=32 reps=10 median_ms=521.134 p90_ms=523.037 per_call_us=16285.4 speedup=1.01 errors=0 client_io_cycles_per_call=68195
+XBENCH label=mockapp-slow5 op=name form=procs2 processes=2 threads_each=1 k=32 reps=10 median_ms=522.920 p90_ms=524.904 per_call_us=16341.2 speedup=1.00 errors=0 client_io_cycles_per_call=91372
+XBENCH label=mockapp-slow5 op=name form=threads4 processes=1 threads_each=4 k=32 reps=10 median_ms=520.865 p90_ms=522.942 per_call_us=16277.0 speedup=1.01 errors=0 client_io_cycles_per_call=74996
+XBENCH label=mockapp-slow5 op=name form=procs4 processes=4 threads_each=1 k=32 reps=10 median_ms=527.275 p90_ms=535.041 per_call_us=16477.3 speedup=1.00 errors=0 client_io_cycles_per_call=107236
+XBENCH label=mockapp-slow5 op=name form=threads8 processes=1 threads_each=8 k=32 reps=10 median_ms=523.162 p90_ms=525.889 per_call_us=16348.8 speedup=1.00 errors=0 client_io_cycles_per_call=71490
+XBENCH label=mockapp-slow5 op=name form=procs8 processes=8 threads_each=1 k=32 reps=10 median_ms=537.198 p90_ms=543.344 per_call_us=16787.4 speedup=0.98 errors=0 client_io_cycles_per_call=103852
+
+# Client stacks under load (client-stacks.ps1): a worker with 8 threads making name reads into the synthetic provider (sta), 5 non-invasive
+# snapshots 1 s apart. For each calling thread, its top frame and innermost uiautomationcore frame; then the client's I/O thread.
+snapshots: 5
+calling threads: 39 x top ntdll!NtWaitForAlertByThreadId | uiautomationcore!ChannelBasedClientConnection::WaitForResponse
+calling threads: 1 x top ucrtbase!__crt_stdio_output::output_processor<wchar_t,__crt_ | uiautomationcore!vsnwprintf
+client I/O thread: 5 x top ntdll!NtWaitForMultipleObjects | uiautomationcore!OverlappedIOManager::IoThreadProc
+## one calling thread's whole stack, snapshot 1
+   4  Id: 21b8.860 Suspend: 1 Teb: 000000ed`66466000 Unfrozen
+Call Site
+ntdll!NtWaitForAlertByThreadId+0x14
+ntdll!RtlWaitOnAddress+0x213
+KERNELBASE!WaitOnAddress+0x38
+uiautomationcore!ChannelBasedClientConnection::WaitForResponse+0xae
+uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn+0x276
+uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+uiautomationcore!DoCallWithReturn+0x27d
+uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d
+uiautomationcore!LocalUiaNodeProxy::CrossProcess_GetPropertyValues+0x1b
+uiautomationcore!InProcClientAPIStub::UiaNode_GetPropertyValues+0x21b
+uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+uiautomationcore!CAutomationElement::InternalGetPropertyValueEx+0x21d
+uiautomationcore!CAutomationElement::GetCurrentPropertyValue+0x121
+uiautomationcore!CAutomationElement::GetPropertyBSTR+0x6d
+uiautomationcore!CAutomationElement::get_CurrentName+0x82
+puia!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName+0x22

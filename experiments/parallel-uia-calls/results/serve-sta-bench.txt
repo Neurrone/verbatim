@@ -1,0 +1,207 @@
+TARGET label=serve-sta-none hwnd=196748 pid=9192 ui_tid=4608 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-sta-none op=name n=1 rep=0 wall_ms=4.023 errors=0
+RAW label=serve-sta-none op=name n=1 rep=1 wall_ms=3.249 errors=0
+RAW label=serve-sta-none op=name n=1 rep=2 wall_ms=2.668 errors=0
+RAW label=serve-sta-none op=name n=1 rep=3 wall_ms=2.537 errors=0
+RAW label=serve-sta-none op=name n=1 rep=4 wall_ms=2.746 errors=0
+RAW label=serve-sta-none op=name n=1 rep=5 wall_ms=2.658 errors=0
+RAW label=serve-sta-none op=name n=1 rep=6 wall_ms=2.558 errors=0
+RAW label=serve-sta-none op=name n=1 rep=7 wall_ms=2.444 errors=0
+RAW label=serve-sta-none op=name n=1 rep=8 wall_ms=2.434 errors=0
+RAW label=serve-sta-none op=name n=1 rep=9 wall_ms=2.699 errors=0
+RAW label=serve-sta-none op=name n=1 rep=10 wall_ms=2.526 errors=0
+RAW label=serve-sta-none op=name n=1 rep=11 wall_ms=2.445 errors=0
+RAW label=serve-sta-none op=name n=1 rep=12 wall_ms=3.166 errors=0
+RAW label=serve-sta-none op=name n=1 rep=13 wall_ms=4.234 errors=0
+RAW label=serve-sta-none op=name n=1 rep=14 wall_ms=5.150 errors=0
+RESULT label=serve-sta-none op=name n=1 k=32 median_ms=2.67 p90_ms=4.23 per_call_us=83.4 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-none op=name n=2 rep=0 wall_ms=2.165 errors=0
+RAW label=serve-sta-none op=name n=2 rep=1 wall_ms=1.806 errors=0
+RAW label=serve-sta-none op=name n=2 rep=2 wall_ms=1.527 errors=0
+RAW label=serve-sta-none op=name n=2 rep=3 wall_ms=1.496 errors=0
+RAW label=serve-sta-none op=name n=2 rep=4 wall_ms=1.429 errors=0
+RAW label=serve-sta-none op=name n=2 rep=5 wall_ms=1.461 errors=0
+RAW label=serve-sta-none op=name n=2 rep=6 wall_ms=1.467 errors=0
+RAW label=serve-sta-none op=name n=2 rep=7 wall_ms=1.566 errors=0
+RAW label=serve-sta-none op=name n=2 rep=8 wall_ms=1.535 errors=0
+RAW label=serve-sta-none op=name n=2 rep=9 wall_ms=1.512 errors=0
+RAW label=serve-sta-none op=name n=2 rep=10 wall_ms=1.611 errors=0
+RAW label=serve-sta-none op=name n=2 rep=11 wall_ms=1.790 errors=0
+RAW label=serve-sta-none op=name n=2 rep=12 wall_ms=1.500 errors=0
+RAW label=serve-sta-none op=name n=2 rep=13 wall_ms=1.533 errors=0
+RAW label=serve-sta-none op=name n=2 rep=14 wall_ms=1.546 errors=0
+RESULT label=serve-sta-none op=name n=2 k=32 median_ms=1.53 p90_ms=1.81 per_call_us=47.9 speedup=1.74 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-none op=name n=4 rep=0 wall_ms=1.855 errors=0
+RAW label=serve-sta-none op=name n=4 rep=1 wall_ms=1.476 errors=0
+RAW label=serve-sta-none op=name n=4 rep=2 wall_ms=1.544 errors=0
+RAW label=serve-sta-none op=name n=4 rep=3 wall_ms=1.482 errors=0
+RAW label=serve-sta-none op=name n=4 rep=4 wall_ms=1.579 errors=0
+RAW label=serve-sta-none op=name n=4 rep=5 wall_ms=1.655 errors=0
+RAW label=serve-sta-none op=name n=4 rep=6 wall_ms=1.605 errors=0
+RAW label=serve-sta-none op=name n=4 rep=7 wall_ms=1.872 errors=0
+RAW label=serve-sta-none op=name n=4 rep=8 wall_ms=1.592 errors=0
+RAW label=serve-sta-none op=name n=4 rep=9 wall_ms=1.546 errors=0
+RAW label=serve-sta-none op=name n=4 rep=10 wall_ms=1.836 errors=0
+RAW label=serve-sta-none op=name n=4 rep=11 wall_ms=1.909 errors=0
+RAW label=serve-sta-none op=name n=4 rep=12 wall_ms=1.889 errors=0
+RAW label=serve-sta-none op=name n=4 rep=13 wall_ms=1.690 errors=0
+RAW label=serve-sta-none op=name n=4 rep=14 wall_ms=1.788 errors=0
+RESULT label=serve-sta-none op=name n=4 k=32 median_ms=1.66 p90_ms=1.89 per_call_us=51.7 speedup=1.61 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-none op=name n=8 rep=0 wall_ms=1.543 errors=0
+RAW label=serve-sta-none op=name n=8 rep=1 wall_ms=1.901 errors=0
+RAW label=serve-sta-none op=name n=8 rep=2 wall_ms=2.358 errors=0
+RAW label=serve-sta-none op=name n=8 rep=3 wall_ms=1.947 errors=0
+RAW label=serve-sta-none op=name n=8 rep=4 wall_ms=2.271 errors=0
+RAW label=serve-sta-none op=name n=8 rep=5 wall_ms=2.162 errors=0
+RAW label=serve-sta-none op=name n=8 rep=6 wall_ms=2.207 errors=0
+RAW label=serve-sta-none op=name n=8 rep=7 wall_ms=2.416 errors=0
+RAW label=serve-sta-none op=name n=8 rep=8 wall_ms=1.801 errors=0
+RAW label=serve-sta-none op=name n=8 rep=9 wall_ms=1.764 errors=0
+RAW label=serve-sta-none op=name n=8 rep=10 wall_ms=1.749 errors=0
+RAW label=serve-sta-none op=name n=8 rep=11 wall_ms=1.653 errors=0
+RAW label=serve-sta-none op=name n=8 rep=12 wall_ms=1.635 errors=0
+RAW label=serve-sta-none op=name n=8 rep=13 wall_ms=2.269 errors=0
+RAW label=serve-sta-none op=name n=8 rep=14 wall_ms=2.200 errors=0
+RESULT label=serve-sta-none op=name n=8 k=32 median_ms=1.95 p90_ms=2.36 per_call_us=60.9 speedup=1.37 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+TARGET label=serve-sta-sleep5 hwnd=196748 pid=9192 ui_tid=4608 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-sta-sleep5 op=name n=1 rep=0 wall_ms=173.672 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=1 wall_ms=171.925 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=2 wall_ms=167.418 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=3 wall_ms=167.994 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=4 wall_ms=170.221 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=5 wall_ms=168.172 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=6 wall_ms=175.887 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=7 wall_ms=171.014 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=8 wall_ms=169.399 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=9 wall_ms=168.295 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=10 wall_ms=169.159 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=11 wall_ms=170.367 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=12 wall_ms=168.806 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=13 wall_ms=172.951 errors=0
+RAW label=serve-sta-sleep5 op=name n=1 rep=14 wall_ms=168.674 errors=0
+RESULT label=serve-sta-sleep5 op=name n=1 k=32 median_ms=169.40 p90_ms=173.67 per_call_us=5293.7 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=0 wall_ms=170.408 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=1 wall_ms=169.029 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=2 wall_ms=166.984 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=3 wall_ms=166.812 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=4 wall_ms=166.002 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=5 wall_ms=166.098 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=6 wall_ms=171.315 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=7 wall_ms=167.588 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=8 wall_ms=168.259 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=9 wall_ms=169.514 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=10 wall_ms=166.840 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=11 wall_ms=166.656 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=12 wall_ms=169.148 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=13 wall_ms=169.047 errors=0
+RAW label=serve-sta-sleep5 op=name n=2 rep=14 wall_ms=170.481 errors=0
+RESULT label=serve-sta-sleep5 op=name n=2 k=32 median_ms=168.26 p90_ms=170.48 per_call_us=5258.1 speedup=1.01 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=0 wall_ms=168.314 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=1 wall_ms=167.292 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=2 wall_ms=170.437 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=3 wall_ms=168.950 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=4 wall_ms=166.952 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=5 wall_ms=167.101 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=6 wall_ms=167.257 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=7 wall_ms=166.316 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=8 wall_ms=167.040 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=9 wall_ms=167.270 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=10 wall_ms=167.931 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=11 wall_ms=168.283 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=12 wall_ms=167.149 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=13 wall_ms=168.353 errors=0
+RAW label=serve-sta-sleep5 op=name n=4 rep=14 wall_ms=167.946 errors=0
+RESULT label=serve-sta-sleep5 op=name n=4 k=32 median_ms=167.29 p90_ms=168.95 per_call_us=5227.9 speedup=1.01 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=0 wall_ms=167.000 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=1 wall_ms=169.487 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=2 wall_ms=168.474 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=3 wall_ms=168.895 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=4 wall_ms=169.411 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=5 wall_ms=168.916 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=6 wall_ms=167.130 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=7 wall_ms=167.863 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=8 wall_ms=169.380 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=9 wall_ms=165.988 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=10 wall_ms=170.313 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=11 wall_ms=166.211 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=12 wall_ms=169.078 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=13 wall_ms=167.731 errors=0
+RAW label=serve-sta-sleep5 op=name n=8 rep=14 wall_ms=166.444 errors=0
+RESULT label=serve-sta-sleep5 op=name n=8 k=32 median_ms=168.47 p90_ms=169.49 per_call_us=5264.8 speedup=1.01 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+TARGET label=serve-sta-pump5 hwnd=196748 pid=9192 ui_tid=4608 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-sta-pump5 op=name n=1 rep=0 wall_ms=506.267 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=1 wall_ms=506.860 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=2 wall_ms=505.838 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=3 wall_ms=506.824 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=4 wall_ms=505.870 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=5 wall_ms=504.112 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=6 wall_ms=505.753 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=7 wall_ms=505.209 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=8 wall_ms=507.135 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=9 wall_ms=506.438 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=10 wall_ms=507.049 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=11 wall_ms=507.228 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=12 wall_ms=505.599 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=13 wall_ms=506.218 errors=0
+RAW label=serve-sta-pump5 op=name n=1 rep=14 wall_ms=506.613 errors=0
+RESULT label=serve-sta-pump5 op=name n=1 k=32 median_ms=506.27 p90_ms=507.13 per_call_us=15820.8 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-pump5 op=name n=2 rep=0 wall_ms=506.974 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=1 wall_ms=505.892 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=2 wall_ms=505.471 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=3 wall_ms=506.127 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=4 wall_ms=506.619 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=5 wall_ms=506.066 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=6 wall_ms=505.863 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=7 wall_ms=505.558 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=8 wall_ms=505.541 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=9 wall_ms=506.284 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=10 wall_ms=504.436 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=11 wall_ms=506.651 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=12 wall_ms=506.191 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=13 wall_ms=505.488 errors=0
+RAW label=serve-sta-pump5 op=name n=2 rep=14 wall_ms=505.687 errors=0
+RESULT label=serve-sta-pump5 op=name n=2 k=32 median_ms=505.89 p90_ms=506.65 per_call_us=15809.1 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-pump5 op=name n=4 rep=0 wall_ms=506.582 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=1 wall_ms=508.043 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=2 wall_ms=506.219 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=3 wall_ms=505.848 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=4 wall_ms=505.533 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=5 wall_ms=505.721 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=6 wall_ms=507.449 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=7 wall_ms=505.930 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=8 wall_ms=505.634 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=9 wall_ms=505.303 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=10 wall_ms=506.549 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=11 wall_ms=506.515 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=12 wall_ms=505.917 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=13 wall_ms=505.002 errors=0
+RAW label=serve-sta-pump5 op=name n=4 rep=14 wall_ms=507.444 errors=0
+RESULT label=serve-sta-pump5 op=name n=4 k=32 median_ms=505.93 p90_ms=507.45 per_call_us=15810.3 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-sta-pump5 op=name n=8 rep=0 wall_ms=522.937 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=1 wall_ms=506.723 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=2 wall_ms=505.817 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=3 wall_ms=522.501 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=4 wall_ms=509.703 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=5 wall_ms=502.143 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=6 wall_ms=505.067 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=7 wall_ms=508.134 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=8 wall_ms=506.024 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=9 wall_ms=505.709 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=10 wall_ms=506.155 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=11 wall_ms=505.241 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=12 wall_ms=522.519 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=13 wall_ms=504.878 errors=0
+RAW label=serve-sta-pump5 op=name n=8 rep=14 wall_ms=504.851 errors=0
+RESULT label=serve-sta-pump5 op=name n=8 k=32 median_ms=506.02 p90_ms=522.52 per_call_us=15813.2 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0

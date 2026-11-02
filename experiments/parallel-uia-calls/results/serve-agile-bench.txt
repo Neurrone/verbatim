@@ -1,0 +1,207 @@
+TARGET label=serve-agile-none hwnd=262284 pid=2376 ui_tid=14028 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-agile-none op=name n=1 rep=0 wall_ms=3.077 errors=0
+RAW label=serve-agile-none op=name n=1 rep=1 wall_ms=3.195 errors=0
+RAW label=serve-agile-none op=name n=1 rep=2 wall_ms=3.409 errors=0
+RAW label=serve-agile-none op=name n=1 rep=3 wall_ms=2.671 errors=0
+RAW label=serve-agile-none op=name n=1 rep=4 wall_ms=3.215 errors=0
+RAW label=serve-agile-none op=name n=1 rep=5 wall_ms=2.851 errors=0
+RAW label=serve-agile-none op=name n=1 rep=6 wall_ms=3.321 errors=0
+RAW label=serve-agile-none op=name n=1 rep=7 wall_ms=3.400 errors=0
+RAW label=serve-agile-none op=name n=1 rep=8 wall_ms=3.061 errors=0
+RAW label=serve-agile-none op=name n=1 rep=9 wall_ms=3.059 errors=0
+RAW label=serve-agile-none op=name n=1 rep=10 wall_ms=2.758 errors=0
+RAW label=serve-agile-none op=name n=1 rep=11 wall_ms=3.094 errors=0
+RAW label=serve-agile-none op=name n=1 rep=12 wall_ms=3.051 errors=0
+RAW label=serve-agile-none op=name n=1 rep=13 wall_ms=3.230 errors=0
+RAW label=serve-agile-none op=name n=1 rep=14 wall_ms=2.868 errors=0
+RESULT label=serve-agile-none op=name n=1 k=32 median_ms=3.08 p90_ms=3.40 per_call_us=96.2 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-none op=name n=2 rep=0 wall_ms=1.622 errors=0
+RAW label=serve-agile-none op=name n=2 rep=1 wall_ms=1.491 errors=0
+RAW label=serve-agile-none op=name n=2 rep=2 wall_ms=1.531 errors=0
+RAW label=serve-agile-none op=name n=2 rep=3 wall_ms=1.867 errors=0
+RAW label=serve-agile-none op=name n=2 rep=4 wall_ms=1.792 errors=0
+RAW label=serve-agile-none op=name n=2 rep=5 wall_ms=1.880 errors=0
+RAW label=serve-agile-none op=name n=2 rep=6 wall_ms=1.853 errors=0
+RAW label=serve-agile-none op=name n=2 rep=7 wall_ms=1.823 errors=0
+RAW label=serve-agile-none op=name n=2 rep=8 wall_ms=1.927 errors=0
+RAW label=serve-agile-none op=name n=2 rep=9 wall_ms=2.297 errors=0
+RAW label=serve-agile-none op=name n=2 rep=10 wall_ms=1.602 errors=0
+RAW label=serve-agile-none op=name n=2 rep=11 wall_ms=2.135 errors=0
+RAW label=serve-agile-none op=name n=2 rep=12 wall_ms=2.260 errors=0
+RAW label=serve-agile-none op=name n=2 rep=13 wall_ms=2.104 errors=0
+RAW label=serve-agile-none op=name n=2 rep=14 wall_ms=1.652 errors=0
+RESULT label=serve-agile-none op=name n=2 k=32 median_ms=1.85 p90_ms=2.26 per_call_us=57.9 speedup=1.66 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-none op=name n=4 rep=0 wall_ms=1.728 errors=0
+RAW label=serve-agile-none op=name n=4 rep=1 wall_ms=2.383 errors=0
+RAW label=serve-agile-none op=name n=4 rep=2 wall_ms=1.563 errors=0
+RAW label=serve-agile-none op=name n=4 rep=3 wall_ms=1.963 errors=0
+RAW label=serve-agile-none op=name n=4 rep=4 wall_ms=1.845 errors=0
+RAW label=serve-agile-none op=name n=4 rep=5 wall_ms=1.805 errors=0
+RAW label=serve-agile-none op=name n=4 rep=6 wall_ms=2.214 errors=0
+RAW label=serve-agile-none op=name n=4 rep=7 wall_ms=1.797 errors=0
+RAW label=serve-agile-none op=name n=4 rep=8 wall_ms=1.695 errors=0
+RAW label=serve-agile-none op=name n=4 rep=9 wall_ms=1.613 errors=0
+RAW label=serve-agile-none op=name n=4 rep=10 wall_ms=1.554 errors=0
+RAW label=serve-agile-none op=name n=4 rep=11 wall_ms=1.451 errors=0
+RAW label=serve-agile-none op=name n=4 rep=12 wall_ms=1.492 errors=0
+RAW label=serve-agile-none op=name n=4 rep=13 wall_ms=1.629 errors=0
+RAW label=serve-agile-none op=name n=4 rep=14 wall_ms=1.684 errors=0
+RESULT label=serve-agile-none op=name n=4 k=32 median_ms=1.70 p90_ms=2.21 per_call_us=53.0 speedup=1.82 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-none op=name n=8 rep=0 wall_ms=1.551 errors=0
+RAW label=serve-agile-none op=name n=8 rep=1 wall_ms=1.486 errors=0
+RAW label=serve-agile-none op=name n=8 rep=2 wall_ms=1.679 errors=0
+RAW label=serve-agile-none op=name n=8 rep=3 wall_ms=1.577 errors=0
+RAW label=serve-agile-none op=name n=8 rep=4 wall_ms=1.603 errors=0
+RAW label=serve-agile-none op=name n=8 rep=5 wall_ms=1.603 errors=0
+RAW label=serve-agile-none op=name n=8 rep=6 wall_ms=1.827 errors=0
+RAW label=serve-agile-none op=name n=8 rep=7 wall_ms=1.504 errors=0
+RAW label=serve-agile-none op=name n=8 rep=8 wall_ms=1.555 errors=0
+RAW label=serve-agile-none op=name n=8 rep=9 wall_ms=1.550 errors=0
+RAW label=serve-agile-none op=name n=8 rep=10 wall_ms=1.480 errors=0
+RAW label=serve-agile-none op=name n=8 rep=11 wall_ms=1.548 errors=0
+RAW label=serve-agile-none op=name n=8 rep=12 wall_ms=1.502 errors=0
+RAW label=serve-agile-none op=name n=8 rep=13 wall_ms=1.638 errors=0
+RAW label=serve-agile-none op=name n=8 rep=14 wall_ms=1.561 errors=0
+RESULT label=serve-agile-none op=name n=8 k=32 median_ms=1.56 p90_ms=1.68 per_call_us=48.6 speedup=1.98 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+TARGET label=serve-agile-sleep5 hwnd=262284 pid=2376 ui_tid=14028 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-agile-sleep5 op=name n=1 rep=0 wall_ms=169.211 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=1 wall_ms=174.983 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=2 wall_ms=167.585 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=3 wall_ms=167.265 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=4 wall_ms=168.290 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=5 wall_ms=171.296 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=6 wall_ms=170.337 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=7 wall_ms=170.610 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=8 wall_ms=168.571 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=9 wall_ms=169.817 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=10 wall_ms=171.561 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=11 wall_ms=171.476 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=12 wall_ms=168.946 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=13 wall_ms=168.144 errors=0
+RAW label=serve-agile-sleep5 op=name n=1 rep=14 wall_ms=167.186 errors=0
+RESULT label=serve-agile-sleep5 op=name n=1 k=32 median_ms=169.21 p90_ms=171.56 per_call_us=5287.9 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=0 wall_ms=167.604 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=1 wall_ms=168.705 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=2 wall_ms=168.679 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=3 wall_ms=168.084 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=4 wall_ms=167.979 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=5 wall_ms=165.937 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=6 wall_ms=170.178 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=7 wall_ms=168.365 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=8 wall_ms=169.216 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=9 wall_ms=170.220 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=10 wall_ms=167.436 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=11 wall_ms=165.906 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=12 wall_ms=169.698 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=13 wall_ms=167.777 errors=0
+RAW label=serve-agile-sleep5 op=name n=2 rep=14 wall_ms=168.411 errors=0
+RESULT label=serve-agile-sleep5 op=name n=2 k=32 median_ms=168.37 p90_ms=170.18 per_call_us=5261.4 speedup=1.01 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=0 wall_ms=166.631 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=1 wall_ms=167.482 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=2 wall_ms=169.033 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=3 wall_ms=167.121 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=4 wall_ms=169.584 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=5 wall_ms=170.034 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=6 wall_ms=166.594 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=7 wall_ms=168.634 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=8 wall_ms=169.539 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=9 wall_ms=167.477 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=10 wall_ms=170.001 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=11 wall_ms=171.450 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=12 wall_ms=168.656 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=13 wall_ms=168.918 errors=0
+RAW label=serve-agile-sleep5 op=name n=4 rep=14 wall_ms=168.581 errors=0
+RESULT label=serve-agile-sleep5 op=name n=4 k=32 median_ms=168.66 p90_ms=170.03 per_call_us=5270.5 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=0 wall_ms=168.550 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=1 wall_ms=167.265 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=2 wall_ms=167.135 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=3 wall_ms=168.316 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=4 wall_ms=166.952 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=5 wall_ms=166.134 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=6 wall_ms=167.902 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=7 wall_ms=167.394 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=8 wall_ms=165.820 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=9 wall_ms=167.793 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=10 wall_ms=170.181 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=11 wall_ms=167.881 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=12 wall_ms=167.690 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=13 wall_ms=168.029 errors=0
+RAW label=serve-agile-sleep5 op=name n=8 rep=14 wall_ms=168.684 errors=0
+RESULT label=serve-agile-sleep5 op=name n=8 k=32 median_ms=167.79 p90_ms=168.68 per_call_us=5243.5 speedup=1.01 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+TARGET label=serve-agile-pump5 hwnd=262284 pid=2376 ui_tid=14028 class=PuiaServe title=puia-serve-0 client=per-thread
+CTX n=1 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=2 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=4 descendants_found=0 elems_held=1 text=false msaa=false
+CTX n=8 descendants_found=0 elems_held=1 text=false msaa=false
+RAW label=serve-agile-pump5 op=name n=1 rep=0 wall_ms=506.077 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=1 wall_ms=511.031 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=2 wall_ms=505.255 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=3 wall_ms=505.201 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=4 wall_ms=506.583 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=5 wall_ms=510.908 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=6 wall_ms=519.570 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=7 wall_ms=506.655 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=8 wall_ms=508.304 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=9 wall_ms=506.172 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=10 wall_ms=507.101 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=11 wall_ms=505.703 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=12 wall_ms=507.539 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=13 wall_ms=505.573 errors=0
+RAW label=serve-agile-pump5 op=name n=1 rep=14 wall_ms=506.511 errors=0
+RESULT label=serve-agile-pump5 op=name n=1 k=32 median_ms=506.58 p90_ms=511.03 per_call_us=15830.7 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-pump5 op=name n=2 rep=0 wall_ms=503.823 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=1 wall_ms=509.575 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=2 wall_ms=501.644 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=3 wall_ms=507.976 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=4 wall_ms=506.050 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=5 wall_ms=507.293 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=6 wall_ms=506.477 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=7 wall_ms=505.519 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=8 wall_ms=510.689 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=9 wall_ms=501.131 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=10 wall_ms=506.542 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=11 wall_ms=506.811 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=12 wall_ms=505.047 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=13 wall_ms=524.915 errors=0
+RAW label=serve-agile-pump5 op=name n=2 rep=14 wall_ms=505.022 errors=0
+RESULT label=serve-agile-pump5 op=name n=2 k=32 median_ms=506.48 p90_ms=510.69 per_call_us=15827.4 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-pump5 op=name n=4 rep=0 wall_ms=507.921 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=1 wall_ms=506.120 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=2 wall_ms=505.590 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=3 wall_ms=506.546 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=4 wall_ms=506.233 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=5 wall_ms=505.292 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=6 wall_ms=505.368 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=7 wall_ms=504.569 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=8 wall_ms=505.309 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=9 wall_ms=506.990 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=10 wall_ms=507.459 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=11 wall_ms=503.953 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=12 wall_ms=507.750 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=13 wall_ms=506.184 errors=0
+RAW label=serve-agile-pump5 op=name n=4 rep=14 wall_ms=506.172 errors=0
+RESULT label=serve-agile-pump5 op=name n=4 k=32 median_ms=506.17 p90_ms=507.75 per_call_us=15817.9 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0
+RAW label=serve-agile-pump5 op=name n=8 rep=0 wall_ms=506.262 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=1 wall_ms=521.797 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=2 wall_ms=505.140 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=3 wall_ms=506.135 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=4 wall_ms=504.969 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=5 wall_ms=506.779 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=6 wall_ms=507.707 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=7 wall_ms=507.532 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=8 wall_ms=505.678 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=9 wall_ms=507.517 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=10 wall_ms=506.453 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=11 wall_ms=507.152 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=12 wall_ms=507.479 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=13 wall_ms=506.350 errors=0
+RAW label=serve-agile-pump5 op=name n=8 rep=14 wall_ms=508.139 errors=0
+RESULT label=serve-agile-pump5 op=name n=8 k=32 median_ms=506.78 p90_ms=508.14 per_call_us=15836.9 speedup=1.00 errors=0 provider_max_concurrent=1 provider_calls=480 provider_off_ui_thread=0

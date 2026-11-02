@@ -1,0 +1,179 @@
+﻿window thread: top 2425680 tid=12704 visible=true class=CASCADIA_HOSTING_WINDOW_CLASS title=puia-wt
+SERVING op=text result=done error 0x80040201 121.197
+SRV_ONDATA
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+SRV_COMINVOKER
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+00000010`b83ff868 00007ffb`a97b7580     uiautomationcore!ComInvoker::CallTarget
+00000010`b83ff870 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x3e0
+00000010`b83ff9a0 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+00000010`b83ff9e0 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+00000010`b83ffa60 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+00000010`b83ffb90 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+00000010`b83ffbf0 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+00000010`b83ffc50 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+00000010`b83ffc80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000010`b83ffcb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SRV_ONDATA
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+SRV_COMINVOKER
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+00000010`b83ff868 00007ffb`a97b7580     uiautomationcore!ComInvoker::CallTarget
+00000010`b83ff870 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x3e0
+00000010`b83ff9a0 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+00000010`b83ff9e0 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+00000010`b83ffa60 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+00000010`b83ffb90 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+00000010`b83ffbf0 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+00000010`b83ffc50 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+00000010`b83ffc80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000010`b83ffcb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+XAML_RANGE_GETTEXT
+.  0  Id: ef4.31a0 Suspend: 1 Teb: 00000010`b7059000 Unfrozen
+00000010`b6fedf08 00007ffb`a97f40ab     Windows_UI_Xaml!CUIATextRangeProviderWrapper::GetText
+00000010`b6fedf10 00007ffb`a982873f     uiautomationcore!RemotePatternStub::TextRange_GetText+0x6b
+00000010`b6fedf60 00007ffb`b4e110bf     uiautomationcore!InvokePatternMethodOnCorrectContext_Callback+0x26f
+00000010`b6fedff0 00007ffb`cd2a5882     OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+00000010`b6fee030 00007ffb`cd21c000     RPCRT4!Ndr64StubWorker+0x862
+00000010`b6fee640 00007ffb`cc95813d     RPCRT4!NdrStubCall3+0xc0
+00000010`b6fee6b0 00007ffb`cd237ca6     combase!CStdStubBuffer_Invoke+0x7d
+00000010`b6fee6f0 00007ffb`cc958082     RPCRT4!CStdStubBuffer_Invoke+0x46
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d
+00000010`b6fee720 00007ffb`cc9575f6     combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x182
+00000010`b6fee780 00007ffb`cc956908     combase!DefaultStubInvoke+0x376
+(Inline Function) --------`--------     combase!SyncStubCall::Invoke+0x7
+(Inline Function) --------`--------     combase!SyncServerCall::StubInvoke+0x33
+00000010`b6fee940 00007ffb`cc9a11df     combase!StubInvoke+0x138
+00000010`b6feea10 00007ffb`cc9361f4     combase!ServerCall::ContextInvoke+0x28f
+(Inline Function) --------`--------     combase!DefaultInvokeInApartment+0x7c
+00000010`b6feeca0 00007ffb`cc8d4b35     combase!ReentrantSTAInvokeInApartment+0x194
+00000010`b6feed90 00007ffb`cc8d3602     combase!ComInvokeWithLockAndIPID+0xca5
+00000010`b6fef0a0 00007ffb`cca07987     combase!ThreadDispatch+0x392
+00000010`b6fef220 00007ffb`cb3352e6     combase!ThreadWndProc+0x177
+00000010`b6fef280 00007ffb`cb335dbd     user32!UserCallWinProcCheckWow+0x356
+00000010`b6fef3e0 00007ff7`ddd84d7d     user32!DispatchMessageWorker+0x1dd
+00000010`b6fef460 00007ff7`ddd8d1c2     WindowsTerminal!WindowEmperor::HandleCommandlineArgs+0xbdd
+00000010`b6fef710 00007ff7`ddd921a2     WindowsTerminal!wWinMain+0x1e2
+(Inline Function) --------`--------     WindowsTerminal!invoke_main+0x21
+00000010`b6fef820 00007ffb`cbe8dda7     WindowsTerminal!__scrt_common_main_seh+0x106
+00000010`b6fef860 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000010`b6fef890 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+XAML_MANAGED_GETTEXT
+.  0  Id: ef4.31a0 Suspend: 1 Teb: 00000010`b7059000 Unfrozen
+00000010`b6fedeb8 00007ffb`b73da08c     Windows_UI_Xaml!CManagedTextRangeProvider::GetText
+(Inline Function) --------`--------     Windows_UI_Xaml!CUIATextRangeProviderWrapper::GetTextImpl+0x61
+00000010`b6fedec0 00007ffb`a97f40ab     Windows_UI_Xaml!CUIATextRangeProviderWrapper::GetText+0xbc
+00000010`b6fedf10 00007ffb`a982873f     uiautomationcore!RemotePatternStub::TextRange_GetText+0x6b
+00000010`b6fedf60 00007ffb`b4e110bf     uiautomationcore!InvokePatternMethodOnCorrectContext_Callback+0x26f
+00000010`b6fedff0 00007ffb`cd2a5882     OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+00000010`b6fee030 00007ffb`cd21c000     RPCRT4!Ndr64StubWorker+0x862
+00000010`b6fee640 00007ffb`cc95813d     RPCRT4!NdrStubCall3+0xc0
+TERMINAL_UIATEXTRANGEBASE_GETTEXT
+.  0  Id: ef4.31a0 Suspend: 1 Teb: 00000010`b7059000 Unfrozen
+00000010`b6fedc38 00007ffb`b095a792     Microsoft_Terminal_Control!Microsoft::Console::Types::UiaTextRangeBase::GetText
+00000010`b6fedc40 00007ffb`b094177a     Microsoft_Terminal_Control!winrt::Microsoft::Terminal::Control::implementation::XamlUiaTextRange::GetText+0x4e
+00000010`b6fedc90 00007ffb`b6e7217d     Microsoft_Terminal_Control!winrt::impl::produce<winrt::Microsoft::Terminal::Control::implementation::XamlUiaTextRange,winrt::Windows::UI::Xaml::Automation::Provider::ITextRangeProvider>::GetText+0x2a
+00000010`b6fedcc0 00007ffb`b72f6729     Windows_UI_Xaml!DirectUI::AutomationPeer::UIATextRangeInvoke+0x114d
+(Inline Function) --------`--------     Windows_UI_Xaml!CFxCallbacks::AutomationPeer_UIATextRangeInvoke+0x22
+00000010`b6fede60 00007ffb`b73da08c     Windows_UI_Xaml!CManagedTextRangeProvider::GetText+0x69
+(Inline Function) --------`--------     Windows_UI_Xaml!CUIATextRangeProviderWrapper::GetTextImpl+0x61
+00000010`b6fedec0 00007ffb`a97f40ab     Windows_UI_Xaml!CUIATextRangeProviderWrapper::GetText+0xbc
+00000010`b6fedf10 00007ffb`a982873f     uiautomationcore!RemotePatternStub::TextRange_GetText+0x6b
+00000010`b6fedf60 00007ffb`b4e110bf     uiautomationcore!InvokePatternMethodOnCorrectContext_Callback+0x26f
+00000010`b6fedff0 00007ffb`cd2a5882     OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+00000010`b6fee030 00007ffb`cd21c000     RPCRT4!Ndr64StubWorker+0x862
+00000010`b6fee640 00007ffb`cc95813d     RPCRT4!NdrStubCall3+0xc0
+00000010`b6fee6b0 00007ffb`cd237ca6     combase!CStdStubBuffer_Invoke+0x7d
+00000010`b6fee6f0 00007ffb`cc958082     RPCRT4!CStdStubBuffer_Invoke+0x46
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d
+00000010`b6fee720 00007ffb`cc9575f6     combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x182
+SRV_ONDATA
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+SRV_COMINVOKER
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+00000010`b83ff9a8 00007ffb`a9747fd5     uiautomationcore!ComInvoker::CallTarget
+00000010`b83ff9b0 00007ffb`a989b53f     uiautomationcore!ReleaseCollection::DispatchReleases+0x45
+00000010`b83ffa00 00007ffb`a977a36f     uiautomationcore!ProcessIncomingBatchedMessages+0x147
+00000010`b83ffad0 00007ffb`a9804aac     uiautomationcore!ChannelBasedServerConnection::OnDataIdle+0x5f
+00000010`b83ffb90 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x17c
+00000010`b83ffbf0 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+00000010`b83ffc50 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+00000010`b83ffc80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000010`b83ffcb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SERVING op=name result=done error 0x80040201 110.494
+SRV_ONDATA
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+SRV_COMINVOKER
+.  7  Id: ef4.2ba4 Suspend: 1 Teb: 00000010`b707f000 Unfrozen
+00000010`b83ff868 00007ffb`a97b778b     uiautomationcore!ComInvoker::CallTarget
+00000010`b83ff870 00007ffb`a98d40ab     uiautomationcore!`anonymous namespace'::ProcessIncomingRequestNoThrow+0x5eb
+00000010`b83ff9a0 00007ffb`a989b5fb     uiautomationcore!ProcessIncomingRequest+0x37
+00000010`b83ff9e0 00007ffb`a9779afb     uiautomationcore!ChannelBasedServerConnection::ProcessOneMessage+0x5f
+00000010`b83ffa60 00007ffb`a9804be5     uiautomationcore!ChannelBasedServerConnection::OnData+0x20b
+00000010`b83ffb90 00007ffb`a976f299     uiautomationcore!ReadWriteChannelInfo::Service+0x2b5
+00000010`b83ffbf0 00007ffb`a9892f69     uiautomationcore!OverlappedIOManager::IoThreadProc+0x69
+00000010`b83ffc50 00007ffb`cbe8dda7     uiautomationcore!OverlappedIOManager::StaticIoThreadProc+0x9
+00000010`b83ffc80 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000010`b83ffcb0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+SRV_ELEMENT_METHOD_CONTEXT
+.  0  Id: ef4.31a0 Suspend: 1 Teb: 00000010`b7059000 Unfrozen
+SRV_COMINVOKER
+.  0  Id: ef4.31a0 Suspend: 1 Teb: 00000010`b7059000 Unfrozen
+00000010`b6fedcd8 00007ffb`a978a4fc     uiautomationcore!ComInvoker::CallTarget
+00000010`b6fedce0 00007ffb`a9789ce4     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+00000010`b6fedd30 00007ffb`a97c30c1     uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+00000010`b6fede10 00007ffb`a974d832     uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues+0x301
+00000010`b6fedf60 00007ffb`b4e110bf     uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+00000010`b6fedff0 00007ffb`cd2a5882     OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+00000010`b6fee030 00007ffb`cd21c000     RPCRT4!Ndr64StubWorker+0x862
+00000010`b6fee640 00007ffb`cc95813d     RPCRT4!NdrStubCall3+0xc0
+00000010`b6fee6b0 00007ffb`cd237ca6     combase!CStdStubBuffer_Invoke+0x7d
+00000010`b6fee6f0 00007ffb`cc958082     RPCRT4!CStdStubBuffer_Invoke+0x46
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d
+00000010`b6fee720 00007ffb`cc9575f6     combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x182
+00000010`b6fee780 00007ffb`cc956908     combase!DefaultStubInvoke+0x376
+(Inline Function) --------`--------     combase!SyncStubCall::Invoke+0x7
+(Inline Function) --------`--------     combase!SyncServerCall::StubInvoke+0x33
+00000010`b6fee940 00007ffb`cc9a11df     combase!StubInvoke+0x138
+00000010`b6feea10 00007ffb`cc9361f4     combase!ServerCall::ContextInvoke+0x28f
+(Inline Function) --------`--------     combase!DefaultInvokeInApartment+0x7c
+00000010`b6feeca0 00007ffb`cc8d4b35     combase!ReentrantSTAInvokeInApartment+0x194
+XAML_GETPROPERTYVALUE
+.  0  Id: ef4.31a0 Suspend: 1 Teb: 00000010`b7059000 Unfrozen
+00000010`b6fed928 00007ffb`a97501c8     Windows_UI_Xaml!CUIAWrapper::GetPropertyValue
+00000010`b6fed930 00007ffb`a974ff3a     uiautomationcore!UiaNode::ProviderGetPropertyValue+0x128
+00000010`b6fedb30 00007ffb`a989c048     uiautomationcore!InProcClientAPIStub::UiaNode_GetPropertyValues+0x13a
+00000010`b6fedbe0 00007ffb`a978a4fc     uiautomationcore!ComInvoker::CallTarget+0x1d8
+00000010`b6fedce0 00007ffb`a9789ce4     uiautomationcore!InProcClientAPIStub::InvokeInProcAPI+0x44
+00000010`b6fedd30 00007ffb`a97c30c1     uiautomationcore!UiaNode::CrossProcess_GetPropertyValues+0x354
+00000010`b6fede10 00007ffb`a974d832     uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues+0x301
+00000010`b6fedf60 00007ffb`b4e110bf     uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0x252
+00000010`b6fedff0 00007ffb`cd2a5882     OneCoreCommonProxyStub!IServiceProvider_RemoteQueryService_Thunk+0x2f
+00000010`b6fee030 00007ffb`cd21c000     RPCRT4!Ndr64StubWorker+0x862
+00000010`b6fee640 00007ffb`cc95813d     RPCRT4!NdrStubCall3+0xc0
+00000010`b6fee6b0 00007ffb`cd237ca6     combase!CStdStubBuffer_Invoke+0x7d
+00000010`b6fee6f0 00007ffb`cc958082     RPCRT4!CStdStubBuffer_Invoke+0x46
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d
+00000010`b6fee720 00007ffb`cc9575f6     combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e
+(Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x182
+00000010`b6fee780 00007ffb`cc956908     combase!DefaultStubInvoke+0x376
+(Inline Function) --------`--------     combase!SyncStubCall::Invoke+0x7
+(Inline Function) --------`--------     combase!SyncServerCall::StubInvoke+0x33
+00000010`b6fee940 00007ffb`cc9a11df     combase!StubInvoke+0x138
+00000010`b6feea10 00007ffb`cc9361f4     combase!ServerCall::ContextInvoke+0x28f
+(Inline Function) --------`--------     combase!DefaultInvokeInApartment+0x7c
+00000010`b6feeca0 00007ffb`cc8d4b35     combase!ReentrantSTAInvokeInApartment+0x194
+00000010`b6feed90 00007ffb`cc8d3602     combase!ComInvokeWithLockAndIPID+0xca5
+00000010`b6fef0a0 00007ffb`cca07987     combase!ThreadDispatch+0x392
+00000010`b6fef220 00007ffb`cb3352e6     combase!ThreadWndProc+0x177
+00000010`b6fef280 00007ffb`cb335dbd     user32!UserCallWinProcCheckWow+0x356
+00000010`b6fef3e0 00007ff7`ddd84d7d     user32!DispatchMessageWorker+0x1dd
+00000010`b6fef460 00007ff7`ddd8d1c2     WindowsTerminal!WindowEmperor::HandleCommandlineArgs+0xbdd
+00000010`b6fef710 00007ff7`ddd921a2     WindowsTerminal!wWinMain+0x1e2
+(Inline Function) --------`--------     WindowsTerminal!invoke_main+0x21
+00000010`b6fef820 00007ffb`cbe8dda7     WindowsTerminal!__scrt_common_main_seh+0x106
+00000010`b6fef860 00007ffb`cd3bee4c     KERNEL32!BaseThreadInitThunk+0x17
+00000010`b6fef890 00000000`00000000     ntdll!RtlUserThreadStart+0x2c

@@ -1,0 +1,186 @@
+# Windows Terminal (portable 1.24.12741.0, pid 3828): UI thread 12704 owns window 2425680; UIA's I/O thread is 11172 (start uiautomationcore.dll+0x162f60, OverlappedIOManager::StaticIoThreadProc).
+# CPU samples (1 ms, WPR's CPU profile) while puia bench made 64 x 9 textall calls (GetText(-1) of the terminal control's document range, PUIA_TEXT_CLASS=TermControl): cargo xtask trace waits <trace> --symbol-server --samples WindowsTerminal.exe:#<tid>
+=== --samples WindowsTerminal.exe:#12704
+"WindowsTerminal.exe:#12704": 847 samples
+running in microsoft.terminal.control.dll: 305
+running in ucrtbase.dll: 162
+running in oleaut32.dll: 139
+running in ntoskrnl.exe: 91
+running in uiautomationcore.dll: 72
+running in ntdll.dll: 19
+running in windows.ui.xaml.dll: 18
+running in combase.dll: 11
+running in win32kbase.sys: 6
+running in ?: 6
+running in coremessaging.dll: 3
+running in user32.dll: 3
+running in dcomp.dll: 3
+running in win32u.dll: 2
+running in rpcrt4.dll: 2
+on the stack ntdll.dll: 765
+on the stack windowsterminal.exe: 764
+on the stack kernel32.dll: 764
+on the stack user32.dll: 764
+on the stack combase.dll: 729
+on the stack rpcrt4.dll: 719
+on the stack uiautomationcore.dll: 718
+on the stack onecorecommonproxystub.dll: 712
+on the stack windows.ui.xaml.dll: 505
+on the stack microsoft.terminal.control.dll: 396
+on the stack ucrtbase.dll: 179
+on the stack oleaut32.dll: 166
+on the stack ntoskrnl.exe: 106
+on the stack win32kfull.sys: 52
+on the stack win32k.sys: 52
+running in function microsoft.terminal.control.dll!memcpy_repmovs: 201
+running in function ucrtbase.dll!memcpy_repmovs: 160
+running in function oleaut32.dll!SysAllocString: 138
+running in function uiautomationcore.dll!RemotePatternStub::TextRange_GetText: 66
+running in function microsoft.terminal.control.dll!memcpy: 27
+running in function microsoft.terminal.control.dll!ROW::_adjustForward<unsigned short>: 18
+running in function ntoskrnl.exe!HalpInterruptSendIpi: 14
+running in function microsoft.terminal.control.dll!ROW::_adjustBackward<unsigned short>: 13
+running in function microsoft.terminal.control.dll!std::basic_string<wchar_t,std::char_traits<wchar_t>,std::allocator<wchar_t> >::append<std::basic_string_view<wchar_t,std::char_traits<wchar_t> >,0>: 12
+running in function ntoskrnl.exe!RtlpUnwindPrologue: 11
+running in function ntoskrnl.exe!RtlpLookupFunctionEntryForStackWalks: 10
+running in function microsoft.terminal.control.dll!TextBuffer::_RowCopyHelper: 7
+running in function ntoskrnl.exe!KiApcInterrupt: 7
+running in function microsoft.terminal.control.dll!TextBuffer::_getRow: 6
+running in function ntoskrnl.exe!KeExpandKernelStackAndCalloutInternal: 6
+running in function 0x7ffbcd5a80d5: 5
+running in function microsoft.terminal.control.dll!ROW::GetText: 4
+running in function microsoft.terminal.control.dll!std::basic_string<wchar_t,std::char_traits<wchar_t>,std::allocator<wchar_t> >::append: 3
+running in function ntoskrnl.exe!RtlpxVirtualUnwind: 3
+running in function ntdll.dll!RtlpHpFreeHeap: 3
+running in function ntoskrnl.exe!ObpReferenceObjectByHandleWithTag: 2
+running in function ntoskrnl.exe!KiSwapThread: 2
+running in function combase.dll!CStdStubBuffer_Invoke: 2
+running in function microsoft.terminal.control.dll!TextBuffer::GetPlainText: 2
+running in function ntdll.dll!RtlpHpVsSlotAllocate: 2
+running in function ntdll.dll!RtlpHpSegPageRangeShrink: 2
+running in function ntoskrnl.exe!EtwpTraceStackWalk: 2
+running in function win32u.dll!NtUserGetMessage: 2
+running in function ntoskrnl.exe!KiPageFault: 2
+running in function ntoskrnl.exe!KiUpdateSpeculationControl: 2
+others' on the stack kernel32.dll!BaseThreadInitThunk: 764
+others' on the stack ntdll.dll!RtlUserThreadStart: 764
+others' on the stack windowsterminal.exe!__scrt_common_main_seh: 764
+others' on the stack windowsterminal.exe!wWinMain: 764
+others' on the stack windowsterminal.exe!WindowEmperor::HandleCommandlineArgs: 764
+others' on the stack user32.dll!UserCallWinProcCheckWow: 734
+others' on the stack user32.dll!DispatchMessageWorker: 732
+others' on the stack combase.dll!ThreadWndProc: 729
+others' on the stack combase.dll!ThreadDispatch: 726
+others' on the stack combase.dll!ComInvokeWithLockAndIPID: 722
+others' on the stack combase.dll!ServerCall::ContextInvoke: 720
+others' on the stack combase.dll!ReentrantSTAInvokeInApartment: 720
+others' on the stack combase.dll!StubInvoke: 720
+others' on the stack rpcrt4.dll!CStdStubBuffer_Invoke: 718
+others' on the stack combase.dll!DefaultStubInvoke: 718
+others' on the stack combase.dll!CStdStubBuffer_Invoke: 718
+others' on the stack combase.dll!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >: 718
+others' on the stack rpcrt4.dll!Ndr64StubWorker: 716
+others' on the stack rpcrt4.dll!NdrStubCall3: 716
+others' on the stack onecorecommonproxystub.dll!IServiceProvider_RemoteQueryService_Thunk: 712
+others' on the stack uiautomationcore.dll!InvokePatternMethodOnCorrectContext_Callback: 707
+others' on the stack uiautomationcore.dll!RemotePatternStub::TextRange_GetText: 692
+others' on the stack windows.ui.xaml.dll!CUIATextRangeProviderWrapper::GetText: 488
+others' on the stack windows.ui.xaml.dll!CManagedTextRangeProvider::GetText: 396
+others' on the stack windows.ui.xaml.dll!DirectUI::AutomationPeer::UIATextRangeInvoke: 396
+others' on the stack microsoft.terminal.control.dll!winrt::Microsoft::Terminal::Control::implementation::XamlUiaTextRange::GetText: 391
+others' on the stack microsoft.terminal.control.dll!winrt::impl::produce<winrt::Microsoft::Terminal::Control::implementation::XamlUiaTextRange,winrt::Windows::UI::Xaml::Automation::Provider::ITextRangeProvider>::GetText: 391
+others' on the stack microsoft.terminal.control.dll!Microsoft::Console::Types::UiaTextRangeBase::GetText: 243
+others' on the stack microsoft.terminal.control.dll!memcpy_repmovs: 204
+others' on the stack microsoft.terminal.control.dll!TextBuffer::GetPlainText: 170
+=== --samples WindowsTerminal.exe:#11172
+"WindowsTerminal.exe:#11172": 575 samples
+running in ntoskrnl.exe: 368
+running in ucrtbase.dll: 140
+running in ntdll.dll: 16
+running in npfs.sys: 13
+running in uiautomationcore.dll: 11
+running in combase.dll: 10
+running in kernelbase.dll: 5
+running in ?: 3
+running in win32kfull.sys: 2
+running in rpcrt4.dll: 2
+running in win32u.dll: 1
+running in fltmgr.sys: 1
+running in win32k.sys: 1
+running in win32kbase.sys: 1
+running in user32.dll: 1
+on the stack ntoskrnl.exe: 386
+on the stack kernel32.dll: 294
+on the stack uiautomationcore.dll: 294
+on the stack ntdll.dll: 294
+on the stack ucrtbase.dll: 147
+on the stack fltmgr.sys: 109
+on the stack npfs.sys: 108
+on the stack kernelbase.dll: 94
+on the stack win32k.sys: 44
+on the stack win32kfull.sys: 43
+on the stack rpcrt4.dll: 43
+on the stack onecorecommonproxystub.dll: 43
+on the stack combase.dll: 39
+on the stack win32kbase.sys: 24
+on the stack user32.dll: 23
+running in function ucrtbase.dll!memcpy_repmovs: 133
+running in function ntoskrnl.exe!HalpInterruptSendIpi: 54
+running in function ntoskrnl.exe!KiDeliverApc: 38
+running in function ntoskrnl.exe!RtlpUnwindPrologue: 38
+running in function ntoskrnl.exe!RtlpLookupFunctionEntryForStackWalks: 35
+running in function ntoskrnl.exe!KiSwapThread: 22
+running in function ntoskrnl.exe!RtlpxVirtualUnwind: 15
+running in function npfs.sys!memcpy: 12
+running in function ntoskrnl.exe!IopDequeueIrpFromThread: 12
+running in function ntoskrnl.exe!KeSetEvent: 10
+running in function ntoskrnl.exe!KiApcInterrupt: 10
+running in function ntoskrnl.exe!KiExitDispatcher: 8
+running in function ucrtbase.dll!memset_repstos: 7
+running in function ntoskrnl.exe!RtlpHeapZeroFastString: 6
+running in function ntoskrnl.exe!RtlpWalkFrameChain: 5
+running in function ntoskrnl.exe!ExpAddTagForBigPages: 4
+running in function ntoskrnl.exe!KiSystemServiceUser: 4
+running in function ntoskrnl.exe!ExAllocateHeapPool: 4
+running in function ntoskrnl.exe!KeQueryPerformanceCounter: 4
+running in function ntdll.dll!RtlAllocateHeap: 4
+running in function ntoskrnl.exe!EtwpReserveTraceBuffer: 4
+running in function ntoskrnl.exe!EtwpQueueApc: 3
+running in function ntoskrnl.exe!KiSearchForNewThreadsForRescheduleContext: 3
+running in function ntoskrnl.exe!IopCompleteRequest: 3
+running in function ntoskrnl.exe!KeQueryCurrentStackInformationEx: 3
+running in function ntoskrnl.exe!ExpLookupHandleTableEntry: 3
+running in function ntoskrnl.exe!KiExpandKernelStackAndCalloutOnStackSegment: 3
+running in function ntoskrnl.exe!EtwpEventWriteFull: 3
+running in function 0x7ffbcd5a80d5: 3
+running in function kernelbase.dll!GetLastError: 3
+others' on the stack uiautomationcore.dll!OverlappedIOManager::IoThreadProc: 294
+others' on the stack uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc: 294
+others' on the stack kernel32.dll!BaseThreadInitThunk: 294
+others' on the stack ntdll.dll!RtlUserThreadStart: 294
+others' on the stack uiautomationcore.dll!ReadWriteChannelInfo::Service: 283
+others' on the stack uiautomationcore.dll!ChannelBasedServerConnection::OnData: 275
+others' on the stack uiautomationcore.dll!ChannelBasedServerConnection::ProcessOneMessage: 246
+others' on the stack uiautomationcore.dll!ProtobufHelper::Serialize<UIAutomationCoreProto::UiaCoreResponseMsg>: 142
+others' on the stack uiautomationcore.dll!UIAutomationCoreProto::UiaCoreResponseMsg::_InternalSerialize: 134
+others' on the stack uiautomationcore.dll!google::protobuf::SerializeToArrayImpl: 134
+others' on the stack uiautomationcore.dll!google::protobuf::MessageLite::SerializeToArray: 134
+others' on the stack uiautomationcore.dll!UIAutomationCoreProto::PatternMethodResponseMsg::_InternalSerialize: 134
+others' on the stack ucrtbase.dll!memcpy_repmovs: 133
+others' on the stack uiautomationcore.dll!UIAutomationCoreProto::WstringMsg::_InternalSerialize: 133
+others' on the stack uiautomationcore.dll!UIAutomationCoreProto::TextRangeGetTextResponseMsg::_InternalSerialize: 133
+others' on the stack uiautomationcore.dll!google::protobuf::io::EpsCopyOutputStream::WriteStringMaybeAliasedOutline: 133
+others' on the stack uiautomationcore.dll!ReadWriteChannelInfo::BlockingWrite: 81
+others' on the stack uiautomationcore.dll!ChannelBasedServerConnection::WriteResponseToChannel: 77
+others' on the stack kernelbase.dll!WriteFile: 51
+others' on the stack ntdll.dll!NtWriteFile: 51
+others' on the stack uiautomationcore.dll!ProcessIncomingRequest: 48
+others' on the stack uiautomationcore.dll!ComInvoker::CallTarget: 45
+others' on the stack uiautomationcore.dll!`anonymous namespace'::ProcessIncomingRequestNoThrow: 45
+others' on the stack rpcrt4.dll!NdrClientCall3: 43
+others' on the stack rpcrt4.dll!NdrpClientCall3: 43
+others' on the stack onecorecommonproxystub.dll!IServiceProvider_QueryService_Proxy: 43
+others' on the stack combase.dll!CSyncClientCall::SendReceive2: 28
+others' on the stack combase.dll!CSyncClientCall::SendReceiveInRetryContext: 28
+others' on the stack combase.dll!NdrExtpProxySendReceive: 28
+others' on the stack combase.dll!CSyncClientCall::SendReceive: 28

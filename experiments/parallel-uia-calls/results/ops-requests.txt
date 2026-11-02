@@ -1,0 +1,298 @@
+# Requests and provider calls per client operation (ops.ps1, ops-count.py). cdb invasive on the client (puia ops) and the target.
+# client_requests: ChannelBasedClientConnection::DoCallWithReturn hits, by the UIA function that sent them (the frame below DoCallWithReturn).
+# after_return: of those, sent after the operation returned (event deliveries' own requests). client_iothread_reads: ChannelBasedClientConnection::OnData, all on the client's I/O thread.
+# server_read: ChannelBasedServerConnection::OnData on the target's I/O thread; messages: ProcessOneMessage; responses: WriteResponseToChannel;
+# release_batches: ProcessIncomingBatchedMessages; release_dispatches: ReleaseCollection::DispatchReleases; events_sent: ChannelBasedServerConnection::SendEventData; raised: UiaRaiseAutomationEvent and UiaRaiseAutomationPropertyChangedEvent.
+# provider: mockapp's hit counters (crates/mockapp/src/hits.rs, read by window message after a 400 ms wait), or for the synthetic provider its COM entry points counted by cdb.
+# Each operation ran twice in a row; times are under breakpoints and are not costs. 'noop' is no call, a baseline.
+# The 'mock: <command>' lines between ops (in the raw output) fall in the segment of the op before them: an event raised by mockapp is counted there.
+
+## mockapp, ops.json (tree.json and a text node), run 1
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+raw_first: client_requests=3 (GetRuntimeId=1 Navigate=1 Release=1) after_return=0 client_iothread_reads=2 | server_read=3 messages=2 responses=2 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=5 Navigate=2 GetRuntimeId=2 FragmentRoot=4
+raw_first: client_requests=2 (Navigate=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=6 GetPropertyValue=1 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+raw_next: client_requests=2 (Navigate=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+raw_next: client_requests=2 (Navigate=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+raw_parent: client_requests=4 (Navigate=1 Release=3) after_return=0 client_iothread_reads=1 | server_read=4 messages=1 responses=1 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+raw_parent: client_requests=4 (Navigate=1 Release=3) after_return=0 client_iothread_reads=1 | server_read=4 messages=1 responses=1 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+ctl_first: client_requests=3 (GetRuntimeId=1 Navigate=1 Release=1) after_return=0 client_iothread_reads=2 | server_read=3 messages=2 responses=2 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=7 GetPropertyValue=2 HostRawElementProvider=5 Navigate=2 GetRuntimeId=2 FragmentRoot=4
+ctl_first: client_requests=2 (Navigate=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=6 GetPropertyValue=2 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+ctl_next: client_requests=2 (Navigate=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=7 GetPropertyValue=2 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+ctl_next: client_requests=2 (Navigate=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=7 GetPropertyValue=2 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+ctl_parent: client_requests=5 (Navigate=1 Release=3 GetPropertyValues=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=2 release_dispatches=5 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=1 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+ctl_parent: client_requests=5 (Navigate=1 Release=3 GetPropertyValues=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=1 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+raw_first_cache: client_requests=5 (GetRuntimeId=1 Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=3 | server_read=5 messages=3 responses=3 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=12 GetPropertyValue=3 HostRawElementProvider=8 Navigate=2 GetRuntimeId=4 FragmentRoot=7
+raw_first_cache: client_requests=4 (Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=4 messages=2 responses=2 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=11 GetPropertyValue=3 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+raw_next_cache: client_requests=4 (Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=4 messages=2 responses=2 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=12 GetPropertyValue=3 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+raw_next_cache: client_requests=4 (Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=4 messages=2 responses=2 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=12 GetPropertyValue=3 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+raw_parent_cache: client_requests=5 (Navigate=1 Release=3 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=2 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+raw_parent_cache: client_requests=5 (Navigate=1 Release=3 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=2 release_dispatches=5 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=2 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+ctl_first_cache: client_requests=5 (GetRuntimeId=1 Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=3 | server_read=5 messages=3 responses=3 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=12 GetPropertyValue=4 HostRawElementProvider=8 Navigate=2 GetRuntimeId=4 FragmentRoot=7
+ctl_first_cache: client_requests=4 (Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=4 messages=2 responses=2 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=11 GetPropertyValue=4 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+ctl_next_cache: client_requests=4 (Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=4 messages=2 responses=2 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=12 GetPropertyValue=4 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+ctl_next_cache: client_requests=4 (Navigate=1 BulkFetch=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=4 messages=2 responses=2 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=12 GetPropertyValue=4 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+ctl_parent_cache: client_requests=6 (Navigate=1 Release=3 GetPropertyValues=1 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=3 | server_read=6 messages=2 responses=2 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=3 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+ctl_parent_cache: client_requests=6 (Navigate=1 Release=3 GetPropertyValues=1 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=3 | server_read=6 messages=2 responses=2 release_batches=2 release_dispatches=5 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=3 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+findfirst: client_requests=8 (GetRuntimeId=1 GetPropertyValues=1 RealRemoteNodeFromProviderEntryPoint=1 Release=4 Find=1) after_return=0 client_iothread_reads=4 | server_read=8 messages=4 responses=4 release_batches=4 release_dispatches=8 events_sent=0 raised=0 | provider WM_GETOBJECT=26 ProviderOptions=110 GetPropertyValue=61 HostRawElementProvider=42 Navigate=63 GetRuntimeId=18 FragmentRoot=18
+findfirst: client_requests=7 (GetPropertyValues=1 RealRemoteNodeFromProviderEntryPoint=1 Release=4 Find=1) after_return=0 client_iothread_reads=3 | server_read=7 messages=3 responses=3 release_batches=4 release_dispatches=8 events_sent=0 raised=0 | provider WM_GETOBJECT=26 ProviderOptions=110 GetPropertyValue=61 HostRawElementProvider=42 Navigate=63 GetRuntimeId=18 FragmentRoot=18
+findfirst_cache: client_requests=10 (GetRuntimeId=1 GetPropertyValues=1 RealRemoteNodeFromProviderEntryPoint=1 Release=5 Find=1 BulkFetch=1) after_return=0 client_iothread_reads=5 | server_read=10 messages=5 responses=5 release_batches=5 release_dispatches=10 events_sent=0 raised=0 | provider WM_GETOBJECT=26 ProviderOptions=115 GetPropertyValue=63 HostRawElementProvider=45 Navigate=63 GetRuntimeId=20 FragmentRoot=21
+findfirst_cache: client_requests=9 (GetPropertyValues=1 RealRemoteNodeFromProviderEntryPoint=1 Release=5 Find=1 BulkFetch=1) after_return=0 client_iothread_reads=4 | server_read=9 messages=3 responses=3 release_batches=5 release_dispatches=10 events_sent=0 raised=0 | provider WM_GETOBJECT=26 ProviderOptions=115 GetPropertyValue=63 HostRawElementProvider=45 Navigate=63 GetRuntimeId=20 FragmentRoot=21
+findall: client_requests=35 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=30 Find=1) after_return=0 client_iothread_reads=5 | server_read=35 messages=5 responses=5 release_batches=13 release_dispatches=26 events_sent=0 raised=0 | provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+findall: client_requests=34 (GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=30 Find=1) after_return=0 client_iothread_reads=4 | server_read=34 messages=4 responses=4 release_batches=13 release_dispatches=26 events_sent=0 raised=0 | provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+findall_cache: client_requests=84 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=54 Find=1 GetPropertiesAndPatterns=1 BulkFetch=24) after_return=0 client_iothread_reads=30 | server_read=84 messages=29 responses=29 release_batches=21 release_dispatches=42 events_sent=0 raised=0 | provider WM_GETOBJECT=27 ProviderOptions=316 GetPropertyValue=104 HostRawElementProvider=152 Navigate=86 GetRuntimeId=96 FragmentRoot=120
+findall_cache: client_requests=84 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=54 Find=1 GetPropertiesAndPatterns=1 BulkFetch=24) after_return=0 client_iothread_reads=30 | server_read=84 messages=30 responses=30 release_batches=22 release_dispatches=44 events_sent=0 raised=0 | provider WM_GETOBJECT=27 ProviderOptions=316 GetPropertyValue=104 HostRawElementProvider=152 Navigate=86 GetRuntimeId=96 FragmentRoot=120
+build_props: client_requests=2 (BulkFetch=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=5 GetPropertyValue=5 HostRawElementProvider=3 GetRuntimeId=2 BoundingRectangle=1 FragmentRoot=3
+build_props: client_requests=2 (BulkFetch=1 Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=5 GetPropertyValue=5 HostRawElementProvider=3 GetRuntimeId=2 BoundingRectangle=1 FragmentRoot=3
+build_subtree: client_requests=4 (BulkFetch=1 Release=3) after_return=0 client_iothread_reads=1 | server_read=4 messages=1 responses=1 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=22 GetPropertyValue=11 HostRawElementProvider=10 Navigate=9 GetRuntimeId=6 FragmentRoot=7
+build_subtree: client_requests=4 (BulkFetch=1 Release=3) after_return=0 client_iothread_reads=1 | server_read=4 messages=1 responses=1 release_batches=2 release_dispatches=4 events_sent=0 raised=0 | provider ProviderOptions=22 GetPropertyValue=11 HostRawElementProvider=10 Navigate=9 GetRuntimeId=6 FragmentRoot=7
+cur_name: client_requests=1 (GetPropertyValues=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+cur_name: client_requests=1 (GetPropertyValues=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+cached_name: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+cached_name: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+runtime_id: client_requests=1 (GetRuntimeId=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider ProviderOptions=1 HostRawElementProvider=2 GetRuntimeId=1 FragmentRoot=2
+runtime_id: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+compare: client_requests=2 (GetRuntimeId=2) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider ProviderOptions=2 HostRawElementProvider=4 GetRuntimeId=2 FragmentRoot=4
+compare: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+fromhandle: client_requests=5 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 GetPropertyValues=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=2 responses=2 release_batches=2 release_dispatches=5 events_sent=0 raised=0 | provider WM_GETOBJECT=2 ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=2 Navigate=2
+fromhandle: client_requests=5 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 GetPropertyValues=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=2 ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=2 Navigate=2
+frompoint: client_requests=9 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 DrillForPointOrFocus=1 GetPropertyValues=3 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=6 | server_read=9 messages=6 responses=6 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=4 ProviderOptions=8 GetPropertyValue=4 HostRawElementProvider=2 Navigate=2 ElementProviderFromPoint=1 WM_GETTITLEBARINFOEX=1
+frompoint: client_requests=9 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 DrillForPointOrFocus=1 GetPropertyValues=3 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=6 | server_read=9 messages=5 responses=5 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=4 ProviderOptions=8 GetPropertyValue=4 HostRawElementProvider=2 Navigate=2 ElementProviderFromPoint=1 WM_GETTITLEBARINFOEX=1
+focused_only: client_requests=5 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 DrillForPointOrFocus=1) after_return=0 client_iothread_reads=3 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+focused_only: client_requests=5 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 DrillForPointOrFocus=1) after_return=0 client_iothread_reads=3 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+getpattern: client_requests=2 (GetPatternProvider=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=1 GetPatternProvider=1 HostRawElementProvider=2 GetRuntimeId=1 FragmentRoot=2
+getpattern: client_requests=2 (GetPatternProvider=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider ProviderOptions=1 GetPatternProvider=1 HostRawElementProvider=2 GetRuntimeId=1 FragmentRoot=2
+action: client_requests=12 (GetPropertyValues=3 Navigate=2 Release=4 SetFocus=2 LocalPatternProxy::Toggle=1) after_return=0 client_iothread_reads=8 | server_read=12 messages=7 responses=7 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=23 GetPropertyValue=4 HostRawElementProvider=11 Navigate=7 GetRuntimeId=1 SetFocus=1 FragmentRoot=8 Toggle=1
+action: client_requests=12 (GetPropertyValues=3 Navigate=2 Release=4 SetFocus=2 LocalPatternProxy::Toggle=1) after_return=0 client_iothread_reads=8 | server_read=12 messages=8 responses=8 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider WM_GETOBJECT=1 ProviderOptions=23 GetPropertyValue=4 HostRawElementProvider=11 Navigate=7 GetRuntimeId=1 SetFocus=1 FragmentRoot=8 Toggle=1
+docrange: client_requests=2 (LocalPatternProxy::get_DocumentRange=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider DocumentRange=1
+docrange: client_requests=2 (LocalPatternProxy::get_DocumentRange=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider DocumentRange=1
+gettext: client_requests=1 (LocalPatternProxy::GetText=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetText=1
+gettext: client_requests=1 (LocalPatternProxy::GetText=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetText=1
+move: client_requests=3 (LocalPatternProxy::Clone=1 LocalPatternProxy::Move=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=2 | server_read=3 messages=2 responses=2 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider Clone=1 Move=1
+move: client_requests=3 (LocalPatternProxy::Clone=1 LocalPatternProxy::Move=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=2 | server_read=3 messages=2 responses=2 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider Clone=1 Move=1
+move_held: client_requests=1 (LocalPatternProxy::Move=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider Move=1
+move_held: client_requests=1 (LocalPatternProxy::Move=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider Move=1
+expand: client_requests=1 (LocalPatternProxy::ExpandToEnclosingUnit=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider ExpandToEnclosingUnit=1
+expand: client_requests=1 (LocalPatternProxy::ExpandToEnclosingUnit=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider ExpandToEnclosingUnit=1
+add_focus: client_requests=22 (RealRemoteNodeFromProviderEntryPoint=3 Release=9 EntireProcessAddEvent=6 GetPropertyValues=3 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=18 | server_read=5 messages=2 responses=2 release_batches=3 release_dispatches=14 events_sent=0 raised=0 | provider WM_GETOBJECT=3 ProviderOptions=9 HostRawElementProvider=3 Navigate=3 GetEmbeddedFragmentRoots=1 FragmentRoot=2 GetFocus=1
+remove_focus: client_requests=6 (RemoveEvent=6) after_return=0 client_iothread_reads=6 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+add_auto: client_requests=10 (GetRuntimeId=1 EntireProcessAddEvent=1 RealRemoteNodeFromProviderEntryPoint=1 Release=6 BulkFetch=1) after_return=8 client_iothread_reads=5 | server_read=10 messages=4 responses=4 release_batches=4 release_dispatches=17 events_sent=1 raised=1 | provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+remove_auto: client_requests=2 (GetRuntimeId=1 RemoveEvent=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+add_prop: client_requests=9 (EntireProcessAddEvent=1 RealRemoteNodeFromProviderEntryPoint=1 Release=6 BulkFetch=1) after_return=8 client_iothread_reads=4 | server_read=9 messages=3 responses=3 release_batches=5 release_dispatches=18 events_sent=1 raised=1 | provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+remove_prop: client_requests=2 (GetRuntimeId=1 RemoveEvent=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+hold_elems: client_requests=10 (GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=6 Find=1) after_return=0 client_iothread_reads=4 | server_read=10 messages=3 responses=3 release_batches=6 release_dispatches=12 events_sent=0 raised=0 | provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+drop_elems: client_requests=24 (Release=24) after_return=0 client_iothread_reads=0 | server_read=24 messages=0 responses=0 release_batches=10 release_dispatches=20 events_sent=0 raised=0 | provider 
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+cur_name: client_requests=1 (GetPropertyValues=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+
+## mockapp, run 2: events in a fresh client, then GetFocusedElement with mockapp in the foreground, releases
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+add_focus: client_requests=27 (RealRemoteNodeFromProviderEntryPoint=4 Release=12 EntireProcessAddEvent=6 GetPropertyValues=3 GetPropertiesAndPatterns=1 GetEventSourceMap=1) after_return=6 client_iothread_reads=22 | server_read=7 messages=2 responses=2 release_batches=4 release_dispatches=16 events_sent=1 raised=1 | provider WM_GETOBJECT=1 ProviderOptions=2 HostRawElementProvider=1 Navigate=1 GetEmbeddedFragmentRoots=1 FragmentRoot=2 GetFocus=1
+remove_focus: client_requests=6 (RemoveEvent=6) after_return=0 client_iothread_reads=6 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+add_auto: client_requests=10 (GetRuntimeId=1 EntireProcessAddEvent=1 RealRemoteNodeFromProviderEntryPoint=1 Release=6 BulkFetch=1) after_return=8 client_iothread_reads=5 | server_read=10 messages=4 responses=4 release_batches=4 release_dispatches=17 events_sent=1 raised=1 | provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+remove_auto: client_requests=2 (GetRuntimeId=1 RemoveEvent=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+add_prop: client_requests=9 (EntireProcessAddEvent=1 RealRemoteNodeFromProviderEntryPoint=1 Release=6 BulkFetch=1) after_return=8 client_iothread_reads=4 | server_read=9 messages=3 responses=3 release_batches=4 release_dispatches=17 events_sent=1 raised=1 | provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+remove_prop: client_requests=2 (GetRuntimeId=1 RemoveEvent=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+foreground: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+focused_only: client_requests=6 (RealRemoteNodeFromProviderEntryPoint=1 Release=4 DrillForPointOrFocus=1) after_return=0 client_iothread_reads=2 | server_read=6 messages=2 responses=2 release_batches=4 release_dispatches=8 events_sent=0 raised=0 | provider WM_GETOBJECT=4 ProviderOptions=14 GetPropertyValue=2 HostRawElementProvider=5 Navigate=3 GetRuntimeId=2 FragmentRoot=2 GetFocus=1
+focused_only: client_requests=6 (RealRemoteNodeFromProviderEntryPoint=1 Release=4 DrillForPointOrFocus=1) after_return=0 client_iothread_reads=2 | server_read=6 messages=2 responses=2 release_batches=4 release_dispatches=8 events_sent=0 raised=0 | provider WM_GETOBJECT=4 ProviderOptions=14 GetPropertyValue=2 HostRawElementProvider=5 Navigate=3 GetRuntimeId=2 FragmentRoot=2 GetFocus=1
+focused: client_requests=7 (RealRemoteNodeFromProviderEntryPoint=1 Release=4 DrillForPointOrFocus=1 GetPropertyValues=1) after_return=0 client_iothread_reads=3 | server_read=7 messages=3 responses=3 release_batches=4 release_dispatches=8 events_sent=0 raised=0 | provider WM_GETOBJECT=4 ProviderOptions=14 GetPropertyValue=3 HostRawElementProvider=6 Navigate=3 GetRuntimeId=2 FragmentRoot=3 GetFocus=1
+add_focus: client_requests=27 (RealRemoteNodeFromProviderEntryPoint=3 Release=12 EntireProcessAddEvent=8 GetPropertyValues=3 GetPropertiesAndPatterns=1) after_return=1 client_iothread_reads=19 | server_read=7 messages=2 responses=2 release_batches=5 release_dispatches=18 events_sent=1 raised=1 | provider WM_GETOBJECT=3 ProviderOptions=13 GetPropertyValue=1 HostRawElementProvider=5 Navigate=4 GetRuntimeId=1 GetEmbeddedFragmentRoots=1 FragmentRoot=3 GetFocus=1
+remove_focus: client_requests=6 (RemoveEvent=6) after_return=0 client_iothread_reads=6 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+hold_elems: client_requests=11 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=6 Find=1) after_return=0 client_iothread_reads=5 | server_read=11 messages=4 responses=4 release_batches=6 release_dispatches=12 events_sent=0 raised=0 | provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+drop_one: client_requests=1 (Release=1) after_return=0 client_iothread_reads=0 | server_read=1 messages=0 responses=0 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider 
+drop_elems: client_requests=23 (Release=23) after_return=0 client_iothread_reads=0 | server_read=23 messages=0 responses=0 release_batches=11 release_dispatches=22 events_sent=0 raised=0 | provider 
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+
+## synthetic provider, sta (one window, IRawElementProviderSimple with an invoke pattern whose Invoke raises Invoke_Invoked)
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+cur_name: client_requests=1 (GetPropertyValues=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=1
+cur_name: client_requests=1 (GetPropertyValues=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=1
+cached_name: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+cached_name: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+build_props: client_requests=1 (GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=5
+build_props: client_requests=1 (GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider GetPropertyValue=5
+runtime_id: client_requests=1 (GetRuntimeId=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+runtime_id: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+compare: client_requests=2 (GetRuntimeId=2) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+compare: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+fromhandle: client_requests=5 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 GetPropertyValues=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider ProviderOptions=8 HostRawElementProvider=2 GetPropertyValue=1
+fromhandle: client_requests=5 (RealRemoteNodeFromProviderEntryPoint=1 Release=3 GetPropertyValues=1) after_return=0 client_iothread_reads=2 | server_read=5 messages=1 responses=1 release_batches=3 release_dispatches=6 events_sent=0 raised=0 | provider ProviderOptions=8 HostRawElementProvider=2 GetPropertyValue=1
+raw_first: client_requests=1 (GetRuntimeId=1) after_return=0 client_iothread_reads=1 | server_read=1 messages=1 responses=1 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+raw_first: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+raw_next: client_requests=3 (RealRemoteNodeFromProviderEntryPoint=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+raw_next: client_requests=3 (RealRemoteNodeFromProviderEntryPoint=1 Release=2) after_return=0 client_iothread_reads=2 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+raw_parent: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+raw_parent: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+ctl_parent: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+ctl_parent: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+findall: client_requests=11 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=6 Find=1) after_return=0 client_iothread_reads=5 | server_read=11 messages=4 responses=4 release_batches=5 release_dispatches=10 events_sent=0 raised=0 | provider GetPropertyValue=2 ProviderOptions=14 HostRawElementProvider=3
+findall: client_requests=11 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=6 Find=1) after_return=0 client_iothread_reads=5 | server_read=11 messages=3 responses=3 release_batches=5 release_dispatches=10 events_sent=0 raised=0 | provider GetPropertyValue=2 ProviderOptions=14 HostRawElementProvider=3
+findall_cache: client_requests=12 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=6 Find=1 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=6 | server_read=12 messages=4 responses=4 release_batches=5 release_dispatches=10 events_sent=0 raised=0 | provider GetPropertyValue=4 ProviderOptions=14 HostRawElementProvider=3
+findall_cache: client_requests=12 (GetRuntimeId=1 GetPropertyValues=2 RealRemoteNodeFromProviderEntryPoint=1 Release=6 Find=1 GetPropertiesAndPatterns=1) after_return=0 client_iothread_reads=6 | server_read=12 messages=4 responses=4 release_batches=5 release_dispatches=10 events_sent=0 raised=0 | provider GetPropertyValue=4 ProviderOptions=14 HostRawElementProvider=3
+getpattern: client_requests=2 (GetPatternProvider=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider GetPatternProvider=1
+getpattern: client_requests=2 (GetPatternProvider=1 LocalPatternProxy::CrossProcess_Release=1) after_return=0 client_iothread_reads=1 | server_read=2 messages=1 responses=1 release_batches=1 release_dispatches=2 events_sent=0 raised=0 | provider GetPatternProvider=1
+action: client_requests=2 (GetPropertyValues=1 LocalPatternProxy::Invoke=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=1 | provider GetPropertyValue=1 Invoke=1 ProviderOptions=4 HostRawElementProvider=2
+action: client_requests=2 (GetPropertyValues=1 LocalPatternProxy::Invoke=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=1 | provider GetPropertyValue=1 Invoke=1 ProviderOptions=4 HostRawElementProvider=2
+add_auto 20009: client_requests=2 (GetRuntimeId=1 EntireProcessAddEvent=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=8 events_sent=0 raised=0 | provider 
+action: client_requests=9 (GetPropertyValues=3 LocalPatternProxy::Invoke=1 RealRemoteNodeFromProviderEntryPoint=1 Release=4) after_return=7 client_iothread_reads=6 | server_read=9 messages=5 responses=5 release_batches=3 release_dispatches=7 events_sent=1 raised=1 | provider GetPropertyValue=4 Invoke=1 ProviderOptions=16 HostRawElementProvider=5
+remove_auto 20009: client_requests=2 (GetRuntimeId=1 RemoveEvent=1) after_return=0 client_iothread_reads=2 | server_read=2 messages=2 responses=2 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+noop: client_requests=0 () after_return=0 client_iothread_reads=0 | server_read=0 messages=0 responses=0 release_batches=0 release_dispatches=0 events_sent=0 raised=0 | provider 
+
+## Raw client output
+### ops-mock-out.txt
+﻿target pid=8096 hwnd=1311346
+ready tid=14004
+op ﻿noop error 0x80070057 op ﻿noop 2.521 ms; provider
+op noop error 0x80070057 op noop 0.443 ms; provider
+op raw_first ok first 776.034 ms; provider ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=5 Navigate=2 GetRuntimeId=2 FragmentRoot=4
+op raw_first ok first 8.597 ms; provider ProviderOptions=6 GetPropertyValue=1 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+op raw_next ok next 7.922 ms; provider ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+op raw_next ok next 8.084 ms; provider ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+op raw_parent ok parent 13.310 ms; provider WM_GETOBJECT=1 ProviderOptions=10 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op raw_parent ok parent 11.982 ms; provider WM_GETOBJECT=1 ProviderOptions=10 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op ctl_first ok first 13.368 ms; provider ProviderOptions=7 GetPropertyValue=2 HostRawElementProvider=5 Navigate=2 GetRuntimeId=2 FragmentRoot=4
+op ctl_first ok first 8.227 ms; provider ProviderOptions=6 GetPropertyValue=2 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+op ctl_next ok next 9.033 ms; provider ProviderOptions=7 GetPropertyValue=2 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+op ctl_next ok next 12.244 ms; provider ProviderOptions=7 GetPropertyValue=2 HostRawElementProvider=3 Navigate=2 GetRuntimeId=1 FragmentRoot=2
+op ctl_parent ok parent 21.747 ms; provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=1 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op ctl_parent ok parent 19.686 ms; provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=1 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op raw_first_cache ok First 21.472 ms; provider ProviderOptions=12 GetPropertyValue=3 HostRawElementProvider=8 Navigate=2 GetRuntimeId=4 FragmentRoot=7
+op raw_first_cache ok First 16.357 ms; provider ProviderOptions=11 GetPropertyValue=3 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+op raw_next_cache ok Choices 15.837 ms; provider ProviderOptions=12 GetPropertyValue=3 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+op raw_next_cache ok Choices 16.389 ms; provider ProviderOptions=12 GetPropertyValue=3 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+op raw_parent_cache ok Mockapp Tree Fixture 20.595 ms; provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=2 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op raw_parent_cache ok Mockapp Tree Fixture 23.383 ms; provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=2 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op ctl_first_cache ok First 21.573 ms; provider ProviderOptions=12 GetPropertyValue=4 HostRawElementProvider=8 Navigate=2 GetRuntimeId=4 FragmentRoot=7
+op ctl_first_cache ok First 15.221 ms; provider ProviderOptions=11 GetPropertyValue=4 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+op ctl_next_cache ok Choices 15.420 ms; provider ProviderOptions=12 GetPropertyValue=4 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+op ctl_next_cache ok Choices 15.483 ms; provider ProviderOptions=12 GetPropertyValue=4 HostRawElementProvider=6 Navigate=2 GetRuntimeId=3 FragmentRoot=5
+op ctl_parent_cache ok Mockapp Tree Fixture 25.894 ms; provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=3 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op ctl_parent_cache ok Mockapp Tree Fixture 26.025 ms; provider WM_GETOBJECT=1 ProviderOptions=10 GetPropertyValue=3 HostRawElementProvider=3 Navigate=3 FragmentRoot=1
+op findfirst ok found 38.219 ms; provider WM_GETOBJECT=26 ProviderOptions=110 GetPropertyValue=61 HostRawElementProvider=42 Navigate=63 GetRuntimeId=18 FragmentRoot=18
+op findfirst ok found 31.156 ms; provider WM_GETOBJECT=26 ProviderOptions=110 GetPropertyValue=61 HostRawElementProvider=42 Navigate=63 GetRuntimeId=18 FragmentRoot=18
+op findfirst_cache ok Advanced 48.659 ms; provider WM_GETOBJECT=26 ProviderOptions=115 GetPropertyValue=63 HostRawElementProvider=45 Navigate=63 GetRuntimeId=20 FragmentRoot=21
+op findfirst_cache ok Advanced 40.294 ms; provider WM_GETOBJECT=26 ProviderOptions=115 GetPropertyValue=63 HostRawElementProvider=45 Navigate=63 GetRuntimeId=20 FragmentRoot=21
+op findall ok 31 101.748 ms; provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+op findall ok 31 96.287 ms; provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+op findall_cache ok 31 331.614 ms; provider WM_GETOBJECT=27 ProviderOptions=316 GetPropertyValue=104 HostRawElementProvider=152 Navigate=86 GetRuntimeId=96 FragmentRoot=120
+op findall_cache ok 31 353.334 ms; provider WM_GETOBJECT=27 ProviderOptions=316 GetPropertyValue=104 HostRawElementProvider=152 Navigate=86 GetRuntimeId=96 FragmentRoot=120
+op build_props ok Items 7.900 ms; provider ProviderOptions=5 GetPropertyValue=5 HostRawElementProvider=3 GetRuntimeId=2 BoundingRectangle=1 FragmentRoot=3
+op build_props ok Items 7.548 ms; provider ProviderOptions=5 GetPropertyValue=5 HostRawElementProvider=3 GetRuntimeId=2 BoundingRectangle=1 FragmentRoot=3
+op build_subtree ok 2 15.223 ms; provider ProviderOptions=22 GetPropertyValue=11 HostRawElementProvider=10 Navigate=9 GetRuntimeId=6 FragmentRoot=7
+op build_subtree ok 2 11.751 ms; provider ProviderOptions=22 GetPropertyValue=11 HostRawElementProvider=10 Navigate=9 GetRuntimeId=6 FragmentRoot=7
+op cur_name ok Items 6.053 ms; provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+op cur_name ok Items 6.196 ms; provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+op cached_name ok Items 0.016 ms; provider
+op cached_name ok Items 0.018 ms; provider
+op runtime_id ok id 6.244 ms; provider ProviderOptions=1 HostRawElementProvider=2 GetRuntimeId=1 FragmentRoot=2
+op runtime_id ok id 0.016 ms; provider
+op compare ok true 11.467 ms; provider ProviderOptions=2 HostRawElementProvider=4 GetRuntimeId=2 FragmentRoot=4
+op compare ok true 0.020 ms; provider
+op fromhandle ok element 21.666 ms; provider WM_GETOBJECT=2 ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=2 Navigate=2
+op fromhandle ok element 19.707 ms; provider WM_GETOBJECT=2 ProviderOptions=7 GetPropertyValue=1 HostRawElementProvider=2 Navigate=2
+op frompoint ok pid=8096 name=Mockapp Tree Fixture 45.518 ms; provider WM_GETOBJECT=4 ProviderOptions=8 GetPropertyValue=4 HostRawElementProvider=2 Navigate=2 ElementProviderFromPoint=1 WM_GETTITLEBARINFOEX=1
+op frompoint ok pid=8096 name=Mockapp Tree Fixture 45.286 ms; provider WM_GETOBJECT=4 ProviderOptions=8 GetPropertyValue=4 HostRawElementProvider=2 Navigate=2 ElementProviderFromPoint=1 WM_GETTITLEBARINFOEX=1
+op focused_only ok element 17.463 ms; provider
+op focused_only ok element 13.583 ms; provider
+op getpattern ok pattern 8.898 ms; provider ProviderOptions=1 GetPatternProvider=1 HostRawElementProvider=2 GetRuntimeId=1 FragmentRoot=2
+op getpattern ok pattern 8.262 ms; provider ProviderOptions=1 GetPatternProvider=1 HostRawElementProvider=2 GetRuntimeId=1 FragmentRoot=2
+op action ok toggled 66.016 ms; provider WM_GETOBJECT=1 ProviderOptions=23 GetPropertyValue=4 HostRawElementProvider=11 Navigate=7 GetRuntimeId=1 SetFocus=1 FragmentRoot=8 Toggle=1
+op action ok toggled 59.631 ms; provider WM_GETOBJECT=1 ProviderOptions=23 GetPropertyValue=4 HostRawElementProvider=11 Navigate=7 GetRuntimeId=1 SetFocus=1 FragmentRoot=8 Toggle=1
+op docrange ok range 12.328 ms; provider DocumentRange=1
+op docrange ok range 7.946 ms; provider DocumentRange=1
+op gettext ok 46 6.114 ms; provider GetText=1
+op gettext ok 46 5.718 ms; provider GetText=1
+op move ok moved 1 (Clone first) 15.929 ms; provider Clone=1 Move=1
+op move ok moved 1 (Clone first) 13.786 ms; provider Clone=1 Move=1
+op move_held ok 1 5.792 ms; provider Move=1
+op move_held ok 1 5.721 ms; provider Move=1
+op expand ok expanded 6.126 ms; provider ExpandToEnclosingUnit=1
+op expand ok expanded 5.774 ms; provider ExpandToEnclosingUnit=1
+event focus tid=14004 at=35092.7 cached_name=Taskbar
+op add_focus ok added 95.996 ms; provider WM_GETOBJECT=3 ProviderOptions=9 HostRawElementProvider=3 Navigate=3 GetEmbeddedFragmentRoots=1 FragmentRoot=2 GetFocus=1
+mock focus btn_ok -> rejected: unrecognized command: ﻿focus btn_ok
+op remove_focus ok removed 20.948 ms; provider
+op add_auto ok added 19.637 ms; provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+mock select item1 -> applied
+event auto 20012 tid=12148 at=38231.0
+op remove_auto ok removed 12.520 ms; provider
+op add_prop ok added 14.544 ms; provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+mock set-name btn_ok Renamed -> applied
+event prop 30005 tid=6860 at=40893.8
+op remove_prop ok removed 13.601 ms; provider
+op hold_elems ok 30 47.432 ms; provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+op drop_elems ok 30 46.675 ms; provider
+op noop error 0x80070057 op noop 0.497 ms; provider
+op cur_name ok Items 5.980 ms; provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+### ops-mock2-out.txt
+﻿target pid=10944 hwnd=3736420
+ready tid=6572
+op noop error 0x80070057 op noop 0.574 ms; provider
+event focus tid=6572 at=39757.4 cached_name=Taskbar
+op add_focus ok added 110.322 ms; provider WM_GETOBJECT=1 ProviderOptions=2 HostRawElementProvider=1 Navigate=1 GetEmbeddedFragmentRoots=1 FragmentRoot=2 GetFocus=1
+mock focus btn_ok -> applied
+event focus tid=2920 at=40210.4 cached_name=OK
+op remove_focus ok removed 24.427 ms; provider
+op add_auto ok added 20.678 ms; provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+mock select item1 -> applied
+event auto 20012 tid=1064 at=42913.8
+op remove_auto ok removed 16.237 ms; provider
+op add_prop ok added 13.802 ms; provider GetEmbeddedFragmentRoots=1 FragmentRoot=1
+mock set-name btn_ok Renamed -> applied
+event prop 30005 tid=9116 at=45591.7
+op remove_prop ok removed 14.771 ms; provider
+op foreground ok set=true foreground_is_target=true 0.895 ms; provider
+mock window-focus -> applied
+mock set-focus doc -> applied
+op focused_only ok element 25.745 ms; provider WM_GETOBJECT=4 ProviderOptions=14 GetPropertyValue=2 HostRawElementProvider=5 Navigate=3 GetRuntimeId=2 FragmentRoot=2 GetFocus=1
+op focused_only ok element 26.639 ms; provider WM_GETOBJECT=4 ProviderOptions=14 GetPropertyValue=2 HostRawElementProvider=5 Navigate=3 GetRuntimeId=2 FragmentRoot=2 GetFocus=1
+op focused ok element (pid read after: 10944) 33.836 ms; provider WM_GETOBJECT=4 ProviderOptions=14 GetPropertyValue=3 HostRawElementProvider=6 Navigate=3 GetRuntimeId=2 FragmentRoot=3 GetFocus=1
+event focus tid=6572 at=51238.4 cached_name=Taskbar
+op add_focus ok added 104.675 ms; provider WM_GETOBJECT=3 ProviderOptions=13 GetPropertyValue=1 HostRawElementProvider=5 Navigate=4 GetRuntimeId=1 GetEmbeddedFragmentRoots=1 FragmentRoot=3 GetFocus=1
+mock focus btn_ok -> applied
+event focus tid=13660 at=51655.9 cached_name=Renamed
+op remove_focus ok removed 24.099 ms; provider
+op hold_elems ok 30 57.609 ms; provider WM_GETOBJECT=27 ProviderOptions=196 GetPropertyValue=54 HostRawElementProvider=80 Navigate=86 GetRuntimeId=48 FragmentRoot=48
+op drop_one ok 29 2.735 ms; provider
+op drop_elems ok 29 50.514 ms; provider
+op noop error 0x80070057 op noop 0.558 ms; provider
+### ops-serve-sta-out.txt
+﻿target pid=10264 hwnd=2818896
+ready tid=13568
+op noop error 0x80070057 op noop 0.523 ms; provider
+op noop error 0x80070057 op noop 0.818 ms; provider
+op cur_name ok serve window 0 11.371 ms; provider
+op cur_name ok serve window 0 8.462 ms; provider
+op cached_name ok serve window 0 0.022 ms; provider
+op cached_name ok serve window 0 0.017 ms; provider
+op build_props ok serve window 0 14.610 ms; provider
+op build_props ok serve window 0 13.947 ms; provider
+op runtime_id ok id 7.283 ms; provider
+op runtime_id ok id 0.021 ms; provider
+op compare ok true 15.102 ms; provider
+op compare ok true 0.022 ms; provider
+op fromhandle ok element 43.230 ms; provider
+op fromhandle ok element 43.006 ms; provider
+op raw_first ok first 14.718 ms; provider
+op raw_first ok first 6.607 ms; provider
+op raw_next ok next 11.299 ms; provider
+op raw_next ok next 10.233 ms; provider
+op raw_parent ok parent 1.413 ms; provider
+op raw_parent ok parent 1.356 ms; provider
+op ctl_parent ok parent 1.352 ms; provider
+op ctl_parent ok parent 1.474 ms; provider
+op findall ok 7 132.737 ms; provider
+op findall ok 7 129.521 ms; provider
+op findall_cache ok 7 144.429 ms; provider
+op findall_cache ok 7 146.982 ms; provider
+op getpattern ok pattern 11.454 ms; provider
+op getpattern ok pattern 10.704 ms; provider
+op action ok invoked 51.085 ms; provider
+op action ok invoked 33.104 ms; provider
+op add_auto 20009 ok added 51.614 ms; provider
+event auto 20009 tid=13964 at=19183.7
+op action ok invoked 122.996 ms; provider
+op remove_auto 20009 ok removed 14.916 ms; provider
+op noop error 0x80070057 op noop 0.606 ms; provider

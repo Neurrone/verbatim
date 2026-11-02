@@ -1,0 +1,315 @@
+# Timeouts against a held provider (timeouts.ps1): mockapp (debug build) under 'hold', so its first provider call (FragmentRoot, under a name read)
+# waits until 'release'. Client: puia ops, call A a name read, call B a name read of the same element 200 ms later on another thread.
+# Times in ms on the script's clock; 'took' is each call's own duration on the client. 'before' and 'after' are mockapp's hit counters,
+# read before the hold and 2 s after the release (both reads are window messages, made only while the window thread is free).
+
+## t2 (no debugger)
+﻿t2 transaction=2000 connection=0 release=12000
+set transaction 2000 -> Ok(()); transaction=2000 connection=2000
+before: hits
+    14.3 mockapp: applied
+    15.8 async A launched
+    16.4 mockapp: held FragmentRoot
+   228.5 async A started=446.7 tid=14200
+   239.1 async B launched
+   240.2 async B started=659.6 tid=2312
+  2206.6 async A cur_name error 0x80131505 started=446.7 ended=2636.6 took=2189.8
+  2427.7 async B cur_name error 0x80131505 started=659.6 ended=2857.8 took=2198.2
+ 12049.2 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+
+## t5 (no debugger)
+﻿t5 transaction=5000 connection=0 release=12000
+set transaction 5000 -> Ok(()); transaction=5000 connection=2000
+before: hits
+    11.6 mockapp: applied
+    13.1 async A launched
+    13.6 mockapp: held FragmentRoot
+   221.4 async A started=447.0 tid=8028
+   231.4 async B launched
+   232.6 async B started=650.1 tid=2892
+  5535.3 async A cur_name error 0x80131505 started=447.0 ended=5963.0 took=5516.0
+  5741.6 async B cur_name error 0x80131505 started=650.1 ended=6169.5 took=5519.4
+ 12065.5 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+
+## t2c05 (no debugger)
+﻿t2c05 transaction=2000 connection=500 release=8000
+set transaction 2000 -> Ok(()); transaction=2000 connection=2000
+set connection 500 -> Ok(()); transaction=2000 connection=500
+before: hits
+     3.1 mockapp: applied
+     3.3 async A launched
+     3.9 mockapp: held FragmentRoot
+   211.6 async A started=433.1 tid=2864
+   212.4 async B launched
+   212.9 async B started=641.8 tid=5288
+  2207.4 async A cur_name error 0x80131505 started=433.1 ended=2636.2 took=2203.1
+  2413.7 async B cur_name error 0x80131505 started=641.8 ended=2842.5 took=2200.7
+  8027.4 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+
+## t20 (no debugger)
+﻿t20 transaction=20000 connection=0 release=30000
+set transaction 20000 -> Ok(()); transaction=20000 connection=2000
+before: hits
+     2.9 mockapp: applied
+     3.2 async A launched
+     3.7 mockapp: held FragmentRoot
+   211.8 async A started=432.9 tid=3608
+   212.6 async B launched
+   213.1 async B started=642.1 tid=13944
+ 22162.3 async A cur_name error 0x80131505 started=432.9 ended=22591.1 took=22158.3
+ 22366.0 async B cur_name error 0x80131505 started=642.1 ended=22794.9 took=22152.8
+ 30027.9 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+
+## t20s: as t20, with one non-invasive snapshot of every stack of both processes at about 1.2 s (it froze the client about 1 s, so its times are late)
+﻿t20s transaction=20000 connection=0 release=30000
+set transaction 20000 -> Ok(()); transaction=20000 connection=2000
+before: hits
+    13.2 mockapp: applied
+    14.6 async A launched
+    15.2 mockapp: held FragmentRoot
+   216.7 async A started=444.8 tid=13068
+  3775.2 stacks taken
+  3782.7 async B launched
+  3784.0 async B started=649.7 tid=2036
+ 23128.0 async A cur_name error 0x80131505 started=444.8 ended=23557.3 took=23112.6
+ 23348.9 async B cur_name error 0x80131505 started=649.7 ended=23778.2 took=23128.5
+ 30062.7 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+### client: the two calling threads
+   9  Id: 3514.330c Suspend: 1 Teb: 00000078`004c9000 Unfrozen
+Child-SP          RetAddr               Call Site
+ntdll!NtWaitForAlertByThreadId+0x14
+ntdll!RtlWaitOnAddress+0x213
+KERNELBASE!WaitOnAddress+0x38
+uiautomationcore!ChannelBasedClientConnection::WaitForResponse+0xae
+uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn+0x276
+uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+uiautomationcore!DoCallWithReturn+0x27d
+uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d
+uiautomationcore!LocalUiaNodeProxy::CrossProcess_GetPropertyValues+0x1b
+uiautomationcore!CAutomationElement::InternalGetPropertyValueEx+0x21d
+uiautomationcore!CAutomationElement::GetCurrentPropertyValue+0x121
+uiautomationcore!CAutomationElement::GetPropertyBSTR+0x6d
+uiautomationcore!CAutomationElement::get_CurrentName+0x82
+puia!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName+0x22
+puia!RNvMs3_NtCsfc8R8NVfkqM_4puia3opsNtB5_2St2op+0x1036
+--
+  10  Id: 3514.7f4 Suspend: 1 Teb: 00000078`004cb000 Unfrozen
+Child-SP          RetAddr               Call Site
+ntdll!NtWaitForAlertByThreadId+0x14
+ntdll!RtlWaitOnAddress+0x213
+KERNELBASE!WaitOnAddress+0x38
+uiautomationcore!ChannelBasedClientConnection::WaitForResponse+0xae
+uiautomationcore!ChannelBasedClientConnection::DoCallWithReturn+0x276
+uiautomationcore!CUIAutomationBlockingCore::DoCallWithReturn+0x5c
+uiautomationcore!BlockingCoreDispatcher::Dispatch_DoCallWithReturn+0x14d
+uiautomationcore!DoCallWithReturn+0x27d
+uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d
+uiautomationcore!LocalUiaNodeProxy::CrossProcess_GetPropertyValues+0x1b
+uiautomationcore!CAutomationElement::InternalGetPropertyValueEx+0x21d
+uiautomationcore!CAutomationElement::GetCurrentPropertyValue+0x121
+uiautomationcore!CAutomationElement::GetPropertyBSTR+0x6d
+uiautomationcore!CAutomationElement::get_CurrentName+0x82
+puia!RNvMs47_NtNtNtCs3WKF79Z4C1k_7windows5Win322UI13AccessibilityNtB6_20IUIAutomationElement11CurrentName+0x22
+puia!RNvMs3_NtCsfc8R8NVfkqM_4puia3opsNtB5_2St2op+0x1036
+--
+.  0  Id: 3614.49c Suspend: 1 Teb: 0000004e`cc52e000 Unfrozen "main"
+Child-SP          RetAddr               Call Site
+ntdll!NtWaitForAlertByThreadId+0x14
+ntdll!RtlWaitOnAddress+0x213
+*** WARNING: Unable to verify checksum for <scratch>\mtarget\debug\mockapp.exe
+KERNELBASE!WaitOnAddress+0x38
+(Inline Function) --------`--------     mockapp!std::sys::sync::futex::windows::wait_on_address+0x19
+(Inline Function) --------`--------     mockapp!std::sys::sync::futex::windows::futex_wait+0x19
+(Inline Function) --------`--------     mockapp!std::sys::sync::condvar::futex::Condvar::wait_optional_timeout+0x23
+mockapp!std::sys::sync::condvar::futex::Condvar::wait+0x33
+mockapp!std::sync::poison::condvar::Condvar::wait<bool>+0x3a
+mockapp!std::sync::poison::condvar::Condvar::wait_while<bool,mockapp::hits::hit::closure_env$0>+0x8c
+mockapp!mockapp::hits::hit+0x1a5
+mockapp!mockapp::uia::handler::impl$9::FragmentRoot+0x32
+mockapp!windows::Win32::UI::Accessibility::impl$104::new::FragmentRoot<mockapp::uia::handler::ChildProvider_Impl,-2>+0x58
+uiautomationcore!UiaUtils::GetFragmentRootWithHostProviderEntryPoint+0x73
+uiautomationcore!UiaUtils::GetDpiCtxFromNode+0xdb
+uiautomationcore!InvokeElementMethodOnCorrectContext_Callback+0xfc
+--
+   9  Id: 3614.2690 Suspend: 1 Teb: 0000004e`cc540000 Unfrozen
+Child-SP          RetAddr               Call Site
+ntdll!NtWaitForMultipleObjects+0x14
+KERNELBASE!WaitForMultipleObjectsEx+0x123
+combase!MTAThreadWaitForCall+0xf4
+(Inline Function) --------`--------     combase!MTAThreadDispatchCrossApartmentCall+0xca
+(Inline Function) --------`--------     combase!CSyncClientCall::SwitchAptAndDispatchCall+0x4dd
+combase!CSyncClientCall::SendReceive2+0x650
+(Inline Function) --------`--------     combase!SyncClientCallRetryContext::SendReceiveWithRetry+0x2f
+combase!CSyncClientCall::SendReceiveInRetryContext+0x5b
+(Inline Function) --------`--------     combase!DefaultSendReceive+0x3c
+combase!CSyncClientCall::SendReceive+0x1df
+(Inline Function) --------`--------     combase!CClientChannel::SendReceive+0x49
+combase!NdrExtpProxySendReceive+0xb3
+RPCRT4!NdrpClientCall3+0x431
+RPCRT4!NdrClientCall3+0xed
+OneCoreCommonProxyStub!IServiceProvider_QueryService_Proxy+0x32
+uiautomationcore!ComInvoker::CallTarget+0x1d8
+--
+
+## t2d and t20d: the client under an invasive cdb (breakpoints on GetTimeout, WaitForResponse, WaitOnAddress, SetResponseInfo)
+﻿t2d transaction=2000 connection=0 release=8000
+set transaction 2000 -> Ok(()); transaction=2000 connection=2000
+before: hits
+  1959.2 mockapp: applied
+  1960.8 async A launched
+  1962.1 mockapp: held FragmentRoot
+  2270.7 async A started=2391.8 tid=10996
+  2285.0 async B launched
+  2294.4 async B started=2708.1 tid=1740
+  4079.5 async A cur_name error 0x80131505 started=2391.8 ended=4508.5 took=2116.7
+  4300.6 async B cur_name error 0x80131505 started=2708.1 ended=4729.8 took=2021.8
+  9997.7 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+﻿t20d transaction=20000 connection=0 release=26000
+set transaction 20000 -> Ok(()); transaction=20000 connection=2000
+before: hits
+  1847.4 mockapp: applied
+  1849.2 async A launched
+  1850.5 mockapp: held FragmentRoot
+  2760.0 async A started=2282.1 tid=6152
+  2773.7 async B launched
+  2783.6 async B started=3199.2 tid=9728
+ 22558.6 async A cur_name error 0x80131505 started=2282.1 ended=22989.8 took=20707.7
+ 22780.8 async B cur_name error 0x80131505 started=3199.2 ended=23211.9 took=20012.8
+ 27888.7 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+### t2d client log: each call read the timeout (GetTimeout returned 2000) and waited once, WaitOnAddress with 2000 ms, in RequestResponseCoordinator::WaitForResponse
+PUIA_ASYNC A tid=10996
+Debugger (not debuggee) time: Mon Nov  2 15:04:40.414 2026 (UTC + 8:00)
+.  9  Id: 2a10.2af4 Suspend: 1 Teb: 0000008c`f7040000 Unfrozen
+Debugger (not debuggee) time: Mon Nov  2 15:04:40.502 2026 (UTC + 8:00)
+.  9  Id: 2a10.2af4 Suspend: 1 Teb: 0000008c`f7040000 Unfrozen
+CLI_WAITONADDRESS timeout=2000
+Debugger (not debuggee) time: Mon Nov  2 15:04:40.504 2026 (UTC + 8:00)
+.  9  Id: 2a10.2af4 Suspend: 1 Teb: 0000008c`f7040000 Unfrozen
+0000008c`f7bfe3f0 00007ffb`a9757e33     uiautomationcore!RequestResponseCoordinator::WaitForResponse+0x85
+PUIA_ASYNC B tid=1740
+Debugger (not debuggee) time: Mon Nov  2 15:04:40.727 2026 (UTC + 8:00)
+. 10  Id: 2a10.6cc Suspend: 1 Teb: 0000008c`f7042000 Unfrozen
+Debugger (not debuggee) time: Mon Nov  2 15:04:40.729 2026 (UTC + 8:00)
+. 10  Id: 2a10.6cc Suspend: 1 Teb: 0000008c`f7042000 Unfrozen
+CLI_WAITONADDRESS timeout=2000
+Debugger (not debuggee) time: Mon Nov  2 15:04:40.731 2026 (UTC + 8:00)
+. 10  Id: 2a10.6cc Suspend: 1 Teb: 0000008c`f7042000 Unfrozen
+0000008c`f7dfe660 00007ffb`a9757e33     uiautomationcore!RequestResponseCoordinator::WaitForResponse+0x85
+CLI_SETRESPONSE
+Debugger (not debuggee) time: Mon Nov  2 15:04:48.444 2026 (UTC + 8:00)
+.  8  Id: 2a10.343c Suspend: 1 Teb: 0000008c`f703c000 Unfrozen
+CLI_SETRESPONSE
+Debugger (not debuggee) time: Mon Nov  2 15:04:48.444 2026 (UTC + 8:00)
+.  8  Id: 2a10.343c Suspend: 1 Teb: 0000008c`f703c000 Unfrozen
+
+## Without a debugger: a context-switch trace of t2 (timeouts-t2trace) and t5 (timeouts-t5trace), verbatim-trace-waits --blocked puia.exe:#<call A's thread> 1
+﻿t2trace transaction=2000 connection=0 release=4000
+set transaction 2000 -> Ok(()); transaction=2000 connection=2000
+before: hits
+    21.2 mockapp: applied
+    22.9 async A launched
+    23.4 mockapp: held FragmentRoot
+   233.3 async A started=472.6 tid=13372
+   241.9 async B launched
+   243.5 async B started=683.5 tid=8912
+  2222.4 async A cur_name error 0x80131505 started=472.6 ended=2671.0 took=2198.4
+  2426.9 async B cur_name error 0x80131505 started=683.5 ended=2875.7 took=2192.2
+  4085.2 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+### call A's blocked waits, t2 (every one woken by a timer's expiry, KiTimerExpiration, from the idle thread)
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:19.575916 to 07:07:19.685982, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 108 ms, from 07:07:19.686094 to 07:07:19.794862, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:19.795031 to 07:07:19.905773, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 109 ms, from 07:07:19.905877 to 07:07:20.015523, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.015829 to 07:07:20.126022, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 109 ms, from 07:07:20.126388 to 07:07:20.235949, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.236064 to 07:07:20.346700, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.346845 to 07:07:20.456922, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.457026 to 07:07:20.567777, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.567960 to 07:07:20.678902, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.679132 to 07:07:20.789495, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.789783 to 07:07:20.900457, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:20.900577 to 07:07:21.011145, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:21.011316 to 07:07:21.121961, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 109 ms, from 07:07:21.122444 to 07:07:21.232071, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:21.232349 to 07:07:21.342436, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 110 ms, from 07:07:21.342595 to 07:07:21.452675, woken by ntoskrnl.exe 0 thread 0 
+puia.exe 2380 thread 13372 "" blocked 205 ms, from 07:07:21.452756 to 07:07:21.658609, woken by ntoskrnl.exe 0 thread 0 
+### the waiting stacks: 18 waits in ChannelBasedClientConnection::WaitForResponse (WaitOnAddress), the last in RequestResponseCoordinator::WaitForResponse under it
+1
+### provider side during t2 (--blocked mockapp.exe:* 1000): the I/O thread waited 4,060 ms in its cross-apartment call, until the release
+mockapp.exe 6020 thread 13688 "" blocked 6598 ms, from 07:07:18.941230 to 07:07:25.539308, woken by mockapp.exe 6020 thread 12068 "main"
+mockapp.exe 6020 thread 404 "" blocked 6531 ms, from 07:07:19.007376 to 07:07:25.539303, woken by mockapp.exe 6020 thread 12068 "main"
+mockapp.exe 6020 thread 5840 "" blocked 6530 ms, from 07:07:19.008901 to 07:07:25.539300, woken by mockapp.exe 6020 thread 12068 "main"
+mockapp.exe 6020 thread 9048 "" blocked 6529 ms, from 07:07:19.009328 to 07:07:25.539298, woken by mockapp.exe 6020 thread 12068 "main"
+mockapp.exe 6020 thread 2676 "" blocked 6529 ms, from 07:07:19.009418 to 07:07:25.539295, woken by mockapp.exe 6020 thread 12068 "main"
+mockapp.exe 6020 thread 13336 "" blocked 6529 ms, from 07:07:19.009814 to 07:07:25.539292, woken by mockapp.exe 6020 thread 12068 "main"
+mockapp.exe 6020 thread 7932 "mockapp-stdin" blocked 4064 ms, from 07:07:19.457462 to 07:07:23.521776, woken by powershell.exe 2532 thread 6904 ""
+mockapp.exe 6020 thread 10668 "" blocked 4060 ms, from 07:07:19.461079 to 07:07:23.521976, woken by mockapp.exe 6020 thread 12068 "main"
+    combase.dll!MTAThreadWaitForCall
+    uiautomationcore.dll!ComInvoker::CallTarget
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+mockapp.exe 6020 thread 12068 "main" blocked 4060 ms, from 07:07:19.461203 to 07:07:23.521823, woken by mockapp.exe 6020 thread 7932 "mockapp-stdin"
+    mockapp.exe!std::sync::poison::condvar::Condvar::wait_while<bool,mockapp::hits::hit::closure_env$0>
+    mockapp.exe!mockapp::hits::hit
+mockapp.exe 6020 thread 7932 "mockapp-stdin" blocked 2016 ms, from 07:07:23.521861 to 07:07:25.538343, woken by powershell.exe 2532 thread 6904 ""
+mockapp.exe 6020 thread 12068 "main" blocked 2005 ms, from 07:07:23.522304 to 07:07:25.527898, woken by puia.exe 2380 thread 8416 "main"
+mockapp.exe 6020 thread 10668 "" blocked 2011 ms, from 07:07:23.522363 to 07:07:25.533960, woken by puia.exe 2380 thread 8416 "main"
+    uiautomationcore.dll!OverlappedIOManager::IoThreadProc
+    uiautomationcore.dll!OverlappedIOManager::StaticIoThreadProc
+﻿t5trace transaction=5000 connection=0 release=7000
+set transaction 5000 -> Ok(()); transaction=5000 connection=2000
+before: hits
+    19.3 mockapp: applied
+    21.1 async A launched
+    21.6 mockapp: held FragmentRoot
+   226.2 async A started=470.7 tid=4396
+   234.7 async B launched
+   235.9 async B started=676.0 tid=1988
+  5534.1 async A cur_name error 0x80131505 started=470.7 ended=5982.8 took=5512.1
+  5739.2 async B cur_name error 0x80131505 started=676.0 ended=6188.0 took=5512.0
+  7065.7 release sent; mockapp: applied
+after: hits GetPropertyValue=2 HostRawElementProvider=2 FragmentRoot=2
+### call A's blocked waits, t5, by length
+      2 108
+      9 109
+     33 110
+      3 111
+      1 205
+puia.exe 2892 thread 4396 "" blocked 109 ms, from 07:12:15.503445 to 07:12:15.613241, woken by ntoskrnl.exe 0 thread 0 "
+puia.exe 2892 thread 4396 "" blocked 205 ms, from 07:12:15.613681 to 07:12:15.818977, woken by ntoskrnl.exe 0 thread 0 "
+
+## A bare WaitOnAddress in the same client process (op waitonaddress), for comparison
+﻿target pid=6188 hwnd=5374712
+ready tid=4676
+op waitonaddress 2000 ok waited 2013.1 ms for 2000 2013.133 ms; provider
+op waitonaddress 5000 ok waited 5004.8 ms for 5000 5004.768 ms; provider
+async X launched
+async X started=8289.7 tid=10004
+async X waitonaddress 2000 ok waited 2002.2 ms for 2000 started=8289.7 ended=10292.1 took=2002.3
+op cur_name ok Items 0.257 ms; provider GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+op waitonaddress 2000 ok waited 2000.0 ms for 2000 2000.017 ms; provider
+
+## t1findfirst: transaction 1000 ms, call B a FindFirst over the root's descendants (AutomationId tab2) instead of a name read (no debugger)
+﻿t1findfirst transaction=1000 connection=0 release=25000
+set transaction 1000 -> Ok(()); transaction=1000 connection=2000
+before: hits
+    15.4 mockapp: applied
+    16.9 async A launched
+    17.3 mockapp: held FragmentRoot
+   226.1 async A started=448.4 tid=2128
+   234.6 async B launched
+   235.7 async B started=657.9 tid=7784
+  1128.3 async A cur_name error 0x80131505 started=448.4 ended=1557.1 took=1108.6
+  1332.6 async B findfirst error 0x80131505 started=657.9 ended=1763.5 took=1105.6
+ 25030.1 release sent; mockapp: applied
+after: hits GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1

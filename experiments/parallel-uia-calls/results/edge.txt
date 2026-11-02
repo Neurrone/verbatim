@@ -1,0 +1,585 @@
+TARGET label=edge hwnd=524906 pid=5672 ui_tid=6800 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window client=per-thread
+CTX n=1 descendants_found=303 elems_held=16 text=true msaa=true
+CTX n=2 descendants_found=303 elems_held=16 text=true msaa=true
+CTX n=4 descendants_found=303 elems_held=16 text=true msaa=true
+CTX n=8 descendants_found=303 elems_held=16 text=true msaa=true
+RAW label=edge op=name n=1 rep=0 wall_ms=6.872 errors=0
+RAW label=edge op=name n=1 rep=1 wall_ms=7.923 errors=0
+RAW label=edge op=name n=1 rep=2 wall_ms=7.847 errors=0
+RAW label=edge op=name n=1 rep=3 wall_ms=6.940 errors=0
+RAW label=edge op=name n=1 rep=4 wall_ms=7.310 errors=0
+RAW label=edge op=name n=1 rep=5 wall_ms=7.554 errors=0
+RAW label=edge op=name n=1 rep=6 wall_ms=7.837 errors=0
+RAW label=edge op=name n=1 rep=7 wall_ms=7.374 errors=0
+RAW label=edge op=name n=1 rep=8 wall_ms=7.276 errors=0
+RAW label=edge op=name n=1 rep=9 wall_ms=7.938 errors=0
+RAW label=edge op=name n=1 rep=10 wall_ms=7.385 errors=0
+RAW label=edge op=name n=1 rep=11 wall_ms=8.178 errors=0
+RAW label=edge op=name n=1 rep=12 wall_ms=8.234 errors=0
+RAW label=edge op=name n=1 rep=13 wall_ms=5.999 errors=0
+RAW label=edge op=name n=1 rep=14 wall_ms=6.577 errors=0
+RAW label=edge op=name n=1 rep=15 wall_ms=6.799 errors=0
+RAW label=edge op=name n=1 rep=16 wall_ms=6.692 errors=0
+RAW label=edge op=name n=1 rep=17 wall_ms=7.055 errors=0
+RAW label=edge op=name n=1 rep=18 wall_ms=6.692 errors=0
+RAW label=edge op=name n=1 rep=19 wall_ms=6.341 errors=0
+RESULT label=edge op=name n=1 k=64 median_ms=7.31 p90_ms=7.94 per_call_us=114.2 speedup=1.00 errors=0
+RAW label=edge op=name n=2 rep=0 wall_ms=4.183 errors=0
+RAW label=edge op=name n=2 rep=1 wall_ms=4.206 errors=0
+RAW label=edge op=name n=2 rep=2 wall_ms=4.437 errors=0
+RAW label=edge op=name n=2 rep=3 wall_ms=4.167 errors=0
+RAW label=edge op=name n=2 rep=4 wall_ms=4.096 errors=0
+RAW label=edge op=name n=2 rep=5 wall_ms=4.393 errors=0
+RAW label=edge op=name n=2 rep=6 wall_ms=4.951 errors=0
+RAW label=edge op=name n=2 rep=7 wall_ms=4.823 errors=0
+RAW label=edge op=name n=2 rep=8 wall_ms=4.402 errors=0
+RAW label=edge op=name n=2 rep=9 wall_ms=4.624 errors=0
+RAW label=edge op=name n=2 rep=10 wall_ms=4.123 errors=0
+RAW label=edge op=name n=2 rep=11 wall_ms=4.095 errors=0
+RAW label=edge op=name n=2 rep=12 wall_ms=4.114 errors=0
+RAW label=edge op=name n=2 rep=13 wall_ms=4.332 errors=0
+RAW label=edge op=name n=2 rep=14 wall_ms=4.453 errors=0
+RAW label=edge op=name n=2 rep=15 wall_ms=4.392 errors=0
+RAW label=edge op=name n=2 rep=16 wall_ms=4.343 errors=0
+RAW label=edge op=name n=2 rep=17 wall_ms=4.902 errors=0
+RAW label=edge op=name n=2 rep=18 wall_ms=4.727 errors=0
+RAW label=edge op=name n=2 rep=19 wall_ms=3.762 errors=0
+RESULT label=edge op=name n=2 k=64 median_ms=4.39 p90_ms=4.82 per_call_us=68.6 speedup=1.66 errors=0
+RAW label=edge op=name n=4 rep=0 wall_ms=4.483 errors=0
+RAW label=edge op=name n=4 rep=1 wall_ms=4.962 errors=0
+RAW label=edge op=name n=4 rep=2 wall_ms=4.704 errors=0
+RAW label=edge op=name n=4 rep=3 wall_ms=4.991 errors=0
+RAW label=edge op=name n=4 rep=4 wall_ms=4.530 errors=0
+RAW label=edge op=name n=4 rep=5 wall_ms=4.230 errors=0
+RAW label=edge op=name n=4 rep=6 wall_ms=4.557 errors=0
+RAW label=edge op=name n=4 rep=7 wall_ms=4.298 errors=0
+RAW label=edge op=name n=4 rep=8 wall_ms=4.509 errors=0
+RAW label=edge op=name n=4 rep=9 wall_ms=4.283 errors=0
+RAW label=edge op=name n=4 rep=10 wall_ms=4.134 errors=0
+RAW label=edge op=name n=4 rep=11 wall_ms=4.218 errors=0
+RAW label=edge op=name n=4 rep=12 wall_ms=4.169 errors=0
+RAW label=edge op=name n=4 rep=13 wall_ms=4.326 errors=0
+RAW label=edge op=name n=4 rep=14 wall_ms=4.643 errors=0
+RAW label=edge op=name n=4 rep=15 wall_ms=4.761 errors=0
+RAW label=edge op=name n=4 rep=16 wall_ms=4.760 errors=0
+RAW label=edge op=name n=4 rep=17 wall_ms=4.292 errors=0
+RAW label=edge op=name n=4 rep=18 wall_ms=4.962 errors=0
+RAW label=edge op=name n=4 rep=19 wall_ms=5.098 errors=0
+RESULT label=edge op=name n=4 k=64 median_ms=4.53 p90_ms=4.96 per_call_us=70.8 speedup=1.61 errors=0
+RAW label=edge op=name n=8 rep=0 wall_ms=3.845 errors=0
+RAW label=edge op=name n=8 rep=1 wall_ms=4.377 errors=0
+RAW label=edge op=name n=8 rep=2 wall_ms=4.212 errors=0
+RAW label=edge op=name n=8 rep=3 wall_ms=4.102 errors=0
+RAW label=edge op=name n=8 rep=4 wall_ms=3.920 errors=0
+RAW label=edge op=name n=8 rep=5 wall_ms=4.425 errors=0
+RAW label=edge op=name n=8 rep=6 wall_ms=4.597 errors=0
+RAW label=edge op=name n=8 rep=7 wall_ms=4.077 errors=0
+RAW label=edge op=name n=8 rep=8 wall_ms=4.268 errors=0
+RAW label=edge op=name n=8 rep=9 wall_ms=4.021 errors=0
+RAW label=edge op=name n=8 rep=10 wall_ms=4.258 errors=0
+RAW label=edge op=name n=8 rep=11 wall_ms=4.393 errors=0
+RAW label=edge op=name n=8 rep=12 wall_ms=4.753 errors=0
+RAW label=edge op=name n=8 rep=13 wall_ms=4.803 errors=0
+RAW label=edge op=name n=8 rep=14 wall_ms=4.700 errors=0
+RAW label=edge op=name n=8 rep=15 wall_ms=4.321 errors=0
+RAW label=edge op=name n=8 rep=16 wall_ms=4.447 errors=0
+RAW label=edge op=name n=8 rep=17 wall_ms=4.557 errors=0
+RAW label=edge op=name n=8 rep=18 wall_ms=4.578 errors=0
+RAW label=edge op=name n=8 rep=19 wall_ms=4.553 errors=0
+RESULT label=edge op=name n=8 k=64 median_ms=4.39 p90_ms=4.70 per_call_us=68.6 speedup=1.66 errors=0
+RAW label=edge op=findall n=1 rep=0 wall_ms=528.983 errors=0
+RAW label=edge op=findall n=1 rep=1 wall_ms=639.076 errors=0
+RAW label=edge op=findall n=1 rep=2 wall_ms=616.617 errors=0
+RAW label=edge op=findall n=1 rep=3 wall_ms=614.744 errors=0
+RAW label=edge op=findall n=1 rep=4 wall_ms=552.108 errors=0
+RAW label=edge op=findall n=1 rep=5 wall_ms=520.438 errors=0
+RAW label=edge op=findall n=1 rep=6 wall_ms=511.814 errors=0
+RAW label=edge op=findall n=1 rep=7 wall_ms=517.585 errors=0
+RAW label=edge op=findall n=1 rep=8 wall_ms=511.672 errors=0
+RAW label=edge op=findall n=1 rep=9 wall_ms=522.952 errors=0
+RAW label=edge op=findall n=1 rep=10 wall_ms=508.273 errors=0
+RAW label=edge op=findall n=1 rep=11 wall_ms=545.910 errors=0
+RAW label=edge op=findall n=1 rep=12 wall_ms=510.039 errors=0
+RAW label=edge op=findall n=1 rep=13 wall_ms=519.087 errors=0
+RAW label=edge op=findall n=1 rep=14 wall_ms=516.006 errors=0
+RAW label=edge op=findall n=1 rep=15 wall_ms=525.724 errors=0
+RAW label=edge op=findall n=1 rep=16 wall_ms=521.458 errors=0
+RAW label=edge op=findall n=1 rep=17 wall_ms=516.285 errors=0
+RAW label=edge op=findall n=1 rep=18 wall_ms=522.614 errors=0
+RAW label=edge op=findall n=1 rep=19 wall_ms=523.786 errors=0
+RESULT label=edge op=findall n=1 k=8 median_ms=522.61 p90_ms=614.74 per_call_us=65326.7 speedup=1.00 errors=0
+RAW label=edge op=findall n=2 rep=0 wall_ms=370.961 errors=0
+RAW label=edge op=findall n=2 rep=1 wall_ms=354.433 errors=0
+RAW label=edge op=findall n=2 rep=2 wall_ms=358.478 errors=0
+RAW label=edge op=findall n=2 rep=3 wall_ms=353.400 errors=0
+RAW label=edge op=findall n=2 rep=4 wall_ms=358.896 errors=0
+RAW label=edge op=findall n=2 rep=5 wall_ms=360.665 errors=0
+RAW label=edge op=findall n=2 rep=6 wall_ms=337.438 errors=0
+RAW label=edge op=findall n=2 rep=7 wall_ms=358.720 errors=0
+RAW label=edge op=findall n=2 rep=8 wall_ms=353.518 errors=0
+RAW label=edge op=findall n=2 rep=9 wall_ms=352.292 errors=0
+RAW label=edge op=findall n=2 rep=10 wall_ms=345.271 errors=0
+RAW label=edge op=findall n=2 rep=11 wall_ms=355.366 errors=0
+RAW label=edge op=findall n=2 rep=12 wall_ms=362.930 errors=0
+RAW label=edge op=findall n=2 rep=13 wall_ms=350.273 errors=0
+RAW label=edge op=findall n=2 rep=14 wall_ms=338.810 errors=0
+RAW label=edge op=findall n=2 rep=15 wall_ms=351.760 errors=0
+RAW label=edge op=findall n=2 rep=16 wall_ms=353.259 errors=0
+RAW label=edge op=findall n=2 rep=17 wall_ms=351.797 errors=0
+RAW label=edge op=findall n=2 rep=18 wall_ms=344.322 errors=0
+RAW label=edge op=findall n=2 rep=19 wall_ms=353.722 errors=0
+RESULT label=edge op=findall n=2 k=8 median_ms=353.52 p90_ms=360.67 per_call_us=44189.8 speedup=1.48 errors=0
+RAW label=edge op=findall n=4 rep=0 wall_ms=342.556 errors=0
+RAW label=edge op=findall n=4 rep=1 wall_ms=343.533 errors=0
+RAW label=edge op=findall n=4 rep=2 wall_ms=342.980 errors=0
+RAW label=edge op=findall n=4 rep=3 wall_ms=351.116 errors=0
+RAW label=edge op=findall n=4 rep=4 wall_ms=351.772 errors=0
+RAW label=edge op=findall n=4 rep=5 wall_ms=348.768 errors=0
+RAW label=edge op=findall n=4 rep=6 wall_ms=356.696 errors=0
+RAW label=edge op=findall n=4 rep=7 wall_ms=342.122 errors=0
+RAW label=edge op=findall n=4 rep=8 wall_ms=353.935 errors=0
+RAW label=edge op=findall n=4 rep=9 wall_ms=363.630 errors=0
+RAW label=edge op=findall n=4 rep=10 wall_ms=348.122 errors=0
+RAW label=edge op=findall n=4 rep=11 wall_ms=361.487 errors=0
+RAW label=edge op=findall n=4 rep=12 wall_ms=355.218 errors=0
+RAW label=edge op=findall n=4 rep=13 wall_ms=361.271 errors=0
+RAW label=edge op=findall n=4 rep=14 wall_ms=351.594 errors=0
+RAW label=edge op=findall n=4 rep=15 wall_ms=346.731 errors=0
+RAW label=edge op=findall n=4 rep=16 wall_ms=347.292 errors=0
+RAW label=edge op=findall n=4 rep=17 wall_ms=340.515 errors=0
+RAW label=edge op=findall n=4 rep=18 wall_ms=355.165 errors=0
+RAW label=edge op=findall n=4 rep=19 wall_ms=354.895 errors=0
+RESULT label=edge op=findall n=4 k=8 median_ms=351.59 p90_ms=361.27 per_call_us=43949.2 speedup=1.49 errors=0
+RAW label=edge op=findall n=8 rep=0 wall_ms=361.543 errors=0
+RAW label=edge op=findall n=8 rep=1 wall_ms=369.740 errors=0
+RAW label=edge op=findall n=8 rep=2 wall_ms=414.054 errors=0
+RAW label=edge op=findall n=8 rep=3 wall_ms=409.398 errors=0
+RAW label=edge op=findall n=8 rep=4 wall_ms=360.954 errors=0
+RAW label=edge op=findall n=8 rep=5 wall_ms=365.693 errors=0
+RAW label=edge op=findall n=8 rep=6 wall_ms=363.881 errors=0
+RAW label=edge op=findall n=8 rep=7 wall_ms=350.322 errors=0
+RAW label=edge op=findall n=8 rep=8 wall_ms=362.926 errors=0
+RAW label=edge op=findall n=8 rep=9 wall_ms=362.851 errors=0
+RAW label=edge op=findall n=8 rep=10 wall_ms=353.602 errors=0
+RAW label=edge op=findall n=8 rep=11 wall_ms=367.033 errors=0
+RAW label=edge op=findall n=8 rep=12 wall_ms=361.608 errors=0
+RAW label=edge op=findall n=8 rep=13 wall_ms=378.140 errors=0
+RAW label=edge op=findall n=8 rep=14 wall_ms=361.021 errors=0
+RAW label=edge op=findall n=8 rep=15 wall_ms=368.912 errors=0
+RAW label=edge op=findall n=8 rep=16 wall_ms=367.468 errors=0
+RAW label=edge op=findall n=8 rep=17 wall_ms=387.603 errors=0
+RAW label=edge op=findall n=8 rep=18 wall_ms=416.809 errors=0
+RAW label=edge op=findall n=8 rep=19 wall_ms=367.531 errors=0
+RESULT label=edge op=findall n=8 k=8 median_ms=367.03 p90_ms=409.40 per_call_us=45879.2 speedup=1.42 errors=0
+RAW label=edge op=fromhandle n=1 rep=0 wall_ms=24.395 errors=0
+RAW label=edge op=fromhandle n=1 rep=1 wall_ms=23.736 errors=0
+RAW label=edge op=fromhandle n=1 rep=2 wall_ms=24.330 errors=0
+RAW label=edge op=fromhandle n=1 rep=3 wall_ms=23.606 errors=0
+RAW label=edge op=fromhandle n=1 rep=4 wall_ms=22.740 errors=0
+RAW label=edge op=fromhandle n=1 rep=5 wall_ms=22.951 errors=0
+RAW label=edge op=fromhandle n=1 rep=6 wall_ms=23.544 errors=0
+RAW label=edge op=fromhandle n=1 rep=7 wall_ms=23.161 errors=0
+RAW label=edge op=fromhandle n=1 rep=8 wall_ms=26.410 errors=0
+RAW label=edge op=fromhandle n=1 rep=9 wall_ms=22.867 errors=0
+RAW label=edge op=fromhandle n=1 rep=10 wall_ms=22.894 errors=0
+RAW label=edge op=fromhandle n=1 rep=11 wall_ms=22.224 errors=0
+RAW label=edge op=fromhandle n=1 rep=12 wall_ms=23.204 errors=0
+RAW label=edge op=fromhandle n=1 rep=13 wall_ms=25.745 errors=0
+RAW label=edge op=fromhandle n=1 rep=14 wall_ms=23.597 errors=0
+RAW label=edge op=fromhandle n=1 rep=15 wall_ms=24.159 errors=0
+RAW label=edge op=fromhandle n=1 rep=16 wall_ms=23.739 errors=0
+RAW label=edge op=fromhandle n=1 rep=17 wall_ms=24.353 errors=0
+RAW label=edge op=fromhandle n=1 rep=18 wall_ms=24.676 errors=0
+RAW label=edge op=fromhandle n=1 rep=19 wall_ms=23.820 errors=0
+RESULT label=edge op=fromhandle n=1 k=32 median_ms=23.74 p90_ms=24.68 per_call_us=741.8 speedup=1.00 errors=0
+RAW label=edge op=fromhandle n=2 rep=0 wall_ms=19.080 errors=0
+RAW label=edge op=fromhandle n=2 rep=1 wall_ms=19.074 errors=0
+RAW label=edge op=fromhandle n=2 rep=2 wall_ms=19.217 errors=0
+RAW label=edge op=fromhandle n=2 rep=3 wall_ms=19.561 errors=0
+RAW label=edge op=fromhandle n=2 rep=4 wall_ms=18.851 errors=0
+RAW label=edge op=fromhandle n=2 rep=5 wall_ms=19.594 errors=0
+RAW label=edge op=fromhandle n=2 rep=6 wall_ms=21.338 errors=0
+RAW label=edge op=fromhandle n=2 rep=7 wall_ms=18.235 errors=0
+RAW label=edge op=fromhandle n=2 rep=8 wall_ms=18.756 errors=0
+RAW label=edge op=fromhandle n=2 rep=9 wall_ms=19.535 errors=0
+RAW label=edge op=fromhandle n=2 rep=10 wall_ms=19.058 errors=0
+RAW label=edge op=fromhandle n=2 rep=11 wall_ms=19.547 errors=0
+RAW label=edge op=fromhandle n=2 rep=12 wall_ms=18.128 errors=0
+RAW label=edge op=fromhandle n=2 rep=13 wall_ms=19.134 errors=0
+RAW label=edge op=fromhandle n=2 rep=14 wall_ms=19.110 errors=0
+RAW label=edge op=fromhandle n=2 rep=15 wall_ms=19.783 errors=0
+RAW label=edge op=fromhandle n=2 rep=16 wall_ms=19.743 errors=0
+RAW label=edge op=fromhandle n=2 rep=17 wall_ms=19.346 errors=0
+RAW label=edge op=fromhandle n=2 rep=18 wall_ms=17.759 errors=0
+RAW label=edge op=fromhandle n=2 rep=19 wall_ms=18.679 errors=0
+RESULT label=edge op=fromhandle n=2 k=32 median_ms=19.13 p90_ms=19.74 per_call_us=597.9 speedup=1.24 errors=0
+RAW label=edge op=fromhandle n=4 rep=0 wall_ms=17.765 errors=0
+RAW label=edge op=fromhandle n=4 rep=1 wall_ms=17.860 errors=0
+RAW label=edge op=fromhandle n=4 rep=2 wall_ms=18.104 errors=0
+RAW label=edge op=fromhandle n=4 rep=3 wall_ms=18.813 errors=0
+RAW label=edge op=fromhandle n=4 rep=4 wall_ms=19.573 errors=0
+RAW label=edge op=fromhandle n=4 rep=5 wall_ms=18.396 errors=0
+RAW label=edge op=fromhandle n=4 rep=6 wall_ms=18.364 errors=0
+RAW label=edge op=fromhandle n=4 rep=7 wall_ms=18.990 errors=0
+RAW label=edge op=fromhandle n=4 rep=8 wall_ms=19.397 errors=0
+RAW label=edge op=fromhandle n=4 rep=9 wall_ms=18.472 errors=0
+RAW label=edge op=fromhandle n=4 rep=10 wall_ms=18.287 errors=0
+RAW label=edge op=fromhandle n=4 rep=11 wall_ms=18.404 errors=0
+RAW label=edge op=fromhandle n=4 rep=12 wall_ms=17.810 errors=0
+RAW label=edge op=fromhandle n=4 rep=13 wall_ms=18.091 errors=0
+RAW label=edge op=fromhandle n=4 rep=14 wall_ms=18.861 errors=0
+RAW label=edge op=fromhandle n=4 rep=15 wall_ms=18.844 errors=0
+RAW label=edge op=fromhandle n=4 rep=16 wall_ms=18.741 errors=0
+RAW label=edge op=fromhandle n=4 rep=17 wall_ms=18.572 errors=0
+RAW label=edge op=fromhandle n=4 rep=18 wall_ms=19.497 errors=0
+RAW label=edge op=fromhandle n=4 rep=19 wall_ms=18.744 errors=0
+RESULT label=edge op=fromhandle n=4 k=32 median_ms=18.57 p90_ms=19.40 per_call_us=580.4 speedup=1.28 errors=0
+RAW label=edge op=fromhandle n=8 rep=0 wall_ms=18.869 errors=0
+RAW label=edge op=fromhandle n=8 rep=1 wall_ms=18.876 errors=0
+RAW label=edge op=fromhandle n=8 rep=2 wall_ms=19.315 errors=0
+RAW label=edge op=fromhandle n=8 rep=3 wall_ms=18.418 errors=0
+RAW label=edge op=fromhandle n=8 rep=4 wall_ms=17.923 errors=0
+RAW label=edge op=fromhandle n=8 rep=5 wall_ms=19.545 errors=0
+RAW label=edge op=fromhandle n=8 rep=6 wall_ms=19.431 errors=0
+RAW label=edge op=fromhandle n=8 rep=7 wall_ms=18.440 errors=0
+RAW label=edge op=fromhandle n=8 rep=8 wall_ms=18.611 errors=0
+RAW label=edge op=fromhandle n=8 rep=9 wall_ms=19.094 errors=0
+RAW label=edge op=fromhandle n=8 rep=10 wall_ms=19.141 errors=0
+RAW label=edge op=fromhandle n=8 rep=11 wall_ms=20.994 errors=0
+RAW label=edge op=fromhandle n=8 rep=12 wall_ms=18.828 errors=0
+RAW label=edge op=fromhandle n=8 rep=13 wall_ms=18.037 errors=0
+RAW label=edge op=fromhandle n=8 rep=14 wall_ms=18.779 errors=0
+RAW label=edge op=fromhandle n=8 rep=15 wall_ms=18.253 errors=0
+RAW label=edge op=fromhandle n=8 rep=16 wall_ms=19.505 errors=0
+RAW label=edge op=fromhandle n=8 rep=17 wall_ms=17.772 errors=0
+RAW label=edge op=fromhandle n=8 rep=18 wall_ms=18.454 errors=0
+RAW label=edge op=fromhandle n=8 rep=19 wall_ms=18.013 errors=0
+RESULT label=edge op=fromhandle n=8 k=32 median_ms=18.83 p90_ms=19.51 per_call_us=588.4 speedup=1.26 errors=0
+RAW label=edge op=text n=1 rep=0 wall_ms=13.002 errors=0
+RAW label=edge op=text n=1 rep=1 wall_ms=12.661 errors=0
+RAW label=edge op=text n=1 rep=2 wall_ms=12.137 errors=0
+RAW label=edge op=text n=1 rep=3 wall_ms=12.626 errors=0
+RAW label=edge op=text n=1 rep=4 wall_ms=12.878 errors=0
+RAW label=edge op=text n=1 rep=5 wall_ms=12.281 errors=0
+RAW label=edge op=text n=1 rep=6 wall_ms=13.059 errors=0
+RAW label=edge op=text n=1 rep=7 wall_ms=12.486 errors=0
+RAW label=edge op=text n=1 rep=8 wall_ms=13.797 errors=0
+RAW label=edge op=text n=1 rep=9 wall_ms=12.783 errors=0
+RAW label=edge op=text n=1 rep=10 wall_ms=12.605 errors=0
+RAW label=edge op=text n=1 rep=11 wall_ms=12.239 errors=0
+RAW label=edge op=text n=1 rep=12 wall_ms=12.344 errors=0
+RAW label=edge op=text n=1 rep=13 wall_ms=12.405 errors=0
+RAW label=edge op=text n=1 rep=14 wall_ms=12.227 errors=0
+RAW label=edge op=text n=1 rep=15 wall_ms=12.646 errors=0
+RAW label=edge op=text n=1 rep=16 wall_ms=12.220 errors=0
+RAW label=edge op=text n=1 rep=17 wall_ms=13.186 errors=0
+RAW label=edge op=text n=1 rep=18 wall_ms=12.283 errors=0
+RAW label=edge op=text n=1 rep=19 wall_ms=12.206 errors=0
+RESULT label=edge op=text n=1 k=32 median_ms=12.61 p90_ms=13.06 per_call_us=393.9 speedup=1.00 errors=0
+RAW label=edge op=text n=2 rep=0 wall_ms=10.354 errors=0
+RAW label=edge op=text n=2 rep=1 wall_ms=11.088 errors=0
+RAW label=edge op=text n=2 rep=2 wall_ms=9.332 errors=0
+RAW label=edge op=text n=2 rep=3 wall_ms=10.358 errors=0
+RAW label=edge op=text n=2 rep=4 wall_ms=10.303 errors=0
+RAW label=edge op=text n=2 rep=5 wall_ms=9.970 errors=0
+RAW label=edge op=text n=2 rep=6 wall_ms=9.212 errors=0
+RAW label=edge op=text n=2 rep=7 wall_ms=9.863 errors=0
+RAW label=edge op=text n=2 rep=8 wall_ms=10.042 errors=0
+RAW label=edge op=text n=2 rep=9 wall_ms=10.032 errors=0
+RAW label=edge op=text n=2 rep=10 wall_ms=10.123 errors=0
+RAW label=edge op=text n=2 rep=11 wall_ms=10.148 errors=0
+RAW label=edge op=text n=2 rep=12 wall_ms=9.307 errors=0
+RAW label=edge op=text n=2 rep=13 wall_ms=9.843 errors=0
+RAW label=edge op=text n=2 rep=14 wall_ms=9.514 errors=0
+RAW label=edge op=text n=2 rep=15 wall_ms=10.128 errors=0
+RAW label=edge op=text n=2 rep=16 wall_ms=10.150 errors=0
+RAW label=edge op=text n=2 rep=17 wall_ms=9.645 errors=0
+RAW label=edge op=text n=2 rep=18 wall_ms=11.064 errors=0
+RAW label=edge op=text n=2 rep=19 wall_ms=10.517 errors=0
+RESULT label=edge op=text n=2 k=32 median_ms=10.12 p90_ms=10.52 per_call_us=316.4 speedup=1.25 errors=0
+RAW label=edge op=text n=4 rep=0 wall_ms=11.241 errors=0
+RAW label=edge op=text n=4 rep=1 wall_ms=10.188 errors=0
+RAW label=edge op=text n=4 rep=2 wall_ms=10.008 errors=0
+RAW label=edge op=text n=4 rep=3 wall_ms=9.524 errors=0
+RAW label=edge op=text n=4 rep=4 wall_ms=9.484 errors=0
+RAW label=edge op=text n=4 rep=5 wall_ms=10.891 errors=0
+RAW label=edge op=text n=4 rep=6 wall_ms=10.104 errors=0
+RAW label=edge op=text n=4 rep=7 wall_ms=9.695 errors=0
+RAW label=edge op=text n=4 rep=8 wall_ms=10.766 errors=0
+RAW label=edge op=text n=4 rep=9 wall_ms=10.769 errors=0
+RAW label=edge op=text n=4 rep=10 wall_ms=10.277 errors=0
+RAW label=edge op=text n=4 rep=11 wall_ms=10.465 errors=0
+RAW label=edge op=text n=4 rep=12 wall_ms=9.899 errors=0
+RAW label=edge op=text n=4 rep=13 wall_ms=9.357 errors=0
+RAW label=edge op=text n=4 rep=14 wall_ms=9.237 errors=0
+RAW label=edge op=text n=4 rep=15 wall_ms=10.056 errors=0
+RAW label=edge op=text n=4 rep=16 wall_ms=9.577 errors=0
+RAW label=edge op=text n=4 rep=17 wall_ms=10.273 errors=0
+RAW label=edge op=text n=4 rep=18 wall_ms=9.035 errors=0
+RAW label=edge op=text n=4 rep=19 wall_ms=9.984 errors=0
+RESULT label=edge op=text n=4 k=32 median_ms=10.06 p90_ms=10.77 per_call_us=314.3 speedup=1.25 errors=0
+RAW label=edge op=text n=8 rep=0 wall_ms=10.158 errors=0
+RAW label=edge op=text n=8 rep=1 wall_ms=9.407 errors=0
+RAW label=edge op=text n=8 rep=2 wall_ms=9.552 errors=0
+RAW label=edge op=text n=8 rep=3 wall_ms=9.513 errors=0
+RAW label=edge op=text n=8 rep=4 wall_ms=9.949 errors=0
+RAW label=edge op=text n=8 rep=5 wall_ms=10.884 errors=0
+RAW label=edge op=text n=8 rep=6 wall_ms=9.549 errors=0
+RAW label=edge op=text n=8 rep=7 wall_ms=9.505 errors=0
+RAW label=edge op=text n=8 rep=8 wall_ms=9.179 errors=0
+RAW label=edge op=text n=8 rep=9 wall_ms=9.570 errors=0
+RAW label=edge op=text n=8 rep=10 wall_ms=9.249 errors=0
+RAW label=edge op=text n=8 rep=11 wall_ms=10.033 errors=0
+RAW label=edge op=text n=8 rep=12 wall_ms=10.302 errors=0
+RAW label=edge op=text n=8 rep=13 wall_ms=10.382 errors=0
+RAW label=edge op=text n=8 rep=14 wall_ms=10.821 errors=0
+RAW label=edge op=text n=8 rep=15 wall_ms=10.680 errors=0
+RAW label=edge op=text n=8 rep=16 wall_ms=10.444 errors=0
+RAW label=edge op=text n=8 rep=17 wall_ms=9.274 errors=0
+RAW label=edge op=text n=8 rep=18 wall_ms=9.927 errors=0
+RAW label=edge op=text n=8 rep=19 wall_ms=10.346 errors=0
+RESULT label=edge op=text n=8 k=32 median_ms=9.95 p90_ms=10.68 per_call_us=310.9 speedup=1.27 errors=0
+RAW label=edge op=msaa n=1 rep=0 wall_ms=6.823 errors=0
+RAW label=edge op=msaa n=1 rep=1 wall_ms=7.001 errors=0
+RAW label=edge op=msaa n=1 rep=2 wall_ms=7.341 errors=0
+RAW label=edge op=msaa n=1 rep=3 wall_ms=7.361 errors=0
+RAW label=edge op=msaa n=1 rep=4 wall_ms=6.655 errors=0
+RAW label=edge op=msaa n=1 rep=5 wall_ms=6.919 errors=0
+RAW label=edge op=msaa n=1 rep=6 wall_ms=6.757 errors=0
+RAW label=edge op=msaa n=1 rep=7 wall_ms=6.648 errors=0
+RAW label=edge op=msaa n=1 rep=8 wall_ms=7.097 errors=0
+RAW label=edge op=msaa n=1 rep=9 wall_ms=6.808 errors=0
+RAW label=edge op=msaa n=1 rep=10 wall_ms=7.183 errors=0
+RAW label=edge op=msaa n=1 rep=11 wall_ms=6.976 errors=0
+RAW label=edge op=msaa n=1 rep=12 wall_ms=7.327 errors=0
+RAW label=edge op=msaa n=1 rep=13 wall_ms=7.426 errors=0
+RAW label=edge op=msaa n=1 rep=14 wall_ms=7.220 errors=0
+RAW label=edge op=msaa n=1 rep=15 wall_ms=7.244 errors=0
+RAW label=edge op=msaa n=1 rep=16 wall_ms=6.889 errors=0
+RAW label=edge op=msaa n=1 rep=17 wall_ms=7.212 errors=0
+RAW label=edge op=msaa n=1 rep=18 wall_ms=6.948 errors=0
+RAW label=edge op=msaa n=1 rep=19 wall_ms=6.855 errors=0
+RESULT label=edge op=msaa n=1 k=64 median_ms=7.00 p90_ms=7.34 per_call_us=109.4 speedup=1.00 errors=0
+RAW label=edge op=msaa n=2 rep=0 wall_ms=4.178 errors=0
+RAW label=edge op=msaa n=2 rep=1 wall_ms=4.131 errors=0
+RAW label=edge op=msaa n=2 rep=2 wall_ms=3.858 errors=0
+RAW label=edge op=msaa n=2 rep=3 wall_ms=3.624 errors=0
+RAW label=edge op=msaa n=2 rep=4 wall_ms=3.554 errors=0
+RAW label=edge op=msaa n=2 rep=5 wall_ms=3.525 errors=0
+RAW label=edge op=msaa n=2 rep=6 wall_ms=3.866 errors=0
+RAW label=edge op=msaa n=2 rep=7 wall_ms=3.675 errors=0
+RAW label=edge op=msaa n=2 rep=8 wall_ms=3.564 errors=0
+RAW label=edge op=msaa n=2 rep=9 wall_ms=3.534 errors=0
+RAW label=edge op=msaa n=2 rep=10 wall_ms=3.697 errors=0
+RAW label=edge op=msaa n=2 rep=11 wall_ms=3.866 errors=0
+RAW label=edge op=msaa n=2 rep=12 wall_ms=3.692 errors=0
+RAW label=edge op=msaa n=2 rep=13 wall_ms=3.605 errors=0
+RAW label=edge op=msaa n=2 rep=14 wall_ms=3.493 errors=0
+RAW label=edge op=msaa n=2 rep=15 wall_ms=3.641 errors=0
+RAW label=edge op=msaa n=2 rep=16 wall_ms=3.536 errors=0
+RAW label=edge op=msaa n=2 rep=17 wall_ms=3.746 errors=0
+RAW label=edge op=msaa n=2 rep=18 wall_ms=3.574 errors=0
+RAW label=edge op=msaa n=2 rep=19 wall_ms=3.621 errors=0
+RESULT label=edge op=msaa n=2 k=64 median_ms=3.64 p90_ms=3.87 per_call_us=56.9 speedup=1.92 errors=0
+RAW label=edge op=msaa n=4 rep=0 wall_ms=3.947 errors=0
+RAW label=edge op=msaa n=4 rep=1 wall_ms=3.652 errors=0
+RAW label=edge op=msaa n=4 rep=2 wall_ms=3.950 errors=0
+RAW label=edge op=msaa n=4 rep=3 wall_ms=3.712 errors=0
+RAW label=edge op=msaa n=4 rep=4 wall_ms=3.542 errors=0
+RAW label=edge op=msaa n=4 rep=5 wall_ms=3.763 errors=0
+RAW label=edge op=msaa n=4 rep=6 wall_ms=3.753 errors=0
+RAW label=edge op=msaa n=4 rep=7 wall_ms=3.674 errors=0
+RAW label=edge op=msaa n=4 rep=8 wall_ms=3.491 errors=0
+RAW label=edge op=msaa n=4 rep=9 wall_ms=3.489 errors=0
+RAW label=edge op=msaa n=4 rep=10 wall_ms=3.537 errors=0
+RAW label=edge op=msaa n=4 rep=11 wall_ms=3.593 errors=0
+RAW label=edge op=msaa n=4 rep=12 wall_ms=3.577 errors=0
+RAW label=edge op=msaa n=4 rep=13 wall_ms=3.564 errors=0
+RAW label=edge op=msaa n=4 rep=14 wall_ms=3.611 errors=0
+RAW label=edge op=msaa n=4 rep=15 wall_ms=3.591 errors=0
+RAW label=edge op=msaa n=4 rep=16 wall_ms=3.683 errors=0
+RAW label=edge op=msaa n=4 rep=17 wall_ms=3.890 errors=0
+RAW label=edge op=msaa n=4 rep=18 wall_ms=3.627 errors=0
+RAW label=edge op=msaa n=4 rep=19 wall_ms=3.718 errors=0
+RESULT label=edge op=msaa n=4 k=64 median_ms=3.65 p90_ms=3.89 per_call_us=57.1 speedup=1.92 errors=0
+RAW label=edge op=msaa n=8 rep=0 wall_ms=3.404 errors=0
+RAW label=edge op=msaa n=8 rep=1 wall_ms=3.953 errors=0
+RAW label=edge op=msaa n=8 rep=2 wall_ms=3.741 errors=0
+RAW label=edge op=msaa n=8 rep=3 wall_ms=3.786 errors=0
+RAW label=edge op=msaa n=8 rep=4 wall_ms=3.790 errors=0
+RAW label=edge op=msaa n=8 rep=5 wall_ms=3.511 errors=0
+RAW label=edge op=msaa n=8 rep=6 wall_ms=3.973 errors=0
+RAW label=edge op=msaa n=8 rep=7 wall_ms=3.585 errors=0
+RAW label=edge op=msaa n=8 rep=8 wall_ms=3.522 errors=0
+RAW label=edge op=msaa n=8 rep=9 wall_ms=3.678 errors=0
+RAW label=edge op=msaa n=8 rep=10 wall_ms=3.874 errors=0
+RAW label=edge op=msaa n=8 rep=11 wall_ms=3.974 errors=0
+RAW label=edge op=msaa n=8 rep=12 wall_ms=3.671 errors=0
+RAW label=edge op=msaa n=8 rep=13 wall_ms=3.564 errors=0
+RAW label=edge op=msaa n=8 rep=14 wall_ms=3.608 errors=0
+RAW label=edge op=msaa n=8 rep=15 wall_ms=4.550 errors=0
+RAW label=edge op=msaa n=8 rep=16 wall_ms=3.922 errors=0
+RAW label=edge op=msaa n=8 rep=17 wall_ms=3.937 errors=0
+RAW label=edge op=msaa n=8 rep=18 wall_ms=3.934 errors=0
+RAW label=edge op=msaa n=8 rep=19 wall_ms=4.035 errors=0
+RESULT label=edge op=msaa n=8 k=64 median_ms=3.79 p90_ms=3.97 per_call_us=59.2 speedup=1.85 errors=0
+RAW label=edge op=rop n=1 rep=0 wall_ms=6.579 errors=0
+RAW label=edge op=rop n=1 rep=1 wall_ms=6.440 errors=0
+RAW label=edge op=rop n=1 rep=2 wall_ms=7.108 errors=0
+RAW label=edge op=rop n=1 rep=3 wall_ms=7.510 errors=0
+RAW label=edge op=rop n=1 rep=4 wall_ms=7.575 errors=0
+RAW label=edge op=rop n=1 rep=5 wall_ms=7.900 errors=0
+RAW label=edge op=rop n=1 rep=6 wall_ms=6.980 errors=0
+RAW label=edge op=rop n=1 rep=7 wall_ms=7.425 errors=0
+RAW label=edge op=rop n=1 rep=8 wall_ms=7.293 errors=0
+RAW label=edge op=rop n=1 rep=9 wall_ms=7.354 errors=0
+RAW label=edge op=rop n=1 rep=10 wall_ms=7.734 errors=0
+RAW label=edge op=rop n=1 rep=11 wall_ms=6.762 errors=0
+RAW label=edge op=rop n=1 rep=12 wall_ms=6.432 errors=0
+RAW label=edge op=rop n=1 rep=13 wall_ms=6.678 errors=0
+RAW label=edge op=rop n=1 rep=14 wall_ms=6.594 errors=0
+RAW label=edge op=rop n=1 rep=15 wall_ms=6.405 errors=0
+RAW label=edge op=rop n=1 rep=16 wall_ms=6.439 errors=0
+RAW label=edge op=rop n=1 rep=17 wall_ms=6.956 errors=0
+RAW label=edge op=rop n=1 rep=18 wall_ms=6.425 errors=0
+RAW label=edge op=rop n=1 rep=19 wall_ms=6.577 errors=0
+RESULT label=edge op=rop n=1 k=32 median_ms=6.96 p90_ms=7.58 per_call_us=217.4 speedup=1.00 errors=0
+RAW label=edge op=rop n=2 rep=0 wall_ms=4.698 errors=0
+RAW label=edge op=rop n=2 rep=1 wall_ms=4.724 errors=0
+RAW label=edge op=rop n=2 rep=2 wall_ms=4.850 errors=0
+RAW label=edge op=rop n=2 rep=3 wall_ms=4.505 errors=0
+RAW label=edge op=rop n=2 rep=4 wall_ms=4.434 errors=0
+RAW label=edge op=rop n=2 rep=5 wall_ms=4.738 errors=0
+RAW label=edge op=rop n=2 rep=6 wall_ms=4.809 errors=0
+RAW label=edge op=rop n=2 rep=7 wall_ms=5.032 errors=0
+RAW label=edge op=rop n=2 rep=8 wall_ms=4.678 errors=0
+RAW label=edge op=rop n=2 rep=9 wall_ms=4.584 errors=0
+RAW label=edge op=rop n=2 rep=10 wall_ms=4.760 errors=0
+RAW label=edge op=rop n=2 rep=11 wall_ms=4.738 errors=0
+RAW label=edge op=rop n=2 rep=12 wall_ms=4.790 errors=0
+RAW label=edge op=rop n=2 rep=13 wall_ms=4.682 errors=0
+RAW label=edge op=rop n=2 rep=14 wall_ms=5.116 errors=0
+RAW label=edge op=rop n=2 rep=15 wall_ms=4.823 errors=0
+RAW label=edge op=rop n=2 rep=16 wall_ms=4.807 errors=0
+RAW label=edge op=rop n=2 rep=17 wall_ms=4.816 errors=0
+RAW label=edge op=rop n=2 rep=18 wall_ms=4.657 errors=0
+RAW label=edge op=rop n=2 rep=19 wall_ms=4.957 errors=0
+RESULT label=edge op=rop n=2 k=32 median_ms=4.76 p90_ms=4.96 per_call_us=148.8 speedup=1.46 errors=0
+RAW label=edge op=rop n=4 rep=0 wall_ms=4.710 errors=0
+RAW label=edge op=rop n=4 rep=1 wall_ms=7.459 errors=0
+RAW label=edge op=rop n=4 rep=2 wall_ms=4.754 errors=0
+RAW label=edge op=rop n=4 rep=3 wall_ms=4.622 errors=0
+RAW label=edge op=rop n=4 rep=4 wall_ms=4.835 errors=0
+RAW label=edge op=rop n=4 rep=5 wall_ms=4.743 errors=0
+RAW label=edge op=rop n=4 rep=6 wall_ms=4.838 errors=0
+RAW label=edge op=rop n=4 rep=7 wall_ms=5.577 errors=0
+RAW label=edge op=rop n=4 rep=8 wall_ms=6.044 errors=0
+RAW label=edge op=rop n=4 rep=9 wall_ms=4.848 errors=0
+RAW label=edge op=rop n=4 rep=10 wall_ms=5.132 errors=0
+RAW label=edge op=rop n=4 rep=11 wall_ms=6.108 errors=0
+RAW label=edge op=rop n=4 rep=12 wall_ms=5.660 errors=0
+RAW label=edge op=rop n=4 rep=13 wall_ms=4.913 errors=0
+RAW label=edge op=rop n=4 rep=14 wall_ms=4.758 errors=0
+RAW label=edge op=rop n=4 rep=15 wall_ms=4.493 errors=0
+RAW label=edge op=rop n=4 rep=16 wall_ms=4.771 errors=0
+RAW label=edge op=rop n=4 rep=17 wall_ms=5.169 errors=0
+RAW label=edge op=rop n=4 rep=18 wall_ms=4.645 errors=0
+RAW label=edge op=rop n=4 rep=19 wall_ms=4.795 errors=0
+RESULT label=edge op=rop n=4 k=32 median_ms=4.84 p90_ms=6.04 per_call_us=151.2 speedup=1.44 errors=0
+RAW label=edge op=rop n=8 rep=0 wall_ms=5.517 errors=0
+RAW label=edge op=rop n=8 rep=1 wall_ms=4.820 errors=0
+RAW label=edge op=rop n=8 rep=2 wall_ms=4.810 errors=0
+RAW label=edge op=rop n=8 rep=3 wall_ms=5.062 errors=0
+RAW label=edge op=rop n=8 rep=4 wall_ms=5.250 errors=0
+RAW label=edge op=rop n=8 rep=5 wall_ms=4.746 errors=0
+RAW label=edge op=rop n=8 rep=6 wall_ms=5.093 errors=0
+RAW label=edge op=rop n=8 rep=7 wall_ms=5.534 errors=0
+RAW label=edge op=rop n=8 rep=8 wall_ms=5.288 errors=0
+RAW label=edge op=rop n=8 rep=9 wall_ms=5.299 errors=0
+RAW label=edge op=rop n=8 rep=10 wall_ms=5.151 errors=0
+RAW label=edge op=rop n=8 rep=11 wall_ms=5.470 errors=0
+RAW label=edge op=rop n=8 rep=12 wall_ms=5.218 errors=0
+RAW label=edge op=rop n=8 rep=13 wall_ms=4.880 errors=0
+RAW label=edge op=rop n=8 rep=14 wall_ms=4.856 errors=0
+RAW label=edge op=rop n=8 rep=15 wall_ms=4.664 errors=0
+RAW label=edge op=rop n=8 rep=16 wall_ms=5.513 errors=0
+RAW label=edge op=rop n=8 rep=17 wall_ms=5.392 errors=0
+RAW label=edge op=rop n=8 rep=18 wall_ms=5.095 errors=0
+RAW label=edge op=rop n=8 rep=19 wall_ms=5.026 errors=0
+RESULT label=edge op=rop n=8 k=32 median_ms=5.15 p90_ms=5.51 per_call_us=161.0 speedup=1.35 errors=0
+PAIR label=edge-findall-beside-name a=FindAll@524906 elem 0 (of 16 held, 303 found) b=Name@524906 elem 3 (of 16 held)
+RESULT label=edge-findall-beside-name a_alone count=10 median_ms=65.34 p90_ms=71.66 max_ms=75.18
+RESULT label=edge-findall-beside-name a_with_b count=10 median_ms=65.79 p90_ms=67.70 max_ms=68.17
+RESULT label=edge-findall-beside-name b_alone count=213 median_ms=0.16 p90_ms=0.22 max_ms=0.36
+RESULT label=edge-findall-beside-name b_during_a count=213 median_ms=0.17 p90_ms=0.28 max_ms=10.33
+PAIR label=edge-findall-beside-rop a=FindAll@524906 elem 0 (of 16 held, 303 found) b=Rop@524906 elem 3 (of 16 held)
+RESULT label=edge-findall-beside-rop a_alone count=10 median_ms=63.27 p90_ms=65.16 max_ms=68.37
+RESULT label=edge-findall-beside-rop a_with_b count=10 median_ms=66.65 p90_ms=71.22 max_ms=71.95
+RESULT label=edge-findall-beside-rop b_alone count=226 median_ms=0.28 p90_ms=0.35 max_ms=0.89
+RESULT label=edge-findall-beside-rop b_during_a count=226 median_ms=0.28 p90_ms=0.42 max_ms=11.24
+CALL other-element hwnd=524906 pid=5672 ui_tid=6800 op=Name elem=3 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+CALL other-element-rop hwnd=524906 pid=5672 ui_tid=6800 op=Rop elem=3 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+CALL same-window-new-connection hwnd=524906 pid=5672 ui_tid=6800 op=FromHandle elem=0 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+CALL other-thread-window hwnd=262182 pid=5672 ui_tid=6800 op=Name elem=3 class=Chrome_WidgetWin_1 title=puia page - Profile 1 - Microsoft​ Edge
+CALL other-thread-window-rop hwnd=262182 pid=5672 ui_tid=6800 op=Rop elem=3 class=Chrome_WidgetWin_1 title=puia page - Profile 1 - Microsoft​ Edge
+CALL other-thread-window-new-connection hwnd=262182 pid=5672 ui_tid=6800 op=FromHandle elem=0 class=Chrome_WidgetWin_1 title=puia page - Profile 1 - Microsoft​ Edge
+CALL stuck hwnd=524906 pid=5672 ui_tid=6800 op=Name elem=1 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+suspended tid=6800
+resumed tid=6800
+TRIAL label=edge-suspended-name trial=0 block=suspend:524906 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4008.3
+RESULT label=edge-suspended-name trial=0 call=same-window-new-connection returned_ms=2191.7 before_unblock result=error 0x80131505 idle_baseline_ms=1.25
+RESULT label=edge-suspended-name trial=0 call=other-thread-window-new-connection returned_ms=2192.2 before_unblock result=error 0x80131505 idle_baseline_ms=1.13
+RESULT label=edge-suspended-name trial=0 call=xproc-other-thread-window returned_ms=4017.5 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-name trial=0 call=xproc-other-element-rop returned_ms=4019.0 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-name trial=0 call=xproc-other-element returned_ms=4020.1 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-name trial=0 call=other-thread-window-rop returned_ms=4023.1 after_unblock result=ok idle_baseline_ms=0.84
+RESULT label=edge-suspended-name trial=0 call=other-thread-window returned_ms=4024.2 after_unblock result=ok idle_baseline_ms=0.49
+RESULT label=edge-suspended-name trial=0 call=other-element-rop returned_ms=4024.7 after_unblock result=ok idle_baseline_ms=0.58
+RESULT label=edge-suspended-name trial=0 call=other-element returned_ms=4024.7 after_unblock result=ok idle_baseline_ms=0.55
+RESULT label=edge-suspended-name trial=0 call=stuck returned_ms=4027.3 after_unblock result=ok idle_baseline_ms=0.00
+suspended tid=6800
+resumed tid=6800
+TRIAL label=edge-suspended-name trial=1 block=suspend:524906 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4009.6
+RESULT label=edge-suspended-name trial=1 call=same-window-new-connection returned_ms=2191.9 before_unblock result=error 0x80131505 idle_baseline_ms=1.07
+RESULT label=edge-suspended-name trial=1 call=other-thread-window-new-connection returned_ms=2192.4 before_unblock result=error 0x80131505 idle_baseline_ms=1.35
+RESULT label=edge-suspended-name trial=1 call=xproc-other-thread-window returned_ms=4010.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-name trial=1 call=xproc-other-element-rop returned_ms=4011.1 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-name trial=1 call=xproc-other-element returned_ms=4011.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-name trial=1 call=stuck returned_ms=4012.0 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=edge-suspended-name trial=1 call=other-thread-window-rop returned_ms=4012.3 after_unblock result=ok idle_baseline_ms=0.69
+RESULT label=edge-suspended-name trial=1 call=other-thread-window returned_ms=4012.4 after_unblock result=ok idle_baseline_ms=0.69
+RESULT label=edge-suspended-name trial=1 call=other-element-rop returned_ms=4013.0 after_unblock result=ok idle_baseline_ms=0.50
+RESULT label=edge-suspended-name trial=1 call=other-element returned_ms=4013.2 after_unblock result=ok idle_baseline_ms=0.49
+CALL other-element hwnd=524906 pid=5672 ui_tid=6800 op=Name elem=3 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+CALL other-element-rop hwnd=524906 pid=5672 ui_tid=6800 op=Rop elem=3 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+CALL same-window-new-connection hwnd=524906 pid=5672 ui_tid=6800 op=FromHandle elem=0 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+CALL other-thread-window hwnd=262182 pid=5672 ui_tid=6800 op=Name elem=3 class=Chrome_WidgetWin_1 title=puia page - Profile 1 - Microsoft​ Edge
+CALL other-thread-window-rop hwnd=262182 pid=5672 ui_tid=6800 op=Rop elem=3 class=Chrome_WidgetWin_1 title=puia page - Profile 1 - Microsoft​ Edge
+CALL other-thread-window-new-connection hwnd=262182 pid=5672 ui_tid=6800 op=FromHandle elem=0 class=Chrome_WidgetWin_1 title=puia page - Profile 1 - Microsoft​ Edge
+CALL stuck hwnd=524906 pid=5672 ui_tid=6800 op=Rop elem=1 class=Chrome_RenderWidgetHostHWND title=Chrome Legacy Window
+suspended tid=6800
+resumed tid=6800
+TRIAL label=edge-suspended-rop trial=0 block=suspend:524906 evidence="200 ms wait" probes_started_ms_after_block=200.6 unblocked_at_ms=4010.5
+RESULT label=edge-suspended-rop trial=0 call=same-window-new-connection returned_ms=2189.8 before_unblock result=error 0x80131505 idle_baseline_ms=1.30
+RESULT label=edge-suspended-rop trial=0 call=other-thread-window-new-connection returned_ms=2190.3 before_unblock result=error 0x80131505 idle_baseline_ms=1.13
+RESULT label=edge-suspended-rop trial=0 call=xproc-other-thread-window returned_ms=4011.8 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-rop trial=0 call=xproc-other-element-rop returned_ms=4012.7 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-rop trial=0 call=xproc-other-element returned_ms=4013.2 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-rop trial=0 call=stuck returned_ms=4013.7 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=edge-suspended-rop trial=0 call=other-thread-window-rop returned_ms=4014.0 after_unblock result=ok idle_baseline_ms=0.93
+RESULT label=edge-suspended-rop trial=0 call=other-element-rop returned_ms=4014.8 after_unblock result=ok idle_baseline_ms=0.69
+RESULT label=edge-suspended-rop trial=0 call=other-thread-window returned_ms=4015.1 after_unblock result=ok idle_baseline_ms=0.68
+RESULT label=edge-suspended-rop trial=0 call=other-element returned_ms=4015.3 after_unblock result=ok idle_baseline_ms=0.64
+suspended tid=6800
+resumed tid=6800
+TRIAL label=edge-suspended-rop trial=1 block=suspend:524906 evidence="200 ms wait" probes_started_ms_after_block=200.2 unblocked_at_ms=4014.7
+RESULT label=edge-suspended-rop trial=1 call=same-window-new-connection returned_ms=2195.1 before_unblock result=error 0x80131505 idle_baseline_ms=0.89
+RESULT label=edge-suspended-rop trial=1 call=other-thread-window-new-connection returned_ms=2195.7 before_unblock result=error 0x80131505 idle_baseline_ms=1.16
+RESULT label=edge-suspended-rop trial=1 call=xproc-other-thread-window returned_ms=4016.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-rop trial=1 call=xproc-other-element-rop returned_ms=4017.4 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-rop trial=1 call=xproc-other-element returned_ms=4017.9 after_unblock result=ok idle_baseline_ms=NaN
+RESULT label=edge-suspended-rop trial=1 call=stuck returned_ms=4018.8 after_unblock result=ok idle_baseline_ms=0.00
+RESULT label=edge-suspended-rop trial=1 call=other-thread-window-rop returned_ms=4019.2 after_unblock result=ok idle_baseline_ms=0.90
+RESULT label=edge-suspended-rop trial=1 call=other-thread-window returned_ms=4019.6 after_unblock result=ok idle_baseline_ms=0.44
+RESULT label=edge-suspended-rop trial=1 call=other-element returned_ms=4020.8 after_unblock result=ok idle_baseline_ms=0.63
+RESULT label=edge-suspended-rop trial=1 call=other-element-rop returned_ms=4021.0 after_unblock result=ok idle_baseline_ms=0.71

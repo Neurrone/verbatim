@@ -1,0 +1,20 @@
+CALL other-element hwnd=6292994 pid=7580 ui_tid=8252 op=Name elem=3 class=CabinetWClass title=Desktop - File Explorer
+CALL other-element-rop hwnd=6292994 pid=7580 ui_tid=8252 op=Rop elem=3 class=CabinetWClass title=Desktop - File Explorer
+CALL taskbar-other-thread hwnd=65770 pid=7580 ui_tid=8788 op=Name elem=3 class=Shell_TrayWnd title=
+CALL taskbar-other-thread-rop hwnd=65770 pid=7580 ui_tid=8788 op=Rop elem=3 class=Shell_TrayWnd title=
+CALL taskbar-new-connection hwnd=65770 pid=7580 ui_tid=8788 op=FromHandle elem=0 class=Shell_TrayWnd title=
+CALL progman-other-thread hwnd=65808 pid=7580 ui_tid=7576 op=Name elem=0 class=Progman title=Program Manager
+CALL stuck hwnd=6292994 pid=7580 ui_tid=8252 op=Name elem=1 class=CabinetWClass title=Desktop - File Explorer
+suspended tid=8252
+PROBES_STARTED trial=0
+resumed tid=8252
+TRIAL label=explorer-shell-suspended-name trial=0 block=suspend:6292994 evidence="200 ms wait" probes_started_ms_after_block=200.9 unblocked_at_ms=4001.7
+RESULT label=explorer-shell-suspended-name trial=0 call=taskbar-new-connection returned_ms=2199.5 before_unblock result=error 0x80131505 idle_baseline_ms=0.72
+RESULT label=explorer-shell-suspended-name trial=0 call=stuck returned_ms=21919.7 after_unblock result=error 0x80131505 idle_baseline_ms=0.00
+RESULT label=explorer-shell-suspended-name trial=0 call=xproc-other-element returned_ms=22126.7 after_unblock result=error done error 0x80131505 22125.920 idle_baseline_ms=NaN
+RESULT label=explorer-shell-suspended-name trial=0 call=progman-other-thread returned_ms=22128.4 after_unblock result=error 0x80131505 idle_baseline_ms=0.19
+RESULT label=explorer-shell-suspended-name trial=0 call=xproc-taskbar-other-thread returned_ms=22129.1 after_unblock result=error done error 0x80131505 22128.412 idle_baseline_ms=NaN
+RESULT label=explorer-shell-suspended-name trial=0 call=taskbar-other-thread returned_ms=22129.6 after_unblock result=error 0x80131505 idle_baseline_ms=0.27
+RESULT label=explorer-shell-suspended-name trial=0 call=other-element-rop returned_ms=22130.3 after_unblock result=error 0x80004005 idle_baseline_ms=1.88
+RESULT label=explorer-shell-suspended-name trial=0 call=other-element returned_ms=22130.6 after_unblock result=error 0x80131505 idle_baseline_ms=1.47
+RESULT label=explorer-shell-suspended-name trial=0 call=taskbar-other-thread-rop returned_ms=22131.1 after_unblock result=error 0x80004005 idle_baseline_ms=0.31

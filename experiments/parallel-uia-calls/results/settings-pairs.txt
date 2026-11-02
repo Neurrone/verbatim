@@ -1,0 +1,48 @@
+PAIR label=settings-ropslow-beside-name-xb0 a=RopSlow@787194 elem 3 (of 16 held, 108 found) b=Name@787194 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=settings-ropslow-beside-name-xb0 a_alone count=10 median_ms=35.98 p90_ms=38.10 max_ms=40.54
+RESULT label=settings-ropslow-beside-name-xb0 a_with_b count=10 median_ms=36.63 p90_ms=38.00 max_ms=38.24
+RESULT label=settings-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.19 p90_ms=0.21 max_ms=0.23
+RESULT label=settings-ropslow-beside-name-xb0 b_during_a count=10 median_ms=34.44 p90_ms=36.17 max_ms=36.74
+PAIR label=settings-ropslow-beside-name-xb1 a=RopSlow@787194 elem 3 (of 16 held, 108 found) b=Name@787194 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=settings-ropslow-beside-name-xb1 a_alone count=10 median_ms=36.48 p90_ms=38.16 max_ms=38.33
+RESULT label=settings-ropslow-beside-name-xb1 a_with_b count=10 median_ms=36.40 p90_ms=37.92 max_ms=38.76
+RESULT label=settings-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.16 p90_ms=0.18 max_ms=0.19
+RESULT label=settings-ropslow-beside-name-xb1 b_during_a count=10 median_ms=33.75 p90_ms=36.68 max_ms=39.67
+PAIR label=settings-ropslow-beside-rop-xb0 a=RopSlow@787194 elem 3 (of 16 held, 108 found) b=Rop@787194 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=settings-ropslow-beside-rop-xb0 a_alone count=10 median_ms=35.45 p90_ms=35.71 max_ms=36.41
+RESULT label=settings-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=35.76 p90_ms=37.07 max_ms=38.03
+RESULT label=settings-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.28 p90_ms=0.33 max_ms=0.34
+RESULT label=settings-ropslow-beside-rop-xb0 b_during_a count=11 median_ms=33.48 p90_ms=35.93 max_ms=35.97
+PAIR label=settings-ropslow-beside-rop-xb1 a=RopSlow@787194 elem 3 (of 16 held, 108 found) b=Rop@787194 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=settings-ropslow-beside-rop-xb1 a_alone count=10 median_ms=35.90 p90_ms=37.13 max_ms=38.26
+RESULT label=settings-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=35.46 p90_ms=36.83 max_ms=37.22
+RESULT label=settings-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.29 p90_ms=0.32 max_ms=0.33
+RESULT label=settings-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=33.37 p90_ms=34.67 max_ms=35.70
+PAIR label=settings-textall-beside-name-xb0 a=TextAll@787194 elem 3 (of 16 held, 108 found) b=Name@787194 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=settings-textall-beside-name-xb0 a_alone count=10 median_ms=0.22 p90_ms=0.26 max_ms=0.49
+RESULT label=settings-textall-beside-name-xb0 a_with_b count=10 median_ms=0.17 p90_ms=0.21 max_ms=0.30
+RESULT label=settings-textall-beside-name-xb0 b_alone count=20 median_ms=0.16 p90_ms=0.18 max_ms=0.19
+RESULT label=settings-textall-beside-name-xb0 b_during_a count=1 median_ms=0.22 p90_ms=0.22 max_ms=0.22
+PAIR label=settings-textall-beside-name-xb1 a=TextAll@787194 elem 3 (of 16 held, 108 found) b=Name@787194 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=settings-textall-beside-name-xb1 a_alone count=10 median_ms=0.22 p90_ms=0.27 max_ms=0.38
+RESULT label=settings-textall-beside-name-xb1 a_with_b count=10 median_ms=0.22 p90_ms=0.23 max_ms=0.32
+RESULT label=settings-textall-beside-name-xb1 b_alone count=20 median_ms=0.16 p90_ms=0.16 max_ms=0.20
+RESULT label=settings-textall-beside-name-xb1 b_during_a count=1 median_ms=0.20 p90_ms=0.20 max_ms=0.20
+PAIR label=settings-textall-beside-rop-xb0 a=TextAll@787194 elem 3 (of 16 held, 108 found) b=Rop@787194 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=settings-textall-beside-rop-xb0 a_alone count=10 median_ms=0.25 p90_ms=0.30 max_ms=0.38
+RESULT label=settings-textall-beside-rop-xb0 a_with_b count=10 median_ms=0.24 p90_ms=0.44 max_ms=0.50
+RESULT label=settings-textall-beside-rop-xb0 b_alone count=20 median_ms=0.28 p90_ms=0.30 max_ms=0.32
+RESULT label=settings-textall-beside-rop-xb0 b_during_a count=2 median_ms=0.46 p90_ms=0.46 max_ms=0.46
+PAIR label=settings-textall-beside-rop-xb1 a=TextAll@787194 elem 3 (of 16 held, 108 found) b=Rop@787194 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=settings-textall-beside-rop-xb1 a_alone count=10 median_ms=0.25 p90_ms=0.28 max_ms=0.33
+RESULT label=settings-textall-beside-rop-xb1 a_with_b count=10 median_ms=0.24 p90_ms=0.43 max_ms=0.43
+RESULT label=settings-textall-beside-rop-xb1 b_alone count=20 median_ms=0.29 p90_ms=0.32 max_ms=0.33
+RESULT label=settings-textall-beside-rop-xb1 b_during_a count=2 median_ms=0.35 p90_ms=0.35 max_ms=0.35

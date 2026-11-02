@@ -1,0 +1,72 @@
+﻿PAIR label=windows-terminal-findall-beside-name-xb0 a=FindAll@2425680 elem 3 (of 16 held, 16 found) b=Name@2425680 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-findall-beside-name-xb0 a_alone count=10 median_ms=12.85 p90_ms=14.07 max_ms=14.08
+RESULT label=windows-terminal-findall-beside-name-xb0 a_with_b count=10 median_ms=12.70 p90_ms=14.33 max_ms=15.66
+RESULT label=windows-terminal-findall-beside-name-xb0 b_alone count=48 median_ms=0.16 p90_ms=0.19 max_ms=0.36
+RESULT label=windows-terminal-findall-beside-name-xb0 b_during_a count=48 median_ms=0.16 p90_ms=1.00 max_ms=2.18
+PAIR label=windows-terminal-findall-beside-name-xb1 a=FindAll@2425680 elem 3 (of 16 held, 16 found) b=Name@2425680 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=windows-terminal-findall-beside-name-xb1 a_alone count=10 median_ms=13.85 p90_ms=15.46 max_ms=15.69
+RESULT label=windows-terminal-findall-beside-name-xb1 a_with_b count=10 median_ms=12.72 p90_ms=13.04 max_ms=13.27
+RESULT label=windows-terminal-findall-beside-name-xb1 b_alone count=47 median_ms=0.15 p90_ms=0.17 max_ms=0.23
+RESULT label=windows-terminal-findall-beside-name-xb1 b_during_a count=47 median_ms=0.16 p90_ms=0.44 max_ms=1.40
+PAIR label=windows-terminal-findall-beside-rop-xb0 a=FindAll@2425680 elem 3 (of 16 held, 16 found) b=Rop@2425680 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-findall-beside-rop-xb0 a_alone count=10 median_ms=12.70 p90_ms=13.50 max_ms=17.56
+RESULT label=windows-terminal-findall-beside-rop-xb0 a_with_b count=10 median_ms=15.07 p90_ms=16.42 max_ms=16.45
+RESULT label=windows-terminal-findall-beside-rop-xb0 b_alone count=57 median_ms=0.26 p90_ms=0.31 max_ms=0.36
+RESULT label=windows-terminal-findall-beside-rop-xb0 b_during_a count=57 median_ms=0.33 p90_ms=0.55 max_ms=2.57
+PAIR label=windows-terminal-findall-beside-rop-xb1 a=FindAll@2425680 elem 3 (of 16 held, 16 found) b=Rop@2425680 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=windows-terminal-findall-beside-rop-xb1 a_alone count=10 median_ms=12.71 p90_ms=13.75 max_ms=14.13
+RESULT label=windows-terminal-findall-beside-rop-xb1 a_with_b count=10 median_ms=12.34 p90_ms=12.67 max_ms=12.83
+RESULT label=windows-terminal-findall-beside-rop-xb1 b_alone count=48 median_ms=0.26 p90_ms=0.29 max_ms=0.30
+RESULT label=windows-terminal-findall-beside-rop-xb1 b_during_a count=48 median_ms=0.25 p90_ms=0.62 max_ms=1.73
+PAIR label=windows-terminal-ropslow-beside-name-xb0 a=RopSlow@2425680 elem 3 (of 16 held, 16 found) b=Name@2425680 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-ropslow-beside-name-xb0 a_alone count=10 median_ms=35.48 p90_ms=36.34 max_ms=40.14
+RESULT label=windows-terminal-ropslow-beside-name-xb0 a_with_b count=10 median_ms=35.27 p90_ms=37.26 max_ms=39.86
+RESULT label=windows-terminal-ropslow-beside-name-xb0 b_alone count=20 median_ms=0.17 p90_ms=0.18 max_ms=0.21
+RESULT label=windows-terminal-ropslow-beside-name-xb0 b_during_a count=10 median_ms=33.27 p90_ms=35.21 max_ms=37.41
+PAIR label=windows-terminal-ropslow-beside-name-xb1 a=RopSlow@2425680 elem 3 (of 16 held, 16 found) b=Name@2425680 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=windows-terminal-ropslow-beside-name-xb1 a_alone count=10 median_ms=36.23 p90_ms=38.20 max_ms=46.15
+RESULT label=windows-terminal-ropslow-beside-name-xb1 a_with_b count=10 median_ms=35.87 p90_ms=36.62 max_ms=36.70
+RESULT label=windows-terminal-ropslow-beside-name-xb1 b_alone count=20 median_ms=0.11 p90_ms=0.15 max_ms=0.20
+RESULT label=windows-terminal-ropslow-beside-name-xb1 b_during_a count=10 median_ms=33.97 p90_ms=34.17 max_ms=35.42
+PAIR label=windows-terminal-ropslow-beside-rop-xb0 a=RopSlow@2425680 elem 3 (of 16 held, 16 found) b=Rop@2425680 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-ropslow-beside-rop-xb0 a_alone count=10 median_ms=36.54 p90_ms=44.97 max_ms=52.30
+RESULT label=windows-terminal-ropslow-beside-rop-xb0 a_with_b count=10 median_ms=35.89 p90_ms=37.24 max_ms=41.92
+RESULT label=windows-terminal-ropslow-beside-rop-xb0 b_alone count=20 median_ms=0.25 p90_ms=0.29 max_ms=0.42
+RESULT label=windows-terminal-ropslow-beside-rop-xb0 b_during_a count=11 median_ms=33.23 p90_ms=35.42 max_ms=39.85
+PAIR label=windows-terminal-ropslow-beside-rop-xb1 a=RopSlow@2425680 elem 3 (of 16 held, 16 found) b=Rop@2425680 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=windows-terminal-ropslow-beside-rop-xb1 a_alone count=10 median_ms=35.78 p90_ms=36.42 max_ms=36.61
+RESULT label=windows-terminal-ropslow-beside-rop-xb1 a_with_b count=10 median_ms=35.81 p90_ms=36.28 max_ms=39.40
+RESULT label=windows-terminal-ropslow-beside-rop-xb1 b_alone count=20 median_ms=0.26 p90_ms=0.28 max_ms=0.38
+RESULT label=windows-terminal-ropslow-beside-rop-xb1 b_during_a count=10 median_ms=33.61 p90_ms=45.68 max_ms=47.53
+PAIR label=windows-terminal-textall-beside-name-xb0 a=TextAll@2425680 elem 3 (of 16 held, 16 found) b=Name@2425680 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-textall-beside-name-xb0 a_alone count=10 median_ms=2.65 p90_ms=2.84 max_ms=3.37
+RESULT label=windows-terminal-textall-beside-name-xb0 a_with_b count=10 median_ms=2.69 p90_ms=2.86 max_ms=3.22
+RESULT label=windows-terminal-textall-beside-name-xb0 b_alone count=20 median_ms=0.18 p90_ms=0.29 max_ms=0.40
+RESULT label=windows-terminal-textall-beside-name-xb0 b_during_a count=11 median_ms=0.57 p90_ms=0.78 max_ms=1.16
+PAIR label=windows-terminal-textall-beside-name-xb1 a=TextAll@2425680 elem 3 (of 16 held, 16 found) b=Name@2425680 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=windows-terminal-textall-beside-name-xb1 a_alone count=10 median_ms=2.81 p90_ms=3.12 max_ms=3.94
+RESULT label=windows-terminal-textall-beside-name-xb1 a_with_b count=10 median_ms=2.69 p90_ms=2.75 max_ms=2.82
+RESULT label=windows-terminal-textall-beside-name-xb1 b_alone count=20 median_ms=0.15 p90_ms=0.17 max_ms=0.18
+RESULT label=windows-terminal-textall-beside-name-xb1 b_during_a count=11 median_ms=0.55 p90_ms=0.68 max_ms=0.70
+PAIR label=windows-terminal-textall-beside-rop-xb0 a=TextAll@2425680 elem 3 (of 16 held, 16 found) b=Rop@2425680 elem 5 (of 16 held)
+PAIR b_in_other_process=false
+RESULT label=windows-terminal-textall-beside-rop-xb0 a_alone count=10 median_ms=2.87 p90_ms=2.95 max_ms=3.15
+RESULT label=windows-terminal-textall-beside-rop-xb0 a_with_b count=10 median_ms=2.66 p90_ms=3.22 max_ms=3.40
+RESULT label=windows-terminal-textall-beside-rop-xb0 b_alone count=20 median_ms=0.25 p90_ms=0.33 max_ms=0.51
+RESULT label=windows-terminal-textall-beside-rop-xb0 b_during_a count=10 median_ms=0.82 p90_ms=1.31 max_ms=2.83
+PAIR label=windows-terminal-textall-beside-rop-xb1 a=TextAll@2425680 elem 3 (of 16 held, 16 found) b=Rop@2425680 elem 5 (of 0 held)
+PAIR b_in_other_process=true
+RESULT label=windows-terminal-textall-beside-rop-xb1 a_alone count=10 median_ms=2.64 p90_ms=2.76 max_ms=2.86
+RESULT label=windows-terminal-textall-beside-rop-xb1 a_with_b count=10 median_ms=2.71 p90_ms=3.10 max_ms=3.15
+RESULT label=windows-terminal-textall-beside-rop-xb1 b_alone count=20 median_ms=0.28 p90_ms=0.30 max_ms=0.32
+RESULT label=windows-terminal-textall-beside-rop-xb1 b_during_a count=11 median_ms=0.50 p90_ms=0.90 max_ms=1.00

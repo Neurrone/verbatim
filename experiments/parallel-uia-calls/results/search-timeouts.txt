@@ -1,0 +1,960 @@
+# search-timeouts.ps1 (E-TT client, puia ett) and timeouts.ps1, 2026-11-02, repository at c71e8253 with this experiment's files. Times in the "go at" lines are local (UTC+8); trace times are UTC.
+
+## E-TT, hold, no debugger: FindFirstBuildCache, transaction 1000, connection 1000 at the call, 10000 when the root was fetched
+ett3 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 release=25000 mockapp=2128 client=13424 ready tid=8808 pid=13424
+    17.6 mockapp: applied
+   334.6 go
+   335.5 mockapp: held GetPropertyValue
+ 13546.5 ett ett_find error 0x80131505 started=359.2 ended=13570.2 took=13211.0
+ 25346.8 release sent
+ 25347.3 mockapp: applied
+
+check block=hold op=ett_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=0 release=16000 mockapp=12936 client=11148 ready tid=14208 pid=11148
+    18.8 mockapp: applied
+   317.1 go at 16:27:52.018
+   332.2 mockapp: held GetPropertyValue
+ 13543.1 ett ett_find error 0x80131505 started=354.0 ended=13565.3 took=13211.2
+ 16343.4 release sent at 16:28:08.044
+ 16344.0 mockapp: applied
+
+ett4 block=hold op=ett_find transaction=1000 connection=1000 recovery=0 release=25000 mockapp=7200 client=7704 ready tid=13824 pid=7704
+    18.1 mockapp: applied
+   331.5 go
+   332.5 mockapp: held GetPropertyValue
+ 13540.2 ett ett_find error 0x80131505 started=356.2 ended=13564.1 took=13207.9
+ 25346.1 release sent
+ 25346.8 mockapp: applied
+
+## E-TT with the connection timeout in force at the root's fetch varied (conn0 at creation, conn1 just before the fetch)
+ett-c4000 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 conn0=4000 release=16000 mockapp=9192 client=6628 ready tid=13420 pid=6628
+    17.1 mockapp: applied
+   324.4 go at 16:05:19.185
+   328.1 mockapp: held GetPropertyValue
+  7545.5 ett ett_find error 0x80131505 started=353.3 ended=7555.3 took=7202.0
+ 16329.0 release sent at 16:05:35.189
+ 16329.7 mockapp: applied
+
+ett-c2000 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 conn0=2000 release=16000 mockapp=9380 client=9204 ready tid=3604 pid=9204
+     0.3 mockapp: applied
+   322.7 go at 16:05:38.148
+   323.9 mockapp: held GetPropertyValue
+  5530.7 ett ett_find error 0x80131505 started=342.7 ended=5549.4 took=5206.7
+ 16339.6 release sent at 16:05:54.164
+ 16340.2 mockapp: applied
+
+ett-c10000-f3000 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=3000 release=16000 mockapp=2876 client=2524 ready tid=13096 pid=2524
+    17.5 mockapp: applied
+   321.2 go at 16:06:24.691
+   324.6 mockapp: held GetPropertyValue
+  6540.6 ett ett_find error 0x80131505 started=349.0 ended=6549.8 took=6200.8
+ 16341.7 release sent at 16:06:40.711
+ 16342.4 mockapp: applied
+
+## The same search from the ops client (root fetched at the default 2000 ms connection timeout), transaction and connection 1000 set later
+ett1 block=hold op=ett_find transaction=1000 connection=1000 release=25000 mockapp=13216 client=2120
+set transaction 1000 -> Ok(()); transaction=1000 connection=2000
+set connection 1000 -> Ok(()); transaction=1000 connection=1000
+before: hits
+    20.3 mockapp: applied
+   327.2 mockapp: held GetPropertyValue
+   327.7 async A launched
+   341.5 async A started=764.8 tid=5412
+  5533.9 async A ett_find error 0x80131505 started=764.8 ended=5971.6 took=5206.9
+ 25334.7 release sent
+ 25335.5 mockapp: applied
+ 27878.8 hits ProviderOptions=19 GetPropertyValue=12 HostRawElementProvider=7 Navigate=10 GetRuntimeId=3 FragmentRoot=3
+
+ett2 block=hold op=ett_find transaction=1000 connection=1000 release=25000 mockapp=13220 client=8628
+set transaction 1000 -> Ok(()); transaction=1000 connection=2000
+set connection 1000 -> Ok(()); transaction=1000 connection=1000
+set recovery true -> Ok(()); recovery=1 coalesce=0
+set coalesce true -> Ok(()); recovery=1 coalesce=1
+before: hits
+    22.2 mockapp: applied
+   331.8 mockapp: held GetPropertyValue
+   332.3 async A launched
+   362.0 async A started=769.3 tid=3492
+  5555.1 async A ett_find error 0x80131505 started=769.3 ended=5977.1 took=5207.8
+ 25362.1 release sent
+ 25363.0 mockapp: applied
+ 27923.8 hits ProviderOptions=19 GetPropertyValue=12 HostRawElementProvider=7 Navigate=10 GetRuntimeId=3 FragmentRoot=3
+
+## E-TT traced (ett5): the client's search thread, every wait
+ett5 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 release=16000 mockapp=4700 client=4216 ready tid=8636 pid=4216
+    19.3 mockapp: applied
+   333.0 go
+   334.0 mockapp: held GetPropertyValue
+ 13528.4 ett ett_find error 0x80131505 started=368.7 ended=13563.2 took=13194.5
+ 16354.0 release sent
+ 16354.6 mockapp: applied
+
+07:57:36.475903 th8636   334 ms woken by powershell.exe 11208 thread 11080 "" | W: ReadFile | R: WriteFile
+07:57:36.810506 th8636   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:36.919674 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.030262 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.140971 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.251218 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.362311 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.473047 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.583512 th8636   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.694369 th8636   205 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:37.901261 th8636  1010 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:38.913833 th8636 10013 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:48.927816 th8636   107 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.035197 th8636   107 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.142560 th8636   107 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.250076 th8636   107 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.358111 th8636   107 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.465526 th8636   107 ms woken by wmiprvse.exe 6360 thread 8620 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.573825 th8636   106 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.680625 th8636   108 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:49.789848 th8636   214 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::FindFirstBuildCache | R: 
+07:57:50.004964 th8636  5368 ms woken by powershell.exe 11208 thread 11080 "" | W: ReadFile | R: WriteFile
+
+## E-TT traced (ett5): mockapp's I/O thread (8768) and window thread (10116) from the search's start
+07:57:36.469030 th8768   341 ms woken by puia.exe 4216 thread 8636 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::FindFirstBuildCache
+07:57:36.480095 th10116   330 ms woken by mockapp.exe 4700 thread 8768 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+07:57:36.810627 th8768 16019 ms woken by mockapp.exe 4700 thread 10116 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+07:57:36.810737 th10116 16019 ms woken by mockapp.exe 4700 thread 7064 "mockapp-st | W: ComInvoker::CallTarget < DispatchMessageWorker < mockapp::window::run | R: mockapp::window::run
+07:57:52.830122 th10116     0 ms woken by mockapp.exe 4700 thread 8768 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+07:57:52.830392 th10116     0 ms woken by mockapp.exe 4700 thread 8768 "" | W: GetMessageW < mockapp::window::run | R: 
+07:57:52.830622 th10116  2542 ms woken by mockapp.exe 4700 thread 8768 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+07:57:52.830699 th8768  2542 ms woken by puia.exe 4216 thread 8636 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_Release < CAutomationElement::Release
+07:57:55.373613 th8768     0 ms woken by mockapp.exe 4700 thread 10116 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+07:57:55.373711 th10116     0 ms woken by mockapp.exe 4700 thread 8768 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+07:57:55.373791 th8768     0 ms woken by mockapp.exe 4700 thread 10116 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+07:57:55.373853 th10116     5 ms woken by mockapp.exe 4700 thread 6644 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ChannelBasedServerConnection::ReleaseObjects < ChannelBasedServerConnection::ReleaseObjectsThreadCallback
+07:57:55.373881 th8768     0 ms woken by puia.exe 4216 thread 8636 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: CAutomationElement::Release
+07:57:55.374903 th8768    10 ms woken by mockapp.exe 4700 thread 10116 "main" | W:  | R: 
+07:57:55.379643 th10116     0 ms woken by mockapp.exe 4700 thread 6644 "" | W: GetMessageW < mockapp::window::run | R: 
+07:57:55.379690 th10116     2 ms woken by mockapp.exe 4700 thread 6644 "" | W: GetMessageW < mockapp::window::run | R: 
+07:57:55.382321 th10116     0 ms woken by mockapp.exe 4700 thread 6644 "" | W: GetMessageW < mockapp::window::run | R: 
+07:57:55.382372 th10116     1 ms woken by mockapp.exe 4700 thread 7064 "mockapp-st | W: GetMessageW < mockapp::window::run | R: mockapp::window::wake < mockapp::window::run
+
+## E-TT with cdb on mockapp (ett7, attached after the root's fetch): requests read, stubs, responses, window messages, provider calls by mockapp hit index (0 WM_GETOBJECT, 1 ProviderOptions, 3 GetPropertyValue, 4 HostRawElementProvider, 5 Navigate, 6 GetRuntimeId, 10 FragmentRoot)
+ett7 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 conn0=10000 release=16000 mockapp=8068 client=4196 ready tid=4356 pid=4196
+  3369.8 server cdb attached
+  3400.6 mockapp: applied
+  3698.5 go at 16:03:43.146
+  3761.5 mockapp: held GetPropertyValue
+ 16948.1 ett ett_find error 0x80131505 started=3726.6 ended=16957.0 took=13230.4
+ 19709.0 release sent at 16:03:59.157
+ 19737.0 mockapp: applied
+ 22623.7 server cdb detached
+
+16:03:42.831 WND msg=8001 wp=0000000000000000 lp=0000000000000000
+16:03:43.152 SRV_ONDATA
+ SRV_MSG
+16:03:43.167 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_GetRuntimeId
+16:03:43.175 SRV_RESP
+16:03:43.182 SRV_ONDATA
+ SRV_MSG
+16:03:43.195 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues
+    3x1
+16:03:59.151 SRV_RESP
+16:03:59.161 SRV_ONDATA
+ SRV_MSG
+16:03:59.177 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_Find
+    1x19 5x10 4x7 3x11 6x3 10x3
+16:03:59.601 SRV_RESP
+
+## E-TT with cdb on the client (ett8): every request with its frames, every SendMessageTimeoutW
+ett8 block=hold op=ett_find transaction=1000 connection=1000 recovery=1 conn0=10000 release=20000 mockapp=7508 client=360 ready tid=7080 pid=360
+  1604.7 client cdb attached
+  1622.1 mockapp: applied
+  1917.3 go at 16:04:35.726
+  2771.5 mockapp: held GetPropertyValue
+ 15831.5 ett ett_find error 0x80131505 started=1947.1 ended=15858.1 took=13911.0
+ 21923.3 release sent at 16:04:55.731
+ 21924.0 mockapp: applied
+ 24791.9 client cdb detached
+
+PUIA_OP ett
+CLI_GETTIMEOUT ret=1000
+CLI_CALL
+Debugger (not debuggee) time: Mon Nov  2 16:04:35.732 2026 (UTC + 8:00)
+    uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetRuntimeId+0xe0
+    uiautomationcore!ElementFinder::Find+0x8c
+CLI_GETTIMEOUT ret=1000
+CLI_GETTIMEOUT ret=1000
+CLI_CALL
+Debugger (not debuggee) time: Mon Nov  2 16:04:36.572 2026 (UTC + 8:00)
+    uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetPropertyValues+0x29d
+    uiautomationcore!FindingVisitor::Enter+0x17b
+    uiautomationcore!ElementFinder::Find+0x1f3
+CLI_GETTIMEOUT ret=1000
+CLI_SMTO hwnd=00000000003604b6 msg=164 wp=0000000000000000 lp=0000003a076fe820 flags=22 timeout=1000
+Debugger (not debuggee) time: Mon Nov  2 16:04:37.596 2026 (UTC + 8:00)
+    USER32!SendMessageTimeoutW
+    uiautomationcore!BasicHwndUtils::GetComboBoxInfoTimeout+0x99
+CLI_SMTO hwnd=00000000003604b6 msg=3d wp=0000000000000168 lp=00000000fffffffb flags=2 timeout=10000
+Debugger (not debuggee) time: Mon Nov  2 16:04:38.610 2026 (UTC + 8:00)
+    USER32!SendMessageTimeoutW
+    oleacc!AccessibleObjectFromWindowTimeout+0x9fc
+    uiautomationcore!DoNonClientNavigation+0xd3
+CLI_GETTIMEOUT ret=1000
+CLI_CALL
+Debugger (not debuggee) time: Mon Nov  2 16:04:48.625 2026 (UTC + 8:00)
+    uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_Find+0x132
+    uiautomationcore!FindingVisitor::CallRemoteAndMergeState+0x9a
+    uiautomationcore!ElementFinder::Find+0x1f3
+CLI_GETTIMEOUT ret=1000
+PUIA_END ett
+
+## Queued FindFirst (timeouts.ps1 -Transaction 1000 -OpB findfirst, ops.json): A a held name read, B the FindFirst; traced (q1)
+q1 transaction=1000 connection=0 release=6000
+set transaction 1000 -> Ok(()); transaction=1000 connection=2000
+before: hits
+    21.3 mockapp: applied
+    23.1 async A launched
+    23.7 mockapp: held FragmentRoot
+   235.4 async A started=471.7 tid=9328
+   244.1 async B launched
+   246.0 async B started=693.8 tid=1992
+  1104.8 async A cur_name error 0x80131505 started=471.7 ended=1552.5 took=1080.8
+  1329.4 async B findfirst error 0x80131505 started=693.8 ended=1777.2 took=1083.3
+  6067.5 release sent; mockapp: applied
+after: hits GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+
+# B (thread 1992)
+08:06:56.471415 th1992     8 ms woken by conhost.exe 10776 thread 4928 "Console D | W:  | R: 
+08:06:56.480799 th1992    99 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:56.580132 th1992   111 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:56.691453 th1992   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:56.801748 th1992   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:56.912468 th1992   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:57.022468 th1992   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:57.133130 th1992   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:57.243710 th1992   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:06:57.354851 th1992   204 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetRuntimeId < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+
+
+## Queued FindFirst with cdb on mockapp (q2, timeouts.ps1 with the provider script above)
+q2 transaction=1000 connection=0 release=6000
+set transaction 1000 -> Ok(()); transaction=1000 connection=2000
+before: hits
+  3302.5 server cdb attached
+  3316.8 mockapp: applied
+  3324.8 async A launched
+  3327.0 mockapp: held FragmentRoot
+  3552.5 async A started=3759.7 tid=14328
+  3561.2 async B launched
+  3562.3 async B started=3985.0 tid=13476
+  4421.9 async A cur_name error 0x80131505 started=3759.7 ended=4853.5 took=1093.8
+  4643.5 async B findfirst error 0x80131505 started=3985.0 ended=5075.1 took=1090.1
+  9392.9 release sent; mockapp: applied
+after: hits GetPropertyValue=1 HostRawElementProvider=1 FragmentRoot=1
+
+16:08:57.401 WND msg=8001 wp=0000000000000000 lp=0000000000000000
+16:08:57.415 SRV_ONDATA
+ SRV_MSG
+    10x1 4x1
+16:09:03.443 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_GetPropertyValues
+    3x1
+16:09:03.457 SRV_RESP
+16:09:03.465 SRV_ONDATA
+ SRV_MSG
+16:09:03.480 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_GetRuntimeId
+16:09:03.488 SRV_RESP
+16:09:06.048 WND msg=8004 wp=0000000000004e25 lp=0000000000000000
+16:09:06.056 WND msg=8004 wp=0000000000004e2c lp=0000000000000000
+16:09:06.064 WND msg=8004 wp=0000000000004e24 lp=0000000000000000
+(the 75 WM_APP+2 hit reads after the release left out)
+
+## Stalled window thread (stall), FindFirst Name "Second", transaction = connection = connection at fetch, no debugger, traced
+stt500 block=stall op=stall_find transaction=500 connection=500 recovery=1 conn0=10000 conn1=500 release=8000 mockapp=10680 client=1224 ready tid=12840 pid=1224
+    19.2 mockapp: stall started
+   315.4 go at 16:10:14.089
+  1864.4 ett stall_find error 0x80131505 started=351.9 ended=1897.3 took=1545.4
+  8011.9 mockapp: stall ended 1793607021778300
+
+# client search thread 12840
+08:10:13.741437 th12840     0 ms woken by conhost.exe 12308 thread 4928 "Console D | W:  | R: 
+08:10:13.742152 th12840     0 ms woken by puia.exe 1224 thread 3160 "" | W:  | R: 
+08:10:13.744166 th12840     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:10:13.744268 th12840     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:13.744455 th12840     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:13.745057 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.745158 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.745262 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.745345 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.745414 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.745590 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.746460 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.746539 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.746615 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.746761 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.746878 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.747391 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.748384 th12840     4 ms woken by puia.exe 1224 thread 2564 "" | W:  | R: 
+08:10:13.753368 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.753550 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.755060 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.755212 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.755326 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.755488 th12840     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:13.755603 th12840     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:13.755683 th12840     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:13.755872 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.755992 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.756218 th12840     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:13.756753 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.756985 th12840     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:13.757053 th12840     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:10:13.757174 th12840     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:13.757438 th12840     0 ms woken by csrss.exe 6560 thread 420 "" | W:  | R: 
+08:10:13.757617 th12840     5 ms woken by mockapp.exe 10680 thread 13708 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:10:13.763220 th12840     0 ms woken by mockapp.exe 10680 thread 9104 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:13.763363 th12840     0 ms woken by puia.exe 1224 thread 2468 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:13.763571 th12840     2 ms woken by puia.exe 1224 thread 2468 "" | W: ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:13.766403 th12840     0 ms woken by mockapp.exe 10680 thread 13708 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:10:13.766500 th12840     0 ms woken by mockapp.exe 10680 thread 9104 "" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:10:13.766634 th12840     0 ms woken by puia.exe 1224 thread 2468 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:13.767076 th12840     6 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:13.773841 th12840   319 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:14.093347 th12840   106 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:14.199917 th12840   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:14.310937 th12840   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:14.421831 th12840   205 ms woken by claude.exe 7288 thread 13140 "" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:14.627722 th12840   505 ms woken by claude.exe 7288 thread 13140 "" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:15.134480 th12840   503 ms woken by claude.exe 7288 thread 13140 "" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:15.638968 th12840  9038 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:24.677708 th12840     0 ms woken by puia.exe 1224 thread 2468 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:24.678227 th12840     0 ms woken by puia.exe 1224 thread 2468 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+# mockapp 10680, I/O and window threads
+08:10:13.766925 th9104   326 ms woken by puia.exe 1224 thread 12840 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst
+08:10:13.778134 th13708  8000 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: mockapp::window::apply < mockapp::window::drain_commands < mockapp::window::wnd_proc < DispatchMessageWorker < mockapp::window::run | R: 
+08:10:14.093443 th9104  7685 ms woken by mockapp.exe 10680 thread 13708 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+08:10:21.778473 th13708  2899 ms woken by mockapp.exe 10680 thread 9104 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:21.778644 th9104  2898 ms woken by puia.exe 1224 thread 12840 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_Release < CAutomationElement::Release
+
+stt1000 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=8352 client=1644 ready tid=7256 pid=1644
+     0.4 mockapp: stall started
+   330.9 go at 16:10:25.103
+  4555.9 ett stall_find error 0x80131505 started=359.3 ended=4568.2 took=4208.9
+  8001.6 mockapp: stall ended 1793607032773937
+
+# client search thread 7256
+08:10:24.745527 th7256     0 ms woken by conhost.exe 12308 thread 4928 "Console D | W:  | R: 
+08:10:24.746287 th7256     0 ms woken by puia.exe 1644 thread 4756 "" | W:  | R: 
+08:10:24.748421 th7256     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:10:24.748516 th7256     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:24.748710 th7256     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:24.749320 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.749420 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.749505 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.749578 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.749648 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.749841 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.750691 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.750780 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.750859 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.751001 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.751124 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.751653 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.752632 th7256     5 ms woken by puia.exe 1644 thread 2524 "" | W:  | R: 
+08:10:24.757978 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.758153 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.759545 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.759704 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.759831 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.760004 th7256     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:24.760141 th7256     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:24.760261 th7256     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:24.760478 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.760601 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.760847 th7256     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:24.761414 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.761562 th7256     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:24.761623 th7256     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:24.761722 th7256     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:10:24.761938 th7256     0 ms woken by csrss.exe 6560 thread 6648 "" | W:  | R: 
+08:10:24.762098 th7256     5 ms woken by mockapp.exe 8352 thread 9200 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:10:24.767781 th7256     0 ms woken by mockapp.exe 8352 thread 10000 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:24.767935 th7256     0 ms woken by puia.exe 1644 thread 8136 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:24.768167 th7256     2 ms woken by puia.exe 1644 thread 8136 "" | W: ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:24.770827 th7256     0 ms woken by mockapp.exe 8352 thread 9200 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:10:24.770920 th7256     0 ms woken by mockapp.exe 8352 thread 10000 "" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:10:24.771054 th7256     0 ms woken by puia.exe 1644 thread 8136 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:24.771488 th7256     1 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:24.773113 th7256   331 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:25.104827 th7256   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.214848 th7256   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.325070 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.436341 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.546886 th7256   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.656743 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.767372 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.878418 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:25.989558 th7256   206 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:26.196901 th7256  1011 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:27.209219 th7256     0 ms woken by puia.exe 1644 thread 13040 "" | W: HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:27.210236 th7256  1012 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.222831 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.333361 th7256   110 ms woken by svchost.exe 13948 thread 9276 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.443444 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.554635 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.665138 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.775373 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.885992 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:28.996172 th7256   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:29.107715 th7256   205 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:29.313835 th7256  6340 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:35.654752 th7256     0 ms woken by puia.exe 1644 thread 8136 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:35.655252 th7256     0 ms woken by puia.exe 1644 thread 8136 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+# mockapp 8352, I/O and window threads
+08:10:24.771343 th10000   333 ms woken by puia.exe 1644 thread 7256 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst
+08:10:24.773338 th9200  8000 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: mockapp::window::apply < mockapp::window::drain_commands < mockapp::window::wnd_proc < DispatchMessageWorker < mockapp::window::run | R: 
+08:10:25.104932 th10000  7669 ms woken by mockapp.exe 8352 thread 9200 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+08:10:32.774212 th9200     0 ms woken by mockapp.exe 8352 thread 10000 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:32.774378 th10000     0 ms woken by mockapp.exe 8352 thread 9200 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+08:10:32.774389 th9200     0 ms woken by windowsterminal.exe 5300 thread 5312 "" | W: GetMessageW < mockapp::window::run | R: 
+08:10:32.774622 th9200  2880 ms woken by mockapp.exe 8352 thread 10000 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:32.774671 th10000  2880 ms woken by puia.exe 1644 thread 7256 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_Release < CAutomationElement::Release
+
+stt200 block=stall op=stall_find transaction=200 connection=200 recovery=1 conn0=10000 conn1=200 release=8000 mockapp=2020 client=4716 ready tid=13872 pid=4716
+     0.5 mockapp: stall started
+   323.9 go at 16:10:36.095
+   943.2 ett stall_find error 0x80131505 started=352.9 ended=970.5 took=617.7
+  8001.2 mockapp: stall ended 1793607043772822
+
+# client search thread 13872
+08:10:35.744531 th13872     0 ms woken by conhost.exe 12308 thread 4928 "Console D | W:  | R: 
+08:10:35.747497 th13872     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:10:35.747611 th13872     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:35.747866 th13872     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:35.748575 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.748668 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.748776 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.748858 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.748928 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.749097 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.749969 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.750058 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.750151 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.750319 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.750459 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.750969 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.751857 th13872     4 ms woken by puia.exe 4716 thread 8020 "" | W:  | R: 
+08:10:35.757104 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.757259 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.758688 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.758851 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.759001 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.759160 th13872     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:35.759284 th13872     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:10:35.759376 th13872     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:10:35.759594 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.759754 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.760002 th13872     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:10:35.760553 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.760684 th13872     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:10:35.760753 th13872     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:10:35.760860 th13872     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:35.761080 th13872     0 ms woken by csrss.exe 6560 thread 6576 "" | W:  | R: 
+08:10:35.761243 th13872     5 ms woken by mockapp.exe 2020 thread 1840 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:10:35.767009 th13872     0 ms woken by mockapp.exe 2020 thread 6636 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:35.767147 th13872     0 ms woken by puia.exe 4716 thread 5932 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:35.767356 th13872     2 ms woken by puia.exe 4716 thread 5932 "" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:35.770007 th13872     0 ms woken by mockapp.exe 2020 thread 1840 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: GetMessageW < mockapp::window::run
+08:10:35.770071 th13872     0 ms woken by mockapp.exe 2020 thread 6636 "" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:10:35.770220 th13872     0 ms woken by puia.exe 4716 thread 5932 "" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:35.770610 th13872     1 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:35.772249 th13872   324 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:36.097387 th13872   204 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:36.302974 th13872   205 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:36.509962 th13872   204 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:36.715033 th13872  9950 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:46.666146 th13872     0 ms woken by puia.exe 4716 thread 5932 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:46.666238 th13872     0 ms woken by puia.exe 4716 thread 5932 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+08:10:46.666476 th13872     0 ms woken by mockapp.exe 2020 thread 6636 "" | W:  | R: 
+08:10:46.666641 th13872     0 ms woken by mockapp.exe 2020 thread 1840 "main" | W:  | R: 
+
+# mockapp 2020, I/O and window threads
+08:10:35.770458 th6636   326 ms woken by puia.exe 4716 thread 13872 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst
+08:10:35.772502 th1840  8000 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: mockapp::window::apply < mockapp::window::drain_commands < mockapp::window::wnd_proc < DispatchMessageWorker < mockapp::window::run | R: 
+08:10:36.097499 th6636  7675 ms woken by mockapp.exe 2020 thread 1840 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+08:10:43.773214 th1840  2892 ms woken by mockapp.exe 2020 thread 6636 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:43.774003 th6636  2892 ms woken by puia.exe 4716 thread 13872 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_Release < CAutomationElement::Release
+
+stt100 block=stall op=stall_find transaction=100 connection=100 recovery=1 conn0=10000 conn1=100 release=8000 mockapp=1364 client=2400 ready tid=1716 pid=2400
+     0.4 mockapp: stall started
+   332.4 go at 16:10:47.092
+   671.2 ett stall_find error 0x80131505 started=360.1 ended=691.9 took=331.8
+  8001.1 mockapp: stall ended 1793607054761602
+
+# client search thread 1716
+08:10:46.734193 th1716     0 ms woken by conhost.exe 12308 thread 4928 "Console D | W:  | R: 
+08:10:46.734929 th1716     0 ms woken by puia.exe 2400 thread 4384 "" | W:  | R: 
+08:10:46.736996 th1716     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:10:46.737123 th1716     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:46.737291 th1716     0 ms woken by svchost.exe 2612 thread 6256 "" | W:  | R: 
+08:10:46.737919 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.738017 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.738105 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.738179 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.738250 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.738430 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.739310 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.739386 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.739472 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.739633 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.739792 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.740409 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.741358 th1716     4 ms woken by puia.exe 2400 thread 1924 "" | W:  | R: 
+08:10:46.746117 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.746268 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.747627 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.747786 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.747897 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.748047 th1716     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:10:46.748211 th1716     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:46.748304 th1716     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:46.748523 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.748641 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.748858 th1716     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:46.749327 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.749457 th1716     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:46.749514 th1716     0 ms woken by sihost.exe 7556 thread 8636 "" | W:  | R: 
+08:10:46.749608 th1716     0 ms woken by svchost.exe 1456 thread 13164 "" | W:  | R: 
+08:10:46.749854 th1716     0 ms woken by csrss.exe 6560 thread 6648 "" | W:  | R: 
+08:10:46.750012 th1716     5 ms woken by mockapp.exe 1364 thread 6028 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:10:46.755580 th1716     0 ms woken by mockapp.exe 1364 thread 4468 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:46.755718 th1716     0 ms woken by puia.exe 2400 thread 1320 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:46.755924 th1716     2 ms woken by puia.exe 2400 thread 1320 "" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:46.758756 th1716     0 ms woken by mockapp.exe 1364 thread 6028 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: GetMessageW < mockapp::window::run
+08:10:46.758858 th1716     0 ms woken by mockapp.exe 1364 thread 4468 "" | W: HwndProxy::Navigate | R: 
+08:10:46.758994 th1716     0 ms woken by puia.exe 2400 thread 1320 "" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:46.759428 th1716     1 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:46.761053 th1716   333 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:47.094275 th1716   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:47.204821 th1716   109 ms woken by claude.exe 7288 thread 13140 "" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:47.315024 th1716     0 ms woken by steam.exe 7408 thread 7428 "" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:47.315512 th1716     0 ms woken by puia.exe 2400 thread 7072 "" | W: HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:47.316389 th1716   108 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:10:47.426092 th1716 10244 ms woken by powershell.exe 6624 thread 13068 "" | W: ReadFile | R: WriteFile
+08:10:57.671181 th1716     0 ms woken by puia.exe 2400 thread 1320 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:57.671275 th1716     0 ms woken by puia.exe 2400 thread 1320 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+# mockapp 1364, I/O and window threads
+08:10:46.759275 th4468   334 ms woken by puia.exe 2400 thread 1716 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst
+08:10:46.761343 th6028  8000 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: mockapp::window::apply < mockapp::window::drain_commands < mockapp::window::wnd_proc < DispatchMessageWorker < mockapp::window::run | R: 
+08:10:47.094372 th4468  7667 ms woken by mockapp.exe 1364 thread 6028 "main" | W: MTAThreadWaitForCall < ComInvoker::CallTarget < ChannelBasedServerConnection::ProcessOneMessage < ChannelBasedServerConnection::OnData < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: DispatchMessageWorker < mockapp::window::run
+08:10:54.761844 th6028  2909 ms woken by mockapp.exe 1364 thread 4468 "" | W: GetMessageW < mockapp::window::run | R: ComInvoker::CallTarget < ReleaseCollection::DispatchReleases < ProcessIncomingBatchedMessages < ChannelBasedServerConnection::OnDataIdle < OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:10:54.762025 th4468  2909 ms woken by puia.exe 2400 thread 1716 "" | W: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc | R: WriteFile < RealCrossProcess_Release < CAutomationElement::Release
+
+## Stalled, untraced repeats
+st500 block=stall op=stall_find transaction=500 connection=500 recovery=1 conn0=10000 conn1=500 release=15000 mockapp=13844 client=12980 ready tid=10208 pid=12980
+    17.8 mockapp: stall started
+   330.0 go at 16:09:28.327
+  1894.7 ett stall_find error 0x80131505 started=356.6 ended=1902.7 took=1546.1
+ 15003.4 mockapp: stall ended 1793606983001005
+
+st1000 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=15000 mockapp=7512 client=2088 ready tid=9980 pid=2088
+     0.3 mockapp: stall started
+   300.4 go at 16:09:46.289
+  4508.3 ett stall_find error 0x80131505 started=321.5 ended=4528.2 took=4206.7
+ 15016.6 mockapp: stall ended 1793607000989714
+
+## Stalled, timeouts varied apart (transaction-connection-connection at fetch), traced
+sv1000-1000-500 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=500 release=8000 mockapp=10200 client=2652 ready tid=2900 pid=2652
+    19.6 mockapp: stall started
+   310.0 go at 16:12:40.935
+  2938.1 ett stall_find error 0x80131505 started=347.7 ended=2957.0 took=2609.2
+  8015.6 mockapp: stall ended 1793607168629959
+
+08:12:40.592130 th2900     0 ms woken by conhost.exe 9084 thread 14168 "Console D | W:  | R: 
+08:12:40.592860 th2900     0 ms woken by puia.exe 2652 thread 9268 "" | W:  | R: 
+08:12:40.594968 th2900     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:12:40.595089 th2900     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:12:40.595251 th2900     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:12:40.595884 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.595993 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.596080 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.596153 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.596225 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.596399 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.597280 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.597366 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.597461 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.597635 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.597797 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.598405 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.599369 th2900     5 ms woken by puia.exe 2652 thread 2764 "" | W:  | R: 
+08:12:40.605046 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.605198 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.607072 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.607228 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.607354 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.607524 th2900     0 ms woken by lsass.exe 1204 thread 1180 "" | W:  | R: 
+08:12:40.607641 th2900     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:40.607735 th2900     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:40.608032 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.608187 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.608423 th2900     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:40.608959 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.609089 th2900     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:40.609146 th2900     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:40.609240 th2900     0 ms woken by svchost.exe 1456 thread 1988 "" | W:  | R: 
+08:12:40.609467 th2900     0 ms woken by csrss.exe 6560 thread 420 "" | W:  | R: 
+08:12:40.609624 th2900     5 ms woken by mockapp.exe 10200 thread 6984 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:12:40.615511 th2900     0 ms woken by mockapp.exe 10200 thread 13860 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:40.615674 th2900     0 ms woken by puia.exe 2652 thread 13468 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:40.615912 th2900     2 ms woken by puia.exe 2652 thread 13468 "" | W: ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:40.618821 th2900     0 ms woken by mockapp.exe 10200 thread 6984 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:12:40.619080 th2900     0 ms woken by puia.exe 2652 thread 13468 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:40.619521 th2900     5 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:12:40.625548 th2900   314 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:12:40.939858 th2900   106 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.046750 th2900   110 ms woken by msmpeng.exe 3400 thread 3884 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.158968 th2900   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.268695 th2900   111 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.379903 th2900   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.490959 th2900   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.601889 th2900   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.712206 th2900   111 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:41.823433 th2900   204 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:42.028952 th2900  1012 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:43.043388 th2900   505 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:43.549245 th2900  7954 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:12:51.504394 th2900     0 ms woken by puia.exe 2652 thread 13468 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:51.504902 th2900     0 ms woken by puia.exe 2652 thread 13468 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+sv500-500-1000 block=stall op=stall_find transaction=500 connection=500 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=13920 client=3480 ready tid=4720 pid=3480
+     0.4 mockapp: stall started
+   330.1 go at 16:12:51.947
+  2382.2 ett stall_find error 0x80131505 started=358.2 ended=2408.9 took=2050.6
+  8001.2 mockapp: stall ended 1793607179618569
+
+08:12:51.590898 th4720     0 ms woken by conhost.exe 9084 thread 14168 "Console D | W:  | R: 
+08:12:51.591559 th4720     0 ms woken by puia.exe 3480 thread 9056 "" | W:  | R: 
+08:12:51.593492 th4720     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:12:51.593614 th4720     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:12:51.593762 th4720     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:12:51.594369 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.594468 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.594554 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.594628 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.594697 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.594877 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.595688 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.595789 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.595893 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.596032 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.596147 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.596651 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.597527 th4720     4 ms woken by puia.exe 3480 thread 8732 "" | W:  | R: 
+08:12:51.602539 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.602687 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.604068 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.604216 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.604329 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.604507 th4720     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:12:51.604632 th4720     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:51.604725 th4720     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:51.604911 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.605049 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.605227 th4720     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:51.605670 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.605803 th4720     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:51.605858 th4720     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:12:51.605979 th4720     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:12:51.606206 th4720     0 ms woken by csrss.exe 6560 thread 6796 "" | W:  | R: 
+08:12:51.606362 th4720     5 ms woken by mockapp.exe 13920 thread 2696 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:12:51.612592 th4720     0 ms woken by mockapp.exe 13920 thread 1664 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:51.612727 th4720     0 ms woken by puia.exe 3480 thread 13628 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:51.612954 th4720     2 ms woken by puia.exe 3480 thread 13628 "" | W: ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:51.615863 th4720     0 ms woken by mockapp.exe 13920 thread 2696 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: GetMessageW < mockapp::window::run
+08:12:51.615937 th4720     0 ms woken by mockapp.exe 13920 thread 1664 "" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:12:51.616075 th4720     0 ms woken by puia.exe 3480 thread 13628 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:12:51.616502 th4720     1 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:12:51.617992 th4720   330 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:12:51.949120 th4720   108 ms woken by wmiprvse.exe 6360 thread 8128 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:52.058406 th4720   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:52.168904 th4720   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:52.279643 th4720   204 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:52.485332 th4720   504 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:52.991042 th4720  1008 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:12:53.999940 th4720  8538 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:02.538826 th4720     0 ms woken by puia.exe 3480 thread 13628 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:02.539317 th4720     0 ms woken by puia.exe 3480 thread 13628 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+sv1000-500-1000 block=stall op=stall_find transaction=1000 connection=500 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=752 client=7696 ready tid=4344 pid=7696
+     0.4 mockapp: stall started
+   330.7 go at 16:13:02.965
+  4555.2 ett stall_find error 0x80131505 started=358.1 ended=4566.2 took=4208.0
+  8001.0 mockapp: stall ended 1793607190635442
+
+08:13:02.608234 th4344     0 ms woken by conhost.exe 9084 thread 14168 "Console D | W:  | R: 
+08:13:02.610928 th4344     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:13:02.611023 th4344     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:13:02.611185 th4344     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:13:02.611845 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.611938 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.612025 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.612108 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.612185 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.612369 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.613202 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.613284 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.613357 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.613508 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.613635 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.614164 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.615053 th4344     4 ms woken by puia.exe 7696 thread 7752 "" | W:  | R: 
+08:13:02.619885 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.620037 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.621608 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.621771 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.621903 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.622066 th4344     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:02.622197 th4344     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:13:02.622286 th4344     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:13:02.622518 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.622665 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.622910 th4344     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:13:02.623453 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.623595 th4344     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:13:02.623651 th4344     0 ms woken by sihost.exe 7556 thread 9812 "" | W:  | R: 
+08:13:02.623757 th4344     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:02.623980 th4344     0 ms woken by csrss.exe 6560 thread 6796 "" | W:  | R: 
+08:13:02.624142 th4344     5 ms woken by mockapp.exe 752 thread 12856 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:13:02.629734 th4344     0 ms woken by mockapp.exe 752 thread 1596 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:02.629917 th4344     0 ms woken by puia.exe 7696 thread 9744 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:02.630138 th4344     2 ms woken by puia.exe 7696 thread 9744 "" | W: ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:02.632796 th4344     0 ms woken by mockapp.exe 752 thread 12856 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: GetMessageW < mockapp::window::run
+08:13:02.632856 th4344     0 ms woken by mockapp.exe 752 thread 1596 "" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: 
+08:13:02.633024 th4344     0 ms woken by puia.exe 7696 thread 9744 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:02.633432 th4344     1 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:02.634964 th4344   331 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:02.966341 th4344   109 ms woken by claude.exe 7288 thread 13140 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.075919 th4344   111 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.187208 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.297414 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.408515 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.519884 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.630601 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.741342 th4344   111 ms woken by claude.exe 7288 thread 13140 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:03.852576 th4344   205 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:04.058408 th4344  1010 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:05.070312 th4344  1011 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.082587 th4344   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.192246 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.302923 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.413193 th4344   111 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.524788 th4344   110 ms woken by claude.exe 7288 thread 13140 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.635061 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.746114 th4344   111 ms woken by claude.exe 7288 thread 13140 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.857652 th4344   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:06.968099 th4344   205 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_Find < FindingVisitor::CallRemoteAndMergeState < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:07.174378 th4344  6349 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:13.523871 th4344     0 ms woken by puia.exe 7696 thread 9744 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:13.523927 th4344     0 ms woken by puia.exe 7696 thread 9744 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+sv500-1000-500 block=stall op=stall_find transaction=500 connection=1000 recovery=1 conn0=10000 conn1=500 release=8000 mockapp=13372 client=5012 ready tid=6944 pid=5012
+     5.4 mockapp: stall started
+   301.3 go at 16:13:13.917
+  1853.9 ett stall_find error 0x80131505 started=328.9 ended=1880.5 took=1551.6
+  8001.2 mockapp: stall ended 1793607201617690
+
+08:13:13.590049 th6944     0 ms woken by conhost.exe 9084 thread 14168 "Console D | W:  | R: 
+08:13:13.592786 th6944     0 ms woken by svchost.exe 2612 thread 2708 "" | W:  | R: 
+08:13:13.592898 th6944     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:13:13.593101 th6944     0 ms woken by svchost.exe 2612 thread 6272 "" | W:  | R: 
+08:13:13.593687 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.593777 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.593882 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.593955 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.594024 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.594202 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.595081 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.595161 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.595234 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.595379 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.595501 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.596020 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.596992 th6944     4 ms woken by puia.exe 5012 thread 10884 "" | W:  | R: 
+08:13:13.602080 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.602224 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.603460 th6944     0 ms woken by msmpeng.exe 3400 thread 11696 "" | W:  | R: 
+08:13:13.603624 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.603788 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.603923 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.604096 th6944     0 ms woken by lsass.exe 1204 thread 1256 "" | W:  | R: 
+08:13:13.604216 th6944     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:13:13.604321 th6944     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:13:13.604535 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.604678 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.604908 th6944     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:13:13.605504 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.605652 th6944     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:13:13.605709 th6944     0 ms woken by sihost.exe 7556 thread 4176 "" | W:  | R: 
+08:13:13.605802 th6944     0 ms woken by svchost.exe 1456 thread 7000 "" | W:  | R: 
+08:13:13.606063 th6944     0 ms woken by csrss.exe 6560 thread 9304 "" | W:  | R: 
+08:13:13.606229 th6944     5 ms woken by mockapp.exe 13372 thread 13832 "main" | W: SendMessageTimeoutW | R: GetMessageW < mockapp::window::run
+08:13:13.611631 th6944     0 ms woken by mockapp.exe 13372 thread 5288 "" | W:  | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:13.611806 th6944     0 ms woken by puia.exe 5012 thread 2892 "" | W: OverlappedIOManager::AddChannel_AnyThread < OverlappedIOManager::AddReadWriteChannel | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:13.612040 th6944     2 ms woken by puia.exe 5012 thread 2892 "" | W: ChannelBasedClientConnection::WaitForResponse | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:13.614771 th6944     0 ms woken by mockapp.exe 13372 thread 13832 "main" | W: SendMessageTimeoutW < HwndProxy::Navigate | R: GetMessageW < mockapp::window::run
+08:13:13.614857 th6944     0 ms woken by mockapp.exe 13372 thread 5288 "" | W: HwndProxy::Navigate | R: 
+08:13:13.614979 th6944     0 ms woken by puia.exe 5012 thread 2892 "" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertiesAndPatterns < CAutomationElement::WrapIUiaNodeAndUpdateCache | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:13.615451 th6944     1 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:13.616961 th6944   301 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:13.918995 th6944   109 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:14.028248 th6944   110 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:14.139229 th6944   111 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:14.250927 th6944   205 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: RequestResponseCoordinator::WaitForResponse < ChannelBasedClientConnection::WaitForResponse < RealCrossProcess_GetPropertyValues < FindingVisitor::Enter < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:14.457263 th6944   506 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:14.964222 th6944     0 ms woken by steamwebhelper.exe 11324 thread 11328 "C | W: SendMessageTimeoutW < GetComboBoxInfoTimeout < HwndProxy::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:14.965487 th6944   504 ms woken by ntoskrnl.exe 0 thread 0 "Idle Thread" | W: SendMessageTimeoutW < AccessibleObjectFromWindowTimeout < DoNonClientNavigation < MsaaNonClientProxyRoot::Navigate < ElementFinder::Find < CAutomationElement::Find < CAutomationElement::FindFirst | R: 
+08:13:15.470555 th6944  8985 ms woken by powershell.exe 7820 thread 7996 "" | W: ReadFile | R: WriteFile
+08:13:24.456353 th6944     0 ms woken by puia.exe 5012 thread 2892 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: OverlappedIOManager::IoThreadProc < OverlappedIOManager::StaticIoThreadProc
+08:13:24.456508 th6944     0 ms woken by puia.exe 5012 thread 2892 "" | W: OverlappedIOManager::RemoveChannel_AnyThread < CAutomationElement::Release | R: 
+
+## Stalled, more variants, untraced
+sx500-500-3000 block=stall op=stall_find transaction=500 connection=500 recovery=1 conn0=10000 conn1=3000 release=12000 mockapp=2764 client=7552 ready tid=3660 pid=7552
+    19.8 mockapp: stall started
+   332.7 go at 16:20:07.234
+  4922.8 ett stall_find error 0x80131505 started=382.7 ended=4969.2 took=4586.5
+ 12005.4 mockapp: stall ended 1793607618906974
+
+sx2000-2000-500 block=stall op=stall_find transaction=2000 connection=2000 recovery=1 conn0=10000 conn1=500 release=12000 mockapp=1376 client=5636 ready tid=8816 pid=5636
+     0.3 mockapp: stall started
+   303.0 go at 16:20:22.158
+  7241.5 ett stall_find error 0x80131505 started=322.8 ended=7244.9 took=6922.1
+ 12015.8 mockapp: stall ended 1793607633855561
+
+sx700-700-700 block=stall op=stall_find transaction=700 connection=700 recovery=1 conn0=10000 conn1=700 release=12000 mockapp=4432 client=7684 ready tid=13388 pid=7684
+     0.3 mockapp: stall started
+   301.4 go at 16:20:37.130
+  2483.2 ett stall_find error 0x80131505 started=322.4 ended=2503.4 took=2180.9
+ 12001.1 mockapp: stall ended 1793607648829987
+
+sx1500-1500-1500 block=stall op=stall_find transaction=1500 connection=1500 recovery=1 conn0=10000 conn1=1500 release=12000 mockapp=6944 client=3384 ready tid=13832 pid=3384
+     0.3 mockapp: stall started
+   311.9 go at 16:20:52.060
+  6620.0 ett stall_find error 0x80131505 started=331.4 ended=6638.6 took=6307.2
+ 12013.8 mockapp: stall ended 1793607663749640
+
+## Stalled, connection recovery off, untraced
+sr1000-1000-500 block=stall op=stall_find transaction=1000 connection=1000 recovery=0 conn0=10000 conn1=500 release=10000 mockapp=12344 client=7468 ready tid=10512 pid=7468
+    19.2 mockapp: stall started
+   316.7 go at 16:21:23.410
+  4017.1 ett stall_find error 0x80131505 started=366.6 ended=4063.7 took=3697.2
+ 10005.3 mockapp: stall ended 1793607693099483
+
+sr500-500-500 block=stall op=stall_find transaction=500 connection=500 recovery=0 conn0=10000 conn1=500 release=10000 mockapp=11352 client=10980 ready tid=7984 pid=10980
+     0.3 mockapp: stall started
+   303.2 go at 16:21:36.364
+  2407.2 ett stall_find error 0x80131505 started=324.4 ended=2411.5 took=2087.1
+ 10014.7 mockapp: stall ended 1793607706061983
+
+## Stalled, 1000 ms, with a wait between the root's fetch and the block (GoDelay), untraced
+stg300 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=10576 client=13112 ready tid=6184 pid=13112
+   308.7 waited 300 ms before the block
+   325.1 mockapp: stall started
+   626.5 go at 16:26:10.252
+  1717.0 ett stall_find error 0x80131505 started=681.8 ended=1769.1 took=1087.3
+  8317.7 mockapp: stall ended 1793607977936981
+
+stg600 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=12316 client=7744 ready tid=14176 pid=7744
+   604.8 waited 600 ms before the block
+   605.9 mockapp: stall started
+   937.4 go at 16:26:21.849
+  2029.0 ett stall_find error 0x80131505 started=958.3 ended=2049.0 took=1090.7
+  8606.6 mockapp: stall ended 1793607989519378
+
+stg1000 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=6572 client=616 ready tid=10180 pid=616
+  1005.0 waited 1000 ms before the block
+  1006.3 mockapp: stall started
+  1336.6 go at 16:19:08.413
+  2428.1 ett stall_find error 0x80131505 started=1356.0 ended=2446.5 took=1090.5
+  9007.6 mockapp: stall ended 1793607556083394
+
+stg3000 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=8736 client=13188 ready tid=11344 pid=13188
+  3014.3 waited 3000 ms before the block
+  3053.2 mockapp: stall started
+  3344.8 go at 16:18:56.422
+  4436.9 ett stall_find error 0x80131505 started=3371.2 ended=4459.9 took=1088.7
+ 11040.2 mockapp: stall ended 1793607544117622
+
+## Stalled with cdb on mockapp attached after the root's fetch (about 3 s later)
+sts1000 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=1612 client=8060 ready tid=10776 pid=8060
+  3519.4 server cdb attached
+  3552.8 mockapp: stall started
+  3847.1 go at 16:17:49.250
+  4940.2 ett stall_find error 0x80131505 started=3874.3 ended=4964.8 took=1090.5
+ 11546.5 mockapp: stall ended 1793607476945897
+ 14779.3 server cdb detached
+
+16:17:48.938 WND msg=8001 wp=0000000000000000 lp=0000000000000000
+16:17:49.254 SRV_ONDATA
+ SRV_MSG
+16:17:56.947 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_GetRuntimeId
+16:17:56.955 SRV_RESP
+
+sts500 block=stall op=stall_find transaction=500 connection=500 recovery=1 conn0=10000 conn1=500 release=8000 mockapp=3316 client=6952 ready tid=13156 pid=6952
+  2640.0 server cdb attached
+  2656.1 mockapp: stall started
+  2955.5 go at 16:18:03.289
+  3510.2 ett stall_find error 0x80131505 started=2975.8 ended=3514.4 took=538.7
+ 10662.3 mockapp: stall ended 1793607490990520
+ 13874.0 server cdb detached
+
+16:18:02.983 WND msg=8001 wp=0000000000000000 lp=0000000000000000
+16:18:03.291 SRV_ONDATA
+ SRV_MSG
+16:18:10.993 SRV_STUB uiautomationcore!RemoteUiaNodeStub::Incoming_GetRuntimeId
+16:18:11.003 SRV_RESP
+
+## Stalled with cdb on the client attached after the root's fetch: return values (svd: with the request breakpoint; sve: without it, C++ exceptions ignored)
+svd1000-1000-500 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=500 release=12000 mockapp=5308 client=13664 ready tid=9680 pid=13664
+  3291.5 client cdb attached
+  3309.9 mockapp: stall started
+  3610.3 go at 16:15:42.674
+  4637.5 ett stall_find error 0x80131505 started=3636.6 ended=4652.5 took=1015.9
+ 15295.0 mockapp: stall ended 1793607354359858
+ 18537.5 client cdb detached
+
+PUIA_OP ett
+EF_FIND
+CLI_CALL
+    uiautomationcore!LocalUiaNodeProxy::RealCrossProcess_GetRuntimeId+0xe0
+CLI_CALL_RET
+eax=80131505
+EF_FIND_RET
+eax=80131505
+PUIA_END ett
+
+sve1000-500-1000 block=stall op=stall_find transaction=1000 connection=500 recovery=1 conn0=10000 conn1=1000 release=12000 mockapp=3020 client=6636 ready tid=7100 pid=6636
+  2904.9 client cdb attached
+  2905.6 mockapp: stall started
+  3207.7 go at 16:17:14.544
+  4228.5 ett stall_find error 0x80131505 started=3228.1 ended=4247.4 took=1019.3
+ 14906.2 mockapp: stall ended 1793607446243210
+ 18114.2 client cdb detached
+
+PUIA_OP ett
+EF_FIND
+EF_FIND_RET
+eax=80131505
+PUIA_END ett
+
+## Stalled with cdb on mockapp attached before the client started (stp): not reproduced without the debugger
+server cdb attached before the client
+stp1000 block=stall op=stall_find transaction=1000 connection=1000 recovery=1 conn0=10000 conn1=1000 release=8000 mockapp=4312 client=13936 ready tid=1124 pid=13936
+    23.7 mockapp: stall started
+   317.2 go at 16:23:20.330
+  2360.0 ett stall_find ok none started=789.0 ended=2814.3 took=2025.3
+  8022.5 mockapp: stall ended 1793607808036222
+ 11229.4 server cdb detached
+
+server cdb attached before the client
+stp500 block=stall op=stall_find transaction=500 connection=500 recovery=1 conn0=10000 conn1=500 release=8000 mockapp=12508 client=3868 ready tid=12512 pid=3868
+    39.8 mockapp: stall started
+   308.3 go at 16:23:34.731
+  1334.9 ett stall_find ok none started=761.5 ended=1771.8 took=1010.3
+  8036.3 mockapp: stall ended 1793607822449047
+ 11206.6 server cdb detached
