@@ -296,8 +296,11 @@ time, on one clock.
   (`acceptance::foreground_relation`). An unrelated window closes the
   record with nothing sent or read. Otherwise, when the window is the
   foreground window itself, the shell sends its window text as a
-  whole-window focus, the plain window read from local data
-  (`worker::window_text`, `read::plain_window`), minted under a request
+  whole-window focus read from local data (`worker::window_text`): the
+  plain window (`read::plain_window`) for a window the outpost judges UIA
+  by a kept verdict or the class lists (`Context::known_to_use_uia`), and
+  otherwise its MSAA client pane (`read::client_pane`), so it is said as
+  the switch without a stall says it, minted under a request
   tag of its own, stamped with the record's stamp; and for a record
   waiting for the application's focus, `Item::GapBound` is pushed into
   the intake, behind every marker queued before it. Handled with the

@@ -612,7 +612,7 @@ pub(super) fn plain_window(context: &RequestContext<'_>, hwnd: isize) -> NodeSna
 /// `verbatim_ia2`'s reader marks an MSAA client, so a top-level window is
 /// spoken by its title and a child window is structure, and in all else a
 /// [`plain_window`], read from Windows' own state.
-fn client_pane(context: &RequestContext<'_>, hwnd: isize) -> NodeSnapshot {
+pub(super) fn client_pane(context: &RequestContext<'_>, hwnd: isize) -> NodeSnapshot {
     window_from_local_state(context, hwnd, true)
 }
 

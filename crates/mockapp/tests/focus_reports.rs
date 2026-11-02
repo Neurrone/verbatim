@@ -1516,8 +1516,10 @@ fn a_uia_window_that_answers_sends_no_window_text() {
 /// a UIA window inside a Win32 frame has its copy dropped for UIA, and the
 /// listener's read of the frame, a window the outpost judges MSAA, is
 /// dropped by the outpost. The record is closed only by what the outpost
-/// reports, so it stays open, and at its bound the window's text is sent
-/// and the gap's read reads the application's focus, in the UIA window.
+/// reports, so it stays open, and at its bound the window's text is sent,
+/// as the frame's MSAA client says it, its title alone, since the outpost
+/// judges the frame MSAA, and the gap's read reads the application's
+/// focus, in the UIA window.
 fn a_listener_read_the_outpost_drops_leaves_the_record_to_its_bound() {
     common::init_com();
     let title = common::unique_title("mockapp-dropped-frame-read");
@@ -1544,7 +1546,7 @@ fn a_listener_read_the_outpost_drops_leaves_the_record_to_its_bound() {
     outpost.deliver(frame);
     outpost.settled();
     outpost.pass_time(Duration::from_secs(1));
-    outpost.window_text(&title);
+    outpost.client_text(&title);
     let reported = outpost.reported_focus();
     assert_eq!(
         reported.chain(),

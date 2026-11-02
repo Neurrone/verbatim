@@ -554,10 +554,13 @@ outpost first sends the window's text from Windows' state, read with no
 call into the application, as a whole-window focus: a held application
 says "held-application window" after a second, then its focus if it
 answers later, where NVDA says nothing until the focus comes (Dickson,
-2026-11-02: a second is the silence budget). A window read through MSAA
-whose foreground report the outpost has not sent by then, its worker
-blocked reading it, says its window text the same way, and no read is
-made for it. A window that has left the front for an unrelated one by
+2026-11-02: a second is the silence budget). The text is said as the
+switch without a stall says the window: a window the outpost judges UIA
+as its window element, "<title> window"; any other, such as File
+Explorer's frame around its UIA list, as its MSAA client, its title
+alone. A window read through MSAA whose foreground report the outpost
+has not sent by then, its worker blocked reading it, says its window
+text the same way, and no read is made for it. A window that has left the front for an unrelated one by
 then closes the wait with nothing sent or read.
 
 Where NVDA drops a gone sender's focus event and speaks nothing until the

@@ -637,22 +637,13 @@ impl Context {
         reader()
     }
 
-    /// The outpost's one test of `item` against the system's foreground,
-    /// made from Windows' state on the reducer's thread as the reducer takes
-    /// the entry from the mailbox, with local calls only: NVDA's acceptance
-    /// test of an MSAA focus (`acceptance::accepts_event`, whose reads of
-    /// the foreground window, the ancestors, the classes and the threads
-    /// are local), and of a foreground change whether its window is the
-    /// foreground window, and when that was found, on the observation clock
-    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
-    /// foreground tests, on its reducer's thread"), with whether the outpost
-    /// judges the window UIA by a kept verdict or the class lists, for the
-    /// gap record the change opens. Nothing else is tested.
-    fn front_test(&self, item: &Item, observed_at_us: u64) -> reducer::Front {
-        use verbatim_reader_rules::acceptance::{self, EventName};
-        /// The take's judgement of a window's backend: the push-time copy
-        /// of the reducer's verdicts, at the event's observation, with no
-        /// probe and nothing recorded.
+    /// Whether the outpost judges window `hwnd` UIA at `at_us` by a kept
+    /// verdict or the class lists, with no probe and nothing recorded: the
+    /// reducer's verdicts as the mailbox last copied them, and local calls
+    /// only, so the reducer's thread may ask it.
+    pub(super) fn known_to_use_uia(&self, hwnd: isize, at_us: u64) -> bool {
+        /// The judgement of a window's backend at one time, from the
+        /// mailbox's copy of the reducer's verdicts.
         struct AtTake {
             verdicts: Arc<reducer::Verdicts>,
             at_us: u64,
@@ -666,13 +657,27 @@ impl Context {
             }
             fn record(&self, _: VerdictChange) {}
         }
-        let known_to_use_uia = |hwnd| {
-            let judgement = AtTake {
-                verdicts: self.mailbox.verdicts(),
-                at_us: observed_at_us,
-            };
-            crate::arbitration::known_to_use_uia(&self.arbitrator, &judgement, hwnd)
+        let judgement = AtTake {
+            verdicts: self.mailbox.verdicts(),
+            at_us,
         };
+        crate::arbitration::known_to_use_uia(&self.arbitrator, &judgement, hwnd)
+    }
+
+    /// The outpost's one test of `item` against the system's foreground,
+    /// made from Windows' state on the reducer's thread as the reducer takes
+    /// the entry from the mailbox, with local calls only: NVDA's acceptance
+    /// test of an MSAA focus (`acceptance::accepts_event`, whose reads of
+    /// the foreground window, the ancestors, the classes and the threads
+    /// are local), and of a foreground change whether its window is the
+    /// foreground window, and when that was found, on the observation clock
+    /// (`docs/design/focus-pipeline-rework-remaining.md`, "The outpost's
+    /// foreground tests, on its reducer's thread"), with whether the outpost
+    /// judges the window UIA by a kept verdict or the class lists, for the
+    /// gap record the change opens. Nothing else is tested.
+    fn front_test(&self, item: &Item, observed_at_us: u64) -> reducer::Front {
+        use verbatim_reader_rules::acceptance::{self, EventName};
+        let known_to_use_uia = |hwnd| self.known_to_use_uia(hwnd, observed_at_us);
         let fact = match item {
             Item::Fact(DeliveredFact::UiaMarked { fact, .. }, _) => &**fact,
             Item::Fact(fact, _) => fact,

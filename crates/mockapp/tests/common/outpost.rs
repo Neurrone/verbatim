@@ -1378,12 +1378,24 @@ impl OutpostUnderTest {
     }
 
     /// The window text the outpost sends next, at its gap record's bound
-    /// with no focus of the window reported: a whole-window focus of the
-    /// plain window, read from local data, named `title`, as the
-    /// responsive switch says the window
+    /// with no focus of the window reported, for a window the outpost
+    /// judges UIA: a whole-window focus of the plain window, read from local
+    /// data, named `title`, as the switch without a stall says the window
     /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
     /// application's title"). Returns its stamp.
     pub fn window_text(&self, title: &str) -> u64 {
+        self.held_text(title, verbatim_model::Role::Window, false)
+    }
+
+    /// [`window_text`](Self::window_text) for a window the outpost does not
+    /// judge UIA: the window's MSAA client pane, standing for the top-level
+    /// window, so it says the title alone, as the window's whole-window
+    /// focus does. Returns its observation.
+    pub fn client_text(&self, title: &str) -> u64 {
+        self.held_text(title, verbatim_model::Role::Pane, true)
+    }
+
+    fn held_text(&self, title: &str, role: verbatim_model::Role, top_level_client: bool) -> u64 {
         match self.next() {
             OutpostToCore::Event {
                 event:
@@ -1396,8 +1408,12 @@ impl OutpostUnderTest {
                 observed_at_us,
                 backend: Backend::Msaa,
                 ..
-            } if node.role == verbatim_model::Role::Window && ancestors.is_empty() => {
+            } if node.role == role && ancestors.is_empty() => {
                 assert_eq!(node.name.as_deref(), Some(title), "the window's text");
+                assert_eq!(
+                    node.details.top_level_client, top_level_client,
+                    "whether it stands for the top-level window's client"
+                );
                 observed_at_us
             }
             other => panic!("the outpost said {other:?}, not the window's text"),

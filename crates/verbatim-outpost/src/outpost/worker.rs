@@ -4633,17 +4633,25 @@ pub(super) fn publication(context: &RequestContext<'_>, walk: &FocusProgress) ->
 /// The window text of top-level window `hwnd`, sent at the gap record's
 /// bound when no focus of the window has come
 /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
-/// application's title"): a whole-window focus of the plain window read
-/// from local data (`read::plain_window`, under the window's MSAA key), so
-/// it is said as the responsive switch says the window, traced `trace` and
+/// application's title"): a whole-window focus read from local data under
+/// the window's MSAA key, so it is said as the switch without a stall says
+/// the window: for a window the outpost judges UIA (`uia`), the plain
+/// window (`read::plain_window`), "<title> window", as its window element
+/// is said; for any other, its MSAA client pane (`read::client_pane`), its
+/// title alone, as its whole-window focus is said. Traced `trace` and
 /// stamped `stamp_us`, the record's. Made on the reducer's thread with no
 /// call into the application; a window, it is not followed.
 pub(super) fn window_text(
     context: &RequestContext<'_>,
     hwnd: isize,
+    uia: bool,
     (trace, stamp_us): (TraceId, u64),
 ) -> Effects {
-    let node = read::plain_window(context, hwnd);
+    let node = if uia {
+        read::plain_window(context, hwnd)
+    } else {
+        read::client_pane(context, hwnd)
+    };
     let judged = judged_focus(context, (&node, &[]), (Some(hwnd), true), None);
     let (node_id, role) = (node.id, node.role);
     let message = event_message(

@@ -563,7 +563,8 @@ impl Shell {
     /// root owner, topmost, or a `Windows.UI.Core` window under the active
     /// window), and, when it is the foreground window itself, its window
     /// text sent as a whole-window focus stamped `stamp_us`: the plain
-    /// window read from local data, minted under `request`'s tag with the
+    /// window, or for a window not known to be read through UIA its MSAA
+    /// client pane, read from local data, minted under `request`'s tag with the
     /// store's lock, a short hold, and written as a commit of its
     /// (`docs/design/focus-pipeline-rework-remaining.md`, "The held UIA
     /// application's title"). No call is made into the application.
@@ -591,9 +592,13 @@ impl Shell {
             );
             return (related, None);
         }
+        // Said as the switch without a stall says the window: a window the
+        // outpost reads through UIA by its window element, "<title>
+        // window"; any other by its MSAA client, its title alone.
+        let uia = self.context.known_to_use_uia(top_level.get(), stamp_us);
         let tag = tag_of(request);
         let context = RequestContext::new(&self.context, tag, facts);
-        let effects = worker::window_text(&context, top_level.get(), (trace, stamp_us));
+        let effects = worker::window_text(&context, top_level.get(), uia, (trace, stamp_us));
         self.garbage.store.push(context.take_removed());
         tracing::info!(
             %trace,
