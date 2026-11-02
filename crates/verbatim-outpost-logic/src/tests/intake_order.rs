@@ -21,7 +21,7 @@
 //!   drop or the end of the listener's reads resolves it.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::strategy::Strategy;
 use proptest::test_runner::{Config, TestRunner};
@@ -118,8 +118,6 @@ struct Pushed {
     place: u64,
     /// The query's number, for a query.
     query: Option<u64>,
-    /// When it was raised, for an MSAA fact.
-    raised: u32,
     /// Its place among the hand-outs, once handed out, and the batch.
     handed: Option<(u64, u64)>,
     /// The members of the focus group it was handed out in, by trace.
@@ -145,6 +143,13 @@ struct Run {
     closed: bool,
     /// The noted caret kept, by trace.
     noted: Option<u64>,
+    /// The model: what waits, by trace in its order; the batch being handed
+    /// out, by trace; the number of the last batch; and the entries dropped,
+    /// with why.
+    waiting: Vec<u64>,
+    batch: BTreeSet<u64>,
+    last_batch: u64,
+    fate: BTreeMap<u64, &'static str>,
     /// Every hand-out, by its `Debug` text, for the double run.
     log: Vec<String>,
     reached: BTreeMap<&'static str, u64>,
@@ -210,6 +215,8 @@ impl Run {
                         self.trail
                     );
                     self.pushed.get_mut(&trace).expect("pushed").cancelled = true;
+                    self.waiting.retain(|&waiting| waiting != trace);
+                    self.batch.remove(&trace);
                 }
             }
             Action::Noted => {
@@ -221,7 +228,6 @@ impl Run {
                         kind: Kind::Noted,
                         place,
                         query: None,
-                        raised: 0,
                         handed: None,
                         group: Vec::new(),
                         ahead: true,
@@ -230,7 +236,9 @@ impl Run {
                     },
                 );
                 // A newer note replaces the one kept.
-                self.noted = Some(trace);
+                if let Some(old) = self.noted.replace(trace) {
+                    self.fate.insert(old, "a noted caret replaced");
+                }
                 self.intake.when_idle(Entry::own(
                     Item::NotedCaret {
                         node_id: NodeId::new(3),
@@ -248,6 +256,8 @@ impl Run {
                     }
                 }
                 self.noted = None;
+                self.waiting.clear();
+                self.batch.clear();
                 self.reach("closed");
             }
         }
@@ -259,6 +269,7 @@ impl Run {
         let raised = u32::try_from(trace).expect("a small trace");
         let mut query = None;
         let mut place = trace;
+        let mut resolved = None;
         let item = match kind {
             Kind::NameChange {
                 window,
@@ -340,18 +351,20 @@ impl Run {
                 Item::Fact(DeliveredFact::UiaFocusMarker { marker: trace }, None)
             }
             Kind::Read(element) => {
-                let resolves = self.resolve_oldest().unwrap_or_else(|| self.fresh());
-                if let Some(resolved) = self.pushed.get(&resolves) {
+                resolved = self.resolve_oldest();
+                let marker = resolved.unwrap_or_else(|| self.fresh());
+                if let Some(resolved) = self.pushed.get(&marker) {
                     place = resolved.place;
                     self.reach("a read in its marker's place");
                 }
-                Item::Fact(focus_read(resolves, element), None)
+                Item::Fact(focus_read(marker, element), None)
             }
             Kind::Dropped => {
-                let resolves = self.resolve_oldest().unwrap_or_else(|| self.fresh());
+                resolved = self.resolve_oldest();
+                let marker = resolved.unwrap_or_else(|| self.fresh());
                 Item::Fact(
                     DeliveredFact::UiaFocusDropped {
-                        marker: resolves,
+                        marker,
                         focus: true,
                         no_window: false,
                     },
@@ -372,7 +385,6 @@ impl Run {
                 kind,
                 place,
                 query,
-                raised,
                 handed: None,
                 group: Vec::new(),
                 ahead: false,
@@ -380,6 +392,9 @@ impl Run {
                 closed: self.closed,
             },
         );
+        if !self.closed {
+            self.queue(trace, kind, resolved);
+        }
         let _ = self.intake.push(
             Entry {
                 item,
@@ -400,13 +415,180 @@ impl Run {
         Some(self.open_markers.remove(0))
     }
 
+    /// The model's part of a push, of entry `trace` of `kind`, resolving the
+    /// open marker `resolved`, if any: a drop or the end of the listener's
+    /// reads removes markers; a read takes its marker's place; a keyed entry
+    /// replaces the waiting entry of its key that no idle barrier divides
+    /// from its place, nearest before it first; and a foreground change of
+    /// window 9 removes the waiting focus on its client area from its
+    /// thread, raised before it, as the intake's documentation says.
+    fn queue(&mut self, trace: u64, kind: Kind, resolved: Option<u64>) {
+        match kind {
+            Kind::Dropped => {
+                self.waiting.retain(|&waiting| Some(waiting) != resolved);
+                return;
+            }
+            Kind::ReadsEnded => {
+                let pushed = &self.pushed;
+                self.waiting
+                    .retain(|waiting| pushed[waiting].kind != Kind::Marker);
+                return;
+            }
+            _ => {}
+        }
+        let mut at = match (kind, resolved) {
+            (Kind::Read(_), Some(marker)) => {
+                self.waiting.iter().position(|&waiting| waiting == marker)
+            }
+            _ => None,
+        };
+        if let Some(wanted) = key(kind) {
+            let from = at.unwrap_or(self.waiting.len());
+            if let Some(found) =
+                self.find_waiting(from, |pushed| key(pushed.kind) == Some(wanted.clone()))
+            {
+                let old = self.waiting.remove(found);
+                self.fate.insert(old, "replaced");
+                if let Some(at) = at.as_mut()
+                    && found < *at
+                {
+                    *at -= 1;
+                }
+            }
+            if let Kind::Foreground { window: 0, thread } = kind {
+                let from = self.waiting.len();
+                if let Some(found) = self.find_waiting(from, |pushed| {
+                    pushed.kind == Kind::Focus { child: 0, thread }
+                }) {
+                    let old = self.waiting.remove(found);
+                    self.fate
+                        .insert(old, "a client focus removed by its foreground change");
+                }
+            }
+        }
+        match at {
+            Some(at) => self.waiting[at] = trace,
+            None => self.waiting.push(trace),
+        }
+    }
+
+    /// The place of the first waiting entry `wanted` names among those no
+    /// idle barrier divides from place `at`: nearest before it, then from it
+    /// on.
+    fn find_waiting(&self, at: usize, wanted: impl Fn(&Pushed) -> bool) -> Option<usize> {
+        let pushed = |place: usize| &self.pushed[&self.waiting[place]];
+        let before = (0..at)
+            .rev()
+            .take_while(|&place| pushed(place).kind != Kind::Round)
+            .find(|&place| wanted(pushed(place)));
+        before.or_else(|| {
+            (at..self.waiting.len())
+                .take_while(|&place| pushed(place).kind != Kind::Round)
+                .find(|&place| wanted(pushed(place)))
+        })
+    }
+
+    /// What is ready to be planned: everything waiting before the first
+    /// open marker, ending at the first idle barrier, which it includes.
+    fn ready(&self) -> Vec<u64> {
+        let mut ready = Vec::new();
+        for &trace in &self.waiting {
+            match self.pushed[&trace].kind {
+                Kind::Marker => break,
+                Kind::Round => {
+                    ready.push(trace);
+                    break;
+                }
+                _ => ready.push(trace),
+            }
+        }
+        ready
+    }
+
+    /// Plans the batch `ready`, by the limiter's counts: of the MSAA focus
+    /// events and foreground changes the newest four, of the other MSAA
+    /// events the newest ten of each thread that raised them, a foreground
+    /// change counted among both and kept by either; then of the menu
+    /// openings kept, the newest alone.
+    fn plan(&mut self, ready: &[u64]) {
+        let mut focus = 0;
+        let mut per_thread: BTreeMap<u8, usize> = BTreeMap::new();
+        let mut kept = vec![true; ready.len()];
+        for (at, trace) in ready.iter().enumerate().rev() {
+            let mut count = |thread: u8| {
+                let count = per_thread.entry(thread).or_default();
+                *count += 1;
+                *count
+            };
+            kept[at] = match self.pushed[trace].kind {
+                Kind::Focus { .. } => {
+                    focus += 1;
+                    focus <= 4
+                }
+                Kind::Foreground { thread, .. } => {
+                    focus += 1;
+                    let among = focus <= 4;
+                    count(thread) <= 10 || among
+                }
+                Kind::NameChange { thread, .. } => count(thread) <= 10,
+                Kind::Console(_) => count(5) <= 10,
+                _ => true,
+            };
+        }
+        let newest_menu = ready
+            .iter()
+            .zip(&kept)
+            .rposition(|(trace, &kept)| kept && matches!(self.pushed[trace].kind, Kind::Menu(_)));
+        for (at, (&trace, &kept)) in ready.iter().zip(&kept).enumerate() {
+            if !kept {
+                self.fate.insert(trace, "past the batch limits");
+            } else if matches!(self.pushed[&trace].kind, Kind::Menu(_)) && Some(at) != newest_menu {
+                self.fate.insert(trace, "an older menu opening");
+            } else {
+                self.batch.insert(trace);
+            }
+        }
+    }
+
     /// Takes the next planned item, checking it against what arrived
     /// before it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one check after another of a hand-out"
+    )]
     fn take(&mut self) {
         let Some((planned, batch)) = self.intake.next(&self.marks) else {
+            assert!(
+                self.closed || (self.batch.is_empty() && self.ready().is_empty()),
+                "nothing handed out with entries ready: {:?}",
+                self.trail
+            );
             return;
         };
         assert!(!self.closed, "a hand-out after close: {:?}", self.trail);
+        assert_eq!(self.intake.batch_number(), batch, "{:?}", self.trail);
+        if batch != self.last_batch {
+            assert_eq!(
+                batch,
+                self.last_batch + 1,
+                "batches numbered one by one, a non-empty batch each: {:?}",
+                self.trail
+            );
+            assert!(
+                self.batch.is_empty(),
+                "a batch planned before the last was handed out: {:?}",
+                self.trail
+            );
+            let ready = self.ready();
+            assert!(
+                !ready.is_empty(),
+                "a batch of nothing ready: {:?}",
+                self.trail
+            );
+            self.waiting.drain(..ready.len());
+            self.plan(&ready);
+            self.last_batch = batch;
+        }
         self.log.push(format!("{planned:?} {batch}"));
         let (entries, menu) = match &planned {
             Planned::Run(entry) => (vec![entry.clone()], false),
@@ -429,7 +611,11 @@ impl Run {
             } = entry.item
             && let Some(noted) = self.intake.take_idle()
         {
-            self.noted = None;
+            assert!(self.batch.remove(&traces[0]), "{:?}", self.trail);
+            let kept = self.noted.take().expect("a noted caret kept");
+            self.waiting.insert(0, kept);
+            self.waiting.insert(1, traces[0]);
+            self.pushed.get_mut(&kept).expect("pushed").ahead = true;
             let barrier = Entry {
                 item: Item::Barrier {
                     asker,
@@ -460,7 +646,14 @@ impl Run {
             );
             pushed.handed = Some((self.handouts, batch));
             pushed.group.clone_from(&traces);
-            if self.noted == Some(trace) {
+            if !self.batch.remove(&trace) {
+                // Only the noted caret kept apart is handed out outside a
+                // batch, and only when nothing else is ready.
+                assert!(
+                    self.noted == Some(trace) && self.batch.is_empty() && self.ready().is_empty(),
+                    "entry {trace} handed out outside its batch: {:?}",
+                    self.trail
+                );
                 self.noted = None;
             }
         }
@@ -521,9 +714,25 @@ impl Run {
             .collect();
         for (trace, entry) in &pushed {
             if entry.handed.is_some() {
+                assert!(
+                    !self.fate.contains_key(trace),
+                    "entry {trace} handed out though {}: {:?}",
+                    self.fate[trace],
+                    self.trail
+                );
                 continue;
             }
-            let reason = Self::reason(*trace, entry, &pushed);
+            let reason = self.fate.get(trace).copied().or(
+                if matches!(entry.kind, Kind::Marker | Kind::Dropped | Kind::ReadsEnded) {
+                    Some("a marker or a drop")
+                } else if entry.cancelled {
+                    Some("cancelled")
+                } else if entry.closed {
+                    Some("closed")
+                } else {
+                    None
+                },
+            );
             let Some(reason) = reason else {
                 panic!(
                     "entry {trace} ({:?}) neither handed out nor dropped for a reason: {:?}",
@@ -561,92 +770,6 @@ impl Run {
             }
         }
     }
-
-    /// Why `entry`, never handed out, was dropped, if a documented reason
-    /// names it.
-    fn reason(trace: u64, entry: &Pushed, all: &[(u64, Pushed)]) -> Option<&'static str> {
-        if matches!(entry.kind, Kind::Marker | Kind::Dropped | Kind::ReadsEnded) {
-            return Some("a marker or a drop");
-        }
-        if entry.cancelled {
-            return Some("cancelled");
-        }
-        if entry.closed {
-            return Some("closed");
-        }
-        if entry.kind == Kind::Noted {
-            return all
-                .iter()
-                .any(|(other, pushed)| *other > trace && pushed.kind == Kind::Noted)
-                .then_some("a noted caret replaced");
-        }
-        let after = || all.iter().filter(move |(other, _)| *other > trace);
-        // Replaced by a newer entry of its object, kind and thread, with no
-        // idle barrier between them.
-        // A read is placed in its marker's place, so "between" is by place.
-        let barrier_between = |until: u64| {
-            all.iter().any(|(_, pushed)| {
-                matches!(pushed.kind, Kind::Round)
-                    && pushed.place > entry.place.min(until)
-                    && pushed.place < entry.place.max(until)
-            })
-        };
-        if let Some(key) = key(entry.kind)
-            && after().any(|(_, pushed)| {
-                key_of(pushed) == Some(key.clone()) && !barrier_between(pushed.place)
-            })
-        {
-            return Some("replaced");
-        }
-        // Past the batch limits: the newest four focus events and
-        // foreground changes, and the newest ten other events per thread.
-        let focus_after = after()
-            .filter(|(_, pushed)| {
-                matches!(pushed.kind, Kind::Focus { .. } | Kind::Foreground { .. })
-            })
-            .count();
-        let thread_after = |thread: u8| {
-            after()
-                .filter(|(_, pushed)| {
-                    matches!(pushed.kind,
-                        Kind::NameChange { thread: other, .. } | Kind::Foreground { thread: other, .. }
-                            if other == thread)
-                })
-                .count()
-        };
-        let limited = match entry.kind {
-            Kind::Focus { .. } => focus_after >= 4,
-            Kind::Foreground { thread, .. } => focus_after >= 4 && thread_after(thread) >= 10,
-            Kind::NameChange { thread, .. } => thread_after(thread) >= 10,
-            Kind::Console(_) => {
-                after()
-                    .filter(|(_, pushed)| matches!(pushed.kind, Kind::Console(_)))
-                    .count()
-                    >= 10
-            }
-            _ => false,
-        };
-        if limited {
-            return Some("past the batch limits");
-        }
-        // A focus on window 9's client area removed by the window's
-        // foreground change from its thread, raised after it.
-        if let Kind::Focus { child: 0, thread } = entry.kind
-            && after().any(|(_, pushed)| {
-                pushed.kind == Kind::Foreground { window: 0, thread }
-                    && pushed.raised >= entry.raised
-            })
-        {
-            return Some("a client focus removed by its foreground change");
-        }
-        // An older menu opening: only the newest of a batch is handed out.
-        if matches!(entry.kind, Kind::Menu(_))
-            && after().any(|(_, pushed)| matches!(pushed.kind, Kind::Menu(_)))
-        {
-            return Some("an older menu opening");
-        }
-        None
-    }
 }
 
 /// The object, kind and thread an entry of `kind` is replaced by a newer
@@ -675,13 +798,6 @@ fn key(kind: Kind) -> Option<String> {
             return None;
         }
     })
-}
-
-fn key_of(pushed: &Pushed) -> Option<String> {
-    if pushed.ahead {
-        return None;
-    }
-    key(pushed.kind)
 }
 
 /// The number a trace was minted from.

@@ -164,7 +164,11 @@ a cancel, a commit's message ahead of its other effects, a cut read's
 finish alone, a program's end answering its watch and its query before
 the next dispatch, a tick deciding the deadline, then the bound, then the
 moved-on rule, then the gap's bound, and an abandonment answering the
-watch and the query before the next dispatch. Each case ends by draining
+watch and the query before the next dispatch, and the hold's release on
+the end of forwarding, the end of the listener's reads or no listener,
+giving back the held copies in the hook's order but those of the kinds
+the listener forwards raised at or before the end, or at or before the
+newest such copy the listener forwarded. Each case ends by draining
 (every program finished, every timer reached, the close), and then every
 query has one reply or is left to the shell's token. Each case runs twice
 and the two runs' effects are compared, and the test fails if a listed
@@ -179,19 +183,24 @@ The intake has a generated test of its own
 (`crates/verbatim-outpost-logic/src/tests/intake_order.rs`, 800 cases,
 about 1.3 s): pushes of every kind of entry it orders, hand-outs, cancels,
 a noted caret and the close, with a barrier reached while a noted caret
-is kept put behind it as the reducer does. From what the test knows of
-each entry it pushed, never from the intake's keys, it checks that each
-entry is handed out at most once, and by the end once or dropped for a
-named reason (replaced by a newer entry of its object, kind and thread
-with no idle barrier between, past the batch limits, a client focus
-removed by its window's later foreground change, an older menu opening, a
-noted caret replaced, cancelled, closed, or a marker or a drop); that
-nothing is handed out ahead of an earlier arrival but by a named
-exception (a focus run tried at its newest's place, a menu opening at its
-batch's end, a read in its marker's place, the noted caret and its
-barrier put ahead); and that an open marker holds back everything after
-it.
-
+is kept put behind it as the reducer does. Its model follows what waits
+from the intake's documented rules, never from its keys or code: a read
+takes its marker's place, a drop or the end of the listener's reads
+removes markers, a keyed entry replaces the waiting entry of its object,
+kind and thread that no idle barrier divides from it, a window's
+foreground change removes the waiting focus on its client area raised
+before it, and a batch is what waits before the first open marker,
+through the first idle barrier, kept by the limiter's counts (the newest
+four focus events and foreground changes, the newest ten other events per
+thread, a foreground change kept by either) and of its menu openings the
+newest alone. It checks that each batch's number rises by one, that each
+entry handed out belongs to its batch, the noted caret alone handed out
+outside one and only when nothing is ready, that each entry is handed out
+once or dropped for the reason the model gave, that nothing is handed out
+ahead of an earlier arrival but by a named exception (a focus run tried
+at its newest's place, a menu opening at its batch's end, a read in its
+marker's place, the noted caret and its barrier put ahead), and that an
+open marker holds back everything after it.
 Beside each, an ignored exploration test (`explore_reducer`,
 `explore_intake`, in `src/tests/explore.rs`, the crate's one file that
 reads the environment) runs the same cases under the seed and case count
