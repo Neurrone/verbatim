@@ -12,11 +12,11 @@ VM), and M3 (desktop usability core) are complete, and what each
 delivered is in [Completed milestones](roadmap-done.md). M4 is in
 progress; its completed parts, M4.1 (stability) among them, are listed
 there too, and M4.1's open follow-ups are under M4, "Follow-ups from
-M4.1". M4.5 (logic foundations) is complete. The process and thread
+M4.1". M4.5 (logic foundations) and M4.6 (generated tests) are complete. The process and thread
 layout was weighed again and kept: an outpost process per application
 and a separate focus listener (D9, D13; Dickson, 2026-11-02). The focus
-pipeline rework's second build is built (2026-11-02). Next: M4.6
-(generated tests), then the rework's third build.
+pipeline rework's second build is built (2026-11-02). Next: the
+rework's third build.
 
 ## M4 — Text, editing, and terminals
 
@@ -241,6 +241,14 @@ The decisions, in brief:
   has not marked "gammaelta" yet; is there a sanctioned form of wait for
   a precondition with no event?
 
+### Follow-ups from M4.6
+
+- `crates/verbatim-core/src/queries/tests.rs`'s three-step enumeration builds the expected effects of a held key's resume by calling `held_watch_answered`, `terminal_model::sync_settings` and `intercept` themselves, so a change to them moves the expected and actual effects together (dropping `answer_from_memory_later` from `intercept` passes); a fixed test should state the resume's literal effects from its three fixed states.
+- Two counterexamples the intake's generated test kills are likely but not guaranteed in the gate's cases (a batch with five focus events kept, and a same-key pair across an idle query in what waits); `LISTED` in `tests/intake_order.rs` should require them.
+- Core's generated test copies two fields of the foreground record, the attention's `topmost` and `under_active_window`, into the expected record unchecked (`queries/generated.rs`).
+- `FocusPath::is_cut_at` in `crates/verbatim-outpost-logic/src/follow.rs` has no test anywhere, and `RequestTable::withdraw` in `crates/verbatim-core/src/requests.rs` has no production caller.
+- The surviving targets in `experiments/logic-tests-study/judgement.md`, "Second run", 22 of 71, are the next checks to add, when a build changes their owner.
+
 ### Follow-ups from M4.1
 
 M4.1's follow-ups still open or deferred, each with its next action.
@@ -298,50 +306,6 @@ Text and selection:
 
 - `text_box_selection_keys` fails at Control+Delete over the selection "alpha " in some runs, saying "alpha" where "beta", "selection removed" is expected: the key's watch answers from its first check, before the edit control has handled the key. The caret and selection rework removes the first check and runs the scenario ten times; if it still fails, the likely cause, unconfirmed, is Core comparing "alpha" while the outpost's word unit reads "alpha " with its white space.
 - The parity ledger's statement that Alt+Up and Alt+Down Arrow speak the line when the application moves the caret has no capture behind it; the caret and selection rework's captures settle it.
-
-## M4.6 — Generated tests
-
-Built after the focus pipeline rework's second build, so the tests are
-written once against the code that stays (Dickson, 2026-10-31); the design,
-with Dickson's decisions of 2026-11-02, is
-[logic tests](design/logic-tests.md), "M4.6".
-
-- The invariants, reference models and postconditions designed first, from
-  the designs and the parity docs rather than from the defects already
-  fixed, reviewed adversarially, and each shown to fail its test when the
-  rule it guards is broken.
-- Generated state-machine tests, plain `proptest` action lists checked in
-  step with a far simpler reference model (Dickson, 2026-11-02): the work
-  in flight's existing test upgraded, then the outpost's reducer with its
-  intake, the listener's scheduler and Core's query table, focus and
-  generations; effects checked against postconditions and invariants after
-  every step; actions weighted toward lifecycle operations, with counts of
-  the states reached. Core's held-key line is added when the caret and
-  selection rework rewrites it; the request table keeps its unit tests
-  (Dickson, 2026-11-02).
-- Fixed seeds and case counts in `cargo xtask ci`, within 30 seconds
-  together (Dickson, 2026-10-31 and 2026-11-02); a nightly exploration job
-  with new seeds, whose failures become fixed cases.
-- `cargo-mutants` on the covered files, limited to changed code.
-- Each generated case run twice in the gate and its effects compared, so a
-  leak of nondeterminism fails at once.
-- The judgement (Dickson, 2026-11-02): the generated tests kill at least
-  30% of the mutants the existing tests miss, and at least one in each
-  owner; and over the next three builds that change a covered owner they
-  find first at least two ordering defects, with their upkeep under 15% of
-  each build's time. If either is not met, the tests stop growing and the
-  simulation is not built.
-- The simulation deferred until the judgement is met, the transport's
-  merge, priority and overflow rules are pure code, and a recorder of the
-  worker's commits exists; if it is built and shows value, a simulated
-  application follows, its conformance checked against mockapp and
-  recorded sessions as the simulated terminal's is against the real
-  terminals ([logic tests](design/logic-tests.md), "Toward a simulated
-  application"; Dickson, 2026-10-31).
-
-Exit: each owner listed has its generated test in the gate; the mutation
-baseline and its second run are recorded with the judgement's first
-measure.
 
 ## M4.2 — Parity small items
 

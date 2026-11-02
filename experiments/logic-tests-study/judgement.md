@@ -894,3 +894,22 @@ Caught now, missed at the baseline, and not killed by the role crates' tests (th
 - All: 49 of 71.
 
 All but one of the 49 fail under the generated tests (`generated_cases_...` or `fixed_cases_...`, the fixed cases of the same files). The exception is lib.rs:728, `Reducer::input` delete `!`, which only `tests::a_gap_record_opened_after_the_close_is_never_tested` catches, a hand-written regression test that the outpost's generated test found (it is not in the baseline's tests.rs). Without it the count is 48.
+
+## The first measure
+
+Met (2026-11-03): the generated tests kill 49 of the 71 targets, 69%, against a threshold of 22, and at least one in each crate (reader-rules 4 of 4, outpost-logic 29 of 37, listener-logic 6 of 9, core 10 of 21). One of the 49, `lib.rs:728`, is killed only by a replay test the outpost's generated test found; without it, 48. The second measure, ordering defects found first and upkeep, is recorded below for each of the next three builds that change a covered owner.
+
+## Build record
+
+M4.6's own build, for reference; the second measure counts from the next build. Production defects found while it was built, each fixed with its shrunk case kept as a replay test and a fixed case:
+
+- `574072e1`: a closed outpost still tested the gap record's bound, so a title could reach Core. Found by the outpost's generated test in the gate.
+- `4d2c7221`: a verdict that left the record unchanged was reported as a change, so the record was sent again and the hook narrowed again. Found by exploration.
+- `e7362127`: a gap record closed by its own tick's publication still had its title committed. Found by exploration.
+- `6c9a1a93`: a push that replaced the event an idle waiter waited on ran no waiters. Found by reading while the design was surveyed; the generated test fails without the fix.
+- `e282e7ea`: the listener kept an ended application for good once its abandoned read returned, one per such process. Found by the scheduler's model.
+- `d12f5da1`: a reading thread's failed start was stepped before the other effects of its step, so an idle answer went ahead of another application's drop. Found by exploration.
+- Not a defect: a gap title ended a caret watch the program in flight held, against the watch's stated rule. Found by exploration; the rule was amended rather than the code (Claude, 2026-11-03, pending Dickson's acceptance), after a deferral that added a lifecycle state was reverted.
+
+Time, by the agents' run times: building the tests 5.1 hours (the outpost's part 3.0, the listener's and Core's 1.5, the review's fixes 0.6); the mutation runs 3.7 hours of machine time; the design's surveys and reviews about 0.6 hours.
+

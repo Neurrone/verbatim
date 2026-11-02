@@ -1,6 +1,6 @@
 # Logic tests: finding ordering defects before review does
 
-Status: proposed on 2026-10-31, revised after its adversarial review (`experiments/logic-tests-study/design-review-1.md`); Dickson's decisions of that day are in `experiments/logic-tests-study/decisions-2026-10-31.md`, and the research behind the alternatives weighed, other projects' experience and the Rust tools, in `experiments/logic-tests-study/research/report.md`. M4.5, the foundations, is built (2026-11-01). M4.6, the generated tests, is designed (2026-11-02), with Dickson's decisions of that day recorded where each applies, and is being built (`docs/roadmap.md`).
+Status: proposed on 2026-10-31, revised after its adversarial review (`experiments/logic-tests-study/design-review-1.md`); Dickson's decisions of that day are in `experiments/logic-tests-study/decisions-2026-10-31.md`, and the research behind the alternatives weighed, other projects' experience and the Rust tools, in `experiments/logic-tests-study/research/report.md`. M4.5, the foundations, is built (2026-11-01). M4.6, the generated tests, is built (2026-11-03), with Dickson's decisions of 2026-11-02 recorded where each applies; its judgement's record is `experiments/logic-tests-study/judgement.md`, whose first measure was met: the generated tests kill 49 of the 71 targets.
 
 ## The problem
 
@@ -208,7 +208,7 @@ Invariants, after every step:
 4. A refused commit changes nothing and gives no effect.
 5. No dispatch while releasing; a release only with no program in flight.
 6. A tick at the time `next_timer` gave, with each of the three clocks at or past the due time `next_timer` derived from it, either changes the state or gives an effect; `next_timer` gives no watch time while busy, releasing or stopping. The clocks advance independently in the generator, since the shell may run a separate observation clock.
-7. The watch: the four invariants of today's enumerated test, and the watch is held only by the program in flight; a gap title committed with the watch open ends it at once, the program in flight holding it or not, and that program's copy is compared no further (Claude, 2026-11-03, pending Dickson's acceptance).
+7. The watch: the four invariants of today's enumerated test, and the watch is held only by the program in flight; a gap title on another node committed with the watch open ends it at once, the program in flight holding it or not, and that program's copy is compared no further (Claude, 2026-11-03, pending Dickson's acceptance).
 8. At most one idle answer per round, and none while holding, while the watch is open, while the gap is pending or while a deferred program is in flight.
 9. The open settles equal those pushed less those answered; each answered exactly once; close empties them.
 10. At most one ask to the program per transition; an armed walk's abandonment comes only after the publication's answer.
