@@ -59,3 +59,8 @@ fn explore_reducer() {
     let _ = super::reducer::run_generated(explored());
 }
 
+#[test]
+#[ignore = "exploration: run by the nightly workflow with its own seed (docs/design/logic-tests.md)"]
+fn explore_intake() {
+    let _ = super::intake_order::run_generated(explored());
+}

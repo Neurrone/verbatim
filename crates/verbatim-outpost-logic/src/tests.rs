@@ -19,6 +19,7 @@ use super::*;
 
 mod explore;
 mod generated;
+mod intake_order;
 mod reducer;
 
 /// The answers the shell gives the reducer's asks, as a test records them:

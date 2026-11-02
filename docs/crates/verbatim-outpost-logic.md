@@ -175,8 +175,25 @@ contents beyond whether the record changed, and exact deadlines beyond
 each kind's budget; and its generator sends a foreground change from the
 listener, never as the hook's held copy.
 
-Beside it, an ignored exploration test (`explore_reducer`, in
-`src/tests/explore.rs`, the crate's one file that
+The intake has a generated test of its own
+(`crates/verbatim-outpost-logic/src/tests/intake_order.rs`, 800 cases,
+about 1.3 s): pushes of every kind of entry it orders, hand-outs, cancels,
+a noted caret and the close, with a barrier reached while a noted caret
+is kept put behind it as the reducer does. From what the test knows of
+each entry it pushed, never from the intake's keys, it checks that each
+entry is handed out at most once, and by the end once or dropped for a
+named reason (replaced by a newer entry of its object, kind and thread
+with no idle barrier between, past the batch limits, a client focus
+removed by its window's later foreground change, an older menu opening, a
+noted caret replaced, cancelled, closed, or a marker or a drop); that
+nothing is handed out ahead of an earlier arrival but by a named
+exception (a focus run tried at its newest's place, a menu opening at its
+batch's end, a read in its marker's place, the noted caret and its
+barrier put ahead); and that an open marker holds back everything after
+it.
+
+Beside each, an ignored exploration test (`explore_reducer`,
+`explore_intake`, in `src/tests/explore.rs`, the crate's one file that
 reads the environment) runs the same cases under the seed and case count
 in `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`; only the nightly
 workflow (`.github/workflows/explore.yml`) runs them.
