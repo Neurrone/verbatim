@@ -410,7 +410,7 @@ an application each abandon a call that has taken half a second
 (`MOVED_ON_GRACE`) once the window in front belongs to the same
 application on another UI thread than the window being handled or read,
 the application being each window's provider process, until their own
-deadlines (10 seconds for the worker, `READ_DEADLINE`, 11 seconds, for a
+deadlines (10 seconds for the worker, `READ_DEADLINE`, 8 seconds, for a
 reading thread); the event is dropped and a new worker or reading thread
 takes the application's later events
 (`docs/crates/verbatim-listener.md`, "How a UIA focus is judged and
@@ -451,12 +451,10 @@ is moving to it. By case:
   user moves to another thread's window and that window's own focus read
   is slow, NVDA cancels it; Verbatim deliberately does not, judging
   against the window being read (Dickson, 2026-10-20).
-- NVDA judges again every half second while it waits
-  (`_waitUntilNormalCoreAliveTimeout`, lines 133 to 148); Verbatim judges
-  when the half second ends and on foreground events, so a move of the
-  keyboard focus to another thread with no foreground event, such as to
-  a child window owned by another thread, is caught by NVDA and missed
-  by Verbatim.
+- Matched: NVDA judges again every half second while it waits
+  (`_waitUntilNormalCoreAliveTimeout`, lines 133 to 148), and so do the
+  outposts and the listener, from the half second's end until their
+  deadlines, with no event needed as evidence (Dickson, 2026-11-01).
 - NVDA compares only threads, by `GetWindowThreadProcessId`, which names
   a console window's client and one of the client's threads
   (`nvda/source/watchdog.py`, lines 230 to 232). Verbatim also requires

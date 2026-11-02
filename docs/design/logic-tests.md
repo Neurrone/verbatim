@@ -1,6 +1,6 @@
 # Logic tests: finding ordering defects before review does
 
-Status: proposed on 2026-10-31, revised after its adversarial review (`experiments/logic-tests-study/design-review-1.md`); Dickson's decisions of that day are in `experiments/logic-tests-study/decisions-2026-10-31.md`, and the research behind the alternatives weighed, other projects' experience and the Rust tools, in `experiments/logic-tests-study/research/report.md`. M4.5, the foundations, is built (2026-11-01); M4.6, the generated tests, remains (`docs/roadmap.md`), after the focus pipeline rework's second build, so the tests are written once against the code that stays.
+Status: proposed on 2026-10-31, revised after its adversarial review (`experiments/logic-tests-study/design-review-1.md`); Dickson's decisions of that day are in `experiments/logic-tests-study/decisions-2026-10-31.md`, and the research behind the alternatives weighed, other projects' experience and the Rust tools, in `experiments/logic-tests-study/research/report.md`. M4.5, the foundations, is built (2026-11-01). M4.6, the generated tests, is designed (2026-11-02), with Dickson's decisions of that day recorded where each applies, and is being built (`docs/roadmap.md`).
 
 ## The problem
 
@@ -10,7 +10,7 @@ The defects were found by review rounds, live runs and end-to-end failures on Gi
 
 ## The goal, and how it is judged
 
-The goal is fewer ordering defects reaching review, a run or a user, and an architecture simpler to reason about, at a cost the defects found repay. Two measures, with their thresholds set in M4.6's design and accepted by Dickson before any generated test is written:
+The goal is fewer ordering defects reaching review, a run or a user, and an architecture simpler to reason about, at a cost the defects found repay. Two measures, with their thresholds set in M4.6's design and accepted by Dickson before any generated test was written (under "The judgement's thresholds"):
 
 - The mutants the generated tests kill that the existing replay tests miss, from `cargo-mutants` run on the reducer crates. Reason: it measures whether the tests detect defects at all, available the day they are written.
 - The ordering defects that review, a live run or the end-to-end suite find in the builds after M4.6, each checked against the tests, beside the time each build spent on generators, models and their upkeep.
@@ -131,16 +131,143 @@ Verbatim already has one instance of every part of this design, in the terminal 
 
 The invariants, reference models and postconditions are designed before any test is written, from the designs and the parity docs rather than from the defects already fixed, and reviewed adversarially. Each is shown to bite: breaking the rule it guards by hand, or a mutant of it, makes its test fail. Reason: the tests are only as good as what they check, and invariants learned from fixed defects overstate what they will catch.
 
+### The judgement's thresholds
+
+Two measures, each with a threshold. If either is not met the generated tests stop growing, are kept as they are while they pass, and the simulation is not built.
+
+Mutants. Before any generated test is written, `cargo-mutants` runs on each owner's covered files (listed under each owner) with the existing tests, and the viable mutants that survive are recorded: the baseline. After the owner's generated test is in the gate, the run is repeated. A survivor judged equivalent by reading it (it cannot change any observable effect) is removed from both counts, with the reason written beside it. Threshold (Dickson, 2026-11-02): the generated tests kill at least 30% of the baseline's non-equivalent survivors across the owners together, and at least one in each owner. Reason: the replay tests were written against these same mechanisms, so most mutants die already; a generated test that kills under a third of what they miss is not finding orderings they missed. Google's filtered mutants were 82% productive, so the survivors are mostly real gaps, not noise.
+
+Excluded from both counts up front, named in the baseline's record: the functions each model leaves out by design (for the outpost, `budget`, `waiting` and `clears_absorb` among them), since no model of bookkeeping can kill their mutants.
+
+Later defects. A generated test's failure during a build counts as a defect found only when its fix changes production code, and it is logged in the build's record when found; a failure fixed in the model or the generator is logged as upkeep. Reason: a failure fixed before its commit leaves no trace, and counting every failure would count the model's own errors. For the next three builds that change a covered owner (the focus pipeline rework's third build, the caret and selection rework, and the next), each ordering, lifecycle or hand-off defect found in a covered owner, by anything, is recorded with what found it first; and each build records the time spent on generators, models and their upkeep. Threshold (Dickson, 2026-11-02): the generated tests find first at least two such defects across the three builds, and their upkeep stays under 15% of each build's time. Reason: October's study puts the defects within reach of these tests at roughly 8 to 12 a month in code that survives the rework; two in three builds is a low bar, and a bar the tests cannot clear says they are not worth growing.
+
+### Order and scope
+
+Built in this order, each its own commit within one build:
+
+1. The shared work in flight (`InFlight`), whose existing generated test is upgraded, since both readers' models take its decisions as given.
+2. The outpost's reducer.
+3. The listener's scheduler, with its grace state and foreground watch enumerated.
+4. Core's reducer, its query table and generations slice.
+5. `cargo-mutants`'s baseline is taken before step 1's first test, and its second run after step 4.
+
+The intake's own test is built with the outpost's reducer, in step 2.
+
+Not in scope: the listener's checks before reading, which the third build makes pure and tests table-driven; the `Arbitrator`, whose decisions reach the reducer only as verdict changes the generator makes directly; every word spoken.
+
+Decided by Dickson, 2026-11-02: Core's held-key line is tested when the caret and selection rework rewrites it, so no test is written for code about to be replaced; Core's request table is left to its unit tests, being already as simple as a model of it; the supervisor's generation typestates get no generated test, since their transitions consume the state and an invalid one does not compile.
+
 ### Tests against reference models
 
-Each pure owner gets a generated state-machine test with `proptest-state-machine`, the outpost's reducer first, then Core's reducer, the listener's scheduler and Core's request table in place. Each compares the owner with a reference model far simpler than it, checks the exact effects of each input against postconditions, and checks invariants after every step. Reason: in Hughes's measurement of eight injected bugs, invariants alone caught 38%, postconditions 79% and a reference model all eight.
+Each owner gets a generated state-machine test that compares it with a reference model far simpler than it, checks the exact effects of each input against postconditions, and checks invariants after every step. Reason: in Hughes's measurement of eight injected bugs, invariants alone caught 38%, postconditions 79% and a reference model all eight.
 
 Rules:
 
-- A generator produces only operations valid in the model's current state, weighted toward lifecycle operations (open, close, abandon, replace, re-dispatch), and the test counts how often each operation and state is reached. Reason: an invariant never violated in a state never reached proves nothing.
+- A generator's actions are weighted toward lifecycle operations (open, close, abandon, replace, re-dispatch), and each is made valid when applied, by resolving its target against the model's current state; an action with no target does nothing.
 - A generator obeys the guarantees the system gives and no stronger ones. A counterexample that cannot happen tightens the generator, and the guarantee it relied on is written down where the mechanism is described.
-- `cargo xtask ci` runs each test with a fixed seed and a fixed number of cases, within a stated time (Dickson, 2026-10-31). A separate exploration job runs new seeds and many more cases; a failure it finds is shrunk and added to the fixed cases, never kept as a seed, since a seed means nothing after the code changes. Reason: `docs/testing.md` asks for one fixed code path, and a random seed in the gate fails on whichever commit draws it.
+- `cargo xtask ci` runs each test with a fixed seed and a fixed number of cases (Dickson, 2026-10-31). A failure the exploration job finds is shrunk and added to the fixed cases, never kept as a seed, since a seed means nothing after the code changes. Reason: `docs/testing.md` asks for one fixed code path, and a random seed in the gate fails on whichever commit draws it.
 - A model stays far simpler than the code it checks. Reason: a model that copies the code copies its defects, and errors are often in the model.
+- Test mechanics (Dickson, 2026-11-02): a case is a plain list of actions, `proptest::collection::vec(action(), 1..N)`, run through a `TestRunner` built from a configuration with every field written out, as `crates/verbatim-term-sim/src/oracle.rs` does. The model runs beside the owner as each action is applied, and an action whose target is absent in the model does nothing. Reason: `proptest-state-machine` generates the whole sequence from the model before the owner runs, so its model must predict every decision the owner makes (an abandonment at a deadline, a moved-on judgement) or it generates inputs for a generation that is already dead; a model that predicts them all copies the work in flight. The plain list is what `crates/verbatim-reader-rules/src/in_flight/tests.rs` and `crates/verbatim-outpost-logic/src/tests/generated.rs` already do; it shrinks, and needs no new dependency. Neither form uses a `proptest!` macro, whose configuration is always overridden by `PROPTEST_*` environment variables (proptest 1.12, `contextualize_config`), even when given explicitly.
+- An action names its target by role ("the program in flight", "the oldest open query", "a request of the generation before"), resolved against the model when applied, never by a request number. Reason: shrinking deletes earlier steps, and a number would then name nothing.
+- Asks are answered in each shell's own order, written down as a guarantee: the outpost's shell answers an ask in line, and the answer's effects come before the rest of the step's effects (`crates/verbatim-outpost/src/outpost/shell.rs`, its ask handling), so one tick's several asks interleave with their answers; the listener's shell answers a step's asks after all its effects, and a failed spawn among those effects comes ahead of the answers. An action that may cause asks carries their answers.
+- A case ends by draining: close or stop the owner, finish every program or job in flight, answer every ask, and tick past every deadline; then the exactly-once invariants are checked whole (each query replied to once, each settle answered once, each marker given one outcome, each idle waiter run once). Before the end they are checked as at most once. A case that ends with the listener stopped checks markers pushed after the stop as dropped and earlier ones as at most once, since a stopping listener's owed markers are ended by Core when the listener ends.
+- Each case runs twice from a new owner and the two effect sequences are compared by their `Debug` text, which is ordered because every map on the path is a `BTreeMap`. Core's test also round-trips the state through its serialisation. Reason: "Determinism", above.
+- Each test counts how often each action kind and each lifecycle state is reached, and fails if any listed state is never reached in the gate's cases. Reason: an invariant never tested in a state never reached proves nothing.
+- Where a generator relies on a guarantee written nowhere, the guarantee is written in the crate guide where the mechanism is described, in the same commit. Each is listed under its owner.
+
+The gate and exploration:
+
+- The gate's test of each owner uses a fixed seed and case count, chosen so the owners together stay within the 30-second budget.
+- Beside it, an `#[ignore]`d exploration test calls the same machine with a seed and case count read from `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`, failing if either is missing. Its file joins the ownership scan's `EXPECT_EXCEPTIONS` and `MODULE_EXCEPTIONS` (it names `std::env`), with an `expect` of `clippy::disallowed_methods` and its reason, and its `#[ignore]` is recorded here as the decision `docs/testing.md` asks for: the exploration test is run only by the scheduled workflow. Reason: the environment is read only by a test the gate never runs, in a file the scan names; the gate itself reads nothing.
+- A GitHub Actions workflow on a schedule, nightly, runs the exploration tests with the run number as the seed. A failure is shrunk and added to the owner's fixed cases as an explicit transition list, never as a seed.
+- `cargo-mutants` runs in the same scheduled workflow on the covered files changed since its last run (`--in-diff`), and on the whole covered set once at each measurement of the judgement.
+
+Dependencies: `proptest`, already audited, as a development dependency of each tested crate; `cargo-mutants` installed in the scheduled workflow only. `ScheduleEffect` derives `Debug` for the double run.
+
+### The owners
+
+#### The work in flight
+
+Covered: `crates/verbatim-reader-rules/src/in_flight.rs`.
+
+Its generated test exists (`in_flight/tests.rs`) and is upgraded: run through `TestRunner::run` so a failure shrinks (it draws with `new_tree().current()` today, which never shrinks); starts valid by construction rather than filtered; the transitions never generated today added (a publication that judges nothing, the next request, answers to a dead request, an arming after publication); states reached counted. Its invariants stay as `docs/crates/verbatim-reader-rules.md` lists them.
+
+#### The outpost's reducer
+
+Covered: `crates/verbatim-outpost-logic/src/lib.rs`, `watch.rs`, `gap_record.rs`, `follow.rs`, `verdicts.rs`, `hold.rs`. The test lives in `src/tests/`, since the reducer's fields and `Clone` are private or test-only.
+
+Model, tracking: the generation and the next request number; the program in flight (its kind, the query it answers, its walk unarmed, armed or published, whether it holds the watch, whether deferred, its focus group); the pending work in the reducer's priority order (owed work, a group's remaining tries, a drop, the intake), as one queue of abstract items; the open queries and the fate of each; the watch (none, open on a query, polling, held by the program); the gap record (closed, or awaiting a focus or a title, its bound waiting or passed); holding, releasing, the idle round, the open settles, stopping; three clocks.
+
+Model, leaving out: the intake's plan. The generator sends every entry kind, several focuses pending at once included, so a focus group's continuation is reached; the model holds the pending entries as a set and checks that each dispatch takes one of them, that each is handled at most once, and that queries go in arrival order, not which entry comes next. The plan has its own generated test (below, "The intake"). Also left out: text facts, held reports, the subscription and the contents of the marks; verdict contents beyond whether the record changed and from which generation; exact deadlines beyond each kind's budget.
+
+Invariants, after every step:
+
+1. At most one program in flight; no dispatch while one is in flight, but a cut caret read's finish.
+2. The open queries equal those recorded less those replied to; each query has at most one reply, and exactly one by the end of the case unless left to the shell's token at close.
+3. Each abandonment names the generation in charge as dead and the next as its replacement; every dispatch is under the generation in charge; no request number recurs.
+4. A refused commit changes nothing and gives no effect.
+5. No dispatch while releasing; a release only with no program in flight.
+6. A tick at the time `next_timer` gave, with each of the three clocks at or past the due time `next_timer` derived from it, either changes the state or gives an effect; `next_timer` gives no watch time while busy, releasing or stopping. The clocks advance independently in the generator, since the shell may run a separate observation clock.
+7. The watch: the four invariants of today's enumerated test, and the watch is held only by the program in flight.
+8. At most one idle answer per round, and none while holding, while the watch is open, while the gap is pending or while a deferred program is in flight.
+9. The open settles equal those pushed less those answered; each answered exactly once; close empties them.
+10. At most one ask to the program per transition; an armed walk's abandonment comes only after the publication's answer.
+11. The marks, when given, are first among a transition's effects and only when they changed; the gap timer is given exactly when the bound changed.
+12. Owed work is tried at most once by each generation, and after an abandonment no owed work names the dead generation as attempting it.
+13. A dead generation's verdict is kept only for a timeout or a forget; the verdicts are sent exactly when the record changed.
+14. A whole-window focus never closes a record awaiting a focus in its own window.
+15. While holding, no hook entry reaches the intake.
+16. After close, nothing from the intake is dispatched and no tick abandons, asks or tests the gap bound.
+
+Postconditions, per input: the exact effects in order for an entry reached with nothing in flight (one dispatch, under the next request, with its kind's deadline), a shell query past its walk time (an empty reply, no dispatch), a cancel, an accepted commit (the effects in the order `lib.rs` documents), a walk armed and returned, a program finished (current, stale, cut, panicked), a tick (deadline, then walk bound, then the moved-on judgement, then the gap bound, then the watch), an abandonment (the abandonment, the watch's answer, the query's reply, the group continued unless published, the pump), each ask's answer, a release's answer and close.
+
+To check in the build: a gap bound's test answered after the tick's other ask abandoned the generation is committed under the dead generation's request without the acceptance check (`lib.rs:830-832`); whether that is correct is settled from the gap record's design before the invariant is written.
+
+Generator guarantees to write down in `docs/crates/verbatim-outpost.md`, "The outpost": the shell ticks after every mailbox drain, not only when a timer is due; each of the three clocks never goes back; an abandoned worker still posts its program's finish, arming and walk return; a program's posts arrive in the order posted and its finish exactly once; Core's request ids are unique for the outpost's life; entries queued behind close still reach the reducer.
+
+#### The intake
+
+Covered: `crates/verbatim-outpost-logic/src/intake.rs`. Its plan reorders by design (a focus run tried newest first, entries of one object, kind and thread replacing each other, a barrier behind a noted caret, a UIA focus marker blocking what follows), so the outpost's model cannot follow it without copying it. A generated test of the intake alone checks only: each entry pushed is planned once or dropped with its reason; nothing is planned ahead of an earlier arrival except under those documented exceptions, each named; a marker blocks everything after it until it is cleared.
+
+#### The listener's scheduler
+
+Covered: `crates/verbatim-listener-logic/src/schedule.rs`, `foreground.rs`.
+
+Model, tracking per application: its queue of markers with kind and key; the running read (marker, request, published, start, deadline); threaded or not; its generation; the abandoned count and when the limit was reached; ending; where it was last moved away from. Globally: the place counter, the last focus's application, the idle waiters, stopping, the alarm. It takes the work in flight's decisions as given, since that has its own test, and checks only that a deadline abandonment comes at or after its deadline, a moved-on abandonment follows an answer of true, and no read survives a tick at or past its deadline. The judged result of a read is opaque, so the third build's pure checks do not change this model.
+
+Invariants: every marker gets exactly one outcome and the open markers equal the model's; one read at a time per application, and jobs only to the generation in charge; an application's jobs in push order, less those replaced or dropped; each spawn's generation above every earlier one within the application's life, which ends when it is removed with nothing abandoned, queued or running (the removal is kept, since keeping every ended application would grow with every process the user runs); no new thread while two are abandoned; no event waits past its application's bound at the limit once a tick or push at or past it is handled; the alarm set is the earliest of the model's due times; at most one ask per application per step; each idle waiter runs exactly once, in the step in which every event pushed before it has its outcome; a published read gets no second outcome; after stop, no spawn, job, ask or alarm, and every push dropped; one forget-last per return from an abandoned thread; each job's moved-away place as the model computes it.
+
+The grace state and the foreground watch are tested by every sequence of up to six steps, as the caret watch is today.
+
+Generator guarantees to write down in `docs/crates/verbatim-listener.md`: a thread asks for its next job only with no read under way; a return comes once per job, from the thread given it; a return not in charge comes only from an abandoned thread; a failed spawn only for a new thread's generation; the foreground input's running applications are exactly those with reads under way; which event kinds carry no window for the moved-on rule; waiter numbers are unique; arming and learning may name a stale request.
+
+#### Core's reducer
+
+Covered: `crates/verbatim-core/src/queries.rs`; `outpost_ended` and `foreground_changed` in `reduce.rs`; the terminal model's ask and answer with its generation check in `terminal_model.rs`.
+
+Slice: the query table (asks, supersession, clears, withdrawal, outposts' ends, memory answers, a model dropped), the focus's lifecycle (taken, alive, left), outpost generations and terminal model generations. Not the held-key line (Dickson, 2026-11-02); when the caret and selection rework is built it adds the line to this test. Not words, carets, text, chains, say-all's buffers, the flood policy or attention for events that are not the focus.
+
+Model, tracking: open queries as outpost, waited kind (read, watch, memory), kind, node and whether superseded, and the ended ids; live and ended generations; the focus as node, outpost, has text, alive, left and top-level window; the front and the newest focus stamp; live terminal models as node and generation in least-recently-used order.
+
+A focus's acceptance is predicted only for generated focuses whose fate the model decides plainly: attended (related to the front, or with no window facts); a new node, or the same node gone or no longer focused, never a duplicate; or the same node focused while alive and not left, always a duplicate; and the stale rule on stamps of another generation. Other focuses are not generated.
+
+Invariants: the outstanding count equals the model's open reads, superseded included; every open entry other than memory names a live generation and no effect asks an ended one; ids only rise and an ended id never returns; at most one live entry of each kind (navigation, caret, text, say-all, each terminal ask, each model's owed, fresh, history and find asks); the held nodes equal the model's and name no ended generation; at most 16 models, generations unique, none of an ended outpost, every memory entry a live model's; after an outpost ends, its focus not alive and no navigator, caret, say-all or start marker in it; each new entry's trace is its input's, or the key's inside a key's effects; the held keys' awaited watch is none or names an open entry.
+
+Though the held-key line is deferred, the generator sends a held key's watch (its pass with a caret watch opened), so the held keys' awaited watch is set, superseded and ended. Reason: it is a second holder of a query's number and gates every command, and an end of its query that skipped its clear would leave commands queued for good.
+
+Postconditions: per answer (no entry, another outpost or memory: nothing changes; superseded: only the table changes, and the held keys resume when the entry was their awaited watch; a model's answer of a generation not live: nothing runs); per outpost end (its entries removed in number order, its models and their memory entries dropped, nothing asked of it); per focus taken, foreground change, command, speech cancelled.
+
+Generator guarantees to write down in `docs/crates/verbatim-core.md`: the listener's foreground stamps never decrease; answers do not come in request order in general. Answers from another outpost and repeated answers are generated, at low weight, since Core's reducer is documented to drop them; that Core never asks an ended generation is an invariant, not a guarantee the generator assumes.
+
+Today's enumeration of every sequence of up to three steps (`queries/tests.rs`) is kept as fixed cases.
+
+#### Core's request table
+
+Not covered (Dickson, 2026-11-02): it is already as simple as a model of it would be, and its eight unit tests stay as they are.
+
+### Found while designing
+
+- The listener's scheduler does not run idle waiters when a push replaces the event blocking them (`schedule.rs:615-629`): the waiter runs at the next step that checks, usually the newer event's end. A delay, not a loss. The idle-waiter invariant as stated fails on this path, so it is fixed in M4.6's build as a defect in the mechanism tested.
 
 ### Not built: recorded inputs replayed against NVDA
 
@@ -179,6 +306,7 @@ Nothing here runs on the event path in a release build. Fault points compile out
 - Simulation frameworks (madsim, turmoil) and Antithesis: rejected. The frameworks are built for async code, and Antithesis runs Linux containers.
 - A second model in another language (P, TLA+) or proof tools (Verus, Creusot, Prusti): rejected. Each is a second description to keep in step with the code. Kani, for bounded proofs of single transitions and parsers, is an optional later pilot on Linux.
 - `loom` or Shuttle: rejected, even for the mixer's wake rule (Dickson, 2026-10-31). They see only code written with their stand-in types, the remaining hand-offs are completion ports and Windows events, and one defect since 1 October was a lost wake between threads (631ee56d), fixed by waking on every push.
+- `proptest-state-machine`, the roadmap's choice: rejected (Dickson, 2026-11-02). It generates a case from the model before the owner runs, so the model must predict each decision the owner makes of its own (an abandonment at a deadline, a moved-on judgement, the intake's plan, a focus refused). It could be used if each model called the real, separately tested decision code (`InFlight`, the intake, `focus_rules`), but then a reader's test would no longer check those decisions against limits, so a misunderstanding between a reader and the work in flight would be shared by model and code. Generating only times far from every bound, so a simple model predicts them, would avoid the boundaries where ordering defects gather; and moving the decisions out of the owners would undo one owner per fact. The plain action list shrinks, keeps actions valid by resolving them when applied, and needs no new dependency. The crate stays the better tool for an owner whose every result its caller decides, as the request table's.
 - `stateright`: kept for a protocol whose design is open, since it checks a separate model.
 - A pure ledger split out of the object store, and the request table split into a pure table and the shell's delivery: rejected after review, since each copies one fact into two places, the node ids the backends' registries mint and the asker each request is owed to.
 - Keeping `verbatim-outpost` whole, or breaking only its cycles: cheaper, but its name covers three programs and its logic could not be tested on another platform.
@@ -205,3 +333,10 @@ Of M4.5's builds:
 - The shell items' bound: a walk after a slow outpost start, or behind other work, has less than 2 seconds and lists fewer items on a large taskbar; a call still under way half a second after the walk's last call loses the whole walk to `Abandoned`; and the half-second margins are judgements.
 - The work in flight: a move that raises a foreground event is noticed up to 500 ms later, as in NVDA; a stuck item past its grace costs up to two wakes a second until its deadline; and the listener keeps the abandoned limit and the per-application queue, and the outpost the focus group and the owed work.
 - The cost rule: the recorder's hand-written serializer remains, about 270 lines; a whole-document frame is copied once more in the relay, about 0.4 ms (release) on verbatim.exe's owner thread with its peak memory raised by the frame's size, 4.0 MB, while both are held; and the terminal conversion without its spare buffers costs about 0.2 to 0.3 ms more in the outpost, off the reducer's thread, on the rare reads of a whole document.
+
+Of M4.6's design:
+
+- Each model leaves out what its owner computes beyond bookkeeping: the words, the intake's plan within the outpost's test, verdict contents. Those stay with replay tests, unit tests and the end-to-end scenarios.
+- Focuses whose acceptance Core's model cannot decide plainly are not generated, so Core's focus rules are covered only for the plain cases.
+- The guarantees a generator relies on are written down but not checked at the boundary that gives them; a shell that breaks one is outside these tests.
+- The judgement's second measure depends on recording what found each defect first, a discipline rather than a mechanism.

@@ -20,8 +20,9 @@ Public API:
 - `Reducer` with `input(input, now)`, which takes one `Input` in
   mailbox order, given the time (`Now`: the shell's monotonic clock, the
   observation clock and the shared clock), and returns the `Effect`s in
-  the order the shell applies them; `tick(now)`, for a timer that came
-  due; and `next_timer(now)`, the time of the shell's timed wait. It makes
+  the order the shell applies them; `tick(now)`, which the shell calls
+  after every drain of its mailbox, a timer due or not, so a tick may
+  find nothing due; and `next_timer(now)`, the time of the shell's timed wait. It makes
   no call of any kind.
 - `Input`: an entry from a producer, a verdict, a commit, a walk armed or returned, a
   program finished, a release's answer, the gap record's bound, the answers to its asks (`MovedOn`, `Published`, `GapBoundTested`), and
@@ -58,8 +59,9 @@ Public API:
   (`InFlight<Current>`): its request, deadline, walk and moved-on rule
   are kept there, and the reducer keeps beside them only the query the
   program answers, its focus group try and whether it is deferred work.
-  The reducer calls it where it judges: a tick, a walk armed or
-  returned, and the asks' answers; a foreground fact judges nothing. The
+  The reducer calls it where it judges: a tick, a walk returned, and
+  the asks' answers; a walk armed only records its bound, and a
+  foreground fact judges nothing. The
   moved-on rule is judged at the grace's end and every half second after
   for a program with a window, until its deadline. On an abandonment the
   reducer emits `Abandon` and answers its own obligations: the running

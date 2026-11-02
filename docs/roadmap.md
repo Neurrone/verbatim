@@ -302,31 +302,35 @@ Text and selection:
 ## M4.6 — Generated tests
 
 Built after the focus pipeline rework's second build, so the tests are
-written once against the code that stays (Dickson, 2026-10-31); the design
-is [logic tests](design/logic-tests.md), "M4.6".
+written once against the code that stays (Dickson, 2026-10-31); the design,
+with Dickson's decisions of 2026-11-02, is
+[logic tests](design/logic-tests.md), "M4.6".
 
 - The invariants, reference models and postconditions designed first, from
   the designs and the parity docs rather than from the defects already
   fixed, reviewed adversarially, and each shown to fail its test when the
   rule it guards is broken.
-- Generated state-machine tests (`proptest-state-machine`) for the
-  outpost's reducer first, then Core's reducer, the listener's scheduler
-  and Core's request table, each compared with a far simpler reference
-  model, its effects checked against postconditions and its invariants
-  after every step; generators valid by construction, weighted toward
-  lifecycle operations, with counts of the states reached.
-- Fixed seeds and case counts in `cargo xtask ci` (Dickson, 2026-10-31); a
-  separate exploration job with new seeds, whose failures become fixed
-  cases.
-- `cargo-mutants` on the reducer crates, limited to changed code.
+- Generated state-machine tests, plain `proptest` action lists checked in
+  step with a far simpler reference model (Dickson, 2026-11-02): the work
+  in flight's existing test upgraded, then the outpost's reducer with its
+  intake, the listener's scheduler and Core's query table, focus and
+  generations; effects checked against postconditions and invariants after
+  every step; actions weighted toward lifecycle operations, with counts of
+  the states reached. Core's held-key line is added when the caret and
+  selection rework rewrites it; the request table keeps its unit tests
+  (Dickson, 2026-11-02).
+- Fixed seeds and case counts in `cargo xtask ci`, within 30 seconds
+  together (Dickson, 2026-10-31 and 2026-11-02); a nightly exploration job
+  with new seeds, whose failures become fixed cases.
+- `cargo-mutants` on the covered files, limited to changed code.
 - Each generated case run twice in the gate and its effects compared, so a
   leak of nondeterminism fails at once.
-- The judgement, with thresholds set in this milestone's design and
-  accepted by Dickson before any test is written: the mutants the
-  generated tests kill that the replay tests miss, and the ordering
-  defects found in later builds against the time spent on generators and
-  models. If they are not met, the tests stop growing and the simulation
-  is not built.
+- The judgement (Dickson, 2026-11-02): the generated tests kill at least
+  30% of the mutants the existing tests miss, and at least one in each
+  owner; and over the next three builds that change a covered owner they
+  find first at least two ordering defects, with their upkeep under 15% of
+  each build's time. If either is not met, the tests stop growing and the
+  simulation is not built.
 - The simulation deferred until the judgement is met, the transport's
   merge, priority and overflow rules are pure code, and a recorder of the
   worker's commits exists; if it is built and shows value, a simulated
@@ -335,8 +339,9 @@ is [logic tests](design/logic-tests.md), "M4.6".
   terminals ([logic tests](design/logic-tests.md), "Toward a simulated
   application"; Dickson, 2026-10-31).
 
-Exit: each pure owner listed has its generated test in the gate; the
-thresholds are recorded with their first measurement.
+Exit: each owner listed has its generated test in the gate; the mutation
+baseline and its second run are recorded with the judgement's first
+measure.
 
 ## M4.2 — Parity small items
 
