@@ -214,10 +214,12 @@ receives the event's own element, judges and reads a UIA focus
   threads and the condition variable each waits on, the alarm's timer,
   the idle waiters' closures and the reads under way (`WatchedRead`, each
   with its `Request`), and applies each step's effects under the lock.
-  The asks are set aside and, once the step's other effects are applied,
-  each is answered as a step of its own, before the lock is let go
-  (`focus_read::step`), so every outcome of a step is sent before an
-  answer's step runs. Each event's marker gets
+  A thread that cannot be started (`SpawnFailed`) and the asks are set
+  aside: once the step's other effects are applied, each failed start is
+  stepped, then each ask is answered, each as a step of its own, before
+  the lock is let go (`focus_read::step`), so every outcome of a step is
+  sent before a failed start's or an answer's step runs, and an idle
+  waiter that step runs comes after them. Each event's marker gets
   exactly one answer: `Readers::push` takes the answer owed for it
   (`Reading::Owed`, the listener's `MarkerOwed`, a
   `verbatim_model::protocol::Responder`), which the shell keeps by marker

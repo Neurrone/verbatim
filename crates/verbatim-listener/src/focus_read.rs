@@ -1677,11 +1677,13 @@ struct ThreadSide<'a, R: Reading> {
 
 /// Steps the schedule with `input` and applies its effects in order,
 /// under the readers' lock: for a reading thread, `thread` is that thread,
-/// and the event it is to read next is returned. The schedule's asks are
-/// set aside and, once every other effect of the step is applied, each is
-/// answered in order as a step of its own, which handles its own effects
-/// and asks the same way, all before the lock is let go: so every outcome
-/// of a step is sent before an answer's step runs, and what is owed
+/// and the event it is to read next is returned. A thread that cannot be
+/// started, and the schedule's asks, are set aside: once every other effect
+/// of the step is applied, each failed start is stepped, then each ask is
+/// answered in order, each as a step of its own, which handles its own
+/// effects and asks the same way, all before the lock is let go. So every
+/// outcome of a step is sent before a failed start's or an answer's step
+/// runs, an idle waiter that step runs comes after them, and what is owed
 /// matches the schedule at each step's end.
 fn step<R: Reading>(
     shared: &Arc<Shared<R>>,
@@ -1692,6 +1694,7 @@ fn step<R: Reading>(
     let effects = state.schedule.step(input, shared.now());
     let mut next = None;
     let mut asks = Vec::new();
+    let mut failed = Vec::new();
     for effect in effects {
         match effect {
             ScheduleEffect::Outcome { pid, meta, judged } => {
@@ -1716,7 +1719,11 @@ fn step<R: Reading>(
                 pid,
                 generation,
                 reuse: false,
-            } => spawn(shared, state, pid, generation),
+            } => {
+                if !spawn(shared, state, pid, generation) {
+                    failed.push(ScheduleInput::SpawnFailed { pid, generation });
+                }
+            }
             ScheduleEffect::Wake(Waking::Thread(pid)) => {
                 if let Some(wake) = state.wakes.get(&pid) {
                     wake.notify_one();
@@ -1780,6 +1787,10 @@ fn step<R: Reading>(
         let mut owed: Vec<u64> = state.owed.keys().copied().collect();
         owed.sort_unstable();
         debug_assert_eq!(owed, state.schedule.markers(), "the owed markers");
+    }
+    for failure in failed {
+        let more = step(shared, state, failure, None);
+        debug_assert!(more.is_none(), "a failed start's step gives no job");
     }
     for ask in asks {
         let answer = answer(shared, state, &ask);
@@ -2039,14 +2050,15 @@ const READING_THREAD: &str = "verbatim-listener-read";
 /// `ERROR_NOT_ENOUGH_MEMORY`.
 const ERROR_NOT_ENOUGH_MEMORY: i32 = 8;
 
-/// Starts a reading thread in charge of `pid`'s events as `generation`;
-/// with no thread to be had, its waiting events are dropped.
+/// Starts a reading thread in charge of `pid`'s events as `generation`,
+/// answering whether it started: with no thread to be had, the caller
+/// steps the schedule with the failure, which drops its waiting events.
 fn spawn<R: Reading>(
     shared: &Arc<Shared<R>>,
     state: &mut ReadersState<R::Job, R::Owed>,
     pid: Pid,
     generation: u64,
-) {
+) -> bool {
     state.wakes.entry(pid).or_default();
     let reading = Arc::clone(shared);
     // A thread the system cannot start, as one out of memory refuses it.
@@ -2068,15 +2080,11 @@ fn spawn<R: Reading>(
         Ok(thread) => {
             state.threads.retain(|thread| !thread.is_finished());
             state.threads.push(thread);
+            true
         }
         Err(error) => {
             tracing::error!(%pid, %error, "a reading thread could not be started");
-            step(
-                shared,
-                state,
-                ScheduleInput::SpawnFailed { pid, generation },
-                None,
-            );
+            false
         }
     }
 }
@@ -3456,6 +3464,66 @@ mod tests {
             "the next event started a thread that read it"
         );
         assert_eq!(fixture.readers.stop(), 1);
+        drop(refusal);
+    }
+
+    /// Found by the read scheduler's generated test
+    /// (`docs/design/logic-tests.md`, "The listener's scheduler"): a tick
+    /// abandons two applications' reads, the first with an event waiting,
+    /// whose new thread cannot start. The failed start is stepped once the
+    /// tick's effects are applied, so the second application's drop is sent
+    /// before the waiting event's, and the idle waiter runs after both.
+    #[test]
+    fn a_failed_start_is_stepped_after_its_steps_other_effects() {
+        // Applications no other test pushes events for, so the selector
+        // names this test's second thread start of the first alone.
+        const FIRST: Pid = Pid(9_902);
+        const SECOND: Pid = Pid(9_903);
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::ThreadStart,
+            |&(name, pid, generation): &(&'static str, Pid, u64)| {
+                name == READING_THREAD && pid == FIRST && generation > 1
+            },
+            1,
+        );
+        let (fixture, still) = still_fixture(Duration::from_secs(60));
+        let (open_first, gate) = mpsc::channel();
+        fixture.push(FIRST, meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        fixture.push(FIRST, meta(2), (2, None, Vec::new()));
+        let (open_second, gate) = mpsc::channel();
+        fixture.push(SECOND, meta(3), (3, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 3);
+        let outcomes = fixture
+            .readers
+            .shared
+            .reading
+            .outcomes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        fixture.readers.when_idle(Box::new(move || {
+            let _ = outcomes.send((Pid(0), 0, "idle"));
+        }));
+        {
+            let mut state = fixture.readers.shared.lock();
+            tick_at(&fixture, &still, &mut state, 60_000_000);
+        }
+        let sent: Vec<(Pid, u64, &'static str)> = (0..4)
+            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                (FIRST, 1, NOT_IN_TIME),
+                (SECOND, 3, NOT_IN_TIME),
+                (FIRST, 2, "no thread to read it"),
+                (Pid(0), 0, "idle"),
+            ]
+        );
+        open_first.send(()).expect("the held read waits");
+        open_second.send(()).expect("the held read waits");
+        assert_eq!(fixture.readers.stop(), 2);
         drop(refusal);
     }
 
