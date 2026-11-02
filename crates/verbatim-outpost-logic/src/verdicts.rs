@@ -167,24 +167,25 @@ impl Verdicts {
             from_us: probe.from_us,
             probed: probe.probed,
         };
-        match self.windows.get_mut(&probe.hwnd) {
+        let updated = match self.windows.get(&probe.hwnd) {
             Some(window) if window.current.owner == kept.owner => {
                 if kept.from_us >= window.current.from_us {
-                    window.previous = Some(std::mem::replace(&mut window.current, kept));
-                } else {
-                    window.previous = Some(kept);
-                }
-            }
-            _ => {
-                self.windows.insert(
-                    probe.hwnd,
                     Window {
                         current: kept,
-                        previous: None,
-                    },
-                );
+                        previous: Some(window.current),
+                    }
+                } else {
+                    Window {
+                        current: window.current,
+                        previous: Some(kept),
+                    }
+                }
             }
-        }
-        true
+            _ => Window {
+                current: kept,
+                previous: None,
+            },
+        };
+        self.windows.insert(probe.hwnd, updated) != Some(updated)
     }
 }

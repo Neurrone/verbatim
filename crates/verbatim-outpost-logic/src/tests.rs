@@ -2033,6 +2033,26 @@ fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
     assert_eq!(verdict_copies(&effects).len(), 0);
 }
 
+/// Found by the outpost's generated test (`docs/design/logic-tests.md`,
+/// "The outpost's reducer", invariant 13): a probe that leaves the record
+/// as it was, the same verdict from the same observation, sends no copy
+/// and does not narrow the hook again.
+#[test]
+fn a_probe_that_changes_nothing_sends_no_copy() {
+    let mut replay = Replay::new();
+    let request = Request {
+        generation: 0,
+        number: 1,
+    };
+    let effects = replay.verdict(request, probe(Probed::Uia), 1);
+    assert_eq!(verdict_copies(&effects).len(), 1, "the first verdict");
+    // The verdict before it is kept for earlier observations, as itself.
+    let effects = replay.verdict(request, probe(Probed::Uia), 1);
+    assert_eq!(verdict_copies(&effects).len(), 1, "kept as the one before");
+    let effects = replay.verdict(request, probe(Probed::Uia), 1);
+    assert!(effects.is_empty(), "{effects:?}");
+}
+
 /// An edit control's text facts with one anchor, `anchor`, at offset
 /// `offset`, as a text call leaves them.
 fn edit_part(anchor: u64, offset: u32) -> NodeAnchors<u32> {
