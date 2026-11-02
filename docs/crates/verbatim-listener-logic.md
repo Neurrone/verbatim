@@ -48,7 +48,9 @@ Public API:
   thread is in charge, as the generation its work in flight has in
   charge; every start of a thread, new or reused, takes a new generation
   (`InFlight::succeed`). An abandonment has the shell stop watching the
-  read (`Unwatch`). The schedule owns the watchdog's alarm: after every
+  read (`Unwatch`). An application whose outpost has ended (`OutpostEnded`)
+  is let go once nothing of it is left, at whichever step leaves it so: no
+  thread in charge, none abandoned and no event waiting. The schedule owns the watchdog's alarm: after every
   step it computes the soonest of each read's next wake and each
   application's end of its wait at the abandoned limit, and emits
   `Alarm(Set(due))` only when that changed, or after a `Tick`, which

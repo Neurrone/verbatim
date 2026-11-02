@@ -362,6 +362,14 @@ impl<J> App<J> {
         self.threaded && self.flight.generation() == generation
     }
 
+    /// Whether its outpost has ended and nothing of it is left: no thread in
+    /// charge, none abandoned, no event waiting. Such an application is no
+    /// longer held, so that what the schedule keeps does not grow with
+    /// every process the user runs.
+    fn spent(&self) -> bool {
+        self.ending && !self.threaded && self.abandoned == 0 && self.queue.is_empty()
+    }
+
     /// When its events waiting with no thread, its abandoned threads at the
     /// limit, are dropped.
     fn waiting_end(&self, deadline: u64) -> Option<u64> {
@@ -737,7 +745,7 @@ impl<J> Schedule<J> {
         }
         if app.ending {
             app.threaded = false;
-            if app.abandoned == 0 {
+            if app.spent() {
                 self.apps.remove(&pid);
             }
         }
@@ -783,6 +791,10 @@ impl<J> Schedule<J> {
         }
         tracing::info!(%pid, "an abandoned UIA focus read returned; its result is discarded");
         effects.push(ScheduleEffect::ForgetLast);
+        if app.spent() {
+            self.apps.remove(&pid);
+            return;
+        }
         if app.threaded || app.queue.is_empty() || stopping {
             return;
         }
@@ -1029,11 +1041,11 @@ impl<J> Schedule<J> {
         let Some(app) = self.apps.get_mut(&pid) else {
             return;
         };
-        if !app.threaded && app.abandoned == 0 && app.queue.is_empty() {
+        app.ending = true;
+        if app.spent() {
             self.apps.remove(&pid);
             return;
         }
-        app.ending = true;
         effects.push(ScheduleEffect::Wake(Waking::Thread(pid)));
     }
 
@@ -1052,6 +1064,9 @@ impl<J> Schedule<J> {
                 meta: queued.meta,
                 judged: Judged::Dropped(NO_THREAD),
             });
+        }
+        if app.spent() {
+            self.apps.remove(&pid);
         }
         self.wake_idle_waiters(effects);
     }
@@ -1884,5 +1899,66 @@ mod tests {
                 Seen::Wake(Waking::Thread(Pid(1))),
             ]
         );
+    }
+
+    /// Found by the read scheduler's generated test
+    /// (`docs/design/logic-tests.md`, "The listener's scheduler"): an
+    /// application whose outpost has ended is let go once its last
+    /// abandoned read returns with nothing waiting.
+    #[test]
+    fn an_ended_application_is_let_go_once_its_last_abandoned_read_returns() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, focus(1, 1), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        assert_eq!(
+            step(&mut schedule, ScheduleInput::Tick, DEADLINE),
+            [Seen::Unwatch(1), Seen::Outcome(1, 1, NOT_IN_TIME)]
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::OutpostEnded { pid: Pid(1) },
+                DEADLINE
+            ),
+            [Seen::Wake(Waking::Thread(Pid(1)))],
+            "held while its abandoned thread is out"
+        );
+        assert_eq!(
+            step(&mut schedule, returned(1, request(1, 1), 1), DEADLINE + 1),
+            [Seen::ForgetLast]
+        );
+        assert!(schedule.apps.is_empty(), "let go");
+    }
+
+    /// Found by the read scheduler's generated test: an application whose
+    /// outpost has ended is let go once its thread cannot start and its
+    /// waiting events are dropped.
+    #[test]
+    fn an_ended_application_whose_thread_cannot_start_is_let_go() {
+        let mut schedule = schedule();
+        assert_eq!(
+            step(&mut schedule, focus(1, 1), 0),
+            [Seen::Spawn(1, 1, false)]
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::OutpostEnded { pid: Pid(1) },
+                0
+            ),
+            [Seen::Wake(Waking::Thread(Pid(1)))]
+        );
+        assert_eq!(
+            step(
+                &mut schedule,
+                ScheduleInput::SpawnFailed {
+                    pid: Pid(1),
+                    generation: 1
+                },
+                0
+            ),
+            [Seen::Outcome(1, 1, NO_THREAD)]
+        );
+        assert!(schedule.apps.is_empty(), "let go");
     }
 }
