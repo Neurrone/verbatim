@@ -819,6 +819,17 @@ impl Run {
                     "{trail:?}"
                 );
                 assert_eq!(self.in_flight.accepts(*request), !published);
+                assert_eq!(
+                    self.in_flight.deadline(),
+                    Some(timeline.start + timeline.deadline),
+                    "the deadline: {trail:?}"
+                );
+                let id = timeline.id;
+                assert_eq!(
+                    self.in_flight.item_mut().map(|item| *item),
+                    Some(id),
+                    "the item: {trail:?}"
+                );
                 if published {
                     assert!(
                         timeline
@@ -832,6 +843,8 @@ impl Run {
         }
         if self.item.is_none() {
             assert!(self.in_flight.running().is_none(), "{trail:?}");
+            assert_eq!(self.in_flight.deadline(), None, "{trail:?}");
+            assert!(self.in_flight.item_mut().is_none(), "{trail:?}");
         }
         assert_eq!(
             self.in_flight.generation(),

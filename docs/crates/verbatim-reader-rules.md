@@ -114,7 +114,8 @@ or a succession ends the item running, and an answer to a dead request
 names the newest request no longer running. Each ask is answered at once
 with a value drawn by the time it is asked at. It compares each item's fate
 (running, ended, or abandoned with its reason, each with whether it was
-published) with the one a scan of its timeline names, and checks its
+published) with the one a scan of its timeline names, and the running
+item, its deadline and `item_mut` with the model's, and checks its
 invariants after every step: each item leaves at most once, the generation
 rises by one per abandonment or succession and an abandonment names the
 item's generation as dead, a published walk followed an armed one, a wake
