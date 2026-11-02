@@ -1260,7 +1260,7 @@ pub enum ListenerToCore {
     /// `GetForegroundWindow` names, Program Manager's, the taskbar's and an
     /// ignored process's included, whatever process raised it and whether
     /// or not its fact is forwarded; for one whose window was not in front,
-    /// once a later focus or foreground `WinEvent` finds it there, unless a
+    /// once a later focus `WinEvent` finds it there, unless a
     /// newer foreground event came first; once when the listener starts,
     /// for the window then in front; and again for a console window in
     /// front whose thread no event had named, once one of its events names

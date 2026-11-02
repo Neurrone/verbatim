@@ -17,7 +17,7 @@
 //! it opens in front), or refused by Windows' foreground lock
 //! (`docs/parity/focus-events.md`, "Event acceptance"). Such a window is
 //! kept as the pending window, replacing any kept before, and is sent once
-//! a later focus or foreground event finds it in front, with that event's
+//! a later focus event finds it in front, with that event's
 //! observation; a newer foreground event replaces it. None sent replaces
 //! another.
 //!
@@ -77,8 +77,8 @@ pub struct ForegroundWatch {
     /// Whether every console's events are hooked.
     console_events: bool,
     /// The newest foreground event's window, when it was not in front as
-    /// the event was handled: sent once a later focus or foreground event
-    /// finds it in front.
+    /// the event was handled: sent once a later focus event finds it in
+    /// front, and replaced by a newer foreground event.
     pending: Option<Front>,
 }
 
