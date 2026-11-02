@@ -94,21 +94,28 @@ screen reader in both rendered and source form.
   make no cross-process call; it reads each UIA focus on a thread per
   application, with no remote operation or connection, and forwards each
   fact to Core, which routes it to the application's own outpost to
-  report (section 1). Why: an outpost started after the event would miss
-  the first focus, and a hung window holds every UIA event of the process
-  with the focus registration. Decided 2026-07-16. Amended 2026-10-20
-  (Dickson).
-- **D14, attention follows focus.** Attention moves only on a foreground
-  change, and the foreground is announced, never a gate; each event rule
-  is defined once, judged in Core, outside Core only before a read and
-  only from the reader's own observations, and Core orders focuses by
-  when they happened (section 2). Why:
-  a foreground gate failed broker-hosted applications and background
-  events users expect. Decided 2026-09-02. Amended 2026-10-25 (Dickson,
-  2026-10-26), 2026-10-30 (Dickson: no state of Core is sent to a
-  reader, [the ownership model](design/ownership.md)) and 2026-10-31 (the
-  ported rules both readers apply are defined in `verbatim-reader-rules`,
-  section 2).
+  report (section 1). It reports every foreground change to Core, with
+  when it observed it, the only report of one, from which Core takes the
+  keyboard hook's view, attention and its foreground record. Why: an
+  outpost started after the event would miss the first focus, and a hung
+  window holds every UIA event of the process with the focus
+  registration; one sender of the fact that a window came to the
+  foreground needs no event from a held application. Decided 2026-07-16.
+  Amended 2026-10-20 (Dickson) and 2026-11-02 (Dickson: the foreground
+  change).
+- **D14, attention follows focus.** Attention moves only on the focus
+  listener's foreground change, never on a focus or an outpost's report,
+  and the foreground is announced, never a gate; each event rule is
+  defined once, judged in Core, outside Core only before a read and only
+  from the reader's own observations, and Core orders focuses by when
+  they happened (section 2). Why: a foreground gate failed broker-hosted
+  applications and background events users expect. Decided 2026-09-02.
+  Amended 2026-10-25 (Dickson, 2026-10-26), 2026-10-30 (Dickson: no state
+  of Core is sent to a reader, [the ownership model](design/ownership.md)),
+  2026-10-31 (the ported rules both readers apply are defined in
+  `verbatim-reader-rules`, section 2) and 2026-11-02 (Dickson: attention
+  moves only on the listener's foreground change, and a focus is judged
+  against Core's record of the window in front).
 - **D15, the latency budget is split in two and measured per stage.** The
   OS event to the utterance queued takes 10 ms or less on every backend,
   and queued to first audio 10 ms or less with eSpeak NG, OneCore exempt
@@ -251,7 +258,16 @@ threads and each outpost's workers; no other thread makes such a call.
 
 Inside, an outpost is one pure state machine, the reducer, on a thread of
 its own. Workers run whole call programs on copies of what they read and
-post their results back; the reducer's timed wait keeps every timer. What it says to
+post their results back; the reducer's timed wait keeps every timer.
+Every test the outpost makes against the foreground, an MSAA focus's
+acceptance test and a foreground change's in-front test, is made on the
+reducer's thread from Windows' state as the entry is taken in, never on
+a worker, which can wait behind a call into a held application; and when
+an application's window is in front at its gap record's bound with no
+focus reported, its title is sent from Windows' state there, read from
+local data with no call into the application
+([its design](design/focus-pipeline-rework-remaining.md), "The held UIA
+application's title"; Dickson, 2026-11-02). What it says to
 Core waits in one queue, written by a thread of its own; queuing never
 waits, nothing is queued while a lock the watchdog takes is held, and
 waiting messages are merged by object and kind, but never a terminal's
@@ -366,10 +382,13 @@ that are global by nature:
   per outpost;
 - global MSAA WinEvent hooks (process id zero) for focus, foreground,
   menu-popup opens, the end of a menu or of the Alt+Tab switcher, alerts,
-  and tooltips shown, NVDA's own arrangement. Every foreground change is
-  also reported to Core as the window in front, with the thread its event
-  names and its process's integrity level, for the keyboard hook's view of
-  the foreground (section 5), and the end of a menu or switcher goes to
+  and tooltips shown, NVDA's own arrangement. Every foreground change
+  whose window is in front is also reported to Core, with when it was
+  observed, its process, its root owner, the thread its event names and
+  its process's integrity level, none replacing another: it is the only
+  report that a window came to the foreground, from which Core takes the
+  keyboard hook's view of the foreground (section 5), attention and its
+  foreground record (section 2); and the end of a menu or switcher goes to
   Core, which asks the foreground application for its focus if its own
   has not changed shortly after, as NVDA's fake focus does.
 
@@ -579,22 +598,28 @@ the speech pipeline. Consequences:
 
 ### Attention and acceptance (D14)
 
-The reducer tracks an attention record: the process and root window that
-most recently received a focus fact. Attention moves only on a foreground
-change, reported as a focus on the window, which the listener has
-confirmed is still the foreground window; an ordinary focus fact is
-classified like any other event, so a topmost popup that takes focus does
+The reducer tracks an attention record: the process and window the focus
+listener last reported in the foreground. Attention moves only on the
+listener's foreground change, never on a focus or an outpost's report; an
+outpost's report of a foreground change is a focus on the window, a
+whole-window focus, taken only while the record's front is its window, or
+was observed no later than it, so a topmost popup that takes focus does
 not take attention. The foreground is announced, never used as a gate.
 
 Acceptance follows NVDA's rules (`docs/parity/focus-events.md`, "Event
-acceptance"). A focus is attended when its window, read at the event, is
-in the system's foreground window (its top-level window or root owner is
-the foreground window, or shares its root owner), is topmost, or is a
-`Windows.UI.Core` window under the input thread's active window. It is
-judged against the real foreground window rather than the attention
-record, because a focus can arrive before the report of the foreground
-change that left its window; a focus with no window facts is judged by
-its application. Of the alerts, only toasts are reported for now. UIA
+acceptance"). Each reader tests a focus once, before it reads it: the
+listener a UIA focus by its nearest window, an outpost's reducer thread an
+MSAA focus and a foreground change, against the system's foreground
+window. Core judges a focus with window facts against its record's
+front, the window the listener last reported in front, with when it was
+observed: a focus is dropped when the front was observed after it and is
+a window it is unrelated to (neither its top-level window nor its root
+owner is the front's window or root owner), as NVDA, testing when it
+handles the event, refuses a focus whose read was held past a switch; a
+focus with no window facts is judged by its application. A foreground
+change into an unrelated window observed after every report Core has
+judged marks Core's focus left, so the return to it is spoken as the same
+switch with no stall is. Of the alerts, only toasts are reported for now. UIA
 notifications are accepted from the attention application only, except
 the shell's window-snap results; menu popups, tooltip and
 notification-bar classes, configured progress bars and toast alerts are

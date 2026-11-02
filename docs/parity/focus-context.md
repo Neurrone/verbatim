@@ -172,28 +172,73 @@ event for a window NVDA reads through UI Automation is dropped, so such
 windows are announced only from the focus's ancestry
 ([Event handling](../nvda/events.md), "Foreground windows").
 
-Verbatim: a foreground fact arrives as a focus on the window, and the
-reducer ignores it when its window handle equals the current focus's
-top-level window handle. Window handles are compared rather than node
-ids because one window has different node ids in different outposts (a
-Settings page whose frame belongs to `ApplicationFrameHost.exe`). A window
-that has no name when focus enters it is not announced later, and a
-foreground change to a nameless window moves attention without speaking
-(a bare "window" says nothing), though it cancels speech, as NVDA's
-foreground event does. The outposts drop a foreground fact whose window
-is not the foreground window when it is handled, and one for a window
-read through UI Automation; the reducer, when the focus line shares
-nothing with the previous one below the desktop, cuts speech off and
-speaks the entered presentable ancestors outermost first, the top-level
-window among them by the rule
-in "Top-level windows in the ancestry", then the focus
-(`docs/design/focus-pipeline.md`, section 16.4). **matched
-(unverified)**: reducer tests, and `mockapp` tests that an early
-foreground event and a UI Automation window's foreground event are
-dropped; the Start menu, window-switch, `conhost_` and
-`explorer_folder_window` scenarios do not yet verify it live, and what
-NVDA says when a console window comes in front some 400 ms after its
-text area's focus is not captured.
+Verbatim: a foreground fact arrives as a whole-window focus, and the
+reducer refuses it when its window handle equals the top-level window
+handle of Core's focus and that focus was not left. Window handles are
+compared rather than node ids because one window has different node ids
+in different outposts (a Settings page whose frame belongs to
+`ApplicationFrameHost.exe`). A window that has no name when focus enters
+it is not announced later, and a whole-window focus of a nameless window
+is taken silently (a bare "window" says nothing), though it cancels
+speech, as NVDA's foreground event does. The outposts drop a foreground
+fact whose window is not the foreground window at their one test, and
+one for a window read through UI Automation; the reducer, when the focus
+line shares nothing with the previous one below the desktop, cuts speech
+off and speaks the entered presentable ancestors outermost first, the
+top-level window among them by the rule in "Top-level windows in the
+ancestry", then the focus (`docs/design/focus-pipeline.md`, section
+16.4).
+
+The title rule (Dickson, 2026-10-30): the window's title is always said
+when the focus enters a top-level window it was not in, decided in Core
+from the focus's chain. A focus Core takes whose own top-level window is
+the system's foreground window when it was published
+(`WindowFacts::foreground_window`), that window not the entered window
+or Core's focus having been left, says the window's own entry in its
+chain, the outermost with that window's handle, with the words of a
+whole-window focus of the window, after the cut and before the other
+entered containers, unless its line already speaks it or it has no name;
+a whole-window focus taken first enters its window, so the focus after
+it says nothing more. So the title does not depend on whether a
+foreground change and its focus shared an outpost's batch, which NVDA's
+own result does by pump timing. Core's `tests/foreground.rs`.
+
+- Different, deliberately: a Windows Forms form or dialog brought to the
+  front with its focus within NVDA's 10 ms pump says its title, where
+  NVDA says none (`two-same-named-dialogs.txt` and
+  `classic-context-menu.txt` in
+  `experiments/focus-pipeline-rework-measurements/captures/`); so does a
+  Windows Forms main window when a dialog closes.
+- Different, deliberately: a focus reported before its window's
+  foreground change arrives, its window already in front, says the title
+  with the focus, where NVDA drops the later foreground change as a
+  repeat.
+- Different, deliberately: the return to the user's desktop after the
+  secure desktop says the title, where NVDA normally says the focus
+  alone (untestable until M8.1).
+- Different, known: on the first Escape from Windows 11 Notepad's WinUI
+  context menu, NVDA says "Untitled - Notepad"
+  (`keyboard-opened-context-menu.txt` in the same folder). The menu is a
+  popup in Notepad's foreground, so the title rule adds nothing; Verbatim
+  says the title only when Notepad's whole-window focus is tried in its
+  batch.
+- A focus raised before its window's foreground change within one pump
+  is no departure: the foreground change, newest, is tried first, and its
+  report ends the focus group, so Verbatim, like NVDA, says the window
+  and not that focus.
+- Different, deliberately (Dickson, 2026-11-02): an application that does
+  not answer, its window in front a second after it was entered with no
+  focus reported, says its window text, read from Windows' state with no
+  call into it ("held-application window"), and then its focus if it
+  answers later, where NVDA says nothing until the focus comes
+  (`docs/parity/focus-events.md`, "A focus UIA does not deliver").
+
+**matched (unverified)** for the rest: reducer tests, and `mockapp`
+tests that an early foreground event and a UI Automation window's
+foreground event are dropped; the Start menu, window-switch, `conhost_`
+and `explorer_folder_window` scenarios do not yet verify it live, and
+what NVDA says when a console window comes in front some 400 ms after
+its text area's focus is not captured.
 
 ### A slider that focuses its thumb
 
