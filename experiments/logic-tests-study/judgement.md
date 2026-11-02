@@ -429,17 +429,17 @@ Source: `experiments/logic-tests-study/judgement.md`, code at be5bd5b9 (`git dif
 
 #### follow.rs: FocusPath::of, is_cut_at, route_to
 The reducer never calls these. They are worker-side helpers, called from `verbatim-outpost` (worker.rs, mod.rs). That crate's `focus_path.rs` tests cover `of` and `route_to`, but the run used only outpost-logic's own tests, and no test anywhere calls `is_cut_at`.
-- follow.rs:149, body Default: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
+- follow.rs:149, body Default: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`; killed by verbatim-outpost's tests.
 - follow.rs:157, != to ==: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
 - follow.rs:167, body false: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
 - follow.rs:167, body true: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
 - follow.rs:168, && to ||: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
 - follow.rs:168, == to !=: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
 - follow.rs:169, && to ||: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
-- follow.rs:178, == to !=: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
-- follow.rs:178, body None: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
-- follow.rs:183, + to *: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
-- follow.rs:183, + to -: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`.
+- follow.rs:178, == to !=: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`; killed by verbatim-outpost's tests.
+- follow.rs:178, body None: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`; killed by verbatim-outpost's tests.
+- follow.rs:183, + to *: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`; killed by verbatim-outpost's tests.
+- follow.rs:183, + to -: excluded, not the reducer's: `FocusPath` is worker code the reducer never calls, tested from `verbatim-outpost`; killed by verbatim-outpost's tests.
 
 #### follow.rs: FollowState::retarget, follows, release_groups
 - follow.rs:485, == to !=: excluded, the subscription (kept groups).
@@ -538,15 +538,15 @@ The reducer never calls these. They are worker-side helpers, called from `verbat
 ### verdicts.rs
 - verdicts.rs:42, Probed::lasts to false: excluded, verdict contents.
 - verdicts.rs:42, to true: excluded, verdict contents.
-- verdicts.rs:98, Kept::judges < to >: excluded, verdict contents.
-- verdicts.rs:102, guard to false: excluded, verdict contents.
+- verdicts.rs:98, Kept::judges < to >: excluded, verdict contents; killed by verbatim-outpost's tests.
+- verdicts.rs:102, guard to false: excluded, verdict contents; killed by verbatim-outpost's tests.
 - verdicts.rs:146, Verdicts::lasts to false: excluded, verdict contents. Invariant 13 checks sends against the record's actual change, and the model does not predict it.
 - verdicts.rs:148, && to ||: excluded, verdict contents.
 - verdicts.rs:148, == to !=: excluded, verdict contents.
-- verdicts.rs:171, == to !=: excluded, verdict contents.
-- verdicts.rs:171, guard to false: excluded, verdict contents.
+- verdicts.rs:171, == to !=: excluded, verdict contents; killed by verbatim-outpost's tests.
+- verdicts.rs:171, guard to false: excluded, verdict contents; killed by verbatim-outpost's tests.
 - verdicts.rs:171, guard to true: excluded, verdict contents.
-- verdicts.rs:172, >= to <: excluded, verdict contents.
+- verdicts.rs:172, >= to <: excluded, verdict contents; killed by verbatim-outpost's tests.
 
 #### watch.rs: Watch::take
 - watch.rs:237, guard to true: target. A program takes a waiting watch on another node. Killed by invariant 7 and the model's watch "held by the program".
@@ -554,12 +554,12 @@ The reducer never calls these. They are worker-side helpers, called from `verbat
 ### verbatim-listener-logic
 
 ### schedule.rs
-- schedule.rs:422, stopping to false: target, NL. No listed check compares the `stopping()` query, which the shell reads.
-- schedule.rs:422, stopping to true: target, NL. Same.
-- schedule.rs:465, focus_pending == to !=: target, NL. No check compares `focus_pending`, which the shell's menu handling reads.
-- schedule.rs:618, push && to ||: target. The wrong events are replaced. Killed by "every marker gets exactly one outcome and the open markers equal the model's" and "jobs in push order, less those replaced or dropped".
+- schedule.rs:422, stopping to false: target, NL. No listed check compares the `stopping()` query, which the shell reads; killed by verbatim-listener's tests.
+- schedule.rs:422, stopping to true: target, NL. Same; killed by verbatim-listener's tests.
+- schedule.rs:465, focus_pending == to !=: target, NL. No check compares `focus_pending`, which the shell's menu handling reads; killed by verbatim-listener's tests.
+- schedule.rs:618, push && to ||: target. The wrong events are replaced. Killed by "every marker gets exactly one outcome and the open markers equal the model's" and "jobs in push order, less those replaced or dropped"; killed by verbatim-listener's tests.
 - schedule.rs:633, != to ==: target, NL. A job's `after_elsewhere` is inverted. The model tracks the last focus's application, but no invariant compares the job's `after_elsewhere`.
-- schedule.rs:658, + to *: target. Killed by "no event waits past its application's bound at the limit once a tick or push at or past it is handled".
+- schedule.rs:658, + to *: target. Killed by "no event waits past its application's bound at the limit once a tick or push at or past it is handled"; killed by verbatim-listener's tests.
 - schedule.rs:734, next == to !=: target. An application with abandoned threads is removed, so their return sends no forget-last. Killed by "one forget-last per return from an abandoned thread".
 - schedule.rs:753, returned && to ||: target. `last_top` is overwritten by a dropped read. Killed by "each job's moved-away place as the model computes it".
 - schedule.rs:775, < to <=: equivalent. `abandoned` never exceeds ABANDONED_LIMIT (threads start only below it), so after the decrement it is below the limit either way.
@@ -569,13 +569,13 @@ The reducer never calls these. They are worker-side helpers, called from `verbat
 - schedule.rs:941, published && to ||: target. A publication answer of another request publishes the current read. Killed by "a published read gets no second outcome" and markers exactly once.
 - schedule.rs:972, drop_waiting || to &&: equivalent. Both callers (push and tick through `waiting_end`) already ensure an unthreaded application with a non-empty queue, so neither guard returns.
 - schedule.rs:1011, foreground == to !=: target. Another application's read's top is used. Killed by "each job's moved-away place as the model computes it".
-- schedule.rs:1023, outpost_ended body (): target, NL. The application is neither removed nor woken to end. No listed check compares the applications kept or the end's Wake.
-- schedule.rs:1026, delete !: target. A threaded application is removed, and a new life reuses generation numbers. Killed by "each spawn's generation above every earlier one within the application's life".
-- schedule.rs:1026, && to || (first): target. An application with abandoned threads or a queue is removed. Killed by forget-last and markers exactly once.
-- schedule.rs:1026, && to || (second): target. A threaded idle application is removed. Killed by the spawn-generation invariant.
+- schedule.rs:1023, outpost_ended body (): target, NL. The application is neither removed nor woken to end. No listed check compares the applications kept or the end's Wake; killed by verbatim-listener's tests.
+- schedule.rs:1026, delete !: target. A threaded application is removed, and a new life reuses generation numbers. Killed by "each spawn's generation above every earlier one within the application's life"; killed by verbatim-listener's tests.
+- schedule.rs:1026, && to || (first): target. An application with abandoned threads or a queue is removed. Killed by forget-last and markers exactly once; killed by verbatim-listener's tests.
+- schedule.rs:1026, && to || (second): target. A threaded idle application is removed. Killed by the spawn-generation invariant; killed by verbatim-listener's tests.
 - schedule.rs:1026, == to !=: target. An application with abandoned threads is removed. Killed by forget-last.
-- schedule.rs:1035, spawn_failed body (): target. The queue gets no outcome. Killed by "every marker gets exactly one outcome".
-- schedule.rs:1038, delete !: target. Same.
+- schedule.rs:1035, spawn_failed body (): target. The queue gets no outcome. Killed by "every marker gets exactly one outcome"; killed by verbatim-listener's tests.
+- schedule.rs:1038, delete !: target. Same; killed by verbatim-listener's tests.
 
 ### verbatim-core
 
@@ -608,3 +608,38 @@ The reducer never calls these. They are worker-side helpers, called from `verbat
 - terminal_model.rs:974, delete !: target. Same.
 - terminal_model.rs:974, && to ||: target. Same.
 - terminal_model.rs:1098, answerable delete ForKey arm: target. A key's request goes to the outpost, not to memory. Killed by the model's open queries' waited kind (memory).
+
+
+## Killed by the role crates' tests
+
+Date: 2026-11-03. Same commit and tool as above. Each crate's missed mutants were run again with the role crate's tests added, which also drive the real reducer: `--test-package` names both the logic crate and its role crate. The mutants were chosen with one `--re` alternation per crate that matches exactly the file, line and mutation listed under that crate above (a few extra mutants on neighbouring lines also ran and are ignored here). The unmutated baseline passed for both runs, with mockapp built first.
+
+- `cargo mutants --in-place -p verbatim-outpost-logic --test-package verbatim-outpost-logic --test-package verbatim-outpost --re <alternation>`: 112 mutants, 41 minutes.
+- `cargo mutants --in-place -p verbatim-listener-logic --test-package verbatim-listener-logic --test-package verbatim-listener --re <alternation>`: 24 mutants, 3 minutes 20 seconds.
+
+Killed, 10 of the 101 missed outpost-logic mutants, by `verbatim-outpost`'s tests, all excluded:
+
+- follow.rs:149, body Default (excluded).
+- follow.rs:178, == to != (excluded).
+- follow.rs:178, body None (excluded).
+- follow.rs:183, + to * (excluded).
+- follow.rs:183, + to - (excluded).
+- verdicts.rs:98, < to > (excluded).
+- verdicts.rs:102, guard to false (excluded).
+- verdicts.rs:171, == to != (excluded).
+- verdicts.rs:171, guard to false (excluded).
+- verdicts.rs:172, >= to < (excluded).
+
+Killed, 11 of the 22 missed listener-logic mutants, by `verbatim-listener`'s tests, all target (the first was killed by timeout, the rest by a failing test):
+
+- schedule.rs:422, stopping to false (target, NL; timeout).
+- schedule.rs:422, stopping to true (target, NL).
+- schedule.rs:465, == to != (target, NL).
+- schedule.rs:618, && to || (target).
+- schedule.rs:658, + to * (target).
+- schedule.rs:1023, outpost_ended body () (target, NL).
+- schedule.rs:1026, delete ! (target).
+- schedule.rs:1026, && to || first (target).
+- schedule.rs:1026, && to || second (target).
+- schedule.rs:1035, spawn_failed body () (target).
+- schedule.rs:1038, delete ! (target).
